@@ -5,6 +5,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 /** #369 submission-seam gates ①② + upgrade uninstall — real arm/assertAcceptable entry. */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -84,7 +85,16 @@ async function withTempGit<T>(
 }
 
 function bareGate(home: string) {
-  return createWorkerSubmissionGate({ home });
+  const gate = createWorkerSubmissionGate({ home });
+  return {
+    ...gate,
+    arm(cwd: string, parent?: SessionManager) {
+      if (parent !== undefined) return gate.arm(cwd, parent);
+      const sessionDir = join(machineLedgerHome(home), "books", "repo", "runs", randomUUID(), "session");
+      mkdirSync(sessionDir, { recursive: true });
+      return gate.arm(cwd, SessionManager.create(cwd, sessionDir));
+    },
+  };
 }
 
 function plantOwnedHooks(cwd: string): { hooksDir: string; hookPath: string } {

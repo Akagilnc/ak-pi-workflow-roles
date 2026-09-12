@@ -29,6 +29,7 @@ import {
   formatTokensCompact,
   formatUsdPrecise,
 } from "./human-format.ts";
+import { listBookRunDirectories } from "./role-run-placement.ts";
 import {
   extractSessionTimestampSpan,
   readLedgerSessionJsonl,
@@ -656,44 +657,33 @@ ${stationBlocks || "<p data-empty=\"true\">no runs</p>"}
  * Load one ticket's runs via the S1 tracer path (read-only ledger scan).
  * Factory board reuses this — no parallel receipt parser.
  *
- * Flat-run attribution (#176 option A): read typed `ticketNumber` from each
- * `runs/<run>@<role>/invocation.json`. Legacy `issues/<N>/runs` remains a
- * read-only compatibility entrance. Unbound flat runs never join a ticket.
+ * Book-run attribution (#176 / #859): read typed `ticketNumber` from each run's
+ * invocation.json under listBookRunDirectories (flat legacy `runs/` + subject-tree
+ * `<ticket|unbound>/runs/`). Legacy `issues/<N>/runs` remains a read-only
+ * compatibility entrance. Unbound runs never join a ticket.
  */
 
-/** One flat run's typed binding projection from invocation.json. */
+/** One book run's typed binding projection from invocation.json. */
 export type FlatRunTicketBinding = {
   readonly runDir: string;
   readonly runFolder: string;
+  /** Book-relative coord (e.g. `runs/id@role` or `582/runs/id@role`). */
+  readonly ledgerCoord: string;
   readonly ticketNumber?: number;
   readonly role?: string;
   readonly correlationId?: string;
 };
 
 /**
- * Book-level flat-run index built once per lane/render and reused per ticket.
- * Pure derived view of flat runs' invocation.json files — not a parallel ledger.
+ * Book-level run index built once per lane/render and reused per ticket.
+ * Pure derived view of book runs' invocation.json files — not a parallel ledger.
  */
 export type TicketTrajectoryBookIndex = {
-  /** ticket number → flat runs bound via invocation.json ticketNumber. */
+  /** ticket number → runs bound via invocation.json ticketNumber. */
   readonly runsByTicket: ReadonlyMap<number, readonly FlatRunTicketBinding[]>;
-  /** Flat runs with no typed ticketNumber (unknown/unbound seam). */
+  /** Runs with no typed ticketNumber (unknown/unbound seam). */
   readonly unboundRuns: readonly FlatRunTicketBinding[];
 };
-
-async function listFlatRunDirectories(ledgerDir: string): Promise<string[]> {
-  const runsDir = join(resolve(ledgerDir), "runs");
-  try {
-    const entries = await readdir(runsDir, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => join(runsDir, entry.name))
-      .sort();
-  } catch (error) {
-    if (isMissingPathError(error)) return [];
-    throw error;
-  }
-}
 
 export async function buildTicketTrajectoryBookIndex(
   ledgerDir: string,
@@ -701,11 +691,13 @@ export async function buildTicketTrajectoryBookIndex(
   const root = resolve(ledgerDir);
   const runsByTicket = new Map<number, FlatRunTicketBinding[]>();
   const unboundRuns: FlatRunTicketBinding[] = [];
-  for (const runDir of await listFlatRunDirectories(root)) {
+  for (const runDir of await listBookRunDirectories(root)) {
     const invocation = await readInvocation(runDir);
+    const rel = relative(root, runDir).split(sep).join("/");
     const binding: FlatRunTicketBinding = {
       runDir,
       runFolder: basename(runDir),
+      ledgerCoord: rel,
       ...(invocation?.ticketNumber !== undefined
         ? { ticketNumber: invocation.ticketNumber }
         : {}),
@@ -744,8 +736,7 @@ export async function loadUnboundTrajectoryRuns(
   const index = bookIndex ?? (await buildTicketTrajectoryBookIndex(root));
   const out: UnboundTrajectoryRun[] = [];
   for (const binding of index.unboundRuns) {
-    const ledgerCoord = ["runs", binding.runFolder].join("/");
-    const run = await parseRunDirectory(binding.runDir, ledgerCoord);
+    const run = await parseRunDirectory(binding.runDir, binding.ledgerCoord);
     out.push({
       run,
       role: binding.role ?? run.station,
@@ -781,14 +772,13 @@ export async function loadTicketTrajectoryRuns(
     runs.push(parsed);
   }
 
-  // Flat runs bound by typed invocation.json ticketNumber.
+  // Book runs (flat + subject-tree) bound by typed invocation.json ticketNumber.
   const flatBindings = index.runsByTicket.get(issueNumber) ?? [];
   for (const binding of flatBindings) {
     const resolvedRunDir = resolve(binding.runDir);
     if (seenRunDirs.has(resolvedRunDir)) continue;
     seenRunDirs.add(resolvedRunDir);
-    const ledgerCoord = ["runs", binding.runFolder].join("/");
-    runs.push(await parseRunDirectory(binding.runDir, ledgerCoord));
+    runs.push(await parseRunDirectory(binding.runDir, binding.ledgerCoord));
   }
 
   return runs;

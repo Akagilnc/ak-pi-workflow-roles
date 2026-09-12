@@ -116,7 +116,7 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(
       admitted.runDirectory,
-      join(home, ".ak-roles", "books", bookKey, "runs", "run-coder-plan-001@coder"),
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-coder-plan-001@coder"),
     );
     const persisted = JSON.parse(
       await readFile(admitted.admittedRequestPath, "utf8"),

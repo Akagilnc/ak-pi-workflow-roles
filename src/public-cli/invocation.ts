@@ -6,12 +6,12 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   lstat,
-  mkdir,
   readFile,
   realpath,
+  rename,
   writeFile,
 } from "node:fs/promises";
-import { basename, isAbsolute, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 import {
   activationBookDirectory,
@@ -21,11 +21,21 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
+import {
+  ensureRoleRunDirectory,
+  ensureRoleRunPlacement,
+  roleRunArtifactsDirectory,
+  roleRunPlacement,
+  type RoleRunSubject,
+} from "../role-run-placement.ts";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
-import { readRunTicketNumber } from "../run-ticket-number.ts";
+import {
+  readRunTicketNumber,
+  requireSafePositiveTicketNumber,
+} from "../run-ticket-number.ts";
 import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
@@ -259,30 +269,36 @@ export type AdmissionPlacement = {
   readonly sessionDirectory: string;
   readonly sessionFile: string;
   readonly runDirectory: string;
+  readonly artifactsDirectory: string;
+  readonly attachmentsDirectory: string;
   readonly ledgerHome: string;
   readonly bookKey: string;
 };
 
-/** Issue principal + derive ledger placement through the injected authority only. */
+/** Issue a principal from the single authoritative role-run placement. */
 export function issueAdmissionPlacement(
   authority: DurablePrincipalAuthority,
   request: {
     readonly cwd: string;
     readonly runId: string;
     readonly role: AdmittedRoleInvocation["role"];
+    /** Identity already asserted by 起居郎; never derive this from CLI parameters. */
+    readonly subject: RoleRunSubject;
     readonly home?: string;
   },
 ): AdmissionPlacement {
-  const principal = authority.issue(request);
-  const { sessionDirectory, sessionFile } = authority.decode(principal);
-  const runDirectory = join(sessionDirectory, "..");
   const ledgerHome = resolveActivationLedgerHome(request.home);
   const bookKey = resolveBookKeyFromGit(request.cwd);
+  const placement = roleRunPlacement(ledgerHome, {
+    bookKey,
+    subject: request.subject,
+    runId: request.runId,
+    role: request.role,
+  });
+  ensureRoleRunPlacement(ledgerHome, placement);
   return {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
+    principal: authority.seal(placement),
+    ...placement,
     ledgerHome,
     bookKey,
   };
@@ -468,27 +484,103 @@ export async function bindAdmittedTicketNumber(
   admitted: AdmittedRoleInvocation,
   ticketNumber: number,
 ): Promise<void> {
-  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
-    throw new Error(`bindAdmittedTicketNumber requires a safe positive integer, got ${String(ticketNumber)}`);
-  }
   if (admitted.ticketNumber !== undefined) {
     if (admitted.ticketNumber === ticketNumber) return;
     throw new Error(
       `bindAdmittedTicketNumber refuses to replace existing ticket #${admitted.ticketNumber} with #${ticketNumber}`,
     );
   }
+  await bindTicketNumberOnRunDirectory(admitted.runDirectory, ticketNumber);
   (admitted as { ticketNumber?: number }).ticketNumber = ticketNumber;
-  await mergeInvocationIdentityPage(admitted.runDirectory, { ticketNumber });
-  const admittedPath = admitted.admittedRequestPath;
-  const current = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
-    string,
-    unknown
-  >;
-  await writeFile(
-    admittedPath,
-    `${JSON.stringify({ ...current, ticketNumber }, null, 2)}\n`,
-    "utf8",
-  );
+}
+
+/** Move a settled first-entry run from unbound to its asserted ticket directory. */
+export async function relocateAdmittedRunToTicket(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  heldLease?: { relocate(runDirectory: string): void },
+): Promise<void> {
+  if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return;
+  const oldRunDirectory = admitted.runDirectory;
+  const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(oldRunDirectory));
+  const target = roleRunPlacement(ledgerHome, {
+    bookKey: admitted.bookKey,
+    subject: { ticketNumber: admitted.ticketNumber },
+    runId: admitted.runId,
+    role: admitted.role,
+  });
+  ensureRoleRunDirectory(ledgerHome, dirname(target.runDirectory));
+  await rename(oldRunDirectory, target.runDirectory);
+  heldLease?.relocate(target.runDirectory);
+
+  const relocatedPath = (value: unknown): unknown =>
+    typeof value === "string" &&
+    (value === oldRunDirectory || value.startsWith(`${oldRunDirectory}${sep}`))
+      ? `${target.runDirectory}${value.slice(oldRunDirectory.length)}`
+      : value;
+  const relocateFields = (record: Record<string, unknown>, fields: readonly string[]): void => {
+    for (const field of fields) record[field] = relocatedPath(record[field]);
+  };
+  const admittedRecord = admitted as unknown as Record<string, unknown>;
+  relocateFields(admittedRecord, [
+    "runDirectory",
+    "admittedRequestPath",
+    "taskPath",
+    "packetPath",
+    "prerequisitesPath",
+    "requestManifestPath",
+    "mergerInputPath",
+  ]);
+  for (const attachment of admitted.attachments) {
+    (attachment as { frozenPath: string }).frozenPath = relocatedPath(
+      attachment.frozenPath,
+    ) as string;
+  }
+  const principal = authority.seal(target);
+  (admitted as { principal: DurablePrincipal }).principal = principal;
+
+  const admittedPath = join(target.runDirectory, "admitted-request.json");
+  if (existsSync(admittedPath)) {
+    const page = JSON.parse(await readFile(admittedPath, "utf8")) as Record<string, unknown>;
+    relocateFields(page, [
+      "runDirectory",
+      "admittedRequestPath",
+      "sessionDirectory",
+      "sessionFile",
+      "taskPath",
+      "packetPath",
+      "prerequisitesPath",
+      "requestManifestPath",
+      "mergerInputPath",
+    ]);
+    if (Array.isArray(page.attachments)) {
+      for (const attachment of page.attachments) {
+        if (attachment !== null && typeof attachment === "object") {
+          relocateFields(attachment as Record<string, unknown>, ["frozenPath"]);
+        }
+      }
+    }
+    await writeFile(admittedPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+  }
+
+  const invocationPath = join(target.runDirectory, "invocation.json");
+  if (existsSync(invocationPath)) {
+    const page = JSON.parse(await readFile(invocationPath, "utf8")) as Record<string, unknown>;
+    relocateFields(page, ["runDirectory", "sessionDirectory", "sessionFile"]);
+    await writeFile(invocationPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+  }
+
+  const statePath = join(target.runDirectory, "run-state.json");
+  if (existsSync(statePath)) {
+    const page = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    relocateFields(page, [
+      "runDirectory",
+      "admittedRequestPath",
+      "sessionDirectory",
+      "sessionFile",
+    ]);
+    await writeFile(statePath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+  }
 }
 
 /**
@@ -500,11 +592,10 @@ export async function bindTicketNumberOnRunDirectory(
   runDirectory: string,
   ticketNumber: number,
 ): Promise<void> {
-  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
-    throw new Error(
-      `bindTicketNumberOnRunDirectory requires a safe positive integer, got ${String(ticketNumber)}`,
-    );
-  }
+  requireSafePositiveTicketNumber(
+    ticketNumber,
+    "bindTicketNumberOnRunDirectory",
+  );
   const admittedPath = join(runDirectory, "admitted-request.json");
   const invocationPath = join(runDirectory, "invocation.json");
   const admitted = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
@@ -1081,7 +1172,13 @@ export async function freezeAttachmentsIntoRun(
 function ticketAdmissionFields(
   ticketNumber: number | undefined,
 ): { ticketNumber?: number } {
-  return ticketNumber === undefined ? {} : { ticketNumber };
+  if (ticketNumber === undefined) return {};
+  return {
+    ticketNumber: requireSafePositiveTicketNumber(
+      ticketNumber,
+      "assertedTicketNumber",
+    ),
+  };
 }
 
 export type AdmitJudgeInvocationOptions = {
@@ -1099,6 +1196,8 @@ export type AdmitJudgeInvocationOptions = {
 
 export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
   correlationId?: string;
+  /** Typed identity handed off by 起居郎 or inherited from an already-bound run. */
+  assertedTicketNumber?: number;
 };
 
 export type AdmitGatekeeperInvocationOptions = AdmitInspectorInvocationOptions;
@@ -1115,7 +1214,7 @@ async function admitStandardMaterialInvocation<
   R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist",
 >(
   role: R,
-  options: AdmitJudgeInvocationOptions & { correlationId?: string },
+  options: AdmitInspectorInvocationOptions,
 ): Promise<AdmittedRoleInvocationBase & { readonly role: R }> {
   // Empty project override must not reach resolve("") → cwd (silent default).
   if (options.project !== undefined) {
@@ -1123,22 +1222,25 @@ async function admitStandardMaterialInvocation<
   }
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
+  // Validate asserted ticket before placement so 0/NaN never become subjects.
+  const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const {
     principal,
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
     role,
+    subject: ticketFields.ticketNumber === undefined
+      ? { unbound: true }
+      : { ticketNumber: ticketFields.ticketNumber },
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
   const correlationFields =
@@ -1165,6 +1267,7 @@ async function admitStandardMaterialInvocation<
       sha256: a.sha256,
       mediaKind: a.mediaKind,
     })),
+    ...ticketFields,
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
@@ -1189,6 +1292,7 @@ async function admitStandardMaterialInvocation<
     principal,
     admittedRequestPath,
     ...correlationFields,
+    ...ticketFields,
   };
 }
 
@@ -1316,17 +1420,16 @@ export async function admitCountersignInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
     role: "countersign",
+    subject: { unbound: true },
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
   // Ticket binding is LLM-only post-admission (#635); admission stays unbound.
@@ -1410,9 +1513,11 @@ export async function loadAdmittedJudgeRequest(
 }
 
 export async function ensureRunArtifactsDir(runDirectory: string): Promise<string> {
-  const dir = join(runDirectory, "artifacts");
-  await mkdir(dir, { recursive: true });
-  return dir;
+  const directory = roleRunArtifactsDirectory(runDirectory);
+  return ensureRoleRunDirectory(
+    resolveActivationLedgerHome(homeFromRunDirectory(runDirectory)),
+    directory,
+  );
 }
 
 export type AdmitCoderInvocationOptions = {
@@ -1456,17 +1561,16 @@ export async function admitCoderInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
     role: "coder",
+    subject: { unbound: true },
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
 
@@ -1603,17 +1707,16 @@ export async function admitFixerInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
     role: "fixer",
+    subject: { unbound: true },
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
 
@@ -1910,17 +2013,16 @@ export async function admitCollectorInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
     role: "collector",
+    subject: { unbound: true },
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   // #676 A: freeze task materials BEFORE target resolution so the role receives
   // real instruction + attachments. Admission binds only explicit --pr or unique
@@ -2209,12 +2311,14 @@ export async function admitDoctorInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
     role: "doctor",
+    subject: { unbound: true },
     home: options.home,
   });
 
@@ -2258,9 +2362,6 @@ export async function admitDoctorInvocation(
     );
   }
 
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths ?? [], attachmentsDirectory);
 
@@ -2415,24 +2516,26 @@ export async function admitNotaryInvocation(options: {
     throw error;
   }
 
+  const inheritedTicketNumber = await readRunTicketNumber(sourceRun.runDirectory);
   const runId = options.createRunId?.() ?? uuidv7();
   const {
     principal,
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
     role: "notary",
+    subject: inheritedTicketNumber === undefined
+      ? { unbound: true }
+      : { ticketNumber: inheritedTicketNumber },
     home: options.home,
   });
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  const ticketFields = ticketAdmissionFields(
-    await readRunTicketNumber(sourceRun.runDirectory),
-  );
+  const ticketFields = ticketAdmissionFields(inheritedTicketNumber);
 
   const admitted = {
     role: "notary" as const,
@@ -2574,15 +2677,16 @@ export async function admitGleanerLeftInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
     role: "gleaner-left",
+    subject: { unbound: true },
     home: options.home,
   });
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
@@ -2738,17 +2842,16 @@ export async function admitReviewerInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
     role: "reviewer",
+    subject: { unbound: true },
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   // Public parse already rejects attachments; keep freeze loop for structural symmetry.
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
@@ -2947,17 +3050,16 @@ export async function admitMergerInvocation(
     sessionDirectory,
     sessionFile,
     runDirectory,
+    attachmentsDirectory,
     ledgerHome,
     bookKey,
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
     role: "merger",
+    subject: { unbound: true },
     home: options.home,
   });
-  const attachmentsDirectory = join(runDirectory, "attachments");
-  ensureRealDirectoryTree(ledgerHome, sessionDirectory);
-  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
 

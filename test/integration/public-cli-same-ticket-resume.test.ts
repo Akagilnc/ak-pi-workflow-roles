@@ -115,10 +115,14 @@ async function listBookRunDirs(home: string): Promise<string[]> {
   const books = await readdir(booksRoot).catch(() => [] as string[]);
   const dirs: string[] = [];
   for (const b of books) {
-    const runsDir = join(booksRoot, b, "runs");
-    const entries = await readdir(runsDir).catch(() => [] as string[]);
-    for (const entry of entries) {
-      dirs.push(join(runsDir, entry));
+    const bookDir = join(booksRoot, b);
+    const subjects = await readdir(bookDir).catch(() => [] as string[]);
+    for (const subject of subjects) {
+      const runsDir = join(bookDir, subject, "runs");
+      const entries = await readdir(runsDir).catch(() => [] as string[]);
+      for (const entry of entries) {
+        dirs.push(join(runsDir, entry));
+      }
     }
   }
   return dirs;

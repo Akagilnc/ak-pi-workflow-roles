@@ -9,6 +9,8 @@
 import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
+import { roleRunArtifactsDirectory } from "./role-run-placement.ts";
+
 export const RUN_TERMINAL_ARTIFACT_FILES = [
   "report.json",
   "error.json",
@@ -191,7 +193,7 @@ function presentUniqueFallbackBoundToRun(
 export async function readRunTerminalArtifact(
   runDirectory: string,
 ): Promise<RunTerminalArtifactRead> {
-  const artifactsDir = join(runDirectory, "artifacts");
+  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
   for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
     const path = join(artifactsDir, file);
     const read = await readTerminalArtifactAtPath(path, file);
