@@ -22,7 +22,7 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -248,7 +248,8 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
       baseRevision: "origin/main",
       createRunId: () => "run-reviewer-blank",
     });
-    assert.equal(blank.instructionEmpty, true);
+    assert.deepEqual(
+      blank.instructionEmpty, true);
     assert.equal(blank.baseRevision, "origin/main");
     assert.deepEqual(blank.authorityRefs, []);
     assert.equal("taskPath" in blank, false);
@@ -466,8 +467,8 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     });
     assert.equal(terminal.roleOutcome.role, "reviewer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(payloadStatus(terminal.roleOutcome), "completed");
-    assert.equal((payloadFacts(terminal.roleOutcome).auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
+    assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
+    assert.equal(((objectPayloads(terminal.roleOutcome)[0] ?? {}).auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
     assert.match(formatTerminalResult(terminal), /auditNoReceipt/);
     assert.equal(terminal.runId, "run-reviewer-settle-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
@@ -621,12 +622,12 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       assert.equal(captured!.includes("--skill"), true);
       assert.equal(captured!.includes("--ak-review-task"), false);
       assert.equal(result.terminal?.roleOutcome.role, "reviewer");
-      assert.equal(
+      assert.deepEqual(
         result.terminal?.roleOutcome.kind === "accepted"
-          ? payloadStatus(result.terminal.roleOutcome)
-          : undefined,
-        "completed",
-      );
+        ? payloadStatusSequence(result.terminal.roleOutcome)
+        : [],
+      ["completed"],
+    );
 
       const bookKey = resolveBookKeyFromGit(project);
       const runDirectory = join(
@@ -643,7 +644,8 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         (error: NodeJS.ErrnoException) => error.code === "ENOENT",
       );
       const projectEntries = await readdir(project);
-      assert.equal(projectEntries.includes("docs"), false);
+      assert.deepEqual(
+      projectEntries.includes("docs"), false);
       assert.equal(projectEntries.includes(".agents"), false);
       const evidence = JSON.parse(
         await readFile(join(runDirectory, "artifacts", "evidence.json"), "utf8"),
@@ -930,11 +932,11 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     assert.equal(resumed.exitCode, 0, stdout.join("") || "reviewer resume failed");
     assert.equal(Array.isArray(resumeArgs), true);
     assert.equal(resumed.terminal?.roleOutcome.role, "reviewer");
-    assert.equal(
+    assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatus(resumed.terminal.roleOutcome)
-        : undefined,
-      "completed",
+        ? payloadStatusSequence(resumed.terminal.roleOutcome)
+        : [],
+      ["completed"],
     );
   });
 });

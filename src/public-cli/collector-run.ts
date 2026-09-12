@@ -142,7 +142,9 @@ function collectorAdapters(): PostAdmissionAdapters<AdmittedCollectorInvocation>
         (infrastructureFailure === undefined
           ? undefined
           : {
-              cause: infrastructureFailure.cause,
+              ...(infrastructureFailure.cause === undefined
+                ? {}
+                : { cause: infrastructureFailure.cause }),
               diagnostic: infrastructureFailure.diagnostic,
               ...(infrastructureFailure.identity === undefined
                 ? {}

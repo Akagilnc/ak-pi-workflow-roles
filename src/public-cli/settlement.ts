@@ -57,28 +57,22 @@ import {
 } from "../package-contracts/judge-output.ts";
 import {
   COLLECTOR_OUTPUT_TOOL,
-  type CollectorReceipt,
 } from "../package-contracts/collector-output.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
-  type CoderOutput,
-  type FixerOutput,
 } from "../package-contracts/worker-output.ts";
 
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
   type DoctorCaseCost,
-  type DoctorOutput,
 } from "../doctor-contracts.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../dossier-resolution.ts";
 import {
   REVIEWER_OUTPUT_TOOL_NAME,
-  type ReviewerIntent,
 } from "../package-contracts/reviewer-output.ts";
 import {
   MERGER_OUTPUT_TOOL_NAME,
-  type MergerOutput,
 } from "../merger-contracts.ts";
 import {
   NOTARY_OUTPUT_TOOL_NAME,
@@ -153,7 +147,7 @@ import {
 } from "./invocation.ts";
 
 /** Ledger reads use the run's machine home — not ambient process HOME (child write vs parent settle). */
-function sealedLedgerHome(admitted: AdmittedRoleInvocation): string {
+function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">): string {
   return homeFromRunDirectory(admitted.runDirectory);
 }
 
@@ -166,7 +160,7 @@ export type SettlementCourtScope = {
 };
 
 function ledgerReadScope(
-  admitted: AdmittedRoleInvocation,
+  admitted: Pick<AdmittedRoleInvocation, "runDirectory">,
   scope?: SettlementCourtScope,
 ): { home: string; attemptId?: string } {
   return {
@@ -179,12 +173,22 @@ function ledgerReadScope(
 
 function roleOutcomeFromRows(
   role: TerminalRoleName,
-  rows: readonly { readonly role: TerminalRoleName; readonly kind: "accepted" | "audit-escalation"; readonly accepted: unknown }[],
+  rows: readonly {
+    readonly role?: TerminalRoleName;
+    readonly kind: "accepted" | "audit-escalation" | "correctable-rejection" | "infrastructure" | "candidate";
+    readonly accepted: unknown;
+  }[],
 ): Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined {
   const mine = rows.filter((row) => row.role === role);
-  if (mine.length === 0) return undefined;
+  // Terminal acceptance kind still only follows sealed / audit-escalation (#881):
+  // correctable-rejection / infrastructure / candidate stay payloads, not acceptance.
+  const terminal = mine.filter(
+    (row) => row.kind === "accepted" || row.kind === "audit-escalation",
+  );
+  if (terminal.length === 0) return undefined;
+  // Role-result block is the full recorded sequence for this seat, not a sole pick.
   const payloads = mine.map((row) => row.accepted);
-  if (mine.some((row) => row.kind === "audit-escalation")) {
+  if (terminal.some((row) => row.kind === "audit-escalation")) {
     return { kind: "audit_escalation", role, status: "audit_escalation", payloads };
   }
   return { kind: "accepted", role, payloads };
@@ -244,7 +248,7 @@ export async function attemptProducedFreshSubmission(
 
 /** #836: every raw role payload in settle scope (调几次记几次). */
 export async function recordedSubmissionPayloads(
-  admitted: AdmittedRoleInvocation,
+  admitted: Pick<AdmittedRoleInvocation, "projectRoot" | "runId" | "runDirectory">,
   scope?: SettlementCourtScope,
 ): Promise<readonly unknown[]> {
   return readRecordedSubmissions(
@@ -260,6 +264,8 @@ export function withSubmissions<T extends TerminalResult>(
 ): T {
   if (submissions.length === 0) return terminal;
   const roleOutcome = terminal.roleOutcome;
+  // #879 keeps an already scoped this-court result; #881 full run history is
+  // presented independently on terminal.submissions. Only fill a missing result payload.
   const withPayloads =
     roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation"
       ? { ...roleOutcome, payloads: (roleOutcome.payloads ?? []).length > 0 ? roleOutcome.payloads : submissions }
@@ -271,7 +277,7 @@ export function withSubmissions<T extends TerminalResult>(
 
 /** Attach full ledger submissions onto any settled terminal (#836). */
 export async function attachRecordedSubmissions<T extends TerminalResult>(
-  admitted: AdmittedRoleInvocation,
+  admitted: Pick<AdmittedRoleInvocation, "projectRoot" | "runId" | "runDirectory">,
   terminal: T,
   scope?: SettlementCourtScope,
 ): Promise<T> {
@@ -337,7 +343,6 @@ import {
   exitCodeForTerminalOutcome,
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
-  lastRolePayloadRecord,
   recommendationNavigatorFact,
   type ControlledFailureCause,
   type TerminalArtifactRef,
@@ -358,9 +363,10 @@ export {
   isLawfulTypedTerminalOutcome,
 };
 
-/** Preserved post-admission failure cause (not a role Receipt). */
+/** Preserved post-admission failure (not a role Receipt). */
 export type ControlledFailure = {
-  readonly cause: ControlledFailureCause;
+  /** Typed class only when confirmed; omitted when unknown (#881 — no fabricated label). */
+  readonly cause?: ControlledFailureCause;
   readonly diagnostic: string;
   readonly identity?: {
     readonly name?: string;
@@ -488,8 +494,7 @@ function isTypedActivationError(
     cause === "activation" ||
     cause === "session" ||
     cause === "output" ||
-    cause === "timeout" ||
-    cause === "unrecognized"
+    cause === "timeout"
   );
 }
 
@@ -518,21 +523,20 @@ export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
     }
     return {
       cause: error.knownCause,
-      diagnostic: error.message || error.name || "unrecognized exception",
+      diagnostic: error.message || error.name || "exception",
       identity,
       ...(error.details === undefined ? {} : { details: error.details }),
     };
   }
   if (error instanceof Error) {
     const identity = thrownIdentity(error);
+    // No typed confirmation → keep original diagnostic/identity; do not mint a class (#881).
     return {
-      cause: "unrecognized",
-      diagnostic: error.message || error.name || "unrecognized exception",
+      diagnostic: error.message || error.name || "exception",
       identity,
     };
   }
   return {
-    cause: "unrecognized",
     diagnostic: String(error),
   };
 }
@@ -563,7 +567,7 @@ function classifyThrownFailure(error: unknown): ControlledFailure {
     ...leaves.slice(1).map((leaf) => {
       const secondary = projectThrownFailureLeaf(leaf);
       return {
-        cause: secondary.cause,
+        ...(secondary.cause === undefined ? {} : { cause: secondary.cause }),
         diagnostic: secondary.diagnostic,
         ...(secondary.identity === undefined ? {} : { identity: secondary.identity }),
         ...(secondary.details === undefined ? {} : { details: secondary.details }),
@@ -571,7 +575,7 @@ function classifyThrownFailure(error: unknown): ControlledFailure {
     }),
   ];
   return {
-    cause: primary.cause,
+    ...(primary.cause === undefined ? {} : { cause: primary.cause }),
     diagnostic: primary.diagnostic,
     ...(primary.identity === undefined ? {} : { identity: primary.identity }),
     details: {
@@ -598,7 +602,7 @@ function withKnownDetails(
 }
 
 /**
- * Classify a controlled post-admission failure without washing unrecognized identities.
+ * Classify a controlled post-admission failure without washing original identities.
  * Cause classes are closed; diagnostic text retains the original identity when known.
  *
  * Order: thrown → knownCause → timeout → activation (nonzero) → session → output.
@@ -612,7 +616,7 @@ export function classifyPostAdmissionFailure(input: {
   stderr: string;
   /**
    * Caught post-admission exception. Presence (own key) is distinct from value:
-   * JavaScript permits `throw undefined`, which must stay unrecognized rather than
+   * JavaScript permits `throw undefined`, which must keep the original thrown fact rather than
    * being washed into activation/null-exit paths that treat missing thrown as absence.
    */
   thrown?: unknown;
@@ -665,6 +669,37 @@ export function classifyPostAdmissionFailure(input: {
         ? {}
         : { identity: input.knownIdentity }),
     };
+  }
+  // #881: original failure testimony without a typed class — keep diagnostic/identity;
+  // do not fall through to activation/output wash that would mint a substitute class.
+  // Bare knownDetails alone is secondary evidence for later branches (withKnownDetails),
+  // not a stand-in primary failure record.
+  if (
+    (input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== "") ||
+    input.knownIdentity !== undefined
+  ) {
+    const diagnostic =
+      input.knownDiagnostic !== undefined && input.knownDiagnostic.trim() !== ""
+        ? input.knownDiagnostic
+        : conciseChildDiagnostic(input.stderr, "role run failed");
+    const { timedOut: _knownTimedOut, ...knownDetails } =
+      input.knownDetails ?? {};
+    const remoteCode = knownDetails.code;
+    return withKnownDetails(
+      {
+        diagnostic,
+        details: {
+          ...knownDetails,
+          ...(remoteCode === undefined ? {} : { code: remoteCode }),
+          exitCode: input.code,
+          ...(input.timedOut ? { timedOut: true as const } : {}),
+        },
+        ...(input.knownIdentity === undefined
+          ? {}
+          : { identity: input.knownIdentity }),
+      },
+      undefined,
+    );
   }
   if (input.timedOut) {
     return withKnownDetails(
@@ -723,7 +758,7 @@ export function explicitInternalKnownFailureClassificationInput(
 ) {
   if (failure === undefined) return {};
   return {
-    knownCause: failure.cause,
+    ...(failure.cause === undefined ? {} : { knownCause: failure.cause }),
     ...(failure.identity === undefined ? {} : { knownIdentity: failure.identity }),
     ...(failure.diagnostic === undefined ? {} : { knownDiagnostic: failure.diagnostic }),
     ...(failure.details === undefined ? {} : { knownDetails: failure.details }),
@@ -1161,10 +1196,20 @@ function complianceFailureFromAuditorVolumes(
       if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord(entry.data)) continue;
       const parent = isRecord(entry.data.parent) ? entry.data.parent : undefined;
       const failure = isRecord(entry.data.failure) ? entry.data.failure : undefined;
-      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId || (failure?.cause !== "provider" && failure?.cause !== "unrecognized")) continue;
+      if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId) continue;
+      // #881: keep the recorded failure as written — typed cause when present, else raw diagnostic only.
+      if (failure === undefined) continue;
       const identity = isRecord(failure.identity) ? failure.identity : undefined;
+      const typedCause =
+        failure.cause === "provider" ||
+        failure.cause === "activation" ||
+        failure.cause === "session" ||
+        failure.cause === "output" ||
+        failure.cause === "timeout"
+          ? (failure.cause as ControlledFailureCause)
+          : undefined;
       return {
-        cause: failure.cause === "provider" ? "provider" : "unrecognized",
+        ...(typedCause === undefined ? {} : { cause: typedCause }),
         ...(identity === undefined ? {} : { identity: {
           ...(typeof identity.name === "string" ? { name: identity.name } : {}),
           ...(typeof identity.code === "string" || typeof identity.code === "number" ? { code: identity.code } : {}),
@@ -2338,7 +2383,6 @@ export async function publishCoderArtifacts(
   coordinates: DurablePrincipalCoordinates,
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
-    readonly coderOutput?: CoderOutput;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
@@ -2353,9 +2397,6 @@ export async function publishCoderArtifacts(
         runId: admitted.runId,
         phase: admitted.phase,
         outcome: roleOutcome,
-        ...(options.coderOutput === undefined
-          ? {}
-          : { receipt: options.coderOutput }),
       },
       null,
       2,
@@ -2511,10 +2552,6 @@ async function settleLawfulCoderTerminalResult(
   const ledgerOutcome = await closedLedgerOutcome(admitted, "coder", scope);
   if (ledgerOutcome === undefined) return undefined;
   const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
-  const output: CoderOutput | undefined =
-    ledgerOutcome.kind === "accepted"
-      ? (lastRolePayloadRecord(ledgerOutcome.payloads ?? []) as CoderOutput | undefined)
-      : undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   const navigator = extractNavigatorFact(entries);
@@ -2523,7 +2560,6 @@ async function settleLawfulCoderTerminalResult(
     roleOutcome,
     coordinates,
     {
-      ...(output === undefined ? {} : { coderOutput: output }),
       ...(options.methodProvenance === undefined
         ? {}
         : { methodProvenance: options.methodProvenance }),
@@ -2614,7 +2650,6 @@ export async function publishFixerArtifacts(
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-    readonly fixerOutput?: FixerOutput;
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
@@ -2629,9 +2664,6 @@ export async function publishFixerArtifacts(
         runId: admitted.runId,
         phase: admitted.phase,
         outcome: roleOutcome,
-        ...(options.fixerOutput === undefined
-          ? {}
-          : { receipt: options.fixerOutput }),
       },
       null,
       2,
@@ -2690,10 +2722,6 @@ async function settleLawfulFixerTerminalResult(
   const ledgerOutcome = await closedLedgerOutcome(admitted, "fixer", scope);
   if (ledgerOutcome === undefined) return undefined;
   const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
-  const output: FixerOutput | undefined =
-    ledgerOutcome.kind === "accepted"
-      ? (lastRolePayloadRecord(ledgerOutcome.payloads ?? []) as FixerOutput | undefined)
-      : undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
@@ -2709,7 +2737,6 @@ async function settleLawfulFixerTerminalResult(
     roleOutcome,
     coordinates,
     {
-      ...(output === undefined ? {} : { fixerOutput: output }),
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
@@ -2749,9 +2776,6 @@ export async function publishCollectorArtifacts(
   admitted: AdmittedCollectorInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
-  options: {
-    readonly collectorReceipt?: CollectorReceipt;
-  } = {},
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
   const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
@@ -2764,9 +2788,6 @@ export async function publishCollectorArtifacts(
         role: "collector",
         runId: admitted.runId,
         outcome: roleOutcome,
-        ...(options.collectorReceipt === undefined
-          ? {}
-          : { receipt: options.collectorReceipt }),
       },
       null,
       2,
@@ -2834,14 +2855,12 @@ async function settleLawfulCollectorTerminalResult(
     }
     return undefined;
   }
-  const receipt = (lastRolePayloadRecord(roleOutcome.payloads ?? []) ?? {}) as CollectorReceipt;
   const accepted: LawfulCollectorRoleOutcome = roleOutcome;
   const navigator = extractNavigatorFact(entries);
   const artifacts = await publishCollectorArtifacts(
     admitted,
     accepted,
     coordinates,
-    { collectorReceipt: receipt },
   );
   return attachRecordedSubmissions(
     admitted,
@@ -2926,7 +2945,6 @@ export async function publishDoctorArtifacts(
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
   options: {
-    readonly doctorOutput?: DoctorOutput;
     readonly cost?: DoctorCaseCost;
     readonly auditNoReceipt?: unknown;
   } = {},
@@ -2942,10 +2960,6 @@ export async function publishDoctorArtifacts(
         role: "doctor",
         runId: admitted.runId,
         outcome: roleOutcome,
-        ...(options.doctorOutput === undefined
-          ? {}
-          : { receipt: options.doctorOutput }),
-        // Independent machine fields beside the receipt — not merged into it.
         ...(options.cost === undefined ? {} : { cost: options.cost }),
         ...(options.auditNoReceipt === undefined ? {} : { auditNoReceipt: options.auditNoReceipt }),
       },
@@ -3011,7 +3025,6 @@ async function settleLawfulDoctorTerminalResult(
       sessionDirectory,
     );
   }
-  const output = (lastRolePayloadRecord(sealed.payloads ?? []) ?? {}) as DoctorOutput;
   const roleOutcome = sealed;
   const navigator = extractNavigatorFact(entries);
   const cost = extractDoctorCandidateCostFact(entries);
@@ -3021,7 +3034,6 @@ async function settleLawfulDoctorTerminalResult(
     roleOutcome,
     coordinates,
     {
-      doctorOutput: output,
       ...(cost === undefined ? {} : { cost }),
       ...(auditNoReceipt === undefined ? {} : { auditNoReceipt }),
     },
@@ -3457,7 +3469,6 @@ export async function publishReviewerArtifacts(
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-    readonly reviewerReceipt?: ReviewerIntent;
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
@@ -3471,9 +3482,6 @@ export async function publishReviewerArtifacts(
         role: "reviewer",
         runId: admitted.runId,
         outcome: roleOutcome,
-        ...(options.reviewerReceipt === undefined
-          ? {}
-          : { receipt: options.reviewerReceipt }),
       },
       null,
       2,
@@ -3533,7 +3541,6 @@ async function settleLawfulReviewerTerminalResult(
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const receipt = lastRolePayloadRecord(sealed.payloads ?? []) as ReviewerIntent | undefined;
   const roleOutcome: LawfulReviewerRoleOutcome = sealed;
   const navigator = extractNavigatorFact(entries);
   const methodInvocations = extractReviewerMethodInvocations(entries, {
@@ -3547,7 +3554,6 @@ async function settleLawfulReviewerTerminalResult(
     roleOutcome,
     coordinates,
     {
-      ...(receipt === undefined ? {} : { reviewerReceipt: receipt }),
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
@@ -3636,7 +3642,6 @@ export async function publishMergerArtifacts(
   options: {
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-    readonly mergerOutput?: MergerOutput;
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
@@ -3650,9 +3655,6 @@ export async function publishMergerArtifacts(
         role: "merger",
         runId: admitted.runId,
         outcome: roleOutcome,
-        ...(options.mergerOutput === undefined
-          ? {}
-          : { receipt: options.mergerOutput }),
       },
       null,
       2,
@@ -3735,7 +3737,6 @@ async function settleLawfulMergerTerminalResult(
     accepted,
     coordinates,
     {
-      mergerOutput: (lastRolePayloadRecord(accepted.payloads ?? []) ?? {}) as MergerOutput,
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
@@ -3965,7 +3966,7 @@ export async function publishFailureArtifacts(
     kind: "error",
     role: admitted.role,
     runId: admitted.runId,
-    cause: failure.cause,
+    ...(failure.cause === undefined ? {} : { cause: failure.cause }),
     diagnostic: failure.diagnostic,
     ...(failure.identity === undefined ? {} : { identity: failure.identity }),
     ...(failure.details === undefined ? {} : { details: failure.details }),
@@ -3990,7 +3991,7 @@ export async function publishFailureArtifacts(
       sha256: a.sha256,
       byteLength: a.byteLength,
     })),
-    failureCause: failure.cause,
+    ...(failure.cause === undefined ? {} : { failureCause: failure.cause }),
   };
   const evidenceWrite = await writeFailureJsonRetainingCause(
     evidenceCandidates,
@@ -4069,7 +4070,7 @@ export async function settleFailureTerminalResult(
   // Private durable artifacts retain the original diagnostic identity (including run ID).
   const artifacts = await publishFailureArtifacts(admitted, failure, authority);
   const decisiveFacts: Record<string, unknown> = {
-    cause: failure.cause,
+    ...(failure.cause === undefined ? {} : { cause: failure.cause }),
     diagnostic: failure.diagnostic,
   };
   if (failure.identity?.name !== undefined) {
@@ -4089,7 +4090,7 @@ export async function settleFailureTerminalResult(
     const roleOutcome: TerminalRoleOutcome = {
       kind: "failure",
       role: admitted.role,
-      cause: failure.cause,
+      ...(failure.cause === undefined ? {} : { cause: failure.cause }),
       diagnostic: failure.diagnostic,
       decisiveFacts,
     };
@@ -4106,7 +4107,7 @@ export async function settleFailureTerminalResult(
   const roleOutcome: TerminalRoleOutcome = {
     kind: "failure",
     role: admitted.role,
-    cause: failure.cause,
+    ...(failure.cause === undefined ? {} : { cause: failure.cause }),
     diagnostic: failure.diagnostic,
     decisiveFacts,
   };
@@ -4146,7 +4147,7 @@ export function presentFailureTerminal(
   io.stdout(formatTerminalResult(terminal));
   if (terminal.roleOutcome.kind === "failure") {
     io.stderr(formatFailureStderrDiagnostic({
-      cause: terminal.roleOutcome.cause,
+      ...(terminal.roleOutcome.cause === undefined ? {} : { cause: terminal.roleOutcome.cause }),
       diagnostic: terminal.roleOutcome.diagnostic,
     }));
     return;

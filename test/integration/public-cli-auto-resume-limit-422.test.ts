@@ -55,7 +55,7 @@ test("#422 loop honors injected effective limit once (N=4 → 5 dispatches, coun
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
     sessionAppender: appendPiSessionCustomEntry,
-      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir,projectRoot:home},
       io,
       autoResumeLimit:4,
       buildInitialPayload: ()=>["--initial"],
@@ -76,7 +76,7 @@ test("#422 loop with injected limit 0 disables auto resume (single dispatch)", a
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
     sessionAppender: appendPiSessionCustomEntry,
-      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir,projectRoot:home},
       io,
       autoResumeLimit:0,
       buildInitialPayload: ()=>["--initial"],
@@ -246,7 +246,7 @@ test("#422 loop entry rejects NaN/negative/fractional/Infinity limits loudly bef
         ()=>runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
     sessionAppender: appendPiSessionCustomEntry,
-          admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
+          admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir,projectRoot:home},
           io,
           autoResumeLimit:bad,
           buildInitialPayload: ()=>["--initial"],

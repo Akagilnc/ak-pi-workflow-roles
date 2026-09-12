@@ -35,7 +35,7 @@ import {
 import {
   installGhFixture,
 } from "../helpers/hermes-fixture.ts";
-import { payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import {
   CANONICAL_SOURCE_ROLE,
   CANONICAL_SOURCE_RUN_ID,
@@ -183,7 +183,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   const scratch = await openNotaryScratch("home-");
   try {
     const { home, project, firstSourcePath, secondSourcePath, io, credentials } = scratch;
-    assert.equal(
+    assert.deepEqual(
       (
         await runAkRole(
           ["config", "set", "notary", "faux/birth-model:high"],
@@ -265,13 +265,14 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     );
     assert.equal(first.exitCode, 0, "first sealed notary must accept");
     assert.equal(first.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
+    assert.deepEqual(
       first.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatus(first.terminal.roleOutcome)
-        : undefined,
-      "pass",
+        ? payloadStatusSequence(first.terminal.roleOutcome)
+        : [],
+      ["pass"],
     );
-    assert.equal(seen.length, 1, "first public notary must dispatch one turn");
+    assert.deepEqual(
+      seen.length, 1, "first public notary must dispatch one turn");
     assert.equal(seen[0]!.kind, "initial", "first summons is initial");
     assert.equal(seen[0]!.model?.model, "birth-model");
     assert.equal(seen[0]!.model?.thinking, "high");
@@ -433,11 +434,11 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     );
     assert.equal(resumed.exitCode, 0, "open-court resume that seals must accept");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
+    assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatus(resumed.terminal.roleOutcome)
-        : undefined,
-      secondCourtSeal.status,
+        ? payloadStatusSequence(resumed.terminal.roleOutcome)
+        : [],
+      [secondCourtSeal.status],
       "open-court seal status must be the lawful non-pass, not first-court pass",
     );
 
@@ -459,12 +460,12 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     );
     assert.equal(bareAfterSeal.exitCode, 0);
     assert.equal(bareAfterSeal.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
+    assert.deepEqual(
       bareAfterSeal.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatus(bareAfterSeal.terminal.roleOutcome)
-        : undefined,
-      secondCourtSeal.status,
-      "bare resume after seal keeps the open-court non-pass status",
+        ? payloadStatusSequence(bareAfterSeal.terminal.roleOutcome)
+        : [],
+      ["pass", secondCourtSeal.status],
+      "post-court pass-through presents full history with the current non-pass last",
     );
   } finally {
     await rm(scratch.home, { recursive: true, force: true });

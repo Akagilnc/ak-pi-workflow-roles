@@ -22,6 +22,8 @@ import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../.
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { recordNonSealedSubmission, sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
   return withTempRoot("ak-dispatch-throw-", fn);
@@ -46,18 +48,57 @@ function alwaysThrowingDispatch(callsRef:{n:number}, messages:readonly string[])
 
 type PointerEntry={data?:{file?:unknown};};
 
+const sealedParams={judgeStatus:"converged",report:"sealed-before-throw"};
+const bounceParams={judgeStatus:"converged",report:"bounce-before-throw"};
+
+async function plantRecordedSubmissions(input:{
+  readonly home:string;
+  readonly project:string;
+  readonly runDirectory:string;
+  readonly runId:string;
+  readonly role:"judge"|"fixer";
+}):Promise<void>{
+  await sealAcceptedSubmission({
+    cwd:input.project,
+    runId:input.runId,
+    role:input.role,
+    details:sealedParams,
+    home:input.home,
+    runDirectory:input.runDirectory,
+    toolCallId:"call-sealed",
+  });
+  await recordNonSealedSubmission({
+    cwd:input.project,
+    runId:input.runId,
+    role:input.role,
+    details:bounceParams,
+    home:input.home,
+    runDirectory:input.runDirectory,
+    toolCallId:"call-bounce",
+    executeError:new GatekeeperDecisionError({
+      status:"bounce",
+      officer:"inspector",
+      receipt:{status:"bounce",findings:["x"]},
+    }),
+  });
+}
+
 test("dispatch exceptions retry to budget with full per-attempt retention and typed failure", async()=>{
   await withTempHome(async(home)=>{
-    const runDir=join(home,"runs","throw-loop-limit2b");
+    const project=join(home,"proj");
+    const runId="throw-loop-limit2b";
+    const runDir=join(home,".ak-roles","books","proj","runs",`${runId}@judge`);
+    await mkdir(project,{recursive:true});
     await mkdir(join(runDir,"session"),{recursive:true});
     const sessionFile=join(runDir,"session","session.jsonl");
     await writeFile(sessionFile,"{}\n","utf8");
+    await plantRecordedSubmissions({home,project,runDirectory:runDir,runId,role:"judge"});
     const callsRef={n:0};
     const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
       sessionAppender: appendPiSessionCustomEntry,
-      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:"throw-loop-limit2b"},
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId,projectRoot:project},
       io,
       autoResumeLimit:2,
       buildInitialPayload: ()=>["--initial"],
@@ -96,19 +137,47 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     }
     assert.equal(pointered.size,3);
 
-    // (d) typed failure carries the LAST true cause and the artifact pointers.
+    // (d) loud failure carries the LAST true error + artifact pointers; no fabricated class (#881).
     if(terminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
+    assert.equal(terminal.roleOutcome.cause, undefined);
     assert.match(terminal.roleOutcome.diagnostic,/boom-final/);
     const filesFromFacts=terminal.roleOutcome.decisiveFacts.dispatchErrorFiles as readonly string[];
     assert.equal(filesFromFacts.length,3);
     assert.deepEqual([...filesFromFacts].sort(),files.map((f)=>join(artifactsDir,f)).sort());
     assert.equal(terminal.artifacts.filter((a)=>a.kind==="error").length,3);
+    assert.deepEqual(terminal.roleOutcome.payloads,[sealedParams,bounceParams]);
+    assert.deepEqual(terminal.submissions,[sealedParams,bounceParams]);
+
+    // Same real entry: principal-unavailable exception terminal also attaches ledger sequence.
+    const unavailableCalls={n:0};
+    const unavailable=await runWithAutoResumeLoop({
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId,projectRoot:project},
+      io,
+      autoResumeLimit:2,
+      isPrincipalAvailable: async()=>false,
+      buildInitialPayload: ()=>["--initial"],
+      buildResumePayload: ()=>["--resume"],
+      dispatch:alwaysThrowingDispatch(unavailableCalls,["boom-unavailable"]),
+    });
+    const unavailableTerminal=unavailable.terminal as TerminalResult;
+    assert.equal(unavailableCalls.n,1);
+    assert.equal(unavailable.exitCode,1);
+    assert.equal(unavailableTerminal.roleOutcome.kind,"failure");
+    if(unavailableTerminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
+    assert.match(unavailableTerminal.roleOutcome.diagnostic,/session principal unavailable before further resume/);
+    assert.deepEqual(unavailableTerminal.roleOutcome.payloads,[sealedParams,bounceParams]);
+    assert.deepEqual(unavailableTerminal.submissions,[sealedParams,bounceParams]);
   });
 });
 
 test("retention sink failure does not break the retry path (PR #418 isolation precedent)", async()=>{
   await withTempHome(async(home)=>{
-    const runDir=join(home,"runs","throw-sink-fails");
+    const project=join(home,"proj");
+    const runId="throw-sink-fails";
+    const runDir=join(home,".ak-roles","books","proj","runs",`${runId}@fixer`);
+    await mkdir(project,{recursive:true});
     await mkdir(join(runDir,"session"),{recursive:true});
     const sessionFile=join(runDir,"session","session.jsonl");
     // Malformed dossier JSONL makes the pointer append fail after the error file lands.
@@ -118,7 +187,7 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
       sessionAppender: appendPiSessionCustomEntry,
-      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"fixer",runId:"throw-sink-fails"},
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"fixer",runId,projectRoot:project},
       io,
       autoResumeLimit:2,
       buildInitialPayload: ()=>["--initial"],
