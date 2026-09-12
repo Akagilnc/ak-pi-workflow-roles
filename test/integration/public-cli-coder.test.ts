@@ -1,4 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
@@ -467,6 +468,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
     {
       const { io } = captureIo();
       let captured: string[] | undefined;
+      let capturedStdin: string | undefined;
       await runAkRole(
         ["coder", "--project", project, "Implement the approved slice."],
         {
@@ -478,8 +480,9 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
+            piRunner: async (args, options) => {
             captured = [...args];
+            capturedStdin = options.stdin;
             return {
               code: 1,
               stderr: "forced stop before model",
@@ -497,11 +500,8 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
         "apply",
       );
       assert.equal(captured!.includes("--skill"), true);
-      // Pi adapter argv applies native `/skill:tdd` from typed methods (#822).
-      assert.equal(
-        captured!.some((a) => a.startsWith("/skill:tdd ") || a === "/skill:tdd"),
-        true,
-      );
+      // Pi native skill invocation rides typed stdin, not argv (#822/#879).
+      assert.equal(readUserDialogueStdin(capturedStdin ?? "").startsWith("/skill:tdd "), true);
     }
   });
 });

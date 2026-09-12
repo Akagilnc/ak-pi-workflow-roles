@@ -108,13 +108,13 @@ function toPiResult<D>(result: HostToolResult<D>): HostToolResult<D> {
 
 /** Fold a host before_agent_start return: push readingMaterial into the provider-visible
  * systemPrompt via the shared renderer and strip the typed field before Pi sees it. */
-function foldBeforeAgentStartReturn(result: unknown): BeforeAgentStartEventResult | void {
+function foldBeforeAgentStartReturn(result: unknown, currentSystemPrompt: string): BeforeAgentStartEventResult | void {
   if (result === undefined || result === null || typeof result !== "object") return undefined;
   const record = result as { systemPrompt?: string; readingMaterial?: unknown };
   const { systemPrompt, readingMaterial } = record;
   const folded = readingMaterial === undefined
     ? systemPrompt
-    : renderAgentStartMaterials(systemPrompt ?? "", [readingMaterial]);
+    : renderAgentStartMaterials(systemPrompt ?? currentSystemPrompt, [readingMaterial]);
   return folded === undefined ? {} : { systemPrompt: folded };
 }
 
@@ -200,8 +200,8 @@ export function createPiRoleHostAdapter(
         const [, handler] = registration;
         pi.on("before_agent_start", (value, ctx) => {
           const result = handler({ prompt: value.prompt, systemPrompt: value.systemPrompt, systemPromptOptions: value.systemPromptOptions }, context(ctx));
-          if (result instanceof Promise) return result.then(foldBeforeAgentStartReturn);
-          return foldBeforeAgentStartReturn(result);
+          if (result instanceof Promise) return result.then((settled) => foldBeforeAgentStartReturn(settled, value.systemPrompt));
+          return foldBeforeAgentStartReturn(result, value.systemPrompt);
         });
       } else if (registration[0] === "input") {
         const [, handler] = registration;

@@ -248,22 +248,18 @@ type HostSessionManager = { getLeafEntry(): HostSessionEntry | undefined; getLea
 /** Context supplied by a host for one activation and its interceptable events. */
 export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; /** Per-turn admitted run directory (#879); never process-global env. */ runDirectory?: string; /** Per-turn court attempt (#879); never process-global env. */ courtAttemptId?: string; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
 
-/** Per-turn run directory: HostContext first, child-process env only as Pi fallback. */
+/** Per-turn run directory; adapters must project any child-process identity. */
 export function runDirectoryFromHostContext(context: HostContext): string | undefined {
-  if (typeof context.runDirectory === "string" && context.runDirectory.trim() !== "") {
-    return context.runDirectory;
-  }
-  const directory = process.env.AK_ROLE_RUN_DIR;
-  return typeof directory === "string" && directory.trim() !== "" ? directory : undefined;
+  return typeof context.runDirectory === "string" && context.runDirectory.trim() !== ""
+    ? context.runDirectory
+    : undefined;
 }
 
-/** Per-turn court attempt: HostContext first, child-process env only as Pi fallback. */
+/** Per-turn court attempt; absence never inherits ambient process identity. */
 export function courtAttemptIdFromHostContext(context: HostContext): string | undefined {
-  if (typeof context.courtAttemptId === "string" && context.courtAttemptId.trim() !== "") {
-    return context.courtAttemptId;
-  }
-  const courtAttempt = process.env.AK_ROLE_COURT_ATTEMPT;
-  return typeof courtAttempt === "string" && courtAttempt.trim() !== "" ? courtAttempt : undefined;
+  return typeof context.courtAttemptId === "string" && context.courtAttemptId.trim() !== ""
+    ? context.courtAttemptId
+    : undefined;
 }
 
 export type HostToolDefinition<S extends TSchema = TSchema, D = unknown, C = HostContext> = { name: string; label: string; description: string; promptSnippet?: string; parameters: S; execute( toolCallId: string, params: Static<S>, signal: AbortSignal | undefined, update: ((result: HostToolResult<D>) => void) | undefined, context: C, ): Promise<HostToolResult<D>>; /**

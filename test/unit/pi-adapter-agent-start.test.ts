@@ -87,6 +87,18 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
     systemPrompt: "BASE",
     readingMaterial: otherBound,
   });
+  const { pi, handlers, ctx } = piCapture();
+  const adapter = createPiRoleHostAdapter(pi);
+  adapter.host.on("before_agent_start", () => ({ readingMaterial: bound }));
+  adapter.host.on("before_agent_start", () => ({ readingMaterial: otherBound }));
+  let currentSystemPrompt = "BASE";
+  for (const handler of handlers.get("before_agent_start") ?? []) {
+    const result = await handler(
+      { prompt: "", systemPrompt: currentSystemPrompt, systemPromptOptions: {} },
+      ctx,
+    );
+    if (result?.systemPrompt !== undefined) currentSystemPrompt = result.systemPrompt;
+  }
 
   // Empty materials: body passthrough; typed field never reaches Pi.
   assert.equal(bodyOnly.systemPrompt, "BASE");
@@ -98,6 +110,8 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
   assert.equal(typeof withBound.systemPrompt, "string");
   assert.notEqual(withBound.systemPrompt, bodyOnly.systemPrompt);
   assert.notEqual(withBound.systemPrompt, withOther.systemPrompt);
+  assert.notEqual(currentSystemPrompt, withBound.systemPrompt);
+  assert.notEqual(currentSystemPrompt, withOther.systemPrompt);
 });
 
 test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at agent-start", async () => {

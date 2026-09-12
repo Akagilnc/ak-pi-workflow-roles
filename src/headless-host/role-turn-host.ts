@@ -275,8 +275,9 @@ function spawnHeadlessTurn(options: {
       reject(new Error("headless child stdin pipe was not created"));
       return;
     }
-    child.stdin.on("error", () => {
-      // Child may exit before reading; close remains the sole settlement.
+    let stdinDeliveryError: Error | undefined;
+    child.stdin.on("error", (error) => {
+      stdinDeliveryError ??= error;
     });
     if (options.stdin !== undefined) {
       child.stdin.write(options.stdin);
@@ -331,6 +332,10 @@ function spawnHeadlessTurn(options: {
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
+      if (stdinDeliveryError !== undefined) {
+        reject(stdinDeliveryError);
+        return;
+      }
       resolve({ code, stdout: resultStdout, stderr, timedOut });
     };
     const onAbort = (): void => {

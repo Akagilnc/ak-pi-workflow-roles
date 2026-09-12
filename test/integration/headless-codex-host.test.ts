@@ -192,3 +192,50 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     ledger.dispose();
   }
 });
+
+test("headless stdin delivery error cannot settle valid output as success", async () => {
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-headless-epipe-", runName: "run@codex" });
+  const fakeBin = join(ledger.runDirectory, "fake-codex-epipe");
+  await writeFile(fakeBin, `#!/usr/bin/env node
+process.stdin.destroy();
+process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-epipe" }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify({ status: "completed" }) } }) + "\\n");
+process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
+process.exit(0);
+`, "utf8");
+  await chmod(fakeBin, 0o755);
+  try {
+    const description = lookupHeadlessHostDescription("codex");
+    assert.ok(description);
+    const host = createHeadlessRoleTurnHost({
+      description,
+      hostName: "codex",
+      binary: fakeBin,
+      sessionIdentity: { async load() { return undefined; }, async bind() {}, resolveSessionFile: () => join(ledger.runDirectory, "session", "session.jsonl") },
+      prepare: async () => ({
+        mcpServers: [],
+        systemPrompt: { body: "system", materials: [] },
+        prompt: "x".repeat(8 * 1024 * 1024),
+        jsonSchema: { type: "object", properties: { status: { type: "string" } }, required: ["status"] },
+        terminatingToolName: "ak_probe_output",
+        async ingestStructuredOutput() {},
+        async closeRound() { return { accepted: true as const }; },
+      }),
+    });
+    const result = await host.executeTurn({
+      principal: fixturePrincipal(join(ledger.runDirectory, "session")),
+      activation: { role: "inspector" },
+      methods: [],
+      continuation: { kind: "initial", prompt: "ignored" },
+      model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
+      cwd: ledger.runDirectory,
+      home: ledger.runDirectory,
+      agentDir: join(ledger.runDirectory, "agent"),
+      runDirectory: ledger.runDirectory,
+    });
+    assert.notEqual(result.code, 0);
+    assert.notEqual(result.knownFailure, undefined);
+  } finally {
+    ledger.dispose();
+  }
+});

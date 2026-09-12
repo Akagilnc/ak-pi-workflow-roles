@@ -292,8 +292,9 @@ export function createDefaultPiSpawnRunner(options: {
       if (child.stderr === null) {
         throw new Error("Pi child stderr pipe was not created");
       }
-      child.stdin.on("error", () => {
-        // Child may exit before reading; close remains the sole settlement.
+      let stdinDeliveryError: Error | undefined;
+      child.stdin.on("error", (error) => {
+        stdinDeliveryError ??= error;
       });
       if (spawnOptions.stdin !== undefined) {
         child.stdin.write(spawnOptions.stdin);
@@ -365,6 +366,10 @@ export function createDefaultPiSpawnRunner(options: {
             settled = true;
             if (executionError !== undefined) {
               reject(executionError);
+              return;
+            }
+            if (stdinDeliveryError !== undefined) {
+              reject(stdinDeliveryError);
               return;
             }
             resolveResult({

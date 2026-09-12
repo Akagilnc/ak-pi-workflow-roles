@@ -483,8 +483,10 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "再裁一次");
     assert.equal(resumed.exitCode, 0, stdout.join("") || "sealed countersign resume failed");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    // #881: multi-row resume keeps the full payload sequence — no sole last pick.
     assert.deepEqual(resumed.terminal?.roleOutcome.payloads, [
+      { countersignStatus: "continue", fix: { summary: "RESUMED-再审" } },
+    ]);
+    assert.deepEqual(resumed.terminal?.submissions, [
       { countersignStatus: "converged", note: "FIRST-署" },
       { countersignStatus: "continue", fix: { summary: "RESUMED-再审" } },
     ]);
@@ -793,13 +795,8 @@ function courtPipelinePiRunner(
         getAllTools: () =>
           registered === undefined ? [] : [{ name: registered.name }],
       } as unknown as RoleHost;
-      const priorRunDir = process.env.AK_ROLE_RUN_DIR;
       const runDir = options.env.AK_ROLE_RUN_DIR;
-      if (typeof runDir === "string" && runDir.trim() !== "") {
-        process.env.AK_ROLE_RUN_DIR = runDir;
-      }
-      try {
-        const runtime = createDiaristRoleRuntime(host, {
+      const runtime = createDiaristRoleRuntime(host, {
           loadSoul: async () => "起居郎职分（测试装载）",
         });
         await runtime.activate();
@@ -813,22 +810,18 @@ function courtPipelinePiRunner(
                 ticketNumber: ticketAssertion,
                 entries: [],
               };
-        const accepted = await registered.execute(
-          "call_diarist_1",
-          params,
-          undefined,
-          undefined,
-          {} as HostContext,
-        );
-        return scriptedTerminatingToolSession({
-          role: "diarist",
-          toolName: DIARIST_OUTPUT_TOOL_NAME,
-          details: accepted.details,
-        })(args, options);
-      } finally {
-        if (priorRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-        else process.env.AK_ROLE_RUN_DIR = priorRunDir;
-      }
+      const accepted = await registered.execute(
+        "call_diarist_1",
+        params,
+        undefined,
+        undefined,
+        { runDirectory: runDir } as HostContext,
+      );
+      return scriptedTerminatingToolSession({
+        role: "diarist",
+        toolName: DIARIST_OUTPUT_TOOL_NAME,
+        details: accepted.details,
+      })(args, options);
     }
     return scriptedCountersignSession(countersignDetails)(args, options);
   };

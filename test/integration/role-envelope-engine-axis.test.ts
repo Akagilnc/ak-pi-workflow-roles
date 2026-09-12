@@ -15,7 +15,13 @@ import {
   AK_ROLE_ENGINE_ENV,
   ENGINE_DETOUR_TOOL_NAME,
 } from "../../src/engine-detour.ts";
-import type { RoleTurnActivation, RoleTurnRequest } from "../../src/host-contracts.ts";
+import {
+  courtAttemptIdFromHostContext,
+  runDirectoryFromHostContext,
+  type HostContext,
+  type RoleTurnActivation,
+  type RoleTurnRequest,
+} from "../../src/host-contracts.ts";
 import { resolveEngineMaterialPath } from "../../src/package-resources/engine-material.ts";
 import type { AdmittedInspectorInvocation } from "../../src/public-cli/invocation.ts";
 import { buildInspectorTurnRequest } from "../../src/public-cli/inspector-run.ts";
@@ -252,6 +258,23 @@ test("concurrent envelopes arm detour per request without process.env writes", a
     await rm(home, { recursive: true, force: true });
     if (previous === undefined) delete process.env[AK_ROLE_ENGINE_ENV];
     else process.env[AK_ROLE_ENGINE_ENV] = previous;
+  }
+});
+
+test("#879 absent HostContext identity never inherits ambient run or court", () => {
+  const priorRun = process.env.AK_ROLE_RUN_DIR;
+  const priorCourt = process.env.AK_ROLE_COURT_ATTEMPT;
+  process.env.AK_ROLE_RUN_DIR = "/ambient/other-run";
+  process.env.AK_ROLE_COURT_ATTEMPT = "ambient-other-court";
+  try {
+    const context = { runDirectory: undefined, courtAttemptId: undefined } as unknown as HostContext;
+    assert.equal(runDirectoryFromHostContext(context), undefined);
+    assert.equal(courtAttemptIdFromHostContext(context), undefined);
+  } finally {
+    if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = priorRun;
+    if (priorCourt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
+    else process.env.AK_ROLE_COURT_ATTEMPT = priorCourt;
   }
 });
 
