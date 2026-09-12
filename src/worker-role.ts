@@ -145,8 +145,8 @@ export type CoderRoleDependencies = {
 
 export type WorkerRoleRuntime = {
   activate(ctx?: HostContext): Promise<void>;
-  /** Arm gate ① baseline after envelope places the worktree (coder/fixer). Parent feeds archivist durability. */
-  armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
+  /** Arm gate ① baseline after envelope places the worktree (coder/fixer). Durable parent required (#857). */
+  armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }): void;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -326,7 +326,7 @@ export function createFixerRoleRuntime(
         });
       }
     },
-    armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }) {
+    armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }) {
       submissionGate.arm(cwd, parent);
     },
   };
@@ -473,7 +473,7 @@ export function createCoderRoleRuntime(
         });
       }
     },
-    armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }) {
+    armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }) {
       submissionGate.arm(cwd, parent);
     },
   };

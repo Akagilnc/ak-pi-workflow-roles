@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { mkdir, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
@@ -188,6 +188,16 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     const paths = resolveTicketProvenanceVolume(TICKET, project, home);
     const volume = await readTicketProvenance(TICKET, project, home);
     assert.equal(volume.recordFile, paths.recordFile);
+    // docs/dossier-topology.md authority: ticket dir holds records.jsonl + 起居录.md directly.
+    const ticketDir = join(
+      resolveActivationLedgerHome(home),
+      "books",
+      resolveBookKeyFromGit(project),
+      String(TICKET),
+    );
+    assert.equal(paths.recordFile, join(ticketDir, "records.jsonl"));
+    assert.equal(paths.humanViewFile, join(ticketDir, "起居录.md"));
+    assert.equal(paths.volumeDir, ticketDir);
     // Structured pointer identity only — no free-text / entry-count locks.
     const landed = volume.entries.find(
       (e) =>
@@ -240,15 +250,14 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
     assert.equal(facts?.ticketNumber ?? null, null);
     assert.equal(facts?.sitian, undefined);
 
-    // 真无票→无录: production volume category (via resolveTicketProvenanceVolume) unminted.
+    // 真无票→无录: ticket dir itself (topology authority) stays unminted.
     const sample = resolveTicketProvenanceVolume(1, project, home);
-    const provenanceCategory = dirname(sample.volumeDir);
     assert.equal(existsSync(sample.recordFile), false);
     assert.equal(existsSync(sample.humanViewFile), false);
     assert.equal(
-      existsSync(provenanceCategory),
+      existsSync(sample.volumeDir),
       false,
-      `true-unbound must not mint ticket-provenance under ${provenanceCategory}`,
+      `true-unbound must not mint ticket dir ${sample.volumeDir}`,
     );
   });
 });

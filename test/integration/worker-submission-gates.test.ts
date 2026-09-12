@@ -65,9 +65,8 @@ function configureGitUser(cwd: string): void {
 }
 
 /**
- * #604: bare arm keeps in-memory bounce (no parent) but sitian must not fall
- * through to the real machine home. Fixture owns a temp package home and passes
- * it into createWorkerSubmissionGate({ home }) — explicit injection, not post-rm.
+ * #604 / #857: fixture owns a temp package home and passes it into
+ * createWorkerSubmissionGate({ home }). Arm always takes an explicit durable parent.
  */
 async function withTempGit<T>(
   fn: (root: string, home: string) => Promise<T> | T,
@@ -84,17 +83,15 @@ async function withTempGit<T>(
   });
 }
 
-function bareGate(home: string) {
-  const gate = createWorkerSubmissionGate({ home });
-  return {
-    ...gate,
-    arm(cwd: string, parent?: SessionManager) {
-      if (parent !== undefined) return gate.arm(cwd, parent);
-      const sessionDir = join(machineLedgerHome(home), "books", "repo", "runs", randomUUID(), "session");
-      mkdirSync(sessionDir, { recursive: true });
-      return gate.arm(cwd, SessionManager.create(cwd, sessionDir));
-    },
-  };
+/** Durable parent session under the temp ledger home — required arm input (#857). */
+function durableParent(home: string, cwd: string): SessionManager {
+  const sessionDir = join(machineLedgerHome(home), "books", "repo", "runs", randomUUID(), "session");
+  mkdirSync(sessionDir, { recursive: true });
+  return SessionManager.create(cwd, sessionDir);
+}
+
+function gateWithHome(home: string) {
+  return createWorkerSubmissionGate({ home });
 }
 
 function plantOwnedHooks(cwd: string): { hooksDir: string; hookPath: string } {
@@ -140,8 +137,8 @@ async function scrubPlanted(
 }
 
 function armThenCommit(cwd: string, home: string, message: string) {
-  const gate = bareGate(home);
-  gate.arm(cwd);
+  const gate = gateWithHome(home);
+  gate.arm(cwd, durableParent(home, cwd));
   git(cwd, ["commit", "--allow-empty", "-m", message]);
   return gate;
 }
@@ -182,8 +179,8 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
     // bare non-git arm target must sit outside this worktree's upward Git discovery;
     // outside root is not deleted (owner 2026-09-06 directory boundary).
     const bare = await mkdtemp(outsideWorktreeTempPrefix("ak-worker-gate-bare-"));
-    const gate = bareGate(home);
-    gate.arm(root);
+    const gate = gateWithHome(home);
+    gate.arm(root, durableParent(home, root));
     for (const status of ["planned", "refused"] as const) {
       assert.doesNotThrow(() => gate.assertAcceptable(status), status);
     }
@@ -197,17 +194,17 @@ test("① completed/partially_completed zero-commit bounces once then confirm; o
         error.code === "worker_commit_reminder",
     );
     assert.doesNotThrow(() => gate.assertAcceptable("completed"));
-    const g2 = bareGate(home);
-    g2.arm(root);
+    const g2 = gateWithHome(home);
+    g2.arm(root, durableParent(home, root));
     assert.throws(() => g2.assertAcceptable("partially_completed"), WorkerCommitReminderError);
     git(root, ["commit", "--allow-empty", "-m", `${FACTORY} work`]);
     assert.doesNotThrow(() => armThenCommit(root, home, `${FACTORY} more`).assertAcceptable("completed"));
 
-    assert.throws(() => bareGate(home).arm(bare), /not a git repository/);
+    assert.throws(() => gateWithHome(home).arm(bare, durableParent(home, bare)), /not a git repository/);
 
     await withTempGit(async (unborn, unbornHome) => {
-      const g = bareGate(unbornHome);
-      g.arm(unborn);
+      const g = gateWithHome(unbornHome);
+      g.arm(unborn, durableParent(unbornHome, unborn));
       assert.throws(() => g.assertAcceptable("completed"), WorkerCommitReminderError);
     }, { seed: false });
   });
@@ -238,8 +235,8 @@ test("② missing prefix bounces once then confirm; open set + merge exempt; unr
 
     // Merge commit exempt (GitHub merge shape, unprefixed subject).
     await withTempGit(async (mergeRepo, mergeHome) => {
-      const g = bareGate(mergeHome);
-      g.arm(mergeRepo);
+      const g = gateWithHome(mergeHome);
+      g.arm(mergeRepo, durableParent(mergeHome, mergeRepo));
       git(mergeRepo, ["checkout", "-b", "topic"]);
       git(mergeRepo, ["commit", "--allow-empty", "-m", `${FACTORY} topic tip`]);
       git(mergeRepo, ["checkout", "main"]);
@@ -258,8 +255,8 @@ test("② missing prefix bounces once then confirm; open set + merge exempt; unr
 
     // baseline tip not ancestor of HEAD → unreliable → no prefix bounce.
     await withTempGit(async (unrelated, unrelatedHome) => {
-      const g = bareGate(unrelatedHome);
-      g.arm(unrelated);
+      const g = gateWithHome(unrelatedHome);
+      g.arm(unrelated, durableParent(unrelatedHome, unrelated));
       git(unrelated, ["checkout", "--orphan", "other"]);
       git(unrelated, ["commit", "--allow-empty", "-m", "orphan tip without prefix"]);
       assert.doesNotThrow(() => g.assertAcceptable("completed"));
@@ -274,8 +271,8 @@ test("② missing prefix bounces once then confirm; open set + merge exempt; unr
 
     // Unborn negative: zero commits → gate ① only.
     await withTempGit(async (unbornNeg, unbornHome) => {
-      const g = bareGate(unbornHome);
-      g.arm(unbornNeg);
+      const g = gateWithHome(unbornHome);
+      g.arm(unbornNeg, durableParent(unbornHome, unbornNeg));
       assert.throws(() => g.assertAcceptable("completed"), WorkerCommitReminderError);
       assert.doesNotThrow(() => g.assertAcceptable("completed"));
     }, { seed: false });
@@ -286,7 +283,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
   await withTempGit(async (root, home) => {
     await withTempGit(async (stranger, _strangerHome) => {
       const beforeLocal = git(root, ["config", "--local", "--list"]);
-      bareGate(home).arm(root);
+      gateWithHome(home).arm(root, durableParent(home, root));
       assert.equal(git(root, ["config", "--local", "--list"]), beforeLocal);
       assert.equal(hooksPathOf(root), undefined);
       const gitDir = git(root, ["rev-parse", "--path-format=absolute", "--git-dir"]);
@@ -295,11 +292,11 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       const { hooksDir, hookPath } = plantOwnedHooks(root);
       assert.ok(existsSync(hookPath));
       const worktreeConfigBefore = git(root, ["config", "--local", "--get", "extensions.worktreeConfig"]);
-      bareGate(home).arm(root);
+      gateWithHome(home).arm(root, durableParent(home, root));
       assert.equal(hooksPathOf(root), undefined);
       assert.equal(existsSync(hooksDir), false);
       assert.equal(git(root, ["config", "--local", "--get", "extensions.worktreeConfig"]), worktreeConfigBefore);
-      assert.doesNotThrow(() => bareGate(home).arm(root));
+      assert.doesNotThrow(() => gateWithHome(home).arm(root, durableParent(home, root)));
 
       // Unmarked same-named dir must survive; hooksPath to non-owned dir stays.
       const foreignDir = join(gitDir, "ak-roles-hooks");
@@ -308,7 +305,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       writeFileSync(foreignHook, "#!/bin/sh\n# foreign hook body\nexit 0\n", "utf8");
       git(root, ["config", "extensions.worktreeConfig", "true"]);
       git(root, ["config", "--worktree", "core.hooksPath", foreignDir]);
-      bareGate(home).arm(root);
+      gateWithHome(home).arm(root, durableParent(home, root));
       assert.ok(existsSync(foreignHook), "unmarked same-named dir must survive");
       assert.equal(hooksPathOf(root), foreignDir);
       git(root, ["config", "--worktree", "--unset", "core.hooksPath"]);
@@ -318,7 +315,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       const mixed = plantOwnedHooks(root);
       const sibling = join(mixed.hooksDir, "user-extra-hook");
       writeFileSync(sibling, "#!/bin/sh\n# not package-owned\nexit 0\n", "utf8");
-      bareGate(home).arm(root);
+      gateWithHome(home).arm(root, durableParent(home, root));
       assert.equal(hooksPathOf(root), undefined);
       assert.equal(existsSync(mixed.hookPath), false, "owned hook file must be removed");
       assert.ok(existsSync(sibling), "unmarked sibling file must survive");
@@ -337,7 +334,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
         new Set([multiOwned.hooksDir, foreignMultiDir]),
         "precondition: owned + foreign multi-value hooksPath",
       );
-      bareGate(home).arm(root);
+      gateWithHome(home).arm(root, durableParent(home, root));
       assert.deepEqual(
         hooksPathsOf(root),
         [foreignMultiDir],
@@ -352,7 +349,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       const mainWtConfig = join(commonDir, "config.worktree");
       writeFileSync(mainWtConfig, `[core]\n\tbare = false\n\tworktree = ${root}\n`, "utf8");
       plantOwnedHooks(root);
-      bareGate(home).arm(root);
+      gateWithHome(home).arm(root, durableParent(home, root));
       const preserved = readFileSync(mainWtConfig, "utf8");
       assert.match(preserved, /bare\s*=\s*false/);
       assert.ok(preserved.includes(`worktree = ${root}`));
@@ -362,7 +359,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       const wt = join(root, "wt-linked");
       git(root, ["worktree", "add", wt, "HEAD"]);
       const plantedWt = plantOwnedHooks(wt);
-      bareGate(home).arm(root);
+      gateWithHome(home).arm(root, durableParent(home, root));
       assert.equal(hooksPathOf(wt), undefined);
       assert.equal(existsSync(plantedWt.hooksDir), false);
 
@@ -375,7 +372,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       symlinkSync(strangerGitDir, escapeLink);
       await withPrimaryAwareCleanup(
         async () => {
-          bareGate(home).arm(root);
+          gateWithHome(home).arm(root, durableParent(home, root));
           assert.equal(
             hooksPathOf(stranger),
             plantedStranger.hooksDir,
@@ -392,7 +389,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       );
 
       // Unrelated repo out of discoverable range (no symlink entry).
-      bareGate(home).arm(root);
+      gateWithHome(home).arm(root, durableParent(home, root));
       assert.equal(hooksPathOf(stranger), plantedStranger.hooksDir);
       assert.ok(existsSync(plantedStranger.hookPath));
 
@@ -401,7 +398,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       chmodSync(unreadable.hookPath, 0o000);
       await withPrimaryAwareCleanup(
         async () => {
-          assert.throws(() => bareGate(home).arm(root), /EACCES|permission denied/i);
+          assert.throws(() => gateWithHome(home).arm(root, durableParent(home, root)), /EACCES|permission denied/i);
           assert.equal(
             hooksPathOf(root),
             unreadable.hooksDir,
@@ -418,7 +415,7 @@ test("arm stops writing hooks and idempotently uninstalls package-owned traces o
       chmodSync(undeletable.hooksDir, 0o555);
       await withPrimaryAwareCleanup(
         async () => {
-          assert.throws(() => bareGate(home).arm(root), /EACCES|permission denied/i);
+          assert.throws(() => gateWithHome(home).arm(root, durableParent(home, root)), /EACCES|permission denied/i);
         },
         async () => {
           await scrubPlanted(root, undeletable);
