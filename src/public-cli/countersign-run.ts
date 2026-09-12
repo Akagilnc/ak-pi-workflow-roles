@@ -126,10 +126,12 @@ type CourtDiaristInvocationResult = {
 
 /**
  * Read #871 set from preserved diarist payloads.
- * - Field absent / null / non-array → undefined (no new set this turn; resume keeps store).
- * - Field is an array (including explicit []) → sole projection with principal
- *   guaranteed; [] becomes single-ticket [main] whole-set replace.
- * - Multiple submissions: last array-valued set wins (whole-set replace, not first hit).
+ * - Field absent / null / non-array → undefined (no new set; resume keeps store).
+ * - Explicit [] → single-ticket [main] whole-set replace (signed empty-set contract).
+ * - Non-empty array with zero lawful typed members after projection → not a new set
+ *   (do not impersonate explicit empty and wipe a stored multi-ticket fact).
+ * - Non-empty array with ≥1 lawful member → sole type/dedupe projection + principal guarantee.
+ * - Multiple submissions: last qualifying set wins.
  * Live path never shape-rejects the role turn; durable damage is a separate seam.
  */
 function courtTicketNumbersFromOutcome(
@@ -151,13 +153,20 @@ function courtTicketNumbersFromOutcome(
     const record = payload as Record<string, unknown>;
     if (!Object.hasOwn(record, "courtTicketNumbers")) continue;
     const raw = record.courtTicketNumbers;
-    // Only a real array (including []) is a present typed set. null/undefined or
-    // non-array shape is not an explicit empty set — skip so resume keeps the
-    // stored run fact (never wash a co-review set into [main] via coercion).
+    // Only a real array is a candidate set. Non-array is not explicit empty.
     if (!Array.isArray(raw)) continue;
-    const projected = projectCourtTicketNumbers(raw, { principalTicket });
-    if (projected === null) continue;
-    latest = projected;
+    // Members only — do not inject principal yet, or all-invalid non-empty becomes [main].
+    const members = projectCourtTicketNumbers(raw);
+    if (members === null) continue;
+    if (members.length === 0) {
+      // Literal [] is the intentional principal-only replace; non-empty garbage is not.
+      if (raw.length === 0) {
+        latest = projectCourtTicketNumbers([], { principalTicket }) ?? undefined;
+      }
+      continue;
+    }
+    latest =
+      projectCourtTicketNumbers(raw, { principalTicket }) ?? undefined;
   }
   return latest;
 }

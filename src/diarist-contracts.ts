@@ -43,8 +43,9 @@ export type DiaristOutput =
        * #871 typed co-review set (ADR 0075 `diarist-resolves-ticket-llm-layer` narrow extension).
        * Positive integers = tickets that should each receive a diary this court (includes main).
        * Field absent → no new set this turn (resume keeps stored run fact; first court defaults to [main]).
-       * Field present empty → single-ticket face [main] whole-set replace.
-       * Mechanical layer only type-projects/dedupes and guarantees principal membership.
+       * Explicit empty array → single-ticket face [main] whole-set replace.
+       * Non-empty with zero lawful members after type projection is not a new set (call site).
+       * Mechanical layer only type-projects/dedupes and guarantees principal membership when applying a set.
        */
       readonly courtTicketNumbers?: readonly number[] | null;
       /** Whole blocks to append under the asserted ticket. Empty list is lawful. */
