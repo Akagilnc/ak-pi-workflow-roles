@@ -119,8 +119,12 @@ async function writeReadableRun(input: {
   readonly role: string;
   readonly projectRoot: string;
   readonly ticketNumber?: number;
+  /** When set, place under subject-tree `<subject>/runs/` instead of flat legacy. */
+  readonly subject?: string;
 }): Promise<void> {
-  const runDir = join(input.bookDir, "runs", `${input.runId}@${input.role}`);
+  const runDir = input.subject === undefined
+    ? join(input.bookDir, "runs", `${input.runId}@${input.role}`)
+    : join(input.bookDir, input.subject, "runs", `${input.runId}@${input.role}`);
   await mkdir(join(runDir, "session"), { recursive: true });
   await mkdir(join(runDir, "artifacts"), { recursive: true });
   const invocation: Record<string, unknown> = {
@@ -228,12 +232,14 @@ async function withBookScopeWorld<T>(
         projectRoot: worktreeRoot,
         ticketNumber: TICKET_A,
       });
+      // One TICKET_A leg under subject-tree so D1 proves analyst walks non-flat runs.
       await writeReadableRun({
         bookDir,
         runId: RUN_MAIN_TICKET_A,
         role: "fixer",
         projectRoot: mainRoot,
         ticketNumber: TICKET_A,
+        subject: String(TICKET_A),
       });
       await writeReadableRun({
         bookDir,
