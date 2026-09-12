@@ -122,7 +122,6 @@ function courtDiaristEscalated(roleOutcome: TerminalRoleOutcome | undefined): bo
  * whether refresh must fail or first-entry settles controlled failure.
  * When `boundTicketNumber` is set (typed handoff from countersign), diarist
  * binds under that key before the turn — never mechanical recognition from prose.
- * Escalate carries the original roleOutcome sequence; no reason rewrite (#881).
  */
 async function invokeCourtDiarist(input: {
   readonly instruction: string;
