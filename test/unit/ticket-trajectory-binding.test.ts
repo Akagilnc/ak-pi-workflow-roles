@@ -17,12 +17,15 @@ async function withBookDir<T>(scenario: (ledgerDir: string) => Promise<T>): Prom
     });
 }
 
-async function seedFlatRun(
+async function seedBookRun(
   ledgerDir: string,
   runFolder: string,
-  options?: { ticketNumber?: number; role?: string },
+  options?: { ticketNumber?: number; role?: string; subject?: string },
 ): Promise<string> {
-  const runDir = join(ledgerDir, "runs", runFolder);
+  const runDir =
+    options?.subject === undefined
+      ? join(ledgerDir, "runs", runFolder)
+      : join(ledgerDir, options.subject, "runs", runFolder);
   const sessionDir = join(runDir, "session");
   await mkdir(sessionDir, { recursive: true });
   const sessionFile = join(sessionDir, "session.jsonl");
@@ -44,6 +47,14 @@ async function seedFlatRun(
     "utf8",
   );
   return runDir;
+}
+
+async function seedFlatRun(
+  ledgerDir: string,
+  runFolder: string,
+  options?: { ticketNumber?: number; role?: string },
+): Promise<string> {
+  return seedBookRun(ledgerDir, runFolder, options);
 }
 
 async function seedLegacyRun(ledgerDir: string, issueNumber: number, runId: string): Promise<void> {
@@ -141,5 +152,20 @@ test("book index is reusable across tickets without re-scanning semantics", asyn
     const b = await loadTicketTrajectoryRuns(ledgerDir, 177, index);
     assert.equal(a.some((run) => run.runId === "01a@judge"), true);
     assert.equal(b.some((run) => run.runId === "01b@fixer"), true);
+  });
+});
+
+test("subject-tree ticket runs are indexed (not only flat legacy runs)", async () => {
+  await withBookDir(async (ledgerDir) => {
+    const runFolder = "01jsub@judge";
+    await seedBookRun(ledgerDir, runFolder, {
+      ticketNumber: 582,
+      subject: "582",
+    });
+    const index = await buildTicketTrajectoryBookIndex(ledgerDir);
+    assert.equal(index.runsByTicket.get(582)?.length, 1);
+    assert.equal(index.runsByTicket.get(582)?.[0]?.ledgerCoord, `582/runs/${runFolder}`);
+    const runs = await loadTicketTrajectoryRuns(ledgerDir, 582, index);
+    assert.equal(runs.some((run) => run.runId === runFolder), true);
   });
 });

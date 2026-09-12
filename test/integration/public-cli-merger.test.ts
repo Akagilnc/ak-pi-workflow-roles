@@ -219,7 +219,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(
       admitted.runDirectory,
-      join(home, ".ak-roles", "books", bookKey, "runs", "run-merger-admit-001@merger"),
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-merger-admit-001@merger"),
     );
 
     // Transport prompt is host-neutral; Pi `/skill:` is adapter-internal only (#822).
@@ -647,7 +647,7 @@ test("ak-role resume continues merger with package method and exact session", as
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@merger`,
     );
     const sessionDirectory = join(runDirectory, "session");

@@ -13,6 +13,7 @@ import {
   type RecordPointer,
   type SitianRecord,
 } from "./sitian-facade.ts";
+import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 import {
   TICKET_PROVENANCE_HUMAN_VIEW,
   TICKET_PROVENANCE_KIND,
@@ -25,7 +26,7 @@ import {
 
 /** Subject string for ticket-keyed volumes — history follows the ticket. */
 export function ticketProvenanceSubject(ticketNumber: number): string {
-  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
+  if (!isSafePositiveTicketNumber(ticketNumber)) {
     throw new Error(`ticket-provenance subject requires a positive ticket number, got ${String(ticketNumber)}`);
   }
   return String(ticketNumber);

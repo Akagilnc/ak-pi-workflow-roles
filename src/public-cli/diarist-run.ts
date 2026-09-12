@@ -12,6 +12,7 @@ import {
   admitDiaristInvocation,
   bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
+  relocateAdmittedRunToTicket,
   type AdmittedDiaristInvocation,
   type ParseDiaristArgvResult,
 } from "./invocation.ts";
@@ -140,6 +141,7 @@ export async function runPublicDiarist(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+      ...(handoffTicket === undefined ? {} : { assertedTicketNumber: handoffTicket }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -151,14 +153,6 @@ export async function runPublicDiarist(
 
   await markRunAdmitted(admitted, env.principalAuthority);
 
-  // Typed handoff: bind before the turn so identity is on durable pages.
-  if (
-    typeof handoffTicket === "number" &&
-    Number.isSafeInteger(handoffTicket) &&
-    handoffTicket >= 1
-  ) {
-    await bindAdmittedTicketNumber(admitted, handoffTicket);
-  }
 
   const turnProjection: RoleTurnRequestProjectionOptions = {
     packageRoot: env.packageRoot,
@@ -214,9 +208,15 @@ export async function runPublicDiarist(
               ? (facts.sitian as { ticketNumber: number }).ticketNumber
               : undefined;
         if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) {
-          (admitted as { ticketNumber?: number }).ticketNumber = raw;
-          if (result.admitted.ticketNumber === undefined) {
-            (result.admitted as { ticketNumber?: number }).ticketNumber = raw;
+          await bindAdmittedTicketNumber(admitted, raw);
+          await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+          if (result.admitted !== admitted) {
+            Object.assign(result.admitted, {
+              ticketNumber: raw,
+              runDirectory: admitted.runDirectory,
+              admittedRequestPath: admitted.admittedRequestPath,
+              principal: admitted.principal,
+            });
           }
         }
       }

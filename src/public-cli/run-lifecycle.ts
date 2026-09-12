@@ -9,13 +9,14 @@ import type {
  * any existing run with an available Pi session principal may be resumed; caller decides.
  * Prose is never regex-classified as quota evidence.
  */
-import { chmod, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { chmod, lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { basename, isAbsolute, join } from "node:path";
 
 import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
+import { listBookRunDirectories } from "../role-run-placement.ts";
 import { readRunTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -700,6 +701,8 @@ export class RunWriterLeaseHeldError extends Error {
 
 export type RunWriterLease = {
   readonly lockPath: string;
+  /** Keep lease cleanup anchored when its run is relocated while held. */
+  relocate(runDirectory: string): void;
   release(): Promise<void>;
 };
 
@@ -830,7 +833,7 @@ async function reclaimStaleWriterLock(
 async function createWriterLease(
   lockPath: string,
   runDirectory: string,
-  reportCleanupFailure: (error: unknown) => void,
+  reportCleanupFailure: (error: unknown, lockPath: string) => void,
 ): Promise<RunWriterLease> {
   const handle = await open(lockPath, "wx");
   try {
@@ -841,24 +844,32 @@ async function createWriterLease(
     throw error;
   }
   let released = false;
+  let currentRunDirectory = runDirectory;
+  let currentLockPath = lockPath;
   return {
-    lockPath,
+    get lockPath() {
+      return currentLockPath;
+    },
+    relocate(nextRunDirectory: string) {
+      currentRunDirectory = nextRunDirectory;
+      currentLockPath = join(nextRunDirectory, WRITER_LOCK_FILE);
+    },
     async release() {
       if (released) return;
       released = true;
       await handle.close().catch(() => undefined);
       try {
-        await unlink(lockPath);
+        await unlink(currentLockPath);
       } catch (error) {
         if (errorCodeOf(error) === "EACCES") {
           try {
-            await chmod(runDirectory, 0o755);
-            await unlink(lockPath);
+            await chmod(currentRunDirectory, 0o755);
+            await unlink(currentLockPath);
           } catch (retryError) {
-            reportCleanupFailure(retryError);
+            reportCleanupFailure(retryError, currentLockPath);
           }
         } else {
-          reportCleanupFailure(error);
+          reportCleanupFailure(error, currentLockPath);
         }
       }
     },
@@ -916,9 +927,9 @@ export async function acquireRunWriterLease(
    * acquire reads it as live and rejects; nothing here may promise that the
    * next acquire reclaims it.
    */
-  const reportCleanupFailure = (error: unknown): void => {
+  const reportCleanupFailure = (error: unknown, lockPath: string): void => {
     reportDiagnostic(
-      `writer lease lock cleanup failed (release is best-effort; residual lock left in place) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
+      `writer lease lock cleanup failed (release is best-effort; residual lock left in place) at ${lockPath}: ${describeErrorIdentity(error)}`,
     );
   };
   /** Contested-lock read failure: nothing was cleaned up; the lock stays exactly where it is. */
@@ -982,10 +993,13 @@ export async function acquireRunWriterLease(
 /**
  * Locate a Role run directory by run ID under the ledger books home.
  * Returns undefined when the ID is unknown.
+ * Walk surface = listBookRunDirectories (flat legacy + subject-tree).
  */
 export async function findRunDirectoryById(
-  home: string,
+  home: string | undefined,
   runId: string,
+  onlyBookKey?: string,
+  onlyRole?: string,
 ): Promise<string | undefined> {
   if (runId.trim() === "") return undefined;
   const ledgerHome = resolveActivationLedgerHome(home);
@@ -997,16 +1011,21 @@ export async function findRunDirectoryById(
     return undefined;
   }
   for (const bookKey of bookKeys) {
-    const runsDir = join(activationBookDirectory(ledgerHome, bookKey), "runs");
-    let entries: string[];
+    if (onlyBookKey !== undefined && bookKey !== onlyBookKey) continue;
+    const bookDir = activationBookDirectory(ledgerHome, bookKey);
+    let runDirectories: string[];
     try {
-      entries = await readdir(runsDir);
+      runDirectories = await listBookRunDirectories(bookDir);
     } catch {
       continue;
     }
-    for (const entry of entries) {
-      if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
-        return join(runsDir, entry);
+    for (const runDirectory of runDirectories) {
+      const entry = basename(runDirectory);
+      if (
+        (onlyRole === undefined && (entry === `${runId}@judge` || entry.startsWith(`${runId}@`))) ||
+        entry === `${runId}@${onlyRole}`
+      ) {
+        return runDirectory;
       }
     }
   }
@@ -1056,11 +1075,35 @@ export async function readRunParentPath(
 }
 
 /**
+ * True when durable run-state names a session principal that has actually formed
+ * (session file present as a real file). Provisional runs relocated+terminalized
+ * before dispatch never form one — same-ticket lookup must skip them so a newer
+ * abandoned mint cannot eclipse an older resumable principal (#859).
+ * Not a terminal-state gate: ADR/#416 allows terminal resume when principal exists.
+ */
+async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boolean> {
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk === undefined) return false;
+  const sessionFile =
+    typeof disk.principalWire.sessionFile === "string" &&
+    disk.principalWire.sessionFile.trim() !== ""
+      ? disk.principalWire.sessionFile
+      : join(disk.principalWire.sessionDirectory, "session.jsonl");
+  try {
+    const stat = await lstat(sessionFile);
+    return stat.isFile() && !stat.isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Locate the latest retained run for one seat under a book (#637 / #747).
- * Same walk surface as findRunDirectoryById. Match by parent run path (officer
- * seats, #747) or by ticket number (countersign / diarist principal).
- * runId is UUIDv7 — lexicographic max is latest. No parallel index.
- * Only a truly missing runs directory means no history; damage/permission errors propagate.
+ * Same walk surface as findRunDirectoryById (listBookRunDirectories). Match by
+ * parent run path (officer seats, #747) or by ticket number (countersign /
+ * diarist principal). runId is UUIDv7 — lexicographic max is latest among runs
+ * that formed a session principal. No parallel index.
+ * Only a truly missing book directory means no history; damage/permission errors propagate.
  */
 export async function findLatestRunIdForSeatTicket(input: {
   readonly home: string;
@@ -1069,34 +1112,34 @@ export async function findLatestRunIdForSeatTicket(input: {
   readonly ticketNumber?: number;
   readonly parentRunPath?: string;
 }): Promise<string | undefined> {
+  if (input.ticketNumber === undefined && input.parentRunPath === undefined) {
+    return undefined;
+  }
   const ledgerHome = resolveActivationLedgerHome(input.home);
-  const runsDir = join(
-    activationBookDirectory(ledgerHome, input.bookKey),
-    "runs",
-  );
-  let entries: string[];
+  const bookDir = activationBookDirectory(ledgerHome, input.bookKey);
+  let runDirectories: string[];
   try {
-    entries = await readdir(runsDir);
+    runDirectories = await listBookRunDirectories(bookDir);
   } catch (error) {
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
   }
   const suffix = `@${input.role}`;
   let best: string | undefined;
-  for (const entry of entries) {
+  for (const runDirectory of runDirectories) {
+    const entry = basename(runDirectory);
     if (!entry.endsWith(suffix)) continue;
     const runId = entry.slice(0, entry.length - suffix.length);
     if (runId.length === 0) continue;
-    const runDirectory = join(runsDir, entry);
     if (input.parentRunPath !== undefined) {
       const parentPath = await readRunParentPath(runDirectory);
       if (parentPath !== input.parentRunPath) continue;
     } else if (input.ticketNumber !== undefined) {
       const ticketNumber = await readRunTicketNumber(runDirectory);
       if (ticketNumber !== input.ticketNumber) continue;
-    } else {
-      continue;
     }
+    // Durable fact: never resume-select a provisional that never formed principal.
+    if (!(await runHasFormedSessionPrincipal(runDirectory))) continue;
     if (best === undefined || runId > best) best = runId;
   }
   return best;

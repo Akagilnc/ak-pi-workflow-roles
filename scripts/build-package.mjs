@@ -26,6 +26,10 @@ const entries = [
   "session-opening-materials",
   // Value-import closure of published non-bundle roots (build-package-only loadable).
   "auditor-dossier-tool",
+  // Static import of auditor-dossier-tool / placement path authority (#859).
+  "role-run-placement",
+  // Static import of role-run-placement (safe-positive ticket invariant).
+  "run-ticket-number",
   "canonical-json",
   "compliance-transport",
   "countersign-contracts",

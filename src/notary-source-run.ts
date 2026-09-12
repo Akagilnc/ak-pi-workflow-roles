@@ -13,7 +13,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import type { NotarySourceRunLocator } from "./notary-contracts.ts";
-import { readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
+import { findRunDirectoryById, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 
 // Run directory leaf: <runId>@<role>. Production uses uuidv7 runIds; offline tracers
 // may use deterministic non-uuid leaves. Role token stays identifier-shaped.
@@ -92,7 +92,8 @@ export async function resolveNotarySourceRunLocator(options: {
   let candidate: string;
   const bare = parseRunDirectoryName(raw);
   if (bare !== undefined && !raw.includes("/") && !raw.includes("\\")) {
-    candidate = join(bookRunsRoot, `${bare.runId}@${bare.role}`);
+    candidate = (await findRunDirectoryById(options.home, bare.runId, bookKey, bare.role))
+      ?? join(bookRunsRoot, `${bare.runId}@${bare.role}`);
   } else {
     candidate = isAbsolute(raw) ? raw : resolve(options.projectRoot, raw);
   }
@@ -100,9 +101,13 @@ export async function resolveNotarySourceRunLocator(options: {
   const real = await requireRunDirectory(candidate, raw);
   const identity = parseRunDirectoryName(basename(real))!;
 
-  const runsRootIdentity = physicalPathIdentity(bookRunsRoot);
+  const bookIdentity = physicalPathIdentity(activationBookDirectory(ledgerHome, bookKey));
   const parentIdentity = physicalPathIdentity(dirname(real));
-  if (parentIdentity !== runsRootIdentity) {
+  const subjectBookIdentity = physicalPathIdentity(dirname(dirname(dirname(real))));
+  if (
+    parentIdentity !== physicalPathIdentity(bookRunsRoot) &&
+    !(basename(dirname(real)) === "runs" && subjectBookIdentity === bookIdentity)
+  ) {
     throw new NotarySourceRunError(
       "notary --source-run must resolve to a retained run under the project machine-ledger book",
     );

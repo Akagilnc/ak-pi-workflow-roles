@@ -6,7 +6,7 @@ Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e
 
 ## 承继 / 修正关系
 
-本 ADR **修正** [ADR 0065](0065-sitian-phase-two-records-have-one-entry.md) 的 `record-scope-phase-two=pi-session-records-only`：二期 scope 在「Pi session 记录」之外，新增 kind `ticket-provenance`，收录 cc session 誊录块 / issue 面 / ADR 锚。历史 ADR 正文不回改；承继关系由本票记载（同 [ADR 0074](0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 先例）。appender 内核 / 落盘拓扑 / `--source-run` / submission ledger **零改动**——`kind` 本为开放集，subject 哈希分区既有。
+本 ADR **修正** [ADR 0065](0065-sitian-phase-two-records-have-one-entry.md) 的 `record-scope-phase-two=pi-session-records-only`：二期 scope 在「Pi session 记录」之外，新增 kind `ticket-provenance`，收录 cc session 誊录块 / issue 面 / ADR 锚。历史 ADR 正文不回改；承继关系由本票记载（同 [ADR 0074](0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 先例）。appender 内核 / `--source-run` / submission ledger **零改动**。簿以下落盘拓扑由 [卷宗拓扑](../dossier-topology.md) 统一定义。
 
 ## Decision keys（逐条绑 owner 原话；真源票面 #582 r1，2026-09-06 起为 #708 r2 修订节；#582 已关）
 
@@ -34,7 +34,7 @@ Status: accepted（owner 2026-08-31 多轮 grill 收口；票庭 run `01a05604-e
 
 ## 机制骨架
 
-- **真源**：司天台 JSONL，kind=`ticket-provenance`，subject＝票号字符串；落盘仍走 `resolveSitianRecordPathInLedger`（`bookDir/ticket-provenance/<sha256(票号)>/records.jsonl`）。
+- **真源**：司天台 JSONL，kind=`ticket-provenance`，subject＝票号字符串；具体落点引用 [卷宗拓扑](../dossier-topology.md)，本 ADR 不另存路径副本。
 - **逐收录块一条 entry**（誊录制）：`basis` / `sourceKind` / `sourceRef` / `transcript` / `timestamp`。追加不改写。
 - **人读面**：同分区 md 渲染视图；只有 JSONL 权威。
 - **起居郎（`diarist`）**：LLM 角色（soul、席位、公开入口 `ak-role diarist`、交卷工具 `ak_diarist_output`）。LLM 自己找材料（`~/.claude/projects`、issue 面、引用 ADR），交卷整块入录；机械层只做幂等落盘与人读面刷新（#779）。**不**预扫会话切块编号、**不**冻清单、**不**目录名推算、**不**对 LLM 输出做引文/票号/相关性判定。**相关性只由 LLM 裁决**（锚定宪法）。

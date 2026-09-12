@@ -11,13 +11,15 @@ import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, mkdtemp, readdir, rm, writeFile, readFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
+import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { HostContext, RoleHost, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
@@ -41,6 +43,9 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
+import { roleRunPlacement } from "../../src/role-run-placement.ts";
+import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import {
   argvFlagValue,
@@ -829,7 +834,7 @@ function courtPipelinePiRunner(
   };
 }
 
-test("public countersign path: 起居郎 asserts then countersign runs with 起居录 paths", async () => {
+test("public CLI keeps ticket, unbound, first-binding, run records, and all readers on one book topology", async () => {
   await withCountersignProject(async ({ home, project }) => {
     // #771 LLM assert + #742 court diarist station; volume may or may not pre-exist.
     ensureTicketProvenanceVolume(582, project, home);
@@ -846,6 +851,7 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
     const parentRoles: string[] = [];
     const childRoles: string[] = [];
     let turnPrompt = "";
+    let countersignRunDirectory = "";
     const parentBase = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
@@ -856,10 +862,28 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
         parentRoles.push(request.activation.role);
         if (request.activation.role === "countersign") {
           turnPrompt = request.continuation.prompt;
+          countersignRunDirectory = request.runDirectory;
         }
-        return parentBase.executeTurn(request);
+        const outcome = await parentBase.executeTurn(request);
+        if (request.activation.role === "countersign") {
+          const auditorDir = join(request.runDirectory, "session", "auditor-roles");
+          await mkdir(auditorDir, { recursive: true });
+          await writeFile(
+            join(auditorDir, "o01_notary.jsonl"),
+            gateToolSessionJsonl({
+              id: "topology-notary",
+              startedAt: "2026-09-11T00:00:00.000Z",
+              endedAt: "2026-09-11T00:00:01.000Z",
+              toolName: "ak_notary_output",
+              args: { status: "pass", findings: [] },
+            }),
+            "utf8",
+          );
+        }
+        return outcome;
       },
     };
+    let observedDiaristRunId = "";
     const childBase = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
@@ -868,20 +892,19 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
     const childHost = {
       async executeTurn(request: RoleTurnRequest) {
         childRoles.push(request.activation.role);
+        observedDiaristRunId = basename(request.runDirectory).split("@")[0]!;
         return childBase.executeTurn(request);
       },
     };
 
     const { io, stdout, stderr } = captureIo();
-    const result = await runPublicCountersign(
-      ["裁：继续审票 #582 是否足以开工。"],
+    const result = await runAkRole(
+      ["countersign", "--project", project, "裁：继续审票 #582 是否足以开工。"],
       {
         home,
         agentDir: join(home, ".pi"),
         packageRoot,
         cwd: project,
-        principalAuthority: piDurablePrincipalAuthority,
-        sessionAppender: appendPiSessionCustomEntry,
         credentials: { "openai-codex": true, xai: true },
         roleTurnHost: parentHost,
         hostAdapters: [
@@ -889,29 +912,20 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
           adapter("grok-build", childHost),
         ],
         createRunId: () => "01a0sign00-0000-7000-8000-000000000d45",
-        host: "pi",
+        io,
       },
-      io,
-      parseCountersignArgv,
     );
     assert.equal(result.exitCode, 0, stderr.join("") || stdout.join(""));
     assert.deepEqual(parentRoles, ["countersign"], "parent adapter must not execute the court diarist child");
     assert.deepEqual(childRoles, ["diarist", "diarist"], "child seat adapter must execute court diarist station");
-    assert.ok(result.admitted?.bookKey);
-    assert.equal(result.admitted?.ticketNumber, 582);
+    const bookKey = resolveBookKeyFromGit(project);
 
-    const diaristRunId = await findLatestRunIdForSeatTicket({
-      home,
-      bookKey: result.admitted!.bookKey,
+    assert.ok(observedDiaristRunId);
+    const diaristCoords = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey,
+      subject: { ticketNumber: 582 },
+      runId: observedDiaristRunId,
       role: "diarist",
-      ticketNumber: 582,
-    });
-    assert.ok(diaristRunId);
-    const diaristCoords = issuePiDurablePrincipalCoordinates({
-      cwd: project,
-      runId: diaristRunId!,
-      role: "diarist",
-      home,
     });
     const diaristState = await readRoleRunState(
       diaristCoords.runDirectory,
@@ -939,9 +953,69 @@ test("public countersign path: 起居郎 asserts then countersign runs with 起�
       "court diarist station child must record own seat model",
     );
 
+    const bookRoot = join(home, ".ak-roles", "books", bookKey);
+    const ticketRun = join(bookRoot, "582", "runs", `${result.terminal!.runId}@countersign`);
+    assert.equal(countersignRunDirectory, ticketRun);
+    assert.equal(
+      diaristCoords.runDirectory.startsWith(join(bookRoot, "582", "runs")),
+      true,
+      "the first ticket-identifying leg is relocated after its typed assertion",
+    );
+
     const volume = resolveTicketProvenanceVolume(582, project, home);
     assert.ok(turnPrompt.includes(volume.humanViewFile));
     assert.ok(turnPrompt.includes(volume.recordFile));
+    await readTicketProvenance(582, project, home);
+
+    assert.deepEqual(result.terminal?.gate?.actualSeats, ["notary"]);
+    await readFile(join(ticketRun, "session", "auditor-roles", "o01_notary.jsonl"), "utf8");
+
+    const unboundId = "01a0sign00-0000-7000-8000-00000000free";
+    let unboundRunDirectory = "";
+    const unboundBase = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "judge",
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        details: { judgeStatus: "converged" },
+      }),
+    });
+    const unbound = await runAkRole(
+      ["judge", "--project", project, "Decide without a ticket."],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: captureIo().io,
+        createRunId: () => unboundId,
+        roleTurnHost: {
+          async executeTurn(request: RoleTurnRequest) {
+            unboundRunDirectory = request.runDirectory;
+            return unboundBase.executeTurn(request);
+          },
+        },
+      },
+    );
+    assert.equal(unbound.exitCode, 0);
+    assert.equal(unboundRunDirectory, join(bookRoot, "unbound", "runs", `${unboundId}@judge`));
+    const submissionRecord = join(unboundRunDirectory, "session", "submission-ledger", "records.jsonl");
+    await readFile(submissionRecord, "utf8");
+    const recorded = await readRecordedSubmissionRows(project, unboundId, home);
+    assert.equal(recorded.length, 1);
+    assert.equal(recorded[0]!.role, "judge");
+    assert.deepEqual(recorded[0]!.accepted, { judgeStatus: "converged" });
+
+    assert.ok(unbound.terminal?.artifacts.length);
+    for (const artifact of unbound.terminal!.artifacts) {
+      assert.equal(artifact.path.startsWith(join(unboundRunDirectory, "artifacts")), true);
+      await readFile(artifact.path, "utf8");
+    }
+
+    const allowedBookEntries = new Set(["582", "unbound", "navigator", "collector-handbook"]);
+    for (const entry of await readdir(bookRoot)) {
+      assert.equal(allowedBookEntries.has(entry), true, entry);
+    }
   });
 });
 
@@ -1122,6 +1196,27 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume");
     assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
+
+    // Third summons: second call left a newer provisional under the ticket with
+    // no formed session principal. Lookup must still select s001, not s002/s003.
+    const third = await runPublicCountersign(
+      ["裁：#582 三轮再审。"],
+      {
+        ...envBase,
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000s003",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+    assert.equal(third.exitCode, 0);
+    assert.equal(
+      third.admitted?.runId,
+      "01a0sign00-0000-7000-8000-00000000s001",
+      "third same-ticket summons must skip provisional runs that never formed a principal",
+    );
+    assert.equal(seen.length, 3);
+    assert.equal(seen[2]!.kind, "resume");
+    assert.equal(seen[2]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
   });
 });
 

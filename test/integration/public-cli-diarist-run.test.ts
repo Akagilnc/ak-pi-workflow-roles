@@ -10,14 +10,19 @@ import { mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
-import type { HostContext, RoleHost } from "../../src/host-contracts.ts";
-import {
-  issuePiDurablePrincipalCoordinates,
-  piDurablePrincipalAuthority,
-} from "../../src/pi/durable-principal.ts";
+import type {
+  DurablePrincipal,
+  DurablePrincipalAuthority,
+  HostContext,
+  RoleHost,
+} from "../../src/host-contracts.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import {
   readTicketProvenance,
   resolveTicketProvenanceVolume,
@@ -36,6 +41,27 @@ const TICKET = 708;
 /** Structured source pointer the protocol payload and volume must share. */
 const ENTRY_SESSION_FILE = "/probe/session.jsonl";
 const ENTRY_ID = "probe-entry-1";
+
+const immutablePrincipalAuthority: DurablePrincipalAuthority = {
+  issue(request) {
+    const coordinates = piDurablePrincipalAuthority.decode(
+      piDurablePrincipalAuthority.issue(request),
+    );
+    return Object.freeze({ coordinates }) as DurablePrincipal;
+  },
+  seal(coordinates) {
+    return Object.freeze({ coordinates, relocated: true }) as DurablePrincipal;
+  },
+  decode(principal) {
+    const wire = principal as { coordinates?: unknown };
+    return piDurablePrincipalAuthority.decode(wire.coordinates ?? principal);
+  },
+  async isAvailable(principal) {
+    return piDurablePrincipalAuthority.isAvailable(
+      piDurablePrincipalAuthority.seal(this.decode(principal)),
+    );
+  },
+};
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-diarist-", async (home) => scenario(home));
@@ -112,9 +138,10 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
         cwd: project,
         io,
         createRunId: () => runId,
+        principalAuthority: immutablePrincipalAuthority,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
+          principalAuthority: immutablePrincipalAuthority,
           piRunner: diaristEnvelopeRunner({
             status: "completed",
             ticketNumber: TICKET,
@@ -145,15 +172,15 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(result.terminal?.roleOutcome.role, "diarist");
 
-    const coords = issuePiDurablePrincipalCoordinates({
-      cwd: project,
+    const placement = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey: resolveBookKeyFromGit(project),
+      subject: { ticketNumber: TICKET },
       runId,
       role: "diarist",
-      home,
     });
     const state = await readRoleRunState(
-      coords.runDirectory,
-      piDurablePrincipalAuthority,
+      placement.runDirectory,
+      immutablePrincipalAuthority,
     );
     assert.equal(state?.role, "diarist");
     assert.equal(state?.state, "terminal");

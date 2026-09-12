@@ -106,7 +106,7 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     assert.deepEqual(admitted.caseIdentity, expectedPatient.identity);
     assert.equal(
       admitted.runDirectory,
-      join(home, ".ak-roles", "books", bookKey, "runs", "run-doctor-001@doctor"),
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-doctor-001@doctor"),
     );
     assert.equal(
       piDurablePrincipalAuthority.decode(admitted.principal).sessionFile,
@@ -417,7 +417,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     // ② AK-owned run-state ledger reaches terminal for the real entry.
     const runState = JSON.parse(
       await readFile(
-        join(home, ".ak-roles", "books", bookKey, "runs", "run-doctor-settle@doctor", "run-state.json"),
+        join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-doctor-settle@doctor", "run-state.json"),
         "utf8",
       ),
     ) as { state: string };
@@ -490,7 +490,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       "run-doctor-settle@doctor",
     );
     const admittedSnap = JSON.parse(
@@ -602,7 +602,7 @@ test("terminal persistence failure through public entry propagates loudly with n
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@doctor`,
     );
     const captured = captureIo();

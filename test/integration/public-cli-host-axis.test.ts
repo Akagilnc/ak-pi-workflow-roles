@@ -374,7 +374,7 @@ process.exit(0);
   const booksRoot = join(home, ".ak-roles", "books");
   const books = await readdir(booksRoot);
   assert.ok(books.length >= 1);
-  const runsRoot = join(booksRoot, books[0]!, "runs");
+  const runsRoot = join(booksRoot, books[0]!, "unbound", "runs");
   const runs = await readdir(runsRoot);
   // #717: this turn is sitian-only (no run-scoped grok-home). #675 nested public
   // navigator attendance may mint sibling role runs; the grok isolation contract
@@ -400,7 +400,7 @@ test("admission writes typed birth host onto invocation.json", async () => homeT
   const booksRoot = join(home, ".ak-roles", "books");
   const books = await readdir(booksRoot);
   assert.ok(books.length >= 1);
-  const runsRoot = join(booksRoot, books[0]!, "runs");
+  const runsRoot = join(booksRoot, books[0]!, "unbound", "runs");
   const runs = await readdir(runsRoot);
   assert.equal(runs.length, 1);
   const invocation = JSON.parse(
@@ -469,7 +469,7 @@ test("bare resume follows live seat table host when it drifts from birth host", 
       ".ak-roles",
       "books",
       books[0]!,
-      "runs",
+      "unbound", "runs",
       `${runId}@judge`,
       "invocation.json",
     );

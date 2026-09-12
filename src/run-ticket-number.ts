@@ -14,16 +14,28 @@ function isEnoent(error: unknown): boolean {
   );
 }
 
-function ticketFromRecord(record: Record<string, unknown>): number | undefined {
-  const ticketNumber = record.ticketNumber;
-  if (
-    typeof ticketNumber === "number" &&
-    Number.isSafeInteger(ticketNumber) &&
-    ticketNumber >= 1
-  ) {
-    return ticketNumber;
+/** Sole safe-positive ticket invariant (bind / admission / placement / readers). */
+export function isSafePositiveTicketNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
+}
+
+/** Loud reject for non-safe-positive ticket numbers before placement or bind. */
+export function requireSafePositiveTicketNumber(
+  ticketNumber: number,
+  context = "ticketNumber",
+): number {
+  if (!isSafePositiveTicketNumber(ticketNumber)) {
+    throw new Error(
+      `${context} requires a safe positive integer, got ${String(ticketNumber)}`,
+    );
   }
-  return undefined;
+  return ticketNumber;
+}
+
+function ticketFromRecord(record: Record<string, unknown>): number | undefined {
+  return isSafePositiveTicketNumber(record.ticketNumber)
+    ? record.ticketNumber
+    : undefined;
 }
 
 async function readPageTicketNumber(

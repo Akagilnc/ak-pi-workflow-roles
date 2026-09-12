@@ -129,9 +129,9 @@ function withOnceSuccessfulBeforeDispatch<
   let succeeded = false;
   return {
     ...adapters,
-    beforeDispatch: async (admitted) => {
+    beforeDispatch: async (admitted, lease) => {
       if (succeeded) return;
-      await hook(admitted);
+      await hook(admitted, lease);
       succeeded = true;
     },
   };
@@ -262,7 +262,7 @@ export type PostAdmissionAdapters<
     result: RoleTurnResult;
     sessionFile: string;
   }) => Promise<RoleTurnKnownFailure | undefined>;
-  beforeDispatch?: (admitted: A) => Promise<void> | void;
+  beforeDispatch?: (admitted: A, lease: RunWriterLease) => Promise<void> | void;
 };
 
 export type ControlledFailureInput = {
@@ -626,7 +626,7 @@ export async function dispatchPostAdmissionTurn<
     // (#840 父子不层叠).
     if (adapters.beforeDispatch !== undefined) {
       try {
-        await adapters.beforeDispatch(admitted);
+        await adapters.beforeDispatch(admitted, lease);
       } catch (error) {
         const settled = (await presentControlledFailure(
           admitted,

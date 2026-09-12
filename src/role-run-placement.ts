@@ -1,9 +1,11 @@
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
   activationBookDirectory,
   ensureRealDirectoryTree,
 } from "./activation-ledger-topology.ts";
+import { requireSafePositiveTicketNumber } from "./run-ticket-number.ts";
 
 export type RoleRunSubject =
   | { readonly ticketNumber: number }
@@ -17,6 +19,57 @@ export type RoleRunPlacement = {
   readonly attachmentsDirectory: string;
 };
 
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
+}
+
+/**
+ * Sole book-level run directory walk: flat legacy `runs/` plus each
+ * `subject/runs/` child (ticket / unbound). One authority for read-side
+ * enumeration under a book directory — findRunDirectoryById, analyst scan,
+ * and ticket trajectory must not hardcode a second subject-tree walk.
+ */
+export async function listBookRunDirectories(bookDir: string): Promise<string[]> {
+  const out: string[] = [];
+  const seen = new Set<string>();
+
+  const collect = async (runsDir: string): Promise<void> => {
+    let entries;
+    try {
+      entries = await readdir(runsDir, { withFileTypes: true });
+    } catch (error) {
+      if (isMissingPathError(error)) return;
+      throw error;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const runDir = join(runsDir, entry.name);
+      if (seen.has(runDir)) continue;
+      seen.add(runDir);
+      out.push(runDir);
+    }
+  };
+
+  await collect(join(bookDir, "runs"));
+
+  let subjects;
+  try {
+    subjects = await readdir(bookDir, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingPathError(error)) return out.sort();
+    throw error;
+  }
+  for (const subject of subjects) {
+    if (!subject.isDirectory() || subject.name === "runs") continue;
+    await collect(join(bookDir, subject.name, "runs"));
+  }
+  return out.sort();
+}
+
 /** The single authority for every path belonging to an admitted role run. */
 export function roleRunPlacement(
   ledgerHome: string,
@@ -28,7 +81,10 @@ export function roleRunPlacement(
   },
 ): RoleRunPlacement {
   const subjectDirectory = "ticketNumber" in input.subject
-    ? String(input.subject.ticketNumber)
+    ? String(requireSafePositiveTicketNumber(
+        input.subject.ticketNumber,
+        "roleRunPlacement subject.ticketNumber",
+      ))
     : "unbound";
   const runDirectory = join(
     activationBookDirectory(ledgerHome, input.bookKey),

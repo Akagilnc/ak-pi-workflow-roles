@@ -168,9 +168,10 @@ export type SettlementCourtScope = {
 function ledgerReadScope(
   admitted: AdmittedRoleInvocation,
   scope?: SettlementCourtScope,
-): { home: string; attemptId?: string } {
+): { home: string; sessionParent: string; attemptId?: string } {
   return {
     home: sealedLedgerHome(admitted),
+    sessionParent: join(admitted.runDirectory, "session", "session.jsonl"),
     ...(scope?.courtAttemptId === undefined || scope.courtAttemptId.length === 0
       ? {}
       : { attemptId: scope.courtAttemptId }),
@@ -222,7 +223,7 @@ export async function attemptProducedFreshSubmission(
     admitted.projectRoot,
     admitted.runId,
     scope.courtAttemptId,
-    sealedLedgerHome(admitted),
+    ledgerReadScope(admitted, scope),
   );
 }
 
