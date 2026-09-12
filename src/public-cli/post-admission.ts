@@ -35,6 +35,7 @@ import type {
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
+import { isOfficerReviewSeat } from "../host-contracts.ts";
 import { projectCaseDossierPointerSection } from "./case-dossier-delivery.ts";
 
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
@@ -55,11 +56,6 @@ function appendContinuationSection(
   return continuation.kind === "initial"
     ? { kind: "initial", prompt }
     : { kind: "resume", prompt };
-}
-
-/** Review seats that receive parent peer dialogue on the gate path (#879). */
-function isOfficerReviewSeat(role: string): boolean {
-  return role === "notary" || role === "inspector" || role === "auditor";
 }
 
 /**

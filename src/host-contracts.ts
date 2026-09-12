@@ -156,6 +156,11 @@ export type RoleTurnHostTransition = {
   readonly priorNativePaths: readonly string[];
 };
 
+/** Gate review officers (察院 / 符宝郎 / 审刑院). Single authority for seat checks. */
+export function isOfficerReviewSeat(role: string): boolean {
+  return role === "notary" || role === "inspector" || role === "auditor";
+}
+
 /** One main-session turn request over the host-neutral execution seam. */
 export type RoleTurnRequest = {
   readonly principal: DurablePrincipal;

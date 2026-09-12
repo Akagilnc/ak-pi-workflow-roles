@@ -21,7 +21,7 @@ import type {
   RoleTurnRequest,
   RoleTurnResult,
 } from "../host-contracts.ts";
-import { ExplicitInternalActivationError } from "../host-contracts.ts";
+import { ExplicitInternalActivationError, isOfficerReviewSeat } from "../host-contracts.ts";
 import { applyEngineChildEnv } from "../engine-detour.ts";
 import { projectActivationFlags } from "../role-activation-flags.ts";
 
@@ -379,10 +379,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       // host-transition priorNativePaths into the review prompt body.
       let turnRequest = request;
       const officerStationChild =
-        request.stationChild === true
-        && (request.activation.role === "notary"
-          || request.activation.role === "inspector"
-          || request.activation.role === "auditor");
+        request.stationChild === true && isOfficerReviewSeat(request.activation.role);
       const paths =
         !officerStationChild && request.hostTransition?.priorNativeKind === "sitian"
           ? request.hostTransition.priorNativePaths

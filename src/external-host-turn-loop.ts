@@ -9,6 +9,7 @@ import type {
   RoleTurnRequest,
   RoleTurnResult,
 } from "./host-contracts.ts";
+import { isOfficerReviewSeat } from "./host-contracts.ts";
 
 export const EXTERNAL_ROLE_TURN_ROUND_LIMIT = 8 as const;
 
@@ -52,10 +53,6 @@ export function mergeRoleTurnAbortSignals(
   if (request === undefined) return prepared;
   if (prepared === undefined) return request;
   return AbortSignal.any([prepared, request]);
-}
-
-function isOfficerReviewSeat(role: string): boolean {
-  return role === "notary" || role === "inspector" || role === "auditor";
 }
 
 /**
