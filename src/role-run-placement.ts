@@ -19,24 +19,12 @@ export type RoleRunPlacement = {
   readonly attachmentsDirectory: string;
 };
 
-function errnoCode(error: unknown): string | undefined {
-  return error instanceof Error && "code" in error
-    ? (error as NodeJS.ErrnoException).code
-    : undefined;
-}
-
-/** True absence of a path node. ENOTDIR is damaged topology and stays loud here. */
-function isAbsentPathError(error: unknown): boolean {
-  return errnoCode(error) === "ENOENT";
-}
-
-/**
- * Optional `…/runs` slot: missing dir OR plain-file collision is empty slot.
- * Other codes (EACCES, …) stay loud.
- */
-function isOptionalRunsSlotError(error: unknown): boolean {
-  const code = errnoCode(error);
-  return code === "ENOENT" || code === "ENOTDIR";
+function isMissingPathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
 }
 
 /**
@@ -54,7 +42,7 @@ export async function listBookRunDirectories(bookDir: string): Promise<string[]>
     try {
       entries = await readdir(runsDir, { withFileTypes: true });
     } catch (error) {
-      if (isOptionalRunsSlotError(error)) return;
+      if (isMissingPathError(error)) return;
       throw error;
     }
     for (const entry of entries) {
@@ -72,8 +60,7 @@ export async function listBookRunDirectories(bookDir: string): Promise<string[]>
   try {
     subjects = await readdir(bookDir, { withFileTypes: true });
   } catch (error) {
-    // Book root: only true absence is empty. ENOTDIR/other damage stays loud.
-    if (isAbsentPathError(error)) return out.sort();
+    if (isMissingPathError(error)) return out.sort();
     throw error;
   }
   for (const subject of subjects) {
