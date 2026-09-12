@@ -37,6 +37,11 @@ import {
   requireSafePositiveTicketNumber,
 } from "../run-ticket-number.ts";
 import {
+  rewriteRoleRunDurablePages,
+  rewriteRunDirectoryPathFields,
+  rewriteRunDirectoryPathValue,
+} from "../role-run-relocation.ts";
+import {
   loadDoctorCase,
 } from "../doctor-evidence.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
@@ -141,6 +146,8 @@ export type AdmittedGleanerLeftInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedInspectorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "inspector";
+  /** Parent run directory (#747 / #879); independent of dialogue instruction. */
+  readonly sourceRunPath?: string;
 };
 
 export type AdmittedGatekeeperInvocation = AdmittedRoleInvocationBase & {
@@ -387,9 +394,9 @@ async function writeRoleInvocationLedger(
  * identity page (resume / temporary override path — same field shape as admission).
  * Bare model clears any prior thinking key so absence stays honest.
  *
- * Engine axis (#617 Scope 1): `string` writes, `null` deletes (authoritative seat
- * projection when the live table has no engine), `undefined` preserves any existing
- * key for non-authoritative partial updates.
+ * Engine axis (#617 Scope 1 / #883): `string` writes, `null` deletes (authoritative
+ * seat projection when the live table has no engine/model), `undefined` preserves
+ * any existing key for non-authoritative partial updates.
  * Host stays write-if-present (`string` only).
  */
 export async function recordEffectiveInvocationModel(
@@ -397,6 +404,7 @@ export async function recordEffectiveInvocationModel(
   model?: InvocationEffectiveModel,
   engine?: string | null,
   host?: string,
+  engineModel?: string | null,
 ): Promise<void> {
   const ledgerPath = join(runDirectory, "invocation.json");
   const current = JSON.parse(await readFile(ledgerPath, "utf8")) as Record<
@@ -417,6 +425,11 @@ export async function recordEffectiveInvocationModel(
     delete next.engine;
   } else if (engine !== undefined) {
     next.engine = engine;
+  }
+  if (engineModel === null) {
+    delete next.engineModel;
+  } else if (engineModel !== undefined) {
+    next.engineModel = engineModel;
   }
   if (host !== undefined) {
     next.host = host;
@@ -513,74 +526,36 @@ export async function relocateAdmittedRunToTicket(
   await rename(oldRunDirectory, target.runDirectory);
   heldLease?.relocate(target.runDirectory);
 
-  const relocatedPath = (value: unknown): unknown =>
-    typeof value === "string" &&
-    (value === oldRunDirectory || value.startsWith(`${oldRunDirectory}${sep}`))
-      ? `${target.runDirectory}${value.slice(oldRunDirectory.length)}`
-      : value;
-  const relocateFields = (record: Record<string, unknown>, fields: readonly string[]): void => {
-    for (const field of fields) record[field] = relocatedPath(record[field]);
-  };
   const admittedRecord = admitted as unknown as Record<string, unknown>;
-  relocateFields(admittedRecord, [
-    "runDirectory",
-    "admittedRequestPath",
-    "taskPath",
-    "packetPath",
-    "prerequisitesPath",
-    "requestManifestPath",
-    "mergerInputPath",
-  ]);
-  for (const attachment of admitted.attachments) {
-    (attachment as { frozenPath: string }).frozenPath = relocatedPath(
-      attachment.frozenPath,
-    ) as string;
-  }
-  const principal = authority.seal(target);
-  (admitted as { principal: DurablePrincipal }).principal = principal;
-
-  const admittedPath = join(target.runDirectory, "admitted-request.json");
-  if (existsSync(admittedPath)) {
-    const page = JSON.parse(await readFile(admittedPath, "utf8")) as Record<string, unknown>;
-    relocateFields(page, [
+  rewriteRunDirectoryPathFields(
+    admittedRecord,
+    [
       "runDirectory",
       "admittedRequestPath",
-      "sessionDirectory",
-      "sessionFile",
       "taskPath",
       "packetPath",
       "prerequisitesPath",
       "requestManifestPath",
       "mergerInputPath",
-    ]);
-    if (Array.isArray(page.attachments)) {
-      for (const attachment of page.attachments) {
-        if (attachment !== null && typeof attachment === "object") {
-          relocateFields(attachment as Record<string, unknown>, ["frozenPath"]);
-        }
-      }
-    }
-    await writeFile(admittedPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+    ],
+    oldRunDirectory,
+    target.runDirectory,
+  );
+  for (const attachment of admitted.attachments) {
+    (attachment as { frozenPath: string }).frozenPath = rewriteRunDirectoryPathValue(
+      attachment.frozenPath,
+      oldRunDirectory,
+      target.runDirectory,
+    ) as string;
   }
+  const principal = authority.seal(target);
+  (admitted as { principal: DurablePrincipal }).principal = principal;
 
-  const invocationPath = join(target.runDirectory, "invocation.json");
-  if (existsSync(invocationPath)) {
-    const page = JSON.parse(await readFile(invocationPath, "utf8")) as Record<string, unknown>;
-    relocateFields(page, ["runDirectory", "sessionDirectory", "sessionFile"]);
-    await writeFile(invocationPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
-  }
-
-  const statePath = join(target.runDirectory, "run-state.json");
-  if (existsSync(statePath)) {
-    const page = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
-    relocateFields(page, [
-      "runDirectory",
-      "admittedRequestPath",
-      "sessionDirectory",
-      "sessionFile",
-    ]);
-    await writeFile(statePath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
-  }
+  await rewriteRoleRunDurablePages({
+    pagesDirectory: target.runDirectory,
+    oldRunDirectory,
+    newRunDirectory: target.runDirectory,
+  });
 }
 
 /**

@@ -16,7 +16,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 import { exitCodeForTerminalOutcome, formatFailureStderrDiagnostic, isLawfulTypedTerminalOutcome } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -211,7 +211,7 @@ test("public CLI multi-turn audit escalate covers audited seats", async () => {
         `${role}: escalate must not set acceptedReceipt true`,
       );
       assert.equal(
-        payloadFacts(escalateOutcome).kind,
+        (objectPayloads(escalateOutcome)[0] ?? {}).kind,
         AUDIT_ESCALATION_KIND,
         role,
       );
@@ -309,7 +309,7 @@ test("public report publication failures retain typed errno identity", async () 
       assert.equal(outcome.kind, "failure", row.label);
       if (outcome.kind !== "failure") throw new Error("expected publication failure");
       // Must not wash publication errno into generic output absence.
-      assert.equal(outcome.cause, "unrecognized", row.label);
+      assert.equal(outcome.cause, undefined, row.label);
       assert.notEqual(outcome.cause, "output", row.label);
       assert.equal(outcome.decisiveFacts.errorCode, row.expectedCode, row.label);
       const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
@@ -319,7 +319,7 @@ test("public report publication failures retain typed errno identity", async () 
         identity?: { name?: string; code?: string | number };
         diagnostic: string;
       };
-      assert.equal(errorBody.cause, "unrecognized", row.label);
+      assert.equal(errorBody.cause, undefined, row.label);
       assert.equal(errorBody.identity?.code, "EISDIR", row.label);
       assert.ok(errorBody.diagnostic.length > 0, row.label);
     });
@@ -685,7 +685,7 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted");
-    assert.equal(payloadStatus(result.terminal!.roleOutcome), "converged");
+    assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["converged"]);
     assert.equal(result.terminal!.runId, "run-prefer-lawful-001");
   });
 });

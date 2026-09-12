@@ -12,6 +12,7 @@ import {
   ENGINE_DETOUR_TOOL_NAME,
   engineDetourFailureDiagnostic,
   isEngineDetourFailure,
+  resolveEngineModel,
   resolveEngineName,
   runEngineDetourOnce,
 } from "./engine-detour.ts";
@@ -65,14 +66,21 @@ function isCallerCancellation(
  */
 export function createEngineDetourToolDefinition(input: {
   engineName: string;
+  /** Optional pool-directive model id (#883); description only — argv stays caller-assembled. */
+  engineModel?: string;
   fail: (error: Error, toolCallId: string, ctx: EngineDetourContext) => never;
 }): HostToolDefinition<typeof engineDetourArgsSchema, unknown, EngineDetourContext> {
   const engineName = input.engineName;
+  const engineModel = input.engineModel;
+  const engineCoord =
+    engineModel === undefined
+      ? `engine=${engineName}`
+      : `engine=${engineName}, model=${engineModel}`;
   return {
     name: ENGINE_DETOUR_TOOL_NAME,
     label: "劳务引擎",
     description:
-      `运行一次劳务引擎子进程（engine=${engineName}），stdout 返回本 session。`,
+      `运行一次劳务引擎子进程（${engineCoord}），stdout 返回本 session。`,
     promptSnippet: "运行配置的劳务引擎一次并返回 stdout",
     parameters: engineDetourArgsSchema,
     async execute(
@@ -136,13 +144,16 @@ export function registerEngineDetourTool(
   roleHost: RoleHost,
   hostActions: EngineDetourHostActions,
 ): boolean {
-  const engineName = resolveEngineName((name) => roleHost.getFlag(name));
+  const getFlag = (name: string) => roleHost.getFlag(name);
+  const engineName = resolveEngineName(getFlag);
   if (engineName === undefined) {
     return false;
   }
+  const engineModel = resolveEngineModel(getFlag);
 
   const definition = createEngineDetourToolDefinition({
     engineName,
+    ...(engineModel === undefined ? {} : { engineModel }),
     fail(error, toolCallId, ctx) {
       hostActions.failInfrastructure(error, ctx, toolCallId);
     },

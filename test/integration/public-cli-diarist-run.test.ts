@@ -6,7 +6,7 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -80,7 +80,7 @@ type RegisteredTool = {
 
 /**
  * Faux pi process for this seat: drives the production diarist role envelope.
- * Sets AK_ROLE_RUN_DIR from the spawn env so accept can bind + commit (#779).
+ * Projects the spawn run identity into typed HostContext (#779/#879).
  */
 function diaristEnvelopeRunner(submitted: unknown): LegacyFauxPiRunner {
   return async (args, options) => {
@@ -92,13 +92,13 @@ function diaristEnvelopeRunner(submitted: unknown): LegacyFauxPiRunner {
       on() {},
       getAllTools: () => (registered === undefined ? [] : [{ name: registered.name }]),
     } as unknown as RoleHost;
-    const priorRunDir = process.env.AK_ROLE_RUN_DIR;
     const runDir = options.env.AK_ROLE_RUN_DIR;
-    if (typeof runDir === "string" && runDir.trim() !== "") {
-      process.env.AK_ROLE_RUN_DIR = runDir;
-    }
-    try {
-      const runtime = createDiaristRoleRuntime(host, {
+    assert.ok(runDir);
+    const sessionDir = join(runDir, "session");
+    const sessionFile = join(sessionDir, "session.jsonl");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(sessionFile, "");
+    const runtime = createDiaristRoleRuntime(host, {
         loadSoul: async () => "起居郎职分（测试装载）",
       });
       await runtime.activate();
@@ -108,17 +108,19 @@ function diaristEnvelopeRunner(submitted: unknown): LegacyFauxPiRunner {
         submitted,
         undefined,
         undefined,
-        {} as HostContext,
+        {
+          runDirectory: runDir,
+          sessionManager: {
+            getSessionDir: () => sessionDir,
+            getSessionFile: () => sessionFile,
+          },
+        } as HostContext,
       );
-      return scriptedTerminatingToolSession({
-        role: "diarist",
-        toolName: DIARIST_OUTPUT_TOOL_NAME,
-        details: accepted.details,
-      })(args, options);
-    } finally {
-      if (priorRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-      else process.env.AK_ROLE_RUN_DIR = priorRunDir;
-    }
+    return scriptedTerminatingToolSession({
+      role: "diarist",
+      toolName: DIARIST_OUTPUT_TOOL_NAME,
+      details: accepted.details,
+    })(args, options);
   };
 }
 

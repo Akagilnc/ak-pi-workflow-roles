@@ -5,12 +5,30 @@
  * 只读已有案卷：不刷新、不生成、不校验内容、不新增拒收或停工条件。
  * 机器文本仅中立标识材料（ADR 0073），用途说明归角色材料所有。
  *
- * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口追加本段。
+ * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口挂载。
+ * 普通入口把本段追加进 continuation；station-child 审核轮次走 attachments
+ * 冻结 + role-runtime `loadCaseDossierReadingMaterial` → readingMaterial →
+ * systemPrompt.materials fold（#879：对话 instruction 保持父腿 payload 原文；
+ * 起居录作独立附件面，不新造 RoleTurnRequest.materials）。
  */
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { resolveTicketProvenanceVolume } from "../ticket-provenance.ts";
+import {
+  freezeAttachmentsIntoRun,
+  type FrozenAttachment,
+} from "./invocation.ts";
 
 /** Section heading of the system-delivered dossier pointer (presentation only). */
 const CASE_DOSSIER_SECTION_HEADING = "## 本票起居录（系统随案提供）" as const;
+
+/** Stable freeze key under run/attachments/ for station-child 0081 delivery. */
+const CASE_DOSSIER_ATTACH_KEY = "case-dossier" as const;
+
+/** Leaf name of the frozen pointer section (content = purpose + paths). */
+const CASE_DOSSIER_ATTACH_FILE = "case-dossier-pointer.md" as const;
 
 /** Pointer only — presence/absence is for the role to observe at the path. */
 function describeDossierFile(path: string): string {
@@ -41,4 +59,71 @@ export async function projectCaseDossierPointerSection(input: {
     `人读视图：${describeDossierFile(volume.humanViewFile)}`,
     `记录卷宗：${describeDossierFile(volume.recordFile)}`,
   ].join("\n");
+}
+
+/**
+ * ADR 0081 delivery for station-child officer turns (#879): freeze the same
+ * pointer section through the existing attachments seam. Role-runtime loads
+ * that freeze via loadCaseDossierReadingMaterial onto readingMaterial; the
+ * envelope then folds it into systemPrompt.materials. Peer dialogue instruction
+ * stays the parent payload; never RoleTurnRequest.materials.
+ * Returns frozen attachments, or undefined when unbound (no dossier).
+ */
+export async function deliverCaseDossierAsAttachment(input: {
+  readonly ticketNumber: number | undefined;
+  readonly projectRoot: string;
+  readonly home: string;
+  readonly runDirectory: string;
+}): Promise<readonly FrozenAttachment[] | undefined> {
+  const section = await projectCaseDossierPointerSection({
+    ticketNumber: input.ticketNumber,
+    projectRoot: input.projectRoot,
+    home: input.home,
+  });
+  if (section === undefined) return undefined;
+  // Stage in OS temp only — never leave a run-local .case-dossier-stage copy.
+  const stagingDir = await mkdtemp(join(tmpdir(), "ak-case-dossier-"));
+  try {
+    const stagingPath = join(stagingDir, CASE_DOSSIER_ATTACH_FILE);
+    await writeFile(stagingPath, `${section}\n`, "utf8");
+    return await freezeAttachmentsIntoRun(
+      [stagingPath],
+      input.runDirectory,
+      CASE_DOSSIER_ATTACH_KEY,
+    );
+  } finally {
+    await rm(stagingDir, { recursive: true, force: true });
+  }
+}
+
+/** Typed reading-material face for a frozen station-child 0081 attachment. */
+export type CaseDossierReadingMaterial = {
+  readonly kind: "case-dossier-pointer";
+  readonly frozenPath: string;
+  readonly section: string;
+};
+
+/**
+ * Load a previously frozen case-dossier attachment as reading material
+ * (existing agent-start / systemPrompt.materials fold — not dialogue prompt,
+ * not RoleTurnRequest.materials). Undefined when the run has no such freeze.
+ */
+export async function loadCaseDossierReadingMaterial(
+  runDirectory: string,
+): Promise<CaseDossierReadingMaterial | undefined> {
+  const frozenPath = join(
+    runDirectory,
+    "attachments",
+    CASE_DOSSIER_ATTACH_KEY,
+    `00-${CASE_DOSSIER_ATTACH_FILE}`,
+  );
+  let section: string;
+  try {
+    section = await readFile(frozenPath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (section.trim() === "") return undefined;
+  return { kind: "case-dossier-pointer", frozenPath, section };
 }

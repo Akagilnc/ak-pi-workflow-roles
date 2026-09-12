@@ -36,6 +36,7 @@ import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import {
   appendEngineSessionMaterial,
   engineSessionMaterialFromOptions,
+  pickEngineAxis,
   type EngineSessionMaterial,
 } from "../package-resources/engine-material.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
@@ -177,13 +178,14 @@ export function selectResumeContinuationPrompt(
 export function buildResumeContinuationPrompt(options: {
   packageRoot: string;
   engine?: string;
+  engineModel?: string;
   message?: string;
 }): string {
   return selectResumeContinuationPrompt(
     options.message,
     engineSessionMaterialFromOptions({
-      ...(options.engine === undefined ? {} : { engine: options.engine }),
       packageRoot: options.packageRoot,
+      ...pickEngineAxis(options),
     }),
   );
 }
@@ -560,6 +562,7 @@ export async function markRunRunning(
   effectiveModel?: InvocationEffectiveModel,
   effectiveEngine?: string,
   effectiveHost?: string,
+  effectiveEngineModel?: string,
 ): Promise<void> {
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
@@ -585,6 +588,12 @@ export async function markRunRunning(
     // Authoritative seat projection: absent engine ⇒ null (delete).
     effectiveEngine === undefined ? null : effectiveEngine,
     effectiveHost,
+    // Authoritative with engine: absent model ⇒ null (delete) when engine axis is written.
+    effectiveEngine === undefined
+      ? null
+      : effectiveEngineModel === undefined
+        ? null
+        : effectiveEngineModel,
   );
 }
 
@@ -749,31 +758,34 @@ function isProcessAlive(pid: number): boolean {
 }
 
 
-type WriterLockAutopsy =
-  | { verdict: "absent"; readFailure?: unknown }
+export type WriterLockAutopsy =
+  | { verdict: "absent" }
+  | { verdict: "unknown"; reason: "unparseable"; content: string }
+  | { verdict: "unknown"; reason: "unreadable"; readFailure: unknown }
   | { verdict: "dead"; pid: number }
   | { verdict: "alive"; pid: number };
 
 /**
- * Holder autopsy for an existing writer.lock (#552). "absent" covers no file,
- * no parseable pid (a live creator mid-acquisition reads as empty, and so does
- * the crash-window leftover), and unreadable files — absent alone never
- * authorizes reclaim; only a "dead" verdict does. A non-ENOENT read failure
- * still decides "absent" but rides along as readFailure so the true cause can
- * land in the cleanup sink instead of being laundered away.
+ * The writer lease holder is the shared authority for current run activity.
+ * Only ENOENT proves no holder; malformed or unreadable locks remain unknown
+ * because they can be observed while a live creator is writing its pid.
  */
-async function autopsyWriterLock(lockPath: string): Promise<WriterLockAutopsy> {
+export async function autopsyWriterLock(lockPath: string): Promise<WriterLockAutopsy> {
   let content: string;
   try {
     content = await readFile(lockPath, "utf8");
   } catch (error) {
     if (errorCodeOf(error) === "ENOENT") return { verdict: "absent" };
-    return { verdict: "absent", readFailure: error };
+    return { verdict: "unknown", reason: "unreadable", readFailure: error };
   }
   const normalized = content.trim();
-  if (!/^[1-9]\d*$/.test(normalized)) return { verdict: "absent" };
+  if (!/^[1-9]\d*$/.test(normalized)) {
+    return { verdict: "unknown", reason: "unparseable", content };
+  }
   const pid = Number.parseInt(normalized, 10);
-  if (!Number.isSafeInteger(pid) || pid <= 0) return { verdict: "absent" };
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    return { verdict: "unknown", reason: "unparseable", content };
+  }
   return isProcessAlive(pid) ? { verdict: "alive", pid } : { verdict: "dead", pid };
 }
 
@@ -784,9 +796,9 @@ function describeAutopsy(autopsy: WriterLockAutopsy): string {
     case "dead":
       return `dead pid ${autopsy.pid}`;
     case "absent":
-      return autopsy.readFailure !== undefined
-        ? "unreadable lock"
-        : "absent or unparseable holder";
+      return "absent holder";
+    case "unknown":
+      return autopsy.reason === "unreadable" ? "unreadable lock" : "unparseable holder";
   }
 }
 
@@ -948,7 +960,7 @@ export async function acquireRunWriterLease(
       if (errorCodeOf(error) !== "EEXIST") throw error;
     }
     lastAutopsy = await autopsyWriterLock(lockPath);
-    if (lastAutopsy.verdict === "absent" && lastAutopsy.readFailure !== undefined) {
+    if (lastAutopsy.verdict === "unknown" && lastAutopsy.reason === "unreadable") {
       reportReadFailure(lastAutopsy.readFailure);
     }
     if (lastAutopsy.verdict === "alive") {
@@ -956,11 +968,16 @@ export async function acquireRunWriterLease(
         `role run writer lease is already held by live pid ${lastAutopsy.pid} at ${lockPath}`,
       );
     }
-    if (lastAutopsy.verdict === "absent") {
+    if (lastAutopsy.verdict === "unknown") {
       throw new RunWriterLeaseHeldError(
-        lastAutopsy.readFailure !== undefined
+        lastAutopsy.reason === "unreadable"
           ? `role run writer lease lock is unreadable at ${lockPath}: ${describeErrorIdentity(lastAutopsy.readFailure)}; holder liveness unverifiable, lock left in place`
           : `role run writer lease lock at ${lockPath} has no verifiable holder pid (empty or unparseable); holder liveness unverifiable, lock left in place`,
+      );
+    }
+    if (lastAutopsy.verdict === "absent") {
+      throw new RunWriterLeaseHeldError(
+        `role run writer lease disappeared before holder autopsy at ${lockPath}`,
       );
     }
     if (reclaimsLeft <= 0) break;
@@ -1007,8 +1024,10 @@ export async function findRunDirectoryById(
   let bookKeys: string[];
   try {
     bookKeys = await readdir(booksRoot);
-  } catch {
-    return undefined;
+  } catch (error) {
+    // Only a missing books root is "unknown id"; permission/IO damage propagates.
+    if (errorCodeOf(error) === "ENOENT") return undefined;
+    throw error;
   }
   for (const bookKey of bookKeys) {
     if (onlyBookKey !== undefined && bookKey !== onlyBookKey) continue;
@@ -1016,8 +1035,9 @@ export async function findRunDirectoryById(
     let runDirectories: string[];
     try {
       runDirectories = await listBookRunDirectories(bookDir);
-    } catch {
-      continue;
+    } catch (error) {
+      if (errorCodeOf(error) === "ENOENT") continue;
+      throw error;
     }
     for (const runDirectory of runDirectories) {
       const entry = basename(runDirectory);
@@ -1092,8 +1112,10 @@ async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boole
   try {
     const stat = await lstat(sessionFile);
     return stat.isFile() && !stat.isSymbolicLink();
-  } catch {
-    return false;
+  } catch (error) {
+    // Absent session file → not formed; permission/IO/damage keeps identity.
+    if (errorCodeOf(error) === "ENOENT") return false;
+    throw error;
   }
 }
 
@@ -2041,6 +2063,9 @@ export async function loadResumableInspectorRun(
   const admitted: AdmittedInspectorInvocation = {
     role: "inspector",
     ...resumedBaseAdmitted(loaded),
+    ...(loaded.admittedFields.sourceRunPath === undefined
+      ? {}
+      : { sourceRunPath: loaded.admittedFields.sourceRunPath }),
   };
   return seatLoadedResult(loaded, admitted);
 }

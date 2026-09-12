@@ -4,7 +4,7 @@
  * #599: manual resume continues the exact session; 只上弹章.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
-import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitGleanerLeftInvocation,
@@ -95,7 +95,7 @@ export async function runPublicGleanerLeft(
     home: env.home,
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...pickEngineAxis(env),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(env.correlationId === undefined || env.correlationId.trim() === ""
       ? {}
@@ -105,7 +105,7 @@ export async function runPublicGleanerLeft(
       prompt: buildGleanerLeftTransportPrompt(
         admitted,
         engineSessionMaterialFromOptions({
-          ...(env.engine === undefined ? {} : { engine: env.engine }),
+          ...pickEngineAxis(env),
           packageRoot: env.packageRoot,
         }),
       ),

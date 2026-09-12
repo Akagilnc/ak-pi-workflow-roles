@@ -3,15 +3,17 @@ import test from "node:test";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { renderAgentStartMaterials } from "../../src/agent-start-materials.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import { projectNotarySessionBound } from "../../src/notary-role.ts";
+import { encodeUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 
 /** Minimal Pi surface: capture before_agent_start as the provider-visible return path. */
 function piCapture() {
-  const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+  const handlers = new Map<string, Array<(event: any, ctx: ExtensionContext) => any>>();
   const pi = {
     on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) {
-      handlers.set(event, handler);
+      handlers.set(event, [...(handlers.get(event) ?? []), handler]);
     },
     registerFlag() {},
     getFlag() {
@@ -67,7 +69,7 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
     const { pi, handlers, ctx } = piCapture();
     const adapter = createPiRoleHostAdapter(pi);
     adapter.host.on("before_agent_start", () => returnValue);
-    const handler = handlers.get("before_agent_start");
+    const handler = handlers.get("before_agent_start")?.[0];
     assert.ok(handler);
     const result = await handler(
       { prompt: "", systemPrompt: "BASE", systemPromptOptions: {} },
@@ -86,6 +88,18 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
     systemPrompt: "BASE",
     readingMaterial: otherBound,
   });
+  const { pi, handlers, ctx } = piCapture();
+  const adapter = createPiRoleHostAdapter(pi);
+  adapter.host.on("before_agent_start", () => ({ readingMaterial: bound }));
+  adapter.host.on("before_agent_start", () => ({ readingMaterial: otherBound }));
+  let currentSystemPrompt = "BASE";
+  for (const handler of handlers.get("before_agent_start") ?? []) {
+    const result = await handler(
+      { prompt: "", systemPrompt: currentSystemPrompt, systemPromptOptions: {} },
+      ctx,
+    );
+    if (result?.systemPrompt !== undefined) currentSystemPrompt = result.systemPrompt;
+  }
 
   // Empty materials: body passthrough; typed field never reaches Pi.
   assert.equal(bodyOnly.systemPrompt, "BASE");
@@ -97,4 +111,50 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
   assert.equal(typeof withBound.systemPrompt, "string");
   assert.notEqual(withBound.systemPrompt, bodyOnly.systemPrompt);
   assert.notEqual(withBound.systemPrompt, withOther.systemPrompt);
+  assert.equal(
+    currentSystemPrompt,
+    renderAgentStartMaterials(
+      renderAgentStartMaterials("BASE", [bound]),
+      [otherBound],
+    ),
+  );
+});
+
+test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at agent-start", async () => {
+  const collision = encodeUserDialogueStdin("ACTUAL");
+  const wrapped = encodeUserDialogueStdin(collision);
+  const { pi, handlers, ctx } = piCapture();
+  const adapter = createPiRoleHostAdapter(pi);
+  const seenInputs: string[] = [];
+  let seenPrompt: string | undefined;
+  adapter.host.on("input", (event) => {
+    seenInputs.push(event.text);
+    return { action: "continue" as const };
+  });
+  adapter.host.on("input", (event) => {
+    seenInputs.push(event.text);
+    return { action: "continue" as const };
+  });
+  adapter.host.on("before_agent_start", (event) => {
+    seenPrompt = event.prompt;
+    return {};
+  });
+
+  const inputHandlers = handlers.get("input");
+  assert.ok(inputHandlers);
+  let inputEvent = { text: wrapped, source: "piped" };
+  for (const inputHandler of inputHandlers) {
+    const result = await inputHandler(inputEvent, ctx);
+    if (result?.action === "transform") inputEvent = { ...inputEvent, text: result.text };
+  }
+  assert.deepEqual(seenInputs, [collision, collision]);
+  assert.equal(inputEvent.text, collision);
+
+  const startHandler = handlers.get("before_agent_start")?.[0];
+  assert.ok(startHandler);
+  await startHandler(
+    { prompt: collision, systemPrompt: "BASE", systemPromptOptions: {} },
+    ctx,
+  );
+  assert.equal(seenPrompt, collision);
 });

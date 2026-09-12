@@ -179,6 +179,7 @@ export function createNotaryRoleRuntime(
         });
         // Evidence assembly only (ADR 0018): soul + bound projection.
         // Ticket value is envelope-admitted at activate — not re-read from flags here.
+        // #879 case dossier freeze→readingMaterial is envelope-owned (shared before_agent_start).
         pi.on("before_agent_start", (event) => {
           if (activation === undefined) {
             throw new Error("符宝郎未激活");

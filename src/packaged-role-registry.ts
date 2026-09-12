@@ -174,7 +174,7 @@ export const PUBLIC_ROLE_RECORDS = [
     role: "inspector",
     phases: [null],
     outputTool: INSPECTOR_OUTPUT_TOOL_NAME,
-    inputFlag: undefined,
+    inputFlag: "ak-inspector-source-run",
     phaseFlag: undefined,
     activationStage: "load-and-install",
     sessionMaterials: INSPECTOR_SESSION_MATERIALS,

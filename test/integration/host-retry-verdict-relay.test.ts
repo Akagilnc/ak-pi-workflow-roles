@@ -35,6 +35,7 @@ function baseRequest(runDirectory: string, home: string): RoleTurnRequest {
 }
 
 const HEADLESS_PROBE_DESCRIPTION: HeadlessHostDescription = {
+  protocol: "claude-print",
   binaryFromHome: ["unused"],
   sessionBindingFile: "probe-headless-session.json",
   fixedArgs: [],
@@ -53,12 +54,7 @@ async function writeFakeHeadlessBinary(runDirectory: string, promptLog: string):
   await writeFile(
     binary,
     `#!/bin/sh
-prompt=""
-prev=""
-for arg in "$@"; do
-  if [ "$prev" = "-p" ]; then prompt="$arg"; fi
-  prev="$arg"
-done
+prompt=$(cat)
 printf '%s\\n' "$prompt" >> ${JSON.stringify(promptLog)}
 printf '%s\\n' '{"type":"result","subtype":"success","is_error":false,"session_id":"sess-headless","structured_output":{"ok":true}}'
 `,

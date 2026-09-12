@@ -1,4 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
@@ -29,7 +30,7 @@ import { execFileSync } from "node:child_process";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { renderPublicAkRoleCommand } from "../../src/public-cli/command-renderer.ts";
@@ -399,8 +400,8 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
   // AC4 typed owner: complete assembly before presentation.
   assert.equal(terminal.roleOutcome.role, "judge");
   assert.equal(terminal.roleOutcome.kind, "accepted");
-  assert.equal(payloadStatus(terminal.roleOutcome), "converged");
-  assert.equal(payloadFacts(terminal.roleOutcome).judgeStatus, "converged");
+  assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["converged"]);
+  assert.equal((objectPayloads(terminal.roleOutcome)[0] ?? {}).judgeStatus, "converged");
   assert.equal(terminal.navigator.disposition, "recommendation");
   if (terminal.navigator.disposition === "recommendation") {
     assert.equal(terminal.navigator.next.role, "fixer");
@@ -962,6 +963,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     const { io, stdout, stderr } = captureIo();
     let capturedArgs: string[] | undefined;
     let capturedEnv: NodeJS.ProcessEnv | undefined;
+    let capturedStdin: string | undefined;
 
     const result = await runAkRole(
       [
@@ -985,6 +987,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
             piRunner: async (args, options) => {
           capturedArgs = [...args];
           capturedEnv = options.env;
+          capturedStdin = options.stdin;
           const sessionDirIdx = args.indexOf("--session-dir");
           assert.ok(sessionDirIdx >= 0);
           const sessionDir = args[sessionDirIdx + 1]!;
@@ -1086,13 +1089,13 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       capturedArgs!.some((arg) => arg.includes("burden")),
       false,
     );
-    // Opaque instruction reaches the gate as the prompt tail.
+    // Opaque instruction reaches the host as typed stdin, not an argv tail.
+    const prompt = readUserDialogueStdin(capturedStdin ?? "");
     assert.equal(
-      capturedArgs!.at(-1)?.includes("Decide whether the attachment is sufficient."),
+      prompt.includes("Decide whether the attachment is sufficient."),
       true,
     );
     // Frozen attachment path (not the mutable source) is what the prompt references.
-    const prompt = capturedArgs!.at(-1)!;
     assert.match(prompt, /attachments\/00-note\.txt/);
     assert.equal(prompt.includes(attachment), false);
 
@@ -1129,9 +1132,9 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     assert.match(stdout.join(""), /judge\taccepted/);
     assert.equal(terminal.roleOutcome.role, "judge");
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(payloadStatus(terminal.roleOutcome), "converged");
+    assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["converged"]);
     assert.equal(
-      (payloadFacts(terminal.roleOutcome).auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt,
+      ((objectPayloads(terminal.roleOutcome)[0] ?? {}).auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt,
       false,
     );
     assert.equal(terminal.navigator.disposition, "recommendation");
@@ -1158,7 +1161,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     // #836: the persisted report carries the role's original payload, not an
     // invented top-level status — read judgeStatus off the last payload,
     // same as the live terminal above.
-    assert.equal(payloadStatus(report.outcome), "converged");
+    assert.deepEqual(payloadStatusSequence(report.outcome), ["converged"]);
 
     // Source mutation after admission does not affect frozen snapshot.
     await writeFile(attachment, "changed", "utf8");
@@ -1184,8 +1187,8 @@ test("runAkRole judge empty request does not invent semantic task content on the
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-        prompt = String(args.at(-1));
+            piRunner: async (args, options) => {
+        prompt = readUserDialogueStdin(String(options.stdin ?? ""));
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
         const details = { judgeStatus: "converged" };
@@ -1244,6 +1247,6 @@ test("runAkRole judge empty request does not invent semantic task content on the
       assert.equal(typeof terminal.navigator.reason, "string");
     }
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(payloadStatus(terminal.roleOutcome), "converged");
+    assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["converged"]);
   });
 });

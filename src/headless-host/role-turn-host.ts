@@ -1,8 +1,13 @@
-/** Headless CLI last hop (#645/#820): spawn/parse/bind. Shared loop = external-host-turn-loop. */
-import { spawn } from "node:child_process";
+/**
+ * Headless CLI last hop (#645/#646/#820): spawn/parse/bind. Shared retry/resume
+ * loop = external-host-turn-loop. Claude print-mode and codex exec share this
+ * lifecycle; argv/parse are protocol-specific.
+ */
+import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
 import {
@@ -19,8 +24,13 @@ import {
 
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
+  closeJsonSchemaForCodex,
+  codexTurnArgs,
   headlessMcpConfigDocument,
   headlessTurnArgs,
+  isClaudePrintDescription,
+  isCodexExecDescription,
+  isPlainObject,
   type HeadlessHostDescription,
 } from "./description.ts";
 
@@ -71,7 +81,7 @@ export type HeadlessCliResult = Readonly<{
  * envelope without stream-json `type`). Intermediate stream-json events are not.
  */
 function isHeadlessResultCandidate(value: unknown): value is HeadlessCliResult {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  if (!isPlainObject(value)) return false;
   const record = value as HeadlessCliResult & { type?: unknown };
   return record.type === undefined
     || record.type === "result"
@@ -79,7 +89,7 @@ function isHeadlessResultCandidate(value: unknown): value is HeadlessCliResult {
 }
 
 /**
- * Parse host stdout into the result envelope.
+ * Parse Claude host stdout into the result envelope.
  * Production uses `--output-format stream-json` (#811 live records); last-result
  * line is the typed receipt. A single-document `json` body still parses so a
  * misconfigured description yields a typed miss rather than a silent empty parse.
@@ -101,7 +111,7 @@ export function parseHeadlessCliStdout(stdout: string): HeadlessCliResult | unde
     if (text === "") continue;
     try {
       const value = JSON.parse(text) as unknown;
-      if (typeof value !== "object" || value === null || Array.isArray(value)) continue;
+      if (!isPlainObject(value)) continue;
       const record = value as HeadlessCliResult & { type?: unknown };
       // Multi-line stream: only explicit result / structured_output lines (not bare objects).
       if (record.type === "result" || record.structured_output !== undefined) {
@@ -129,6 +139,116 @@ function resultCandidateText(line: string): string | undefined {
   }
 }
 
+/**
+ * Minimal consumer-driven parse of `codex exec --json` JSONL (ADR 0043).
+ * Only takes thread_id, final agent_message text, and terminal turn.failed.
+ * Top-level `error` events are non-terminal (reconnect notices, skill budget
+ * warnings); they must not poison a later turn.completed receipt.
+ */
+export type CodexExecTurnObservation = Readonly<{
+  threadId?: string;
+  /** Last `item.completed` agent_message text (final message / structured receipt). */
+  finalMessage?: string;
+  /** Present only for terminal `turn.failed` (not recoverable `error` events). */
+  failureDiagnostic?: string;
+  turnCompleted: boolean;
+}>;
+
+function createCodexExecTurnObserver(): {
+  readonly observe: (event: unknown) => void;
+  readonly result: () => CodexExecTurnObservation;
+} {
+  let threadId: string | undefined;
+  let finalMessage: string | undefined;
+  let failureDiagnostic: string | undefined;
+  let turnCompleted = false;
+
+  return {
+    observe(value) {
+      if (!isPlainObject(value)) return;
+      const type = typeof value.type === "string" ? value.type : undefined;
+      if (type === "thread.started" && typeof value.thread_id === "string" && value.thread_id !== "") {
+        threadId = value.thread_id;
+      } else if (type === "item.completed" && isPlainObject(value.item)) {
+        if (value.item.type === "agent_message" && typeof value.item.text === "string") {
+          finalMessage = value.item.text;
+        }
+      } else if (type === "turn.completed") {
+        turnCompleted = true;
+        failureDiagnostic = undefined;
+      } else if (type === "turn.failed") {
+        turnCompleted = false;
+        failureDiagnostic = formatCodexFailurePayload(value.error ?? value);
+      }
+      // Top-level `error` is non-terminal; exit/receipt handling remains downstream.
+    },
+    result() {
+      return {
+        ...(threadId === undefined ? {} : { threadId }),
+        ...(finalMessage === undefined ? {} : { finalMessage }),
+        ...(failureDiagnostic === undefined ? {} : { failureDiagnostic }),
+        turnCompleted,
+      };
+    },
+  };
+}
+
+function formatCodexFailurePayload(payload: unknown): string {
+  if (typeof payload === "string" && payload.trim() !== "") return payload;
+  if (isPlainObject(payload)) {
+    if (typeof payload.message === "string" && payload.message.trim() !== "") return payload.message;
+    try {
+      return JSON.stringify(payload);
+    } catch {
+      return "codex turn failed";
+    }
+  }
+  return String(payload);
+}
+
+/** cwd or an ancestor has a `.git` entry (file or directory). */
+function cwdIsGitWorkTree(cwd: string): boolean {
+  let dir = cwd;
+  for (;;) {
+    if (existsSync(join(dir, ".git"))) return true;
+    const parent = dirname(dir);
+    if (parent === dir) return false;
+    dir = parent;
+  }
+}
+
+/**
+ * Absolute git common dir for workspace-write extra roots (worktree index.lock).
+ * When cwd is not a git work tree → undefined (caller skips extra roots).
+ * When cwd is a git work tree, git non-zero / empty stdout / spawn failure
+ * must fail loud with the real cause — never wash into "no common dir".
+ */
+function resolveGitCommonDir(cwd: string): string | undefined {
+  if (!cwdIsGitWorkTree(cwd)) return undefined;
+  let result: { status: number | null; stdout: string; stderr: string; error?: Error };
+  try {
+    result = spawnSync("git", ["rev-parse", "--git-common-dir"], {
+      cwd,
+      encoding: "utf8",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`git rev-parse --git-common-dir failed: ${message}`);
+  }
+  if (result.error !== undefined) {
+    throw new Error(`git rev-parse --git-common-dir failed: ${result.error.message}`);
+  }
+  if (result.status !== 0) {
+    const detail = result.stderr.trim() || `exit ${String(result.status)}`;
+    throw new Error(`git rev-parse --git-common-dir failed: ${detail}`);
+  }
+  const raw = result.stdout.trim();
+  if (raw === "") {
+    throw new Error("git rev-parse --git-common-dir returned empty stdout");
+  }
+  return isAbsolute(raw) ? raw : resolve(cwd, raw);
+}
+
 function spawnHeadlessTurn(options: {
   readonly binary: string;
   readonly args: readonly string[];
@@ -136,6 +256,8 @@ function spawnHeadlessTurn(options: {
   readonly env: NodeJS.ProcessEnv;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+  /** User dialogue body; omitted from argv so execve cannot E2BIG (#879). */
+  readonly stdin?: string;
   /** Called for each complete stdout line as it arrives (live stream-json). */
   readonly onStdoutLine?: (line: string) => void;
 }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
@@ -147,8 +269,20 @@ function spawnHeadlessTurn(options: {
     const child = spawn(options.binary, [...options.args], {
       cwd: options.cwd,
       env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["pipe", "pipe", "pipe"],
     });
+    if (child.stdin === null) {
+      reject(new Error("headless child stdin pipe was not created"));
+      return;
+    }
+    let stdinDeliveryError: Error | undefined;
+    child.stdin.on("error", (error) => {
+      stdinDeliveryError ??= error;
+    });
+    if (options.stdin !== undefined) {
+      child.stdin.write(options.stdin);
+    }
+    child.stdin.end();
     // Rolling retention only: last result-candidate line for final parse.
     // Live events go to sitian via onStdoutLine — never accumulate the full stream.
     let resultStdout = "";
@@ -198,6 +332,10 @@ function spawnHeadlessTurn(options: {
       settled = true;
       if (timer !== undefined) clearTimeout(timer);
       options.signal?.removeEventListener("abort", onAbort);
+      if (stdinDeliveryError !== undefined) {
+        reject(stdinDeliveryError);
+        return;
+      }
       resolve({ code, stdout: resultStdout, stderr, timedOut });
     };
     const onAbort = (): void => {
@@ -259,19 +397,68 @@ function terminalFromSpawned(
   };
 }
 
-/** Headless last hop (#820): session bind/resume, CLI spawn turn, MCP/json-schema mount. */
+function buildTurnArgs(options: {
+  readonly description: HeadlessHostDescription;
+  readonly systemPromptPath: string;
+  readonly jsonSchema: Readonly<Record<string, unknown>>;
+  readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
+  readonly mcpConfigPath?: string;
+  readonly outputSchemaPath?: string;
+  readonly model?: string;
+  readonly effort?: string;
+  readonly sessionId: string | undefined;
+  readonly sessionKind: "new" | "resume";
+  readonly cwd: string;
+  readonly writableRoots?: readonly string[];
+}): readonly string[] {
+  if (isCodexExecDescription(options.description)) {
+    if (options.sessionKind === "resume" && !options.sessionId) {
+      throw new Error("codex resume requires a bound thread_id");
+    }
+    if (options.outputSchemaPath === undefined) throw new Error("codex requires an output schema path");
+    return codexTurnArgs({
+      systemPromptPath: options.systemPromptPath,
+      outputSchemaPath: options.outputSchemaPath,
+      mcpServers: options.mcpServers,
+      ...(options.model === undefined ? {} : { model: options.model }),
+      ...(options.effort === undefined ? {} : { effort: options.effort }),
+      session: options.sessionKind === "resume"
+        ? { kind: "resume", id: options.sessionId! }
+        : { kind: "new" },
+      skipGitRepoCheck: !cwdIsGitWorkTree(options.cwd),
+      ...(!options.writableRoots?.length ? {} : { writableRoots: options.writableRoots }),
+    });
+  }
+
+  if (!isClaudePrintDescription(options.description)) throw new Error("unsupported headless host protocol");
+  if (!options.sessionId) throw new Error("claude print-mode requires a session id");
+  if (options.mcpConfigPath === undefined) throw new Error("claude print-mode requires an MCP config path");
+  return headlessTurnArgs({
+    description: options.description,
+    systemPromptPath: options.systemPromptPath,
+    jsonSchema: options.jsonSchema,
+    mcpConfigPath: options.mcpConfigPath,
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.effort === undefined ? {} : { effort: options.effort }),
+    session: { kind: options.sessionKind, id: options.sessionId },
+  });
+}
+
+/** Headless last hop (#820): session bind/resume, CLI spawn turn, MCP/json-schema/output-schema mount. */
 export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): RoleTurnHost {
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
     const prepared = await config.prepare(request);
     const systemPrompt = renderSystemPromptOverride(prepared.systemPrompt);
+    const codex = isCodexExecDescription(config.description);
     let outcome: RoleTurnResult = failure("session", "HeadlessNoOutcome", "no-outcome");
     try {
+      // Claude mints a package UUID for --session-id; codex waits for thread.started.
       let sessionId = await config.sessionIdentity.load(request.principal);
       let sessionKind: "new" | "resume" =
         request.continuation.kind === "resume" && sessionId !== undefined && sessionId !== ""
           ? "resume"
           : "new";
-      if (sessionKind === "new") {
+      if (sessionKind === "new" && !codex) {
         sessionId = randomUUID();
         await config.sessionIdentity.bind(request.principal, sessionId);
       }
@@ -280,12 +467,21 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       const env: NodeJS.ProcessEnv = { ...process.env, ...(config.env ?? {}) };
       const systemPromptPath = join(request.runDirectory, "headless-system-prompt.txt");
       await writeFile(systemPromptPath, systemPrompt, "utf8");
-      const mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
-      await writeFile(
-        mcpConfigPath,
-        `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
-        "utf8",
-      );
+      let mcpConfigPath: string | undefined;
+      let outputSchemaPath: string | undefined;
+      if (codex) {
+        // Codex --output-schema needs a closed transport projection on disk.
+        outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
+        const closed = closeJsonSchemaForCodex(prepared.jsonSchema);
+        await writeFile(outputSchemaPath, `${JSON.stringify(closed, null, 2)}\n`, "utf8");
+      } else {
+        mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
+        await writeFile(
+          mcpConfigPath,
+          `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
+          "utf8",
+        );
+      }
 
       const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
       outcome = await driveExternalRoleTurnRounds(prepared, request, {
@@ -293,19 +489,32 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         currentSessionId: () => sessionId,
         afterRetry() { sessionKind = "resume"; },
         async runRound({ prompt, abortSignal }) {
-          const args = headlessTurnArgs({
-            description: config.description,
-            prompt,
-            systemPromptPath,
-            jsonSchema: prepared.jsonSchema,
-            mcpConfigPath,
-            ...(request.model?.model !== undefined ? { model: request.model.model } : {}),
-            ...(request.model?.thinking !== undefined ? { effort: request.model.thinking } : {}),
-            session: sessionKind === "new"
-              ? { kind: "new", id: sessionId! }
-              : { kind: "resume", id: sessionId! },
-          });
+          let args: readonly string[];
+          try {
+            const gitCommonDir = codex ? resolveGitCommonDir(request.cwd) : undefined;
+            args = buildTurnArgs({
+              description: config.description,
+              systemPromptPath,
+              jsonSchema: prepared.jsonSchema,
+              mcpServers: prepared.mcpServers,
+              ...(mcpConfigPath === undefined ? {} : { mcpConfigPath }),
+              ...(outputSchemaPath === undefined ? {} : { outputSchemaPath }),
+              ...(request.model?.model !== undefined ? { model: request.model.model } : {}),
+              ...(request.model?.thinking !== undefined ? { effort: request.model.thinking } : {}),
+              sessionId,
+              sessionKind,
+              cwd: request.cwd,
+              ...(gitCommonDir === undefined ? {} : { writableRoots: [gitCommonDir] }),
+            });
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            return {
+              status: "terminal",
+              result: failure("session", "HeadlessArgvFailure", "argv-failed", { diagnostic: message }, message),
+            };
+          }
 
+          const codexObserver = codex ? createCodexExecTurnObserver() : undefined;
           let spawned: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
           try {
             spawned = await spawnHeadlessTurn({
@@ -313,6 +522,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               args,
               cwd: request.cwd,
               env,
+              stdin: prompt,
               ...(abortSignal === undefined ? {} : { signal: abortSignal }),
               ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
               onStdoutLine(line) {
@@ -325,7 +535,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                   // Non-JSON noise on stdout is not a host structured event.
                   return;
                 }
-                // Sitian write failures propagate → spawn rejects → session failure.
+                // One bounded live seam owns both recording and host-specific reduction.
                 reportHostSessionEvent({
                   host: config.hostName,
                   cwd: request.cwd,
@@ -333,6 +543,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                   source: "headless-host",
                   event,
                 });
+                codexObserver?.observe(event);
               },
             });
           } catch (error) {
@@ -373,6 +584,72 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             });
           }
 
+          if (codex) {
+            const observation = codexObserver!.result();
+            if (observation.threadId === undefined || observation.threadId === "") {
+              return terminalFromSpawned(spawned, {
+                cause: "session",
+                identity: { name: "HeadlessMissingThreadId", code: "missing-thread-id" },
+                diagnostic: "codex exec emitted no thread.started thread_id",
+                details: { sessionId, exitCode: spawned.code },
+              });
+            }
+            sessionId = observation.threadId;
+            await config.sessionIdentity.bind(request.principal, sessionId);
+
+            if (observation.failureDiagnostic !== undefined) {
+              return terminalFromSpawned(spawned, {
+                cause: "output",
+                identity: { name: "HeadlessCliError", code: "codex-turn-failed" },
+                diagnostic: observation.failureDiagnostic,
+                details: { sessionId, exitCode: spawned.code },
+              });
+            }
+
+            // Non-zero exit without a parseable failure event still fails loud.
+            if (spawned.code !== 0 && spawned.code !== null) {
+              return terminalFromSpawned(spawned, {
+                cause: "output",
+                identity: { name: "HeadlessCliError", code: "codex-nonzero-exit" },
+                diagnostic: spawned.stderr.trim() || `codex exec exited ${String(spawned.code)}`,
+                details: { sessionId, exitCode: spawned.code },
+              });
+            }
+
+            if (!observation.turnCompleted) {
+              return terminalFromSpawned(spawned, {
+                cause: "output",
+                identity: { name: "HeadlessCliError", code: "codex-missing-terminal-event" },
+                diagnostic: "codex exec exited without turn.completed",
+                details: { sessionId, exitCode: spawned.code },
+              });
+            }
+
+            if (observation.finalMessage === undefined) {
+              return terminalFromSpawned(spawned, {
+                cause: "output",
+                identity: { name: "HeadlessEmptyOutput", code: "empty-stdout" },
+                diagnostic: spawned.stderr.trim() || "codex exec produced no agent_message",
+                details: { sessionId, exitCode: spawned.code },
+              });
+            }
+
+            let receipt: unknown;
+            try {
+              receipt = JSON.parse(observation.finalMessage);
+            } catch {
+              return terminalFromSpawned(spawned, {
+                cause: "output",
+                identity: { name: "HeadlessEmptyOutput", code: "unparseable-final-message" },
+                diagnostic: "codex final agent_message was not JSON",
+                details: { sessionId, exitCode: spawned.code },
+              });
+            }
+            await prepared.ingestStructuredOutput(receipt);
+            return { status: "delivered", stderr: spawned.stderr };
+          }
+
+          // Claude print-mode path.
           const envelope = parseHeadlessCliStdout(spawned.stdout);
           if (envelope === undefined) {
             return terminalFromSpawned(spawned, {
@@ -383,6 +660,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             });
           }
 
+          // Bind the host-reported session id (authoritative for --resume).
           if (typeof envelope.session_id === "string" && envelope.session_id !== "") {
             sessionId = envelope.session_id;
             await config.sessionIdentity.bind(request.principal, sessionId);

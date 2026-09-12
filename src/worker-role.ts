@@ -290,6 +290,8 @@ export function createFixerRoleRuntime(
                 ...(_signal === undefined ? {} : { signal: _signal }),
                 hostActions,
                 toolCallId,
+                // #879: this-turn typed payload — identity-bound at submit site.
+                submission: output,
               });
             }
             const acceptedDetails = output;
@@ -428,6 +430,8 @@ export function createCoderRoleRuntime(
                 ...(_signal === undefined ? {} : { signal: _signal }),
                 hostActions,
                 toolCallId,
+                // #879: this-turn typed payload — identity-bound at submit site.
+                submission: output,
               });
             }
             const acceptedDetails = output;

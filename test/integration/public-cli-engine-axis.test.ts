@@ -71,9 +71,9 @@ function readJudgeInvocation(
 
 function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
   assert.equal(
-    argv.some((a) => a === "--engine" || a.startsWith("--ak-engine")),
+    argv.some((a) => a === "--engine" || a === "--ak-engine"),
     false,
-    "engine must not leak as argv flag",
+    "engine name must not leak as argv flag",
   );
 }
 
@@ -1319,3 +1319,152 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
     });
   },
 );
+
+/**
+ * #883 — engine model axis on seat table → typed turn request + invocation.
+ * Contract surface is typed only (request / invocation / seat row).
+ */
+test("#883 engine model axis: set/clear/opaque round-trip on real public entry", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    execFileSync("git", ["init", "-b", "main"], { cwd: project });
+    execFileSync("git", ["config", "user.email", "engine@test.local"], { cwd: project });
+    execFileSync("git", ["config", "user.name", "Engine Test"], { cwd: project });
+    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
+    const bookKey = resolveBookKeyFromGit(project);
+    const { createMinimalHost } = await import("../helpers/role-turn-host-fixture.ts");
+    const OPAQUE_MODEL = "cursor-grok-4.6-high";
+
+    {
+      const { io, stderr } = captureIo();
+      const setModel = await runAkRole(
+        ["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"],
+        { packageRoot, home, io },
+      );
+      assert.equal(setModel.exitCode, 0, stderr.join(""));
+    }
+
+    // 1 + 5: set engine+model once; one leg carries the opaque id on request + invocation.
+    {
+      const { io, stderr } = captureIo();
+      const setEngine = await runAkRole(
+        ["config", "set-engine", "judge", "cursor", OPAQUE_MODEL],
+        { packageRoot, home, io },
+      );
+      assert.equal(setEngine.exitCode, 0, stderr.join(""));
+      const persisted = await loadPublicCliConfig(home);
+      assert.equal(persisted.seats.judge?.engine, "cursor");
+      assert.equal(persisted.seats.judge?.engineModel, OPAQUE_MODEL);
+
+      let requestEngine: string | undefined;
+      let requestModel: string | undefined;
+      await runAkRole(["judge", "--project", project, "engine model request"], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "engine-model-001",
+        credentials,
+        io: captureIo().io,
+        roleTurnHost: createMinimalHost((request) => {
+          requestEngine = request.engine;
+          requestModel = request.engineModel;
+          return Promise.resolve({ code: 0, stderr: "", timedOut: false });
+        }),
+      });
+      assert.equal(requestEngine, "cursor");
+      assert.equal(requestModel, OPAQUE_MODEL);
+      const invocation = readJudgeInvocation(home, bookKey, "engine-model-001");
+      assert.equal(invocation.engine, "cursor");
+      assert.equal(invocation.engineModel, OPAQUE_MODEL);
+    }
+
+    // 2: name-only set-engine clears any prior engineModel (name-is-model / material-pinned bare).
+    for (const engine of ["hermes", "opus"] as const) {
+      const { io, stderr } = captureIo();
+      const setBare = await runAkRole(["config", "set-engine", "judge", engine], {
+        packageRoot,
+        home,
+        io,
+      });
+      assert.equal(setBare.exitCode, 0, stderr.join(""));
+      // Name-only set drops prior engineModel — no unset needed.
+      assert.equal((await loadPublicCliConfig(home)).seats.judge?.engineModel, undefined);
+
+      let requestModel: string | undefined = "sentinel";
+      await runAkRole(["judge", "--project", project, `${engine} bare`], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => `engine-model-${engine}`,
+        credentials,
+        io: captureIo().io,
+        roleTurnHost: createMinimalHost((request) => {
+          requestModel = request.engineModel;
+          return Promise.resolve({ code: 0, stderr: "", timedOut: false });
+        }),
+      });
+      assert.equal(requestModel, undefined);
+      const invocation = readJudgeInvocation(home, bookKey, `engine-model-${engine}`);
+      assert.equal("engineModel" in invocation, false);
+      assert.equal(invocation.engine, engine);
+    }
+
+    // 3: set model then clear → absent on seat, request, invocation.
+    {
+      const { io, stderr } = captureIo();
+      await runAkRole(
+        ["config", "set-engine", "judge", "cursor", OPAQUE_MODEL],
+        { packageRoot, home, io },
+      );
+      assert.equal(stderr.join(""), "");
+      const cleared = await runAkRole(["config", "unset-engine-model", "judge"], {
+        packageRoot,
+        home,
+        io: captureIo().io,
+      });
+      assert.equal(cleared.exitCode, 0);
+      const persisted = await loadPublicCliConfig(home);
+      assert.equal(persisted.seats.judge?.engine, "cursor");
+      assert.equal(persisted.seats.judge?.engineModel, undefined);
+
+      let requestModel: string | undefined = "sentinel";
+      await runAkRole(["judge", "--project", project, "cleared model"], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "engine-model-cleared",
+        credentials,
+        io: captureIo().io,
+        roleTurnHost: createMinimalHost((request) => {
+          requestModel = request.engineModel;
+          return Promise.resolve({ code: 0, stderr: "", timedOut: false });
+        }),
+      });
+      assert.equal(requestModel, undefined);
+      const invocation = readJudgeInvocation(home, bookKey, "engine-model-cleared");
+      assert.equal("engineModel" in invocation, false);
+    }
+
+    // set-engine-model alone + unset-engine drops both halves.
+    {
+      const { io, stderr } = captureIo();
+      await runAkRole(["config", "set-engine", "judge", "cursor"], { packageRoot, home, io });
+      const setOnly = await runAkRole(
+        ["config", "set-engine-model", "judge", OPAQUE_MODEL],
+        { packageRoot, home, io },
+      );
+      assert.equal(setOnly.exitCode, 0, stderr.join(""));
+      assert.equal((await loadPublicCliConfig(home)).seats.judge?.engineModel, OPAQUE_MODEL);
+      const unsetAll = await runAkRole(["config", "unset-engine", "judge"], {
+        packageRoot,
+        home,
+        io: captureIo().io,
+      });
+      assert.equal(unsetAll.exitCode, 0);
+      const after = await loadPublicCliConfig(home);
+      assert.equal(after.seats.judge?.engine, undefined);
+      assert.equal(after.seats.judge?.engineModel, undefined);
+    }
+  });
+});

@@ -36,7 +36,7 @@ import {
 } from "../../src/public-cli/invocation.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
   argvFlagValue,
@@ -446,13 +446,9 @@ test("layer ① lawful pass/bounce/escalate exit 0 via public entry", async () =
       // not rewritten into audit_escalation / fabricated reason.
       assert.equal(result.terminal.roleOutcome.kind, "accepted");
       assert.equal(result.terminal.roleOutcome.role, "notary");
-      assert.equal(
-        payloadStatus(result.terminal.roleOutcome),
-        receipt.status,
-        `receipt ${receipt.status}`,
-      );
+      assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [receipt.status]);
       if ("reason" in receipt) {
-        assert.equal(payloadFacts(result.terminal.roleOutcome).reason, receipt.reason);
+        assert.equal((objectPayloads(result.terminal.roleOutcome)[0] ?? {}).reason, receipt.reason);
       }
       assert.equal(isLawfulTypedTerminalOutcome(result.terminal.roleOutcome), true);
     }

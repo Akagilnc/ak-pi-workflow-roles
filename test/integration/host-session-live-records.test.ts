@@ -16,6 +16,7 @@ import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 
 const description: HeadlessHostDescription = Object.freeze({
+  protocol: "claude-print",
   binaryFromHome: Object.freeze(["bin", "fake-claude"]),
   sessionBindingFile: "claude-headless-session.json",
   fixedArgs: Object.freeze(["--output-format", "stream-json", "--verbose"]),
