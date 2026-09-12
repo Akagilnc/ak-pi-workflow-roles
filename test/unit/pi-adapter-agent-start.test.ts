@@ -105,10 +105,14 @@ test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at a
   const wrapped = encodeUserDialogueStdin(collision);
   const { pi, handlers, ctx } = piCapture();
   const adapter = createPiRoleHostAdapter(pi);
-  let seenInput: string | undefined;
+  const seenInputs: string[] = [];
   let seenPrompt: string | undefined;
   adapter.host.on("input", (event) => {
-    seenInput = event.text;
+    seenInputs.push(event.text);
+    return { action: "continue" as const };
+  });
+  adapter.host.on("input", (event) => {
+    seenInputs.push(event.text);
     return { action: "continue" as const };
   });
   adapter.host.on("before_agent_start", (event) => {
@@ -119,7 +123,7 @@ test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at a
   const inputHandler = handlers.get("input");
   assert.ok(inputHandler);
   const inputResult = await inputHandler({ text: wrapped, source: "piped" }, ctx);
-  assert.equal(seenInput, collision);
+  assert.deepEqual(seenInputs, [collision, collision]);
   assert.deepEqual(inputResult, { action: "transform", text: collision });
 
   const startHandler = handlers.get("before_agent_start");

@@ -145,6 +145,9 @@ export function createPiRoleHostAdapter(
   options: { transcriptFromContext?: (context: ExtensionContext) => string; oauthKeepalive?: OAuthKeepaliveOptions } = {},
 ): PiRoleHostAdapter {
   const keepalive = createOAuthKeepalive(options.oauthKeepalive);
+  type InputHandler = Extract<HostEventRegistration, ["input", unknown]>[1];
+  const inputHandlers: InputHandler[] = [];
+  let inputDispatcherRegistered = false;
   const host: RoleHost = {
     deliverSubmissionRejection(_rejection) {
       // #836 删 1/A4.5: no package-authored non-sole resume sentence.
@@ -199,17 +202,24 @@ export function createPiRoleHostAdapter(
         });
       } else if (registration[0] === "input") {
         const [, handler] = registration;
-        pi.on("input", (value, ctx) => {
-          const text = readUserDialogueStdin(value.text);
-          const result = handler({ text, ...(value.images === undefined ? {} : { images: value.images }), source: value.source }, context(ctx));
-          if (result instanceof Promise) {
-            return result.then((settled) => settled?.action === "continue" && text !== value.text
-              ? { action: "transform" as const, text }
-              : settled);
+        inputHandlers.push(handler);
+        if (inputDispatcherRegistered) return;
+        inputDispatcherRegistered = true;
+        pi.on("input", async (value, ctx) => {
+          let text = readUserDialogueStdin(value.text);
+          let images = value.images;
+          const hostContext = context(ctx);
+          for (const inputHandler of inputHandlers) {
+            const result = await inputHandler({ text, ...(images === undefined ? {} : { images }), source: value.source }, hostContext);
+            if (result?.action === "handled") return result;
+            if (result?.action === "transform") {
+              text = result.text;
+              images = result.images;
+            }
           }
-          return result?.action === "continue" && text !== value.text
-            ? { action: "transform" as const, text }
-            : result;
+          return text !== value.text || images !== value.images
+            ? { action: "transform" as const, text, ...(images === undefined ? {} : { images }) }
+            : { action: "continue" as const };
         });
       } else if (registration[0] === "tool_call") {
         const [, handler] = registration;
