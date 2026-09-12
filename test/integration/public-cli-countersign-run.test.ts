@@ -1049,10 +1049,17 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     const seen: Array<{ runId: string; kind: string }> = [];
     let diaristTurns = 0;
     const parentSeal = { countersignStatus: "converged" as const, note: "署" };
+    const childCompleted = {
+      status: "completed" as const,
+      ticketNumber: 582,
+      entries: [] as unknown[],
+    };
     const childEscalate = {
       status: "escalate" as const,
       reason: "cannot identify court target",
     };
+    // Diarist turns: 1 id + 2 refresh (first); 3 id + 4 refresh (second success);
+    // 5 id + 6 refresh escalate (third).
     const baseHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
@@ -1060,9 +1067,7 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
         const role = argvFlagValue(args, "--ak-role");
         if (role === "diarist") {
           diaristTurns += 1;
-          // 1 identity + 1 refresh on first entry; 1 identity on re-summons (ticket key);
-          // 4th = bound refresh on resumed run escalates (#881 coexist).
-          if (diaristTurns === 4) return courtPipelinePiRunner("escalate")(args, options);
+          if (diaristTurns === 6) return courtPipelinePiRunner("escalate")(args, options);
           return courtPipelinePiRunner(582)(args, options);
         }
         return courtPipelinePiRunner(582, parentSeal)(args, options);
@@ -1107,11 +1112,8 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.equal(seen.length, 1);
     assert.equal(seen[0]!.kind, "initial");
     assert.equal(seen[0]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
-    // Parent ledger holds the sealed countersign row for the coexist assertion below.
-    assert.deepEqual(first.terminal?.roleOutcome.payloads, [parentSeal]);
 
     // createRunId would mint s002 if auto-resume were skipped — must not fire.
-    // #881: bound refresh escalates — failure terminal appends child rows after parent ledger.
     const second = await runPublicCountersign(
       ["裁：#582 二轮再审。"],
       {
@@ -1121,6 +1123,7 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
       captureIo().io,
       parseCountersignArgv,
     );
+    assert.equal(second.exitCode, 0);
     assert.equal(
       second.admitted?.runId,
       "01a0sign00-0000-7000-8000-00000000s001",
@@ -1131,41 +1134,33 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
       second.admitted?.runId,
       "01a0sign00-0000-7000-8000-00000000s002",
     );
-    // Refresh escalate: parent body must not run; no parent auto-resume.
-    assert.equal(seen.length, 1, "parent body must not dispatch after refresh escalate");
-    assert.equal(second.exitCode, 1);
-    assert.equal(second.terminal?.roleOutcome.kind, "failure");
-    assert.equal(second.terminal?.autoResumeCount ?? 0, 0);
-    if (second.terminal?.roleOutcome.kind !== "failure") throw new Error("unreachable");
-    // Parent ledger (countersign seal + any same-run station rows) then child escalate once.
-    const payloads = second.terminal.roleOutcome.payloads ?? [];
-    const submissions = second.terminal.submissions ?? [];
-    assert.deepEqual(payloads, submissions, "payloads and submissions stay one sequence");
-    assert.equal(
-      payloads.filter((row) => deepEqualRow(row, parentSeal)).length,
-      1,
-      "parent countersign seal exactly once",
+    // A dispatched body turn on re-summons must be resume on the prior run.
+    assert.equal(seen.length, 2);
+    assert.equal(seen[1]!.kind, "resume");
+    assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
+
+    // #881 later call: bound refresh escalates — exact ordered coexist sequence.
+    const third = await runPublicCountersign(
+      ["裁：#582 三轮再审。"],
+      {
+        ...envBase,
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000s003",
+      },
+      captureIo().io,
+      parseCountersignArgv,
     );
-    assert.equal(
-      payloads.filter((row) => deepEqualRow(row, childEscalate)).length,
-      1,
-      "child escalate exactly once",
-    );
-    const parentIdx = payloads.findIndex((row) => deepEqualRow(row, parentSeal));
-    const childIdx = payloads.findIndex((row) => deepEqualRow(row, childEscalate));
-    assert.ok(parentIdx >= 0 && childIdx > parentIdx, "parent ledger precedes child escalate");
-    assert.deepEqual(payloads[childIdx], childEscalate);
+    assert.equal(third.admitted?.runId, "01a0sign00-0000-7000-8000-00000000s001");
+    assert.equal(seen.length, 2, "parent body must not dispatch after refresh escalate");
+    assert.equal(third.exitCode, 1);
+    assert.equal(third.terminal?.roleOutcome.kind, "failure");
+    assert.equal(third.terminal?.autoResumeCount ?? 0, 0);
+    if (third.terminal?.roleOutcome.kind !== "failure") throw new Error("unreachable");
+    // Two successful body seals + identity completed on this summons + child escalate.
+    const expectedSequence = [parentSeal, parentSeal, childCompleted, childEscalate];
+    assert.deepEqual(third.terminal.roleOutcome.payloads, expectedSequence);
+    assert.deepEqual(third.terminal.submissions, expectedSequence);
   });
 });
-
-function deepEqualRow(actual: unknown, expected: unknown): boolean {
-  try {
-    assert.deepEqual(actual, expected);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 test("public countersign path: true-unbound 起居郎 asserts null — no ticket bind, no 起居录 paths", async () => {
   await withCountersignProject(async ({ home, project }) => {
