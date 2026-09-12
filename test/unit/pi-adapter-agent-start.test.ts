@@ -3,6 +3,7 @@ import test from "node:test";
 
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { renderAgentStartMaterials } from "../../src/agent-start-materials.ts";
 import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import { projectNotarySessionBound } from "../../src/notary-role.ts";
 import { encodeUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
@@ -110,8 +111,13 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
   assert.equal(typeof withBound.systemPrompt, "string");
   assert.notEqual(withBound.systemPrompt, bodyOnly.systemPrompt);
   assert.notEqual(withBound.systemPrompt, withOther.systemPrompt);
-  assert.notEqual(currentSystemPrompt, withBound.systemPrompt);
-  assert.notEqual(currentSystemPrompt, withOther.systemPrompt);
+  assert.equal(
+    currentSystemPrompt,
+    renderAgentStartMaterials(
+      renderAgentStartMaterials("BASE", [bound]),
+      [otherBound],
+    ),
+  );
 });
 
 test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at agent-start", async () => {
