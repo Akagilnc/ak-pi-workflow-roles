@@ -14,10 +14,9 @@ import { appendFile, copyFile, mkdir, readdir, readFile, stat, writeFile } from 
 import { dirname, join, relative, sep } from "node:path";
 
 import {
-  destinationRunDirectory,
   findBookRunDirectory,
+  findPlacedMigratingRun,
   isTicketNumberString,
-  resolveMigratingRunTicket,
   runCoordsFromSessionParent,
   runIdFromSubject,
   ticketNumberFromSubject,
@@ -273,30 +272,17 @@ async function resolveRunDestination(
   | { readonly kind: "run"; readonly runDirectory: string; readonly disposition: "placed" | "unbound" }
   | { readonly kind: "unbound-key"; readonly key: string }
 > {
-  const destBook = join(context.booksDirectory, bookKey);
-  const existingDest = await findBookRunDirectory(destBook, runId);
+  const existingDest = await findPlacedMigratingRun(
+    context.booksDirectory,
+    bookKey,
+    runId,
+    hints.role,
+  );
   if (existingDest !== undefined) {
-    const underUnbound = existingDest.runDirectory.includes(`${sep}unbound${sep}runs${sep}`);
     return {
       kind: "run",
       runDirectory: existingDest.runDirectory,
-      disposition: underUnbound ? "unbound" : "placed",
-    };
-  }
-
-  const backupRun = await findBookRunDirectory(join(context.backupBooksDirectory, bookKey), runId);
-  if (backupRun !== undefined) {
-    const ticketNumber = (await resolveMigratingRunTicket(backupRun.runDirectory)).ticketNumber;
-    return {
-      kind: "run",
-      runDirectory: destinationRunDirectory(
-        context.booksDirectory,
-        bookKey,
-        ticketNumber,
-        runId,
-        backupRun.role,
-      ),
-      disposition: ticketNumber !== undefined ? "placed" : "unbound",
+      disposition: existingDest.disposition,
     };
   }
 

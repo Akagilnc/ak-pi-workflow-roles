@@ -14,8 +14,7 @@ import {
   type BookTopologyPartitionMigrator,
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
-import { roleRunPlacement } from "./role-run-placement.ts";
-import { readRunTicketNumber } from "./run-ticket-number.ts";
+import { findPlacedMigratingRun } from "./book-topology-migration-placement.ts";
 
 const SITIAN_MIXED_VOLUME_PARTITIONS = [
   "attendance",
@@ -153,53 +152,36 @@ function inspectWorkerSubmissionGateVolume(text: string): {
   return { leaf, malformedRows };
 }
 
-function destinationKindFile(
+function volumeDestinationFile(
   booksDirectory: string,
   bookKey: string,
-  leaf: string | undefined,
-  ticketNumber: number | undefined,
+  destRun: { readonly runDirectory: string } | undefined,
   kind: string,
   fileName: string,
 ): string {
-  if (leaf === undefined) {
+  if (destRun === undefined) {
     return join(booksDirectory, bookKey, "unbound", kind, fileName);
   }
-  const parsed = parseRunLeaf(leaf);
-  if (parsed !== undefined) {
-    const placement = roleRunPlacement(dirname(booksDirectory), {
-      bookKey,
-      subject: ticketNumber === undefined ? { unbound: true } : { ticketNumber },
-      runId: parsed.runId,
-      role: parsed.role,
-    });
-    return join(placement.sessionDirectory, kind, fileName);
-  }
-  const subject = ticketNumber === undefined ? "unbound" : String(ticketNumber);
-  return join(
-    booksDirectory,
-    bookKey,
-    subject,
-    "runs",
-    leaf,
-    "session",
-    kind,
-    fileName,
-  );
+  return join(destRun.runDirectory, "session", kind, fileName);
 }
 
-async function ticketForRunLeaf(
-  cache: Map<string, number | undefined>,
-  backupBooksDirectory: string,
+async function placedRunForLeaf(
+  cache: Map<string, { runDirectory: string; disposition: "placed" | "unbound" } | undefined>,
+  booksDirectory: string,
   bookKey: string,
   leaf: string,
-): Promise<number | undefined> {
+): Promise<{ runDirectory: string; disposition: "placed" | "unbound" } | undefined> {
   const cacheKey = `${bookKey}\0${leaf}`;
   if (cache.has(cacheKey)) return cache.get(cacheKey);
-  const ticketNumber = await readRunTicketNumber(
-    join(backupBooksDirectory, bookKey, "runs", leaf),
+  const parsed = parseRunLeaf(leaf);
+  const placed = await findPlacedMigratingRun(
+    booksDirectory,
+    bookKey,
+    parsed?.runId ?? leaf,
+    parsed?.role,
   );
-  cache.set(cacheKey, ticketNumber);
-  return ticketNumber;
+  cache.set(cacheKey, placed);
+  return placed;
 }
 
 async function appendRawLine(file: string, raw: string): Promise<void> {
@@ -281,7 +263,7 @@ async function migrateSitianMixedVolume(
   context: BookTopologyMigrationContext,
 ): Promise<ReturnType<typeof reconcileMigrationPartition>> {
   const outcomes: MigrationItemOutcome[] = [];
-  const ticketCache = new Map<string, number | undefined>();
+  const placedCache = new Map<string, { runDirectory: string; disposition: "placed" | "unbound" } | undefined>();
   const { backupBooksDirectory, booksDirectory } = context;
 
   for (const bookKey of await listBookKeys(backupBooksDirectory)) {
@@ -313,10 +295,9 @@ async function migrateSitianMixedVolume(
       try {
         parsed = JSON.parse(row.raw);
       } catch {
-        const dest = destinationKindFile(
+        const dest = volumeDestinationFile(
           booksDirectory,
           bookKey,
-          undefined,
           undefined,
           partition,
           "records.jsonl",
@@ -331,10 +312,9 @@ async function migrateSitianMixedVolume(
         continue;
       }
       if (!isRecord(parsed)) {
-        const dest = destinationKindFile(
+        const dest = volumeDestinationFile(
           booksDirectory,
           bookKey,
-          undefined,
           undefined,
           partition,
           "records.jsonl",
@@ -350,20 +330,19 @@ async function migrateSitianMixedVolume(
       }
 
       const leaf = runLeafFromRecord(parsed);
-      const ticketNumber = leaf === undefined
+      const destRun = leaf === undefined
         ? undefined
-        : await ticketForRunLeaf(ticketCache, backupBooksDirectory, bookKey, leaf);
-      const dest = destinationKindFile(
+        : await placedRunForLeaf(placedCache, booksDirectory, bookKey, leaf);
+      const dest = volumeDestinationFile(
         booksDirectory,
         bookKey,
-        leaf,
-        ticketNumber,
+        destRun,
         partition,
         "records.jsonl",
       );
       await appendRawLine(dest, row.raw);
       outcomes.push({
-        disposition: leaf !== undefined && ticketNumber !== undefined ? "placed" : "unbound",
+        disposition: destRun?.disposition === "placed" ? "placed" : "unbound",
         source,
       });
     }
@@ -389,7 +368,7 @@ async function migrateWorkerSubmissionGate(
 ): Promise<ReturnType<typeof reconcileMigrationPartition>> {
   const outcomes: MigrationItemOutcome[] = [];
   const volumeMalformedRows: { source: string; raw: string }[] = [];
-  const ticketCache = new Map<string, number | undefined>();
+  const placedCache = new Map<string, { runDirectory: string; disposition: "placed" | "unbound" } | undefined>();
   const { backupBooksDirectory, booksDirectory } = context;
   const kind = WORKER_SUBMISSION_GATE_KIND;
 
@@ -415,14 +394,13 @@ async function migrateWorkerSubmissionGate(
       const text = await readFile(sourcePath, "utf8");
       const inspected = inspectWorkerSubmissionGateVolume(text);
       const leaf = inspected.leaf;
-      const ticketNumber = leaf === undefined
+      const destRun = leaf === undefined
         ? undefined
-        : await ticketForRunLeaf(ticketCache, backupBooksDirectory, bookKey, leaf);
-      const dest = destinationKindFile(
+        : await placedRunForLeaf(placedCache, booksDirectory, bookKey, leaf);
+      const dest = volumeDestinationFile(
         booksDirectory,
         bookKey,
-        leaf,
-        ticketNumber,
+        destRun,
         kind,
         name,
       );
@@ -431,7 +409,7 @@ async function migrateWorkerSubmissionGate(
       volumeDestinations.set(resolve(sourcePath), dest);
       // One outcome per volume keeps the entries closure; bad rows attach below.
       outcomes.push({
-        disposition: leaf !== undefined && ticketNumber !== undefined ? "placed" : "unbound",
+        disposition: destRun?.disposition === "placed" ? "placed" : "unbound",
         source,
       });
       for (const bad of inspected.malformedRows) {

@@ -105,10 +105,78 @@ export async function resolveMigratingRunTicket(runDirectory: string): Promise<{
   };
 }
 
+export function isUnboundRunDirectory(runDirectory: string): boolean {
+  return runDirectory.replaceAll("\\", "/").includes("/unbound/runs/");
+}
+
+export type BackupRunLeaf = {
+  readonly relativePath: string;
+  readonly sourcePath: string;
+  readonly leafName: string;
+  readonly isDirectory: boolean;
+  readonly layout: "flat" | "ticket" | "unbound";
+};
+
+async function listRunLeafEntries(
+  runsDirectory: string,
+): Promise<readonly { readonly name: string; readonly isDirectory: boolean }[]> {
+  try {
+    const entries = await readdir(runsDirectory, { withFileTypes: true });
+    return entries
+      .map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory() }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (error) {
+    if ((error as { code?: unknown }).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+/**
+ * Every retained run tree under one backup book: legacy flat `runs/`,
+ * already-canonical `<ticket>/runs/`, and `unbound/runs/`.
+ */
+export async function listBackupRunLeaves(
+  backupBookDirectory: string,
+): Promise<readonly BackupRunLeaf[]> {
+  const leaves: BackupRunLeaf[] = [];
+  const collect = async (
+    relativeDir: string,
+    layout: BackupRunLeaf["layout"],
+  ): Promise<void> => {
+    const runsDirectory = join(backupBookDirectory, ...relativeDir.split("/"));
+    for (const entry of await listRunLeafEntries(runsDirectory)) {
+      leaves.push({
+        relativePath: `${relativeDir}/${entry.name}`,
+        sourcePath: join(runsDirectory, entry.name),
+        leafName: entry.name,
+        isDirectory: entry.isDirectory,
+        layout,
+      });
+    }
+  };
+  await collect("runs", "flat");
+  await collect("unbound/runs", "unbound");
+  let subjects: readonly { name: string; isDirectory: boolean }[] = [];
+  try {
+    subjects = (await readdir(backupBookDirectory, { withFileTypes: true }))
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({ name: entry.name, isDirectory: true }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch (error) {
+    if ((error as { code?: unknown }).code !== "ENOENT") throw error;
+  }
+  for (const subject of subjects) {
+    if (!isTicketNumberString(subject.name)) continue;
+    await collect(`${subject.name}/runs`, "ticket");
+  }
+  return leaves;
+}
+
 /** Locate `runId@role` under bookDir/runs, bookDir/<subject>/runs, bookDir/unbound/runs. */
 export async function findBookRunDirectory(
   bookDir: string,
   runId: string,
+  role?: string,
 ): Promise<{ readonly runDirectory: string; readonly role: string } | undefined> {
   if (runId.trim() === "") return undefined;
   const subjectEntries = await readdir(bookDir, { withFileTypes: true }).catch((error: unknown) => {
@@ -119,6 +187,7 @@ export async function findBookRunDirectory(
     "",
     ...subjectEntries.filter((entry) => entry.isDirectory()).map((entry) => entry.name),
   ];
+  const exactLeaf = role !== undefined && role.length > 0 ? `${runId}@${role}` : undefined;
   for (const subject of subjectDirs) {
     const runsDir = subject === "" ? join(bookDir, "runs") : join(bookDir, subject, "runs");
     let entries: string[];
@@ -128,14 +197,38 @@ export async function findBookRunDirectory(
       if ((error as { code?: unknown }).code === "ENOENT") continue;
       throw error;
     }
+    if (exactLeaf !== undefined && role !== undefined) {
+      if (entries.includes(exactLeaf)) {
+        return { runDirectory: join(runsDir, exactLeaf), role };
+      }
+      continue;
+    }
     for (const entry of entries) {
       if (!entry.startsWith(`${runId}@`)) continue;
-      const role = entry.slice(runId.length + 1);
-      if (role.length === 0 || role.includes("@")) continue;
-      return { runDirectory: join(runsDir, entry), role };
+      const foundRole = entry.slice(runId.length + 1);
+      if (foundRole.length === 0 || foundRole.includes("@")) continue;
+      return { runDirectory: join(runsDir, entry), role: foundRole };
     }
   }
   return undefined;
+}
+
+/** Destination run already placed by T9, including role when known. */
+export async function findPlacedMigratingRun(
+  booksDirectory: string,
+  bookKey: string,
+  runId: string,
+  role?: string,
+): Promise<
+  | { readonly runDirectory: string; readonly disposition: "placed" | "unbound" }
+  | undefined
+> {
+  const found = await findBookRunDirectory(join(booksDirectory, bookKey), runId, role);
+  if (found === undefined) return undefined;
+  return {
+    runDirectory: found.runDirectory,
+    disposition: isUnboundRunDirectory(found.runDirectory) ? "unbound" : "placed",
+  };
 }
 
 /**
