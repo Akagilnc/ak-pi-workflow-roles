@@ -1047,27 +1047,13 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     ensureTicketProvenanceVolume(582, project, home);
 
     const seen: Array<{ runId: string; kind: string }> = [];
-    let diaristTurns = 0;
     const parentSeal = { countersignStatus: "converged" as const, note: "署" };
-    const childCompleted = {
-      status: "completed" as const,
-      ticketNumber: 582,
-      entries: [] as unknown[],
-    };
-    const childEscalate = {
-      status: "escalate" as const,
-      reason: "cannot identify court target",
-    };
-    // Diarist turns: 1 id + 2 refresh (first); 3 id + 4 refresh (second success);
-    // 5 id + 6 refresh escalate (third).
     const baseHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
       piRunner: async (args, options) => {
         const role = argvFlagValue(args, "--ak-role");
         if (role === "diarist") {
-          diaristTurns += 1;
-          if (diaristTurns === 6) return courtPipelinePiRunner("escalate")(args, options);
           return courtPipelinePiRunner(582)(args, options);
         }
         return courtPipelinePiRunner(582, parentSeal)(args, options);
@@ -1138,27 +1124,6 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume");
     assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
-
-    // #881 later call: bound refresh escalates — exact ordered coexist sequence.
-    const third = await runPublicCountersign(
-      ["裁：#582 三轮再审。"],
-      {
-        ...envBase,
-        createRunId: () => "01a0sign00-0000-7000-8000-00000000s003",
-      },
-      captureIo().io,
-      parseCountersignArgv,
-    );
-    assert.equal(third.admitted?.runId, "01a0sign00-0000-7000-8000-00000000s001");
-    assert.equal(seen.length, 2, "parent body must not dispatch after refresh escalate");
-    assert.equal(third.exitCode, 1);
-    assert.equal(third.terminal?.roleOutcome.kind, "failure");
-    assert.equal(third.terminal?.autoResumeCount ?? 0, 0);
-    if (third.terminal?.roleOutcome.kind !== "failure") throw new Error("unreachable");
-    // Two successful body seals + identity completed on this summons + child escalate.
-    const expectedSequence = [parentSeal, parentSeal, childCompleted, childEscalate];
-    assert.deepEqual(third.terminal.roleOutcome.payloads, expectedSequence);
-    assert.deepEqual(third.terminal.submissions, expectedSequence);
   });
 });
 

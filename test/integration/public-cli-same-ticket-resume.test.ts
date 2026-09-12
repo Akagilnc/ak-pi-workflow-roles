@@ -359,12 +359,12 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       "accepted",
       "ledger still holds the first court's accepted payload",
     );
+    // Presented payload is the first court's pass — never re-invented for the new court.
     assert.deepEqual(
       second.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(second.terminal.roleOutcome)
         : [],
-      ["pass",
-      "presented payload is the first court's pass — never re-invented for the new court"],
+      ["pass"],
     );
     assert.equal(turn, 3, "same-parent court must dispatch a real turn");
     assert.equal(seen.length, 3, "same-parent court must dispatch one turn after cross-parent mint");

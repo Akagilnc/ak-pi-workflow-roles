@@ -98,7 +98,6 @@ import {
   settleFailureTerminalResult,
   settleHostEndedNoReceipt,
   attachRecordedSubmissions,
-  withSubmissions,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -120,14 +119,6 @@ import {
  */
 export class StationChildExhaustedError extends Error {
   override readonly name = "StationChildExhaustedError";
-  /** Child role payload sequence when the station escalated with a terminal (#881). */
-  readonly childPayloads?: readonly unknown[];
-  constructor(message: string, childPayloads?: readonly unknown[]) {
-    super(message);
-    if (childPayloads !== undefined && childPayloads.length > 0) {
-      this.childPayloads = childPayloads;
-    }
-  }
 }
 
 function withOnceSuccessfulBeforeDispatch<
@@ -300,12 +291,6 @@ export type ControlledFailureInput = {
    * already the reported cause.
    */
   skipRunStateWrite?: boolean;
-  /**
-   * #881: child-station payload sequence to coexist beside this run's ledger
-   * rows on the single failure terminal — appended after attachRecordedSubmissions,
-   * before the one presentation. Not a second attachment path.
-   */
-  coexistPayloads?: readonly unknown[];
 };
 
 /** Result of seat prep after the single pre-lease admitted load. */
@@ -439,7 +424,7 @@ export async function presentControlledFailure<
     await persistReturnedRunState(admitted, authority);
   }
 
-  let terminal = await attachRecordedSubmissions(
+  const terminal = await attachRecordedSubmissions(
     admitted,
     await settleFailureTerminalResult(
       admitted,
@@ -450,17 +435,6 @@ export async function presentControlledFailure<
         : {},
     ),
   );
-  // #881: append child coexist rows after ledger attach, before the single present.
-  const coexist = failureInput.coexistPayloads;
-  if (coexist !== undefined && coexist.length > 0) {
-    const existing =
-      terminal.roleOutcome.kind === "failure" ||
-      terminal.roleOutcome.kind === "accepted" ||
-      terminal.roleOutcome.kind === "audit_escalation"
-        ? terminal.roleOutcome.payloads ?? []
-        : terminal.submissions ?? [];
-    terminal = withSubmissions(terminal, [...existing, ...coexist]);
-  }
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
@@ -664,11 +638,6 @@ export async function dispatchPostAdmissionTurn<
             code: null,
             stderr: "",
             thrown: error,
-            ...(error instanceof StationChildExhaustedError &&
-            error.childPayloads !== undefined &&
-            error.childPayloads.length > 0
-              ? { coexistPayloads: error.childPayloads }
-              : {}),
           },
           adapters,
           env.principalAuthority,

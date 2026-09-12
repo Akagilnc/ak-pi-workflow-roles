@@ -499,7 +499,11 @@ test("public-cli every packaged role accepts via shared sealed→Terminal entry"
       assert.equal(result.exitCode, 0, `${row.role} exit: ${stderr}`);
       assert.equal(result.terminal?.roleOutcome.kind, "accepted", `${row.role}: ${stderr}`);
       assert.equal(result.terminal?.roleOutcome.role, row.role, row.role);
-      assert.deepEqual(result.terminal ? payloadStatusSequence(result.terminal.roleOutcome) : [], [row.status], row.role);
+      assert.deepEqual(
+        result.terminal ? payloadStatusSequence(result.terminal.roleOutcome) : [],
+        row.status === undefined ? [] : [row.status],
+        row.role,
+      );
     }
   });
 });
@@ -587,7 +591,7 @@ test("host-neutral typed turns record every terminating submission without sole 
     );
     assert.equal(result.exitCode, 0, JSON.stringify(result.terminal?.roleOutcome));
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.deepEqual(result.terminal ? payloadStatusSequence(result.terminal.roleOutcome) : [], ["converged"]);
+    assert.deepEqual(result.terminal ? payloadStatusSequence(result.terminal.roleOutcome) : [], ["continue", "converged"]);
     const recorded =
       result.terminal?.roleOutcome.kind === "accepted"
         ? result.terminal.roleOutcome.payloads

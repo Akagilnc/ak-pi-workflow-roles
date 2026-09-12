@@ -100,25 +100,10 @@ type CourtDiaristIdentity =
 
 type CourtDiaristInvocationResult = {
   readonly identity: CourtDiaristIdentity;
-  /** Full diarist terminal role outcome when present — payload sequence preserved (#881). */
-  readonly roleOutcome?: TerminalRoleOutcome;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
 
-/** Full payload sequence on kinds that carry it — empty when absent. */
-function roleOutcomePayloads(roleOutcome: TerminalRoleOutcome | undefined): readonly unknown[] {
-  if (roleOutcome === undefined) return [];
-  if (
-    roleOutcome.kind === "accepted" ||
-    roleOutcome.kind === "audit_escalation" ||
-    roleOutcome.kind === "failure"
-  ) {
-    return roleOutcome.payloads ?? [];
-  }
-  return [];
-}
-
-/** Routing boolean over the preserved sequence — does not pick or rewrite a sole row. */
+/** Routing boolean over the child's own typed sequence — does not pick or rewrite a sole row. */
 function courtDiaristEscalated(roleOutcome: TerminalRoleOutcome | undefined): boolean {
   if (roleOutcome === undefined) return false;
   if (roleOutcome.kind === "audit_escalation") return true;
@@ -180,7 +165,6 @@ async function invokeCourtDiarist(input: {
   if (courtDiaristEscalated(roleOutcome)) {
     return {
       identity: { kind: "escalate" },
-      ...(roleOutcome === undefined ? {} : { roleOutcome }),
     };
   }
 
@@ -191,7 +175,6 @@ async function invokeCourtDiarist(input: {
         : result.stderr?.trim() || `exit ${result.exitCode}`;
     return {
       identity: { kind: "unbound" },
-      ...(roleOutcome === undefined ? {} : { roleOutcome }),
       failedWithoutEscalate: {
         diagnostic: `court diarist station failed for ${input.failureLabel}: ${diagnostic}`,
       },
@@ -206,12 +189,10 @@ async function invokeCourtDiarist(input: {
   ) {
     return {
       identity: { kind: "ticket", ticketNumber: asserted },
-      ...(roleOutcome === undefined ? {} : { roleOutcome }),
     };
   }
   return {
     identity: { kind: "unbound" },
-    ...(roleOutcome === undefined ? {} : { roleOutcome }),
   };
 }
 
@@ -252,17 +233,12 @@ export async function runCountersignCourtDiaristStation(
   );
 
   if (outcome.identity.kind === "escalate") {
-    // Carry the original diarist payload sequence on the error → parent failure terminal (#881).
     throw new StationChildExhaustedError(
       "court diarist station escalated (cannot identify court target)",
-      roleOutcomePayloads(outcome.roleOutcome),
     );
   }
   if (outcome.failedWithoutEscalate !== undefined) {
-    throw new StationChildExhaustedError(
-      outcome.failedWithoutEscalate.diagnostic,
-      roleOutcomePayloads(outcome.roleOutcome),
-    );
+    throw new StationChildExhaustedError(outcome.failedWithoutEscalate.diagnostic);
   }
 }
 
@@ -334,9 +310,6 @@ export async function runPublicCountersign(
 
     if (outcome.identity.kind === "escalate") {
       // 御批: 识别不了就上抛 — settle on the admitted countersign run.
-      // Child sequence enters the single settlement/attachment path via coexistPayloads
-      // before presentation (#881 — not a post-hoc second attachment).
-      const childPayloads = roleOutcomePayloads(outcome.roleOutcome);
       return await presentControlledFailure(
         admitted,
         {
@@ -346,7 +319,6 @@ export async function runPublicCountersign(
           thrown: new Error(
             "court diarist station escalated (cannot identify court target)",
           ),
-          ...(childPayloads.length > 0 ? { coexistPayloads: childPayloads } : {}),
         },
         countersignAdapters(),
         env.principalAuthority,

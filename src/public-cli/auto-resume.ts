@@ -370,15 +370,24 @@ async function attachDispatchExceptionTerminal(
     readonly projectRoot: string;
   },
   terminal: TerminalResult,
+  io: CliIo,
 ): Promise<TerminalResult> {
-  return attachRecordedSubmissions(
-    {
-      projectRoot: admitted.projectRoot,
-      runId: admitted.runId,
-      runDirectory: admitted.runDirectory,
-    },
-    terminal,
-  );
+  try {
+    return await attachRecordedSubmissions(
+      {
+        projectRoot: admitted.projectRoot,
+        runId: admitted.runId,
+        runDirectory: admitted.runDirectory,
+      },
+      terminal,
+    );
+  } catch (error) {
+    // Existing diagnostic seam: attach true cause on stderr, original Terminal stays.
+    io.stderr(
+      `dispatch exception ledger attach failed (best-effort continue): ${describeErrorIdentity(error)}\n`,
+    );
+    return terminal;
+  }
 }
 
 /**
@@ -602,6 +611,7 @@ export async function runWithAutoResumeLoop<
             endReason: "auto-resume budget exhausted",
             everyAttemptThrew,
           }),
+          options.io,
         );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
         presentTerminal(terminal, options.io);
@@ -622,6 +632,7 @@ export async function runWithAutoResumeLoop<
             endReason: "session principal unavailable before further resume",
             everyAttemptThrew,
           }),
+          options.io,
         );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
         presentTerminal(terminal, options.io);

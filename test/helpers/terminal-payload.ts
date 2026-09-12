@@ -4,7 +4,7 @@ import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 export function objectPayloads(
   outcome: TerminalRoleOutcome,
 ): readonly Record<string, unknown>[] {
-  if (outcome.kind === "failure" || outcome.kind === "no_receipt") return [];
+  if (outcome.kind === "no_receipt") return [];
   const records: Record<string, unknown>[] = [];
   for (const payload of outcome.payloads ?? []) {
     if (typeof payload === "object" && payload !== null && !Array.isArray(payload)) {
