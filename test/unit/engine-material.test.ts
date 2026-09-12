@@ -82,8 +82,8 @@ test("#883 engineSessionMaterialFromOptions: engineModel is optional opaque coor
       engine: "cursor",
       packageRoot: root,
     });
+    assert.equal(bare?.name, "cursor");
     assert.equal(bare?.model, undefined);
-    assert.equal(bare !== undefined && "model" in bare && bare.model !== undefined, false);
   });
 });
 
