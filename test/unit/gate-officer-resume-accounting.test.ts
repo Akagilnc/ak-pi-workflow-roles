@@ -830,7 +830,7 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
   });
 });
 
-test("#879 station-child officer: case dossier on readingMaterial face; dialogue body = peer only", async () => {
+test("#879 station-child officer: case dossier once via shared envelope readingMaterial; dialogue = peer only", async () => {
   await withTempRoot("ak-officer-dossier-attach-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -885,32 +885,64 @@ test("#879 station-child officer: case dossier on readingMaterial face; dialogue
     assert.equal(projected.result.status, "pass");
     assert.ok(prompts.length >= 1);
     const dialogue = prompts[prompts.length - 1]!;
-
-    // Dialogue body is peer payload only — no attachment listing splice.
     assert.equal(dialogue, peerBody, "continuation.prompt must equal parent payload only");
 
     const officerRun = projected.summoned?.runDirectory ?? runDirs[runDirs.length - 1];
     assert.ok(officerRun, "officer run directory must exist");
 
-    // Non-body face: post-admission freeze + loadCaseDossierReadingMaterial
-    // (same function role-envelope / notary before_agent_start consume).
-    const {
-      loadCaseDossierReadingMaterial,
-    } = await import("../../src/public-cli/case-dossier-delivery.ts");
-    const material = await loadCaseDossierReadingMaterial(officerRun!);
-    assert.ok(material !== undefined, "0081 reading material must load from freeze");
-    assert.equal(material!.kind, "case-dossier-pointer");
-    assert.equal(material!.section.includes(volume.humanViewFile), true);
-    assert.equal(material!.section.includes(volume.recordFile), true);
-
-    // Existing agent-start fold surfaces it on systemPrompt face (not dialogue).
-    const { renderAgentStartMaterials } = await import("../../src/agent-start-materials.ts");
-    const folded = renderAgentStartMaterials("soul-body", [material!]);
-    assert.equal(folded.includes(material!.frozenPath), true);
-    assert.equal(folded.includes(volume.humanViewFile), true);
-    // Dialogue body still has neither volume path nor frozen path.
-    assert.equal(dialogue.includes(volume.humanViewFile), false);
-    assert.equal(dialogue.includes(material!.frozenPath), false);
+    // Real envelope send boundary: prepareRoleEnvelope collects the single shared
+    // before_agent_start owner exactly once into systemPrompt.materials.
+    const { prepareRoleEnvelope } = await import("../../src/role-envelope.ts");
+    const { createRoleRuntimeDependencies } = await import(
+      "../../src/role-runtime-dependencies.ts"
+    );
+    const { tmpdir } = await import("node:os");
+    const { mkdtemp: mkdtempFs } = await import("node:fs/promises");
+    const socketDir = await mkdtempFs(join(tmpdir(), "ak-879-env-"));
+    const socketPath = join(socketDir, "mcp.sock");
+    const prepared = await prepareRoleEnvelope({
+      request: {
+        principal: fixturePrincipal(join(officerRun!, "session")),
+        activation: { role: "judge" },
+        methods: [],
+        continuation: { kind: "resume", prompt: peerBody },
+        cwd: project,
+        home,
+        agentDir: join(home, "agent"),
+        runDirectory: officerRun!,
+        stationChild: true,
+      },
+      dependencies: createRoleRuntimeDependencies(packageRoot),
+      socketPath,
+    });
+    try {
+      assert.equal(prepared.prompt, peerBody, "envelope prompt must stay peer body");
+      const dossiers = prepared.systemPrompt.materials.filter(
+        (material) =>
+          typeof material === "object"
+          && material !== null
+          && (material as { kind?: unknown }).kind === "case-dossier-pointer",
+      );
+      assert.equal(
+        dossiers.length,
+        1,
+        `case dossier must project exactly once, got ${dossiers.length}`,
+      );
+      const dossier = dossiers[0] as {
+        frozenPath: string;
+        section: string;
+      };
+      assert.equal(dossier.section.includes(volume.humanViewFile), true);
+      assert.equal(dossier.section.includes(volume.recordFile), true);
+      // Fold into provider-visible systemPrompt face (existing agent-start seam).
+      const { renderAgentStartMaterials } = await import("../../src/agent-start-materials.ts");
+      const folded = renderAgentStartMaterials(prepared.systemPrompt.body, prepared.systemPrompt.materials);
+      assert.equal(folded.includes(dossier.frozenPath), true);
+      assert.equal(prepared.prompt.includes(dossier.frozenPath), false);
+      assert.equal(prepared.prompt.includes(volume.humanViewFile), false);
+    } finally {
+      await prepared.dispose?.();
+    }
 
     const { access } = await import("node:fs/promises");
     await assert.rejects(

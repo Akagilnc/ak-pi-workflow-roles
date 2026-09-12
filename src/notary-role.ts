@@ -179,35 +179,22 @@ export function createNotaryRoleRuntime(
         });
         // Evidence assembly only (ADR 0018): soul + bound projection.
         // Ticket value is envelope-admitted at activate — not re-read from flags here.
-        // #879: station-child 0081 case dossier (when post-admission froze it) rides the
-        // same readingMaterial → systemPrompt fold — never continuation.prompt.
-        pi.on("before_agent_start", async (event) => {
+        // #879 case dossier freeze→readingMaterial is envelope-owned (shared before_agent_start).
+        pi.on("before_agent_start", (event) => {
           if (activation === undefined) {
             throw new Error("符宝郎未激活");
-          }
-          const bound = projectNotarySessionBound({
-            sourceRun: activation.sourceRun,
-            ...(activation.ticketNumber === undefined
-              ? {}
-              : { ticketNumber: activation.ticketNumber }),
-          });
-          const runDir = process.env.AK_ROLE_RUN_DIR;
-          let readingMaterial: unknown = bound;
-          if (typeof runDir === "string" && runDir.trim() !== "") {
-            const { loadCaseDossierReadingMaterial } = await import(
-              "./public-cli/case-dossier-delivery.ts"
-            );
-            const caseDossier = await loadCaseDossierReadingMaterial(runDir);
-            if (caseDossier !== undefined) {
-              readingMaterial = { bound, caseDossier };
-            }
           }
           return {
             systemPrompt: assembleNotaryAgentStartPrompt({
               baseSystemPrompt: event.systemPrompt,
               soul: activation.soul,
             }),
-            readingMaterial,
+            readingMaterial: projectNotarySessionBound({
+              sourceRun: activation.sourceRun,
+              ...(activation.ticketNumber === undefined
+                ? {}
+                : { ticketNumber: activation.ticketNumber }),
+            }),
           };
         });
       }

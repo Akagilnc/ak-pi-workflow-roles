@@ -636,6 +636,15 @@ export async function prepareRoleEnvelope(options: {
     }
     // Method notes only here — role before_agent_start injects soul once.
     // Preloading session materials duplicated soul under the role tag (#632).
+    // #879: inject run dir before before_agent_start so the single shared
+    // case-dossier readingMaterial owner (role-runtime) can see the freeze.
+    priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;
+    priorAkRoleCourtAttempt = process.env.AK_ROLE_COURT_ATTEMPT;
+    process.env.AK_ROLE_RUN_DIR = request.runDirectory;
+    if (request.courtAttemptId === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
+    else process.env.AK_ROLE_COURT_ATTEMPT = request.courtAttemptId;
+    runDirInjected = true;
+
     const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile(path, "utf8")))).join("\n\n");
     const promptResults = await emit("before_agent_start", {
       prompt,
@@ -648,11 +657,8 @@ export async function prepareRoleEnvelope(options: {
       return [value.systemPrompt];
     });
     const systemPromptBody = systemPromptParts.length > 0 ? systemPromptParts.join("\n\n") : methodPrompt;
-    // Typed reading materials from agent-start handlers. Folded into the
-    // provider-visible systemPrompt by the adapter at the send boundary.
-    // #879: no RoleTurnRequest.materials; station-child 0081 case dossier rides
-    // the same readingMaterial → systemPrompt.materials fold when frozen under
-    // run/attachments/case-dossier/ (post-admission mount; dialogue prompt untouched).
+    // Typed reading materials from agent-start handlers (incl. single shared
+    // case-dossier owner). Folded into provider-visible systemPrompt at send.
     const readingMaterials: unknown[] = [];
     for (const value of promptResults) {
       if (typeof value !== "object" || value === null) continue;
@@ -660,20 +666,6 @@ export async function prepareRoleEnvelope(options: {
       const material = (value as { readingMaterial?: unknown }).readingMaterial;
       if (material !== undefined) readingMaterials.push(material);
     }
-    {
-      const { loadCaseDossierReadingMaterial } = await import(
-        "./public-cli/case-dossier-delivery.ts"
-      );
-      const caseDossier = await loadCaseDossierReadingMaterial(request.runDirectory);
-      if (caseDossier !== undefined) readingMaterials.push(caseDossier);
-    }
-
-    priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;
-    priorAkRoleCourtAttempt = process.env.AK_ROLE_COURT_ATTEMPT;
-    process.env.AK_ROLE_RUN_DIR = request.runDirectory;
-    if (request.courtAttemptId === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
-    else process.env.AK_ROLE_COURT_ATTEMPT = request.courtAttemptId;
-    runDirInjected = true;
 
     const terminating = tools.get(terminatingToolName);
     if (terminating === undefined) {

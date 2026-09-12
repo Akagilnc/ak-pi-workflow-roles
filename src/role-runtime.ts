@@ -748,23 +748,9 @@ function createFiledOfficerRuntime(
             };
           },
         });
-        roleHost.on("before_agent_start", async (event) => {
+        roleHost.on("before_agent_start", (event) => {
           if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
           const tail = `\n\n<${spec.soulTag}_soul>\n${soul}\n</${spec.soulTag}_soul>`;
-          // #879: station-child 0081 case dossier rides readingMaterial fold when frozen.
-          const runDir = process.env.AK_ROLE_RUN_DIR;
-          if (typeof runDir === "string" && runDir.trim() !== "") {
-            const { loadCaseDossierReadingMaterial } = await import(
-              "./public-cli/case-dossier-delivery.ts"
-            );
-            const caseDossier = await loadCaseDossierReadingMaterial(runDir);
-            if (caseDossier !== undefined) {
-              return {
-                systemPrompt: `${event.systemPrompt}${tail}`,
-                readingMaterial: caseDossier,
-              };
-            }
-          }
           return { systemPrompt: `${event.systemPrompt}${tail}` };
         });
       }
@@ -1270,6 +1256,20 @@ export function createRoleRuntimeExtension(
           systemPrompt: collectorBusiness.assembleMaterials(activeCollector, event.systemPrompt),
         };
       }
+    });
+    // #879: single shared owner of station-child 0081 case-dossier → readingMaterial fold.
+    // post-admission freezes under run/attachments/case-dossier/; this handler alone
+    // projects it onto the existing agent-start materials face (Pi + envelope collect).
+    // Role modules must not re-read the freeze (ADR 0018 lifecycle; no duplicate fold).
+    roleHost.on("before_agent_start", async () => {
+      const runDir = process.env.AK_ROLE_RUN_DIR;
+      if (typeof runDir !== "string" || runDir.trim() === "") return;
+      const { loadCaseDossierReadingMaterial } = await import(
+        "./public-cli/case-dossier-delivery.ts"
+      );
+      const caseDossier = await loadCaseDossierReadingMaterial(runDir);
+      if (caseDossier === undefined) return;
+      return { readingMaterial: caseDossier };
     });
     roleHost.on("tool_result", async (event) => {
       const role = selectedRole;
