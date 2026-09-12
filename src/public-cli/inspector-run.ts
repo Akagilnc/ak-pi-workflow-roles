@@ -6,7 +6,7 @@
  * #637 / #747: same-parent (卷宗指针) re-summons resume the seat's previous run.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
-import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
@@ -149,7 +149,7 @@ export async function runPublicInspector(
   await markRunAdmitted(admitted, env.principalAuthority);
 
   const engineMaterial = engineSessionMaterialFromOptions({
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...pickEngineAxis(env),
     packageRoot: env.packageRoot,
   });
   const turnRequest = buildInspectorTurnRequest(admitted, {
@@ -157,7 +157,7 @@ export async function runPublicInspector(
     home: env.home,
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...pickEngineAxis(env),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(env.correlationId === undefined || env.correlationId.trim() === ""
       ? {}

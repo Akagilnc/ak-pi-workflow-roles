@@ -13,7 +13,31 @@ export type EngineSessionMaterial = Readonly<{
   name: string;
   /** Present only when a packaged notes file exists for this name. */
   materialPath?: string;
+  /**
+   * Optional owner pool-directive model id for multi-model engines (#883).
+   * Opaque pass-through coordinate for the seat — not validated against a catalog.
+   */
+  model?: string;
 }>;
+
+/** Project engine name + optional model for env / request / material spreads. */
+export function pickEngineAxis(source: {
+  readonly engine?: string | undefined;
+  readonly engineModel?: string | undefined;
+}): { engine?: string; engineModel?: string } {
+  return {
+    ...(source.engine === undefined ? {} : { engine: source.engine }),
+    ...(source.engineModel === undefined ? {} : { engineModel: source.engineModel }),
+  };
+}
+
+/** Non-empty trimmed opaque engine model label; empty/whitespace rejected. */
+export function assertLegalEngineModel(model: string): string {
+  if (typeof model !== "string" || model.trim() === "" || model.trim() !== model) {
+    throw new Error(`illegal engine model: ${JSON.stringify(model)}`);
+  }
+  return model;
+}
 
 /** Non-empty, trimmed; reject only real path hazards at the I/O seam. */
 export function isEngineNameSyntax(name: string): boolean {
@@ -80,6 +104,8 @@ export function assertLegalEngineName(name: string): string {
  */
 export function engineSessionMaterialFromOptions(options: {
   engine?: string;
+  /** Optional pool-directive model id (#883); ignored when engine is absent. */
+  engineModel?: string;
   packageRoot?: string;
 }): EngineSessionMaterial | undefined {
   if (options.engine === undefined) return undefined;
@@ -87,11 +113,16 @@ export function engineSessionMaterialFromOptions(options: {
     throw new Error("packageRoot is required when engine is configured");
   }
   const name = assertLegalEngineName(options.engine);
+  const model =
+    options.engineModel === undefined
+      ? undefined
+      : assertLegalEngineModel(options.engineModel);
   const materialPath = resolveEngineMaterialPath(options.packageRoot, name);
+  const modelField = model === undefined ? {} : { model };
   if (existsSync(materialPath)) {
-    return Object.freeze({ name, materialPath });
+    return Object.freeze({ name, materialPath, ...modelField });
   }
-  return Object.freeze({ name });
+  return Object.freeze({ name, ...modelField });
 }
 
 /**
@@ -113,10 +144,16 @@ export function appendEngineSessionMaterial(
   if (engineMaterial.materialPath !== undefined) {
     out.push("本次配置的劳务引擎及其手册：");
     out.push(`- engine: ${engineMaterial.name}`);
+    if (engineMaterial.model !== undefined) {
+      out.push(`- engineModel: ${engineMaterial.model}`);
+    }
     out.push(`- ${engineMaterial.materialPath}`);
   } else {
     // Name-only pass-through: no packaged bytes to claim as handbook.
     out.push(`- engine: ${engineMaterial.name}`);
+    if (engineMaterial.model !== undefined) {
+      out.push(`- engineModel: ${engineMaterial.model}`);
+    }
   }
   return out;
 }

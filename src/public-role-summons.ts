@@ -18,6 +18,7 @@ import type { PublicCallableRole } from "./public-cli/registry.ts";
 import type { RoleTurnHost } from "./host-contracts.ts";
 import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
+import { pickEngineAxis } from "./package-resources/engine-material.ts";
 
 /** Env published by the parent activation so nested summons never re-derive root. */
 export const AK_ROLE_PACKAGE_ROOT_ENV = "AK_ROLE_PACKAGE_ROOT" as const;
@@ -163,9 +164,12 @@ async function resolveSummonHome(options: PublicSummonRequest): Promise<string> 
   return packageMachineHome();
 }
 
-/** Seat axes only — no parent-env fallback (#675 / #617 DK-3). */
-function projectSeatEngine(seat: EffectiveSeat): { engine?: string } {
-  return seat.engine === undefined ? {} : { engine: seat.engine };
+/** Seat axes only — no parent-env fallback (#675 / #617 DK-3 / #883). */
+function projectSeatEngine(seat: EffectiveSeat): {
+  engine?: string;
+  engineModel?: string;
+} {
+  return pickEngineAxis(seat);
 }
 
 function projectSeatHost(seat: EffectiveSeat): { host?: string } {

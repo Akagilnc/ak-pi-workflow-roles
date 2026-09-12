@@ -4,7 +4,11 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ENGINE_FLAG_NAME, normalizeEngineName } from "./engine-detour.ts";
+import {
+  ENGINE_FLAG_NAME,
+  ENGINE_MODEL_FLAG_NAME,
+  normalizeEngineName,
+} from "./engine-detour.ts";
 import { requireGatekeeperPass } from "./gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
@@ -114,9 +118,10 @@ export async function prepareRoleEnvelope(options: {
     throw new Error(`role has no terminating tool: ${request.activation.role}`);
   }
   const flags = projectActivationFlags(request);
-  // #818 P1: engine axis is request-scoped on this RoleHost — never process.env.
-  // Always project ("" = no engine) so ambient AK_ROLE_ENGINE cannot arm detour.
+  // #818 P1 / #883: engine axis is request-scoped on this RoleHost — never process.env.
+  // Always project ("" = no engine/model) so ambient cannot arm detour or invent a model.
   flags.set(ENGINE_FLAG_NAME, normalizeEngineName(request.engine) ?? "");
+  flags.set(ENGINE_MODEL_FLAG_NAME, normalizeEngineName(request.engineModel) ?? "");
   const tools = new Map<string, HostToolDefinition>();
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];

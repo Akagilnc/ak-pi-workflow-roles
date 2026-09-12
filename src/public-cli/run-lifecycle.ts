@@ -35,6 +35,7 @@ import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import {
   appendEngineSessionMaterial,
   engineSessionMaterialFromOptions,
+  pickEngineAxis,
   type EngineSessionMaterial,
 } from "../package-resources/engine-material.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
@@ -176,13 +177,14 @@ export function selectResumeContinuationPrompt(
 export function buildResumeContinuationPrompt(options: {
   packageRoot: string;
   engine?: string;
+  engineModel?: string;
   message?: string;
 }): string {
   return selectResumeContinuationPrompt(
     options.message,
     engineSessionMaterialFromOptions({
-      ...(options.engine === undefined ? {} : { engine: options.engine }),
       packageRoot: options.packageRoot,
+      ...pickEngineAxis(options),
     }),
   );
 }
@@ -559,6 +561,7 @@ export async function markRunRunning(
   effectiveModel?: InvocationEffectiveModel,
   effectiveEngine?: string,
   effectiveHost?: string,
+  effectiveEngineModel?: string,
 ): Promise<void> {
   const current = await readRoleRunStateDisk(runDirectory);
   if (current === undefined) {
@@ -584,6 +587,12 @@ export async function markRunRunning(
     // Authoritative seat projection: absent engine ⇒ null (delete).
     effectiveEngine === undefined ? null : effectiveEngine,
     effectiveHost,
+    // Authoritative with engine: absent model ⇒ null (delete) when engine axis is written.
+    effectiveEngine === undefined
+      ? null
+      : effectiveEngineModel === undefined
+        ? null
+        : effectiveEngineModel,
   );
 }
 
