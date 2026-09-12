@@ -830,7 +830,7 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
   });
 });
 
-test("#879 station-child officer: case dossier via attachments freeze, not dialogue body", async () => {
+test("#879 station-child officer: case dossier via attach transport, peer body intact", async () => {
   await withTempRoot("ak-officer-dossier-attach-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -857,6 +857,7 @@ test("#879 station-child officer: case dossier via attachments freeze, not dialo
     });
     const host = {
       async executeTurn(request: RoleTurnRequest) {
+        // Real send boundary: host sees the projected continuation.
         prompts.push(request.continuation.prompt);
         runDirs.push(request.runDirectory);
         assert.equal("materials" in request, false);
@@ -865,6 +866,8 @@ test("#879 station-child officer: case dossier via attachments freeze, not dialo
     };
 
     const body = { countersignStatus: "converged", note: "DOSSIER-ATTACH-BODY" };
+    const { readableGateItem } = await import("../../src/readable-gate-item.ts");
+    const peerBody = readableGateItem(body);
     const projected = await projectGatekeeperRun({
       context: {
         cwd: project,
@@ -883,43 +886,48 @@ test("#879 station-child officer: case dossier via attachments freeze, not dialo
     });
     assert.equal(projected.result.status, "pass");
     assert.ok(prompts.length >= 1);
-    const dialogue = prompts[prompts.length - 1]!;
-    // Dialogue body carries parent payload and must not splice dossier paths.
-    assert.ok(dialogue.length > 0, "officer dialogue must carry parent body");
+    const sent = prompts[prompts.length - 1]!;
+
+    // Peer dialogue instruction is the parent payload (prefix); attach transport
+    // rides after via existing buildInstructionTransportPrompt shape.
     assert.equal(
-      dialogue.includes(volume.humanViewFile),
-      false,
-      "0081 dossier paths must not ride in station-child officer dialogue body",
-    );
-    assert.equal(
-      dialogue.includes(volume.recordFile),
-      false,
-      "0081 record path must not ride in station-child officer dialogue body",
+      sent.startsWith(peerBody),
+      true,
+      "send-boundary prompt must keep parent payload as dialogue instruction prefix",
     );
 
-    // Non-body delivery: frozen under run/attachments/case-dossier/.
+    // Frozen attachment under run/attachments/case-dossier/ + path projected to seat.
     const officerRun = projected.summoned?.runDirectory ?? runDirs[runDirs.length - 1];
     assert.ok(officerRun, "officer run directory must exist");
-    const { readdir } = await import("node:fs/promises");
+    const { readdir, access } = await import("node:fs/promises");
     const attachRoot = join(officerRun!, "attachments");
     let foundPath: string | undefined;
-    try {
-      const top = await readdir(attachRoot);
-      for (const name of top) {
-        if (!name.includes("case-dossier")) continue;
-        const files = await readdir(join(attachRoot, name));
-        for (const file of files) {
-          if (!file.includes("case-dossier-pointer")) continue;
-          foundPath = join(attachRoot, name, file);
-          const text = await readFile(foundPath, "utf8");
-          // Attachment content carries the bound ticket path pointers (structured).
-          assert.equal(text.includes(volume.humanViewFile), true);
-          assert.equal(text.includes(volume.recordFile), true);
-        }
+    const top = await readdir(attachRoot);
+    for (const name of top) {
+      if (!name.includes("case-dossier")) continue;
+      const files = await readdir(join(attachRoot, name));
+      for (const file of files) {
+        if (!file.includes("case-dossier-pointer")) continue;
+        foundPath = join(attachRoot, name, file);
+        const text = await readFile(foundPath, "utf8");
+        assert.equal(text.includes(volume.humanViewFile), true);
+        assert.equal(text.includes(volume.recordFile), true);
       }
-    } catch (error) {
-      assert.fail(`expected case-dossier attachment under ${attachRoot}: ${String(error)}`);
     }
     assert.ok(foundPath, "0081 case dossier must hang as run attachment");
+    // Send boundary must project the frozen path (existing attach transport).
+    assert.equal(
+      sent.includes(foundPath!),
+      true,
+      "send-boundary prompt must project frozen case-dossier path to the seat",
+    );
+    // Dossier volume paths live in the attachment file, not spliced as body rewrite
+    // of the peer payload prefix.
+    assert.equal(sent.startsWith(peerBody), true);
+    // No leftover run-local staging copy.
+    await assert.rejects(
+      () => access(join(officerRun!, ".case-dossier-stage")),
+      /ENOENT/,
+    );
   });
 });

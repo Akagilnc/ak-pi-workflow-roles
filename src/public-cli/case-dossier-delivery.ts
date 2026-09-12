@@ -6,10 +6,12 @@
  * 机器文本仅中立标识材料（ADR 0073），用途说明归角色材料所有。
  *
  * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口挂载。
- * 普通入口把本段追加进 continuation；station-child 审核轮次改走既有 attachments
- * 冻结接缝（#879：对话正文保持父腿 payload，起居录不零递送、不新造 materials）。
+ * 普通入口把本段追加进 continuation；station-child 审核轮次走既有 attachments
+ * 冻结 + `buildInstructionTransportPrompt` 附件路径投影（#879：对话 instruction
+ * 保持父腿 payload 原文；起居录作独立附件面，不新造 RoleTurnRequest.materials）。
  */
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { resolveTicketProvenanceVolume } from "../ticket-provenance.ts";
@@ -59,9 +61,11 @@ export async function projectCaseDossierPointerSection(input: {
 }
 
 /**
- * ADR 0081 delivery for station-child officer turns (#879): hang the same
- * pointer section via the existing attachments freeze seam — never into the
- * parent↔officer dialogue body, and never via RoleTurnRequest.materials.
+ * ADR 0081 delivery for station-child officer turns (#879): freeze the same
+ * pointer section through the existing attachments seam. Caller projects the
+ * returned frozen paths via buildInstructionTransportPrompt (existing attach
+ * transport) so the seat sees the readable reference — peer dialogue instruction
+ * stays the parent payload; never RoleTurnRequest.materials.
  * Returns frozen attachments, or undefined when unbound (no dossier).
  */
 export async function deliverCaseDossierAsAttachment(input: {
@@ -76,14 +80,17 @@ export async function deliverCaseDossierAsAttachment(input: {
     home: input.home,
   });
   if (section === undefined) return undefined;
-  // Stage outside attachments/, then freeze through the shared attachment seam.
-  const stagingDir = join(input.runDirectory, ".case-dossier-stage");
-  await mkdir(stagingDir, { recursive: true });
-  const stagingPath = join(stagingDir, CASE_DOSSIER_ATTACH_FILE);
-  await writeFile(stagingPath, `${section}\n`, "utf8");
-  return freezeAttachmentsIntoRun(
-    [stagingPath],
-    input.runDirectory,
-    CASE_DOSSIER_ATTACH_KEY,
-  );
+  // Stage in OS temp only — never leave a run-local .case-dossier-stage copy.
+  const stagingDir = await mkdtemp(join(tmpdir(), "ak-case-dossier-"));
+  try {
+    const stagingPath = join(stagingDir, CASE_DOSSIER_ATTACH_FILE);
+    await writeFile(stagingPath, `${section}\n`, "utf8");
+    return await freezeAttachmentsIntoRun(
+      [stagingPath],
+      input.runDirectory,
+      CASE_DOSSIER_ATTACH_KEY,
+    );
+  } finally {
+    await rm(stagingDir, { recursive: true, force: true });
+  }
 }
