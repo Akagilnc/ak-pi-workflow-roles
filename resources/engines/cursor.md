@@ -31,8 +31,7 @@ cursor-agent -p -f --output-format text --model <MODEL_ID> "YOUR_LABOR_PROMPT"
   `cursor-agent --help`).
 - This note does not pin a model id. The dispatch order (owner pool
   directive) names the model to pass verbatim via `--model`. If `--model
-  <MODEL_ID>` is not provided, `cursor-agent` uses `cursor-grok-4.6-high` by
-  default.
+  <MODEL_ID>` is not provided, please uses `cursor-grok-4.6-high`.
 - Always `--output-format text`; never `stream-json` (the event stream goes back
   into the seat's context as noise — see `opus.md`).
 
