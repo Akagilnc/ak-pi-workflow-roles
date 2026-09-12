@@ -450,14 +450,24 @@ test("a recorded append failure never returns accepted", async () => {
 
 test("court attempt tags record without hiding earlier payloads (#836)", async () => {
   await withLedgerFixture(async (f) => {
-    await f.start("t1");
-    await f.tool().execute("t1", { judgeStatus: "continue" }, undefined, undefined, f.context);
+    // Same bare toolCallId across courts — reader must still keep both payloads (#881).
+    const reusedCallId = "reused-id";
+    await f.start(reusedCallId);
+    await f.tool().execute(reusedCallId, { judgeStatus: "continue" }, undefined, undefined, f.context);
     const priorCourt = process.env.AK_ROLE_COURT_ATTEMPT;
     process.env.AK_ROLE_COURT_ATTEMPT = "court-turn-2";
     try {
       const reopened = registerTool(f.root);
-      await reopened.start("court-2");
-      await reopened.tool().execute("court-2", { judgeStatus: "converged" }, undefined, undefined, reopened.context);
+      await reopened.start(reusedCallId);
+      await reopened.tool().execute(reusedCallId, { judgeStatus: "converged" }, undefined, undefined, reopened.context);
+      const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+      assert.deepEqual(
+        rows.map((row) => ({ kind: row.kind, toolCallId: row.toolCallId, accepted: row.accepted })),
+        [
+          { kind: "accepted", toolCallId: reusedCallId, accepted: { judgeStatus: "continue" } },
+          { kind: "accepted", toolCallId: reusedCallId, accepted: { judgeStatus: "converged" } },
+        ],
+      );
       const recorded = await readRecordedSubmissions(f.root, "run-ledger", f.root);
       assert.equal(recorded.length, 2);
       assert.deepEqual(recorded, [

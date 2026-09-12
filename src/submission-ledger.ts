@@ -218,6 +218,15 @@ function rowRank(kind: RecordedSubmissionRow["kind"]): number {
   }
 }
 
+/**
+ * Same-call identity for reader pairing only (#881 / #836).
+ * attemptId is already on the record (subject/payload); bare toolCallId alone
+ * collapses distinct court attempts that reused a host call id.
+ */
+function submissionCallKey(attemptId: string | undefined, toolCallId: string): string {
+  return `${attemptId ?? ""}\0${toolCallId}`;
+}
+
 function rowFromPayload(
   kind: RecordedSubmissionRow["kind"],
   payload: {
@@ -245,7 +254,8 @@ function rowFromPayload(
  * All recorded role submissions in ledger order (#836 multi-submit / #881).
  * Projects every original payload — sealed, audit-escalation, correctable-rejection,
  * infrastructure, and bare candidate — without outcome-class filtering.
- * Same toolCallId (candidate + outcome both carrying params) appears once.
+ * Same call (candidate + outcome both carrying params) appears once — keyed by
+ * recorded attemptId + toolCallId so distinct court attempts stay distinct (#881).
  * `accepted` is the original payload; never rebuilt from a status/facts envelope.
  */
 export async function readRecordedSubmissionRows(
@@ -257,9 +267,9 @@ export async function readRecordedSubmissionRows(
   const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
   const scoped = recordsForAttempt(owned, scope.attemptId);
   const out: RecordedSubmissionRow[] = [];
-  const indexByToolCallId = new Map<string, number>();
+  const indexByCall = new Map<string, number>();
   // Recover seat identity for historical non-sealed rows that omitted role (#881).
-  const roleByToolCallId = new Map<string, TerminalRoleName>();
+  const roleByCall = new Map<string, TerminalRoleName>();
   for (const record of scoped) {
     const payload = record.payload as {
       toolCallId?: unknown;
@@ -268,13 +278,15 @@ export async function readRecordedSubmissionRows(
     } | undefined;
     if (typeof payload?.toolCallId !== "string" || payload.toolCallId.length === 0) continue;
     const role = recordedRole(payload);
-    if (role !== undefined) roleByToolCallId.set(payload.toolCallId, role);
+    if (role !== undefined) {
+      roleByCall.set(submissionCallKey(recordAttemptId(record), payload.toolCallId), role);
+    }
   }
 
-  const take = (row: RecordedSubmissionRow): void => {
+  const take = (row: RecordedSubmissionRow, callKey: string | undefined): void => {
     const toolCallId = row.toolCallId;
-    if (toolCallId !== undefined) {
-      const existingIndex = indexByToolCallId.get(toolCallId);
+    if (toolCallId !== undefined && callKey !== undefined) {
+      const existingIndex = indexByCall.get(callKey);
       if (existingIndex !== undefined) {
         const existing = out[existingIndex]!;
         if (rowRank(row.kind) >= rowRank(existing.kind)) {
@@ -289,20 +301,24 @@ export async function readRecordedSubmissionRows(
         }
         return;
       }
-      indexByToolCallId.set(toolCallId, out.length);
+      indexByCall.set(callKey, out.length);
     }
     out.push(row);
   };
 
   for (const record of scoped) {
+    const attemptId = recordAttemptId(record);
     if (record.kind === "candidate") {
       const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "candidate" }>> & {
         projection?: { role?: unknown };
       } | undefined;
       if (payload?.type !== "candidate" || payload.params === undefined) continue;
-      const fallback =
-        typeof payload.toolCallId === "string" ? roleByToolCallId.get(payload.toolCallId) : undefined;
-      take(rowFromPayload("candidate", payload, payload.params, fallback));
+      const callKey =
+        typeof payload.toolCallId === "string"
+          ? submissionCallKey(attemptId, payload.toolCallId)
+          : undefined;
+      const fallback = callKey !== undefined ? roleByCall.get(callKey) : undefined;
+      take(rowFromPayload("candidate", payload, payload.params, fallback), callKey);
       continue;
     }
     if (record.kind === "sealed") {
@@ -310,9 +326,12 @@ export async function readRecordedSubmissionRows(
         projection?: { role?: unknown };
       } | undefined;
       if (payload?.type !== "sealed" || payload.accepted === undefined) continue;
-      const fallback =
-        typeof payload.toolCallId === "string" ? roleByToolCallId.get(payload.toolCallId) : undefined;
-      take(rowFromPayload("accepted", payload, payload.accepted, fallback));
+      const callKey =
+        typeof payload.toolCallId === "string"
+          ? submissionCallKey(attemptId, payload.toolCallId)
+          : undefined;
+      const fallback = callKey !== undefined ? roleByCall.get(callKey) : undefined;
+      take(rowFromPayload("accepted", payload, payload.accepted, fallback), callKey);
       continue;
     }
     if (record.kind !== "outcome") continue;
@@ -331,9 +350,12 @@ export async function readRecordedSubmissionRows(
             ? "infrastructure"
             : undefined;
     if (kind === undefined) continue;
-    const fallback =
-      typeof payload.toolCallId === "string" ? roleByToolCallId.get(payload.toolCallId) : undefined;
-    take(rowFromPayload(kind, payload, payload.accepted, fallback));
+    const callKey =
+      typeof payload.toolCallId === "string"
+        ? submissionCallKey(attemptId, payload.toolCallId)
+        : undefined;
+    const fallback = callKey !== undefined ? roleByCall.get(callKey) : undefined;
+    take(rowFromPayload(kind, payload, payload.accepted, fallback), callKey);
   }
   return out;
 }
