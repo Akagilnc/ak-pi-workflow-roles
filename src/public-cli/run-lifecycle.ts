@@ -1024,8 +1024,10 @@ export async function findRunDirectoryById(
   let bookKeys: string[];
   try {
     bookKeys = await readdir(booksRoot);
-  } catch {
-    return undefined;
+  } catch (error) {
+    // Only a missing books root is "unknown id"; permission/IO damage propagates.
+    if (errorCodeOf(error) === "ENOENT") return undefined;
+    throw error;
   }
   for (const bookKey of bookKeys) {
     if (onlyBookKey !== undefined && bookKey !== onlyBookKey) continue;
@@ -1033,8 +1035,9 @@ export async function findRunDirectoryById(
     let runDirectories: string[];
     try {
       runDirectories = await listBookRunDirectories(bookDir);
-    } catch {
-      continue;
+    } catch (error) {
+      if (errorCodeOf(error) === "ENOENT") continue;
+      throw error;
     }
     for (const runDirectory of runDirectories) {
       const entry = basename(runDirectory);
@@ -1109,8 +1112,10 @@ async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boole
   try {
     const stat = await lstat(sessionFile);
     return stat.isFile() && !stat.isSymbolicLink();
-  } catch {
-    return false;
+  } catch (error) {
+    // Absent session file → not formed; permission/IO/damage keeps identity.
+    if (errorCodeOf(error) === "ENOENT") return false;
+    throw error;
   }
 }
 

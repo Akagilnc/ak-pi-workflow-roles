@@ -2,7 +2,7 @@
  * #866 (T10): record-class partition migrators (build only; execution is #861).
  *
  * Line-closed placement by each row's typed kind (never by source directory alone):
- * - ticket-provenance → <ticket>/ticket-provenance/
+ * - ticket-provenance → <ticket>/ (records.jsonl + human view; live topology)
  * - submission-ledger kinds → owning run session/submission-ledger/
  * - attempt-history → owning run session/attempt-history/
  * - unknown ownership → unbound/ (never silent discard)
@@ -10,7 +10,7 @@
  * - misplaced: any foreign jsonl whose kind is one of the three classes
  */
 import { createHash } from "node:crypto";
-import { appendFile, copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { appendFile, copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, sep } from "node:path";
 
 import {
@@ -18,7 +18,10 @@ import {
   findBookRunDirectory,
   findPlacedMigratingRun,
   findUniquePrincipalPlacedRun,
+  isMigrationEnoent,
   isTicketNumberString,
+  listMigrationBookKeys,
+  listMigrationDirents,
   runCoordsFromSessionParent,
   runIdFromSubject,
   runRefFromBoundPath,
@@ -75,23 +78,13 @@ async function readJsonlLines(filePath: string): Promise<readonly string[]> {
   try {
     text = await readFile(filePath, "utf8");
   } catch (error) {
-    if ((error as { code?: unknown }).code === "ENOENT") return [];
+    if (isMigrationEnoent(error)) return [];
     throw error;
   }
   if (text.length === 0) return [];
   const lines = text.split("\n");
   if (text.endsWith("\n")) lines.pop();
   return lines;
-}
-
-async function listBookKeys(booksDirectory: string): Promise<readonly string[]> {
-  try {
-    const entries = await readdir(booksDirectory, { withFileTypes: true });
-    return entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name);
-  } catch (error) {
-    if ((error as { code?: unknown }).code === "ENOENT") return [];
-    throw error;
-  }
 }
 
 async function ensureDir(path: string): Promise<void> {
@@ -154,14 +147,7 @@ function recordClassOfKind(kind: unknown): RecordClass | undefined {
 async function listFilesRecursive(root: string, predicate: (name: string) => boolean): Promise<string[]> {
   const out: string[] = [];
   async function walk(directory: string): Promise<void> {
-    let entries;
-    try {
-      entries = await readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      if ((error as { code?: unknown }).code === "ENOENT") return;
-      throw error;
-    }
-    for (const entry of entries) {
+    for (const entry of await listMigrationDirents(directory)) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) await walk(path);
       else if (entry.isFile() && predicate(entry.name)) out.push(path);
@@ -179,11 +165,7 @@ async function listFilesRecursive(root: string, predicate: (name: string) => boo
  */
 async function listVolumeRecordFiles(partitionDir: string): Promise<string[]> {
   const files: string[] = [join(partitionDir, "records.jsonl")];
-  const volumes = await readdir(partitionDir, { withFileTypes: true }).catch((error: unknown) => {
-    if ((error as { code?: unknown }).code === "ENOENT") return [] as const;
-    throw error;
-  });
-  for (const entry of volumes) {
+  for (const entry of await listMigrationDirents(partitionDir)) {
     if (!entry.isDirectory()) continue;
     files.push(join(partitionDir, entry.name, "records.jsonl"));
   }
@@ -351,8 +333,9 @@ async function placeTicketProvenanceLine(
     await writes.append(unboundCategoryFile(context.booksDirectory, bookKey, TICKET_PROVENANCE, stableKey(raw)), raw);
     return { disposition: "unbound", source };
   }
+  // Live topology (docs/dossier-topology.md): ticket root holds records.jsonl.
   await writes.append(
-    join(context.booksDirectory, bookKey, String(ticketNumber), TICKET_PROVENANCE, "records.jsonl"),
+    join(context.booksDirectory, bookKey, String(ticketNumber), "records.jsonl"),
     raw,
   );
   return { disposition: "placed", source };
@@ -474,14 +457,14 @@ async function copyTicketCompanions(
   if (ticketNumber === undefined) return;
 
   // Typed ticket rows already created dest records.jsonl via placeTicketProvenanceLine.
-  const destDir = join(context.booksDirectory, bookKey, String(ticketNumber), TICKET_PROVENANCE);
+  const destDir = join(context.booksDirectory, bookKey, String(ticketNumber));
   await ensureDir(destDir);
   for (const name of [TICKET_PROVENANCE_HUMAN_VIEW, "offered-identities.jsonl"] as const) {
     const from = join(volumeDir, name);
     try {
       await stat(from);
     } catch (error) {
-      if ((error as { code?: unknown }).code === "ENOENT") continue;
+      if (isMigrationEnoent(error)) continue;
       throw error;
     }
     await copyFile(from, join(destDir, name));
@@ -507,18 +490,14 @@ async function migrateHomePartitionBook(
 
   if (category !== TICKET_PROVENANCE) return;
 
-  // Partial-nesting era: <ticket>/ticket-provenance/
-  const ticketDirs = await readdir(backupBook, { withFileTypes: true }).catch((error: unknown) => {
-    if ((error as { code?: unknown }).code === "ENOENT") return [] as const;
-    throw error;
-  });
-  for (const entry of ticketDirs) {
+  // Partial-nesting era source: <ticket>/ticket-provenance/ → live ticket root.
+  for (const entry of await listMigrationDirents(backupBook)) {
     if (!entry.isDirectory() || !isTicketNumberString(entry.name)) continue;
     const nested = join(backupBook, entry.name, TICKET_PROVENANCE, "records.jsonl");
     try {
       await stat(nested);
     } catch (error) {
-      if ((error as { code?: unknown }).code === "ENOENT") continue;
+      if (isMigrationEnoent(error)) continue;
       throw error;
     }
     await migrateJsonlFileByKind(context, bookKey, writes, nested, TICKET_PROVENANCE, outcomes);
@@ -629,7 +608,7 @@ async function forEachBook(
   context: BookTopologyMigrationContext,
   body: (bookKey: string, writes: RecordWriteCache) => Promise<void>,
 ): Promise<void> {
-  for (const bookKey of await listBookKeys(context.backupBooksDirectory)) {
+  for (const bookKey of await listMigrationBookKeys(context.backupBooksDirectory)) {
     await body(bookKey, new RecordWriteCache());
   }
 }

@@ -7,8 +7,8 @@
  * deprecated-kinds, deprecated-run-pages, navigator, collector-handbook,
  * manual-archives.
  */
-import { cp, lstat, mkdir, readdir, readFile, stat, unlink, utimes, writeFile } from "node:fs/promises";
-import type { Dirent, Stats } from "node:fs";
+import { cp, lstat, mkdir, readFile, stat, unlink, utimes, writeFile } from "node:fs/promises";
+import type { Stats } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
 import {
@@ -25,8 +25,11 @@ import {
 import {
   findPlacedMigratingRun,
   isFlatRunsRelative,
+  isMigrationEnoent,
   isTicketNumberString,
   listBackupRunLeaves,
+  listMigrationBookKeys,
+  listMigrationDirents,
   uniqueRunLeafExistsInBook,
 } from "./book-topology-migration-placement.ts";
 import {
@@ -80,14 +83,6 @@ type ParentRun = {
   readonly role: string;
 };
 
-function isEnoent(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
-  );
-}
-
 function parseRunLeaf(name: string): RunLeaf | undefined {
   const match = RUN_LEAF.exec(name);
   if (match === null) return undefined;
@@ -101,41 +96,18 @@ function sourceIdentity(backupBooksDirectory: string, path: string): string {
   return relative(backupBooksDirectory, path).split(sep).join("/");
 }
 
-async function listBookKeys(backupBooksDirectory: string): Promise<string[]> {
-  try {
-    const entries = await readdir(backupBooksDirectory, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
-  } catch (error) {
-    if (isEnoent(error)) return [];
-    throw error;
-  }
-}
-
-async function listDirents(directory: string): Promise<readonly Dirent[]> {
-  try {
-    const entries = await readdir(directory, { withFileTypes: true });
-    return [...entries].sort((a, b) => a.name.localeCompare(b.name));
-  } catch (error) {
-    if (isEnoent(error)) return [];
-    throw error;
-  }
-}
-
 async function directoryExists(path: string): Promise<boolean> {
   try {
     const info = await stat(path);
     return info.isDirectory();
   } catch (error) {
-    if (isEnoent(error)) return false;
+    if (isMigrationEnoent(error)) return false;
     throw error;
   }
 }
 
 async function hasAnyFileRecursive(directory: string): Promise<boolean> {
-  for (const entry of await listDirents(directory)) {
+  for (const entry of await listMigrationDirents(directory)) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
       if (await hasAnyFileRecursive(path)) return true;
@@ -221,6 +193,14 @@ function parseParentRunBoundToMigration(
     && (before[1] === "unbound" || (before[1] !== undefined && isTicketNumberString(before[1])))
   ) {
     bookKey = before[0];
+  } else if (
+    before.length === 3
+    && before[1] === "issues"
+    && before[2] !== undefined
+    && isTicketNumberString(before[2])
+  ) {
+    // Legacy issues/<ticket>/runs/<leaf> bound to this book.
+    bookKey = before[0];
   }
   if (bookKey === undefined) return undefined;
   const leaf = parseRunLeaf(leafName);
@@ -239,7 +219,7 @@ async function readJsonlParentSession(path: string): Promise<string | undefined>
   try {
     raw = await readFile(path, "utf8");
   } catch (error) {
-    if (isEnoent(error)) return undefined;
+    if (isMigrationEnoent(error)) return undefined;
     throw error;
   }
   const newline = raw.indexOf("\n");
@@ -288,7 +268,7 @@ async function findTrueVolumeParent(
   try {
     ledgerRaw = await readFile(join(volumeDirectory, CURRENT_SESSION_LEDGER), "utf8");
   } catch (error) {
-    if (isEnoent(error)) return undefined;
+    if (isMigrationEnoent(error)) return undefined;
     throw error;
   }
   let sessionFileField: string;
@@ -318,7 +298,7 @@ async function findTrueVolumeParent(
     const info = await lstat(liveSession);
     if (!info.isFile()) return undefined;
   } catch (error) {
-    if (isEnoent(error)) return undefined;
+    if (isMigrationEnoent(error)) return undefined;
     throw error;
   }
 
@@ -350,15 +330,26 @@ async function collectPlacedRunRewrites(
     seen.add(oldRunDirectory);
     rewrites.push({ oldRunDirectory, newRunDirectory });
   };
-  for (const bookKey of await listBookKeys(booksDirectory)) {
-    for (const subject of await listDirents(join(booksDirectory, bookKey))) {
+  for (const bookKey of await listMigrationBookKeys(booksDirectory)) {
+    for (const subject of await listMigrationDirents(join(booksDirectory, bookKey))) {
       if (!subject.isDirectory()) continue;
       const runsRoot = join(booksDirectory, bookKey, subject.name, "runs");
-      for (const run of await listDirents(runsRoot)) {
+      for (const run of await listMigrationDirents(runsRoot)) {
         if (!run.isDirectory()) continue;
         const finalPath = join(runsRoot, run.name);
         push(join(booksDirectory, bookKey, "runs", run.name), finalPath);
         push(join(backupBooksDirectory, bookKey, "runs", run.name), finalPath);
+        push(join(backupBooksDirectory, bookKey, subject.name, "runs", run.name), finalPath);
+        if (isTicketNumberString(subject.name)) {
+          push(
+            join(booksDirectory, bookKey, "issues", subject.name, "runs", run.name),
+            finalPath,
+          );
+          push(
+            join(backupBooksDirectory, bookKey, "issues", subject.name, "runs", run.name),
+            finalPath,
+          );
+        }
       }
     }
   }
@@ -370,10 +361,16 @@ function historicalRunDirectoriesFor(
   backupBooksDirectory: string,
   parent: ParentRun,
 ): readonly string[] {
-  return [
-    join(booksDirectory, parent.bookKey, "runs", parent.leafName),
-    join(backupBooksDirectory, parent.bookKey, "runs", parent.leafName),
+  const out = [
+    join(booksDirectory, parent.bookKey, parent.sourceRelative),
+    join(backupBooksDirectory, parent.bookKey, parent.sourceRelative),
   ];
+  // Flat alias when the source nest is already ticket/unbound/issues.
+  if (!parent.sourceRelative.startsWith("runs/")) {
+    out.push(join(booksDirectory, parent.bookKey, "runs", parent.leafName));
+    out.push(join(backupBooksDirectory, parent.bookKey, "runs", parent.leafName));
+  }
+  return out;
 }
 
 async function resolveDestinationRun(
@@ -451,7 +448,7 @@ async function mergeRewrittenCurrentSession(
     srcStat = await stat(srcPath);
     srcRaw = await readFile(srcPath, "utf8");
   } catch (error) {
-    if (isEnoent(error)) return;
+    if (isMigrationEnoent(error)) return;
     throw error;
   }
 
@@ -481,7 +478,7 @@ async function mergeRewrittenCurrentSession(
   try {
     destStat = await stat(destPath);
   } catch (error) {
-    if (!isEnoent(error)) throw error;
+    if (!isMigrationEnoent(error)) throw error;
   }
   await writeWinningCurrentSession(
     destPath,
@@ -494,7 +491,7 @@ async function mergeRewrittenCurrentSession(
 
 async function copyDirSkippingCurrentSession(from: string, to: string): Promise<void> {
   await mkdir(to, { recursive: true });
-  for (const entry of await listDirents(from)) {
+  for (const entry of await listMigrationDirents(from)) {
     if (entry.name === CURRENT_SESSION_LEDGER && entry.isFile()) continue;
     const src = join(from, entry.name);
     const dest = join(to, entry.name);
@@ -533,9 +530,9 @@ export const bookTopologyAuditorRolesMigrator: BookTopologyPartitionMigrator = {
     );
     const rewriteSeen = new Set(crossRunRewrites.map((r) => r.oldRunDirectory));
 
-    for (const bookKey of await listBookKeys(backupBooksDirectory)) {
+    for (const bookKey of await listMigrationBookKeys(backupBooksDirectory)) {
       const auditorRoot = join(backupBooksDirectory, bookKey, AUDITOR_ROLES_PARTITION);
-      for (const entry of await listDirents(auditorRoot)) {
+      for (const entry of await listMigrationDirents(auditorRoot)) {
         const sourcePath = join(auditorRoot, entry.name);
         if (entry.isFile() && entry.name === T10_MISFILED_NAME) {
           continue;
@@ -605,25 +602,58 @@ export const bookTopologyAuditorRolesMigrator: BookTopologyPartitionMigrator = {
   },
 };
 
+/**
+ * Copy ticket-level issues material only. Runs under issues/<ticket>/runs are
+ * owned by the unified T9 inventory (listBackupRunLeaves layout "issues") and
+ * must not be force-copied over already-placed destinations.
+ */
+async function copyIssuesNonRunTree(source: string, destination: string): Promise<void> {
+  await mkdir(destination, { recursive: true });
+  for (const entry of await listMigrationDirents(source)) {
+    if (entry.name === "runs") continue;
+    const from = join(source, entry.name);
+    const to = join(destination, entry.name);
+    if (entry.isDirectory()) {
+      await copyIssuesNonRunTree(from, to);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+    try {
+      await stat(to);
+      throw new Error(
+        `book topology migration refuses to overwrite ${to} with ${from}`,
+      );
+    } catch (error) {
+      if (!isMigrationEnoent(error)) throw error;
+    }
+    await cp(from, to, { preserveTimestamps: true });
+  }
+}
+
 export const bookTopologyIssuesMigrator: BookTopologyPartitionMigrator = {
   partition: ISSUES_PARTITION,
   async migrate(context: BookTopologyMigrationContext) {
     const outcomes: MigrationItemOutcome[] = [];
     const { backupBooksDirectory, booksDirectory } = context;
 
-    for (const bookKey of await listBookKeys(backupBooksDirectory)) {
+    for (const bookKey of await listMigrationBookKeys(backupBooksDirectory)) {
       const issuesRoot = join(backupBooksDirectory, bookKey, ISSUES_PARTITION);
-      for (const entry of await listDirents(issuesRoot)) {
+      for (const entry of await listMigrationDirents(issuesRoot)) {
         const sourcePath = join(issuesRoot, entry.name);
         const source = sourceIdentity(backupBooksDirectory, sourcePath);
         const isTicketDir =
           entry.isDirectory() && TICKET_NUMBER_NAME.test(entry.name);
-        if (isTicketDir && (await hasAnyFileRecursive(sourcePath))) {
-          await copyTree(sourcePath, join(booksDirectory, bookKey, entry.name));
-          outcomes.push({ disposition: "placed", source });
+        if (!isTicketDir || !(await hasAnyFileRecursive(sourcePath))) {
+          outcomes.push({ disposition: "discarded", source });
           continue;
         }
-        outcomes.push({ disposition: "discarded", source });
+        // Non-run companions only; runs closed under the runs partition.
+        // Ticket entry is still placed when it only held runs already migrated by T9.
+        await copyIssuesNonRunTree(
+          sourcePath,
+          join(booksDirectory, bookKey, entry.name),
+        );
+        outcomes.push({ disposition: "placed", source });
       }
     }
 
@@ -637,10 +667,10 @@ export const bookTopologyDeprecatedKindsMigrator: BookTopologyPartitionMigrator 
     const outcomes: MigrationItemOutcome[] = [];
     const { backupBooksDirectory } = context;
 
-    for (const bookKey of await listBookKeys(backupBooksDirectory)) {
+    for (const bookKey of await listMigrationBookKeys(backupBooksDirectory)) {
       for (const kind of DEPRECATED_KIND_DIRECTORIES) {
         const kindRoot = join(backupBooksDirectory, bookKey, kind);
-        for (const entry of await listDirents(kindRoot)) {
+        for (const entry of await listMigrationDirents(kindRoot)) {
           outcomes.push({
             disposition: "discarded",
             source: sourceIdentity(backupBooksDirectory, join(kindRoot, entry.name)),
@@ -657,7 +687,7 @@ async function unlinkIfPresent(path: string): Promise<void> {
   try {
     await unlink(path);
   } catch (error) {
-    if (!isEnoent(error)) throw error;
+    if (!isMigrationEnoent(error)) throw error;
   }
 }
 
@@ -671,7 +701,7 @@ async function discardDeprecatedPagesFromRunSource(input: {
   readonly destinationRunDirectory: string | undefined;
   readonly outcomes: MigrationItemOutcome[];
 }): Promise<void> {
-  for (const page of await listDirents(input.sourceRunDirectory)) {
+  for (const page of await listMigrationDirents(input.sourceRunDirectory)) {
     if (!page.isFile() || !isDeprecatedRunPage(page.name)) continue;
     input.outcomes.push({
       disposition: "discarded",
@@ -689,8 +719,8 @@ async function discardDeprecatedPagesFromRunSource(input: {
 /**
  * Count each backup deprecated run page as discarded, and delete the same page
  * from the destination run when it has already been placed. One rule, one place:
- * isDeprecatedRunPage names the pages; this migrator applies the discard across
- * both actual source populations — flat `runs/` and legacy `issues/<N>/runs/`.
+ * isDeprecatedRunPage names the pages; listBackupRunLeaves is the sole inventory
+ * (flat, ticket, unbound, issues).
  */
 export const bookTopologyDeprecatedRunPagesMigrator: BookTopologyPartitionMigrator = {
   partition: DEPRECATED_RUN_PAGES_PARTITION,
@@ -698,8 +728,7 @@ export const bookTopologyDeprecatedRunPagesMigrator: BookTopologyPartitionMigrat
     const outcomes: MigrationItemOutcome[] = [];
     const { backupBooksDirectory, booksDirectory } = context;
 
-    for (const bookKey of await listBookKeys(backupBooksDirectory)) {
-      // Population 1: every retained run T9 inventories (flat, ticket, unbound).
+    for (const bookKey of await listMigrationBookKeys(backupBooksDirectory)) {
       for (const leaf of await listBackupRunLeaves(join(backupBooksDirectory, bookKey))) {
         if (!leaf.isDirectory) continue;
         const placed = await findPlacedMigratingRun(
@@ -715,33 +744,6 @@ export const bookTopologyDeprecatedRunPagesMigrator: BookTopologyPartitionMigrat
           outcomes,
         });
       }
-
-      // Population 2: legacy issues/<N>/runs (issues migrator copies whole tree
-      // to <book>/<N>/runs). Same discard authority — no parallel scrub in the
-      // issues copier.
-      const issuesRoot = join(backupBooksDirectory, bookKey, ISSUES_PARTITION);
-      for (const issue of await listDirents(issuesRoot)) {
-        if (!issue.isDirectory() || !TICKET_NUMBER_NAME.test(issue.name)) continue;
-        const issueRunsRoot = join(issuesRoot, issue.name, "runs");
-        for (const run of await listDirents(issueRunsRoot)) {
-          if (!run.isDirectory()) continue;
-          const runDirectory = join(issueRunsRoot, run.name);
-          const destination = join(
-            booksDirectory,
-            bookKey,
-            issue.name,
-            "runs",
-            run.name,
-          );
-          const destExists = await directoryExists(destination);
-          await discardDeprecatedPagesFromRunSource({
-            backupBooksDirectory,
-            sourceRunDirectory: runDirectory,
-            destinationRunDirectory: destExists ? destination : undefined,
-            outcomes,
-          });
-        }
-      }
     }
 
     return reconcileMigrationPartition(DEPRECATED_RUN_PAGES_PARTITION, "entries", outcomes);
@@ -753,11 +755,11 @@ async function copyBookTopLevelPartition(
   partition: string,
   outcomes: MigrationItemOutcome[],
 ): Promise<void> {
-  for (const bookKey of await listBookKeys(context.backupBooksDirectory)) {
+  for (const bookKey of await listMigrationBookKeys(context.backupBooksDirectory)) {
     const sourceDir = join(context.backupBooksDirectory, bookKey, partition);
     if (!(await directoryExists(sourceDir))) continue;
     await copyTree(sourceDir, join(context.booksDirectory, bookKey, partition));
-    for (const entry of await listDirents(sourceDir)) {
+    for (const entry of await listMigrationDirents(sourceDir)) {
       outcomes.push({
         disposition: "placed",
         source: sourceIdentity(
@@ -794,7 +796,7 @@ export const bookTopologyManualArchivesMigrator: BookTopologyPartitionMigrator =
     const { backupBooksDirectory, booksDirectory } = context;
     const archivesRoot = join(dirname(booksDirectory), MANUAL_ARCHIVES_PARTITION);
 
-    for (const bookKey of await listBookKeys(backupBooksDirectory)) {
+    for (const bookKey of await listMigrationBookKeys(backupBooksDirectory)) {
       for (const dirName of MANUAL_ARCHIVE_DIRECTORIES) {
         const sourceDir = join(backupBooksDirectory, bookKey, dirName);
         if (!(await directoryExists(sourceDir))) continue;

@@ -4,12 +4,15 @@
  * `unbound/runs/`. Attribution reuses the shared migrating-run helper;
  * already-canonical trees copy as-is.
  */
-import { cp, mkdir, readdir, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
 
 import {
   destinationRunDirectory,
+  isMigrationEnoent,
+  isTicketNumberString,
   listBackupRunLeaves,
+  listMigrationBookKeys,
   resolveMigratingRunTicket,
 } from "./book-topology-migration-placement.ts";
 import {
@@ -49,33 +52,12 @@ function parseRunLeaf(name: string): RunLeaf | undefined {
   return { runId: match[1]!, role: match[2]! };
 }
 
-function isEnoent(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
-  );
-}
-
 async function pathExists(path: string): Promise<boolean> {
   try {
     await stat(path);
     return true;
   } catch (error) {
-    if (isEnoent(error)) return false;
-    throw error;
-  }
-}
-
-async function listBookKeys(backupBooksDirectory: string): Promise<string[]> {
-  try {
-    const entries = await readdir(backupBooksDirectory, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
-  } catch (error) {
-    if (isEnoent(error)) return [];
+    if (isMigrationEnoent(error)) return false;
     throw error;
   }
 }
@@ -138,7 +120,28 @@ async function planBookMoves(
     let historicalRunDirectory: string | undefined;
     let derivation: PlannedRunMove["derivation"];
 
-    if (leaf.layout !== "flat") {
+    if (leaf.layout === "issues") {
+      // issues/<ticket>/runs/<leaf> → <ticket>/runs/<leaf>; conflict refuses below.
+      const parts = leaf.relativePath.replaceAll("\\", "/").split("/");
+      const ticketStr = parts[1];
+      if (ticketStr !== undefined && isTicketNumberString(ticketStr)) {
+        targetPath = join(booksDirectory, bookKey, ticketStr, "runs", leaf.leafName);
+        disposition = "placed";
+        historicalRunDirectory = join(
+          booksDirectory,
+          bookKey,
+          "issues",
+          ticketStr,
+          "runs",
+          leaf.leafName,
+        );
+      } else {
+        targetPath = join(booksDirectory, bookKey, "unbound", "runs", leaf.leafName);
+        disposition = "unbound";
+        historicalRunDirectory = join(booksDirectory, bookKey, leaf.relativePath);
+      }
+      derivation = undefined;
+    } else if (leaf.layout !== "flat") {
       targetPath = join(booksDirectory, bookKey, leaf.relativePath);
       disposition = leaf.layout === "unbound" ? "unbound" : "placed";
       historicalRunDirectory = undefined;
@@ -196,7 +199,7 @@ export const bookTopologyRunsMigrator: BookTopologyPartitionMigrator = {
     const outcomes: MigrationItemOutcome[] = [];
     const { backupBooksDirectory, booksDirectory } = context;
 
-    for (const bookKey of await listBookKeys(backupBooksDirectory)) {
+    for (const bookKey of await listMigrationBookKeys(backupBooksDirectory)) {
       const planned = await planBookMoves(
         backupBooksDirectory,
         booksDirectory,

@@ -4,7 +4,7 @@
  * unbound/. Never discard, never silent-merge, never leave at book root.
  */
 import type { Dirent, Stats } from "node:fs";
-import { appendFile, cp, lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, cp, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
 import { WORKER_SUBMISSION_GATE_KIND } from "./archivist-record-entry.ts";
@@ -17,6 +17,9 @@ import {
 import {
   bookHistoricalRoots,
   findPlacedMigratingRun,
+  isMigrationEnoent,
+  listMigrationBookKeys,
+  listMigrationDirents,
   runRefFromBoundPath,
 } from "./book-topology-migration-placement.ts";
 
@@ -29,33 +32,12 @@ const SITIAN_MIXED_VOLUME_PARTITIONS = [
 
 const CURRENT_SESSION_LEDGER = "current-session.json";
 
-function isEnoent(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
-  );
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function posixRelative(from: string, to: string): string {
   return relative(from, to).split(sep).join("/");
-}
-
-async function listBookKeys(backupBooksDirectory: string): Promise<string[]> {
-  try {
-    const entries = await readdir(backupBooksDirectory, { withFileTypes: true });
-    return entries
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => entry.name)
-      .sort();
-  } catch (error) {
-    if (isEnoent(error)) return [];
-    throw error;
-  }
 }
 
 function addPathCandidate(paths: string[], seen: Set<string>, value: unknown): void {
@@ -116,7 +98,7 @@ async function readRegularBackupFile(path: string): Promise<string | undefined> 
   try {
     info = await lstat(path);
   } catch (error) {
-    if (isEnoent(error)) return undefined;
+    if (isMigrationEnoent(error)) return undefined;
     throw error;
   }
   if (!info.isFile()) {
@@ -275,7 +257,7 @@ async function migrateSitianMixedVolume(
   const placedCache = new Map<string, { runDirectory: string; disposition: "placed" | "unbound" } | undefined>();
   const { backupBooksDirectory, booksDirectory } = context;
 
-  for (const bookKey of await listBookKeys(backupBooksDirectory)) {
+  for (const bookKey of await listMigrationBookKeys(backupBooksDirectory)) {
     const sourceDir = join(backupBooksDirectory, bookKey, partition);
     const recordsFile = join(sourceDir, "records.jsonl");
     const bookRoots = bookHistoricalRoots(booksDirectory, backupBooksDirectory, bookKey);
@@ -295,6 +277,8 @@ async function migrateSitianMixedVolume(
       continue;
     }
 
+    // Line placement builds the sole volume→dest map for current-session rewrite.
+    const placedDests = new Set<string>();
     const sourceIdentity = posixRelative(backupBooksDirectory, recordsFile);
     for (const row of jsonlRows(text)) {
       const source = `${sourceIdentity}:${row.lineNumber}`;
@@ -310,6 +294,7 @@ async function migrateSitianMixedVolume(
           "records.jsonl",
         );
         await appendRawLine(dest, row.raw);
+        placedDests.add(dest);
         outcomes.push({
           disposition: "unbound",
           source,
@@ -327,6 +312,7 @@ async function migrateSitianMixedVolume(
           "records.jsonl",
         );
         await appendRawLine(dest, row.raw);
+        placedDests.add(dest);
         outcomes.push({
           disposition: "unbound",
           source,
@@ -354,15 +340,25 @@ async function migrateSitianMixedVolume(
         "records.jsonl",
       );
       await appendRawLine(dest, row.raw);
+      placedDests.add(dest);
       outcomes.push({
         disposition: destRun?.disposition === "placed" ? "placed" : "unbound",
         source,
       });
     }
 
+    const volumeDestinations = new Map<string, string>();
+    if (placedDests.size === 1) {
+      const onlyDest = placedDests.values().next().value!;
+      volumeDestinations.set(resolve(recordsFile), onlyDest);
+      volumeDestinations.set(
+        resolve(join(booksDirectory, bookKey, partition, "records.jsonl")),
+        onlyDest,
+      );
+    }
     await migrateCurrentSessionPointer({
       sourceDir,
-      volumeDestinations: new Map(),
+      volumeDestinations,
       unboundPointerFile: join(
         booksDirectory,
         bookKey,
@@ -385,19 +381,14 @@ async function migrateWorkerSubmissionGate(
   const { backupBooksDirectory, booksDirectory } = context;
   const kind = WORKER_SUBMISSION_GATE_KIND;
 
-  for (const bookKey of await listBookKeys(backupBooksDirectory)) {
+  for (const bookKey of await listMigrationBookKeys(backupBooksDirectory)) {
     const sourceDir = join(backupBooksDirectory, bookKey, kind);
-    let entries: Dirent[];
-    try {
-      entries = await readdir(sourceDir, { withFileTypes: true });
-    } catch (error) {
-      if (isEnoent(error)) continue;
-      throw error;
-    }
+    const entries = await listMigrationDirents(sourceDir);
+    if (entries.length === 0) continue;
 
     const bookRoots = bookHistoricalRoots(booksDirectory, backupBooksDirectory, bookKey);
     const volumes = entries
-      .filter((entry) => entry.name.endsWith(".jsonl"))
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
       .map((entry) => entry.name)
       .sort();
     const volumeDestinations = new Map<string, string>();

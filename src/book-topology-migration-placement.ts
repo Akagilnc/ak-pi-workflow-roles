@@ -2,7 +2,9 @@
  * Shared placement helpers for book-topology migrators (#865 / #866).
  * Board ticket → readRunTicketNumber; destination path → roleRunPlacement.
  * Worktree basename “所含票号” is the single #852/#865/#866 rule.
+ * Shared ENOENT / book-key / dirent enumeration authority for migration modules.
  */
+import type { Dirent } from "node:fs";
 import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -17,12 +19,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function isEnoent(error: unknown): boolean {
+/** Sole migration ENOENT projection — non-ENOENT must propagate. */
+export function isMigrationEnoent(error: unknown): boolean {
   return (
     error instanceof Error &&
     "code" in error &&
     (error as NodeJS.ErrnoException).code === "ENOENT"
   );
+}
+
+/** Book-key directories under a books root; missing root → []. */
+export async function listMigrationBookKeys(
+  booksDirectory: string,
+): Promise<string[]> {
+  try {
+    const entries = await readdir(booksDirectory, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort((a, b) => a.localeCompare(b));
+  } catch (error) {
+    if (isMigrationEnoent(error)) return [];
+    throw error;
+  }
+}
+
+/** Directory entries sorted by name; missing directory → []. */
+export async function listMigrationDirents(
+  directory: string,
+): Promise<readonly Dirent[]> {
+  try {
+    const entries = await readdir(directory, { withFileTypes: true });
+    return [...entries].sort((a, b) => a.name.localeCompare(b.name));
+  } catch (error) {
+    if (isMigrationEnoent(error)) return [];
+    throw error;
+  }
 }
 
 export function ticketNumberFromUnknown(value: unknown): number | undefined {
@@ -38,13 +70,17 @@ export function isTicketNumberString(value: string): boolean {
 /**
  * Ticket number contained in a worktree path's final segment.
  * #852: 「工作树路径末段所含票号」— shared by #865 and #866.
+ * Exactly one digit run that is itself a safe positive ticket spelling;
+ * multiple or zero digit runs are undecidable → undefined (unbound).
  */
 export function ticketNumberFromWorktreeBasename(
   pathBasename: string,
 ): number | undefined {
-  const match = /(\d+)/.exec(pathBasename);
-  if (match === null) return undefined;
-  const ticketNumber = Number(match[1]);
+  const matches = pathBasename.match(/\d+/g);
+  if (matches === null || matches.length !== 1) return undefined;
+  const spelling = matches[0]!;
+  if (!TICKET_NUMBER_RE.test(spelling)) return undefined;
+  const ticketNumber = Number(spelling);
   if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) return undefined;
   return ticketNumber;
 }
@@ -66,7 +102,7 @@ async function readProjectRootFromRun(
         return { projectRoot, sourcePage: page };
       }
     } catch (error) {
-      if (isEnoent(error)) continue;
+      if (isMigrationEnoent(error)) continue;
       throw error;
     }
   }
@@ -164,26 +200,23 @@ export type BackupRunLeaf = {
   readonly sourcePath: string;
   readonly leafName: string;
   readonly isDirectory: boolean;
-  readonly layout: "flat" | "ticket" | "unbound";
+  readonly layout: "flat" | "ticket" | "unbound" | "issues";
 };
 
 async function listRunLeafEntries(
   runsDirectory: string,
 ): Promise<readonly { readonly name: string; readonly isDirectory: boolean }[]> {
-  try {
-    const entries = await readdir(runsDirectory, { withFileTypes: true });
-    return entries
-      .map((entry) => ({ name: entry.name, isDirectory: entry.isDirectory() }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  } catch (error) {
-    if ((error as { code?: unknown }).code === "ENOENT") return [];
-    throw error;
-  }
+  const entries = await listMigrationDirents(runsDirectory);
+  return entries.map((entry) => ({
+    name: entry.name,
+    isDirectory: entry.isDirectory(),
+  }));
 }
 
 /**
  * Every retained run tree under one backup book: legacy flat `runs/`,
- * already-canonical `<ticket>/runs/`, and `unbound/runs/`.
+ * already-canonical `<ticket>/runs/`, `unbound/runs/`, and legacy
+ * `issues/<ticket>/runs/`.
  */
 export async function listBackupRunLeaves(
   backupBookDirectory: string,
@@ -206,18 +239,13 @@ export async function listBackupRunLeaves(
   };
   await collect("runs", "flat");
   await collect("unbound/runs", "unbound");
-  let subjects: readonly { name: string; isDirectory: boolean }[] = [];
-  try {
-    subjects = (await readdir(backupBookDirectory, { withFileTypes: true }))
-      .filter((entry) => entry.isDirectory())
-      .map((entry) => ({ name: entry.name, isDirectory: true }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  } catch (error) {
-    if ((error as { code?: unknown }).code !== "ENOENT") throw error;
-  }
-  for (const subject of subjects) {
-    if (!isTicketNumberString(subject.name)) continue;
+  for (const subject of await listMigrationDirents(backupBookDirectory)) {
+    if (!subject.isDirectory() || !isTicketNumberString(subject.name)) continue;
     await collect(`${subject.name}/runs`, "ticket");
+  }
+  for (const issue of await listMigrationDirents(join(backupBookDirectory, "issues"))) {
+    if (!issue.isDirectory() || !isTicketNumberString(issue.name)) continue;
+    await collect(`issues/${issue.name}/runs`, "issues");
   }
   return leaves;
 }
@@ -227,23 +255,16 @@ async function listExactPlacedRunPaths(
   leafName: string,
 ): Promise<string[]> {
   const matches: string[] = [];
-  const subjectEntries = await readdir(bookDir, { withFileTypes: true }).catch((error: unknown) => {
-    if ((error as { code?: unknown }).code === "ENOENT") return [] as const;
-    throw error;
-  });
+  const subjectEntries = await listMigrationDirents(bookDir);
   const runsDirs = [
     join(bookDir, "runs"),
     ...subjectEntries.filter((entry) => entry.isDirectory()).map((entry) => join(bookDir, entry.name, "runs")),
   ];
   for (const runsDir of runsDirs) {
-    let entries: string[];
-    try {
-      entries = await readdir(runsDir);
-    } catch (error) {
-      if ((error as { code?: unknown }).code === "ENOENT") continue;
-      throw error;
+    const entries = await listMigrationDirents(runsDir);
+    if (entries.some((entry) => entry.name === leafName)) {
+      matches.push(join(runsDir, leafName));
     }
-    if (entries.includes(leafName)) matches.push(join(runsDir, leafName));
   }
   return matches;
 }
@@ -258,7 +279,17 @@ function destPathFromSourceRelative(
   if (runsIndex < 0 || runsIndex + 1 >= parts.length) return undefined;
   const leaf = parts[runsIndex + 1];
   const before = parts.slice(0, runsIndex);
-  if (leaf === undefined || before.length !== 1) return undefined;
+  if (leaf === undefined) return undefined;
+  // Legacy issues/<ticket>/runs/<leaf> → canonical <ticket>/runs/<leaf>.
+  if (
+    before.length === 2
+    && before[0] === "issues"
+    && before[1] !== undefined
+    && isTicketNumberString(before[1])
+  ) {
+    return join(booksDirectory, bookKey, before[1], "runs", leaf);
+  }
+  if (before.length !== 1) return undefined;
   const subject = before[0];
   if (subject === undefined) return undefined;
   if (subject !== "unbound" && !isTicketNumberString(subject)) return undefined;
@@ -280,26 +311,17 @@ async function listPrincipalPlacedRunPaths(
   runId: string,
 ): Promise<string[]> {
   const matches = [...await listExactPlacedRunPaths(bookDir, runId)];
-  const subjectEntries = await readdir(bookDir, { withFileTypes: true }).catch((error: unknown) => {
-    if ((error as { code?: unknown }).code === "ENOENT") return [] as const;
-    throw error;
-  });
+  const subjectEntries = await listMigrationDirents(bookDir);
   const runsDirs = [
     join(bookDir, "runs"),
     ...subjectEntries.filter((entry) => entry.isDirectory()).map((entry) => join(bookDir, entry.name, "runs")),
   ];
   const prefix = `${runId}@`;
   for (const runsDir of runsDirs) {
-    let entries: string[];
-    try {
-      entries = await readdir(runsDir);
-    } catch (error) {
-      if ((error as { code?: unknown }).code === "ENOENT") continue;
-      throw error;
-    }
-    for (const entry of entries) {
-      if (!entry.startsWith(prefix) || entry.slice(runId.length + 1).includes("@")) continue;
-      const path = join(runsDir, entry);
+    for (const entry of await listMigrationDirents(runsDir)) {
+      const name = entry.name;
+      if (!name.startsWith(prefix) || name.slice(runId.length + 1).includes("@")) continue;
+      const path = join(runsDir, name);
       if (!matches.includes(path)) matches.push(path);
     }
   }
