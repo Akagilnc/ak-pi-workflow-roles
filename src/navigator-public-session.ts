@@ -26,7 +26,7 @@ import { lastRolePayloadRecord } from "./public-cli/terminal.ts";
  * settlement already stamps from typed HTTP observation / provider stop.
  */
 function providerFailureFromPublicTerminal(outcome: {
-  readonly cause: string;
+  readonly cause?: string;
   readonly diagnostic: string;
   readonly decisiveFacts: Readonly<Record<string, unknown>>;
 }): NavigatorProviderFailureFact {

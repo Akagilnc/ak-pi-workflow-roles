@@ -309,7 +309,7 @@ test("public report publication failures retain typed errno identity", async () 
       assert.equal(outcome.kind, "failure", row.label);
       if (outcome.kind !== "failure") throw new Error("expected publication failure");
       // Must not wash publication errno into generic output absence.
-      assert.equal(outcome.cause, "unrecognized", row.label);
+      assert.equal(outcome.cause, undefined, row.label);
       assert.notEqual(outcome.cause, "output", row.label);
       assert.equal(outcome.decisiveFacts.errorCode, row.expectedCode, row.label);
       const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
@@ -319,7 +319,7 @@ test("public report publication failures retain typed errno identity", async () 
         identity?: { name?: string; code?: string | number };
         diagnostic: string;
       };
-      assert.equal(errorBody.cause, "unrecognized", row.label);
+      assert.equal(errorBody.cause, undefined, row.label);
       assert.equal(errorBody.identity?.code, "EISDIR", row.label);
       assert.ok(errorBody.diagnostic.length > 0, row.label);
     });

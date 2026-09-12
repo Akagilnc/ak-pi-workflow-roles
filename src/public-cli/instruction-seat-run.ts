@@ -122,7 +122,9 @@ function instructionSeatAdapters(options?: {
       return infrastructureFailure === undefined
         ? result.knownFailure
         : {
-            cause: infrastructureFailure.cause,
+            ...(infrastructureFailure.cause === undefined
+              ? {}
+              : { cause: infrastructureFailure.cause }),
             diagnostic: infrastructureFailure.diagnostic,
             ...(infrastructureFailure.identity === undefined
               ? {}

@@ -422,7 +422,6 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
       result,
       stdout,
       stderr,
-      expectedCause: "unrecognized",
       diagnosticEquals: multiline,
       identityName: "UpstreamProviderError",
     });
@@ -441,7 +440,6 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
     const presented = stderr[0]!;
     assert.ok(presented.includes(multiline));
     const helper = formatFailureStderrDiagnostic({
-      cause: "unrecognized",
       diagnostic: multiline,
     });
     assert.ok(helper.includes(multiline));
@@ -527,12 +525,11 @@ test("public Reviewer no-task dispatch retains evidence-child provider identity"
       result,
       stdout,
       stderr,
-      expectedCause: "unrecognized",
       diagnosticEquals: "Codex error: The usage limit has been reached",
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "unrecognized");
+      assert.equal(terminal.roleOutcome.cause, undefined);
       assert.equal(
         terminal.roleOutcome.diagnostic,
         "Codex error: The usage limit has been reached",
@@ -543,7 +540,7 @@ test("public Reviewer no-task dispatch retains evidence-child provider identity"
       diagnostic: string;
       details?: { errorMessage?: string };
     };
-    assert.equal(errorBody.cause, "unrecognized");
+    assert.equal(errorBody.cause, undefined);
     assert.equal(errorBody.diagnostic, "Codex error: The usage limit has been reached");
     assert.equal(errorBody.details?.errorMessage, "Codex error: The usage limit has been reached");
   });

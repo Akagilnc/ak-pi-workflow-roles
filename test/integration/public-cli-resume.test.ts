@@ -665,7 +665,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind === "failure") {
       // Publication errno retained; hint presence must not wash failure cause into provider-429.
-      assert.equal(result.terminal!.roleOutcome.cause, "unrecognized");
+      assert.equal(result.terminal!.roleOutcome.cause, undefined);
       assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
     }
     // #836: seal no longer blocks redispatch; auto-resume budget still bounds attempts.

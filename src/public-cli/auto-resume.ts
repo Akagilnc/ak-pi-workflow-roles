@@ -384,8 +384,8 @@ function dispatchExceptionFailureTerminal(input: {
     ? "dispatch threw an exception on every attempt"
     : "the final dispatch threw an exception";
   const diagnostic = `${history} (${input.endReason}; resumes used ${input.autoResumeAttempts}); last cause: ${describeErrorIdentity(causeError)}`;
+  // #881: no fabricated cause class — original error identity + error-file pointers carry the fact.
   const decisiveFacts: Record<string, unknown> = {
-    cause: "unrecognized",
     diagnostic,
     resumesUsed: input.autoResumeAttempts,
     dispatchErrorFiles: [...input.errorFiles],
@@ -406,7 +406,6 @@ function dispatchExceptionFailureTerminal(input: {
     roleOutcome: {
       kind: "failure",
       role: input.role,
-      cause: "unrecognized",
       diagnostic,
       decisiveFacts,
     },

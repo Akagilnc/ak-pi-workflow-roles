@@ -63,7 +63,9 @@ function judgeAdapters(): PostAdmissionAdapters<AdmittedJudgeInvocation> {
         (infrastructureFailure === undefined
           ? undefined
           : {
-              cause: infrastructureFailure.cause,
+              ...(infrastructureFailure.cause === undefined
+                ? {}
+                : { cause: infrastructureFailure.cause }),
               diagnostic: infrastructureFailure.diagnostic,
               ...(infrastructureFailure.identity === undefined
                 ? {}

@@ -24,6 +24,8 @@ export type SubmissionLedgerEvent =
       readonly toolCallId: string;
       readonly toolName: string;
       readonly sequence: number;
+      /** Seat identity — machine fact beside the payload (ADR 0042 / #881). */
+      readonly role?: TerminalRoleName;
       /** LLM tool-call params at call time (#836 原话). */
       readonly params?: unknown;
     }
@@ -79,9 +81,19 @@ function attemptIdentity(context: HostContext, runId: string): string {
 
 /** One recorded role submission as stored — original payload plus host identity. */
 export type RecordedSubmissionRow = {
-  readonly role: TerminalRoleName;
-  readonly kind: "accepted" | "audit-escalation";
+  /**
+   * Seat identity when known. Historical correctable/infrastructure rows may omit it;
+   * payloads still project (#881). Terminal acceptance kind still requires a role match.
+   */
+  readonly role?: TerminalRoleName;
+  /**
+   * Recording class on the ledger. Terminal acceptance kind still only follows
+   * `accepted` / `audit-escalation`; every class carries the original payload (#881).
+   */
+  readonly kind: "accepted" | "audit-escalation" | "correctable-rejection" | "infrastructure" | "candidate";
   readonly accepted: unknown;
+  /** Present when the ledger row names the tool call — used to dedupe candidate+outcome. */
+  readonly toolCallId?: string;
 };
 
 /** Closed-submission callback: original payload, no status/facts projection (#836). */
@@ -191,8 +203,49 @@ function recordedRole(payload: { role?: unknown; projection?: { role?: unknown }
   return undefined;
 }
 
+/** Prefer a more complete row for the same tool call without inventing a sole winner across calls. */
+function rowRank(kind: RecordedSubmissionRow["kind"]): number {
+  switch (kind) {
+    case "accepted":
+      return 4;
+    case "audit-escalation":
+      return 3;
+    case "correctable-rejection":
+    case "infrastructure":
+      return 2;
+    case "candidate":
+      return 1;
+  }
+}
+
+function rowFromPayload(
+  kind: RecordedSubmissionRow["kind"],
+  payload: {
+    role?: unknown;
+    projection?: { role?: unknown };
+    accepted?: unknown;
+    params?: unknown;
+    toolCallId?: unknown;
+  },
+  accepted: unknown,
+  roleFallback?: TerminalRoleName,
+): RecordedSubmissionRow {
+  const role = recordedRole(payload) ?? roleFallback;
+  return {
+    ...(role === undefined ? {} : { role }),
+    kind,
+    accepted,
+    ...(typeof payload.toolCallId === "string" && payload.toolCallId.length > 0
+      ? { toolCallId: payload.toolCallId }
+      : {}),
+  };
+}
+
 /**
- * All recorded role submissions in ledger order (#836 multi-submit).
+ * All recorded role submissions in ledger order (#836 multi-submit / #881).
+ * Projects every original payload — sealed, audit-escalation, correctable-rejection,
+ * infrastructure, and bare candidate — without outcome-class filtering.
+ * Same toolCallId (candidate + outcome both carrying params) appears once.
  * `accepted` is the original payload; never rebuilt from a status/facts envelope.
  */
 export async function readRecordedSubmissionRows(
@@ -204,27 +257,83 @@ export async function readRecordedSubmissionRows(
   const { owned } = await readOwnedSubmissionRecords(cwd, runId, scope.home);
   const scoped = recordsForAttempt(owned, scope.attemptId);
   const out: RecordedSubmissionRow[] = [];
+  const indexByToolCallId = new Map<string, number>();
+  // Recover seat identity for historical non-sealed rows that omitted role (#881).
+  const roleByToolCallId = new Map<string, TerminalRoleName>();
   for (const record of scoped) {
+    const payload = record.payload as {
+      toolCallId?: unknown;
+      role?: unknown;
+      projection?: { role?: unknown };
+    } | undefined;
+    if (typeof payload?.toolCallId !== "string" || payload.toolCallId.length === 0) continue;
+    const role = recordedRole(payload);
+    if (role !== undefined) roleByToolCallId.set(payload.toolCallId, role);
+  }
+
+  const take = (row: RecordedSubmissionRow): void => {
+    const toolCallId = row.toolCallId;
+    if (toolCallId !== undefined) {
+      const existingIndex = indexByToolCallId.get(toolCallId);
+      if (existingIndex !== undefined) {
+        const existing = out[existingIndex]!;
+        if (rowRank(row.kind) >= rowRank(existing.kind)) {
+          out[existingIndex] = {
+            ...row,
+            toolCallId,
+            // Keep a previously recovered role when the upgraded row still omits it.
+            ...(row.role === undefined && existing.role !== undefined ? { role: existing.role } : {}),
+          };
+        } else if (existing.role === undefined && row.role !== undefined) {
+          out[existingIndex] = { ...existing, role: row.role };
+        }
+        return;
+      }
+      indexByToolCallId.set(toolCallId, out.length);
+    }
+    out.push(row);
+  };
+
+  for (const record of scoped) {
+    if (record.kind === "candidate") {
+      const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "candidate" }>> & {
+        projection?: { role?: unknown };
+      } | undefined;
+      if (payload?.type !== "candidate" || payload.params === undefined) continue;
+      const fallback =
+        typeof payload.toolCallId === "string" ? roleByToolCallId.get(payload.toolCallId) : undefined;
+      take(rowFromPayload("candidate", payload, payload.params, fallback));
+      continue;
+    }
     if (record.kind === "sealed") {
       const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "sealed" }>> & {
         projection?: { role?: unknown };
       } | undefined;
       if (payload?.type !== "sealed" || payload.accepted === undefined) continue;
-      const role = recordedRole(payload);
-      if (role === undefined) continue;
-      out.push({ role, kind: "accepted", accepted: payload.accepted });
+      const fallback =
+        typeof payload.toolCallId === "string" ? roleByToolCallId.get(payload.toolCallId) : undefined;
+      take(rowFromPayload("accepted", payload, payload.accepted, fallback));
       continue;
     }
     if (record.kind !== "outcome") continue;
     const payload = record.payload as Partial<Extract<SubmissionLedgerEvent, { type: "outcome" }>> & {
       projection?: { role?: unknown };
     } | undefined;
-    if (payload?.type !== "outcome" || payload.outcome !== "audit-escalation" || payload.accepted === undefined) {
-      continue;
-    }
-    const role = recordedRole(payload);
-    if (role === undefined) continue;
-    out.push({ role, kind: "audit-escalation", accepted: payload.accepted });
+    if (payload?.type !== "outcome" || payload.accepted === undefined) continue;
+    const outcome = payload.outcome;
+    const kind: RecordedSubmissionRow["kind"] |
+      undefined =
+      outcome === "audit-escalation"
+        ? "audit-escalation"
+        : outcome === "correctable-rejection"
+          ? "correctable-rejection"
+          : outcome === "infrastructure"
+            ? "infrastructure"
+            : undefined;
+    if (kind === undefined) continue;
+    const fallback =
+      typeof payload.toolCallId === "string" ? roleByToolCallId.get(payload.toolCallId) : undefined;
+    take(rowFromPayload(kind, payload, payload.accepted, fallback));
   }
   return out;
 }
@@ -241,7 +350,7 @@ export async function readRecordedSubmissions(
   return (await readRecordedSubmissionRows(cwd, runId, homeOrScope)).map((row) => row.accepted);
 }
 
-/** True when the run has at least one recorded accepted or audit-escalation payload. */
+/** True when the run has at least one recorded original payload (any outcome class). */
 export async function hasRecordedSubmission(
   cwd: string,
   runId: string,
@@ -364,6 +473,7 @@ export function createSubmissionLedgerHost(
             toolCallId,
             toolName: tool.name,
             sequence: ++state.sequence,
+            role,
             params,
           });
           let result: HostToolResult<unknown>;
@@ -389,6 +499,7 @@ export function createSubmissionLedgerHost(
                 outcome: "correctable-rejection",
                 code: "typed-bounce",
                 diagnostic: error instanceof Error ? error.message : String(error),
+                role,
                 accepted: params,
               });
               throw error;
@@ -399,6 +510,7 @@ export function createSubmissionLedgerHost(
                 toolCallId,
                 outcome: "infrastructure",
                 diagnostic: error instanceof Error ? error.message : String(error),
+                role,
                 accepted: params,
               });
               throw error;

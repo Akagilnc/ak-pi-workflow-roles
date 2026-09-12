@@ -680,7 +680,6 @@ test("terminal persistence failure through public entry propagates loudly with n
       result,
       stdout: captured.stdout,
       stderr: captured.stderr,
-      expectedCause: "unrecognized",
       diagnosticIncludes: "EISDIR",
       identityCode: "EISDIR",
     });

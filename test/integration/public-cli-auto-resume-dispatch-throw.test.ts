@@ -96,8 +96,9 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     }
     assert.equal(pointered.size,3);
 
-    // (d) typed failure carries the LAST true cause and the artifact pointers.
+    // (d) loud failure carries the LAST true error + artifact pointers; no fabricated class (#881).
     if(terminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
+    assert.equal(terminal.roleOutcome.cause, undefined);
     assert.match(terminal.roleOutcome.diagnostic,/boom-final/);
     const filesFromFacts=terminal.roleOutcome.decisiveFacts.dispatchErrorFiles as readonly string[];
     assert.equal(filesFromFacts.length,3);
