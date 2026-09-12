@@ -1,4 +1,4 @@
-import { mkdir, readdir, readFile, rename } from "node:fs/promises";
+import { mkdir, readdir, rename } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -6,6 +6,10 @@ import {
   physicalPathIdentity,
   physicallyContainedIn,
 } from "./activation-ledger-topology.ts";
+import {
+  autopsyWriterLock,
+  describeErrorIdentity,
+} from "./public-cli/run-lifecycle.ts";
 export type MigrationDisposition = "placed" | "unbound" | "discarded";
 
 export type MigrationItemOutcome =
@@ -84,23 +88,23 @@ export function reconcileMigrationPartition(
   };
 }
 
-async function findRunStateFiles(root: string): Promise<string[]> {
-  const states: string[] = [];
+async function findWriterLocks(root: string): Promise<string[]> {
+  const locks: string[] = [];
   async function walk(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) await walk(path);
-      else if (entry.isFile() && entry.name === "run-state.json") states.push(path);
+      else if (entry.isFile() && entry.name === "writer.lock") locks.push(path);
     }
   }
   await walk(root);
-  return states;
+  return locks;
 }
 
 /**
  * Refuse migration from a role whose canonical dossier is inside books/, and
- * refuse while any retained run is non-terminal. Unknown state cannot prove a
- * zero-in-flight window, so it fails with its source path intact.
+ * while a writer lease proves a run is currently active. Retained lifecycle
+ * state is history, not holder liveness.
  */
 export async function assertBookTopologyMigrationPrerequisites(
   booksDirectory: string,
@@ -118,23 +122,15 @@ export async function assertBookTopologyMigrationPrerequisites(
   }
 
   const active: string[] = [];
-  for (const statePath of await findRunStateFiles(booksDirectory)) {
-    let state: unknown;
-    try {
-      const page: unknown = JSON.parse(await readFile(statePath, "utf8"));
-      state = typeof page === "object" && page !== null && "state" in page
-        ? (page as { state?: unknown }).state
-        : undefined;
-    } catch (error) {
-      throw new Error(`cannot establish zero in-flight runs from ${statePath}`, { cause: error });
-    }
-    if (typeof state !== "string") {
-      throw new Error(`cannot establish zero in-flight runs from ${statePath}: missing state`);
-    }
-    if (state === "admitted" || state === "running" || state === "resumable") {
-      active.push(statePath);
-    } else if (state !== "terminal") {
-      throw new Error(`cannot establish zero in-flight runs from ${statePath}: unknown state ${state}`);
+  for (const lockPath of await findWriterLocks(booksDirectory)) {
+    const holder = await autopsyWriterLock(lockPath);
+    if (holder.verdict === "alive") {
+      active.push(`${lockPath} (live pid ${holder.pid})`);
+    } else if (holder.verdict === "unknown") {
+      const cause = holder.reason === "unreadable"
+        ? `unreadable: ${describeErrorIdentity(holder.readFailure)}`
+        : `unparseable holder: ${JSON.stringify(holder.content)}`;
+      throw new Error(`cannot establish zero in-flight runs from ${lockPath}: ${cause}`);
     }
   }
   if (active.length > 0) {
