@@ -414,7 +414,7 @@ export type { MergerRoleDependencies } from "./merger-role.ts";
 
 type WorkerArmable = {
   activate(context?: HostContext): Promise<void>;
-  armSubmissionGate(cwd: string, parent?: { getSessionFile(): string | undefined }): void;
+  armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }): void;
 };
 
 type ActivationRuntime = {

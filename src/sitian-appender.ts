@@ -11,7 +11,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
@@ -210,14 +210,6 @@ type SitianRecordPath = {
   readonly ledgerHome: string;
 };
 
-function safeBookKey(cwd: string): string {
-  try {
-    return resolveBookKeyFromGit(cwd);
-  } catch {
-    return basename(resolve(cwd)) || "default";
-  }
-}
-
 /** Pure topology owner shared by ambient writes and explicit-home submission reads. */
 export function resolveSitianRecordPathInLedger(
   input: SitianRecordInput,
@@ -237,8 +229,12 @@ export function resolveSitianRecordPathInLedger(
 
   let sessionDir: string;
   if (ticketNumber !== undefined) {
-    const bookDir = activationBookDirectory(ledgerHome, safeBookKey(input.cwd ?? process.cwd()));
-    sessionDir = join(bookDir, ticketNumber, category);
+    // docs/dossier-topology.md: ticket dir holds records.jsonl + 起居录.md directly.
+    const bookDir = activationBookDirectory(
+      ledgerHome,
+      resolveBookKeyFromGit(input.cwd ?? process.cwd()),
+    );
+    sessionDir = join(bookDir, ticketNumber);
   } else {
     if (
       input.sessionParent === undefined
