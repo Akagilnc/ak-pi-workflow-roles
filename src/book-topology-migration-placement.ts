@@ -4,8 +4,9 @@
  * Worktree basename “所含票号” is the single #852/#865/#866 rule.
  */
 import { readdir, readFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
+import { pathContainedIn } from "./activation-ledger-topology.ts";
 import { roleRunPlacement } from "./role-run-placement.ts";
 import { readRunTicketNumber } from "./run-ticket-number.ts";
 
@@ -114,6 +115,48 @@ export async function resolveMigratingRunTicket(runDirectory: string): Promise<{
 
 export function isUnboundRunDirectory(runDirectory: string): boolean {
   return runDirectory.replaceAll("\\", "/").includes("/unbound/runs/");
+}
+
+export function bookHistoricalRoots(
+  booksDirectory: string,
+  backupBooksDirectory: string,
+  bookKey: string,
+): readonly string[] {
+  return [join(booksDirectory, bookKey), join(backupBooksDirectory, bookKey)];
+}
+
+export type BoundRunRef = {
+  readonly leaf: string;
+  readonly sourceRelative: string;
+};
+
+function runLeafFromRelative(path: string): string | undefined {
+  const segments = path.replaceAll("\\", "/").split("/").filter((segment) => segment.length > 0);
+  const runsIndex = segments.lastIndexOf("runs");
+  if (runsIndex < 0 || runsIndex + 1 >= segments.length) return undefined;
+  const leaf = segments[runsIndex + 1];
+  if (leaf === undefined || leaf === "." || leaf === "..") return undefined;
+  return leaf;
+}
+
+/** Bind a path to this book's historical roots, then take complete leaf + source-relative run dir. */
+export function runRefFromBoundPath(
+  path: string,
+  bookRoots: readonly string[],
+): BoundRunRef | undefined {
+  for (const root of bookRoots) {
+    const rootResolved = resolve(root);
+    const candidate = isAbsolute(path) ? resolve(path) : resolve(rootResolved, path);
+    if (candidate === rootResolved || !pathContainedIn(rootResolved, candidate)) continue;
+    const rel = relative(rootResolved, candidate).split(sep).join("/");
+    const leaf = runLeafFromRelative(rel);
+    if (leaf === undefined) continue;
+    const parts = rel.split("/").filter((part) => part.length > 0);
+    const runsIndex = parts.indexOf("runs");
+    if (runsIndex < 0 || runsIndex + 1 >= parts.length) continue;
+    return { leaf, sourceRelative: parts.slice(0, runsIndex + 2).join("/") };
+  }
+  return undefined;
 }
 
 export type BackupRunLeaf = {

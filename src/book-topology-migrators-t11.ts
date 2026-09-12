@@ -23,7 +23,6 @@ import {
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
 import {
-  findBookRunDirectory,
   findPlacedMigratingRun,
   isTicketNumberString,
   listBackupRunLeaves,
@@ -74,6 +73,7 @@ type RunLeaf = { readonly runId: string; readonly role: string };
 type ParentRun = {
   readonly bookKey: string;
   readonly leafName: string;
+  readonly sourceRelative: string;
   readonly runId: string;
   readonly role: string;
 };
@@ -223,7 +223,13 @@ function parseParentRunBoundToMigration(
   if (bookKey === undefined) return undefined;
   const leaf = parseRunLeaf(leafName);
   if (leaf === undefined) return undefined;
-  return { bookKey, leafName, runId: leaf.runId, role: leaf.role };
+  return {
+    bookKey,
+    leafName,
+    sourceRelative: parts.slice(1, runsIndex + 2).join("/"),
+    runId: leaf.runId,
+    role: leaf.role,
+  };
 }
 
 async function readJsonlParentSession(path: string): Promise<string | undefined> {
@@ -255,13 +261,9 @@ async function backupParentRunExists(
   backupBooksDirectory: string,
   parent: ParentRun,
 ): Promise<boolean> {
-  return (
-    await findBookRunDirectory(
-      join(backupBooksDirectory, parent.bookKey),
-      parent.runId,
-      parent.role,
-    )
-  ) !== undefined;
+  return directoryExists(
+    join(backupBooksDirectory, parent.bookKey, parent.sourceRelative),
+  );
 }
 
 /**
@@ -381,6 +383,7 @@ async function resolveDestinationRun(
     context.booksDirectory,
     parent.bookKey,
     parent.leafName,
+    parent.sourceRelative,
   );
 }
 

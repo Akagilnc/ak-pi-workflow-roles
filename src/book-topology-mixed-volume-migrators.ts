@@ -5,9 +5,8 @@
  */
 import type { Dirent, Stats } from "node:fs";
 import { appendFile, cp, lstat, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 
-import { pathContainedIn } from "./activation-ledger-topology.ts";
 import { WORKER_SUBMISSION_GATE_KIND } from "./archivist-record-entry.ts";
 import {
   reconcileMigrationPartition,
@@ -15,7 +14,11 @@ import {
   type BookTopologyPartitionMigrator,
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
-import { findPlacedMigratingRun } from "./book-topology-migration-placement.ts";
+import {
+  bookHistoricalRoots,
+  findPlacedMigratingRun,
+  runRefFromBoundPath,
+} from "./book-topology-migration-placement.ts";
 
 const SITIAN_MIXED_VOLUME_PARTITIONS = [
   "attendance",
@@ -97,53 +100,10 @@ function describeFsKind(entry: Dirent | Stats): string {
   return "unknown filesystem object";
 }
 
-function bookHistoricalRoots(
-  booksDirectory: string,
-  backupBooksDirectory: string,
-  bookKey: string,
-): readonly string[] {
-  return [join(booksDirectory, bookKey), join(backupBooksDirectory, bookKey)];
-}
-
-/** Last `runs/<leaf>` segment; leaf may be `<runId>@<role>` or bare. */
-function runLeafFromPath(path: string): string | undefined {
-  const segments = path.replaceAll("\\", "/").split("/").filter((segment) => segment.length > 0);
-  const runsIndex = segments.lastIndexOf("runs");
-  if (runsIndex < 0 || runsIndex + 1 >= segments.length) return undefined;
-  const leaf = segments[runsIndex + 1];
-  if (leaf === undefined || leaf === "." || leaf === "..") return undefined;
-  return leaf;
-}
-
-type BoundRunRef = {
-  readonly leaf: string;
-  readonly sourceRelative: string;
-};
-
-/** Bind path evidence to this book's historical roots before taking a run leaf. */
-function runRefFromBoundPath(
-  path: string,
-  bookRoots: readonly string[],
-): BoundRunRef | undefined {
-  for (const root of bookRoots) {
-    const rootResolved = resolve(root);
-    const candidate = isAbsolute(path) ? resolve(path) : resolve(rootResolved, path);
-    if (candidate === rootResolved || !pathContainedIn(rootResolved, candidate)) continue;
-    const rel = relative(rootResolved, candidate).split(sep).join("/");
-    const leaf = runLeafFromPath(rel);
-    if (leaf === undefined) continue;
-    const parts = rel.split("/").filter((part) => part.length > 0);
-    const runsIndex = parts.indexOf("runs");
-    if (runsIndex < 0 || runsIndex + 1 >= parts.length) continue;
-    return { leaf, sourceRelative: parts.slice(0, runsIndex + 2).join("/") };
-  }
-  return undefined;
-}
-
 function runRefFromRecord(
   record: Record<string, unknown>,
   bookRoots: readonly string[],
-): BoundRunRef | undefined {
+): ReturnType<typeof runRefFromBoundPath> {
   for (const path of pathCandidatesFromRecord(record)) {
     const ref = runRefFromBoundPath(path, bookRoots);
     if (ref !== undefined) return ref;

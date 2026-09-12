@@ -14,11 +14,13 @@ import { appendFile, copyFile, mkdir, readdir, readFile, stat, writeFile } from 
 import { dirname, join, relative, sep } from "node:path";
 
 import {
+  bookHistoricalRoots,
   findBookRunDirectory,
   findPlacedMigratingRun,
   isTicketNumberString,
   runCoordsFromSessionParent,
   runIdFromSubject,
+  runRefFromBoundPath,
   ticketNumberFromSubject,
 } from "./book-topology-migration-placement.ts";
 import {
@@ -275,10 +277,17 @@ async function resolveRunDestination(
   const leafName = hints.role !== undefined && hints.role.length > 0
     ? `${runId}@${hints.role}`
     : runId;
+  const sourceRelative = typeof hints.sessionParent === "string"
+    ? runRefFromBoundPath(
+      hints.sessionParent,
+      bookHistoricalRoots(context.booksDirectory, context.backupBooksDirectory, bookKey),
+    )?.sourceRelative
+    : undefined;
   const existingDest = await findPlacedMigratingRun(
     context.booksDirectory,
     bookKey,
     leafName,
+    sourceRelative,
   );
   if (existingDest !== undefined) {
     return {
