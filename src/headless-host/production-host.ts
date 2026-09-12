@@ -1,13 +1,13 @@
 /**
- * Production composition for the generic headless CLI RoleTurnHost (#645).
+ * Production composition for the generic headless CLI RoleTurnHost (#645 / #646).
  * Agent subprocesses inherit the operator home and credentials in place.
  * No HOME rewrite, no isolated home, no credential parameters — CLI owns auth.
  * Sitian records on the run are the dossier; host private sessions stay private.
  *
- * Intermediate AK tools ride the shared envelope MCP relay via host-native
- * `--mcp-config` under `--strict-mcp-config`. The terminating receipt is the
- * host-native `--json-schema` / structured_output schema channel only
- * (#750 submission-tool-is-schema-channel) — terminating tool is not listed on MCP.
+ * Intermediate AK tools ride the shared envelope MCP relay (Claude `--mcp-config`,
+ * codex `-c mcp_servers.*`). The terminating receipt is the host-native schema
+ * channel only (#750 submission-tool-is-schema-channel) — terminating tool is not
+ * listed on MCP (Claude `--json-schema`, codex `--output-schema` closed projection).
  */
 import { randomUUID } from "node:crypto";
 

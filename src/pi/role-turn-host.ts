@@ -21,9 +21,10 @@ import type {
   RoleTurnRequest,
   RoleTurnResult,
 } from "../host-contracts.ts";
-import { ExplicitInternalActivationError } from "../host-contracts.ts";
-import { applyEngineChildEnv } from "../engine-detour.ts";
+import { ExplicitInternalActivationError, isOfficerReviewSeat } from "../host-contracts.ts";
+import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from "../engine-detour.ts";
 import { projectActivationFlags } from "../role-activation-flags.ts";
+import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
 
 
 /** Package-relative Internal role entrypoint (ADR 0052; same path as public-cli registry). */
@@ -119,7 +120,7 @@ export function applyPiNativeSkillInvocation(
  * Pi last-hop argv after `--no-extensions -e entry` (#819).
  * Activation flag membership comes from middle-layer projectActivationFlags;
  * this function only renders session coords, controlled constants, and pairs.
- * Single forced method → Pi-native `/skill:` on the argv prompt (#822).
+ * User dialogue is not an argv element (#879): it rides spawn stdin.
  */
 export function buildPiTurnExtraArgs(
   request: RoleTurnRequest,
@@ -127,14 +128,6 @@ export function buildPiTurnExtraArgs(
   extraPiArgs: readonly string[] = [],
 ): string[] {
   const { sessionFile, sessionDirectory } = authority.decode(request.principal);
-  const rawPrompt =
-    request.continuation.kind === "initial" || request.continuation.kind === "resume"
-      ? request.continuation.prompt
-      : (() => {
-          const _exhaustive: never = request.continuation;
-          return _exhaustive;
-        })();
-  const prompt = applyPiNativeSkillInvocation(request.methods, rawPrompt);
   return [
     "--no-skills",
     ...buildMethodArgs(request.methods),
@@ -148,11 +141,29 @@ export function buildPiTurnExtraArgs(
     ...extraPiArgs,
     // Envelope assembly = projectActivationFlags; pi only renders argv pairs.
     ...activationFlagsToPiArgv(projectActivationFlags(request)),
+    ...piEngineModelArgs(request),
     "--mode",
     "json",
     ...buildSeatModelCliArgs(request.model),
-    prompt,
   ];
+}
+
+/** Engine name stays on child env; model has no env fallback (#883 / #879). */
+function piEngineModelArgs(request: RoleTurnRequest): string[] {
+  const model = normalizeEngineName(request.engineModel);
+  if (model === undefined) return [];
+  return [`--${ENGINE_MODEL_FLAG_NAME}`, model];
+}
+
+function piUserDialogueBody(request: RoleTurnRequest): string {
+  const rawPrompt =
+    request.continuation.kind === "initial" || request.continuation.kind === "resume"
+      ? request.continuation.prompt
+      : (() => {
+          const _exhaustive: never = request.continuation;
+          return _exhaustive;
+        })();
+  return applyPiNativeSkillInvocation(request.methods, rawPrompt);
 }
 
 export type PiSpawnRunner = (
@@ -163,6 +174,8 @@ export type PiSpawnRunner = (
     timeoutMs?: number;
     /** Parent cancellation; the child gets the same graceful SIGTERM as a budget. */
     signal?: AbortSignal;
+    /** User dialogue body; omitted from argv so execve cannot E2BIG (#879). */
+    stdin?: string;
   },
 ) => Promise<{
   code: number | null;
@@ -271,11 +284,22 @@ export function createDefaultPiSpawnRunner(options: {
       const child = spawn(piIdentity.executable, [...args], {
         cwd: spawnOptions.cwd,
         env: spawnOptions.env,
-        stdio: ["ignore", "ignore", "pipe"],
+        stdio: ["pipe", "ignore", "pipe"],
       });
+      if (child.stdin === null) {
+        throw new Error("Pi child stdin pipe was not created");
+      }
       if (child.stderr === null) {
         throw new Error("Pi child stderr pipe was not created");
       }
+      let stdinDeliveryError: Error | undefined;
+      child.stdin.on("error", (error) => {
+        stdinDeliveryError ??= error;
+      });
+      if (spawnOptions.stdin !== undefined) {
+        child.stdin.write(spawnOptions.stdin);
+      }
+      child.stdin.end();
       let stderr = "";
       let timedOut = false;
       // No default wall clock. Only an explicit caller budget arms a timer (ADR 0010).
@@ -344,6 +368,10 @@ export function createDefaultPiSpawnRunner(options: {
               reject(executionError);
               return;
             }
+            if (stdinDeliveryError !== undefined) {
+              reject(stdinDeliveryError);
+              return;
+            }
             resolveResult({
               code,
               stderr,
@@ -375,9 +403,13 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
     async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
       // #617 DK-7: Pi argv gets projected native paths once; never record bytes.
       // Pi already owns its own session file, so only sitian prior volume rides in.
+      // #879: station-child officer dialogue keeps peer words — do not splice
+      // host-transition priorNativePaths into the review prompt body.
       let turnRequest = request;
+      const officerStationChild =
+        request.stationChild === true && isOfficerReviewSeat(request.activation.role);
       const paths =
-        request.hostTransition?.priorNativeKind === "sitian"
+        !officerStationChild && request.hostTransition?.priorNativeKind === "sitian"
           ? request.hostTransition.priorNativePaths
           : undefined;
       if (
@@ -400,6 +432,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
         config.extraPiArgs ?? [],
       );
       const args = buildExplicitInternalActivationArgs(roleEntry, extraArgs);
+      const stdin = encodeUserDialogueStdin(piUserDialogueBody(turnRequest));
       // Shared envelope isolates this call's court identity: omitting courtAttemptId
       // must not inherit a parent process.env.AK_ROLE_COURT_ATTEMPT (#637).
       const env: NodeJS.ProcessEnv = {
@@ -444,6 +477,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       return await spawnRunner(args, {
         cwd: request.cwd,
         env,
+        stdin,
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
         ...(request.signal === undefined ? {} : { signal: request.signal }),
       });

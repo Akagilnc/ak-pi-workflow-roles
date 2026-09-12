@@ -8,7 +8,7 @@ import type {
   RoleTurnKnownFailure,
   RoleTurnRequest,
 } from "../host-contracts.ts";
-import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -123,6 +123,7 @@ function mergerTurnOptions(
   agentDir: string;
   model?: import("./config.ts").SeatModelConfig;
   engine?: string;
+  engineModel?: string;
   timeoutMs?: number;
   correlationId?: string;
 } {
@@ -131,7 +132,7 @@ function mergerTurnOptions(
     home: env.home,
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...pickEngineAxis(env),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(admitted.correlationId === undefined && env.correlationId === undefined
       ? {}
@@ -221,7 +222,7 @@ export async function runPublicMerger(
           prompt: buildMergerTransportPrompt(
             admitted,
             engineSessionMaterialFromOptions({
-              ...(env.engine === undefined ? {} : { engine: env.engine }),
+              ...pickEngineAxis(env),
               packageRoot: env.packageRoot,
             }),
           ),
@@ -233,7 +234,7 @@ export async function runPublicMerger(
         home: env.home,
         agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...pickEngineAxis(env),
         ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
@@ -242,7 +243,7 @@ export async function runPublicMerger(
           kind: "resume",
           prompt: buildResumeContinuationPrompt({
             packageRoot: env.packageRoot,
-            ...(env.engine === undefined ? {} : { engine: env.engine }),
+            ...pickEngineAxis(env),
           }),
         },
       }),

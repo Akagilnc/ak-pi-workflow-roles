@@ -6,7 +6,7 @@
  * run/rebind/nest path. (#744: evidence-child public seat deleted.)
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
-import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import { readRunTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -68,6 +68,11 @@ export type InstructionSeatRunEnv = PostAdmissionEnv & {
    * Never a public CLI argv — must not pollute the --source-run parent lookup key (#747).
    */
   reviewReask?: string;
+  /**
+   * #879 gate summons: verbatim parent-submission body for officer dialogue content.
+   * Rides summons.instruction / first-mint prompt when reviewReask is absent.
+   */
+  gateReviewInstruction?: string;
 };
 
 /** Project an admitted instruction-seat invocation onto the host-neutral turn request. */
@@ -121,7 +126,9 @@ function instructionSeatAdapters(options?: {
       return infrastructureFailure === undefined
         ? result.knownFailure
         : {
-            cause: infrastructureFailure.cause,
+            ...(infrastructureFailure.cause === undefined
+              ? {}
+              : { cause: infrastructureFailure.cause }),
             diagnostic: infrastructureFailure.diagnostic,
             ...(infrastructureFailure.identity === undefined
               ? {}
@@ -288,8 +295,9 @@ export async function runPublicInstructionSeat(
     }
   }
 
-  // #756/#786: auditor reask / verbatim submission body ride summons.instruction on resume.
-  const resumeInstruction = env.reviewReask;
+  // #756/#879: auditor reask / verbatim submission body ride summons.instruction.
+  // Binding pointer stays --source-run / argv 卷宗指针; content is body or reask.
+  const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
   const summons: SameTicketSummonsMaterials = {
     ...(resumeInstruction === undefined
       ? {
@@ -365,20 +373,22 @@ export async function runPublicInstructionSeat(
         home: env.home,
         agentDir: env.agentDir,
         ...(env.model === undefined ? {} : { model: env.model }),
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...pickEngineAxis(env),
         ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
         ...(env.correlationId === undefined || env.correlationId.trim() === ""
           ? {}
           : { correlationId: env.correlationId }),
         continuation: {
           kind: "initial",
-          prompt: buildInstructionTransportPrompt(
-            admitted,
-            engineSessionMaterialFromOptions({
-              ...(env.engine === undefined ? {} : { engine: env.engine }),
-              packageRoot: env.packageRoot,
-            }),
-          ),
+          // #879: gate first mint uses parent payload as content when present.
+          prompt: (env.reviewReask ?? env.gateReviewInstruction)
+            ?? buildInstructionTransportPrompt(
+              admitted,
+              engineSessionMaterialFromOptions({
+                ...pickEngineAxis(env),
+                packageRoot: env.packageRoot,
+              }),
+            ),
         },
       });
 

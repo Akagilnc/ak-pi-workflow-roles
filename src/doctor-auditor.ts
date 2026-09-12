@@ -26,7 +26,7 @@ export type DoctorAuditOptions = {
  */
 export function createPiDoctorAuditor(): (options: DoctorAuditOptions) => Promise<ComplianceDecision> {
   return async (options) => {
-    const dossier = resolveAuditDossier();
+    const dossier = resolveAuditDossier(options.context);
     requireAuditMaterials(dossier);
     const subjects = readDoctorAuditSubjects(options.context);
     requireAuditMaterials(subjects);

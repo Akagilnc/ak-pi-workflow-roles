@@ -84,7 +84,8 @@ export async function assertPublicFailureSettlement(input: {
   result: { exitCode: number; terminal?: TerminalResult };
   stdout: string[];
   stderr: string[];
-  expectedCause: ControlledFailureCause;
+  /** Typed cause when confirmed; omit / pass undefined when no typed class (#881). */
+  expectedCause?: ControlledFailureCause;
   diagnosticIncludes?: string;
   diagnosticEquals?: string;
   identityName?: string;
@@ -128,7 +129,7 @@ export async function assertPublicFailureSettlement(input: {
   assert.ok(errorRef, "failure Terminal must carry error artifact ref");
   const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
     kind: string;
-    cause: string;
+    cause?: string;
     diagnostic: string;
     identity?: { name?: string; code?: string | number };
   };
@@ -142,6 +143,9 @@ export async function assertPublicFailureSettlement(input: {
     assert.equal(errorBody.identity?.code, input.identityCode);
   }
   assert.equal("judgeStatus" in errorBody, false);
+  // #881: never mint a fabricated classification label.
+  assert.notEqual(errorBody.cause, "unrecognized");
+  assert.notEqual(terminal.roleOutcome.cause, "unrecognized");
 
   const evidenceRef = terminal.artifacts.find((a) => a.kind === "evidence");
   assert.ok(evidenceRef, "failure Terminal must carry evidence artifact ref");

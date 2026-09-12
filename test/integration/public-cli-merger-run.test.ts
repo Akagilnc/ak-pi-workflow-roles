@@ -29,7 +29,7 @@ import {
   noReceiptLifecycleFacts,
 } from "../../src/receipt-delivery-policy.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
-import { payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import {
   createSubmissionLedgerHost,
   hasRecordedSubmission,
@@ -277,6 +277,8 @@ function hostNeutralTypedTurn(options: {
         cwd: request.cwd,
         mode: "json",
         model: undefined,
+        runDirectory: request.runDirectory,
+        ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
         sessionManager: {
           getHeader: () => ({ type: "session", id: `${options.runId}:alternate-host` }),
           getSessionFile: () => coordinates.sessionFile,
@@ -287,10 +289,7 @@ function hostNeutralTypedTurn(options: {
         },
         abort() {},
       } as HostContext;
-      const priorRun = process.env.AK_ROLE_RUN_DIR;
-      process.env.AK_ROLE_RUN_DIR = request.runDirectory;
-      try {
-        const turns = options.turns ?? [[{ id: "t1", kind: "output" as const }]];
+      const turns = options.turns ?? [[{ id: "t1", kind: "output" as const }]];
         for (const [turnIndex, turn] of turns.entries()) {
           const calls = turn.map(({ id, kind }) => ({
             toolCallId: id,
@@ -346,12 +345,9 @@ function hostNeutralTypedTurn(options: {
           }
           await handlers.get("turn_end")!({ turnIndex, calls }, context);
         }
-        if (options.postSealAction === true) {
-          const late = { toolCallId: "after-seal", toolName: outputTool };
-          await handlers.get("tool_execution_start")?.(late, context);
-        }
-      } finally {
-        if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR; else process.env.AK_ROLE_RUN_DIR = priorRun;
+      if (options.postSealAction === true) {
+        const late = { toolCallId: "after-seal", toolName: outputTool };
+        await handlers.get("tool_execution_start")?.(late, context);
       }
       return { code: 0, stderr: "", timedOut: false };
     },
@@ -499,7 +495,11 @@ test("public-cli every packaged role accepts via shared sealed→Terminal entry"
       assert.equal(result.exitCode, 0, `${row.role} exit: ${stderr}`);
       assert.equal(result.terminal?.roleOutcome.kind, "accepted", `${row.role}: ${stderr}`);
       assert.equal(result.terminal?.roleOutcome.role, row.role, row.role);
-      assert.equal(result.terminal && payloadStatus(result.terminal.roleOutcome), row.status, row.role);
+      assert.deepEqual(
+        result.terminal ? payloadStatusSequence(result.terminal.roleOutcome) : [],
+        row.status === undefined ? [] : [row.status],
+        row.role,
+      );
     }
   });
 });
@@ -535,6 +535,8 @@ test("host-neutral typed turns record every terminating submission without sole 
           cwd: request.cwd,
           mode: "json",
           model: undefined,
+          runDirectory: request.runDirectory,
+          ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
           sessionManager: {
             getHeader: () => ({ type: "session", id: `${runId}:attempt` }),
             getSessionFile: () => coordinates.sessionFile,
@@ -545,10 +547,7 @@ test("host-neutral typed turns record every terminating submission without sole 
           },
           abort() {},
         } as HostContext;
-        const priorRun = process.env.AK_ROLE_RUN_DIR;
-        process.env.AK_ROLE_RUN_DIR = request.runDirectory;
-        try {
-          for (const payload of payloads) {
+        for (const payload of payloads) {
             const id = `call-${payloadIndex++}`;
             await registered!.execute(id, payload, undefined, undefined, context);
             await appendFile(coordinates.sessionFile, `${JSON.stringify({
@@ -562,14 +561,10 @@ test("host-neutral typed turns record every terminating submission without sole 
               },
             })}\n`, "utf8");
           }
-          await handlers.get("turn_end")?.({
-            turnIndex: 0,
-            calls: payloads.map((_, i) => ({ toolCallId: `call-${i}`, toolName: outputTool })),
-          }, context);
-        } finally {
-          if (priorRun === undefined) delete process.env.AK_ROLE_RUN_DIR;
-          else process.env.AK_ROLE_RUN_DIR = priorRun;
-        }
+        await handlers.get("turn_end")?.({
+          turnIndex: 0,
+          calls: payloads.map((_, i) => ({ toolCallId: `call-${i}`, toolName: outputTool })),
+        }, context);
         return { code: 0, stderr: "", timedOut: false };
       },
     };
@@ -587,7 +582,7 @@ test("host-neutral typed turns record every terminating submission without sole 
     );
     assert.equal(result.exitCode, 0, JSON.stringify(result.terminal?.roleOutcome));
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(result.terminal && payloadStatus(result.terminal.roleOutcome), "converged");
+    assert.deepEqual(result.terminal ? payloadStatusSequence(result.terminal.roleOutcome) : [], ["continue", "converged"]);
     const recorded =
       result.terminal?.roleOutcome.kind === "accepted"
         ? result.terminal.roleOutcome.payloads

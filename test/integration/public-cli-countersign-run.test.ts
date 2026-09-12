@@ -1,5 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
  * out via real runAkRole entry; #599 resume continues the exact session.
@@ -16,6 +16,7 @@ import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -142,7 +143,8 @@ test("countersign admission freezes attachments and binds the countersign role",
       createRunId: () => "01a0sign00-0000-7000-8000-000000000001",
     });
 
-    assert.equal(admitted.role, "countersign");
+    assert.deepEqual(
+      admitted.role, "countersign");
     assert.equal(admitted.instructionEmpty, false);
     assert.equal(admitted.attachments.length, 1);
     assert.ok(admitted.attachments[0]?.frozenPath);
@@ -294,11 +296,9 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
       assert.equal(result.exitCode, 0, `receipt ${receipt.countersignStatus}`);
       assert.ok(result.terminal, `receipt ${receipt.countersignStatus}`);
       assert.equal(result.terminal.roleOutcome.kind, "accepted");
-      assert.equal(
-        payloadStatus(result.terminal.roleOutcome),
-        receipt.countersignStatus,
-      );
-      const facts = payloadFacts(result.terminal.roleOutcome);
+      assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [receipt.countersignStatus,
+      ]);
+      const facts = (objectPayloads(result.terminal.roleOutcome)[0] ?? {});
       assert.equal(facts.countersignStatus, receipt.countersignStatus);
       // #757: nested fields pass through — no lift to fixSummary/decisionQuestion.
       if (receipt.countersignStatus === "continue") {
@@ -384,6 +384,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
     });
     const { io: resumeIo, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
+    let resumeStdin: string | undefined;
     const resumed = await runAkRole(["resume", runId, "再裁一次"], {
       home,
       packageRoot,
@@ -395,6 +396,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
         // Resume still refreshes 起居郎 (refresh-every-court); true-unbound face.
         piRunner: withTrueUnboundDiarist(async (args, options) => {
           resumeArgs = [...args];
+          resumeStdin = options.stdin;
           return scriptedCountersignSession({
             countersignStatus: "converged",
             note: "RESUMED-续署",
@@ -406,17 +408,18 @@ test("ak-role resume continues countersign on the exact session", async () => {
     assert.equal(Array.isArray(resumeArgs), true);
     assert.equal(resumeArgs![resumeArgs!.indexOf("--ak-role") + 1], "countersign");
     assert.equal(resumeArgs![resumeArgs!.indexOf("--session-dir") + 1], coords.sessionDirectory);
-    assert.equal(resumeArgs!.includes("再裁一次"), true);
+    assert.equal(resumeArgs!.includes("再裁一次"), false);
+    assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "再裁一次");
     assert.equal(resumed.terminal?.roleOutcome.role, "countersign");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
+    assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatus(resumed.terminal.roleOutcome)
-        : undefined,
-      "converged",
+        ? payloadStatusSequence(resumed.terminal.roleOutcome)
+        : [],
+      ["converged"],
     );
     const facts = resumed.terminal?.roleOutcome.kind === "accepted"
-      ? payloadFacts(resumed.terminal.roleOutcome)
+      ? (objectPayloads(resumed.terminal.roleOutcome)[0] ?? {})
       : undefined;
     assert.equal(facts?.note, "RESUMED-续署");
   });
@@ -452,13 +455,14 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     assert.equal(first.exitCode, 0);
     assert.equal(
       first.terminal?.roleOutcome.kind === "accepted"
-        ? payloadFacts(first.terminal.roleOutcome).note
+        ? (objectPayloads(first.terminal.roleOutcome)[0] ?? {}).note
         : undefined,
       "FIRST-署",
     );
 
     let resumeDispatches = 0;
     let resumeArgs: string[] | undefined;
+    let resumeStdin: string | undefined;
     const { io: resumeIo, stdout } = captureIo();
     const resumed = await runAkRole(["resume", runId, "再裁一次"], {
       home,
@@ -471,6 +475,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
         piRunner: async (args, options) => {
           resumeDispatches += 1;
           resumeArgs = [...args];
+          resumeStdin = options.stdin;
           return scriptedCountersignSession({
             countersignStatus: "continue",
             fix: { summary: "RESUMED-再审" },
@@ -479,19 +484,17 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
       }),
     });
     assert.equal(resumeDispatches, 1, "sealed resume with message must reach the host");
-    assert.equal(resumeArgs!.includes("再裁一次"), true);
+    assert.equal(resumeArgs!.includes("再裁一次"), false);
+    assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "再裁一次");
     assert.equal(resumed.exitCode, 0, stdout.join("") || "sealed countersign resume failed");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
-      resumed.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatus(resumed.terminal.roleOutcome)
-        : undefined,
-      "continue",
-    );
-    const facts = resumed.terminal?.roleOutcome.kind === "accepted"
-      ? payloadFacts(resumed.terminal.roleOutcome)
-      : undefined;
-    assert.equal((facts?.fix as { summary?: string } | undefined)?.summary, "RESUMED-再审");
+    assert.deepEqual(resumed.terminal?.roleOutcome.payloads, [
+      { countersignStatus: "continue", fix: { summary: "RESUMED-再审" } },
+    ]);
+    assert.deepEqual(resumed.terminal?.submissions, [
+      { countersignStatus: "converged", note: "FIRST-署" },
+      { countersignStatus: "continue", fix: { summary: "RESUMED-再审" } },
+    ]);
   });
 });
 
@@ -765,10 +768,10 @@ test("public countersign path: summons text alone never mints a ticket without �
 
 /**
  * Multi-role faux pi: diarist envelope when --ak-role diarist, else countersign.
- * ticketAssertion: positive N = 本庭对象; null = true-unbound (真无票→无录).
+ * ticketAssertion: positive N = 本庭对象; null = true-unbound; "escalate" = 认不出.
  */
 function courtPipelinePiRunner(
-  ticketAssertion: number | null = 582,
+  ticketAssertion: number | null | "escalate" = 582,
   countersignDetails: unknown = {
     countersignStatus: "converged",
     note: "署",
@@ -797,38 +800,33 @@ function courtPipelinePiRunner(
         getAllTools: () =>
           registered === undefined ? [] : [{ name: registered.name }],
       } as unknown as RoleHost;
-      const priorRunDir = process.env.AK_ROLE_RUN_DIR;
       const runDir = options.env.AK_ROLE_RUN_DIR;
-      if (typeof runDir === "string" && runDir.trim() !== "") {
-        process.env.AK_ROLE_RUN_DIR = runDir;
-      }
-      try {
-        const runtime = createDiaristRoleRuntime(host, {
+      const runtime = createDiaristRoleRuntime(host, {
           loadSoul: async () => "起居郎职分（测试装载）",
         });
         await runtime.activate();
         assert.ok(registered, "diarist envelope registered no output tool");
         // 起居郎 LLM asserts the court target; envelope binds typed key (#771 / #779).
-        const accepted = await registered.execute(
-          "call_diarist_1",
-          {
-            status: "completed",
-            ticketNumber: ticketAssertion,
-            entries: [],
-          },
-          undefined,
-          undefined,
-          {} as HostContext,
-        );
-        return scriptedTerminatingToolSession({
-          role: "diarist",
-          toolName: DIARIST_OUTPUT_TOOL_NAME,
-          details: accepted.details,
-        })(args, options);
-      } finally {
-        if (priorRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-        else process.env.AK_ROLE_RUN_DIR = priorRunDir;
-      }
+        const params =
+          ticketAssertion === "escalate"
+            ? { status: "escalate", reason: "cannot identify court target" }
+            : {
+                status: "completed",
+                ticketNumber: ticketAssertion,
+                entries: [],
+              };
+      const accepted = await registered.execute(
+        "call_diarist_1",
+        params,
+        undefined,
+        undefined,
+        { runDirectory: runDir } as HostContext,
+      );
+      return scriptedTerminatingToolSession({
+        role: "diarist",
+        toolName: DIARIST_OUTPUT_TOOL_NAME,
+        details: accepted.details,
+      })(args, options);
     }
     return scriptedCountersignSession(countersignDetails)(args, options);
   };
@@ -1123,13 +1121,17 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     ensureTicketProvenanceVolume(582, project, home);
 
     const seen: Array<{ runId: string; kind: string }> = [];
+    const parentSeal = { countersignStatus: "converged" as const, note: "署" };
     const baseHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
-      piRunner: courtPipelinePiRunner(582, {
-        countersignStatus: "converged",
-        note: "署",
-      }),
+      piRunner: async (args, options) => {
+        const role = argvFlagValue(args, "--ak-role");
+        if (role === "diarist") {
+          return courtPipelinePiRunner(582)(args, options);
+        }
+        return courtPipelinePiRunner(582, parentSeal)(args, options);
+      },
     });
     const host = {
       async executeTurn(request: RoleTurnRequest) {

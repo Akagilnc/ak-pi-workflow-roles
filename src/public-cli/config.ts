@@ -5,7 +5,11 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { assertRegisteredHostName, DEFAULT_ROLE_TURN_HOST } from "../host-descriptions.ts";
-import { assertLegalEngineName } from "../package-resources/engine-material.ts";
+import {
+  assertLegalEngineModel,
+  assertLegalEngineName,
+  pickEngineAxis,
+} from "../package-resources/engine-material.ts";
 import { resolveConfiguredProvinceOfficer } from "../institutional-resolution.ts";
 import {
   PUBLIC_CALLABLE_ROLES,
@@ -51,6 +55,8 @@ export type PersistentSeatConfig = {
   model?: string;
   thinking?: PublicThinkingLevel;
   engine?: string;
+  /** Optional labor-engine model id (#883); only meaningful with engine. */
+  engineModel?: string;
   host?: string;
 };
 
@@ -90,6 +96,8 @@ export type EffectiveSeat = {
   selection?: SeatModelConfig;
   /** Selected engine name when configured; undefined = no engine (default path). */
   engine?: string;
+  /** Labor-engine model id when the resolved engine carries one (#883). */
+  engineModel?: string;
   engineSource: EngineSource;
   host: string;
   hostSource: HostSource;
@@ -100,6 +108,8 @@ export type InvocationModelOverride = {
   thinking?: PublicThinkingLevel;
   /** Optional engine override for this invocation only (#356). */
   engine?: string;
+  /** Optional engine-model override for this invocation only (#883). */
+  engineModel?: string;
   host?: string;
 };
 
@@ -160,7 +170,7 @@ export function setPersistentSeatConfig(
       [seat]: {
         ...selection,
         // Model rewrite preserves a previously configured engine axis.
-        ...(previous?.engine === undefined ? {} : { engine: previous.engine }),
+        ...pickEngineAxis(previous ?? {}),
         ...(previous?.host === undefined ? {} : { host: previous.host }),
       },
     },
@@ -191,7 +201,7 @@ export function clearPersistentSeatConfig(
       seats: {
         ...config.seats,
         [seat]: {
-          ...(previous.engine === undefined ? {} : { engine: previous.engine }),
+          ...pickEngineAxis(previous),
           ...(previous.host === undefined ? {} : { host: previous.host }),
         },
       },
@@ -213,7 +223,11 @@ export function setPersistentSeatHost(
   }
   if (host === undefined) {
     const { host: _dropped, ...rest } = previous;
-    if (seatModelOnly(rest) === undefined && rest.engine === undefined) {
+    if (
+      seatModelOnly(rest) === undefined &&
+      rest.engine === undefined &&
+      rest.engineModel === undefined
+    ) {
       const { [seat]: _row, ...seats } = config.seats;
       return { ...config, seats };
     }
@@ -224,16 +238,18 @@ export function setPersistentSeatHost(
 }
 
 /**
- * Set or clear persistent engine on a callable role seat (#356 / #378 / #391 / #453).
+ * Set or clear persistent engine on a callable role seat (#356 / #378 / #391 / #453 / #883).
  * First engine still requires an existing seat row (model, or residual axes).
- * Clearing engine from an axis-only residual drops the empty row; clearing
- * engine from a model+engine row leaves model-only. Seat type is PublicCallableRole
- * (same as PublicConfigurableSeat; navigator included since #639).
+ * Clearing engine drops engineModel with it; clearing engine from an axis-only
+ * residual drops the empty row; clearing engine from a model+engine row leaves
+ * model-only. Optional engineModel on set writes both halves of the pool directive.
+ * Seat type is PublicCallableRole (navigator included since #639).
  */
 export function setPersistentSeatEngine(
   config: PublicCliConfig,
   seat: PublicCallableRole,
   engine: string | undefined,
+  engineModel?: string,
 ): PublicCliConfig {
   const previous = config.seats[seat];
   if (previous === undefined) {
@@ -242,7 +258,7 @@ export function setPersistentSeatEngine(
     );
   }
   if (engine === undefined) {
-    const { engine: _dropped, ...modelOnly } = previous;
+    const { engine: _dropped, engineModel: _droppedModel, ...modelOnly } = previous;
     // Drop the row only after the final independent axis is cleared.
     if (seatModelOnly(modelOnly) === undefined && modelOnly.host === undefined) {
       const { [seat]: _row, ...seats } = config.seats;
@@ -258,11 +274,53 @@ export function setPersistentSeatEngine(
   }
   // Engine-name path-safety syntax is owned solely by assertLegalEngineName
   // (call-request + config-parse seams). Setter is pure seat mutation.
+  // Name-only set clears any prior engineModel so a new engine does not inherit
+  // a stale multi-model id; pass engineModel to set both halves together.
+  // Model-only edits use setPersistentSeatEngineModel.
+  const { engineModel: _priorModel, ...withoutModel } = previous;
+  const next: PersistentSeatConfig =
+    engineModel === undefined
+      ? { ...withoutModel, engine }
+      : { ...withoutModel, engine, engineModel };
   return {
     ...config,
     seats: {
       ...config.seats,
-      [seat]: { ...previous, engine },
+      [seat]: next,
+    },
+  };
+}
+
+/**
+ * Set or clear the labor-engine model id on a callable seat (#883).
+ * Requires an existing engine name; clearing model leaves engine intact.
+ */
+export function setPersistentSeatEngineModel(
+  config: PublicCliConfig,
+  seat: PublicCallableRole,
+  engineModel: string | undefined,
+): PublicCliConfig {
+  const previous = config.seats[seat];
+  if (previous === undefined || previous.engine === undefined) {
+    throw new Error(
+      `config seat ${seat} has no persistent engine; set-engine before engine model`,
+    );
+  }
+  if (engineModel === undefined) {
+    const { engineModel: _dropped, ...rest } = previous;
+    return {
+      ...config,
+      seats: {
+        ...config.seats,
+        [seat]: rest,
+      },
+    };
+  }
+  return {
+    ...config,
+    seats: {
+      ...config.seats,
+      [seat]: { ...previous, engineModel },
     },
   };
 }
@@ -311,6 +369,21 @@ export function validatePublicCliConfigAxes(
       } catch (error) {
         throw new Error(
           `config seat ${seat} engine is illegal: ${row.engine}`,
+          { cause: error },
+        );
+      }
+    }
+    if (row?.engineModel !== undefined) {
+      if (row.engine === undefined) {
+        throw new Error(
+          `config seat ${seat} engineModel requires engine`,
+        );
+      }
+      try {
+        assertLegalEngineModel(row.engineModel);
+      } catch (error) {
+        throw new Error(
+          `config seat ${seat} engineModel is illegal: ${row.engineModel}`,
           { cause: error },
         );
       }
@@ -480,6 +553,9 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
     // validatePublicCliConfigAxes → assertLegalEngineName (single authority).
     throw new Error(`config seat ${seat} engine must be a string`);
   }
+  if (raw.engineModel !== undefined && typeof raw.engineModel !== "string") {
+    throw new Error(`config seat ${seat} engineModel must be a string`);
+  }
   // #453/#522/#568: notary/inspector host/engine residuals remain legal after
   // model clear. All other seats keep provider/model.
   if (!hasProvider) {
@@ -491,7 +567,11 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
         throw new Error(`config seat ${seat} thinking requires provider/model`);
       }
       return {
-        ...(raw.engine === undefined ? {} : { engine: raw.engine as string }),
+        ...pickEngineAxis({
+          engine: typeof raw.engine === "string" ? raw.engine : undefined,
+          engineModel:
+            typeof raw.engineModel === "string" ? raw.engineModel : undefined,
+        }),
         ...(raw.host === undefined ? {} : { host: raw.host as string }),
       };
     }
@@ -513,7 +593,11 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
     ...(raw.thinking === undefined
       ? {}
       : { thinking: raw.thinking as PublicThinkingLevel }),
-    ...(raw.engine === undefined ? {} : { engine: raw.engine as string }),
+    ...pickEngineAxis({
+      engine: typeof raw.engine === "string" ? raw.engine : undefined,
+      engineModel:
+        typeof raw.engineModel === "string" ? raw.engineModel : undefined,
+    }),
     ...(raw.host === undefined ? {} : { host: raw.host as string }),
   };
   return parsed;
@@ -578,18 +662,27 @@ function attachEngineAxis(
       engineSource: "unconfigured",
     };
   }
-  const persistentEngine = config.seats[seat.seat]?.engine;
+  const persistentRow = config.seats[seat.seat];
+  const persistentEngine = persistentRow?.engine;
+  const persistentEngineModel = persistentRow?.engineModel;
   if (invocation?.engine !== undefined) {
+    // Invocation engine override: model only when the same invocation supplies it.
     return {
       ...seat,
-      engine: invocation.engine,
+      ...pickEngineAxis({
+        engine: invocation.engine,
+        engineModel: invocation.engineModel,
+      }),
       engineSource: "invocation",
     };
   }
   if (persistentEngine !== undefined) {
     return {
       ...seat,
-      engine: persistentEngine,
+      ...pickEngineAxis({
+        engine: persistentEngine,
+        engineModel: persistentEngineModel,
+      }),
       engineSource: "persistent",
     };
   }

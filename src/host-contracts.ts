@@ -15,18 +15,22 @@ export type HostToolResult<T = unknown> = {
 /** Opaque host-owned identity persisted with a Role run. */
 export type DurablePrincipal = object & { readonly __durablePrincipal?: never };
 
-/** Controlled post-admission failure classes (ADR 0052 / #107). Owner = host contract. */
+/**
+ * Controlled post-admission failure classes (ADR 0052 / #107). Owner = host contract.
+ * Closed set of typed facts only — never a fabricated "could not classify" label (#881).
+ * When no typed confirmation exists, omit cause and keep the original diagnostic / error pointer.
+ */
 export type ControlledFailureCause =
   | "activation"
   | "provider"
   | "session"
   | "output"
-  | "timeout"
-  | "unrecognized";
+  | "timeout";
 
 /** Production-owned typed failure carried on a resolved turn result. */
 export type RoleTurnKnownFailure = {
-  readonly cause: ControlledFailureCause;
+  /** Present only when a typed fact confirms the class; omitted when unknown (#881). */
+  readonly cause?: ControlledFailureCause;
   readonly identity?: {
     readonly name?: string;
     readonly code?: string | number;
@@ -126,7 +130,7 @@ export type RoleTurnActivation =
       /** Required comparison-base revision for the unanchored merge-candidate diff. */
       readonly baseRevision: string;
     }
-  | { readonly role: "inspector" }
+  | { readonly role: "inspector"; readonly sourceRun?: string }
   | { readonly role: "gatekeeper" }
   | { readonly role: "navigator" }
   | { readonly role: "auditor" }
@@ -156,6 +160,11 @@ export type RoleTurnHostTransition = {
   readonly priorNativePaths: readonly string[];
 };
 
+/** Gate review officers (察院 / 符宝郎 / 审刑院). Single authority for seat checks. */
+export function isOfficerReviewSeat(role: string): boolean {
+  return role === "notary" || role === "inspector" || role === "auditor";
+}
+
 /** One main-session turn request over the host-neutral execution seam. */
 export type RoleTurnRequest = {
   readonly principal: DurablePrincipal;
@@ -164,6 +173,8 @@ export type RoleTurnRequest = {
   readonly continuation: RoleTurnContinuation;
   readonly model?: RoleTurnModelConfig;
   readonly engine?: string;
+  /** Labor-engine model id from the live seat table (#883); opaque pass-through. */
+  readonly engineModel?: string;
   readonly cwd: string;
   readonly home: string;
   readonly agentDir: string;
@@ -235,7 +246,21 @@ export interface DurablePrincipalAuthority {
 type HostSessionManager = { getLeafEntry(): HostSessionEntry | undefined; getLeafId(): string | null | undefined; getEntries(): Iterable<HostSessionEntry>; getSessionDir(): string; getSessionFile(): string | undefined; getHeader?(): { readonly type: string; readonly id?: string } | null; setSessionFile?(path: string): void; appendCustomEntry?(customType: string, data?: unknown): unknown; };
 
 /** Context supplied by a host for one activation and its interceptable events. */
-export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
+export type HostContext = { cwd: string; mode: string; model: { readonly provider: string } | undefined; sessionManager: HostSessionManager; /** Per-turn admitted run directory (#879); never process-global env. */ runDirectory?: string; /** Per-turn court attempt (#879); never process-global env. */ courtAttemptId?: string; signal?: AbortSignal | undefined; ui?: { notify?(message: string, type?: "info" | "warning" | "error"): void }; transcript?(): string; abort(): void; };
+
+/** Per-turn run directory; adapters must project any child-process identity. */
+export function runDirectoryFromHostContext(context: HostContext): string | undefined {
+  return typeof context.runDirectory === "string" && context.runDirectory.trim() !== ""
+    ? context.runDirectory
+    : undefined;
+}
+
+/** Per-turn court attempt; absence never inherits ambient process identity. */
+export function courtAttemptIdFromHostContext(context: HostContext): string | undefined {
+  return typeof context.courtAttemptId === "string" && context.courtAttemptId.trim() !== ""
+    ? context.courtAttemptId
+    : undefined;
+}
 
 export type HostToolDefinition<S extends TSchema = TSchema, D = unknown, C = HostContext> = { name: string; label: string; description: string; promptSnippet?: string; parameters: S; execute( toolCallId: string, params: Static<S>, signal: AbortSignal | undefined, update: ((result: HostToolResult<D>) => void) | undefined, context: C, ): Promise<HostToolResult<D>>; /**
  * #641 chain② opt-in: when the output params carry the shared infrastructure
@@ -350,7 +375,7 @@ export interface RoleHost {
   getAllTools(): Array<{ name: string; sourceInfo?: { path?: string } }>;
   setActiveTools(names: string[]): void;
   getActiveTools(): string[];
-  requireGatekeeperPass?(options: { context: HostContext; subject: HostGatekeeperSubject; signal?: AbortSignal; hostActions: HostGatekeeperActions; toolCallId: string }): Promise<void>;
+  requireGatekeeperPass?(options: { context: HostContext; subject: HostGatekeeperSubject; signal?: AbortSignal; hostActions: HostGatekeeperActions; toolCallId: string; submission?: unknown }): Promise<void>;
   on(event: "before_agent_start", handler: HostEventHandler<"before_agent_start">): void;
   on(event: "input", handler: HostEventHandler<"input">): void;
   on(event: "tool_call", handler: HostEventHandler<"tool_call">): void;

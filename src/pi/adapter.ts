@@ -21,6 +21,7 @@ import type {
 import { createOAuthKeepalive, type OAuthKeepaliveOptions } from "../oauth-keepalive.ts";
 import { createRoleRuntimeExtension, type RoleRuntimeDependencies } from "../role-runtime.ts";
 import { renderAgentStartMaterials } from "../agent-start-materials.ts";
+import { readUserDialogueStdin } from "../user-dialogue-stdin.ts";
 
 
 export type PiRoleHostAdapter = RoleEnvelopeHost;
@@ -45,6 +46,12 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
     cwd: context.cwd,
     mode: context.mode,
     model: context.model === undefined ? undefined : { provider: context.model.provider },
+    ...(typeof process.env.AK_ROLE_RUN_DIR === "string" && process.env.AK_ROLE_RUN_DIR.trim() !== ""
+      ? { runDirectory: process.env.AK_ROLE_RUN_DIR }
+      : {}),
+    ...(typeof process.env.AK_ROLE_COURT_ATTEMPT === "string" && process.env.AK_ROLE_COURT_ATTEMPT.trim() !== ""
+      ? { courtAttemptId: process.env.AK_ROLE_COURT_ATTEMPT }
+      : {}),
     sessionManager: {
       getLeafEntry: () => context.sessionManager.getLeafEntry(),
       getLeafId: () => context.sessionManager.getLeafId(),
@@ -78,6 +85,7 @@ function requirePiGatekeeperPass(options: {
   signal?: AbortSignal;
   hostActions: HostGatekeeperActions;
   toolCallId: string;
+  submission?: unknown;
 }): Promise<void> {
   return requireGatekeeperPass({
     context: options.context,
@@ -90,6 +98,7 @@ function requirePiGatekeeperPass(options: {
       bindSubmissionNonPass: options.hostActions.bindSubmissionNonPass,
     },
     toolCallId: options.toolCallId,
+    ...(options.submission === undefined ? {} : { submission: options.submission }),
   });
 }
 
@@ -99,13 +108,13 @@ function toPiResult<D>(result: HostToolResult<D>): HostToolResult<D> {
 
 /** Fold a host before_agent_start return: push readingMaterial into the provider-visible
  * systemPrompt via the shared renderer and strip the typed field before Pi sees it. */
-function foldBeforeAgentStartReturn(result: unknown): BeforeAgentStartEventResult | void {
+function foldBeforeAgentStartReturn(result: unknown, currentSystemPrompt: string): BeforeAgentStartEventResult | void {
   if (result === undefined || result === null || typeof result !== "object") return undefined;
   const record = result as { systemPrompt?: string; readingMaterial?: unknown };
   const { systemPrompt, readingMaterial } = record;
   const folded = readingMaterial === undefined
     ? systemPrompt
-    : renderAgentStartMaterials(systemPrompt ?? "", [readingMaterial]);
+    : renderAgentStartMaterials(systemPrompt ?? currentSystemPrompt, [readingMaterial]);
   return folded === undefined ? {} : { systemPrompt: folded };
 }
 
@@ -136,6 +145,12 @@ export function createPiRoleHostAdapter(
   options: { transcriptFromContext?: (context: ExtensionContext) => string; oauthKeepalive?: OAuthKeepaliveOptions } = {},
 ): PiRoleHostAdapter {
   const keepalive = createOAuthKeepalive(options.oauthKeepalive);
+  // Decode transport exactly once before Pi's native handler chain. Pi retains
+  // its own transform/image propagation and per-handler error isolation.
+  pi.on("input", (value) => {
+    const text = readUserDialogueStdin(value.text);
+    return text === value.text ? { action: "continue" } : { action: "transform", text };
+  });
   const host: RoleHost = {
     deliverSubmissionRejection(_rejection) {
       // #836 删 1/A4.5: no package-authored non-sole resume sentence.
@@ -185,8 +200,8 @@ export function createPiRoleHostAdapter(
         const [, handler] = registration;
         pi.on("before_agent_start", (value, ctx) => {
           const result = handler({ prompt: value.prompt, systemPrompt: value.systemPrompt, systemPromptOptions: value.systemPromptOptions }, context(ctx));
-          if (result instanceof Promise) return result.then(foldBeforeAgentStartReturn);
-          return foldBeforeAgentStartReturn(result);
+          if (result instanceof Promise) return result.then((settled) => foldBeforeAgentStartReturn(settled, value.systemPrompt));
+          return foldBeforeAgentStartReturn(result, value.systemPrompt);
         });
       } else if (registration[0] === "input") {
         const [, handler] = registration;

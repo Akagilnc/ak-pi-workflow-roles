@@ -122,6 +122,8 @@ export function createJudgeRoleRuntime(
               ...(signal === undefined ? {} : { signal }),
               hostActions,
               toolCallId,
+              // #879: this-turn typed payload — identity-bound at submit site.
+              submission: parameters,
             });
             // #756: 审刑院合规路径 — same review-queue law as 符宝郎/察院.
             // pass → accept; bounce|escalate → raw auditor receipt back to judge;
@@ -132,6 +134,8 @@ export function createJudgeRoleRuntime(
               ...(signal === undefined ? {} : { signal }),
               hostActions,
               toolCallId,
+              // #879: same parent payload for 审刑院; not recovered from session latest.
+              submission: parameters,
             });
             return {
               content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],

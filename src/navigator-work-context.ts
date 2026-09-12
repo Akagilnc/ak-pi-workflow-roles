@@ -6,7 +6,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { loadDoctorCase } from "./doctor-evidence.ts";
-import type { HostContext } from "./host-contracts.ts";
+import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
 import {
   navigatorSubjectKey,
   navigatorSubjectKeyForInput,
@@ -64,10 +64,9 @@ export async function loadNavigatorWorkContext(
     subjectProvenance = "role_input";
   }
   // Public ak-role run: admitted request is the typed Navigator work-context source.
-  const publicRunDir = process.env.AK_ROLE_RUN_DIR;
+  const publicRunDir = runDirectoryFromHostContext(options.context);
   const currentSessionDir = options.context.sessionManager.getSessionDir();
-  const isBoundPublicRun = typeof publicRunDir === "string"
-    && publicRunDir.trim() !== ""
+  const isBoundPublicRun = publicRunDir !== undefined
     && resolve(currentSessionDir) === resolve(publicRunDir, "session");
   if (
     options.role === "judge" &&

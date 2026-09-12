@@ -9,7 +9,7 @@ import {
   NotarySourceRunError,
   resolveNotarySourceRunLocator,
 } from "../notary-source-run.ts";
-import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitNotaryInvocation,
@@ -52,6 +52,12 @@ export type NotaryRunEnv = PostAdmissionEnv & {
    * Never a public CLI argv — external callers still have zero prompt.
    */
   reviewReask?: string;
+  /**
+   * #879 gate summons: verbatim parent-submission body for officer dialogue content.
+   * Rides summons.instruction / first-mint prompt when reviewReask is absent.
+   * Binding pointer stays --source-run (independent machine material).
+   */
+  gateReviewInstruction?: string;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -115,10 +121,10 @@ export async function runPublicNotary(
     throw error;
   }
   // #747: officer resume key is this parent source-run path (not ticket number).
-  // #753/#786: gate re-ask and verbatim submission body share summons.instruction
-  // (reask wins when both present; no parallel stack).
+  // #753/#879: gate re-ask and verbatim submission body share summons.instruction
+  // (reask wins when both present; no parallel stack). Binding stays sourceRunPath.
   {
-    const resumeInstruction = env.reviewReask;
+    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: source.runDirectory,
       sourceRun: source,
@@ -166,7 +172,7 @@ export async function runPublicNotary(
   await markRunAdmitted(admitted, env.principalAuthority);
 
   const engineMaterial = engineSessionMaterialFromOptions({
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...pickEngineAxis(env),
     packageRoot: env.packageRoot,
   });
   const turnRequest = buildNotaryTurnRequest(admitted, {
@@ -174,14 +180,17 @@ export async function runPublicNotary(
     home: env.home,
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...pickEngineAxis(env),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(env.correlationId === undefined || env.correlationId.trim() === ""
       ? {}
       : { correlationId: env.correlationId }),
     continuation: {
       kind: "initial",
-      prompt: buildNotaryTransportPrompt(admitted, engineMaterial),
+      // #879: gate path first mint carries parent payload as dialogue content;
+      // external zero-prompt kickoff unchanged when no body/reask.
+      prompt: (env.reviewReask ?? env.gateReviewInstruction)
+        ?? buildNotaryTransportPrompt(admitted, engineMaterial),
     },
   });
 

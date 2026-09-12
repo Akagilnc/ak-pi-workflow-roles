@@ -541,22 +541,23 @@ test("public admitted-request projects typed subject/authority; missing/malforme
       "utf8",
     );
 
-    process.env.AK_ROLE_RUN_DIR = runDir;
     const judgePi = { getFlag: () => undefined };
-    const judgeCtx = {
+    const judgeCtx = (runDirectory: string) => ({
       cwd: root,
-      sessionManager: { getSessionDir: () => join(process.env.AK_ROLE_RUN_DIR!, "session") } } as never;
+      runDirectory,
+      sessionManager: { getSessionDir: () => join(runDirectory, "session") },
+    } as never);
 
-    const loaded = await loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" });
+    delete process.env.AK_ROLE_RUN_DIR;
+    const loaded = await loadNavigatorWorkContext(judgePi, { context: judgeCtx(runDir), role: "judge" });
     assert.equal(loaded.subject, prose);
     assert.equal(loaded.authority, prose);
     assert.equal(loaded.subjectProvenance, "role_input");
     assert.ok(loaded.subjectKey.length > 0);
 
     // Missing admitted request → typed context unavailable (not model/session/transport).
-    process.env.AK_ROLE_RUN_DIR = join(root, "missing-run");
     await assert.rejects(
-      () => loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" }),
+      () => loadNavigatorWorkContext(judgePi, { context: judgeCtx(join(root, "missing-run")), role: "judge" }),
       (error: unknown) =>
         error instanceof NavigatorUnavailableError &&
         error.unavailableSource === "context" &&
@@ -567,9 +568,8 @@ test("public admitted-request projects typed subject/authority; missing/malforme
     const badRun = join(root, "bad-run");
     await mkdir(badRun, { recursive: true });
     await writeFile(join(badRun, "admitted-request.json"), "{not-json", "utf8");
-    process.env.AK_ROLE_RUN_DIR = badRun;
     await assert.rejects(
-      () => loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" }),
+      () => loadNavigatorWorkContext(judgePi, { context: judgeCtx(badRun), role: "judge" }),
       (error: unknown) =>
         error instanceof NavigatorUnavailableError && error.unavailableSource === "context",
     );
@@ -586,9 +586,8 @@ test("public admitted-request projects typed subject/authority; missing/malforme
         attachments: [] }),
       "utf8",
     );
-    process.env.AK_ROLE_RUN_DIR = wrongRoleRun;
     await assert.rejects(
-      () => loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" }),
+      () => loadNavigatorWorkContext(judgePi, { context: judgeCtx(wrongRoleRun), role: "judge" }),
       (error: unknown) =>
         error instanceof NavigatorUnavailableError && error.unavailableSource === "context",
     );
@@ -605,8 +604,7 @@ test("public admitted-request projects typed subject/authority; missing/malforme
         attachments: [] }),
       "utf8",
     );
-    process.env.AK_ROLE_RUN_DIR = emptyRun;
-    const empty = await loadNavigatorWorkContext(judgePi, { context: judgeCtx, role: "judge" });
+    const empty = await loadNavigatorWorkContext(judgePi, { context: judgeCtx(emptyRun), role: "judge" });
     assert.equal(empty.subjectProvenance, "placeholder");
     assert.equal(empty.authority, "");
     assert.equal(empty.subject.includes(prose), false);

@@ -4,7 +4,11 @@ import { createServer, type Server, type Socket } from "node:net";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { ENGINE_FLAG_NAME, normalizeEngineName } from "./engine-detour.ts";
+import {
+  ENGINE_FLAG_NAME,
+  ENGINE_MODEL_FLAG_NAME,
+  normalizeEngineName,
+} from "./engine-detour.ts";
 import { requireGatekeeperPass } from "./gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
@@ -114,9 +118,10 @@ export async function prepareRoleEnvelope(options: {
     throw new Error(`role has no terminating tool: ${request.activation.role}`);
   }
   const flags = projectActivationFlags(request);
-  // #818 P1: engine axis is request-scoped on this RoleHost — never process.env.
-  // Always project ("" = no engine) so ambient AK_ROLE_ENGINE cannot arm detour.
+  // #818 P1 / #883: engine axis is request-scoped on this RoleHost — never process.env.
+  // Always project ("" = no engine/model) so ambient cannot arm detour or invent a model.
   flags.set(ENGINE_FLAG_NAME, normalizeEngineName(request.engine) ?? "");
+  flags.set(ENGINE_MODEL_FLAG_NAME, normalizeEngineName(request.engineModel) ?? "");
   const tools = new Map<string, HostToolDefinition>();
   const handlers = new Map<string, Handler[]>();
   const calls: Array<{ toolCallId: string; toolName: string }> = [];
@@ -167,6 +172,8 @@ export async function prepareRoleEnvelope(options: {
     cwd: request.cwd,
     mode: "print",
     model: request.model === undefined ? undefined : { provider: request.model.provider },
+    runDirectory: request.runDirectory,
+    ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
     sessionManager: {
       getLeafEntry: () => sessionEntries.at(-1) as ReturnType<HostContext["sessionManager"]["getLeafEntry"]>,
       getLeafId: () => runId,
@@ -234,6 +241,7 @@ export async function prepareRoleEnvelope(options: {
           bindSubmissionNonPass: options.hostActions.bindSubmissionNonPass,
         },
         toolCallId: options.toolCallId,
+        ...(options.submission === undefined ? {} : { submission: options.submission }),
       });
     },
     on(...registration: HostEventRegistration) {
@@ -522,33 +530,14 @@ export async function prepareRoleEnvelope(options: {
   const relay = fileURLToPath(new URL("./mcp-relay.mjs", import.meta.url));
   await listen(server, options.socketPath);
   let disposed = false;
-  // Tools execute in this process (relay is protocol-only). Mirror Pi's child-env
-  // AK_ROLE_RUN_DIR / AK_ROLE_COURT_ATTEMPT injection onto the parent so ledger
-  // identity sees the same signals. Engine axis is request-scoped via RoleHost
-  // flag — never process.env (#818 P1). Run-dir may wait
-  // until prepare succeeds. Dispose restores including unset.
-  let priorAkRoleRunDir: string | undefined;
-  let priorAkRoleCourtAttempt: string | undefined;
-  let runDirInjected = false;
-  const restoreAkRoleRunEnv = (): void => {
-    if (!runDirInjected) return;
-    runDirInjected = false;
-    if (priorAkRoleRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = priorAkRoleRunDir;
-    if (priorAkRoleCourtAttempt === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
-    else process.env.AK_ROLE_COURT_ATTEMPT = priorAkRoleCourtAttempt;
-  };
+  // Per-turn run/court identity lives on HostContext (request-scoped). Engine
+  // axis is already a RoleHost flag — never process.env (#818 P1 / #879).
   const dispose = async (): Promise<void> => {
     if (disposed) return;
     disposed = true;
     const cleanupFailures: unknown[] = [];
     try {
       await emit("session_shutdown", {});
-    } catch (error) {
-      cleanupFailures.push(error);
-    }
-    try {
-      restoreAkRoleRunEnv();
     } catch (error) {
       cleanupFailures.push(error);
     }
@@ -635,6 +624,8 @@ export async function prepareRoleEnvelope(options: {
     }
     // Method notes only here — role before_agent_start injects soul once.
     // Preloading session materials duplicated soul under the role tag (#632).
+    // #879: case-dossier owner reads runDirectory from this turn's HostContext.
+
     const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile(path, "utf8")))).join("\n\n");
     const promptResults = await emit("before_agent_start", {
       prompt,
@@ -647,8 +638,8 @@ export async function prepareRoleEnvelope(options: {
       return [value.systemPrompt];
     });
     const systemPromptBody = systemPromptParts.length > 0 ? systemPromptParts.join("\n\n") : methodPrompt;
-    // Typed reading materials from agent-start handlers (machine face; independent of prompt bytes).
-    // Folded into the provider-visible systemPrompt by the adapter at the send boundary.
+    // Typed reading materials from agent-start handlers (incl. single shared
+    // case-dossier owner). Folded into provider-visible systemPrompt at send.
     const readingMaterials: unknown[] = [];
     for (const value of promptResults) {
       if (typeof value !== "object" || value === null) continue;
@@ -656,13 +647,6 @@ export async function prepareRoleEnvelope(options: {
       const material = (value as { readingMaterial?: unknown }).readingMaterial;
       if (material !== undefined) readingMaterials.push(material);
     }
-
-    priorAkRoleRunDir = process.env.AK_ROLE_RUN_DIR;
-    priorAkRoleCourtAttempt = process.env.AK_ROLE_COURT_ATTEMPT;
-    process.env.AK_ROLE_RUN_DIR = request.runDirectory;
-    if (request.courtAttemptId === undefined) delete process.env.AK_ROLE_COURT_ATTEMPT;
-    else process.env.AK_ROLE_COURT_ATTEMPT = request.courtAttemptId;
-    runDirInjected = true;
 
     const terminating = tools.get(terminatingToolName);
     if (terminating === undefined) {

@@ -202,7 +202,7 @@ function assertLoudGateReadFailure(terminal: TerminalResult): void {
   if (terminal.roleOutcome.kind !== "failure") {
     throw new Error("expected failure terminal for gate read damage");
   }
-  assert.equal(terminal.roleOutcome.cause, "unrecognized");
+  assert.equal(terminal.roleOutcome.cause, undefined);
   assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "LedgerSessionJsonlError");
   assert.equal(
     Object.prototype.hasOwnProperty.call(terminal.roleOutcome.decisiveFacts, "publicationFailure"),

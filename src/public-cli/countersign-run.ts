@@ -23,7 +23,7 @@
  * 起居郎 so freeze loads issue face (`refresh-every-court` / typed handoff).
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
-import { engineSessionMaterialFromOptions } from "../package-resources/engine-material.ts";
+import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCountersignInvocation,
@@ -56,7 +56,7 @@ import {
   trySettleCountersignTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import { lastRolePayloadRecord, type TerminalResult } from "./terminal.ts";
+import type { TerminalResult, TerminalRoleOutcome } from "./terminal.ts";
 import {
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
@@ -98,7 +98,24 @@ export function buildCountersignTurnRequest(
 type CourtDiaristIdentity =
   | { readonly kind: "ticket"; readonly ticketNumber: number }
   | { readonly kind: "unbound" }
-  | { readonly kind: "escalate"; readonly reason: string };
+  | { readonly kind: "escalate" };
+
+type CourtDiaristInvocationResult = {
+  readonly identity: CourtDiaristIdentity;
+  readonly failedWithoutEscalate?: { readonly diagnostic: string };
+};
+
+/** Routing boolean over the child's own typed sequence — does not pick or rewrite a sole row. */
+function courtDiaristEscalated(roleOutcome: TerminalRoleOutcome | undefined): boolean {
+  if (roleOutcome === undefined) return false;
+  if (roleOutcome.kind === "audit_escalation") return true;
+  if (roleOutcome.kind !== "accepted") return false;
+  return (roleOutcome.payloads ?? []).some((payload) => {
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+    const record = payload as Record<string, unknown>;
+    return record.status === "escalate" || record.countersignStatus === "escalate";
+  });
+}
 
 /**
  * Invoke public 起居郎 under the court-pipeline quiet face.
@@ -114,10 +131,7 @@ async function invokeCourtDiarist(input: {
   readonly failureLabel: string;
   /** Already-verified typed key from countersign (refresh / post-assert handoff). */
   readonly boundTicketNumber?: number;
-}, env: CountersignRunEnv, io: CliIo): Promise<{
-  readonly identity: CourtDiaristIdentity;
-  readonly failedWithoutEscalate?: { readonly diagnostic: string };
-}> {
+}, env: CountersignRunEnv, io: CliIo): Promise<CourtDiaristInvocationResult> {
   // Quiet face: the countersign caller must not see diarist CLI chatter.
   const quietIo: CliIo = {
     stdout() {},
@@ -147,23 +161,12 @@ async function invokeCourtDiarist(input: {
   });
 
   const roleOutcome = result.terminal?.roleOutcome;
-  if (roleOutcome !== undefined && (roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation")) {
-    const facts = lastRolePayloadRecord(roleOutcome.payloads ?? []);
-    const status =
-      typeof facts?.status === "string"
-        ? facts.status
-        : typeof facts?.countersignStatus === "string"
-          ? facts.countersignStatus
-          : roleOutcome.kind === "audit_escalation"
-            ? "escalate"
-            : undefined;
-    if (status === "escalate") {
-      const reason =
-        typeof facts?.reason === "string"
-          ? facts.reason
-          : "diarist escalated without reason";
-      return { identity: { kind: "escalate", reason } };
-    }
+  // Escalate routing is a boolean over the preserved sequence (#881). Reasons and
+  // payload bodies stay on roleOutcome — never rewritten into a sole identity reason.
+  if (courtDiaristEscalated(roleOutcome)) {
+    return {
+      identity: { kind: "escalate" },
+    };
   }
 
   if (result.exitCode !== 0) {
@@ -185,9 +188,13 @@ async function invokeCourtDiarist(input: {
     Number.isSafeInteger(asserted) &&
     asserted >= 1
   ) {
-    return { identity: { kind: "ticket", ticketNumber: asserted } };
+    return {
+      identity: { kind: "ticket", ticketNumber: asserted },
+    };
   }
-  return { identity: { kind: "unbound" } };
+  return {
+    identity: { kind: "unbound" },
+  };
 }
 
 /**
@@ -228,7 +235,7 @@ export async function runCountersignCourtDiaristStation(
 
   if (outcome.identity.kind === "escalate") {
     throw new StationChildExhaustedError(
-      `court diarist station escalated (cannot identify court target): ${outcome.identity.reason}`,
+      "court diarist station escalated (cannot identify court target)",
     );
   }
   if (outcome.failedWithoutEscalate !== undefined) {
@@ -311,7 +318,7 @@ export async function runPublicCountersign(
           code: null,
           stderr: "",
           thrown: new Error(
-            `court diarist station escalated (cannot identify court target): ${outcome.identity.reason}`,
+            "court diarist station escalated (cannot identify court target)",
           ),
         },
         countersignAdapters(),
@@ -390,7 +397,7 @@ export async function runPublicCountersign(
     home: env.home,
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...pickEngineAxis(env),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     ...(env.correlationId === undefined || env.correlationId.trim() === ""
       ? {}
@@ -400,7 +407,7 @@ export async function runPublicCountersign(
       prompt: buildCountersignTransportPrompt(
         admitted,
         engineSessionMaterialFromOptions({
-          ...(env.engine === undefined ? {} : { engine: env.engine }),
+          ...pickEngineAxis(env),
           packageRoot: env.packageRoot,
         }),
       ),

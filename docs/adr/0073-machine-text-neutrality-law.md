@@ -2,7 +2,7 @@
 
 Status: accepted（owner 2026-08-27 三令 + 两项边界裁定，本 ADR 即冻结件）
 
-> **Supersession / 修订落点 (#836):** 代码自写指令句删除后，确需对角色说的话归入包资源文档（`resources/*.md`，随案附卷、可审），不改 soul。指针句（附件路径、卷宗指针、「请重读」开场）属中立机器文本，保留。清单见 `resources/836-deleted-machine-instruction-inventory.md`。
+> **Supersession / 修订落点 (#836；#879 窄修):** 代码自写指令句删除后，确需对角色说的话归入包资源文档（`resources/*.md`，随案附卷、可审），不改 soul。指针句（附件路径、卷宗指针）属中立机器文本／绑定材料，保留。「请重读」开场已废止（#879；2026-09-11「没有这三个字」覆盖 2026-09-10 庭上加字）。清单见 `resources/836-deleted-machine-instruction-inventory.md`。
 
 ## 御笔原话（2026-08-27，逐字）
 

@@ -233,6 +233,7 @@ export type LegacyFauxPiRunner = (
     cwd: string;
     env: NodeJS.ProcessEnv;
     timeoutMs?: number;
+    stdin?: string;
   },
 ) => Promise<{
   code: number | null;

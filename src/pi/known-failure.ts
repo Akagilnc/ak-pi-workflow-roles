@@ -49,9 +49,8 @@ function sessionStopDetails(input: {
 /**
  * Project a native session assistant stop onto the existing knownFailure chain.
  * Classification follows two-way testimony: typed HTTP status or SDK structure
- * keeps provider; stopReason, configured provider/model, or errorMessage prose
- * alone is the existing unrecognized value. Present upstream payload is preserved
- * in details without rewriting; missing fields are omitted.
+ * keeps provider; stopReason / errorMessage prose alone never invents a class (#881).
+ * Present upstream payload is preserved in details without rewriting; missing fields are omitted.
  */
 export function knownFailureFromProviderStop(input: {
   readonly stopReason?: string;
@@ -70,7 +69,7 @@ export function knownFailureFromProviderStop(input: {
   const diagnostic = nonEmptyString(input.errorMessage);
   const details = sessionStopDetails(input);
   return {
-    cause: hasUpstreamErrorTestimony(input) ? "provider" : "unrecognized",
+    ...(hasUpstreamErrorTestimony(input) ? { cause: "provider" as const } : {}),
     ...(diagnostic === undefined ? {} : { diagnostic }),
     ...(Object.keys(details).length === 0 ? {} : { details }),
   };

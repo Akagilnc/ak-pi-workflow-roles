@@ -13,7 +13,7 @@ import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 
 const stoppedHost: RoleTurnHost = { executeTurn: async () => ({ code: 1, stderr: "stop", timedOut: false }) };
@@ -204,7 +204,7 @@ test("production adapter table registers grok-build and hermes and keeps pi sele
     host: "missing",
     seat: "judge",
     model: "openai-codex/gpt-5.6-sol",
-    registeredHosts: ["pi", "grok-build", "hermes", "claude"],
+    registeredHosts: ["pi", "grok-build", "hermes", "claude", "codex"],
   });
   assert.equal(piTurns, 2);
 }));
@@ -541,9 +541,9 @@ test("#822 coder apply non-pi hosts: prompt free of /skill:; method provenance o
       assert.equal(result.terminal?.roleOutcome?.kind, "accepted", label);
       // #836: the role's own status field, read off its original payload —
       // not a runtime-selected top-level status.
-      assert.equal(
-        result.terminal?.roleOutcome === undefined ? undefined : payloadStatus(result.terminal.roleOutcome),
-        "planned",
+      assert.deepEqual(
+        result.terminal?.roleOutcome === undefined ? [] : payloadStatusSequence(result.terminal.roleOutcome),
+        ["planned"],
         label,
       );
       const evidenceRef = result.terminal?.artifacts?.find((a) => a.kind === "evidence");
@@ -689,7 +689,9 @@ rl.on("line", (line) => {
         `#!/usr/bin/env node
 import { existsSync, writeFileSync } from "node:fs";
 const dump = ${JSON.stringify(argvDump)};
-if (!existsSync(dump)) writeFileSync(dump, JSON.stringify(process.argv.slice(2)));
+let stdin = "";
+for await (const chunk of process.stdin) stdin += chunk;
+if (!existsSync(dump)) writeFileSync(dump, JSON.stringify({ argv: process.argv.slice(2), stdin }));
 process.stdout.write(${JSON.stringify(JSON.stringify(plannedEnvelope))} + "\\n");
 process.exit(0);
 `,
@@ -704,10 +706,10 @@ process.exit(0);
         { ...productionBase(home), cwd: project, createRunId: () => "run-822-coder-claude" },
       );
 
-      const argv = JSON.parse(await readFile(argvDump, "utf8")) as string[];
-      const promptAt = argv.indexOf("-p");
-      assert.equal(promptAt >= 0, true, "headless prompt flag -p must be present");
-      const hostPrompt = argv[promptAt + 1]!;
+      const observed = JSON.parse(await readFile(argvDump, "utf8")) as { argv: string[]; stdin: string };
+      const argv = observed.argv;
+      assert.equal(argv.includes("-p"), true, "headless prompt flag -p must be present");
+      const hostPrompt = observed.stdin;
       assert.equal(hostPrompt.startsWith("/skill:"), false, hostPrompt.slice(0, 80));
       assert.equal(hostPrompt.includes(assignment), true);
       // Provider-visible systemPrompt channel is a path flag (structure), not free text.
