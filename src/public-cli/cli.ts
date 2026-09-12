@@ -8,7 +8,9 @@ import { join } from "node:path";
 
 import { packageMachineHome } from "../activation-ledger-topology.ts";
 import {
+  assertLegalEngineModel,
   assertLegalEngineName,
+  pickEngineAxis,
 } from "../package-resources/engine-material.ts";
 import {
   resolveConfiguredProvinceOfficer,
@@ -27,6 +29,7 @@ import {
   setAutoResumeLimit,
   setPersistentSeatConfig,
   setPersistentSeatEngine,
+  setPersistentSeatEngineModel,
   setPersistentSeatHost,
   validatePublicCliConfigAxes,
   type CredentialProviders,
@@ -580,6 +583,17 @@ function invocationFromParsed(parsed: ParsedGlobal): InvocationModelOverride | u
   };
 }
 
+function requireLegalEngineModel(model: string): string {
+  try {
+    return assertLegalEngineModel(model);
+  } catch (error) {
+    throw new CliUsageError(
+      error instanceof Error ? error.message : String(error),
+      { cause: error },
+    );
+  }
+}
+
 function requireLegalEngineName(name: string): string {
   try {
     return assertLegalEngineName(name);
@@ -595,18 +609,24 @@ function requireLegalEngineName(name: string): string {
 function requireCallableSeat(
   seat: string,
   axis: "engine" | "host",
-  verb: "set-engine" | "unset-engine" | "set-host" | "unset-host",
+  verb:
+    | "set-engine"
+    | "unset-engine"
+    | "set-engine-model"
+    | "unset-engine-model"
+    | "set-host"
+    | "unset-host",
 ): asserts seat is PublicCallableRole {
   if (!isPublicCallableRole(seat)) {
     throw new CliUsageError(`unknown ${axis}-axis seat: ${seat}`);
   }
 }
 
-/** Single seat.engine → run-options projection (#391 E2). */
+/** Single seat engine axis → run-options projection (#391 E2 / #883). */
 function projectSeatEngine(
-  seat: Readonly<{ engine?: string }>,
-): { engine: string } | Record<PropertyKey, never> {
-  return seat.engine === undefined ? {} : { engine: seat.engine };
+  seat: Readonly<{ engine?: string; engineModel?: string }>,
+): { engine?: string; engineModel?: string } {
+  return pickEngineAxis(seat);
 }
 
 /** Single seat.host → run-options projection (#595 / #617). */
@@ -721,7 +741,7 @@ function renderHelp(): string {
     "",
     "Role options: ak-role help <command>",
     "Persistent config: ak-role config set <seat> <provider/model[:thinking]> | unset <gatekeeper|inspector|notary>",
-    "Persistent engine (callable roles): ak-role config set-engine <seat> <name> | unset-engine <seat>",
+    "Persistent engine (callable roles): ak-role config set-engine <seat> <name> [model] | unset-engine <seat> | set-engine-model <seat> <model> | unset-engine-model <seat>",
     "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
     "Host providers: ~/.ak-roles/host-providers.json (owner-edited; table > unique host directory > fail)",
     "Host resolution: --host → persistent seat host → pi (resume uses the same order; #617)",
@@ -777,15 +797,17 @@ export type ConfigDisplaySeat = {
   readonly source: ConfiguredProvinceOfficerResolution["source"];
   readonly selection?: EffectiveSeat["selection"];
   readonly engine?: string;
+  readonly engineModel?: string;
   readonly host?: string;
 };
 
 function diskAxes(disk: PublicCliConfig["seats"][PublicConfigurableSeat]): {
   engine?: string;
+  engineModel?: string;
   host?: string;
 } {
   return {
-    ...(disk?.engine === undefined ? {} : { engine: disk.engine }),
+    ...pickEngineAxis(disk ?? {}),
     ...(disk?.host === undefined ? {} : { host: disk.host }),
   };
 }
@@ -849,12 +871,13 @@ function renderConfigDisplaySeat(row: ConfigDisplaySeat): string {
   const model =
     row.selection === undefined ? "-" : formatModelSpec(row.selection);
   const engine = row.engine === undefined ? "-" : row.engine;
+  const engineModel = row.engineModel === undefined ? "-" : row.engineModel;
   const host = row.host === undefined ? "-" : row.host;
-  return `${row.seat}\t${row.source}\t${model}\t${engine}\t${host}`;
+  return `${row.seat}\t${row.source}\t${model}\t${engine}\t${engineModel}\t${host}`;
 }
 
 function renderConfig(config: PublicCliConfig, home: string): string {
-  const lines: string[] = ["seat\tsource\tmodel\tengine\thost"];
+  const lines: string[] = ["seat\tsource\tmodel\tengine\tengineModel\thost"];
   const rows = projectConfigDisplaySeats(config);
   if (rows.length === 0) {
     lines.push("(empty)");
@@ -961,18 +984,20 @@ async function runConfigCommand(
   }
 
   if (args[0] === "set-engine") {
-    if (args.length !== 3) {
+    if (args.length !== 3 && args.length !== 4) {
       throw new CliUsageError(
-        "usage: ak-role config set-engine <seat> <name>",
+        "usage: ak-role config set-engine <seat> <name> [model]",
       );
     }
     const seat = args[1]!;
     const name = args[2]!;
+    const engineModel = args[3];
     requireCallableSeat(seat, "engine", "set-engine");
     requireLegalEngineName(name);
+    if (engineModel !== undefined) requireLegalEngineModel(engineModel);
     let config = await loadAndValidateConfig(home, packageRoot);
     try {
-      config = setPersistentSeatEngine(config, seat, name);
+      config = setPersistentSeatEngine(config, seat, name, engineModel);
     } catch (error) {
       throw new CliUsageError(
         error instanceof Error ? error.message : String(error),
@@ -995,6 +1020,52 @@ async function runConfigCommand(
     let config = await loadAndValidateConfig(home, packageRoot);
     try {
       config = setPersistentSeatEngine(config, seat, undefined);
+    } catch (error) {
+      throw new CliUsageError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
+    }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config, home));
+    return 0;
+  }
+
+  if (args[0] === "set-engine-model") {
+    if (args.length !== 3) {
+      throw new CliUsageError(
+        "usage: ak-role config set-engine-model <seat> <model>",
+      );
+    }
+    const seat = args[1]!;
+    const model = args[2]!;
+    requireCallableSeat(seat, "engine", "set-engine-model");
+    requireLegalEngineModel(model);
+    let config = await loadAndValidateConfig(home, packageRoot);
+    try {
+      config = setPersistentSeatEngineModel(config, seat, model);
+    } catch (error) {
+      throw new CliUsageError(
+        error instanceof Error ? error.message : String(error),
+        { cause: error },
+      );
+    }
+    await savePublicCliConfig(config, home);
+    io.stdout(renderConfig(config, home));
+    return 0;
+  }
+
+  if (args[0] === "unset-engine-model") {
+    if (args.length !== 2) {
+      throw new CliUsageError(
+        "usage: ak-role config unset-engine-model <seat>",
+      );
+    }
+    const seat = args[1]!;
+    requireCallableSeat(seat, "engine", "unset-engine-model");
+    let config = await loadAndValidateConfig(home, packageRoot);
+    try {
+      config = setPersistentSeatEngineModel(config, seat, undefined);
     } catch (error) {
       throw new CliUsageError(
         error instanceof Error ? error.message : String(error),

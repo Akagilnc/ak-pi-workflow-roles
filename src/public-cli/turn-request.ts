@@ -10,6 +10,7 @@ import type {
   RoleTurnModelConfig,
   RoleTurnRequest,
 } from "../host-contracts.ts";
+import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import type { SeatModelConfig } from "./config.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 
@@ -26,6 +27,8 @@ export type RoleTurnRequestProjectionOptions = {
   agentDir: string;
   model?: SeatModelConfig;
   engine?: string;
+  /** Labor-engine model id (#883); projected onto the turn when present. */
+  engineModel?: string;
   timeoutMs?: number;
   correlationId?: string;
   continuation: RoleTurnRequest["continuation"];
@@ -64,7 +67,7 @@ export function projectRoleTurnRequest(
     methods: roleDetails.methods ?? [],
     continuation: options.continuation,
     ...(options.model === undefined ? {} : { model: options.model }),
-    ...(options.engine === undefined ? {} : { engine: options.engine }),
+    ...pickEngineAxis(options),
     cwd,
     home: options.home,
     agentDir: options.agentDir,

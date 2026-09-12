@@ -169,6 +169,8 @@ export type RoleTurnRequest = {
   readonly continuation: RoleTurnContinuation;
   readonly model?: RoleTurnModelConfig;
   readonly engine?: string;
+  /** Labor-engine model id from the live seat table (#883); opaque pass-through. */
+  readonly engineModel?: string;
   readonly cwd: string;
   readonly home: string;
   readonly agentDir: string;

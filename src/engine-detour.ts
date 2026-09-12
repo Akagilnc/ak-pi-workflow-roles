@@ -24,6 +24,9 @@ export const AK_ROLE_ENGINE_ENV = "AK_ROLE_ENGINE" as const;
  */
 export const ENGINE_FLAG_NAME = "ak-engine" as const;
 
+/** Request-scoped engine model flag on RoleHost (#883). Empty = no model. */
+export const ENGINE_MODEL_FLAG_NAME = "ak-engine-model" as const;
+
 /**
  * Argv placeholder replaced by a seam-owned temp prompt file path when
  * `stagedPrompt` is set. Exactly one argv entry must equal this token.
@@ -278,4 +281,18 @@ export function resolveEngineName(
     if (typeof flag === "string") return normalizeEngineName(flag);
   }
   return engineNameFromEnv();
+}
+
+/**
+ * Request-scoped engine model resolver (#883).
+ * Flag wins when present (including "" = no model). No process.env fallback —
+ * model is seat-table only, never ambient.
+ */
+export function resolveEngineModel(
+  getFlag?: (name: string) => boolean | string | undefined,
+): string | undefined {
+  if (getFlag === undefined) return undefined;
+  const flag = getFlag(ENGINE_MODEL_FLAG_NAME);
+  if (typeof flag !== "string") return undefined;
+  return normalizeEngineName(flag);
 }

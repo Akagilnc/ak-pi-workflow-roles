@@ -208,6 +208,13 @@ async function readInvocationEngine(runDirectory: string): Promise<unknown> {
   return invocation.engine;
 }
 
+async function readInvocationEngineModel(runDirectory: string): Promise<unknown> {
+  const invocation = JSON.parse(
+    await readFile(join(runDirectory, "invocation.json"), "utf8"),
+  ) as Record<string, unknown>;
+  return invocation.engineModel;
+}
+
 test("engine stays effective on the initial typed request for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-init-" }, async ({ home }) => {
     const project = join(home, "work");
@@ -300,6 +307,7 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
   });
 });
 
+
 test("explicit ak-role resume re-projects engine onto the resumed typed request for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-resume-" }, async ({ home }) => {
     const project = join(home, "work");
@@ -386,6 +394,93 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
         `${seat}: explicit resume must write engine onto invocation.json`,
       );
     }
+  });
+});
+
+test("#883 explicit resume re-projects engineModel from the live seat table", async () => {
+  await withHermeticHome({ prefix: "ak-engine-model-resume-" }, async ({ home }) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-engine-model-resume";
+    const ENGINE_MODEL = "cursor-grok-4.6-high";
+
+    // Birth leg without engineModel.
+    {
+      const { io, stderr } = captureIo();
+      await runAkRole(["config", "set", "judge", "xai/grok-4.5:high"], { packageRoot, home, io });
+      assert.equal(stderr.join(""), "");
+      await runAkRole(["config", "set-engine", "judge", "cursor"], { packageRoot, home, io });
+      assert.equal(stderr.join(""), "");
+      await runAkRole(["judge", "--project", project, "seed without model"], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        roleTurnHost: createMinimalHost(async (request) => {
+          await seedPrincipalSession(request);
+          await observeTyped429ViaProductionHandler({
+            runDirectory: request.runDirectory,
+            provider: "xai",
+          });
+          return { code: 1, stderr: "quota", timedOut: false };
+        }),
+      });
+    }
+
+    // Live seat gains engineModel (#617 DK-3 / #883): resume must take current table.
+    {
+      const { io, stderr } = captureIo();
+      const setModel = await runAkRole(
+        ["config", "set-engine-model", "judge", ENGINE_MODEL],
+        { packageRoot, home, io },
+      );
+      assert.equal(setModel.exitCode, 0, stderr.join(""));
+    }
+
+    let resumedEngine: string | undefined;
+    let resumedModel: string | undefined;
+    let invocationModel: unknown;
+    {
+      const { io, stdout, stderr } = captureIo();
+      const resumed = await runAkRole(["resume", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io,
+        principalAuthority: piDurablePrincipalAuthority,
+        roleTurnHost: createMinimalHost(async (request) => {
+          resumedEngine = request.engine;
+          resumedModel = request.engineModel;
+          invocationModel = await readInvocationEngineModel(request.runDirectory);
+          const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+          await seedTerminalSession({
+            seat: "judge",
+            sessionFile,
+            cwd: request.cwd,
+            home: request.home,
+            runId,
+            runDirectory: request.runDirectory,
+          });
+          return { code: 0, stderr: "", timedOut: false };
+        }),
+      });
+      assert.equal(resumed.exitCode, 0, stdout.join("") + "\n[stderr] " + stderr.join(""));
+    }
+    assert.equal(resumedEngine, "cursor");
+    assert.equal(
+      resumedModel,
+      ENGINE_MODEL,
+      "resume must re-project live seat engineModel onto the typed request",
+    );
+    assert.equal(
+      invocationModel,
+      ENGINE_MODEL,
+      "resume must write live seat engineModel onto invocation.json",
+    );
   });
 });
 

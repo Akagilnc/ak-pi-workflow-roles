@@ -2,7 +2,7 @@
  * Packaged host description tables (#729 / #731 / #645).
  * Key = seat-table `host` value.
  * - ACP family rows feed the generic ACP factory.
- * - Headless CLI family rows feed the generic headless factory (#645; #646 codex next).
+ * - Headless CLI family rows feed the generic headless factory (#645 claude / #646 codex).
  * pi is the in-process default, not a row.
  * Unregistered names fail closed (#510); these tables do not fallback.
  */
@@ -66,15 +66,19 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
 });
 
 /**
- * Headless CLI family (#645). Claude is the first row; codex (#646) adds another.
- * fixedArgs: print mode, isolation without `--bare` (OAuth stays), full permissions.
- * stream-json + verbose: live host events for sitian records (#811); result is last line.
- * `--setting-sources` empty = load no user/project/local CLAUDE.md/hooks/skills
- * (role envelope is delivered via `--system-prompt` wholesale replace).
- * `--strict-mcp-config` with no `--mcp-config` drops operator MCP + claude.ai connectors.
+ * Headless CLI family (#645 / #646). Claude print-mode is the first row;
+ * codex exec (#646) adds another. Protocol-specific argv/parse live in
+ * headless-host helpers (#752 per-host impl).
+ * Claude fixedArgs: print mode, isolation without `--bare` (OAuth stays), full
+ * permissions. stream-json + verbose: live host events for sitian records
+ * (#811); result is last line. `--setting-sources` empty = load no
+ * user/project/local CLAUDE.md/hooks/skills (role envelope is delivered via
+ * `--system-prompt` wholesale replace). `--strict-mcp-config` with no
+ * `--mcp-config` drops operator MCP + claude.ai connectors.
  */
 export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDescription>> = Object.freeze({
   "claude": Object.freeze({
+    protocol: "claude-print",
     binaryFromHome: Object.freeze([".local", "bin", "claude"]),
     sessionBindingFile: "claude-headless-session.json",
     fixedArgs: Object.freeze([
@@ -97,6 +101,15 @@ export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDes
     mcpConfigFlag: "--mcp-config",
     sessionIdFlag: "--session-id",
     resumeFlag: "--resume",
+  }),
+  /**
+   * Codex headless (#646). Binary under operator home; auth stays in CODEX_HOME.
+   * Argv/parse/schema-close are codex-exec helpers — not Claude flag mapping.
+   */
+  "codex": Object.freeze({
+    protocol: "codex-exec",
+    binaryFromHome: Object.freeze([".local", "bin", "codex"]),
+    sessionBindingFile: "codex-headless-session.json",
   }),
 });
 
