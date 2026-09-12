@@ -9,10 +9,10 @@ import { encodeUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 
 /** Minimal Pi surface: capture before_agent_start as the provider-visible return path. */
 function piCapture() {
-  const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+  const handlers = new Map<string, Array<(event: any, ctx: ExtensionContext) => any>>();
   const pi = {
     on(event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) {
-      handlers.set(event, handler);
+      handlers.set(event, [...(handlers.get(event) ?? []), handler]);
     },
     registerFlag() {},
     getFlag() {
@@ -68,7 +68,7 @@ test("Pi adapter folds readingMaterial into provider systemPrompt and strips the
     const { pi, handlers, ctx } = piCapture();
     const adapter = createPiRoleHostAdapter(pi);
     adapter.host.on("before_agent_start", () => returnValue);
-    const handler = handlers.get("before_agent_start");
+    const handler = handlers.get("before_agent_start")?.[0];
     assert.ok(handler);
     const result = await handler(
       { prompt: "", systemPrompt: "BASE", systemPromptOptions: {} },
@@ -120,13 +120,17 @@ test("#879 Pi adapter unpacks typed stdin once; collision body stays intact at a
     return {};
   });
 
-  const inputHandler = handlers.get("input");
-  assert.ok(inputHandler);
-  const inputResult = await inputHandler({ text: wrapped, source: "piped" }, ctx);
+  const inputHandlers = handlers.get("input");
+  assert.ok(inputHandlers);
+  let inputEvent = { text: wrapped, source: "piped" };
+  for (const inputHandler of inputHandlers) {
+    const result = await inputHandler(inputEvent, ctx);
+    if (result?.action === "transform") inputEvent = { ...inputEvent, text: result.text };
+  }
   assert.deepEqual(seenInputs, [collision, collision]);
-  assert.deepEqual(inputResult, { action: "transform", text: collision });
+  assert.equal(inputEvent.text, collision);
 
-  const startHandler = handlers.get("before_agent_start");
+  const startHandler = handlers.get("before_agent_start")?.[0];
   assert.ok(startHandler);
   await startHandler(
     { prompt: collision, systemPrompt: "BASE", systemPromptOptions: {} },

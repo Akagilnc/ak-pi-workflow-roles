@@ -145,9 +145,12 @@ export function createPiRoleHostAdapter(
   options: { transcriptFromContext?: (context: ExtensionContext) => string; oauthKeepalive?: OAuthKeepaliveOptions } = {},
 ): PiRoleHostAdapter {
   const keepalive = createOAuthKeepalive(options.oauthKeepalive);
-  type InputHandler = Extract<HostEventRegistration, ["input", unknown]>[1];
-  const inputHandlers: InputHandler[] = [];
-  let inputDispatcherRegistered = false;
+  // Decode transport exactly once before Pi's native handler chain. Pi retains
+  // its own transform/image propagation and per-handler error isolation.
+  pi.on("input", (value) => {
+    const text = readUserDialogueStdin(value.text);
+    return text === value.text ? { action: "continue" } : { action: "transform", text };
+  });
   const host: RoleHost = {
     deliverSubmissionRejection(_rejection) {
       // #836 删 1/A4.5: no package-authored non-sole resume sentence.
@@ -202,25 +205,7 @@ export function createPiRoleHostAdapter(
         });
       } else if (registration[0] === "input") {
         const [, handler] = registration;
-        inputHandlers.push(handler);
-        if (inputDispatcherRegistered) return;
-        inputDispatcherRegistered = true;
-        pi.on("input", async (value, ctx) => {
-          let text = readUserDialogueStdin(value.text);
-          let images = value.images;
-          const hostContext = context(ctx);
-          for (const inputHandler of inputHandlers) {
-            const result = await inputHandler({ text, ...(images === undefined ? {} : { images }), source: value.source }, hostContext);
-            if (result?.action === "handled") return result;
-            if (result?.action === "transform") {
-              text = result.text;
-              images = result.images;
-            }
-          }
-          return text !== value.text || images !== value.images
-            ? { action: "transform" as const, text, ...(images === undefined ? {} : { images }) }
-            : { action: "continue" as const };
-        });
+        pi.on("input", (value, ctx) => handler({ text: value.text, ...(value.images === undefined ? {} : { images: value.images }), source: value.source }, context(ctx)));
       } else if (registration[0] === "tool_call") {
         const [, handler] = registration;
         pi.on("tool_call", (value, ctx) => handler({ toolName: value.toolName, toolCallId: value.toolCallId, input: value.input }, context(ctx)));
