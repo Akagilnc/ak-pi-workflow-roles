@@ -14,7 +14,7 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { payloadFacts } from "../helpers/terminal-payload.ts";
+import { payloadFacts , objectPayloads} from "../helpers/terminal-payload.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
@@ -122,7 +122,7 @@ test("S5: terminal with accepted receipt stays loadable; bare sealed resume reac
     assert.equal(resumed.terminal?.roleOutcome.kind,"accepted");
     assert.equal(
       resumed.terminal?.roleOutcome.kind==="accepted"
-        ?payloadFacts(resumed.terminal.roleOutcome).note
+        ?(objectPayloads(resumed.terminal.roleOutcome)[0] ?? {}).note
         :undefined,
       "FIRST-ok",
     );
@@ -251,7 +251,7 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
     sessionAppender: appendPiSessionCustomEntry,
-      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir,projectRoot:home},
       io,
       autoResumeLimit:0,
       buildInitialPayload: ()=>["--initial"],
@@ -273,7 +273,7 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
     sessionAppender: appendPiSessionCustomEntry,
-      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir},
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId:runDir,projectRoot:home},
       io,
       autoResumeLimit:0,
       buildInitialPayload: ()=>["--initial"],

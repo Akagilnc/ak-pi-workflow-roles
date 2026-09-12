@@ -16,7 +16,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus , objectPayloads} from "../helpers/terminal-payload.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 import { exitCodeForTerminalOutcome, formatFailureStderrDiagnostic, isLawfulTypedTerminalOutcome } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -211,7 +211,7 @@ test("public CLI multi-turn audit escalate covers audited seats", async () => {
         `${role}: escalate must not set acceptedReceipt true`,
       );
       assert.equal(
-        payloadFacts(escalateOutcome).kind,
+        (objectPayloads(escalateOutcome)[0] ?? {}).kind,
         AUDIT_ESCALATION_KIND,
         role,
       );

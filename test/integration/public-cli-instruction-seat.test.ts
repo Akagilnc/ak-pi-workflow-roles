@@ -1,5 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus , objectPayloads} from "../helpers/terminal-payload.ts";
 /**
  * #639 public instruction-seat entries — Gatekeeper + Navigator via real runAkRole.
  *
@@ -212,7 +212,7 @@ for (const scenario of CASES) {
       );
       scenario.assertDecisiveFacts(
         result.terminal?.roleOutcome.kind === "accepted"
-          ? payloadFacts(result.terminal.roleOutcome)
+          ? (objectPayloads(result.terminal.roleOutcome)[0] ?? {})
           : undefined,
       );
     });

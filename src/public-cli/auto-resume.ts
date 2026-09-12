@@ -367,11 +367,10 @@ async function attachDispatchExceptionTerminal(
   admitted: {
     readonly runDirectory: string;
     readonly runId: string;
-    readonly projectRoot?: string;
+    readonly projectRoot: string;
   },
   terminal: TerminalResult,
 ): Promise<TerminalResult> {
-  if (admitted.projectRoot === undefined) return terminal;
   return attachRecordedSubmissions(
     {
       projectRoot: admitted.projectRoot,
@@ -446,8 +445,8 @@ export async function runWithAutoResumeLoop<
     role: TerminalRoleName;
     runId: string;
     principal: DurablePrincipal;
-    /** Required for ledger attach on exception terminals; production callers pass Admitted. */
-    projectRoot?: string;
+    /** Required: exception terminals attach the ledger via this existing admitted fact. */
+    projectRoot: string;
   };
   principalAuthority: DurablePrincipalAuthority;
   /**

@@ -145,25 +145,21 @@ async function invokeCourtDiarist(input: {
   });
 
   const roleOutcome = result.terminal?.roleOutcome;
-  if (roleOutcome !== undefined && (roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation")) {
-    if (roleOutcome.kind === "audit_escalation") {
-      return { identity: { kind: "escalate", reason: "diarist escalated without reason" } };
-    }
-    for (const payload of roleOutcome.payloads ?? []) {
-      if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
+  // Escalation is a sequence existence fact, not a sole payload pick (#881).
+  // audit_escalation kind is itself the terminal fact; accepted rows contribute
+  // only via whether any payload carries escalate status — reasons stay on the
+  // payload sequence for callers that read result.terminal, not rewritten here.
+  if (roleOutcome?.kind === "audit_escalation") {
+    return { identity: { kind: "escalate", reason: "audit_escalation" } };
+  }
+  if (roleOutcome?.kind === "accepted") {
+    const hasEscalate = (roleOutcome.payloads ?? []).some((payload) => {
+      if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
       const record = payload as Record<string, unknown>;
-      const status =
-        typeof record.status === "string"
-          ? record.status
-          : typeof record.countersignStatus === "string"
-            ? record.countersignStatus
-            : undefined;
-      if (status !== "escalate") continue;
-      const reason =
-        typeof record.reason === "string"
-          ? record.reason
-          : "diarist escalated without reason";
-      return { identity: { kind: "escalate", reason } };
+      return record.status === "escalate" || record.countersignStatus === "escalate";
+    });
+    if (hasEscalate) {
+      return { identity: { kind: "escalate", reason: "escalate status present in payload sequence" } };
     }
   }
 

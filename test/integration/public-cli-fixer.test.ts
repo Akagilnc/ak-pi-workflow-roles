@@ -29,7 +29,7 @@ import {
 import { runAkRole } from "../../src/public-cli/cli.ts";
 
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus , objectPayloads} from "../helpers/terminal-payload.ts";
 
 import {
   admitFixerInvocation as admitFixerInvocationRaw,
@@ -736,16 +736,16 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
     assert.equal(isLawfulTypedTerminalOutcome(terminal.roleOutcome), true);
     assert.equal(exitCodeForTerminalOutcome(terminal.roleOutcome), 0);
     // #757: status rides as submitted — no fixerStatus lift.
-    assert.equal(payloadFacts(terminal.roleOutcome).status, "refused");
+    assert.equal((objectPayloads(terminal.roleOutcome)[0] ?? {}).status, "refused");
     // #757: blocker fields stay nested under blocker — no lift/drop projection.
-    const blocker = payloadFacts(terminal.roleOutcome).blocker as {
+    const blocker = (objectPayloads(terminal.roleOutcome)[0] ?? {}).blocker as {
       cause?: string;
       prerequisiteId?: string;
     } | undefined;
     assert.equal(blocker?.cause, "prerequisite_unmet");
     assert.equal(blocker?.prerequisiteId, "owner.choice");
     assert.equal(
-      payloadFacts(terminal.roleOutcome).remainingScope,
+      (objectPayloads(terminal.roleOutcome)[0] ?? {}).remainingScope,
       "the entire plan assignment",
     );
     // Not a controlled-failure face.
@@ -800,7 +800,7 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
         : undefined,
       "refused",
     );
-    const publicBlocker = payloadFacts(result.terminal!.roleOutcome).blocker as {
+    const publicBlocker = (objectPayloads(result.terminal!.roleOutcome)[0] ?? {}).blocker as {
       cause?: string;
       prerequisiteId?: string;
     } | undefined;
@@ -899,7 +899,7 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
       if (settled.roleOutcome.kind !== "accepted") throw new Error("expected accepted Fixer outcome");
       assert.equal(payloadStatus(settled.roleOutcome), row.status);
       assert.deepEqual(
-        payloadFacts(settled.roleOutcome)[row.factKey],
+        (objectPayloads(settled.roleOutcome)[0] ?? {})[row.factKey],
         row.factValue,
         row.status,
       );
@@ -944,7 +944,7 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
       if (result.terminal!.roleOutcome.kind !== "accepted") throw new Error("expected accepted Fixer outcome");
       assert.equal(payloadStatus(result.terminal!.roleOutcome), row.status);
       assert.deepEqual(
-        payloadFacts(result.terminal!.roleOutcome)[row.factKey],
+        (objectPayloads(result.terminal!.roleOutcome)[0] ?? {})[row.factKey],
         row.factValue,
         row.status,
       );

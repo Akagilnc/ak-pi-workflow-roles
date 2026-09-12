@@ -1,12 +1,8 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { fixtureDoctorAdmitted, fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
+import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import {
-  recordNonSealedSubmission,
-  recordNonSealedSubmissionForSpawn,
-  sealAcceptedSubmission,
-} from "../helpers/submission-ledger-fixture.ts";
+import { recordNonSealedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
 // #420 整改拆分：公开入口与 provider-stop 家族分片并行（同根家族聚合，无新增机制）。
@@ -26,7 +22,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 
-import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult, trySettleDoctorTerminalResult } from "../../src/public-cli/settlement.ts";
+import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ControlledFailureCause, TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -874,67 +870,6 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
     assert.deepEqual(terminal.roleOutcome.payloads, [bounceParams, infraParams]);
     assert.deepEqual(terminal.submissions, [bounceParams, infraParams]);
     assert.equal(result.exitCode, 1);
-  });
-});
-
-test("#881 sealed then bounce stay a payload sequence; artifact does not pick a sole receipt", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const bookKey = resolveBookKeyFromGit(project);
-    const runId = "run-881-no-sole-receipt";
-    const runDirectory = join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@doctor`);
-    await mkdir(join(runDirectory, "session"), { recursive: true });
-    await writeFile(join(runDirectory, "session", "session.jsonl"), "", "utf8");
-    const sealed = { status: "completed", case: { issueNumber: 40 }, findings: [] };
-    const bounce = { status: "completed", case: { issueNumber: 40 }, findings: ["later-bounce"] };
-    await sealAcceptedSubmission({
-      cwd: project,
-      runId,
-      role: "doctor",
-      details: sealed,
-      home,
-      runDirectory,
-      toolCallId: "call-sealed",
-    });
-    await recordNonSealedSubmission({
-      cwd: project,
-      runId,
-      role: "doctor",
-      details: bounce,
-      home,
-      runDirectory,
-      toolCallId: "call-bounce",
-      executeError: new GatekeeperDecisionError({
-        status: "bounce",
-        officer: "inspector",
-        receipt: { status: "bounce", findings: ["x"] },
-      }),
-    });
-    const settled = await trySettleDoctorTerminalResult(
-      fixtureDoctorAdmitted({
-        runId,
-        bookKey,
-        projectRoot: project,
-        runDirectory,
-        issueNumber: 40,
-        caseRunsPath: join(project, "runs"),
-        caseIdentity: { issueNumber: 40, runsPath: join(project, "runs") },
-      }),
-      piDurablePrincipalAuthority,
-    );
-    assert.ok(settled);
-    assert.equal(settled.roleOutcome.kind, "accepted");
-    assert.deepEqual(settled.roleOutcome.payloads, [sealed, bounce]);
-    const reportPath = settled.artifacts.find((artifact) => artifact.kind === "report")?.path;
-    assert.ok(reportPath);
-    const report = JSON.parse(await readFile(reportPath, "utf8")) as {
-      receipt?: unknown;
-      outcome?: { payloads?: unknown };
-    };
-    assert.equal(Object.hasOwn(report, "receipt"), false);
-    assert.deepEqual(report.outcome?.payloads, [sealed, bounce]);
   });
 });
 

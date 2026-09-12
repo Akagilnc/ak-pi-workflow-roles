@@ -31,7 +31,7 @@ import {
 } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus , objectPayloads} from "../helpers/terminal-payload.ts";
 
 import {
   admitDoctorInvocation,
@@ -389,10 +389,10 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     assert.equal(completed.terminal!.roleOutcome.kind, "accepted");
     assert.equal(payloadStatus(completed.terminal!.roleOutcome), "completed");
     // #757: full receipt passes through — issueNumber stays under case, not lifted.
-    const completedCase = payloadFacts(completed.terminal!.roleOutcome).case as { issueNumber?: number } | undefined;
+    const completedCase = (objectPayloads(completed.terminal!.roleOutcome)[0] ?? {}).case as { issueNumber?: number } | undefined;
     assert.equal(completedCase?.issueNumber, 40);
-    assert.ok(Array.isArray(payloadFacts(completed.terminal!.roleOutcome).findings));
-    assert.equal((payloadFacts(completed.terminal!.roleOutcome).findings as unknown[]).length, 1);
+    assert.ok(Array.isArray((objectPayloads(completed.terminal!.roleOutcome)[0] ?? {}).findings));
+    assert.equal(((objectPayloads(completed.terminal!.roleOutcome)[0] ?? {}).findings as unknown[]).length, 1);
     assert.match(completedIo.stdout.join(""), /doctor/);
 
     const reportPath = completed.terminal!.artifacts.find((a) => a.kind === "report")
@@ -479,7 +479,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       "refused",
     );
     assert.equal(
-      payloadFacts(refused.terminal!.roleOutcome).reason,
+      (objectPayloads(refused.terminal!.roleOutcome)[0] ?? {}).reason,
       "Need retained sessions",
     );
 

@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus , objectPayloads} from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";

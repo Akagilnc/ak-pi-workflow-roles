@@ -1,5 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus , objectPayloads} from "../helpers/terminal-payload.ts";
 /**
  * #502 public Gleaner-Left seat — required --base, empty instruction admitted,
  * #599 resume continues the exact session; empty/nonempty 弹章 → typed Terminal.
@@ -139,7 +139,7 @@ test("public gleaner-left settles empty 弹章 as typed Terminal", async () => {
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
     assert.equal(result.terminal.roleOutcome.role, "gleaner-left");
     assert.equal(payloadStatus(result.terminal.roleOutcome), "completed");
-    const facts = payloadFacts(result.terminal.roleOutcome);
+    const facts = (objectPayloads(result.terminal.roleOutcome)[0] ?? {});
     assert.equal(facts.status, "completed");
     assert.deepEqual(facts.findings, []);
 
@@ -194,7 +194,7 @@ test("public gleaner-left settles nonempty 弹章 pointer/statement as typed Ter
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
     assert.equal(payloadStatus(result.terminal.roleOutcome), "completed");
-    const facts = payloadFacts(result.terminal.roleOutcome);
+    const facts = (objectPayloads(result.terminal.roleOutcome)[0] ?? {});
     const findings = facts.findings as readonly {
       pointer: string;
       statement: string;
@@ -290,7 +290,7 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
       "completed",
     );
     const facts = resumed.terminal?.roleOutcome.kind === "accepted"
-      ? payloadFacts(resumed.terminal.roleOutcome)
+      ? (objectPayloads(resumed.terminal.roleOutcome)[0] ?? {})
       : undefined;
     const findings = facts?.findings as readonly { pointer?: string; statement?: string }[] | undefined;
     assert.equal(findings?.[0]?.statement, "RESUMED-弹章");

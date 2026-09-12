@@ -409,6 +409,15 @@ test("untyped public navigator failure keeps unknown cause instead of relabeling
     }),
     { source: "auth", cause: "auth" },
   );
+  // cause=provider alone does not confirm a transport subclass — cause stays unknown.
+  assert.deepEqual(
+    navigatorProviderFailureFromPublicTerminal({
+      cause: "provider",
+      diagnostic: "provider failure",
+      decisiveFacts: {},
+    }),
+    { source: "transport", cause: "unknown" },
+  );
 });
 
 test("model settings are exact and typed settlement projection ignores prose and correctable errors", () => {

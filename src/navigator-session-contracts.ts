@@ -164,7 +164,9 @@ export function navigatorProviderFailureFromPublicTerminal(outcome: {
     code: secondary?.code ?? facts.errorCode,
   });
   if (fromCode !== undefined) return fromCode;
-  if (outcome.cause === "provider") return { source: "transport", cause: "transport" };
+  // cause=provider names the known source region only; without status/diagnostics/code
+  // the specific cause stays unknown (#881 — never invent transport/session labels).
+  if (outcome.cause === "provider") return { source: "transport", cause: "unknown" };
   const typed = navigatorUnavailableKey(outcome.cause);
   if (typed !== undefined) return { source: typed, cause: typed };
   return { source: "unknown", cause: "unknown" };

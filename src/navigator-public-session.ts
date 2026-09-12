@@ -84,10 +84,12 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
           const outcome = summoned.terminal?.roleOutcome;
           if (outcome === undefined) {
             const detail = summoned.stderr?.trim() || `exit ${summoned.exitCode}`;
-            providerFailure = { source: "transport", cause: "transport" };
+            // Known source is the public-summon transport path; unconfirmed cause stays unknown.
+            providerFailure = { source: "transport", cause: "unknown" };
             throw navigatorUnavailableError(
-              "transport",
+              providerFailure.source,
               new Error(`Navigator public summon produced no terminal (${detail})`),
+              providerFailure.cause,
             );
           }
           if (outcome.kind === "failure") {
@@ -124,7 +126,8 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
         } catch (error) {
           if (error instanceof NavigatorUnavailableError) throw error;
           const fact = navigatorProviderFailureFromError(error);
-          providerFailure = fact ?? { source: "transport", cause: "transport" };
+          // Catch path is the public-summon seam (source transport); untyped cause stays unknown.
+          providerFailure = fact ?? { source: "transport", cause: "unknown" };
           throw navigatorUnavailableError(providerFailure.source, error, providerFailure.cause);
         }
         })();

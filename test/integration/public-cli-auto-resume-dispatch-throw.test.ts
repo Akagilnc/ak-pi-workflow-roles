@@ -147,22 +147,10 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     assert.equal(terminal.artifacts.filter((a)=>a.kind==="error").length,3);
     assert.deepEqual(terminal.roleOutcome.payloads,[sealedParams,bounceParams]);
     assert.deepEqual(terminal.submissions,[sealedParams,bounceParams]);
-  });
-});
 
-test("dispatch exception principal-unavailable terminal attaches recorded submissions", async()=>{
-  await withTempHome(async(home)=>{
-    const project=join(home,"proj");
-    const runId="throw-principal-unavailable";
-    const runDir=join(home,".ak-roles","books","proj","runs",`${runId}@judge`);
-    await mkdir(project,{recursive:true});
-    await mkdir(join(runDir,"session"),{recursive:true});
-    const sessionFile=join(runDir,"session","session.jsonl");
-    await writeFile(sessionFile,"{}\n","utf8");
-    await plantRecordedSubmissions({home,project,runDirectory:runDir,runId,role:"judge"});
-    const callsRef={n:0};
-    const {io}=captureIo();
-    const result=await runWithAutoResumeLoop({
+    // Same real entry: principal-unavailable exception terminal also attaches ledger sequence.
+    const unavailableCalls={n:0};
+    const unavailable=await runWithAutoResumeLoop({
       principalAuthority: piDurablePrincipalAuthority,
       sessionAppender: appendPiSessionCustomEntry,
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId,projectRoot:project},
@@ -171,22 +159,25 @@ test("dispatch exception principal-unavailable terminal attaches recorded submis
       isPrincipalAvailable: async()=>false,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
-      dispatch:alwaysThrowingDispatch(callsRef,["boom-unavailable"]),
+      dispatch:alwaysThrowingDispatch(unavailableCalls,["boom-unavailable"]),
     });
-    const terminal=result.terminal as TerminalResult;
-    assert.equal(callsRef.n,1);
-    assert.equal(result.exitCode,1);
-    assert.equal(terminal.roleOutcome.kind,"failure");
-    if(terminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
-    assert.match(terminal.roleOutcome.diagnostic,/session principal unavailable before further resume/);
-    assert.deepEqual(terminal.roleOutcome.payloads,[sealedParams,bounceParams]);
-    assert.deepEqual(terminal.submissions,[sealedParams,bounceParams]);
+    const unavailableTerminal=unavailable.terminal as TerminalResult;
+    assert.equal(unavailableCalls.n,1);
+    assert.equal(unavailable.exitCode,1);
+    assert.equal(unavailableTerminal.roleOutcome.kind,"failure");
+    if(unavailableTerminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
+    assert.match(unavailableTerminal.roleOutcome.diagnostic,/session principal unavailable before further resume/);
+    assert.deepEqual(unavailableTerminal.roleOutcome.payloads,[sealedParams,bounceParams]);
+    assert.deepEqual(unavailableTerminal.submissions,[sealedParams,bounceParams]);
   });
 });
 
 test("retention sink failure does not break the retry path (PR #418 isolation precedent)", async()=>{
   await withTempHome(async(home)=>{
-    const runDir=join(home,"runs","throw-sink-fails");
+    const project=join(home,"proj");
+    const runId="throw-sink-fails";
+    const runDir=join(home,".ak-roles","books","proj","runs",`${runId}@fixer`);
+    await mkdir(project,{recursive:true});
     await mkdir(join(runDir,"session"),{recursive:true});
     const sessionFile=join(runDir,"session","session.jsonl");
     // Malformed dossier JSONL makes the pointer append fail after the error file lands.
@@ -196,7 +187,7 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
       sessionAppender: appendPiSessionCustomEntry,
-      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"fixer",runId:"throw-sink-fails"},
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"fixer",runId,projectRoot:project},
       io,
       autoResumeLimit:2,
       buildInitialPayload: ()=>["--initial"],

@@ -22,7 +22,7 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus , objectPayloads} from "../helpers/terminal-payload.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -467,7 +467,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal(terminal.roleOutcome.role, "reviewer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.equal(payloadStatus(terminal.roleOutcome), "completed");
-    assert.equal((payloadFacts(terminal.roleOutcome).auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
+    assert.equal(((objectPayloads(terminal.roleOutcome)[0] ?? {}).auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
     assert.match(formatTerminalResult(terminal), /auditNoReceipt/);
     assert.equal(terminal.runId, "run-reviewer-settle-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);

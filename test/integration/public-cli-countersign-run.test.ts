@@ -1,5 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { payloadFacts, payloadStatus } from "../helpers/terminal-payload.ts";
+import { payloadFacts, payloadStatus , objectPayloads} from "../helpers/terminal-payload.ts";
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
  * out via real runAkRole entry; #599 resume continues the exact session.
@@ -293,7 +293,7 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
         payloadStatus(result.terminal.roleOutcome),
         receipt.countersignStatus,
       );
-      const facts = payloadFacts(result.terminal.roleOutcome);
+      const facts = (objectPayloads(result.terminal.roleOutcome)[0] ?? {});
       assert.equal(facts.countersignStatus, receipt.countersignStatus);
       // #757: nested fields pass through — no lift to fixSummary/decisionQuestion.
       if (receipt.countersignStatus === "continue") {
@@ -411,7 +411,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
       "converged",
     );
     const facts = resumed.terminal?.roleOutcome.kind === "accepted"
-      ? payloadFacts(resumed.terminal.roleOutcome)
+      ? (objectPayloads(resumed.terminal.roleOutcome)[0] ?? {})
       : undefined;
     assert.equal(facts?.note, "RESUMED-续署");
   });
@@ -447,7 +447,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     assert.equal(first.exitCode, 0);
     assert.equal(
       first.terminal?.roleOutcome.kind === "accepted"
-        ? payloadFacts(first.terminal.roleOutcome).note
+        ? (objectPayloads(first.terminal.roleOutcome)[0] ?? {}).note
         : undefined,
       "FIRST-署",
     );
