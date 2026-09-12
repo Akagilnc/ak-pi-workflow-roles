@@ -334,7 +334,8 @@ export async function findBookRunDirectory(
   return { runDirectory: unique.runDirectory, role: foundRole };
 }
 
-function isFlatRunsRelative(sourceRelative: string, leafName: string): boolean {
+/** Historical flat `runs/<leaf>` alias under a book root (not ticket/unbound). */
+export function isFlatRunsRelative(sourceRelative: string, leafName: string): boolean {
   const parts = sourceRelative.replaceAll("\\", "/").split("/").filter((part) => part.length > 0);
   return parts.length === 2 && parts[0] === "runs" && parts[1] === leafName;
 }

@@ -24,6 +24,7 @@ import {
 } from "./book-topology-migration.ts";
 import {
   findPlacedMigratingRun,
+  isFlatRunsRelative,
   isTicketNumberString,
   listBackupRunLeaves,
   uniqueRunLeafExistsInBook,
@@ -264,7 +265,8 @@ async function backupParentRunExists(
 ): Promise<boolean> {
   const backupBook = join(backupBooksDirectory, parent.bookKey);
   if (await directoryExists(join(backupBook, parent.sourceRelative))) return true;
-  // Old flat `runs/<leaf>` alias while the unique complete leaf already nests elsewhere.
+  // Unique-leaf fallback only for the cut historical flat alias, never missing nested paths.
+  if (!isFlatRunsRelative(parent.sourceRelative, parent.leafName)) return false;
   return uniqueRunLeafExistsInBook(backupBook, parent.leafName);
 }
 
