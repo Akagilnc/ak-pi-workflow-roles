@@ -52,7 +52,6 @@ import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   presentStructuralRejection,
   trySettleCountersignTerminalResult,
-  withSubmissions,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { TerminalResult, TerminalRoleOutcome } from "./terminal.ts";
@@ -335,8 +334,10 @@ export async function runPublicCountersign(
 
     if (outcome.identity.kind === "escalate") {
       // 御批: 识别不了就上抛 — settle on the admitted countersign run.
-      // Child payload sequence attaches onto the failure terminal (#881 coexist).
-      const settled = await presentControlledFailure(
+      // Child sequence enters the single settlement/attachment path via coexistPayloads
+      // before presentation (#881 — not a post-hoc second attachment).
+      const childPayloads = roleOutcomePayloads(outcome.roleOutcome);
+      return await presentControlledFailure(
         admitted,
         {
           timedOut: false,
@@ -345,17 +346,12 @@ export async function runPublicCountersign(
           thrown: new Error(
             "court diarist station escalated (cannot identify court target)",
           ),
+          ...(childPayloads.length > 0 ? { coexistPayloads: childPayloads } : {}),
         },
         countersignAdapters(),
         env.principalAuthority,
         io,
       );
-      const childPayloads = roleOutcomePayloads(outcome.roleOutcome);
-      if (childPayloads.length === 0) return settled;
-      return {
-        ...settled,
-        terminal: withSubmissions(settled.terminal, childPayloads),
-      };
     }
 
     // Typed failure terminal (verification / infra / non-zero without escalate)

@@ -300,6 +300,12 @@ export type ControlledFailureInput = {
    * already the reported cause.
    */
   skipRunStateWrite?: boolean;
+  /**
+   * #881: child-station payload sequence to coexist beside this run's ledger
+   * rows on the single failure terminal — appended after attachRecordedSubmissions,
+   * before the one presentation. Not a second attachment path.
+   */
+  coexistPayloads?: readonly unknown[];
 };
 
 /** Result of seat prep after the single pre-lease admitted load. */
@@ -433,7 +439,7 @@ export async function presentControlledFailure<
     await persistReturnedRunState(admitted, authority);
   }
 
-  const terminal = await attachRecordedSubmissions(
+  let terminal = await attachRecordedSubmissions(
     admitted,
     await settleFailureTerminalResult(
       admitted,
@@ -444,6 +450,17 @@ export async function presentControlledFailure<
         : {},
     ),
   );
+  // #881: append child coexist rows after ledger attach, before the single present.
+  const coexist = failureInput.coexistPayloads;
+  if (coexist !== undefined && coexist.length > 0) {
+    const existing =
+      terminal.roleOutcome.kind === "failure" ||
+      terminal.roleOutcome.kind === "accepted" ||
+      terminal.roleOutcome.kind === "audit_escalation"
+        ? terminal.roleOutcome.payloads ?? []
+        : terminal.submissions ?? [];
+    terminal = withSubmissions(terminal, [...existing, ...coexist]);
+  }
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
@@ -640,13 +657,18 @@ export async function dispatchPostAdmissionTurn<
       try {
         await adapters.beforeDispatch(admitted);
       } catch (error) {
-        let settled = (await presentControlledFailure(
+        const settled = (await presentControlledFailure(
           admitted,
           {
             timedOut: false,
             code: null,
             stderr: "",
             thrown: error,
+            ...(error instanceof StationChildExhaustedError &&
+            error.childPayloads !== undefined &&
+            error.childPayloads.length > 0
+              ? { coexistPayloads: error.childPayloads }
+              : {}),
           },
           adapters,
           env.principalAuthority,
@@ -654,13 +676,6 @@ export async function dispatchPostAdmissionTurn<
           persistRunState,
         )) as { exitCode: number; admitted: A; terminal: T };
         if (error instanceof StationChildExhaustedError) {
-          // #881: child payload sequence coexists on the parent failure terminal.
-          if (error.childPayloads !== undefined && error.childPayloads.length > 0) {
-            settled = {
-              ...settled,
-              terminal: withSubmissions(settled.terminal, error.childPayloads) as T,
-            };
-          }
           return { ...settled, skipAutoResume: true as const, ...deferredPersist };
         }
         return { ...settled, ...deferredPersist };

@@ -754,10 +754,10 @@ test("public countersign path: summons text alone never mints a ticket without �
 
 /**
  * Multi-role faux pi: diarist envelope when --ak-role diarist, else countersign.
- * ticketAssertion: positive N = 本庭对象; null = true-unbound (真无票→无录).
+ * ticketAssertion: positive N = 本庭对象; null = true-unbound; "escalate" = 认不出.
  */
 function courtPipelinePiRunner(
-  ticketAssertion: number | null = 582,
+  ticketAssertion: number | null | "escalate" = 582,
   countersignDetails: unknown = {
     countersignStatus: "converged",
     note: "署",
@@ -798,13 +798,17 @@ function courtPipelinePiRunner(
         await runtime.activate();
         assert.ok(registered, "diarist envelope registered no output tool");
         // 起居郎 LLM asserts the court target; envelope binds typed key (#771 / #779).
+        const params =
+          ticketAssertion === "escalate"
+            ? { status: "escalate", reason: "cannot identify court target" }
+            : {
+                status: "completed",
+                ticketNumber: ticketAssertion,
+                entries: [],
+              };
         const accepted = await registered.execute(
           "call_diarist_1",
-          {
-            status: "completed",
-            ticketNumber: ticketAssertion,
-            entries: [],
-          },
+          params,
           undefined,
           undefined,
           {} as HostContext,
@@ -1168,5 +1172,56 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
     const volume = resolveTicketProvenanceVolume(582, project, home);
     assert.equal(turnPrompt.includes(volume.humanViewFile), false);
     assert.equal(turnPrompt.includes(volume.recordFile), false);
+
+    // #881: same first-entry path — diarist escalate carries child payload sequence
+    // on the presented failure terminal (coexist via single settlement attachment).
+    const escalateHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: courtPipelinePiRunner("escalate"),
+    });
+    const escalateIo = captureIo();
+    const escalated = await runPublicCountersign(
+      ["裁：本庭对象不明。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: escalateHost,
+        hostAdapters: [adapter("pi", escalateHost)],
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000d47",
+      },
+      escalateIo.io,
+      parseCountersignArgv,
+    );
+    assert.equal(escalated.exitCode, 1);
+    assert.equal(escalated.terminal?.roleOutcome.kind, "failure");
+    const childRows =
+      escalated.terminal?.roleOutcome.kind === "failure"
+        ? escalated.terminal.roleOutcome.payloads ?? []
+        : [];
+    assert.ok(
+      childRows.some(
+        (row) =>
+          typeof row === "object" &&
+          row !== null &&
+          !Array.isArray(row) &&
+          (row as { status?: unknown }).status === "escalate",
+      ),
+      "presented failure terminal must carry diarist escalate payload row",
+    );
+    assert.equal(
+      escalated.terminal?.submissions?.some(
+        (row) =>
+          typeof row === "object" &&
+          row !== null &&
+          !Array.isArray(row) &&
+          (row as { status?: unknown }).status === "escalate",
+      ),
+      true,
+    );
   });
 });
