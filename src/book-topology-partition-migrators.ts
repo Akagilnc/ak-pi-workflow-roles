@@ -1,3 +1,4 @@
+import { BOOK_TOPOLOGY_MIXED_VOLUME_MIGRATORS } from "./book-topology-mixed-volume-migrators.ts";
 import type { BookTopologyPartitionMigrator } from "./book-topology-migration.ts";
 import { BOOK_TOPOLOGY_T11_MIGRATORS } from "./book-topology-migrators-t11.ts";
 import { BOOK_TOPOLOGY_RECORD_CLASS_MIGRATORS } from "./book-topology-record-class-migrators.ts";
@@ -20,4 +21,5 @@ export const BOOK_TOPOLOGY_PARTITION_MIGRATORS: readonly BookTopologyPartitionMi
   bookTopologyRunsMigrator,
   ...BOOK_TOPOLOGY_RECORD_CLASS_MIGRATORS,
   ...BOOK_TOPOLOGY_T11_MIGRATORS,
+  ...BOOK_TOPOLOGY_MIXED_VOLUME_MIGRATORS,
 ];

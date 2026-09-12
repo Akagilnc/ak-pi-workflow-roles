@@ -1,26 +1,28 @@
 /**
- * #865 T9: migrate the legacy flat `runs/` partition into ticket-scoped or
- * unbound placement. Derivation from the worktree basename is recorded beside
- * the run so it can be audited or overturned; board-recorded ticketNumber wins.
+ * #865 T9: migrate retained runs into ticket-scoped or unbound placement.
+ * Inventory covers legacy flat `runs/`, existing `<ticket>/runs/`, and
+ * `unbound/runs/`. Attribution reuses the shared migrating-run helper;
+ * already-canonical trees copy as-is.
  */
-import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, sep } from "node:path";
 
+import {
+  destinationRunDirectory,
+  listBackupRunLeaves,
+  resolveMigratingRunTicket,
+} from "./book-topology-migration-placement.ts";
 import {
   reconcileMigrationPartition,
   type BookTopologyMigrationContext,
   type BookTopologyPartitionMigrator,
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
-import { roleRunPlacement } from "./role-run-placement.ts";
 import {
   rewriteRoleRunDurablePages,
   type RunDirectoryPathRewrite,
 } from "./role-run-relocation.ts";
-import {
-  MIGRATION_TICKET_DERIVATION_PAGE,
-  readBoardTicketNumber,
-} from "./run-ticket-number.ts";
+import { MIGRATION_TICKET_DERIVATION_PAGE } from "./run-ticket-number.ts";
 
 const RUNS_PARTITION = "runs";
 
@@ -29,25 +31,16 @@ const RUN_LEAF =
 
 type RunLeaf = { readonly runId: string; readonly role: string };
 
-type TicketAttribution =
-  | { readonly kind: "board"; readonly ticketNumber: number }
-  | {
-      readonly kind: "worktree-basename";
-      readonly ticketNumber: number;
-      readonly projectRoot: string;
-      readonly sourcePage: string;
-      readonly basename: string;
-    }
-  | { readonly kind: "unbound" };
-
 type PlannedRunMove = {
   readonly sourcePath: string;
   readonly sourceIdentity: string;
   readonly isDirectory: boolean;
-  readonly attribution: TicketAttribution;
+  readonly disposition: "placed" | "unbound";
   readonly targetPath: string;
-  /** Path as durable pages still record it (pre-rename books/ location). */
-  readonly historicalRunDirectory: string;
+  readonly historicalRunDirectory: string | undefined;
+  readonly derivation:
+    | { readonly ticketNumber: number; readonly projectRoot: string; readonly sourcePage: string }
+    | undefined;
 };
 
 function parseRunLeaf(name: string): RunLeaf | undefined {
@@ -64,82 +57,14 @@ function isEnoent(error: unknown): boolean {
   );
 }
 
-/** Ticket number contained in a worktree path's final segment. */
-function ticketNumberFromWorktreeBasename(
-  pathBasename: string,
-): number | undefined {
-  const match = /(\d+)/.exec(pathBasename);
-  if (match === null) return undefined;
-  const ticketNumber = Number(match[1]);
-  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) return undefined;
-  return ticketNumber;
-}
-
-async function readProjectRoot(
-  runDirectory: string,
-): Promise<{ projectRoot: string; sourcePage: string } | undefined> {
-  for (const page of [
-    "admitted-request.json",
-    "invocation.json",
-    "run-state.json",
-  ] as const) {
-    try {
-      const raw: unknown = JSON.parse(
-        await readFile(join(runDirectory, page), "utf8"),
-      );
-      if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-        continue;
-      }
-      const projectRoot = (raw as { projectRoot?: unknown }).projectRoot;
-      if (typeof projectRoot === "string" && projectRoot.length > 0) {
-        return { projectRoot, sourcePage: page };
-      }
-    } catch (error) {
-      if (isEnoent(error)) continue;
-      throw error;
-    }
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (isEnoent(error)) return false;
+    throw error;
   }
-  return undefined;
-}
-
-async function attributeRun(runDirectory: string): Promise<TicketAttribution> {
-  const boardTicket = await readBoardTicketNumber(runDirectory);
-  if (boardTicket !== undefined) {
-    return { kind: "board", ticketNumber: boardTicket };
-  }
-  const project = await readProjectRoot(runDirectory);
-  if (project === undefined) return { kind: "unbound" };
-  const pathBasename = basename(project.projectRoot);
-  const ticketNumber = ticketNumberFromWorktreeBasename(pathBasename);
-  if (ticketNumber === undefined) return { kind: "unbound" };
-  return {
-    kind: "worktree-basename",
-    ticketNumber,
-    projectRoot: project.projectRoot,
-    sourcePage: project.sourcePage,
-    basename: pathBasename,
-  };
-}
-
-async function writeDerivationPage(
-  targetRunDirectory: string,
-  attribution: Extract<TicketAttribution, { kind: "worktree-basename" }>,
-): Promise<void> {
-  const page = {
-    ticketNumber: attribution.ticketNumber,
-    derivation: "worktree-path-basename" as const,
-    source: {
-      page: attribution.sourcePage,
-      field: "projectRoot",
-      path: attribution.projectRoot,
-      basename: attribution.basename,
-    },
-  };
-  await writeFile(
-    join(targetRunDirectory, MIGRATION_TICKET_DERIVATION_PAGE),
-    `${JSON.stringify(page, null, 2)}\n`,
-    "utf8",
-  );
 }
 
 async function listBookKeys(backupBooksDirectory: string): Promise<string[]> {
@@ -155,45 +80,29 @@ async function listBookKeys(backupBooksDirectory: string): Promise<string[]> {
   }
 }
 
-async function listRunLeaves(
-  runsDirectory: string,
-): Promise<readonly { name: string; isDirectory: boolean }[]> {
-  try {
-    const entries = await readdir(runsDirectory, { withFileTypes: true });
-    return entries
-      .map((entry) => ({
-        name: entry.name,
-        isDirectory: entry.isDirectory(),
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
-  } catch (error) {
-    if (isEnoent(error)) return [];
-    throw error;
-  }
-}
-
-function targetRunDirectoryFor(
-  booksDirectory: string,
-  bookKey: string,
-  leafName: string,
-  attribution: TicketAttribution,
-): string {
-  const leaf = parseRunLeaf(leafName);
-  const ledgerHome = dirname(booksDirectory);
-  if (leaf !== undefined) {
-    const subject =
-      attribution.kind === "unbound"
-        ? ({ unbound: true } as const)
-        : ({ ticketNumber: attribution.ticketNumber } as const);
-    return roleRunPlacement(ledgerHome, {
-      bookKey,
-      subject,
-      runId: leaf.runId,
-      role: leaf.role,
-    }).runDirectory;
-  }
-  // Non-<runId>@<role> entries still land under unbound/runs/ — never discarded.
-  return join(booksDirectory, bookKey, "unbound", "runs", leafName);
+async function writeDerivationPage(
+  targetRunDirectory: string,
+  derivation: {
+    readonly ticketNumber: number;
+    readonly projectRoot: string;
+    readonly sourcePage: string;
+  },
+): Promise<void> {
+  const page = {
+    ticketNumber: derivation.ticketNumber,
+    derivation: "worktree-path-basename" as const,
+    source: {
+      page: derivation.sourcePage,
+      field: "projectRoot",
+      path: derivation.projectRoot,
+      basename: basename(derivation.projectRoot),
+    },
+  };
+  await writeFile(
+    join(targetRunDirectory, MIGRATION_TICKET_DERIVATION_PAGE),
+    `${JSON.stringify(page, null, 2)}\n`,
+    "utf8",
+  );
 }
 
 async function copyRunTree(
@@ -214,43 +123,68 @@ async function planBookMoves(
   booksDirectory: string,
   bookKey: string,
 ): Promise<readonly PlannedRunMove[]> {
-  const sourceRunsDirectory = join(backupBooksDirectory, bookKey, "runs");
+  const backupBook = join(backupBooksDirectory, bookKey);
+  const claimed = new Map<string, string>();
   const planned: PlannedRunMove[] = [];
-  for (const leaf of await listRunLeaves(sourceRunsDirectory)) {
-    const sourcePath = join(sourceRunsDirectory, leaf.name);
-    const sourceIdentity = relative(backupBooksDirectory, sourcePath)
+
+  for (const leaf of await listBackupRunLeaves(backupBook)) {
+    const sourceIdentity = relative(backupBooksDirectory, leaf.sourcePath)
       .split(sep)
       .join("/");
+    const parsed = leaf.isDirectory ? parseRunLeaf(leaf.leafName) : undefined;
 
-    // Only <runId>@<role> directories can occupy ticket placement; everything
-    // else still lands under unbound/runs/ and is never discarded.
-    const leafIdentity = leaf.isDirectory ? parseRunLeaf(leaf.name) : undefined;
-    const attribution =
-      leafIdentity === undefined
-        ? ({ kind: "unbound" } as const)
-        : await attributeRun(sourcePath);
+    let targetPath: string;
+    let disposition: "placed" | "unbound";
+    let historicalRunDirectory: string | undefined;
+    let derivation: PlannedRunMove["derivation"];
 
-    const targetPath = targetRunDirectoryFor(
-      booksDirectory,
-      bookKey,
-      leaf.name,
-      attribution,
-    );
-    // Historical path as pages still record it (pre-rename books/ location).
-    const historicalRunDirectory = join(
-      booksDirectory,
-      bookKey,
-      "runs",
-      leaf.name,
-    );
+    if (leaf.layout !== "flat") {
+      targetPath = join(booksDirectory, bookKey, leaf.relativePath);
+      disposition = leaf.layout === "unbound" ? "unbound" : "placed";
+      historicalRunDirectory = undefined;
+      derivation = undefined;
+    } else if (parsed === undefined) {
+      targetPath = join(booksDirectory, bookKey, "unbound", "runs", leaf.leafName);
+      disposition = "unbound";
+      historicalRunDirectory = join(booksDirectory, bookKey, "runs", leaf.leafName);
+      derivation = undefined;
+    } else {
+      const ticket = await resolveMigratingRunTicket(leaf.sourcePath);
+      targetPath = destinationRunDirectory(
+        booksDirectory,
+        bookKey,
+        ticket.ticketNumber,
+        parsed.runId,
+        parsed.role,
+      );
+      disposition = ticket.ticketNumber === undefined ? "unbound" : "placed";
+      historicalRunDirectory = join(booksDirectory, bookKey, "runs", leaf.leafName);
+      derivation =
+        ticket.derivation?.method === "project-root-basename"
+          && ticket.ticketNumber !== undefined
+          ? {
+              ticketNumber: ticket.ticketNumber,
+              projectRoot: ticket.derivation.source,
+              sourcePage: ticket.derivation.sourcePage,
+            }
+          : undefined;
+    }
 
+    const prior = claimed.get(targetPath);
+    if (prior !== undefined) {
+      throw new Error(
+        `book topology migration refuses to overwrite ${targetPath} (already claimed by ${prior}) with ${leaf.sourcePath}`,
+      );
+    }
+    claimed.set(targetPath, leaf.sourcePath);
     planned.push({
-      sourcePath,
+      sourcePath: leaf.sourcePath,
       sourceIdentity,
       isDirectory: leaf.isDirectory,
-      attribution,
+      disposition,
       targetPath,
       historicalRunDirectory,
+      derivation,
     });
   }
   return planned;
@@ -269,32 +203,34 @@ export const bookTopologyRunsMigrator: BookTopologyPartitionMigrator = {
         bookKey,
       );
 
-      // Full historical→final map so cross-run pointers rewrite to each peer's
-      // final placement, not only the current run's own move.
       const crossRunRewrites: RunDirectoryPathRewrite[] = planned
-        .filter((move) => move.isDirectory)
+        .filter((move) => move.isDirectory && move.historicalRunDirectory !== undefined)
         .map((move) => ({
-          oldRunDirectory: move.historicalRunDirectory,
+          oldRunDirectory: move.historicalRunDirectory!,
           newRunDirectory: move.targetPath,
         }));
 
       for (const move of planned) {
+        if (await pathExists(move.targetPath)) {
+          throw new Error(
+            `book topology migration refuses to overwrite ${move.targetPath} with ${move.sourcePath}`,
+          );
+        }
         await copyRunTree(move.sourcePath, move.targetPath, move.isDirectory);
         if (move.isDirectory) {
           await rewriteRoleRunDurablePages({
             pagesDirectory: move.targetPath,
-            oldRunDirectory: move.historicalRunDirectory,
+            oldRunDirectory: move.historicalRunDirectory ?? move.targetPath,
             newRunDirectory: move.targetPath,
             crossRunRewrites,
           });
-          if (move.attribution.kind === "worktree-basename") {
-            await writeDerivationPage(move.targetPath, move.attribution);
-          }
+        }
+        if (move.isDirectory && move.derivation !== undefined) {
+          await writeDerivationPage(move.targetPath, move.derivation);
         }
 
         outcomes.push({
-          disposition:
-            move.attribution.kind === "unbound" ? "unbound" : "placed",
+          disposition: move.disposition,
           source: move.sourceIdentity,
         });
       }
