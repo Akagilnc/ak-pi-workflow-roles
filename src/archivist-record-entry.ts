@@ -70,6 +70,12 @@ type CurrentSessionClaim =
   | { readonly won: true }
   | { readonly won: false; readonly winnerFile: string };
 
+type NavigatorSessionHeader = {
+  readonly type: "session";
+  readonly id: string;
+  readonly cwd?: string;
+};
+
 /**
  * Sole current-session publish authority: assemble complete payload, write a
  * same-directory temp, then exclusive hard-link install so readers never see a
@@ -81,11 +87,13 @@ function claimCurrentSession(sessionDir: string, sessionFile: string): CurrentSe
   const ledger = join(sessionDir, CURRENT_SESSION_LEDGER);
   const payload = `${JSON.stringify({ sessionFile })}\n`;
   const temporary = join(sessionDir, `.current-session-${randomUUID()}.tmp`);
+  let primaryFailure: unknown;
+  let claim: CurrentSessionClaim | undefined;
   try {
     writeFileSync(temporary, payload);
     try {
       linkSync(temporary, ledger);
-      return { won: true };
+      claim = { won: true };
     } catch (error) {
       if (errnoCode(error) !== "EEXIST") {
         throw new ActivationLedgerError(
@@ -95,62 +103,120 @@ function claimCurrentSession(sessionDir: string, sessionFile: string): CurrentSe
       }
       const winnerFile = readCurrentSession(sessionDir);
       assertRecentFinalFileUnderSessionDir(sessionDir, winnerFile);
-      return { won: false, winnerFile };
+      claim = { won: false, winnerFile };
     }
   } catch (error) {
-    if (error instanceof ActivationLedgerError) throw error;
-    throw new ActivationLedgerError(
-      `archivist current-session ledger cannot be created (${ledger}): ${errorText(error)}`,
-      { cause: error },
-    );
-  } finally {
-    try {
-      unlinkSync(temporary);
-    } catch {
-      // temp residue only — destination install already committed or never linked
+    primaryFailure = error instanceof ActivationLedgerError
+      ? error
+      : new ActivationLedgerError(
+        `archivist current-session ledger cannot be created (${ledger}): ${errorText(error)}`,
+        { cause: error },
+      );
+  }
+
+  // Temp cleanup is mandatory when the file still exists. ENOENT = already clear.
+  // No primary: cleanup failure is the main ActivationLedgerError. With primary:
+  // keep primary cause and attach cleanup via AggregateError (activation-ledger shape).
+  try {
+    unlinkSync(temporary);
+  } catch (cleanupError) {
+    if (errnoCode(cleanupError) !== "ENOENT") {
+      if (primaryFailure !== undefined) {
+        throw new AggregateError(
+          [primaryFailure, cleanupError],
+          `archivist current-session temp cleanup failed beside primary failure (${temporary})`,
+          { cause: primaryFailure },
+        );
+      }
+      throw new ActivationLedgerError(
+        `archivist current-session temp cleanup failed (${temporary}): ${errorText(cleanupError)}`,
+        { cause: cleanupError },
+      );
     }
   }
+
+  if (primaryFailure !== undefined) throw primaryFailure;
+  return claim!;
 }
 
+type HeaderOnlyCandidateRead =
+  | { readonly kind: "header-only"; readonly header: NavigatorSessionHeader }
+  | { readonly kind: "not-header-only" }
+  | { readonly kind: "absent" };
+
 /**
- * Header-only structure kernel for a mint candidate: first non-blank line is a
- * session header; no further non-blank lines (no business entry).
+ * Structure kernel for a mint candidate: first non-blank line is a session
+ * header; no further non-blank lines (no business entry). Real read I/O
+ * failures (EACCES/EIO/…) propagate as ActivationLedgerError — never washed
+ * into not-header-only / false success. ENOENT → absent.
  */
-function isHeaderOnlySessionCandidate(filePath: string): boolean {
+function readHeaderOnlySessionCandidate(filePath: string): HeaderOnlyCandidateRead {
   let text: string;
   try {
     text = readFileSync(filePath, "utf8");
-  } catch {
-    return false;
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") return { kind: "absent" };
+    throw new ActivationLedgerError(
+      `archivist mint candidate structure kernel is not readable (${filePath}): ${errorText(error)}`,
+      { cause: error },
+    );
   }
-  let sawHeader = false;
+  let header: NavigatorSessionHeader | undefined;
   for (const line of text.split("\n")) {
     if (line.trim() === "") continue;
-    if (!sawHeader) {
-      if (parseSessionHeaderLine(line) === undefined) return false;
-      sawHeader = true;
+    if (header === undefined) {
+      header = parseSessionHeaderLine(line);
+      if (header === undefined) return { kind: "not-header-only" };
       continue;
     }
-    return false;
+    return { kind: "not-header-only" };
   }
-  return sawHeader;
+  return header === undefined
+    ? { kind: "not-header-only" }
+    : { kind: "header-only", header };
 }
 
 /**
- * Loser mint cleanup: delete only when path identity is still this process's
- * candidate AND the structure kernel remains header-only. Never touches the
- * winner, history, peers, or current-session.json. Predicate-satisfied unlink
- * failure is infrastructure failure with cause preserved — not best-effort.
+ * Loser mint cleanup: delete only when (1) path still equals this SessionManager's
+ * held candidate, (2) in-memory header/session identity matches the on-disk
+ * header id, and (3) structure kernel is still header-only with no business
+ * entry. Never touches winner, history, peers, or current-session.json.
+ * Predicate-satisfied unlink failure is infrastructure failure with cause
+ * preserved — not best-effort. Mismatch → do not delete (no fabricated success).
  */
-function removeHeaderOnlyMintCandidate(candidateFile: string): void {
-  const absolute = resolve(candidateFile);
-  if (!isHeaderOnlySessionCandidate(absolute)) return;
+function removeHeaderOnlyMintCandidate(
+  session: SessionManager,
+  candidateFile: string,
+): void {
+  const held = session.getSessionFile();
+  if (held === undefined) return;
+  const absoluteHeld = resolve(held);
+  const absoluteCandidate = resolve(candidateFile);
+  if (absoluteHeld !== absoluteCandidate) return;
+
+  const memoryHeader = session.getHeader();
+  const sessionId = session.getSessionId();
+  if (
+    memoryHeader === null
+    || memoryHeader.type !== "session"
+    || typeof memoryHeader.id !== "string"
+    || memoryHeader.id.length === 0
+    || memoryHeader.id !== sessionId
+  ) {
+    return;
+  }
+
+  const disk = readHeaderOnlySessionCandidate(absoluteCandidate);
+  if (disk.kind === "absent") return;
+  if (disk.kind !== "header-only") return;
+  if (disk.header.id !== memoryHeader.id) return;
+
   try {
-    unlinkSync(absolute);
+    unlinkSync(absoluteCandidate);
   } catch (error) {
     if (errnoCode(error) === "ENOENT") return;
     throw new ActivationLedgerError(
-      `archivist mint candidate cleanup failed (${absolute}): ${errorText(error)}`,
+      `archivist mint candidate cleanup failed (${absoluteCandidate}): ${errorText(error)}`,
       { cause: error },
     );
   }
@@ -163,12 +229,6 @@ function currentSessionLedgerPath(sessionDir: string): string {
 /** Same bounds as Pi readSessionHeader — do not invent a second scan ceiling. */
 const SESSION_HEADER_CHUNK_BYTES = 4096;
 const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
-
-type NavigatorSessionHeader = {
-  readonly type: "session";
-  readonly id: string;
-  readonly cwd?: string;
-};
 
 /**
  * Bounded session-header discovery matching Pi readSessionHeader:
@@ -531,7 +591,7 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
       const claim = claimCurrentSession(sessionDir, file);
       if (!claim.won) {
         const winner = SessionManager.open(claim.winnerFile, sessionDir, cwd);
-        removeHeaderOnlyMintCandidate(file);
+        removeHeaderOnlyMintCandidate(session, file);
         return { session: winner, resumed: true };
       }
     }
