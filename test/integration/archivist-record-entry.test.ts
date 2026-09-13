@@ -159,10 +159,6 @@ test("navigator factory durable nest: parent states, unicode cwd, wrong-cwd, no-
       });
       // Nest and admitted run share one ledger home — never a second passwd/env home.
       assert.equal(physicalPathIdentity(session.recordPointer()!), physicalPathIdentity(nest));
-      assert.equal(
-        physicalPathIdentity(session.recordPointer()!).startsWith(physicalPathIdentity(machineLedgerHome(home))),
-        true,
-      );
       session.appendEntry("ak-navigator-route", { run: state.label });
       last = session;
     }

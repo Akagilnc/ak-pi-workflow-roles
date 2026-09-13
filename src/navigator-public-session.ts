@@ -25,17 +25,13 @@ import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.
  * passwd guesses — those split the nest from the owning run (#852).
  */
 async function resolveNavigatorLedgerHome(context: HostContext): Promise<string | undefined> {
-  const { homeFromRunDirectory, tryHomeFromAkRolesPath } = await import(
+  const { tryHomeFromAkRolesPath } = await import(
     "./activation-ledger-topology.ts"
   );
   const runDirectory = runDirectoryFromHostContext(context);
   if (runDirectory !== undefined) {
-    try {
-      return homeFromRunDirectory(runDirectory);
-    } catch {
-      const soft = tryHomeFromAkRolesPath(runDirectory);
-      if (soft !== undefined && soft.length > 0) return soft;
-    }
+    const fromRun = tryHomeFromAkRolesPath(runDirectory);
+    if (fromRun !== undefined && fromRun.length > 0) return fromRun;
   }
   const parentFile = context.sessionManager?.getSessionFile?.();
   if (typeof parentFile === "string" && parentFile.trim() !== "") {
