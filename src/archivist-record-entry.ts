@@ -4,10 +4,13 @@
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
 import {
+  closeSync,
   existsSync,
   mkdirSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   realpathSync,
   statSync,
   writeFileSync,
@@ -74,11 +77,91 @@ function currentSessionLedgerPath(sessionDir: string): string {
   return join(sessionDir, CURRENT_SESSION_LEDGER);
 }
 
+/** Same bounds as Pi readSessionHeader — do not invent a second scan ceiling. */
+const SESSION_HEADER_CHUNK_BYTES = 4096;
+const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
+
+type NavigatorSessionHeader = {
+  readonly type: "session";
+  readonly id: string;
+  readonly cwd?: string;
+};
+
 /**
- * Pre-sidecar navigator continuation (same contract as historical findMostRecentSession):
- * valid session header, header.cwd resolves equal to the calling cwd, newest file mtime wins.
- * Nest-local only — not a parallel scanner and not a generic kind fallback.
- * Returns undefined when no candidate matches (caller mints fresh, same as the old null path).
+ * Bounded session-header discovery matching Pi readSessionHeader:
+ * 4KiB chunks, ≤1MiB total, skip leading blank lines, first non-blank JSON line.
+ * Format non-session / malformed / oversize-without-header → undefined (non-candidate).
+ * Real open/read I/O failures propagate — never washed into non-candidate.
+ */
+function readBoundedSessionHeader(filePath: string): NavigatorSessionHeader | undefined {
+  const fd = openSync(filePath, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(SESSION_HEADER_CHUNK_BYTES);
+    let pending = "";
+    let scanned = 0;
+    while (scanned < MAX_SESSION_HEADER_SCAN_BYTES) {
+      const toRead = Math.min(buffer.length, MAX_SESSION_HEADER_SCAN_BYTES - scanned);
+      const bytesRead = readSync(fd, buffer, 0, toRead, null);
+      if (bytesRead === 0) {
+        return parseSessionHeaderLine(pending);
+      }
+      scanned += bytesRead;
+      pending += buffer.subarray(0, bytesRead).toString("utf8");
+      let lineStart = 0;
+      let newlineIndex = pending.indexOf("\n", lineStart);
+      while (newlineIndex !== -1) {
+        const line = pending.slice(lineStart, newlineIndex);
+        lineStart = newlineIndex + 1;
+        newlineIndex = pending.indexOf("\n", lineStart);
+        if (line.trim() === "") continue;
+        return parseSessionHeaderLine(line);
+      }
+      pending = pending.slice(lineStart);
+    }
+    // Exactly at the scan limit with a complete final line is still accepted;
+    // any further unread byte means the header never arrived in bounds.
+    const probe = Buffer.allocUnsafe(1);
+    if (readSync(fd, probe, 0, 1, null) === 0) {
+      return parseSessionHeaderLine(pending);
+    }
+    return undefined;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function parseSessionHeaderLine(line: string): NavigatorSessionHeader | undefined {
+  if (line.trim() === "") return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (
+    typeof parsed !== "object"
+    || parsed === null
+    || (parsed as { type?: unknown }).type !== "session"
+    || typeof (parsed as { id?: unknown }).id !== "string"
+    || (parsed as { id: string }).id.length === 0
+  ) {
+    return undefined;
+  }
+  const cwd = (parsed as { cwd?: unknown }).cwd;
+  return {
+    type: "session",
+    id: (parsed as { id: string }).id,
+    ...(typeof cwd === "string" ? { cwd } : {}),
+  };
+}
+
+/**
+ * Pre-sidecar navigator continuation (historical findMostRecentSession selection):
+ * bounded valid session header, header.cwd resolves equal to the calling cwd,
+ * newest file mtime wins. Nest-local only — not a generic kind fallback.
+ * Returns undefined when no candidate matches (caller mints fresh, old null path).
+ * Directory/stat/read I/O failures propagate as ActivationLedgerError (failure honesty);
+ * format non-candidates stay skippable.
  */
 function mostRecentNavigatorSessionFile(sessionDir: string, cwd: string): string | undefined {
   const absoluteSessionDir = resolve(sessionDir);
@@ -99,29 +182,25 @@ function mostRecentNavigatorSessionFile(sessionDir: string, cwd: string): string
     let st;
     try {
       st = statSync(filePath);
-    } catch {
-      continue;
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `archivist navigator session file is not stat-able (${filePath}): ${errorText(error)}`,
+        { cause: error },
+      );
     }
     if (!st.isFile()) continue;
+    let header: NavigatorSessionHeader | undefined;
     try {
-      const firstLine = readFileSync(filePath, "utf8").split("\n", 1)[0] ?? "";
-      if (firstLine.trim() === "") continue;
-      const header: unknown = JSON.parse(firstLine);
-      if (
-        typeof header !== "object"
-        || header === null
-        || (header as { type?: unknown }).type !== "session"
-        || typeof (header as { id?: unknown }).id !== "string"
-        || (header as { id: string }).id.length === 0
-      ) {
-        continue;
-      }
-      const headerCwd = (header as { cwd?: unknown }).cwd;
-      if (typeof headerCwd !== "string" || headerCwd.length === 0) continue;
-      if (resolve(headerCwd) !== absoluteCwd) continue;
-    } catch {
-      continue;
+      header = readBoundedSessionHeader(filePath);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `archivist navigator session header is not readable (${filePath}): ${errorText(error)}`,
+        { cause: error },
+      );
     }
+    if (header === undefined) continue;
+    if (typeof header.cwd !== "string" || header.cwd.length === 0) continue;
+    if (resolve(header.cwd) !== absoluteCwd) continue;
     matched.push({ path: filePath, mtimeMs: st.mtimeMs });
   }
   if (matched.length === 0) return undefined;
@@ -133,8 +212,7 @@ function mostRecentNavigatorSessionFile(sessionDir: string, cwd: string): string
  * Resume target for an existing navigator work-subject nest.
  * Prefer the AK current-session sidecar. When absent (legal pre-sidecar / migrated
  * shape), adopt by historical cwd + mtime recency and write the sidecar once.
- * No match → undefined so the sole entry mints fresh (old null path). Multiple
- * matching files are not ambiguity when mtime orders them.
+ * No match → undefined so the sole entry mints fresh (old null path).
  * Ordinary kinds and worker-submission-gate do not use this path.
  */
 function resolveNavigatorNestContinuation(

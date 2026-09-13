@@ -1,10 +1,11 @@
 /**
  * #216/#221 archivist record entry — divergent-parent nesting + #852 navigator work-subject.
- * Navigator durable behavior: one real factory tracer (external pointer/entries only).
+ * Navigator: one independent factory tracer (external topology + entries only).
  */
 import assert from "node:assert/strict";
-import { mkdir, readdir, rm, utimes, writeFile } from "node:fs/promises";
-import { dirname, join, sep } from "node:path";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, utimes, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
@@ -25,7 +26,6 @@ test("createRecordSession nests by the durable parent file", async () => {
     seedGitRepository(project);
 
     const parentDir = join(machineLedgerHome(home), "books", "proj", "runs", "activation", "parent-run");
-    // Divergent sessionDir under the same ledger home (pi --session-dir A --resume B).
     const otherDir = join(machineLedgerHome(home), "books", "proj", "runs", "activation", "other-session-dir");
     await mkdir(parentDir, { recursive: true });
     await mkdir(otherDir, { recursive: true });
@@ -54,11 +54,18 @@ test("createRecordSession nests by the durable parent file", async () => {
 
     const expected = join(dirname(parentFile), "auditor-roles");
     assert.equal(child.getSessionDir(), expected);
-    // Settlement read boundAuditorKnownFailure joins dirname(sessionFile)/auditor-roles.
-    const settlementRead = join(dirname(parent.getSessionFile()!), "auditor-roles");
-    assert.equal(physicalPathIdentity(child.getSessionDir()), physicalPathIdentity(settlementRead));
+    assert.equal(
+      physicalPathIdentity(child.getSessionDir()),
+      physicalPathIdentity(join(dirname(parent.getSessionFile()!), "auditor-roles")),
+    );
   });
 });
+
+/** Independent book-top nest contract — join/hash only, never the placement helper under test. */
+function expectedNavigatorNest(home: string, bookKey: string, subject: string): string {
+  const digest = createHash("sha256").update(subject).digest("hex").slice(0, 32);
+  return join(machineLedgerHome(home), "books", bookKey, "navigator", digest);
+}
 
 function routeRuns(entries: readonly unknown[]): string[] {
   return entries
@@ -67,52 +74,36 @@ function routeRuns(entries: readonly unknown[]): string[] {
     .filter((run): run is string => typeof run === "string");
 }
 
-function assertBookTopNavigatorPointer(pointer: string, home: string): void {
-  const resolved = physicalPathIdentity(pointer);
-  assert.ok(
-    resolved.startsWith(`${physicalPathIdentity(machineLedgerHome(home))}${sep}`),
-    "pointer must stay under hermetic ledger home",
-  );
-  assert.ok(
-    resolved.includes(`${sep}navigator${sep}`),
-    "pointer must sit under book-top navigator/",
-  );
+function sessionJsonl(id: string, cwd: string, route: string): string {
+  return `${JSON.stringify({
+    type: "session",
+    version: 3,
+    id,
+    timestamp: "2026-09-01T00:00:00.000Z",
+    cwd,
+  })}\n${JSON.stringify({
+    type: "custom",
+    customType: "ak-navigator-route",
+    data: { run: route },
+    id: `${id}-route`,
+    parentId: null,
+    timestamp: "2026-09-01T00:00:01.000Z",
+  })}\n`;
 }
 
 /**
- * Sole navigator durable tracer via the public factory:
- * three parent states share one nest, cross-reopen keeps entries, and a real
- * dual-session sidecarless volume adopts by cwd + mtime recency.
+ * Sole navigator factory tracer: table-driven parent states, independent nest path,
+ * wrong-cwd recency filter, and no-match mint.
  */
-test("navigator factory durable nest: parent states, reopen, dual-session adopt", async () => {
+test("navigator factory durable nest: parent states, wrong-cwd recency, no-match mint", async () => {
   await withHermeticHome({ prefix: "ak-archivist-navigator-subject-" }, async ({ home }) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitRepository(project);
 
     const subject = "/work/subject-a";
+    const nest = expectedNavigatorNest(home, "proj", subject);
     const factory = createNativeNavigatorSessionFactory();
-
-    const noParent = await factory({
-      context: { cwd: project, home, sessionManager: undefined } as never,
-      subject,
-      tool: undefined as never,
-    });
-    const nest = noParent.recordPointer()!;
-    assertBookTopNavigatorPointer(nest, home);
-    noParent.appendEntry("ak-navigator-route", { run: "no-parent" });
-
-    const unmaterialized = await factory({
-      context: {
-        cwd: project,
-        home,
-        sessionManager: { getSessionFile: () => undefined },
-      } as never,
-      subject,
-      tool: undefined as never,
-    });
-    assert.equal(physicalPathIdentity(unmaterialized.recordPointer()!), physicalPathIdentity(nest));
-    unmaterialized.appendEntry("ak-navigator-route", { run: "unmaterialized-parent" });
 
     const parentDir = join(machineLedgerHome(home), "books", "proj", "871", "runs", "r1@judge", "session");
     await mkdir(parentDir, { recursive: true });
@@ -128,93 +119,79 @@ test("navigator factory durable nest: parent states, reopen, dual-session adopt"
       })}\n`,
     );
     const parent = SessionManager.open(parentFile, parentDir);
-    const materialized = await factory({
-      context: { cwd: project, home, sessionManager: parent } as never,
-      subject,
-      tool: undefined as never,
-    });
-    assert.equal(physicalPathIdentity(materialized.recordPointer()!), physicalPathIdentity(nest));
-    materialized.appendEntry("ak-navigator-route", { run: "materialized-parent" });
 
-    const reopened = await factory({
-      context: { cwd: project, home, sessionManager: undefined } as never,
-      subject,
-      tool: undefined as never,
-    });
-    assert.equal(physicalPathIdentity(reopened.recordPointer()!), physicalPathIdentity(nest));
-    assert.deepEqual(routeRuns(reopened.entries()), [
+    const parentStates = [
+      { label: "no-parent", sessionManager: undefined as unknown },
+      { label: "unmaterialized-parent", sessionManager: { getSessionFile: () => undefined } },
+      { label: "materialized-parent", sessionManager: parent },
+    ] as const;
+
+    let last: Awaited<ReturnType<ReturnType<typeof createNativeNavigatorSessionFactory>>> | undefined;
+    for (const state of parentStates) {
+      const session = await factory({
+        context: { cwd: project, home, sessionManager: state.sessionManager } as never,
+        subject,
+        tool: undefined as never,
+      });
+      assert.equal(physicalPathIdentity(session.recordPointer()!), physicalPathIdentity(nest));
+      session.appendEntry("ak-navigator-route", { run: state.label });
+      last = session;
+    }
+    assert.deepEqual(routeRuns(last!.entries()), [
       "no-parent",
       "unmaterialized-parent",
       "materialized-parent",
     ]);
+    await last!.dispose();
 
-    await noParent.dispose();
-    await unmaterialized.dispose();
-    await materialized.dispose();
-    await reopened.dispose();
-
-    // Real dual-session sidecarless shape (production has one such volume):
-    // same header.cwd, distinct mtimes — adopt the newer without treating multi-file as ambiguity.
-    const dualSubject = "/work/subject-dual-legacy";
-    const seed = await factory({
-      context: { cwd: project, home, sessionManager: undefined } as never,
-      subject: dualSubject,
-      tool: undefined as never,
-    });
-    const dualNest = seed.recordPointer()!;
-    assertBookTopNavigatorPointer(dualNest, home);
-    await seed.dispose();
-    for (const name of await readdir(dualNest)) {
-      await rm(join(dualNest, name), { force: true });
-    }
-    const olderFile = join(dualNest, "2026-09-01T18-42-28-846Z_01a05e47-a56e-7633-8ce5-7cce276b09c5.jsonl");
-    const newerFile = join(dualNest, "2026-09-02T02-33-34-005Z_01a05ff6-f035-7a88-978d-9010e0c54a6d.jsonl");
-    const sessionLine = (id: string, stamp: string) =>
-      `${JSON.stringify({
-        type: "session",
-        version: 3,
-        id,
-        timestamp: stamp,
-        cwd: project,
-      })}\n`;
-    const routeLine = (run: string, id: string, stamp: string) =>
-      `${JSON.stringify({
-        type: "custom",
-        customType: "ak-navigator-route",
-        data: { run },
-        id,
-        parentId: null,
-        timestamp: stamp,
-      })}\n`;
+    // Legacy dual fixture: newer has wrong cwd (must not win); older matches calling cwd.
+    const legacySubject = "/work/subject-legacy-cwd";
+    const legacyNest = expectedNavigatorNest(home, "proj", legacySubject);
+    await mkdir(legacyNest, { recursive: true });
+    const olderMatching = join(legacyNest, "older-matching.jsonl");
+    const newerWrongCwd = join(legacyNest, "newer-wrong-cwd.jsonl");
+    await writeFile(olderMatching, sessionJsonl("older-id", project, "matching-older"));
+    await writeFile(newerWrongCwd, sessionJsonl("newer-id", join(project, "other"), "wrong-cwd-newer"));
+    // Leading blank before header — historical reader skips blanks; must still adopt.
     await writeFile(
-      olderFile,
-      `${sessionLine("01a05e47-a56e-7633-8ce5-7cce276b09c5", "2026-09-01T18:42:28.846Z")}${routeLine("from-older", "r-old", "2026-09-01T18:42:29.000Z")}`,
+      olderMatching,
+      `\n\n${sessionJsonl("older-id", project, "matching-older")}`,
     );
-    await writeFile(
-      newerFile,
-      `${sessionLine("01a05ff6-f035-7a88-978d-9010e0c54a6d", "2026-09-02T02:33:34.005Z")}${routeLine("from-newer", "r-new", "2026-09-02T02:33:35.000Z")}`,
-    );
-    const olderTime = new Date("2026-09-02T02:32:00.000Z");
-    const newerTime = new Date("2026-09-03T02:40:26.000Z");
-    await utimes(olderFile, olderTime, olderTime);
-    await utimes(newerFile, newerTime, newerTime);
+    const olderTime = new Date("2026-09-02T00:00:00.000Z");
+    const newerTime = new Date("2026-09-03T00:00:00.000Z");
+    await utimes(olderMatching, olderTime, olderTime);
+    await utimes(newerWrongCwd, newerTime, newerTime);
 
     const adopted = await factory({
       context: { cwd: project, home, sessionManager: undefined } as never,
-      subject: dualSubject,
+      subject: legacySubject,
       tool: undefined as never,
     });
-    assert.equal(physicalPathIdentity(adopted.recordPointer()!), physicalPathIdentity(dualNest));
-    assert.deepEqual(routeRuns(adopted.entries()), ["from-newer"]);
-    adopted.appendEntry("ak-navigator-route", { run: "after-adopt" });
-    const adoptedAgain = await factory({
-      context: { cwd: project, home, sessionManager: undefined } as never,
-      subject: dualSubject,
-      tool: undefined as never,
-    });
-    assert.deepEqual(routeRuns(adoptedAgain.entries()), ["from-newer", "after-adopt"]);
+    assert.equal(physicalPathIdentity(adopted.recordPointer()!), physicalPathIdentity(legacyNest));
+    assert.deepEqual(routeRuns(adopted.entries()), ["matching-older"]);
     await adopted.dispose();
-    await adoptedAgain.dispose();
+
+    // No cwd match → mint fresh (old null path); prior wrong-cwd debris must not be resumed.
+    const noMatchSubject = "/work/subject-no-match";
+    const noMatchNest = expectedNavigatorNest(home, "proj", noMatchSubject);
+    await mkdir(noMatchNest, { recursive: true });
+    await writeFile(
+      join(noMatchNest, "foreign.jsonl"),
+      sessionJsonl("foreign-id", join(project, "foreign"), "foreign-only"),
+    );
+    const minted = await factory({
+      context: { cwd: project, home, sessionManager: undefined } as never,
+      subject: noMatchSubject,
+      tool: undefined as never,
+    });
+    assert.equal(physicalPathIdentity(minted.recordPointer()!), physicalPathIdentity(noMatchNest));
+    assert.deepEqual(routeRuns(minted.entries()), []);
+    minted.appendEntry("ak-navigator-route", { run: "fresh-mint" });
+    assert.deepEqual(routeRuns(minted.entries()), ["fresh-mint"]);
+    // Fresh mint is a new principal — not the foreign file.
+    const leaves = (await readdir(noMatchNest)).filter((name) => name.endsWith(".jsonl"));
+    assert.ok(leaves.length >= 2);
+    await minted.dispose();
   });
 });
 
@@ -226,8 +203,6 @@ test("Sitian facade: three levels, with/without usage, and raw pointer can open 
 
     const { sitianReport, readSitianRecords } = await import("../../src/sitian-facade.ts");
 
-    // Case 1: run-summary with usage
-    // #604: explicit home — packageMachineHome ignores process.env.HOME.
     const summaryPtr = sitianReport({
       level: "run-summary",
       kind: "settlement-summary",
@@ -243,7 +218,6 @@ test("Sitian facade: three levels, with/without usage, and raw pointer can open 
     assert.equal(summaryRead.records.length, 1);
     assert.equal(summaryRead.records[0]!.usage?.totalTokens, 60);
 
-    // Case 2: event without usage, with raw reference
     const rawFile = join(home, "raw-session.jsonl");
     await writeFile(rawFile, '{"type":"session"}\n', "utf8");
     const eventPtr = sitianReport({
@@ -263,7 +237,6 @@ test("Sitian facade: three levels, with/without usage, and raw pointer can open 
     assert.equal(eventRead.records[0]!.raw?.sessionFile, rawFile);
     assert.equal(eventRead.records[0]!.raw?.entryId, "entry-99");
 
-    // Case 3: protocol-snapshot without usage, without raw reference
     const snapPtr = sitianReport({
       level: "protocol-snapshot",
       kind: "auditor-roles",
