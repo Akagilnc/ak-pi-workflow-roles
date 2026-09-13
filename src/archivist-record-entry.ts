@@ -3,11 +3,9 @@
  * 调用方只声明自己是谁的什么；落点由候簿拓扑算出，签名不含任何落点/路径参数。
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
-import { randomUUID } from "node:crypto";
 import {
   closeSync,
   existsSync,
-  linkSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -15,7 +13,6 @@ import {
   readSync,
   realpathSync,
   statSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve, join } from "node:path";
@@ -66,160 +63,22 @@ function readCurrentSession(sessionDir: string): string {
   }
 }
 
-type CurrentSessionClaim =
-  | { readonly won: true }
-  | { readonly won: false; readonly winnerFile: string };
-
-type NavigatorSessionHeader = {
-  readonly type: "session";
-  readonly id: string;
-  readonly cwd?: string;
-};
-
-/**
- * Sole current-session publish authority: assemble complete payload, write a
- * same-directory temp, then exclusive hard-link install so readers never see a
- * half-written sidecar. EEXIST → nest-fenced winner adoption. Non-EEXIST keeps
- * the typed main failure. Shared by nest adoption, fresh mint, and every other
- * mayResumeSameNest write point.
- */
-function claimCurrentSession(sessionDir: string, sessionFile: string): CurrentSessionClaim {
+function writeCurrentSession(sessionDir: string, sessionFile: string): void {
   const ledger = join(sessionDir, CURRENT_SESSION_LEDGER);
-  const payload = `${JSON.stringify({ sessionFile })}\n`;
-  const temporary = join(sessionDir, `.current-session-${randomUUID()}.tmp`);
-  let primaryFailure: unknown;
-  let claim: CurrentSessionClaim | undefined;
   try {
-    writeFileSync(temporary, payload);
-    try {
-      linkSync(temporary, ledger);
-      claim = { won: true };
-    } catch (error) {
-      if (errnoCode(error) !== "EEXIST") {
-        throw new ActivationLedgerError(
-          `archivist current-session ledger cannot be created (${ledger}): ${errorText(error)}`,
-          { cause: error },
-        );
-      }
-      const winnerFile = readCurrentSession(sessionDir);
-      assertRecentFinalFileUnderSessionDir(sessionDir, winnerFile);
-      claim = { won: false, winnerFile };
-    }
+    writeFileSync(ledger, `${JSON.stringify({ sessionFile })}\n`, { flag: "wx" });
   } catch (error) {
-    primaryFailure = error instanceof ActivationLedgerError
-      ? error
-      : new ActivationLedgerError(
-        `archivist current-session ledger cannot be created (${ledger}): ${errorText(error)}`,
-        { cause: error },
-      );
-  }
-
-  // Temp cleanup is mandatory when the file still exists. ENOENT = already clear.
-  // No primary: cleanup failure is the main ActivationLedgerError. With primary:
-  // keep primary cause and attach cleanup via AggregateError (activation-ledger shape).
-  try {
-    unlinkSync(temporary);
-  } catch (cleanupError) {
-    if (errnoCode(cleanupError) !== "ENOENT") {
-      if (primaryFailure !== undefined) {
-        throw new AggregateError(
-          [primaryFailure, cleanupError],
-          `archivist current-session temp cleanup failed beside primary failure (${temporary})`,
-          { cause: primaryFailure },
-        );
-      }
-      throw new ActivationLedgerError(
-        `archivist current-session temp cleanup failed (${temporary}): ${errorText(cleanupError)}`,
-        { cause: cleanupError },
-      );
-    }
-  }
-
-  if (primaryFailure !== undefined) throw primaryFailure;
-  return claim!;
-}
-
-type HeaderOnlyCandidateRead =
-  | { readonly kind: "header-only"; readonly header: NavigatorSessionHeader }
-  | { readonly kind: "not-header-only" }
-  | { readonly kind: "absent" };
-
-/**
- * Structure kernel for a mint candidate: first non-blank line is a session
- * header; no further non-blank lines (no business entry). Real read I/O
- * failures (EACCES/EIO/…) propagate as ActivationLedgerError — never washed
- * into not-header-only / false success. ENOENT → absent.
- */
-function readHeaderOnlySessionCandidate(filePath: string): HeaderOnlyCandidateRead {
-  let text: string;
-  try {
-    text = readFileSync(filePath, "utf8");
-  } catch (error) {
-    if (errnoCode(error) === "ENOENT") return { kind: "absent" };
     throw new ActivationLedgerError(
-      `archivist mint candidate structure kernel is not readable (${filePath}): ${errorText(error)}`,
+      `archivist current-session ledger cannot be created (${ledger}): ${errorText(error)}`,
       { cause: error },
     );
   }
-  let header: NavigatorSessionHeader | undefined;
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
-    if (header === undefined) {
-      header = parseSessionHeaderLine(line);
-      if (header === undefined) return { kind: "not-header-only" };
-      continue;
-    }
-    return { kind: "not-header-only" };
-  }
-  return header === undefined
-    ? { kind: "not-header-only" }
-    : { kind: "header-only", header };
 }
 
-/**
- * Loser mint cleanup: delete only when (1) path still equals this SessionManager's
- * held candidate, (2) in-memory header/session identity matches the on-disk
- * header id, and (3) structure kernel is still header-only with no business
- * entry. Never touches winner, history, peers, or current-session.json.
- * Predicate-satisfied unlink failure is infrastructure failure with cause
- * preserved — not best-effort. Mismatch → do not delete (no fabricated success).
- */
-function removeHeaderOnlyMintCandidate(
-  session: SessionManager,
-  candidateFile: string,
-): void {
-  const held = session.getSessionFile();
-  if (held === undefined) return;
-  const absoluteHeld = resolve(held);
-  const absoluteCandidate = resolve(candidateFile);
-  if (absoluteHeld !== absoluteCandidate) return;
-
-  const memoryHeader = session.getHeader();
-  const sessionId = session.getSessionId();
-  if (
-    memoryHeader === null
-    || memoryHeader.type !== "session"
-    || typeof memoryHeader.id !== "string"
-    || memoryHeader.id.length === 0
-    || memoryHeader.id !== sessionId
-  ) {
-    return;
-  }
-
-  const disk = readHeaderOnlySessionCandidate(absoluteCandidate);
-  if (disk.kind === "absent") return;
-  if (disk.kind !== "header-only") return;
-  if (disk.header.id !== memoryHeader.id) return;
-
-  try {
-    unlinkSync(absoluteCandidate);
-  } catch (error) {
-    if (errnoCode(error) === "ENOENT") return;
-    throw new ActivationLedgerError(
-      `archivist mint candidate cleanup failed (${absoluteCandidate}): ${errorText(error)}`,
-      { cause: error },
-    );
-  }
+/** True when wx lost to a peer creator — native EEXIST on the write itself. */
+function isCurrentSessionClaimRace(error: unknown): boolean {
+  if (!(error instanceof ActivationLedgerError)) return errnoCode(error) === "EEXIST";
+  return errnoCode(error.cause) === "EEXIST";
 }
 
 function currentSessionLedgerPath(sessionDir: string): string {
@@ -229,6 +88,12 @@ function currentSessionLedgerPath(sessionDir: string): string {
 /** Same bounds as Pi readSessionHeader — do not invent a second scan ceiling. */
 const SESSION_HEADER_CHUNK_BYTES = 4096;
 const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
+
+type NavigatorSessionHeader = {
+  readonly type: "session";
+  readonly id: string;
+  readonly cwd?: string;
+};
 
 /**
  * Bounded session-header discovery matching Pi readSessionHeader:
@@ -400,8 +265,19 @@ function resolveNavigatorNestContinuation(
   const adopted = mostRecentNavigatorSessionFile(sessionDir, cwd);
   if (adopted === undefined) return undefined;
   assertRecentFinalFileUnderSessionDir(sessionDir, adopted);
-  const claim = claimCurrentSession(sessionDir, adopted);
-  return claim.won ? adopted : claim.winnerFile;
+  try {
+    writeCurrentSession(sessionDir, adopted);
+    return adopted;
+  } catch (error) {
+    // Concurrent first adopter lost wx — read the winner through the same
+    // containment gate. Other write failures keep their typed cause.
+    if (isCurrentSessionClaimRace(error)) {
+      const recentFile = readCurrentSession(sessionDir);
+      assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
+      return recentFile;
+    }
+    throw error;
+  }
 }
 
 /** Durable parent session surface that links and nests the record. */
@@ -574,9 +450,6 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
   // Pi defers session-file create until the first assistant message. Custom-entry-only
   // records never get that turn, so the sole record entry materializes the in-memory
   // header onto the UUIDv7 path before returning. Existing path → early return.
-  // Fresh mayResumeSameNest mint order (fixed): header-only candidate first, then
-  // exclusive complete sidecar claim; loser adopts the winner and conditionally
-  // deletes only this process's still-header-only candidate.
   if (session.isPersisted()) {
     const file = session.getSessionFile();
     if (file !== undefined && !existsSync(file)) {
@@ -588,12 +461,7 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
       }
     }
     if (mayResumeSameNest && file !== undefined) {
-      const claim = claimCurrentSession(sessionDir, file);
-      if (!claim.won) {
-        const winner = SessionManager.open(claim.winnerFile, sessionDir, cwd);
-        removeHeaderOnlyMintCandidate(session, file);
-        return { session: winner, resumed: true };
-      }
+      writeCurrentSession(sessionDir, file);
     }
   }
   return { session, resumed: false };
