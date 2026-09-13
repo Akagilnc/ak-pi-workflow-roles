@@ -18,6 +18,7 @@ import type {
   DurablePrincipalAuthority,
   HostContext,
   RoleHost,
+  type RoleTurnHost,
 } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -29,6 +30,7 @@ import {
 } from "../../src/ticket-provenance.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
 import {
+  createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
   type LegacyFauxPiRunner,
@@ -260,6 +262,117 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
       existsSync(sample.volumeDir),
       false,
       `true-unbound must not mint ticket dir ${sample.volumeDir}`,
+    );
+  });
+});
+
+
+/**
+ * Host turn already started + board ticket already written by the accept hook,
+ * then the turn fails: failure stays honest and the run still relocates under the
+ * ticket before lease release (shared afterDispatch once-only finish).
+ */
+test("ak-role diarist host-turn failure still relocates board-bound run", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    // Temp-home config only — never the real seat table. Zero resume budget so
+    // this tracer stays on the post-turn relocate seam.
+    await mkdir(join(home, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(home, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ autoResumeLimit: 0 }, null, 2)}\n`,
+    );
+
+    const runId = "01a0diar00-0000-7000-8000-000000000003";
+    const { io } = captureIo();
+
+    const failingHost = createMinimalHost(async (request) => {
+      let registered: RegisteredTool | undefined;
+      const host = {
+        registerTool(tool: unknown) {
+          registered = tool as RegisteredTool;
+        },
+        on() {},
+        getAllTools: () => (registered === undefined ? [] : [{ name: registered.name }]),
+      } as unknown as RoleHost;
+      const runDir = request.runDirectory;
+      const sessionDir = join(runDir, "session");
+      const sessionFile = join(sessionDir, "session.jsonl");
+      await mkdir(sessionDir, { recursive: true });
+      await writeFile(sessionFile, "");
+      const runtime = createDiaristRoleRuntime(host, {
+        loadSoul: async () => "起居郎职分（测试装载）",
+      });
+      await runtime.activate();
+      assert.ok(registered, "diarist envelope registered no output tool");
+      // Real accept hook writes typed board ticket under the still-unbound run.
+      await registered.execute(
+        "call_diarist_fail_1",
+        {
+          status: "completed",
+          ticketNumber: TICKET,
+          entries: [
+            {
+              sourceKind: "cc-session",
+              sourceRef: { sessionFile: ENTRY_SESSION_FILE, entryId: ENTRY_ID },
+              transcript: "board-bound before host failure",
+              timestamp: "2026-09-08T00:00:00.000Z",
+            },
+          ],
+        },
+        undefined,
+        undefined,
+        {
+          runDirectory: runDir,
+          sessionManager: {
+            getSessionDir: () => sessionDir,
+            getSessionFile: () => sessionFile,
+          },
+        } as HostContext,
+      );
+      throw new Error("host turn failed after diarist board bind");
+    });
+
+    const result = await runAkRole(
+      ["diarist", "--project", project, `整理 #${TICKET} 起居录`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => runId,
+        principalAuthority: immutablePrincipalAuthority,
+        roleTurnHost: failingHost,
+      },
+    );
+
+    assert.notEqual(result.exitCode, 0, "host failure must stay non-zero");
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const ticketPlacement = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey,
+      subject: { ticketNumber: TICKET },
+      runId,
+      role: "diarist",
+    });
+    const unboundPlacement = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey,
+      subject: { unbound: true },
+      runId,
+      role: "diarist",
+    });
+    assert.equal(
+      existsSync(join(ticketPlacement.runDirectory, "run-state.json")),
+      true,
+      `failure run must relocate under ticket with durable state at ${ticketPlacement.runDirectory}`,
+    );
+    assert.equal(
+      existsSync(join(unboundPlacement.runDirectory, "run-state.json")),
+      false,
+      "unbound must not keep the durable run-state after relocate",
     );
   });
 });

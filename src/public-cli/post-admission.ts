@@ -584,13 +584,32 @@ export async function dispatchPostAdmissionTurn<
     turnDispatched?: true;
     needsPersist?: true;
   };
-  /** Post-turn bind/relocate under the still-held writer lease; failures stay controlled. */
+  /**
+   * Once-only post-host-turn hook (Diarist bind/relocate, etc.) under the still-held
+   * writer lease. Every exit after the host turn has started must pass here before
+   * lease release — success and failure alike. When a primary failure terminal already
+   * exists, keep that cause and leave relocate failure on the shared diagnostic channel.
+   */
+  let afterDispatchApplied = false;
   const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
-    if (adapters.afterDispatch === undefined) return result;
+    if (adapters.afterDispatch === undefined || afterDispatchApplied) return result;
+    afterDispatchApplied = true;
     try {
       await adapters.afterDispatch(admitted, lease);
       return result;
     } catch (error) {
+      const primaryFailure =
+        result.terminal !== undefined
+        && !isLawfulTypedTerminalOutcome(result.terminal.roleOutcome);
+      if (primaryFailure) {
+        await recordBestEffortPostDispatchDiagnostic(
+          admitted,
+          env,
+          `afterDispatch failed beside primary terminal (best-effort continue): ${describeErrorIdentity(error)}`,
+          io,
+        );
+        return result;
+      }
       return {
         ...(await presentControlledFailure(
           admitted,
@@ -778,7 +797,7 @@ export async function dispatchPostAdmissionTurn<
         io,
         persistRunState,
       );
-      return { ...settled, turnDispatched: true as const, ...deferredPersist };
+      return await finishAfterTurn({ ...settled, turnDispatched: true as const, ...deferredPersist });
     }
 
     // `result.stderr` stays live in memory for the real classification below
@@ -982,7 +1001,7 @@ export async function dispatchPostAdmissionTurn<
         io,
         persistRunState,
       );
-      return { ...settledFailure, turnDispatched: true as const, ...deferredPersist };
+      return await finishAfterTurn({ ...settledFailure, turnDispatched: true as const, ...deferredPersist });
     }
     if (settledOutcome !== undefined) {
       if (persistRunState) {
@@ -1013,7 +1032,7 @@ export async function dispatchPostAdmissionTurn<
             io,
             persistRunState,
           );
-          return { ...failed, turnDispatched: true as const, ...deferredPersist };
+          return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
         }
       }
       // Lawful persist + present is the caller's stop seam (auto-resume loop /
@@ -1054,7 +1073,7 @@ export async function dispatchPostAdmissionTurn<
         io,
         persistRunState,
       );
-      return { ...failed, turnDispatched: true as const, ...deferredPersist };
+      return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
     }
 
     // Nothing else was wrong, but the durable stderr mirror itself failed to
@@ -1074,7 +1093,7 @@ export async function dispatchPostAdmissionTurn<
         io,
         persistRunState,
       );
-      return { ...failed, turnDispatched: true as const, ...deferredPersist };
+      return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
     }
 
     const noReceipt = await attachRecordedSubmissions(
@@ -1105,7 +1124,7 @@ export async function dispatchPostAdmissionTurn<
           io,
           persistRunState,
         );
-        return { ...failed, turnDispatched: true as const, ...deferredPersist };
+        return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
       }
     }
     return await finishAfterTurn({
