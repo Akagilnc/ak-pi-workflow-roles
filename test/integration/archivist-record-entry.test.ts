@@ -110,6 +110,16 @@ test("navigator factory durable nest: parent states, unicode cwd, wrong-cwd, no-
     const subject = "/work/subject-a";
     const nest = expectedNavigatorNest(home, bookKey, subject);
     const factory = createNativeNavigatorSessionFactory();
+    // HostContext.runDirectory is the admitted-run ledger identity (#852 / #879) — not context.home.
+    const runDirectory = join(
+      machineLedgerHome(home),
+      "books",
+      bookKey,
+      "unbound",
+      "runs",
+      "nav-run@navigator",
+    );
+    await mkdir(join(runDirectory, "session"), { recursive: true });
 
     const parentDir = join(
       machineLedgerHome(home),
@@ -143,11 +153,16 @@ test("navigator factory durable nest: parent states, unicode cwd, wrong-cwd, no-
     let last: Awaited<ReturnType<ReturnType<typeof createNativeNavigatorSessionFactory>>> | undefined;
     for (const state of parentStates) {
       const session = await factory({
-        context: { cwd: project, home, sessionManager: state.sessionManager } as never,
+        context: { cwd: project, runDirectory, sessionManager: state.sessionManager } as never,
         subject,
         tool: undefined as never,
       });
+      // Nest and admitted run share one ledger home — never a second passwd/env home.
       assert.equal(physicalPathIdentity(session.recordPointer()!), physicalPathIdentity(nest));
+      assert.equal(
+        physicalPathIdentity(session.recordPointer()!).startsWith(physicalPathIdentity(machineLedgerHome(home))),
+        true,
+      );
       session.appendEntry("ak-navigator-route", { run: state.label });
       last = session;
     }
@@ -157,6 +172,36 @@ test("navigator factory durable nest: parent states, unicode cwd, wrong-cwd, no-
       "materialized-parent",
     ]);
     await last!.dispose();
+
+    // Foreign parent path (not under .ak-roles) must not displace runDirectory home.
+    const foreignParentFile = join(home, "outside-ledger", "session.jsonl");
+    await mkdir(dirname(foreignParentFile), { recursive: true });
+    await writeFile(
+      foreignParentFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "foreign-parent",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        cwd: project,
+      })}\n`,
+    );
+    const foreignSubject = "/work/subject-foreign-parent";
+    const foreignNest = expectedNavigatorNest(home, bookKey, foreignSubject);
+    const foreignSession = await factory({
+      context: {
+        cwd: project,
+        runDirectory,
+        sessionManager: { getSessionFile: () => foreignParentFile },
+      } as never,
+      subject: foreignSubject,
+      tool: undefined as never,
+    });
+    assert.equal(
+      physicalPathIdentity(foreignSession.recordPointer()!),
+      physicalPathIdentity(foreignNest),
+    );
+    await foreignSession.dispose();
 
     // Legacy: newer wrong-cwd must not win; older matching Unicode cwd (leading blanks) adopts.
     const legacySubject = "/work/subject-legacy-cwd";
@@ -178,7 +223,7 @@ test("navigator factory durable nest: parent states, unicode cwd, wrong-cwd, no-
     await utimes(newerWrongCwd, newerTime, newerTime);
 
     const adopted = await factory({
-      context: { cwd: project, home, sessionManager: undefined } as never,
+      context: { cwd: project, runDirectory, sessionManager: undefined } as never,
       subject: legacySubject,
       tool: undefined as never,
     });
@@ -195,7 +240,7 @@ test("navigator factory durable nest: parent states, unicode cwd, wrong-cwd, no-
       sessionJsonl("foreign-id", join(project, "foreign"), "foreign-only"),
     );
     const minted = await factory({
-      context: { cwd: project, home, sessionManager: undefined } as never,
+      context: { cwd: project, runDirectory, sessionManager: undefined } as never,
       subject: noMatchSubject,
       tool: undefined as never,
     });
@@ -218,7 +263,7 @@ test("navigator factory durable nest: parent states, unicode cwd, wrong-cwd, no-
     await assert.rejects(
       () =>
         factory({
-          context: { cwd: project, home, sessionManager: undefined } as never,
+          context: { cwd: project, runDirectory, sessionManager: undefined } as never,
           subject: ioSubject,
           tool: undefined as never,
         }),
