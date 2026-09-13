@@ -18,7 +18,7 @@ import type {
   DurablePrincipalAuthority,
   HostContext,
   RoleHost,
-  type RoleTurnHost,
+  RoleTurnHost,
 } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
