@@ -97,9 +97,11 @@ export async function readMigrationDerivedTicketNumber(
 }
 
 /**
- * Sole effective ticketNumber for a retained run: board admitted → board
- * invocation → migration derivation. Derivation is last so board wins and is
- * never overwritten by a derived page.
+ * Display / historical-placement ticketNumber for a retained run:
+ * board admitted → board invocation → migration derivation.
+ * Derivation is last so board wins. Callers that mint, resume, inherit, or
+ * otherwise write ticket identity must use readBoardTicketNumber instead —
+ * derived placement is never a board assertion.
  */
 export async function readRunTicketNumber(
   runDirectory: string,

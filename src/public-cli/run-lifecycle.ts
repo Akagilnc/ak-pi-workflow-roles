@@ -19,7 +19,7 @@ import {
 import { listBookRunDirectories } from "../role-run-placement.ts";
 import {
   isSafePositiveTicketNumber,
-  readRunTicketNumber,
+  readBoardTicketNumber,
 } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -1018,6 +1018,8 @@ export async function acquireRunWriterLease(
  * Locate a Role run directory by run ID under the ledger books home.
  * Returns undefined when the ID is unknown.
  * Walk surface = listBookRunDirectories (flat legacy + subject-tree).
+ * Collects every match under the supplied book/role filters: zero → undefined,
+ * one → path, many → loud ambiguity (never readdir-first).
  */
 export async function findRunDirectoryById(
   home: string | undefined,
@@ -1036,6 +1038,7 @@ export async function findRunDirectoryById(
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
   }
+  const matches: string[] = [];
   for (const bookKey of bookKeys) {
     if (onlyBookKey !== undefined && bookKey !== onlyBookKey) continue;
     const bookDir = activationBookDirectory(ledgerHome, bookKey);
@@ -1052,11 +1055,15 @@ export async function findRunDirectoryById(
         (onlyRole === undefined && (entry === `${runId}@judge` || entry.startsWith(`${runId}@`))) ||
         entry === `${runId}@${onlyRole}`
       ) {
-        return runDirectory;
+        matches.push(runDirectory);
       }
     }
   }
-  return undefined;
+  if (matches.length === 0) return undefined;
+  if (matches.length === 1) return matches[0];
+  throw new Error(
+    `ambiguous role run id ${runId}: ${matches.join(", ")}`,
+  );
 }
 
 /** Code-owned gate inspector summons prefix (public-role-summons / #747). */
@@ -1164,7 +1171,8 @@ export async function findLatestRunIdForSeatTicket(input: {
       const parentPath = await readRunParentPath(runDirectory);
       if (parentPath !== input.parentRunPath) continue;
     } else if (input.ticketNumber !== undefined) {
-      const ticketNumber = await readRunTicketNumber(runDirectory);
+      // Same-ticket resume is board identity only — never migration-derived.
+      const ticketNumber = await readBoardTicketNumber(runDirectory);
       if (ticketNumber !== input.ticketNumber) continue;
     }
     // Durable fact: never resume-select a provisional that never formed principal.

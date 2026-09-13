@@ -15,9 +15,9 @@ const rows = [
   { type: "message", timestamp: "2026-08-01T05:01:20.000Z", message: { role: "toolResult", toolCallId: "c1", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "done" } } },
 ];
 
-/** Machine ledger home runs root: `.../.ak-roles/books/<book>/issues/<issue>/runs`. */
+/** Machine ledger home runs root: `.../.ak-roles/books/<book>/<issue>/runs`. */
 function homeRuns(root: string, issue: number, book = "demo-book"): string {
-  return join(root, ".ak-roles", "books", book, "issues", String(issue), "runs");
+  return join(root, ".ak-roles", "books", book, String(issue), "runs");
 }
 
 test("one retained runs directory yields an independently cited single-case cost report", async () => {
@@ -247,7 +247,7 @@ test("case identity is repository-relative with an absolute fallback outside rep
     await mkdir(join(repository, ".git"));
     const repositoryRuns = homeRuns(repository, 40);
     await mkdir(repositoryRuns, { recursive: true });
-    assert.equal((await loadDoctorCase(repositoryRuns)).identity.runsPath, ".ak-roles/books/demo-book/issues/40/runs");
+    assert.equal((await loadDoctorCase(repositoryRuns)).identity.runsPath, ".ak-roles/books/demo-book/40/runs");
   });
 
   // Absolute-fallback arm must sit truly outside any git worktree. worktreeTempPrefix

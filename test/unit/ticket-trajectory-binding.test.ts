@@ -10,6 +10,7 @@ import {
   loadTicketTrajectoryRuns,
   loadUnboundTrajectoryRuns,
 } from "../../src/ticket-trajectory.ts";
+import { findRunDirectoryById } from "../../src/public-cli/run-lifecycle.ts";
 
 async function withBookDir<T>(scenario: (ledgerDir: string) => Promise<T>): Promise<T> {
   return await withTempRoot("ak-ticket-traj-", async (root) => {
@@ -152,6 +153,48 @@ test("book index is reusable across tickets without re-scanning semantics", asyn
     const b = await loadTicketTrajectoryRuns(ledgerDir, 177, index);
     assert.equal(a.some((run) => run.runId === "01a@judge"), true);
     assert.equal(b.some((run) => run.runId === "01b@fixer"), true);
+  });
+});
+
+test("bare runId lookup is loud when the same id exists under multiple leaves", async () => {
+  await withTempRoot("ak-run-id-ambig-", async (home) => {
+    const book = join(home, ".ak-roles", "books", "demo");
+    const runId = "01ambigrun";
+    for (const role of ["judge", "coder"] as const) {
+      const runDir = join(book, "unbound", "runs", `${runId}@${role}`);
+      await mkdir(runDir, { recursive: true });
+    }
+    await assert.rejects(
+      () => findRunDirectoryById(home, runId),
+      (error: unknown) =>
+        error instanceof Error &&
+        error.message.includes("ambiguous role run id") &&
+        error.message.includes(`${runId}@judge`) &&
+        error.message.includes(`${runId}@coder`),
+    );
+    // Role filter keeps a unique match.
+    const onlyJudge = await findRunDirectoryById(home, runId, undefined, "judge");
+    assert.ok(onlyJudge?.endsWith(`${runId}@judge`));
+  });
+});
+
+test("migration-derived ticket page places a run into the ticket view without board pages", async () => {
+  await withBookDir(async (ledgerDir) => {
+    const runFolder = "01derived@judge";
+    const runDir = await seedFlatRun(ledgerDir, runFolder);
+    await writeFile(
+      join(runDir, "migration-ticket-derivation.json"),
+      `${JSON.stringify({
+        ticketNumber: 852,
+        derivation: "worktree-path-basename",
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    const runs = await loadTicketTrajectoryRuns(ledgerDir, 852);
+    assert.equal(runs.some((run) => run.runId === runFolder), true);
+    // Board-less derived placement must not leak into other tickets.
+    const other = await loadTicketTrajectoryRuns(ledgerDir, 853);
+    assert.equal(other.some((run) => run.runId === runFolder), false);
   });
 });
 

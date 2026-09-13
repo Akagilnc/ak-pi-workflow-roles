@@ -30,6 +30,7 @@ import {
   formatUsdPrecise,
 } from "./human-format.ts";
 import { listBookRunDirectories } from "./role-run-placement.ts";
+import { readRunTicketNumber } from "./run-ticket-number.ts";
 import {
   extractSessionTimestampSpan,
   readLedgerSessionJsonl,
@@ -303,16 +304,12 @@ async function readInvocation(runDir: string): Promise<InvocationInfo | undefine
         info.model = rawModel;
       }
     }
-    if (
-      typeof parsed.ticketNumber === "number" &&
-      Number.isInteger(parsed.ticketNumber) &&
-      parsed.ticketNumber >= 1
-    ) {
-      info.ticketNumber = parsed.ticketNumber;
-    }
     if (typeof parsed.correlationId === "string" && parsed.correlationId.trim() !== "") {
       info.correlationId = parsed.correlationId;
     }
+    // Display placement: board pages first, then migration-derived (never forges board).
+    const ticketNumber = await readRunTicketNumber(runDir);
+    if (ticketNumber !== undefined) info.ticketNumber = ticketNumber;
     return info;
   } catch (error) {
     // Only genuine absence activates the invocation fallback. Malformed JSON and

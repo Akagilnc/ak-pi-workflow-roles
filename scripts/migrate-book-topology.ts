@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 import { resolve } from "node:path";
 
 import { migrateBookTopology } from "../src/book-topology-migration.ts";
@@ -7,7 +6,7 @@ import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../src/book-topology-partitio
 function ledgerHomeFromArgv(argv: readonly string[]): string | undefined {
   if (argv.length === 0) return undefined;
   if (argv.length === 2 && argv[0] === "--ledger-home") return resolve(argv[1]);
-  throw new Error("usage: tsx scripts/migrate-book-topology.ts [--ledger-home <path>]");
+  throw new Error("usage: node dist/migrate-book-topology.js [--ledger-home <path>]");
 }
 
 const report = await migrateBookTopology({

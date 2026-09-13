@@ -167,7 +167,7 @@ test("parseDoctorArgv requires positive issue; accepts optional runs and rejects
       "--issue",
       "7",
       "--runs",
-      ".ak-roles/books/demo/issues/7/runs",
+      ".ak-roles/books/demo/7/runs",
       "--project",
       "/tmp/p",
       "--attach",
@@ -175,7 +175,7 @@ test("parseDoctorArgv requires positive issue; accepts optional runs and rejects
     ]),
     {
       issueNumber: 7,
-      runs: ".ak-roles/books/demo/issues/7/runs",
+      runs: ".ak-roles/books/demo/7/runs",
       project: "/tmp/p",
       attachmentPaths: ["/tmp/a.md"],
       instruction: "",

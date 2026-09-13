@@ -143,6 +143,35 @@ export async function buildHeadlessProductionHost(
   );
 }
 
+/**
+ * Published one-shot book-topology migration CLI (#852).
+ * Node-executable ESM bundle — consumers must not need dev-only tsx.
+ * createRequire banner lets transitive CJS deps reach node builtins.
+ */
+export async function buildMigrateBookTopology(
+  outfile = "dist/migrate-book-topology.js",
+) {
+  await mkdir(dirname(outfile), { recursive: true });
+  await build({
+    entryPoints: ["scripts/migrate-book-topology.ts"],
+    outfile,
+    format: "esm",
+    platform: "node",
+    target: "node20",
+    bundle: true,
+    banner: {
+      js: [
+        "#!/usr/bin/env node",
+        "import { createRequire as __akCreateRequire } from 'node:module';",
+        "const require = __akCreateRequire(import.meta.url);",
+        "",
+      ].join("\n"),
+    },
+    logLevel: "silent",
+  });
+  await chmod(outfile, 0o755);
+}
+
 export async function buildPackageArtifacts() {
   await build({
     entryPoints: entries.map((name) => `src/${name}.ts`),
@@ -169,6 +198,7 @@ export async function buildPackageArtifacts() {
   await buildPublicAkRoleBin();
   await buildAcpProductionHost();
   await buildHeadlessProductionHost();
+  await buildMigrateBookTopology();
 }
 
 const isMain =
