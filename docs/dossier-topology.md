@@ -11,7 +11,6 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 └── books/<book-key>/
     ├── <ticket>/
     │   ├── records.jsonl
-    │   ├── 起居录.md
     │   └── runs/<runId>@<role>/
     │       ├── session/
     │       ├── artifacts/
@@ -37,7 +36,7 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 归属判据是：删除一张票后仍有意义的记录才留在票外。除游奕使工作主体与通进司手册外，属于某票的材料均落在该票目录；属于某条腿的记录均落在该腿的 run 目录，不在簿根另设 kind 分区。首次入票的识别腿先落 `unbound/runs/`，取得起居郎 typed 票身份后整体归位至 `<ticket>/runs/`，不设第五类顶层项。
 
-`records.jsonl` 是该票起居录的权威记录，`起居录.md` 是同目录派生的人读面。`session/` 的内部文件由对应宿主决定；Pi 的原生会话文件位于 `session/session.jsonl`。run-owned records 包括 attempt history、submission ledger、gate、attendance、dispatch error 与过闸官员卷等归属于该 run 的记录；这些名称描述所有权，不另立簿根路径。
+`records.jsonl` 是该票起居录的唯一文件（#900：每票只留一份，派生人读面 `起居录.md` 已取消）。`session/` 的内部文件由对应宿主决定；Pi 的原生会话文件位于 `session/session.jsonl`。run-owned records 包括 attempt history、submission ledger、gate、attendance、dispatch error 与过闸官员卷等归属于该 run 的记录；这些名称描述所有权，不另立簿根路径。
 
 ## 边界
 
