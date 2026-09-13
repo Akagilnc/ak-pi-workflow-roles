@@ -561,10 +561,9 @@ async function mergeCompanionsFromVolume(
   bookKey: string,
   volumeDir: string,
   writes: RecordWriteCache,
-  touchedTickets: Set<number>,
 ): Promise<void> {
   for (const ticketNumber of await ticketNumbersInVolume(volumeDir)) {
-    touchedTickets.add(ticketNumber);
+    noteTouchedTicket(context, bookKey, ticketNumber);
     const destDir = join(context.booksDirectory, bookKey, String(ticketNumber));
     await ensureDir(destDir);
     await mergeOfferedIdentities(destDir, volumeDir, writes);
@@ -579,25 +578,14 @@ async function migrateHomePartitionBook(
   outcomes: MigrationItemOutcome[],
 ): Promise<void> {
   const backupBook = join(context.backupBooksDirectory, bookKey);
-  // Touches accumulate on context.touchedTicketsByBook — human view finalizes
-  // once after misplaced lines also land (not here).
-  let touchedTickets = context.touchedTicketsByBook.get(bookKey);
-  if (touchedTickets === undefined) {
-    touchedTickets = new Set<number>();
-    context.touchedTicketsByBook.set(bookKey, touchedTickets);
-  }
+  // Touches accumulate via noteTouchedTicket — human view finalizes once after
+  // misplaced lines also land (not here).
   // listVolumeRecordFiles covers partition-root records.jsonl + hashed sub-volumes.
   const rootFiles = await listVolumeRecordFiles(join(backupBook, category));
   for (const filePath of rootFiles) {
     await migrateJsonlFileByKind(context, bookKey, writes, filePath, category, outcomes);
     if (category === TICKET_PROVENANCE) {
-      await mergeCompanionsFromVolume(
-        context,
-        bookKey,
-        dirname(filePath),
-        writes,
-        touchedTickets,
-      );
+      await mergeCompanionsFromVolume(context, bookKey, dirname(filePath), writes);
     }
   }
 
@@ -620,11 +608,9 @@ async function migrateHomePartitionBook(
         throw error;
       }
       await migrateJsonlFileByKind(context, bookKey, writes, recordsFile, TICKET_PROVENANCE, outcomes);
-      await mergeCompanionsFromVolume(context, bookKey, volumeDir, writes, touchedTickets);
+      await mergeCompanionsFromVolume(context, bookKey, volumeDir, writes);
       // Ticket-dir name itself is a typed ticket when the volume lives under it.
-      if (isTicketNumberString(entry.name)) {
-        touchedTickets.add(Number(entry.name));
-      }
+      noteTouchedTicket(context, bookKey, Number(entry.name));
     }
   }
 }
