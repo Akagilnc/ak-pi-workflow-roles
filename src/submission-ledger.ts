@@ -16,6 +16,7 @@ import { isAuditEscalationProjection } from "./audit-escalation.ts";
 
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { readSitianRecords, resolveSitianRecordPathInLedger, sitianReport, type RecordPointer } from "./sitian-facade.ts";
+import type { SitianRecord } from "./sitian-contracts.ts";
 import { findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
 import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
@@ -137,15 +138,33 @@ async function submissionRecordFile(cwd: string, runId: string, scope: Submissio
   }, ledgerHome).recordFile;
 }
 
-async function readOwnedSubmissionRecords(cwd: string, runId: string, scope: SubmissionLedgerReadScope = {}) {
+/**
+ * Discriminated owned-row view:
+ * - unknown run → file absent + empty owned (read APIs only)
+ * - located ledger → file is string; prior/write consumers may build RecordPointer
+ */
+type OwnedSubmissionRecords =
+  | { readonly file: undefined; readonly owned: readonly [] }
+  | { readonly file: string; readonly owned: readonly SitianRecord[] };
+
+async function readOwnedSubmissionRecords(
+  cwd: string,
+  runId: string,
+  scope: SubmissionLedgerReadScope = {},
+): Promise<OwnedSubmissionRecords> {
   const file = await submissionRecordFile(cwd, runId, scope);
   if (file === undefined) {
-    return { file: undefined as string | undefined, owned: [] as const };
+    return { file: undefined, owned: [] };
   }
   const { records } = await readSitianRecords(file);
   return {
-    file: file as string | undefined,
-    owned: records.filter((record) => typeof record.subject === "object" && record.subject !== null && (record.subject as { runId?: string }).runId === runId),
+    file,
+    owned: records.filter(
+      (record) =>
+        typeof record.subject === "object"
+        && record.subject !== null
+        && (record.subject as { runId?: string }).runId === runId,
+    ),
   };
 }
 
@@ -466,13 +485,34 @@ export async function readLatestSubmissionOutcome(
 type LedgerState = { prior?: RecordPointer; sequence: number };
 
 async function restoreState(cwd: string, runId: string, scope: SubmissionLedgerReadScope): Promise<LedgerState> {
-  const { file, owned } = await readOwnedSubmissionRecords(cwd, runId, scope);
+  const located = await readOwnedSubmissionRecords(cwd, runId, scope);
+  // Unknown-run empty set: no prior chain. Owned rows without a file are an internal bug.
+  if (located.file === undefined) {
+    if (located.owned.length !== 0) {
+      throw new Error(
+        `submission ledger invariant: owned rows present without recordFile for run ${runId}`,
+      );
+    }
+    return { sequence: 0 };
+  }
+  const { file, owned } = located;
   const last = owned.at(-1);
   return {
-    ...(last === undefined ? {} : { prior: { identity: last.identity, recordFile: file, kind: last.kind, level: last.level } }),
+    ...(last === undefined
+      ? {}
+      : {
+          prior: {
+            identity: last.identity,
+            recordFile: file,
+            kind: last.kind,
+            level: last.level,
+          },
+        }),
     sequence: owned.reduce((maximum, record) => {
       const payload = record.payload as Partial<SubmissionLedgerEvent> | undefined;
-      return payload?.type === "candidate" && typeof payload.sequence === "number" ? Math.max(maximum, payload.sequence) : maximum;
+      return payload?.type === "candidate" && typeof payload.sequence === "number"
+        ? Math.max(maximum, payload.sequence)
+        : maximum;
     }, 0),
   };
 }
