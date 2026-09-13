@@ -33,6 +33,7 @@ import type {
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
 import {
+  isSafePositiveTicketNumber,
   readRunTicketNumber,
   requireSafePositiveTicketNumber,
 } from "../run-ticket-number.ts";
@@ -143,6 +144,11 @@ export type AdmittedCountersignInvocation = AdmittedRoleInvocationBase & {
    * Whole-set replace on new typed submission — never union with history.
    */
   courtTicketNumbers?: readonly number[];
+  /**
+   * Load-time durable set damage diagnostic (#871 B7). Resume must settle as
+   * countersign controlled failure with this text — never structural exit 2 or main-only.
+   */
+  courtTicketNumbersDamage?: string;
 };
 
 export type AdmittedGleanerLeftInvocation = AdmittedRoleInvocationBase & {
@@ -524,20 +530,18 @@ export async function bindCourtTicketNumbersOnAdmitted(
   admitted: AdmittedCountersignInvocation,
   courtTicketNumbers: readonly number[],
 ): Promise<void> {
-  const principal = admitted.ticketNumber;
-  if (
-    typeof principal !== "number" ||
-    !Number.isSafeInteger(principal) ||
-    principal < 1
-  ) {
+  if (admitted.ticketNumber === undefined) {
     throw new Error(
       "bindCourtTicketNumbersOnAdmitted requires a bound principal ticketNumber",
     );
   }
+  const principal = requireSafePositiveTicketNumber(
+    admitted.ticketNumber,
+    "bindCourtTicketNumbersOnAdmitted principal ticketNumber",
+  );
   // Strict write path: every member must already be a lawful number (no soft filter).
-  for (let i = 0; i < courtTicketNumbers.length; i += 1) {
-    const item = courtTicketNumbers[i];
-    if (typeof item !== "number" || !Number.isSafeInteger(item) || item < 1) {
+  for (const item of courtTicketNumbers) {
+    if (!isSafePositiveTicketNumber(item)) {
       throw new Error(
         `bindCourtTicketNumbersOnAdmitted requires safe positive integers, got ${String(item)}`,
       );

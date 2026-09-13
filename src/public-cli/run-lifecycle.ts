@@ -17,7 +17,10 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { listBookRunDirectories } from "../role-run-placement.ts";
-import { readRunTicketNumber } from "../run-ticket-number.ts";
+import {
+  isSafePositiveTicketNumber,
+  readRunTicketNumber,
+} from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   readLatestTypedProviderHttpObservation,
@@ -1188,6 +1191,11 @@ type LoadedAdmittedRequestFields = {
   readonly ticketNumber?: number;
   /** #871 typed co-review set restored on countersign resume. */
   readonly courtTicketNumbers?: readonly number[];
+  /**
+   * #871 durable set present-but-damaged diagnostic. Countersign resume settles
+   * controlled failure with this text; not a structural usage rejection.
+   */
+  readonly courtTicketNumbersDamage?: string;
   /** Collector — admitted repository/PR identity restored on resume (#633). */
   readonly prNumber?: number;
   readonly repository?: string;
@@ -1218,12 +1226,9 @@ function parsePersistedTicketIdentity(
     typeof record.correlationId === "string" && record.correlationId.trim() !== ""
       ? record.correlationId
       : undefined;
-  const ticketNumber =
-    typeof record.ticketNumber === "number" &&
-    Number.isSafeInteger(record.ticketNumber) &&
-    record.ticketNumber >= 1
-      ? record.ticketNumber
-      : undefined;
+  const ticketNumber = isSafePositiveTicketNumber(record.ticketNumber)
+    ? record.ticketNumber
+    : undefined;
   return {
     ...(correlationId === undefined ? {} : { correlationId }),
     ...(ticketNumber === undefined ? {} : { ticketNumber }),
@@ -1232,58 +1237,75 @@ function parsePersistedTicketIdentity(
 
 /**
  * #871 durable set from one run page.
- * Absent → undefined (legacy). Present damage → throw. Never filter into main-only.
+ * Absent → absent. Present damage keeps the original reason (no throw here).
  */
-function requireDurableCourtTicketNumbers(
+function readDurableCourtTicketNumbersPage(
   record: Record<string, unknown>,
   principalTicket: number | undefined,
   pageLabel: string,
-): readonly number[] | undefined {
+):
+  | { readonly kind: "absent" }
+  | { readonly kind: "ok"; readonly tickets: readonly number[] }
+  | { readonly kind: "damage"; readonly reason: string } {
   const interpreted = interpretDurableCourtTicketNumbers(record, {
     ...(principalTicket === undefined ? {} : { principalTicket }),
   });
   if (interpreted.kind === "damage") {
-    throw new CliUsageError(
-      `role run ${pageLabel} courtTicketNumbers is damaged: ${interpreted.reason}`,
-    );
+    return {
+      kind: "damage",
+      reason: `role run ${pageLabel} courtTicketNumbers is damaged: ${interpreted.reason}`,
+    };
   }
-  return interpreted.kind === "ok" ? interpreted.tickets : undefined;
+  if (interpreted.kind === "ok") {
+    return { kind: "ok", tickets: interpreted.tickets };
+  }
+  return { kind: "absent" };
 }
 
 /**
- * Merge admitted + invocation #871 sets. Both present must match; one present wins;
- * both absent stays legacy-undefined. Damage and cross-page mismatch fail closed.
+ * Merge admitted + invocation #871 sets.
+ * Both present must match; one present wins; both absent stays legacy.
+ * Damage / cross-page mismatch return a diagnostic — countersign resume settles
+ * controlled failure; load itself does not structural-reject.
  */
 function mergeDurableCourtTicketNumbers(input: {
   readonly admittedRecord: Record<string, unknown> | undefined;
   readonly invocationRecord: Record<string, unknown> | undefined;
   readonly principalTicket: number | undefined;
-}): readonly number[] | undefined {
+}):
+  | { readonly kind: "ok"; readonly tickets?: readonly number[] }
+  | { readonly kind: "damage"; readonly reason: string } {
   const fromAdmitted =
     input.admittedRecord === undefined
-      ? undefined
-      : requireDurableCourtTicketNumbers(
+      ? ({ kind: "absent" } as const)
+      : readDurableCourtTicketNumbersPage(
           input.admittedRecord,
           input.principalTicket,
           "admitted-request",
         );
   const fromInvocation =
     input.invocationRecord === undefined
-      ? undefined
-      : requireDurableCourtTicketNumbers(
+      ? ({ kind: "absent" } as const)
+      : readDurableCourtTicketNumbersPage(
           input.invocationRecord,
           input.principalTicket,
           "invocation",
         );
-  if (fromAdmitted !== undefined && fromInvocation !== undefined) {
-    if (!sameCourtTicketNumbers(fromAdmitted, fromInvocation)) {
-      throw new CliUsageError(
-        "role run courtTicketNumbers differs between admitted-request and invocation",
-      );
+  if (fromAdmitted.kind === "damage") return fromAdmitted;
+  if (fromInvocation.kind === "damage") return fromInvocation;
+  if (fromAdmitted.kind === "ok" && fromInvocation.kind === "ok") {
+    if (!sameCourtTicketNumbers(fromAdmitted.tickets, fromInvocation.tickets)) {
+      return {
+        kind: "damage",
+        reason:
+          "role run courtTicketNumbers differs between admitted-request and invocation",
+      };
     }
-    return fromAdmitted;
+    return { kind: "ok", tickets: fromAdmitted.tickets };
   }
-  return fromAdmitted ?? fromInvocation;
+  if (fromAdmitted.kind === "ok") return { kind: "ok", tickets: fromAdmitted.tickets };
+  if (fromInvocation.kind === "ok") return { kind: "ok", tickets: fromInvocation.tickets };
+  return { kind: "ok" };
 }
 
 function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
@@ -1347,6 +1369,7 @@ async function loadResumableRunRecord(
   let correlationId: string | undefined;
   let ticketNumber: number | undefined;
   let courtTicketNumbers: readonly number[] | undefined;
+  let courtTicketNumbersDamage: string | undefined;
   let admittedIdentityRecord: Record<string, unknown> | undefined;
   let invocationIdentityRecord: Record<string, unknown> | undefined;
   let prNumber: number | undefined;
@@ -1567,12 +1590,18 @@ async function loadResumableRunRecord(
     }
   }
   // #871: resolve set after main ticket so principal membership can be checked.
-  // Present-but-damaged / cross-page mismatch fail closed; absent stays legacy.
-  courtTicketNumbers = mergeDurableCourtTicketNumbers({
+  // Present-but-damaged / cross-page mismatch keep diagnostic for countersign
+  // controlled-failure; both-absent stays legacy; single lawful page restores.
+  const mergedSet = mergeDurableCourtTicketNumbers({
     admittedRecord: admittedIdentityRecord,
     invocationRecord: invocationIdentityRecord,
     principalTicket: ticketNumber,
   });
+  if (mergedSet.kind === "damage") {
+    courtTicketNumbersDamage = mergedSet.reason;
+  } else if (mergedSet.tickets !== undefined) {
+    courtTicketNumbers = mergedSet.tickets;
+  }
   return {
     run,
     principal,
@@ -1593,6 +1622,9 @@ async function loadResumableRunRecord(
       ...(correlationId === undefined ? {} : { correlationId }),
       ...(ticketNumber === undefined ? {} : { ticketNumber }),
       ...(courtTicketNumbers === undefined ? {} : { courtTicketNumbers }),
+      ...(courtTicketNumbersDamage === undefined
+        ? {}
+        : { courtTicketNumbersDamage }),
       ...(prNumber === undefined ? {} : { prNumber }),
       ...(repository === undefined ? {} : { repository }),
       ...(repositoryDisplay === undefined ? {} : { repositoryDisplay }),
@@ -1868,6 +1900,12 @@ export async function loadResumableCountersignRun(
     ...(base.courtTicketNumbers === undefined
       ? {}
       : { courtTicketNumbers: base.courtTicketNumbers }),
+    ...(loaded.admittedFields.courtTicketNumbersDamage === undefined
+      ? {}
+      : {
+          courtTicketNumbersDamage:
+            loaded.admittedFields.courtTicketNumbersDamage,
+        }),
   };
   return seatLoadedResult(loaded, admitted);
 }

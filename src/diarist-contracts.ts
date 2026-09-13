@@ -12,6 +12,10 @@ import type {
   TicketProvenanceSourceKind,
   TicketProvenanceSourceRef,
 } from "./ticket-provenance-contracts.ts";
+import {
+  isSafePositiveTicketNumber,
+  requireSafePositiveTicketNumber,
+} from "./run-ticket-number.ts";
 
 export const DIARIST_OUTPUT_TOOL_NAME = "ak_diarist_output";
 export const DIARIST_ACCEPTED_TEXT = "起居郎回执已接受";
@@ -72,18 +76,14 @@ export function projectCourtTicketNumbers(
   const out: number[] = [];
   const seen = new Set<number>();
   for (const item of raw) {
-    if (typeof item !== "number" || !Number.isSafeInteger(item) || item < 1) continue;
+    if (!isSafePositiveTicketNumber(item)) continue;
     if (seen.has(item)) continue;
     seen.add(item);
     out.push(item);
   }
   const principal = options?.principalTicket;
   if (principal === undefined) return out;
-  if (typeof principal !== "number" || !Number.isSafeInteger(principal) || principal < 1) {
-    throw new Error(
-      `projectCourtTicketNumbers principalTicket must be a safe positive integer, got ${String(principal)}`,
-    );
-  }
+  requireSafePositiveTicketNumber(principal, "projectCourtTicketNumbers principalTicket");
   if (seen.has(principal)) return out;
   return [principal, ...out];
 }
@@ -119,7 +119,7 @@ export function interpretDurableCourtTicketNumbers(
   }
   for (let i = 0; i < raw.length; i += 1) {
     const item = raw[i];
-    if (typeof item !== "number" || !Number.isSafeInteger(item) || item < 1) {
+    if (!isSafePositiveTicketNumber(item)) {
       return {
         kind: "damage",
         reason: `courtTicketNumbers[${i}] is not a safe positive integer`,
@@ -135,20 +135,19 @@ export function interpretDurableCourtTicketNumbers(
     };
   }
   const principal = options?.principalTicket;
-  if (
-    principal !== undefined &&
-    (typeof principal !== "number" ||
-      !Number.isSafeInteger(principal) ||
-      principal < 1 ||
-      !tickets.includes(principal))
-  ) {
-    return {
-      kind: "damage",
-      reason:
-        typeof principal === "number" && Number.isSafeInteger(principal) && principal >= 1
-          ? `courtTicketNumbers is missing principal ticket #${principal}`
-          : "courtTicketNumbers principal ticket is not a safe positive integer",
-    };
+  if (principal !== undefined) {
+    if (!isSafePositiveTicketNumber(principal)) {
+      return {
+        kind: "damage",
+        reason: "courtTicketNumbers principal ticket is not a safe positive integer",
+      };
+    }
+    if (!tickets.includes(principal)) {
+      return {
+        kind: "damage",
+        reason: `courtTicketNumbers is missing principal ticket #${principal}`,
+      };
+    }
   }
   return { kind: "ok", tickets: Object.freeze([...tickets]) };
 }

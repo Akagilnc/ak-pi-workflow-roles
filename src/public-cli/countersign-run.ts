@@ -28,6 +28,7 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   projectCourtTicketNumbers,
 } from "../diarist-contracts.ts";
+import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import {
   admitCountersignInvocation,
   bindAdmittedTicketNumber,
@@ -249,11 +250,7 @@ async function invokeCourtDiarist(input: {
   }
 
   const asserted = (result.admitted as { ticketNumber?: number } | undefined)?.ticketNumber;
-  if (
-    typeof asserted === "number" &&
-    Number.isSafeInteger(asserted) &&
-    asserted >= 1
-  ) {
+  if (isSafePositiveTicketNumber(asserted)) {
     const courtTicketNumbers = courtTicketNumbersFromOutcome(roleOutcome, asserted);
     return {
       identity: {
@@ -635,6 +632,11 @@ export async function runPublicCountersignResume(
     },
     adapters: countersignAdapters({
       beforeDispatch: async (admitted) => {
+        // #871 B7: durable set damage already identified at load — settle as
+        // station-child exhausted → presentControlledFailure (not structural exit 2).
+        if (admitted.courtTicketNumbersDamage !== undefined) {
+          throw new StationChildExhaustedError(admitted.courtTicketNumbersDamage);
+        }
         // #871: same-ticket re-summons may hand a fresh typed set from identity.
         // Whole-set replace onto this run fact; no new set → keep stored set.
         // Manual resume (no pending) keeps the durable set and never invents one.
