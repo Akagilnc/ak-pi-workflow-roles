@@ -1011,14 +1011,36 @@ test("public navigator session takes a seat edit for the next summon instead of 
     const priorHome = process.env.HOME;
     process.env.HOME = root;
     const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
+    const { mkdir, writeFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { seedGitRepository } = await import("../helpers/pi-test-harness.ts");
     await withPrimaryAwareCleanup(
       async () => {
+        seedGitRepository(root);
         await savePublicCliConfig(
           { seats: { navigator: { provider: "provider", model: "one" } } },
           root,
         );
+        // #852: factory always books navigator/<work-subject>; give a materialized
+        // parent under the hermetic home so ledger placement stays inside root.
+        const parentDir = join(root, ".ak-roles", "books", "seat", "runs", "r@judge", "session");
+        await mkdir(parentDir, { recursive: true });
+        const parentFile = join(parentDir, "session.jsonl");
+        await writeFile(
+          parentFile,
+          `${JSON.stringify({
+            type: "session",
+            version: 3,
+            id: "seat-parent",
+            timestamp: "2025-01-01T00:00:00.000Z",
+            cwd: root,
+          })}\n`,
+        );
         const session = await createNativeNavigatorSessionFactory()({
-          context: { cwd: root, sessionManager: undefined } as never,
+          context: {
+            cwd: root,
+            sessionManager: { getSessionFile: () => parentFile },
+          } as never,
           subject: "seat edit between prepares",
           tool: undefined as never,
         });
@@ -1031,6 +1053,8 @@ test("public navigator session takes a seat edit for the next summon instead of 
         );
         await session.setModel?.("other/two:high", "high");
         assert.equal(session.getThinkingLevel?.(), "high");
+        // Durable pointer must exist even though this case only checks seat edit.
+        assert.ok(session.recordPointer());
         await session.dispose();
       },
       async () => {

@@ -13,8 +13,18 @@ import {
   errorText,
   pathContainedIn,
   physicallyContainedIn,
+  resolveActivationLedgerHome,
   resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
+import {
+  NAVIGATOR_RECORD_KIND,
+  navigatorWorkSubjectRecordDirectory,
+} from "./archivist-record-topology.ts";
+
+export {
+  NAVIGATOR_RECORD_KIND,
+  navigatorWorkSubjectRecordDirectory,
+} from "./archivist-record-topology.ts";
 
 const CURRENT_SESSION_LEDGER = "current-session.json";
 
@@ -63,10 +73,19 @@ export type CreateRecordSessionOptions = {
   readonly cwd: string;
   /** What kind of record this is (e.g. "auditor-roles"). Single path segment; not a destination path. */
   readonly kind: string;
-  /** Parent session — its durable file is the sole nesting authority. */
+  /** Parent session — nesting authority for ordinary kinds; optional parentSession link for navigator. */
   readonly parent?: RecordSessionParent;
-  /** Optional durable-record intent; does not select placement or continuation. */
+  /**
+   * Durable work-subject intent. For navigator only, selects the book-top
+   * `navigator/<work-subject>` nest (dossier-topology / #852); does not restore
+   * generic kind partitions.
+   */
   readonly subject?: string;
+  /**
+   * Process home when no parent path can derive the ledger home. Not a record
+   * destination — same identity surface as resolveActivationLedgerHome(home).
+   */
+  readonly home?: string;
 };
 
 /** Authorized no-subject kind that may resume the most recent same-nest peer (ADR 0066). Sole string true source for gate resume identity. */
@@ -120,7 +139,7 @@ function assertRecentFinalFileUnderSessionDir(
 /** Open result including the sole continuation fact. */
 export type RecordSessionOpen = {
   readonly session: SessionManager;
-  /** True only when the authorized worker-submission-gate volume was reopened. */
+  /** True when an existing navigator work-subject or worker-submission-gate volume was reopened. */
   readonly resumed: boolean;
 };
 
@@ -131,8 +150,8 @@ export type RecordSessionOpen = {
  * identity is checked once before SessionManager.open (directory walk cannot see a
  * trailing .jsonl symlink). New principals mint under the already-validated sessionDir
  * via destination-free SessionManager.create — no derived postcondition.
- * Resume via the AK-owned current-session ledger is limited to the authorized
- * worker-submission-gate durable path (ADR 0066).
+ * Resume via the AK-owned current-session ledger is limited to navigator work-subject
+ * nests and the authorized worker-submission-gate durable path (ADR 0066 / #852).
  * Other ordinary no-subject children (auditor-roles, evidence-children, …) always mint fresh.
  * New persisted principals materialize their deferred session header before return so
  * custom-entry-only writers do not need a parallel delayed-header helper.
@@ -142,32 +161,52 @@ export type RecordSessionOpen = {
 export function createRecordSessionOpen(options: CreateRecordSessionOptions): RecordSessionOpen {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
-  // Path → ledger home is owned by topology (explicit env.home nests via parent path).
-  const ledgerHome = resolveActivationLedgerHomeForPath(parentFile);
 
-  if (parentFile === undefined || parentFile.length === 0) {
+  let sessionDir: string;
+  let parentSession: string | undefined;
+  let mayResumeSameNest: boolean;
+  let ledgerHome: string;
+
+  // #852 sole book-top exception: navigator/<work-subject> via one topology authority.
+  // Holds for no parent / unmaterialized parent / materialized parent — never silent in-memory.
+  if (options.kind === NAVIGATOR_RECORD_KIND && options.subject !== undefined) {
+    sessionDir = navigatorWorkSubjectRecordDirectory({
+      cwd,
+      subject: options.subject,
+      ...(parentFile === undefined || parentFile.length === 0
+        ? {}
+        : { parentSessionFile: parentFile }),
+      ...(options.home === undefined ? {} : { home: options.home }),
+    });
+    parentSession = parentFile && parentFile.length > 0 ? parentFile : undefined;
+    mayResumeSameNest = true;
+    ledgerHome =
+      parentFile !== undefined && parentFile.length > 0
+        ? resolveActivationLedgerHomeForPath(parentFile)
+        : resolveActivationLedgerHome(options.home);
+  } else if (parentFile === undefined || parentFile.length === 0) {
     if (options.subject === undefined) {
       // No durable principal requested: preserve prior in-memory child behavior.
       return { session: SessionManager.inMemory(cwd), resumed: false };
     }
     throw new Error("Durable record ownership requires a parent session inside the ledger home");
+  } else {
+    ledgerHome = resolveActivationLedgerHomeForPath(parentFile);
+    const parentResolved = resolve(parentFile);
+    if (!physicallyContainedIn(ledgerHome, parentResolved)) {
+      throw new Error("Durable record ownership requires a parent session inside the ledger home");
+    }
+    // Ordinary kinds: durable parent's file is the sole nesting authority. A divergent
+    // SessionManager directory must not create a second placement route.
+    // Do not restore generic bookDir/<kind> fallback for foreign/unrooted parents.
+    sessionDir = join(dirname(parentResolved), options.kind);
+    parentSession = parentFile;
+    mayResumeSameNest = options.kind === WORKER_SUBMISSION_GATE_KIND;
   }
-
-  const parentResolved = resolve(parentFile);
-  if (!physicallyContainedIn(ledgerHome, parentResolved)) {
-    throw new Error("Durable record ownership requires a parent session inside the ledger home");
-  }
-  // The durable parent's file is the sole nesting authority. A divergent
-  // SessionManager directory must not create a second placement route.
-  const sessionDir = join(dirname(parentResolved), options.kind);
-  const parentSession = parentFile;
 
   const nestAlreadyExists = existsSync(sessionDir);
   // Directory-chain ownership: containment + physical components (no parallel assert).
   ensureRealDirectoryTree(ledgerHome, sessionDir);
-  // Worker-submission-gate is the sole authorized same-nest continuation.
-  // Subject no longer selects a persistence partition.
-  const mayResumeSameNest = options.kind === WORKER_SUBMISSION_GATE_KIND;
   if (mayResumeSameNest && nestAlreadyExists) {
     const recentFile = readCurrentSession(sessionDir);
     assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);

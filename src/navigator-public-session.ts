@@ -24,12 +24,14 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
     let thinkingLevel = resolved.thinkingLevel;
 
     // Archivist nest for attendance route memory only (ADR 0018 / 0065) — not a session open.
+    // #852: navigator/<work-subject> is the sole book-top exception; always pass subject so
+    // unmaterialized/missing parent still gets a durable nest instead of silent in-memory.
     const { createRecordSession } = await import("./archivist-record-entry.ts");
-    const parentFile = context.sessionManager?.getSessionFile?.();
     const sessionManager = createRecordSession({
       cwd: context.cwd,
       kind: "navigator",
-      ...(typeof parentFile === "string" && parentFile.length > 0 ? { subject, parent: context.sessionManager } : {}),
+      subject,
+      ...(context.sessionManager !== undefined ? { parent: context.sessionManager } : {}),
     });
 
     let providerFailure: NavigatorProviderFailureFact | undefined;
