@@ -645,8 +645,8 @@ const DOCTOR_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Optional project-relative .ak-roles/books/<book>/issues/<n>/runs override matching --issue.",
-      zh: "可选项目相对 .ak-roles/books/<book>/issues/<n>/runs 覆盖，且须匹配 --issue。",
+      en: "Optional project-relative .ak-roles/books/<book>/<n>/runs override matching --issue.",
+      zh: "可选项目相对 .ak-roles/books/<book>/<n>/runs 覆盖，且须匹配 --issue。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];

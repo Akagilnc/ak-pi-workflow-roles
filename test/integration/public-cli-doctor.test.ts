@@ -129,17 +129,8 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     assert.deepEqual(persisted.caseIdentity, expectedPatient.identity);
 
     // Empty retained root still admits — Doctor's refusal boundary owns insufficiency.
+    // Default admit creates canonical <ticket>/runs; no need to pre-seed issues/.
     const emptyIssue = 41;
-    const emptyRuns = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "issues",
-      String(emptyIssue),
-      "runs",
-    );
-    await mkdir(emptyRuns, { recursive: true });
     const emptyAdmitted = await admitDoctorInvocation({
       principalAuthority: piDurablePrincipalAuthority,
       home,
@@ -215,13 +206,12 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
       isUsage,
     );
 
-    // Project-relative runs root that matches grammar + issue is admitted
+    // Project-relative runs root that matches canonical grammar + issue is admitted
     const localRuns = join(
       project,
       ".ak-roles",
       "books",
       "demo-book",
-      "issues",
       "40",
       "runs",
     );
@@ -236,7 +226,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
       home,
       cwd: project,
       issueNumber: 40,
-      runs: ".ak-roles/books/demo-book/issues/40/runs",
+      runs: ".ak-roles/books/demo-book/40/runs",
       createRunId: () => "run-local-runs",
     });
     assert.equal(admitted.caseRunsPath, await realpath(localRuns));

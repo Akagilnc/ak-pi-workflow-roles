@@ -281,6 +281,12 @@ export type PostAdmissionAdapters<
     sessionFile: string;
   }) => Promise<RoleTurnKnownFailure | undefined>;
   beforeDispatch?: (admitted: A, lease: RunWriterLease) => Promise<void> | void;
+  /**
+   * After the host turn settles and before the writer lease is released.
+   * Post-turn bind/relocate (e.g. Diarist first assert) must run here so the
+   * held lease follows the run directory and failures stay controlled.
+   */
+  afterDispatch?: (admitted: A, lease: RunWriterLease) => Promise<void> | void;
 };
 
 export type ControlledFailureInput = {
@@ -570,6 +576,41 @@ export async function dispatchPostAdmissionTurn<
   const deferredPersist = persistRunState ? {} : { needsPersist: true as const };
   const shouldPresent =
     adapters.shouldPresentSettled ?? ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
+  type DispatchOutcome = {
+    exitCode: number;
+    admitted: A;
+    terminal?: T;
+    skipAutoResume?: true;
+    turnDispatched?: true;
+    needsPersist?: true;
+  };
+  /** Post-turn bind/relocate under the still-held writer lease; failures stay controlled. */
+  const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
+    if (adapters.afterDispatch === undefined) return result;
+    try {
+      await adapters.afterDispatch(admitted, lease);
+      return result;
+    } catch (error) {
+      return {
+        ...(await presentControlledFailure(
+          admitted,
+          {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+          },
+          adapters,
+          env.principalAuthority,
+          io,
+          persistRunState,
+        )) as { exitCode: number; admitted: A; terminal: T },
+        ...(result.turnDispatched === true ? { turnDispatched: true as const } : {}),
+        ...(result.skipAutoResume === true ? { skipAutoResume: true as const } : {}),
+        ...deferredPersist,
+      };
+    }
+  };
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -977,7 +1018,7 @@ export async function dispatchPostAdmissionTurn<
       }
       // Lawful persist + present is the caller's stop seam (auto-resume loop /
       // manual resume), not this retried host-turn function.
-      return { ...settledOutcome, ...deferredPersist };
+      return await finishAfterTurn({ ...settledOutcome, ...deferredPersist });
     }
 
     // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
@@ -1067,13 +1108,13 @@ export async function dispatchPostAdmissionTurn<
         return { ...failed, turnDispatched: true as const, ...deferredPersist };
       }
     }
-    return {
+    return await finishAfterTurn({
       exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),
       admitted,
       terminal: noReceipt,
       turnDispatched: true as const,
       ...deferredPersist,
-    };
+    });
   } finally {
     try {
       await lease.release();

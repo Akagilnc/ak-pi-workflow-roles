@@ -34,7 +34,7 @@ import type {
 } from "../host-contracts.ts";
 import {
   isSafePositiveTicketNumber,
-  readRunTicketNumber,
+  readBoardTicketNumber,
   requireSafePositiveTicketNumber,
 } from "../run-ticket-number.ts";
 import {
@@ -2147,8 +2147,9 @@ export function buildCollectorTransportPrompt(
 const DOCTOR_ISSUE_NUMBER_PATTERN = /^[1-9]\d*$/;
 
 /** Match retained Doctor case runs roots (ADR 0017 / loadDoctorCase). */
+/** Canonical Doctor case: `<book>/<ticket>/runs`. Legacy `issues/<n>/runs` is read-only compat. */
 const DOCTOR_CASE_RUNS_PATH_PATTERN =
-  /\/\.ak-roles\/books\/[^/]+\/issues\/([1-9]\d*)\/runs$/;
+  /\/\.ak-roles\/books\/[^/]+\/(?:issues\/)?([1-9]\d*)\/runs$/;
 
 /**
  * Parse a positive Issue number for public Doctor admission.
@@ -2263,9 +2264,9 @@ export async function resolveDoctorCaseRunsPath(options: {
   runs?: string;
 }): Promise<string> {
   const ledgerHome = resolveActivationLedgerHome(options.home);
+  // Canonical topology: <book>/<ticket>/runs (docs/dossier-topology.md).
   const defaultRuns = join(
     activationBookDirectory(ledgerHome, options.bookKey),
-    "issues",
     String(options.issueNumber),
     "runs",
   );
@@ -2309,7 +2310,7 @@ export async function resolveDoctorCaseRunsPath(options: {
   const match = normalized.match(DOCTOR_CASE_RUNS_PATH_PATTERN);
   if (!match) {
     throw new CliUsageError(
-      "doctor --runs must be an .ak-roles/books/<book>/issues/<n>/runs directory",
+      "doctor --runs must be an .ak-roles/books/<book>/<n>/runs directory",
     );
   }
   if (Number(match[1]) !== options.issueNumber) {
@@ -2554,7 +2555,8 @@ export async function admitNotaryInvocation(options: {
     throw error;
   }
 
-  const inheritedTicketNumber = await readRunTicketNumber(sourceRun.runDirectory);
+  // Notary inherits board identity only — migration-derived stays display/placement.
+  const inheritedTicketNumber = await readBoardTicketNumber(sourceRun.runDirectory);
   const runId = options.createRunId?.() ?? uuidv7();
   const {
     principal,

@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "../../src/host-contracts.ts";
@@ -55,18 +57,23 @@ function registerTool(
     parameters: Type.Object({}),
     execute: async (_id, params, ...rest) => execute(params),
   });
+  // HostContext.runDirectory is the admitted run coordinate (#879) — must sit
+  // inside the ledger home so restore/append share one ownership path.
+  const runDirectory = `${root}/.ak-roles/books/fixture/runs/run-ledger@${role}`;
+  mkdirSync(`${runDirectory}/session`, { recursive: true });
+  writeFileSync(`${runDirectory}/session/session.jsonl`, "");
   const context = {
     cwd: root,
     mode: "json",
     model: undefined,
-    runDirectory: `${root}/runs/run-ledger@${role}`,
+    runDirectory,
     sessionManager: {
       getHeader: () => ({ type: "session", id: "run-ledger:attempt" }),
       getLeafEntry: () => undefined,
       getLeafId: () => null,
       getEntries: () => [],
-      getSessionDir: () => `${process.env.AK_ROLE_RUN_DIR}/session`,
-      getSessionFile: () => `${process.env.AK_ROLE_RUN_DIR}/session/session.jsonl`,
+      getSessionDir: () => `${runDirectory}/session`,
+      getSessionFile: () => `${runDirectory}/session/session.jsonl`,
     },
     abort() { throw new Error("ledger must not abort the host (#836)"); },
   } as unknown as HostContext;
@@ -359,8 +366,13 @@ test("officer escalate via gate is correctable bounce-to-parent with raw receipt
     const outcome = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome").at(-1);
     assert.equal(outcome?.payload && (outcome.payload as { outcome?: string }).outcome, "correctable-rejection");
     // #881: original officer params remain projectable on correctable-rejection.
-    assert.equal(await hasRecordedSubmission(f.root, "run-ledger", f.root), true);
-    assert.deepEqual(await readRecordedSubmissions(f.root, "run-ledger", f.root), [{ status: "completed" }]);
+    // Read via the coder run's sessionParent — bare runId is ambiguous across roles.
+    const coderScope = {
+      home: f.root,
+      sessionParent: join(String(bouncing.context.runDirectory), "session", "session.jsonl"),
+    };
+    assert.equal(await hasRecordedSubmission(f.root, "run-ledger", coderScope), true);
+    assert.deepEqual(await readRecordedSubmissions(f.root, "run-ledger", coderScope), [{ status: "completed" }]);
   });
 });
 
@@ -397,9 +409,10 @@ test("every packaged role records original payload through the production ledger
   ];
   for (const row of rows) {
     await withLedgerFixture(async (f) => {
-      process.env.AK_ROLE_RUN_DIR = `${f.root}/.ak-roles/books/fixture/runs/run-${row.role}@${row.role}`;
-      await mkdir(`${process.env.AK_ROLE_RUN_DIR}/session`, { recursive: true });
-      await writeFile(`${process.env.AK_ROLE_RUN_DIR}/session/session.jsonl`, "");
+      const roleRunDirectory = `${f.root}/.ak-roles/books/fixture/runs/run-${row.role}@${row.role}`;
+      process.env.AK_ROLE_RUN_DIR = roleRunDirectory;
+      await mkdir(`${roleRunDirectory}/session`, { recursive: true });
+      await writeFile(`${roleRunDirectory}/session/session.jsonl`, "");
       const outputTool = packagedRoleOutputTool(row.role)!;
       const alternateHost = registerTool(
         f.root,
@@ -407,14 +420,14 @@ test("every packaged role records original payload through the production ledger
         outputTool,
         row.role,
       );
-      alternateHost.context.runDirectory = `${f.root}/runs/run-${row.role}@${row.role}`;
+      alternateHost.context.runDirectory = roleRunDirectory;
       await alternateHost.start(`${row.role}-output`, outputTool);
       const accepted = await alternateHost.tool().execute(`${row.role}-output`, row.details, undefined, undefined, alternateHost.context);
       assert.deepEqual(accepted.details, row.details, row.role);
       assert.equal(accepted.terminate, true, row.role);
       const rows = await readRecordedSubmissionRows(f.root, `run-${row.role}`, {
         home: f.root,
-        sessionParent: `${process.env.AK_ROLE_RUN_DIR}/session/session.jsonl`,
+        sessionParent: `${roleRunDirectory}/session/session.jsonl`,
       });
       assert.deepEqual(
         rows,
@@ -455,6 +468,15 @@ test("a recorded append failure never returns accepted", async () => {
         }
       },
     );
+  });
+});
+
+test("unknown run read APIs return empty without ownership throw", async () => {
+  await withLedgerFixture(async (f) => {
+    const rows = await readRecordedSubmissionRows(f.root, "missing-run-id", { home: f.root });
+    assert.deepEqual(rows, []);
+    assert.equal(await hasRecordedSubmission(f.root, "missing-run-id", { home: f.root }), false);
+    assert.deepEqual(await readRecordedSubmissions(f.root, "missing-run-id", { home: f.root }), []);
   });
 });
 

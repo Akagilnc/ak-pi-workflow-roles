@@ -1,6 +1,7 @@
 /**
  * Shared placement helpers for book-topology migrators (#865 / #866).
- * Board ticket → readRunTicketNumber; destination path → roleRunPlacement.
+ * Placement ticket → board pages then migration-derived then worktree basename;
+ * destination path → roleRunPlacement. Identity writers use board only.
  * Worktree basename “所含票号” is the single #852/#865/#866 rule.
  * Shared ENOENT / book-key / dirent enumeration authority for migration modules.
  */
@@ -10,7 +11,11 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 
 import { pathContainedIn } from "./activation-ledger-topology.ts";
 import { roleRunPlacement } from "./role-run-placement.ts";
-import { readRunTicketNumber } from "./run-ticket-number.ts";
+import {
+  MIGRATION_TICKET_DERIVATION_PAGE,
+  readBoardTicketNumber,
+  readMigrationDerivedTicketNumber,
+} from "./run-ticket-number.ts";
 
 const TICKET_NUMBER_RE = /^[1-9][0-9]*$/;
 const RUN_DIR_NAME_RE = /^([^@]+)@([^@]+)$/;
@@ -119,18 +124,31 @@ export type MigratingRunTicketDerivation =
 
 /**
  * Ticket binding for a retained run directory (#852 / #865 / #866):
- * board-recorded ticketNumber (readRunTicketNumber) first, then worktree
- * basename containment when the leaf holds a ticket number.
+ * effective placement ticket (board pages, else migration-derived page) first,
+ * then worktree basename containment when the leaf holds a ticket number.
+ * Migration placement may use derived facts; LLM/board identity writers must not.
  */
 export async function resolveMigratingRunTicket(runDirectory: string): Promise<{
   readonly ticketNumber: number | undefined;
   readonly derivation: MigratingRunTicketDerivation | undefined;
 }> {
-  const boardTicket = await readRunTicketNumber(runDirectory);
+  const boardTicket = await readBoardTicketNumber(runDirectory);
   if (boardTicket !== undefined) {
     return {
       ticketNumber: boardTicket,
       derivation: { method: "board", source: runDirectory },
+    };
+  }
+
+  const derivedTicket = await readMigrationDerivedTicketNumber(runDirectory);
+  if (derivedTicket !== undefined) {
+    return {
+      ticketNumber: derivedTicket,
+      derivation: {
+        method: "project-root-basename",
+        source: runDirectory,
+        sourcePage: MIGRATION_TICKET_DERIVATION_PAGE,
+      },
     };
   }
 

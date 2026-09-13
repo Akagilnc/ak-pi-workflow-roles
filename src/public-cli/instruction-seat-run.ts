@@ -7,7 +7,7 @@
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
-import { readRunTicketNumber } from "../run-ticket-number.ts";
+import { readBoardTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitAuditorInvocation,
@@ -285,7 +285,8 @@ export async function runPublicInstructionSeat(
         home: env.home,
       });
       auditorSourceRun = resolved.runDirectory;
-      auditorSourceTicket = await readRunTicketNumber(resolved.runDirectory);
+      // Auditor inherits board identity only — migration-derived is display, not admission.
+      auditorSourceTicket = await readBoardTicketNumber(resolved.runDirectory);
     } catch (error) {
       presentStructuralRejection(
         new CliUsageError(error instanceof Error ? error.message : String(error)),

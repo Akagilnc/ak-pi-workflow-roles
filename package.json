@@ -48,7 +48,7 @@
     "test:all": "node scripts/run-test-all.mjs",
     "test:adjudication": "node --import tsx --import ./scripts/test-process-env-preload.mjs --test test/adjudication/**/*.test.ts",
     "typecheck": "tsc --noEmit",
-    "migrate:book-topology": "tsx scripts/migrate-book-topology.ts"
+    "migrate:book-topology": "node dist/migrate-book-topology.js"
   },
   "pi": {
     "extensions": []

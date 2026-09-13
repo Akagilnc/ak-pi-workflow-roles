@@ -22,6 +22,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import { listBookRunDirectories } from "./role-run-placement.ts";
+import { readRunTicketNumber } from "./run-ticket-number.ts";
 import {
   extractSessionModelSequence,
   extractSessionTimestampSpan,
@@ -140,13 +141,10 @@ async function readInvocationScopeFields(
     return undefined;
   }
   const projectRoot = parsed.projectRoot;
-  // Same #176 contract: positive integer ticketNumber only.
-  if (
-    typeof parsed.ticketNumber === "number"
-    && Number.isInteger(parsed.ticketNumber)
-    && parsed.ticketNumber >= 1
-  ) {
-    return { projectRoot, ticketNumber: parsed.ticketNumber };
+  // Display/history placement: board first, then migration-derived (#852).
+  const ticketNumber = await readRunTicketNumber(runDirectory);
+  if (ticketNumber !== undefined) {
+    return { projectRoot, ticketNumber };
   }
   return { projectRoot };
 }
