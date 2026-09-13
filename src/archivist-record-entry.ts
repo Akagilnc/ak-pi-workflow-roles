@@ -16,6 +16,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, resolve, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -89,24 +90,20 @@ type NavigatorSessionHeader = {
 
 /**
  * Bounded session-header discovery matching Pi readSessionHeader:
- * 4KiB chunks, ≤1MiB total, skip leading blank lines, first non-blank JSON line.
- * Format non-session / malformed / oversize-without-header → undefined (non-candidate).
- * Real open/read I/O failures propagate — never washed into non-candidate.
+ * 4KiB chunks, ≤1MiB total, StringDecoder across reads + EOF flush, skip leading
+ * blank lines, first non-blank JSON line. Format non-session / malformed /
+ * oversize-without-header → undefined (non-candidate). Real open/read I/O
+ * failures propagate — never washed into non-candidate.
  */
 function readBoundedSessionHeader(filePath: string): NavigatorSessionHeader | undefined {
   const fd = openSync(filePath, "r");
   try {
     const buffer = Buffer.allocUnsafe(SESSION_HEADER_CHUNK_BYTES);
+    const decoder = new StringDecoder("utf8");
     let pending = "";
     let scanned = 0;
-    while (scanned < MAX_SESSION_HEADER_SCAN_BYTES) {
-      const toRead = Math.min(buffer.length, MAX_SESSION_HEADER_SCAN_BYTES - scanned);
-      const bytesRead = readSync(fd, buffer, 0, toRead, null);
-      if (bytesRead === 0) {
-        return parseSessionHeaderLine(pending);
-      }
-      scanned += bytesRead;
-      pending += buffer.subarray(0, bytesRead).toString("utf8");
+    const consume = (chunk: string): NavigatorSessionHeader | undefined => {
+      pending += chunk;
       let lineStart = 0;
       let newlineIndex = pending.indexOf("\n", lineStart);
       while (newlineIndex !== -1) {
@@ -117,12 +114,23 @@ function readBoundedSessionHeader(filePath: string): NavigatorSessionHeader | un
         return parseSessionHeaderLine(line);
       }
       pending = pending.slice(lineStart);
+      return undefined;
+    };
+    while (scanned < MAX_SESSION_HEADER_SCAN_BYTES) {
+      const toRead = Math.min(buffer.length, MAX_SESSION_HEADER_SCAN_BYTES - scanned);
+      const bytesRead = readSync(fd, buffer, 0, toRead, null);
+      if (bytesRead === 0) {
+        return consume(decoder.end()) ?? parseSessionHeaderLine(pending);
+      }
+      scanned += bytesRead;
+      const found = consume(decoder.write(buffer.subarray(0, bytesRead)));
+      if (found !== undefined) return found;
     }
     // Exactly at the scan limit with a complete final line is still accepted;
     // any further unread byte means the header never arrived in bounds.
     const probe = Buffer.allocUnsafe(1);
     if (readSync(fd, probe, 0, 1, null) === 0) {
-      return parseSessionHeaderLine(pending);
+      return consume(decoder.end()) ?? parseSessionHeaderLine(pending);
     }
     return undefined;
   } finally {

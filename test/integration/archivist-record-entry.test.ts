@@ -4,13 +4,16 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, utimes, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readdir, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
-import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
+import {
+  ActivationLedgerError,
+  physicalPathIdentity,
+} from "../../src/activation-ledger-topology.ts";
 import { createRecordSession } from "../../src/archivist-record-entry.ts";
 import { createNativeNavigatorSessionFactory } from "../../src/navigator-public-session.ts";
 import {
@@ -93,19 +96,30 @@ function sessionJsonl(id: string, cwd: string, route: string): string {
 
 /**
  * Sole navigator factory tracer: table-driven parent states, independent nest path,
- * wrong-cwd recency filter, and no-match mint.
+ * Unicode cwd adopt, wrong-cwd recency, no-match mint, one I/O failure.
  */
-test("navigator factory durable nest: parent states, wrong-cwd recency, no-match mint", async () => {
+test("navigator factory durable nest: parent states, unicode cwd, wrong-cwd, no-match, io fail", async () => {
   await withHermeticHome({ prefix: "ak-archivist-navigator-subject-" }, async ({ home }) => {
-    const project = join(home, "proj");
+    // Book key and calling cwd carry ordinary legal Unicode — external adopt contract,
+    // not a chunk-boundary probe.
+    const project = join(home, "proj-导航-α");
     await mkdir(project, { recursive: true });
     seedGitRepository(project);
+    const bookKey = "proj-导航-α";
 
     const subject = "/work/subject-a";
-    const nest = expectedNavigatorNest(home, "proj", subject);
+    const nest = expectedNavigatorNest(home, bookKey, subject);
     const factory = createNativeNavigatorSessionFactory();
 
-    const parentDir = join(machineLedgerHome(home), "books", "proj", "871", "runs", "r1@judge", "session");
+    const parentDir = join(
+      machineLedgerHome(home),
+      "books",
+      bookKey,
+      "871",
+      "runs",
+      "r1@judge",
+      "session",
+    );
     await mkdir(parentDir, { recursive: true });
     const parentFile = join(parentDir, "session.jsonl");
     await writeFile(
@@ -144,18 +158,19 @@ test("navigator factory durable nest: parent states, wrong-cwd recency, no-match
     ]);
     await last!.dispose();
 
-    // Legacy dual fixture: newer has wrong cwd (must not win); older matches calling cwd.
+    // Legacy: newer wrong-cwd must not win; older matching Unicode cwd (leading blanks) adopts.
     const legacySubject = "/work/subject-legacy-cwd";
-    const legacyNest = expectedNavigatorNest(home, "proj", legacySubject);
+    const legacyNest = expectedNavigatorNest(home, bookKey, legacySubject);
     await mkdir(legacyNest, { recursive: true });
     const olderMatching = join(legacyNest, "older-matching.jsonl");
     const newerWrongCwd = join(legacyNest, "newer-wrong-cwd.jsonl");
-    await writeFile(olderMatching, sessionJsonl("older-id", project, "matching-older"));
-    await writeFile(newerWrongCwd, sessionJsonl("newer-id", join(project, "other"), "wrong-cwd-newer"));
-    // Leading blank before header — historical reader skips blanks; must still adopt.
     await writeFile(
       olderMatching,
       `\n\n${sessionJsonl("older-id", project, "matching-older")}`,
+    );
+    await writeFile(
+      newerWrongCwd,
+      sessionJsonl("newer-id", join(project, "other"), "wrong-cwd-newer"),
     );
     const olderTime = new Date("2026-09-02T00:00:00.000Z");
     const newerTime = new Date("2026-09-03T00:00:00.000Z");
@@ -171,9 +186,9 @@ test("navigator factory durable nest: parent states, wrong-cwd recency, no-match
     assert.deepEqual(routeRuns(adopted.entries()), ["matching-older"]);
     await adopted.dispose();
 
-    // No cwd match → mint fresh (old null path); prior wrong-cwd debris must not be resumed.
+    // No cwd match → mint fresh (old null path).
     const noMatchSubject = "/work/subject-no-match";
-    const noMatchNest = expectedNavigatorNest(home, "proj", noMatchSubject);
+    const noMatchNest = expectedNavigatorNest(home, bookKey, noMatchSubject);
     await mkdir(noMatchNest, { recursive: true });
     await writeFile(
       join(noMatchNest, "foreign.jsonl"),
@@ -188,10 +203,31 @@ test("navigator factory durable nest: parent states, wrong-cwd recency, no-match
     assert.deepEqual(routeRuns(minted.entries()), []);
     minted.appendEntry("ak-navigator-route", { run: "fresh-mint" });
     assert.deepEqual(routeRuns(minted.entries()), ["fresh-mint"]);
-    // Fresh mint is a new principal — not the foreign file.
     const leaves = (await readdir(noMatchNest)).filter((name) => name.endsWith(".jsonl"));
     assert.ok(leaves.length >= 2);
     await minted.dispose();
+
+    // One deterministic file-level I/O failure → external ActivationLedgerError (not washed).
+    const ioSubject = "/work/subject-io-fail";
+    const ioNest = expectedNavigatorNest(home, bookKey, ioSubject);
+    await mkdir(ioNest, { recursive: true });
+    const blocked = join(ioNest, "blocked.jsonl");
+    await writeFile(blocked, sessionJsonl("blocked-id", project, "blocked-route"));
+    await chmod(blocked, 0);
+    try {
+      await assert.rejects(
+        () =>
+          factory({
+            context: { cwd: project, home, sessionManager: undefined } as never,
+            subject: ioSubject,
+            tool: undefined as never,
+          }),
+        (error: unknown) =>
+          error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
+      );
+    } finally {
+      await chmod(blocked, 0o644);
+    }
   });
 });
 
