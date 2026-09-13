@@ -45,6 +45,19 @@ const SUBMISSION_LEDGER = "submission-ledger";
 const ATTEMPT_HISTORY = "attempt-history";
 const MISPLACED = "misplaced-record-class";
 
+function noteTouchedTicket(
+  context: BookTopologyMigrationContext,
+  bookKey: string,
+  ticketNumber: number,
+): void {
+  let set = context.touchedTicketsByBook.get(bookKey);
+  if (set === undefined) {
+    set = new Set<number>();
+    context.touchedTicketsByBook.set(bookKey, set);
+  }
+  set.add(ticketNumber);
+}
+
 type RecordClass = typeof TICKET_PROVENANCE | typeof SUBMISSION_LEDGER | typeof ATTEMPT_HISTORY;
 
 type JsonLine =
@@ -344,6 +357,7 @@ async function placeTicketProvenanceLine(
     join(context.booksDirectory, bookKey, String(ticketNumber), "records.jsonl"),
     raw,
   );
+  noteTouchedTicket(context, bookKey, ticketNumber);
   return { disposition: "placed", source };
 }
 
@@ -565,7 +579,13 @@ async function migrateHomePartitionBook(
   outcomes: MigrationItemOutcome[],
 ): Promise<void> {
   const backupBook = join(context.backupBooksDirectory, bookKey);
-  const touchedTickets = new Set<number>();
+  // Touches accumulate on context.touchedTicketsByBook — human view finalizes
+  // once after misplaced lines also land (not here).
+  let touchedTickets = context.touchedTicketsByBook.get(bookKey);
+  if (touchedTickets === undefined) {
+    touchedTickets = new Set<number>();
+    context.touchedTicketsByBook.set(bookKey, touchedTickets);
+  }
   // listVolumeRecordFiles covers partition-root records.jsonl + hashed sub-volumes.
   const rootFiles = await listVolumeRecordFiles(join(backupBook, category));
   for (const filePath of rootFiles) {
@@ -607,9 +627,6 @@ async function migrateHomePartitionBook(
       }
     }
   }
-
-  // All sources merged first; human view derived once from authoritative JSONL.
-  await finalizeTicketCompanions(context, bookKey, touchedTickets);
 }
 
 function normalizeJsonlRaw(raw: string): string {
@@ -760,6 +777,10 @@ export const misplacedRecordClassPartitionMigrator: BookTopologyPartitionMigrato
   async migrate(context) {
     const outcomes: MigrationItemOutcome[] = [];
     await forEachBook(context, (bookKey, writes) => migrateMisplacedBook(context, bookKey, writes, outcomes));
+    // All record-class lines (home + misplaced) have landed — one human-view pass.
+    for (const [bookKey, tickets] of context.touchedTicketsByBook) {
+      await finalizeTicketCompanions(context, bookKey, tickets);
+    }
     return reconcileMigrationPartition(MISPLACED, "lines", outcomes);
   },
 };

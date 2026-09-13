@@ -44,6 +44,12 @@ export type BookTopologyMigrationContext = {
   readonly backupBooksDirectory: string;
   /** Fresh destination at the former books/ path. */
   readonly booksDirectory: string;
+  /**
+   * Ticket numbers whose records.jsonl grew during record-class placement.
+   * Human view is finalized once after all record-class migrators finish —
+   * never after ticket-provenance home alone (misplaced lines can still land).
+   */
+  readonly touchedTicketsByBook: Map<string, Set<number>>;
 };
 
 export type BookTopologyPartitionMigrator = {
@@ -194,7 +200,11 @@ export async function migrateBookTopology(input: {
   const backupBooksDirectory = await renameBooksToDatedBackup(booksDirectory, input.now);
   await mkdir(booksDirectory);
 
-  const context = { backupBooksDirectory, booksDirectory };
+  const context: BookTopologyMigrationContext = {
+    backupBooksDirectory,
+    booksDirectory,
+    touchedTicketsByBook: new Map(),
+  };
   const partitions: MigrationPartitionReport[] = [];
   for (const migrator of input.migrators) {
     const report = await migrator.migrate(context);
