@@ -22,6 +22,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 import {
   ActivationLedgerError,
   ensureRealDirectoryTree,
+  errnoCode,
   errorText,
   pathContainedIn,
   physicallyContainedIn,
@@ -72,6 +73,12 @@ function writeCurrentSession(sessionDir: string, sessionFile: string): void {
       { cause: error },
     );
   }
+}
+
+/** True when wx lost to a peer creator — native EEXIST on the write itself. */
+function isCurrentSessionClaimRace(error: unknown): boolean {
+  if (!(error instanceof ActivationLedgerError)) return errnoCode(error) === "EEXIST";
+  return errnoCode(error.cause) === "EEXIST";
 }
 
 function currentSessionLedgerPath(sessionDir: string): string {
@@ -258,8 +265,19 @@ function resolveNavigatorNestContinuation(
   const adopted = mostRecentNavigatorSessionFile(sessionDir, cwd);
   if (adopted === undefined) return undefined;
   assertRecentFinalFileUnderSessionDir(sessionDir, adopted);
-  writeCurrentSession(sessionDir, adopted);
-  return adopted;
+  try {
+    writeCurrentSession(sessionDir, adopted);
+    return adopted;
+  } catch (error) {
+    // Concurrent first adopter lost wx — read the winner through the same
+    // containment gate. Other write failures keep their typed cause.
+    if (isCurrentSessionClaimRace(error)) {
+      const recentFile = readCurrentSession(sessionDir);
+      assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
+      return recentFile;
+    }
+    throw error;
+  }
 }
 
 /** Durable parent session surface that links and nests the record. */
