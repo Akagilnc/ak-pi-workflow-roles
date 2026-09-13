@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readdir, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readdir, symlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
@@ -208,26 +208,23 @@ test("navigator factory durable nest: parent states, unicode cwd, wrong-cwd, no-
     await minted.dispose();
 
     // One deterministic file-level I/O failure → external ActivationLedgerError (not washed).
+    // Self-loop .jsonl symlink (same shape as existing public-cli PATH loop fixtures):
+    // stable across root/DAC models — not chmod(0).
     const ioSubject = "/work/subject-io-fail";
     const ioNest = expectedNavigatorNest(home, bookKey, ioSubject);
     await mkdir(ioNest, { recursive: true });
     const blocked = join(ioNest, "blocked.jsonl");
-    await writeFile(blocked, sessionJsonl("blocked-id", project, "blocked-route"));
-    await chmod(blocked, 0);
-    try {
-      await assert.rejects(
-        () =>
-          factory({
-            context: { cwd: project, home, sessionManager: undefined } as never,
-            subject: ioSubject,
-            tool: undefined as never,
-          }),
-        (error: unknown) =>
-          error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
-      );
-    } finally {
-      await chmod(blocked, 0o644);
-    }
+    await symlink(blocked, blocked);
+    await assert.rejects(
+      () =>
+        factory({
+          context: { cwd: project, home, sessionManager: undefined } as never,
+          subject: ioSubject,
+          tool: undefined as never,
+        }),
+      (error: unknown) =>
+        error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
+    );
   });
 });
 
