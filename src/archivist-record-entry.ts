@@ -91,10 +91,16 @@ type NavigatorSessionHeader = {
 /**
  * Bounded session-header discovery matching Pi readSessionHeader:
  * 4KiB chunks, ≤1MiB total, StringDecoder across reads + EOF flush, skip leading
- * blank lines, first non-blank JSON line. Format non-session / malformed /
- * oversize-without-header → undefined (non-candidate). Real open/read I/O
- * failures propagate — never washed into non-candidate.
+ * blank lines, first non-blank JSON line only. Accepted session header → value;
+ * complete non-session / malformed first line → rejected (non-candidate, stop);
+ * no complete line yet → incomplete (keep reading). Oversize-without-header →
+ * undefined. Real open/read I/O failures propagate — never washed into non-candidate.
  */
+type SessionHeaderRead =
+  | { readonly kind: "accepted"; readonly header: NavigatorSessionHeader }
+  | { readonly kind: "rejected" }
+  | { readonly kind: "incomplete" };
+
 function readBoundedSessionHeader(filePath: string): NavigatorSessionHeader | undefined {
   const fd = openSync(filePath, "r");
   try {
@@ -102,7 +108,7 @@ function readBoundedSessionHeader(filePath: string): NavigatorSessionHeader | un
     const decoder = new StringDecoder("utf8");
     let pending = "";
     let scanned = 0;
-    const consume = (chunk: string): NavigatorSessionHeader | undefined => {
+    const consume = (chunk: string): SessionHeaderRead => {
       pending += chunk;
       let lineStart = 0;
       let newlineIndex = pending.indexOf("\n", lineStart);
@@ -111,26 +117,42 @@ function readBoundedSessionHeader(filePath: string): NavigatorSessionHeader | un
         lineStart = newlineIndex + 1;
         newlineIndex = pending.indexOf("\n", lineStart);
         if (line.trim() === "") continue;
-        return parseSessionHeaderLine(line);
+        // First non-blank complete line decides — never scan past a rejection.
+        pending = pending.slice(lineStart);
+        const header = parseSessionHeaderLine(line);
+        return header === undefined
+          ? { kind: "rejected" }
+          : { kind: "accepted", header };
       }
       pending = pending.slice(lineStart);
-      return undefined;
+      return { kind: "incomplete" };
+    };
+    const finishPending = (tail: string): NavigatorSessionHeader | undefined => {
+      const result = consume(tail);
+      if (result.kind === "accepted") return result.header;
+      if (result.kind === "rejected") return undefined;
+      // EOF with residual non-blank bytes and no newline: treat as one final line.
+      if (pending.trim() === "") return undefined;
+      const header = parseSessionHeaderLine(pending);
+      pending = "";
+      return header;
     };
     while (scanned < MAX_SESSION_HEADER_SCAN_BYTES) {
       const toRead = Math.min(buffer.length, MAX_SESSION_HEADER_SCAN_BYTES - scanned);
       const bytesRead = readSync(fd, buffer, 0, toRead, null);
       if (bytesRead === 0) {
-        return consume(decoder.end()) ?? parseSessionHeaderLine(pending);
+        return finishPending(decoder.end());
       }
       scanned += bytesRead;
       const found = consume(decoder.write(buffer.subarray(0, bytesRead)));
-      if (found !== undefined) return found;
+      if (found.kind === "accepted") return found.header;
+      if (found.kind === "rejected") return undefined;
     }
     // Exactly at the scan limit with a complete final line is still accepted;
     // any further unread byte means the header never arrived in bounds.
     const probe = Buffer.allocUnsafe(1);
     if (readSync(fd, probe, 0, 1, null) === 0) {
-      return consume(decoder.end()) ?? parseSessionHeaderLine(pending);
+      return finishPending(decoder.end());
     }
     return undefined;
   } finally {

@@ -252,6 +252,25 @@ test("navigator factory durable nest: parent states, unicode cwd, wrong-cwd, no-
     assert.ok(leaves.length >= 2);
     await minted.dispose();
 
+    // First non-blank non-header line is terminal rejection — later valid header must not adopt.
+    const rejectSubject = "/work/subject-header-reject";
+    const rejectNest = expectedNavigatorNest(home, bookKey, rejectSubject);
+    await mkdir(rejectNest, { recursive: true });
+    await writeFile(
+      join(rejectNest, "noise-then-header.jsonl"),
+      `${JSON.stringify({ type: "message", role: "user" })}\n${sessionJsonl("later-header", project, "should-not-adopt")}`,
+    );
+    const rejected = await factory({
+      context: { cwd: project, runDirectory, sessionManager: undefined } as never,
+      subject: rejectSubject,
+      tool: undefined as never,
+    });
+    assert.equal(physicalPathIdentity(rejected.recordPointer()!), physicalPathIdentity(rejectNest));
+    assert.deepEqual(routeRuns(rejected.entries()), []);
+    rejected.appendEntry("ak-navigator-route", { run: "fresh-after-reject" });
+    assert.deepEqual(routeRuns(rejected.entries()), ["fresh-after-reject"]);
+    await rejected.dispose();
+
     // One deterministic file-level I/O failure → external ActivationLedgerError (not washed).
     // Self-loop .jsonl symlink (same shape as existing public-cli PATH loop fixtures):
     // stable across root/DAC models — not chmod(0).
