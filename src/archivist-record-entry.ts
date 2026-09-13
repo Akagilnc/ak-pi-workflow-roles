@@ -25,13 +25,11 @@ import {
 } from "./activation-ledger-topology.ts";
 import {
   NAVIGATOR_RECORD_KIND,
-  navigatorWorkSubjectRecordDirectory,
   resolveNavigatorWorkSubjectPlacement,
 } from "./archivist-record-topology.ts";
 
 export {
   NAVIGATOR_RECORD_KIND,
-  navigatorWorkSubjectRecordDirectory,
   resolveNavigatorWorkSubjectPlacement,
 } from "./archivist-record-topology.ts";
 
@@ -77,12 +75,14 @@ function currentSessionLedgerPath(sessionDir: string): string {
 }
 
 /**
- * Valid session principals already on disk under a navigator work-subject nest.
- * Used only when the AK current-session sidecar is absent (pre-sidecar / T11 copy).
- * Not a parallel scanner module — nest-local listing inside the sole record entry.
+ * Pre-sidecar navigator continuation (same contract as historical findMostRecentSession):
+ * valid session header, header.cwd resolves equal to the calling cwd, newest file mtime wins.
+ * Nest-local only — not a parallel scanner and not a generic kind fallback.
+ * Returns undefined when no candidate matches (caller mints fresh, same as the old null path).
  */
-function listNavigatorNestSessionFiles(sessionDir: string): string[] {
+function mostRecentNavigatorSessionFile(sessionDir: string, cwd: string): string | undefined {
   const absoluteSessionDir = resolve(sessionDir);
+  const absoluteCwd = resolve(cwd);
   let names: string[];
   try {
     names = readdirSync(absoluteSessionDir);
@@ -92,7 +92,7 @@ function listNavigatorNestSessionFiles(sessionDir: string): string[] {
       { cause: error },
     );
   }
-  const found: string[] = [];
+  const matched: { path: string; mtimeMs: number }[] = [];
   for (const name of names) {
     if (!name.endsWith(".jsonl")) continue;
     const filePath = join(absoluteSessionDir, name);
@@ -103,7 +103,6 @@ function listNavigatorNestSessionFiles(sessionDir: string): string[] {
       continue;
     }
     if (!st.isFile()) continue;
-    // Header must be a real session principal — skip empty/malformed debris.
     try {
       const firstLine = readFileSync(filePath, "utf8").split("\n", 1)[0] ?? "";
       if (firstLine.trim() === "") continue;
@@ -117,40 +116,39 @@ function listNavigatorNestSessionFiles(sessionDir: string): string[] {
       ) {
         continue;
       }
+      const headerCwd = (header as { cwd?: unknown }).cwd;
+      if (typeof headerCwd !== "string" || headerCwd.length === 0) continue;
+      if (resolve(headerCwd) !== absoluteCwd) continue;
     } catch {
       continue;
     }
-    found.push(filePath);
+    matched.push({ path: filePath, mtimeMs: st.mtimeMs });
   }
-  return found;
+  if (matched.length === 0) return undefined;
+  matched.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return matched[0]!.path;
 }
 
 /**
  * Resume target for an existing navigator work-subject nest.
  * Prefer the AK current-session sidecar. When absent (legal pre-sidecar / migrated
- * shape), adopt the sole valid session file in the nest and write the sidecar once.
- * Zero candidates or more than one valid session is durable damage / ambiguity — loud fail.
+ * shape), adopt by historical cwd + mtime recency and write the sidecar once.
+ * No match → undefined so the sole entry mints fresh (old null path). Multiple
+ * matching files are not ambiguity when mtime orders them.
  * Ordinary kinds and worker-submission-gate do not use this path.
  */
-function resolveNavigatorNestContinuation(sessionDir: string): string {
+function resolveNavigatorNestContinuation(
+  sessionDir: string,
+  cwd: string,
+): string | undefined {
   const ledgerPath = currentSessionLedgerPath(sessionDir);
   if (existsSync(ledgerPath)) {
     const recentFile = readCurrentSession(sessionDir);
     assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
     return recentFile;
   }
-  const candidates = listNavigatorNestSessionFiles(sessionDir);
-  if (candidates.length === 0) {
-    throw new ActivationLedgerError(
-      `archivist navigator nest has no current-session sidecar and no adoptable session file (${sessionDir})`,
-    );
-  }
-  if (candidates.length > 1) {
-    throw new ActivationLedgerError(
-      `archivist navigator nest has no current-session sidecar and multiple session files (${sessionDir}): ${candidates.length}`,
-    );
-  }
-  const adopted = candidates[0]!;
+  const adopted = mostRecentNavigatorSessionFile(sessionDir, cwd);
+  if (adopted === undefined) return undefined;
   assertRecentFinalFileUnderSessionDir(sessionDir, adopted);
   writeCurrentSession(sessionDir, adopted);
   return adopted;
@@ -299,17 +297,23 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
   // Directory-chain ownership: containment + physical components (no parallel assert).
   ensureRealDirectoryTree(ledgerHome, sessionDir);
   if (mayResumeSameNest && nestAlreadyExists) {
-    let recentFile: string;
     if (options.kind === NAVIGATOR_RECORD_KIND) {
-      recentFile = resolveNavigatorNestContinuation(sessionDir);
+      const recentFile = resolveNavigatorNestContinuation(sessionDir, cwd);
+      if (recentFile !== undefined) {
+        return {
+          session: SessionManager.open(recentFile, sessionDir, cwd),
+          resumed: true,
+        };
+      }
+      // No sidecar and no cwd-matching session — mint fresh in the existing nest.
     } else {
-      recentFile = readCurrentSession(sessionDir);
+      const recentFile = readCurrentSession(sessionDir);
       assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
+      return {
+        session: SessionManager.open(recentFile, sessionDir, cwd),
+        resumed: true,
+      };
     }
-    return {
-      session: SessionManager.open(recentFile, sessionDir, cwd),
-      resumed: true,
-    };
   }
 
   const session = SessionManager.create(

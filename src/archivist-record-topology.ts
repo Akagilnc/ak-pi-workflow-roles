@@ -54,13 +54,3 @@ export function resolveNavigatorWorkSubjectPlacement(input: {
     ),
   };
 }
-
-/** Nest path only — thin facade over the sole placement authority. */
-export function navigatorWorkSubjectRecordDirectory(input: {
-  readonly cwd: string;
-  readonly subject: string;
-  readonly parentSessionFile?: string;
-  readonly home?: string;
-}): string {
-  return resolveNavigatorWorkSubjectPlacement(input).sessionDir;
-}
