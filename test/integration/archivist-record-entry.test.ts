@@ -1,17 +1,21 @@
 /**
- * #216/#221 archivist record entry — divergent-parent nesting.
- * Production-reachable shape: SessionManager.open(file, otherDir) ≡ pi --session-dir A --resume B.
- * Settlement reads join(dirname(sessionFile), "auditor-roles"); writer must land on the same path.
+ * #216/#221 archivist record entry — divergent-parent nesting + #852 navigator work-subject.
+ * Navigator: one independent factory tracer (external topology + entries only).
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readdir, symlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
-import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
+import {
+  ActivationLedgerError,
+  physicalPathIdentity,
+} from "../../src/activation-ledger-topology.ts";
 import { createRecordSession } from "../../src/archivist-record-entry.ts";
+import { createNativeNavigatorSessionFactory } from "../../src/navigator-public-session.ts";
 import {
   machineLedgerHome,
   seedGitRepository,
@@ -25,7 +29,6 @@ test("createRecordSession nests by the durable parent file", async () => {
     seedGitRepository(project);
 
     const parentDir = join(machineLedgerHome(home), "books", "proj", "runs", "activation", "parent-run");
-    // Divergent sessionDir under the same ledger home (pi --session-dir A --resume B).
     const otherDir = join(machineLedgerHome(home), "books", "proj", "runs", "activation", "other-session-dir");
     await mkdir(parentDir, { recursive: true });
     await mkdir(otherDir, { recursive: true });
@@ -54,11 +57,175 @@ test("createRecordSession nests by the durable parent file", async () => {
 
     const expected = join(dirname(parentFile), "auditor-roles");
     assert.equal(child.getSessionDir(), expected);
-    // Settlement readBoundAuditorKnownFailure joins dirname(sessionFile)/auditor-roles.
-    const settlementRead = join(dirname(parent.getSessionFile()!), "auditor-roles");
-    assert.equal(physicalPathIdentity(child.getSessionDir()), physicalPathIdentity(settlementRead));
+    assert.equal(
+      physicalPathIdentity(child.getSessionDir()),
+      physicalPathIdentity(join(dirname(parent.getSessionFile()!), "auditor-roles")),
+    );
   });
+});
 
+/** Independent book-top nest contract — join/hash only, never the placement helper under test. */
+function expectedNavigatorNest(home: string, bookKey: string, subject: string): string {
+  const digest = createHash("sha256").update(subject).digest("hex").slice(0, 32);
+  return join(machineLedgerHome(home), "books", bookKey, "navigator", digest);
+}
+
+function routeRuns(entries: readonly unknown[]): string[] {
+  return entries
+    .filter((entry) => (entry as { customType?: string }).customType === "ak-navigator-route")
+    .map((entry) => (entry as { data?: { run?: unknown } }).data?.run)
+    .filter((run): run is string => typeof run === "string");
+}
+
+function sessionJsonl(id: string, cwd: string, route: string): string {
+  return `${JSON.stringify({
+    type: "session",
+    version: 3,
+    id,
+    timestamp: "2026-09-01T00:00:00.000Z",
+    cwd,
+  })}\n${JSON.stringify({
+    type: "custom",
+    customType: "ak-navigator-route",
+    data: { run: route },
+    id: `${id}-route`,
+    parentId: null,
+    timestamp: "2026-09-01T00:00:01.000Z",
+  })}\n`;
+}
+
+/**
+ * Sole navigator factory tracer: table-driven parent states, independent nest path,
+ * Unicode cwd adopt, wrong-cwd recency, no-match mint, one I/O failure.
+ */
+test("navigator factory durable nest: parent states, unicode cwd, wrong-cwd, no-match, io fail", async () => {
+  await withHermeticHome({ prefix: "ak-archivist-navigator-subject-" }, async ({ home }) => {
+    // Book key and calling cwd carry ordinary legal Unicode — external adopt contract,
+    // not a chunk-boundary probe.
+    const project = join(home, "proj-导航-α");
+    await mkdir(project, { recursive: true });
+    seedGitRepository(project);
+    const bookKey = "proj-导航-α";
+
+    const subject = "/work/subject-a";
+    const nest = expectedNavigatorNest(home, bookKey, subject);
+    const factory = createNativeNavigatorSessionFactory();
+
+    const parentDir = join(
+      machineLedgerHome(home),
+      "books",
+      bookKey,
+      "871",
+      "runs",
+      "r1@judge",
+      "session",
+    );
+    await mkdir(parentDir, { recursive: true });
+    const parentFile = join(parentDir, "session.jsonl");
+    await writeFile(
+      parentFile,
+      `${JSON.stringify({
+        type: "session",
+        version: 3,
+        id: "materialized-parent",
+        timestamp: "2025-01-01T00:00:00.000Z",
+        cwd: project,
+      })}\n`,
+    );
+    const parent = SessionManager.open(parentFile, parentDir);
+
+    const parentStates = [
+      { label: "no-parent", sessionManager: undefined as unknown },
+      { label: "unmaterialized-parent", sessionManager: { getSessionFile: () => undefined } },
+      { label: "materialized-parent", sessionManager: parent },
+    ] as const;
+
+    let last: Awaited<ReturnType<ReturnType<typeof createNativeNavigatorSessionFactory>>> | undefined;
+    for (const state of parentStates) {
+      const session = await factory({
+        context: { cwd: project, home, sessionManager: state.sessionManager } as never,
+        subject,
+        tool: undefined as never,
+      });
+      assert.equal(physicalPathIdentity(session.recordPointer()!), physicalPathIdentity(nest));
+      session.appendEntry("ak-navigator-route", { run: state.label });
+      last = session;
+    }
+    assert.deepEqual(routeRuns(last!.entries()), [
+      "no-parent",
+      "unmaterialized-parent",
+      "materialized-parent",
+    ]);
+    await last!.dispose();
+
+    // Legacy: newer wrong-cwd must not win; older matching Unicode cwd (leading blanks) adopts.
+    const legacySubject = "/work/subject-legacy-cwd";
+    const legacyNest = expectedNavigatorNest(home, bookKey, legacySubject);
+    await mkdir(legacyNest, { recursive: true });
+    const olderMatching = join(legacyNest, "older-matching.jsonl");
+    const newerWrongCwd = join(legacyNest, "newer-wrong-cwd.jsonl");
+    await writeFile(
+      olderMatching,
+      `\n\n${sessionJsonl("older-id", project, "matching-older")}`,
+    );
+    await writeFile(
+      newerWrongCwd,
+      sessionJsonl("newer-id", join(project, "other"), "wrong-cwd-newer"),
+    );
+    const olderTime = new Date("2026-09-02T00:00:00.000Z");
+    const newerTime = new Date("2026-09-03T00:00:00.000Z");
+    await utimes(olderMatching, olderTime, olderTime);
+    await utimes(newerWrongCwd, newerTime, newerTime);
+
+    const adopted = await factory({
+      context: { cwd: project, home, sessionManager: undefined } as never,
+      subject: legacySubject,
+      tool: undefined as never,
+    });
+    assert.equal(physicalPathIdentity(adopted.recordPointer()!), physicalPathIdentity(legacyNest));
+    assert.deepEqual(routeRuns(adopted.entries()), ["matching-older"]);
+    await adopted.dispose();
+
+    // No cwd match → mint fresh (old null path).
+    const noMatchSubject = "/work/subject-no-match";
+    const noMatchNest = expectedNavigatorNest(home, bookKey, noMatchSubject);
+    await mkdir(noMatchNest, { recursive: true });
+    await writeFile(
+      join(noMatchNest, "foreign.jsonl"),
+      sessionJsonl("foreign-id", join(project, "foreign"), "foreign-only"),
+    );
+    const minted = await factory({
+      context: { cwd: project, home, sessionManager: undefined } as never,
+      subject: noMatchSubject,
+      tool: undefined as never,
+    });
+    assert.equal(physicalPathIdentity(minted.recordPointer()!), physicalPathIdentity(noMatchNest));
+    assert.deepEqual(routeRuns(minted.entries()), []);
+    minted.appendEntry("ak-navigator-route", { run: "fresh-mint" });
+    assert.deepEqual(routeRuns(minted.entries()), ["fresh-mint"]);
+    const leaves = (await readdir(noMatchNest)).filter((name) => name.endsWith(".jsonl"));
+    assert.ok(leaves.length >= 2);
+    await minted.dispose();
+
+    // One deterministic file-level I/O failure → external ActivationLedgerError (not washed).
+    // Self-loop .jsonl symlink (same shape as existing public-cli PATH loop fixtures):
+    // stable across root/DAC models — not chmod(0).
+    const ioSubject = "/work/subject-io-fail";
+    const ioNest = expectedNavigatorNest(home, bookKey, ioSubject);
+    await mkdir(ioNest, { recursive: true });
+    const blocked = join(ioNest, "blocked.jsonl");
+    await symlink(blocked, blocked);
+    await assert.rejects(
+      () =>
+        factory({
+          context: { cwd: project, home, sessionManager: undefined } as never,
+          subject: ioSubject,
+          tool: undefined as never,
+        }),
+      (error: unknown) =>
+        error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
+    );
+  });
 });
 
 test("Sitian facade: three levels, with/without usage, and raw pointer can open canonical volume", async () => {
@@ -69,8 +236,6 @@ test("Sitian facade: three levels, with/without usage, and raw pointer can open 
 
     const { sitianReport, readSitianRecords } = await import("../../src/sitian-facade.ts");
 
-    // Case 1: run-summary with usage
-    // #604: explicit home — packageMachineHome ignores process.env.HOME.
     const summaryPtr = sitianReport({
       level: "run-summary",
       kind: "settlement-summary",
@@ -86,7 +251,6 @@ test("Sitian facade: three levels, with/without usage, and raw pointer can open 
     assert.equal(summaryRead.records.length, 1);
     assert.equal(summaryRead.records[0]!.usage?.totalTokens, 60);
 
-    // Case 2: event without usage, with raw reference
     const rawFile = join(home, "raw-session.jsonl");
     await writeFile(rawFile, '{"type":"session"}\n', "utf8");
     const eventPtr = sitianReport({
@@ -106,7 +270,6 @@ test("Sitian facade: three levels, with/without usage, and raw pointer can open 
     assert.equal(eventRead.records[0]!.raw?.sessionFile, rawFile);
     assert.equal(eventRead.records[0]!.raw?.entryId, "entry-99");
 
-    // Case 3: protocol-snapshot without usage, without raw reference
     const snapPtr = sitianReport({
       level: "protocol-snapshot",
       kind: "auditor-roles",

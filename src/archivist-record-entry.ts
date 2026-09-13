@@ -3,8 +3,20 @@
  * 调用方只声明自己是谁的什么；落点由候簿拓扑算出，签名不含任何落点/路径参数。
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, resolve, join } from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
@@ -15,6 +27,15 @@ import {
   physicallyContainedIn,
   resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
+import {
+  NAVIGATOR_RECORD_KIND,
+  resolveNavigatorWorkSubjectPlacement,
+} from "./archivist-record-topology.ts";
+
+export {
+  NAVIGATOR_RECORD_KIND,
+  resolveNavigatorWorkSubjectPlacement,
+} from "./archivist-record-topology.ts";
 
 const CURRENT_SESSION_LEDGER = "current-session.json";
 
@@ -53,6 +74,172 @@ function writeCurrentSession(sessionDir: string, sessionFile: string): void {
   }
 }
 
+function currentSessionLedgerPath(sessionDir: string): string {
+  return join(sessionDir, CURRENT_SESSION_LEDGER);
+}
+
+/** Same bounds as Pi readSessionHeader — do not invent a second scan ceiling. */
+const SESSION_HEADER_CHUNK_BYTES = 4096;
+const MAX_SESSION_HEADER_SCAN_BYTES = 1024 * 1024;
+
+type NavigatorSessionHeader = {
+  readonly type: "session";
+  readonly id: string;
+  readonly cwd?: string;
+};
+
+/**
+ * Bounded session-header discovery matching Pi readSessionHeader:
+ * 4KiB chunks, ≤1MiB total, StringDecoder across reads + EOF flush, skip leading
+ * blank lines, first non-blank JSON line. Format non-session / malformed /
+ * oversize-without-header → undefined (non-candidate). Real open/read I/O
+ * failures propagate — never washed into non-candidate.
+ */
+function readBoundedSessionHeader(filePath: string): NavigatorSessionHeader | undefined {
+  const fd = openSync(filePath, "r");
+  try {
+    const buffer = Buffer.allocUnsafe(SESSION_HEADER_CHUNK_BYTES);
+    const decoder = new StringDecoder("utf8");
+    let pending = "";
+    let scanned = 0;
+    const consume = (chunk: string): NavigatorSessionHeader | undefined => {
+      pending += chunk;
+      let lineStart = 0;
+      let newlineIndex = pending.indexOf("\n", lineStart);
+      while (newlineIndex !== -1) {
+        const line = pending.slice(lineStart, newlineIndex);
+        lineStart = newlineIndex + 1;
+        newlineIndex = pending.indexOf("\n", lineStart);
+        if (line.trim() === "") continue;
+        return parseSessionHeaderLine(line);
+      }
+      pending = pending.slice(lineStart);
+      return undefined;
+    };
+    while (scanned < MAX_SESSION_HEADER_SCAN_BYTES) {
+      const toRead = Math.min(buffer.length, MAX_SESSION_HEADER_SCAN_BYTES - scanned);
+      const bytesRead = readSync(fd, buffer, 0, toRead, null);
+      if (bytesRead === 0) {
+        return consume(decoder.end()) ?? parseSessionHeaderLine(pending);
+      }
+      scanned += bytesRead;
+      const found = consume(decoder.write(buffer.subarray(0, bytesRead)));
+      if (found !== undefined) return found;
+    }
+    // Exactly at the scan limit with a complete final line is still accepted;
+    // any further unread byte means the header never arrived in bounds.
+    const probe = Buffer.allocUnsafe(1);
+    if (readSync(fd, probe, 0, 1, null) === 0) {
+      return consume(decoder.end()) ?? parseSessionHeaderLine(pending);
+    }
+    return undefined;
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function parseSessionHeaderLine(line: string): NavigatorSessionHeader | undefined {
+  if (line.trim() === "") return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return undefined;
+  }
+  if (
+    typeof parsed !== "object"
+    || parsed === null
+    || (parsed as { type?: unknown }).type !== "session"
+    || typeof (parsed as { id?: unknown }).id !== "string"
+    || (parsed as { id: string }).id.length === 0
+  ) {
+    return undefined;
+  }
+  const cwd = (parsed as { cwd?: unknown }).cwd;
+  return {
+    type: "session",
+    id: (parsed as { id: string }).id,
+    ...(typeof cwd === "string" ? { cwd } : {}),
+  };
+}
+
+/**
+ * Pre-sidecar navigator continuation (historical findMostRecentSession selection):
+ * bounded valid session header, header.cwd resolves equal to the calling cwd,
+ * newest file mtime wins. Nest-local only — not a generic kind fallback.
+ * Returns undefined when no candidate matches (caller mints fresh, old null path).
+ * Directory/stat/read I/O failures propagate as ActivationLedgerError (failure honesty);
+ * format non-candidates stay skippable.
+ */
+function mostRecentNavigatorSessionFile(sessionDir: string, cwd: string): string | undefined {
+  const absoluteSessionDir = resolve(sessionDir);
+  const absoluteCwd = resolve(cwd);
+  let names: string[];
+  try {
+    names = readdirSync(absoluteSessionDir);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `archivist navigator nest is not readable (${sessionDir}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+  const matched: { path: string; mtimeMs: number }[] = [];
+  for (const name of names) {
+    if (!name.endsWith(".jsonl")) continue;
+    const filePath = join(absoluteSessionDir, name);
+    let st;
+    try {
+      st = statSync(filePath);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `archivist navigator session file is not stat-able (${filePath}): ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+    if (!st.isFile()) continue;
+    let header: NavigatorSessionHeader | undefined;
+    try {
+      header = readBoundedSessionHeader(filePath);
+    } catch (error) {
+      throw new ActivationLedgerError(
+        `archivist navigator session header is not readable (${filePath}): ${errorText(error)}`,
+        { cause: error },
+      );
+    }
+    if (header === undefined) continue;
+    if (typeof header.cwd !== "string" || header.cwd.length === 0) continue;
+    if (resolve(header.cwd) !== absoluteCwd) continue;
+    matched.push({ path: filePath, mtimeMs: st.mtimeMs });
+  }
+  if (matched.length === 0) return undefined;
+  matched.sort((a, b) => b.mtimeMs - a.mtimeMs);
+  return matched[0]!.path;
+}
+
+/**
+ * Resume target for an existing navigator work-subject nest.
+ * Prefer the AK current-session sidecar. When absent (legal pre-sidecar / migrated
+ * shape), adopt by historical cwd + mtime recency and write the sidecar once.
+ * No match → undefined so the sole entry mints fresh (old null path).
+ * Ordinary kinds and worker-submission-gate do not use this path.
+ */
+function resolveNavigatorNestContinuation(
+  sessionDir: string,
+  cwd: string,
+): string | undefined {
+  const ledgerPath = currentSessionLedgerPath(sessionDir);
+  if (existsSync(ledgerPath)) {
+    const recentFile = readCurrentSession(sessionDir);
+    assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
+    return recentFile;
+  }
+  const adopted = mostRecentNavigatorSessionFile(sessionDir, cwd);
+  if (adopted === undefined) return undefined;
+  assertRecentFinalFileUnderSessionDir(sessionDir, adopted);
+  writeCurrentSession(sessionDir, adopted);
+  return adopted;
+}
+
 /** Durable parent session surface that links and nests the record. */
 export type RecordSessionParent = {
   getSessionFile(): string | undefined;
@@ -63,10 +250,19 @@ export type CreateRecordSessionOptions = {
   readonly cwd: string;
   /** What kind of record this is (e.g. "auditor-roles"). Single path segment; not a destination path. */
   readonly kind: string;
-  /** Parent session — its durable file is the sole nesting authority. */
+  /** Parent session — nesting authority for ordinary kinds; optional parentSession link for navigator. */
   readonly parent?: RecordSessionParent;
-  /** Optional durable-record intent; does not select placement or continuation. */
+  /**
+   * Durable work-subject intent. For navigator only, selects the book-top
+   * `navigator/<work-subject>` nest (dossier-topology / #852); does not restore
+   * generic kind partitions.
+   */
   readonly subject?: string;
+  /**
+   * Process home when no parent path can derive the ledger home. Not a record
+   * destination — same identity surface as resolveActivationLedgerHome(home).
+   */
+  readonly home?: string;
 };
 
 /** Authorized no-subject kind that may resume the most recent same-nest peer (ADR 0066). Sole string true source for gate resume identity. */
@@ -120,7 +316,7 @@ function assertRecentFinalFileUnderSessionDir(
 /** Open result including the sole continuation fact. */
 export type RecordSessionOpen = {
   readonly session: SessionManager;
-  /** True only when the authorized worker-submission-gate volume was reopened. */
+  /** True when an existing navigator work-subject or worker-submission-gate volume was reopened. */
   readonly resumed: boolean;
 };
 
@@ -131,8 +327,8 @@ export type RecordSessionOpen = {
  * identity is checked once before SessionManager.open (directory walk cannot see a
  * trailing .jsonl symlink). New principals mint under the already-validated sessionDir
  * via destination-free SessionManager.create — no derived postcondition.
- * Resume via the AK-owned current-session ledger is limited to the authorized
- * worker-submission-gate durable path (ADR 0066).
+ * Resume via the AK-owned current-session ledger is limited to navigator work-subject
+ * nests and the authorized worker-submission-gate durable path (ADR 0066 / #852).
  * Other ordinary no-subject children (auditor-roles, evidence-children, …) always mint fresh.
  * New persisted principals materialize their deferred session header before return so
  * custom-entry-only writers do not need a parallel delayed-header helper.
@@ -142,39 +338,68 @@ export type RecordSessionOpen = {
 export function createRecordSessionOpen(options: CreateRecordSessionOptions): RecordSessionOpen {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
-  // Path → ledger home is owned by topology (explicit env.home nests via parent path).
-  const ledgerHome = resolveActivationLedgerHomeForPath(parentFile);
 
-  if (parentFile === undefined || parentFile.length === 0) {
+  let sessionDir: string;
+  let parentSession: string | undefined;
+  let mayResumeSameNest: boolean;
+  let ledgerHome: string;
+
+  // #852 sole book-top exception: navigator/<work-subject> via one topology authority.
+  // Holds for no parent / unmaterialized parent / materialized parent — never silent in-memory.
+  if (options.kind === NAVIGATOR_RECORD_KIND && options.subject !== undefined) {
+    const placement = resolveNavigatorWorkSubjectPlacement({
+      cwd,
+      subject: options.subject,
+      ...(parentFile === undefined || parentFile.length === 0
+        ? {}
+        : { parentSessionFile: parentFile }),
+      ...(options.home === undefined ? {} : { home: options.home }),
+    });
+    sessionDir = placement.sessionDir;
+    ledgerHome = placement.ledgerHome;
+    parentSession = parentFile && parentFile.length > 0 ? parentFile : undefined;
+    mayResumeSameNest = true;
+  } else if (parentFile === undefined || parentFile.length === 0) {
     if (options.subject === undefined) {
       // No durable principal requested: preserve prior in-memory child behavior.
       return { session: SessionManager.inMemory(cwd), resumed: false };
     }
     throw new Error("Durable record ownership requires a parent session inside the ledger home");
+  } else {
+    ledgerHome = resolveActivationLedgerHomeForPath(parentFile);
+    const parentResolved = resolve(parentFile);
+    if (!physicallyContainedIn(ledgerHome, parentResolved)) {
+      throw new Error("Durable record ownership requires a parent session inside the ledger home");
+    }
+    // Ordinary kinds: durable parent's file is the sole nesting authority. A divergent
+    // SessionManager directory must not create a second placement route.
+    // Do not restore generic bookDir/<kind> fallback for foreign/unrooted parents.
+    sessionDir = join(dirname(parentResolved), options.kind);
+    parentSession = parentFile;
+    mayResumeSameNest = options.kind === WORKER_SUBMISSION_GATE_KIND;
   }
-
-  const parentResolved = resolve(parentFile);
-  if (!physicallyContainedIn(ledgerHome, parentResolved)) {
-    throw new Error("Durable record ownership requires a parent session inside the ledger home");
-  }
-  // The durable parent's file is the sole nesting authority. A divergent
-  // SessionManager directory must not create a second placement route.
-  const sessionDir = join(dirname(parentResolved), options.kind);
-  const parentSession = parentFile;
 
   const nestAlreadyExists = existsSync(sessionDir);
   // Directory-chain ownership: containment + physical components (no parallel assert).
   ensureRealDirectoryTree(ledgerHome, sessionDir);
-  // Worker-submission-gate is the sole authorized same-nest continuation.
-  // Subject no longer selects a persistence partition.
-  const mayResumeSameNest = options.kind === WORKER_SUBMISSION_GATE_KIND;
   if (mayResumeSameNest && nestAlreadyExists) {
-    const recentFile = readCurrentSession(sessionDir);
-    assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
-    return {
-      session: SessionManager.open(recentFile, sessionDir, cwd),
-      resumed: true,
-    };
+    if (options.kind === NAVIGATOR_RECORD_KIND) {
+      const recentFile = resolveNavigatorNestContinuation(sessionDir, cwd);
+      if (recentFile !== undefined) {
+        return {
+          session: SessionManager.open(recentFile, sessionDir, cwd),
+          resumed: true,
+        };
+      }
+      // No sidecar and no cwd-matching session — mint fresh in the existing nest.
+    } else {
+      const recentFile = readCurrentSession(sessionDir);
+      assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
+      return {
+        session: SessionManager.open(recentFile, sessionDir, cwd),
+        resumed: true,
+      };
+    }
   }
 
   const session = SessionManager.create(

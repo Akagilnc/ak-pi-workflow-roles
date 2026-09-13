@@ -1011,14 +1011,18 @@ test("public navigator session takes a seat edit for the next summon instead of 
     const priorHome = process.env.HOME;
     process.env.HOME = root;
     const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
+    const { seedGitRepository } = await import("../helpers/pi-test-harness.ts");
     await withPrimaryAwareCleanup(
       async () => {
+        // Durable nest placement is owned by the archivist factory tracer; this case
+        // only locks seat-edit-between-prepares. context.home keeps ledger hermetic.
+        seedGitRepository(root);
         await savePublicCliConfig(
           { seats: { navigator: { provider: "provider", model: "one" } } },
           root,
         );
         const session = await createNativeNavigatorSessionFactory()({
-          context: { cwd: root, sessionManager: undefined } as never,
+          context: { cwd: root, home: root, sessionManager: undefined } as never,
           subject: "seat edit between prepares",
           tool: undefined as never,
         });
