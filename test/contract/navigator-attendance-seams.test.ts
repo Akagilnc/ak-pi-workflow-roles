@@ -1011,18 +1011,16 @@ test("public navigator session takes a seat edit for the next summon instead of 
     const priorHome = process.env.HOME;
     process.env.HOME = root;
     const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
-    const { dirname, join } = await import("node:path");
-    const { seedGitRepository, machineLedgerHome } = await import("../helpers/pi-test-harness.ts");
-    const { physicalPathIdentity } = await import("../../src/activation-ledger-topology.ts");
+    const { seedGitRepository } = await import("../helpers/pi-test-harness.ts");
     await withPrimaryAwareCleanup(
       async () => {
+        // Durable nest placement is owned by the archivist factory tracer; this case
+        // only locks seat-edit-between-prepares. context.home keeps ledger hermetic.
         seedGitRepository(root);
         await savePublicCliConfig(
           { seats: { navigator: { provider: "provider", model: "one" } } },
           root,
         );
-        // Keep no-parent factory path (the #859 gate-flash scene). context.home is the
-        // process-identity surface so ledger stays hermetic without env-HOME placement.
         const session = await createNativeNavigatorSessionFactory()({
           context: { cwd: root, home: root, sessionManager: undefined } as never,
           subject: "seat edit between prepares",
@@ -1037,12 +1035,6 @@ test("public navigator session takes a seat edit for the next summon instead of 
         );
         await session.setModel?.("other/two:high", "high");
         assert.equal(session.getThinkingLevel?.(), "high");
-        const pointer = session.recordPointer();
-        assert.ok(pointer, "no-parent factory must still book a durable navigator nest");
-        assert.equal(
-          physicalPathIdentity(dirname(pointer)),
-          physicalPathIdentity(join(machineLedgerHome(root), "books", basename(root), "navigator")),
-        );
         await session.dispose();
       },
       async () => {

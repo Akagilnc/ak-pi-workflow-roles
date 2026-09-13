@@ -3,7 +3,15 @@
  * 调用方只声明自己是谁的什么；落点由候簿拓扑算出，签名不含任何落点/路径参数。
  * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
  */
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
@@ -13,17 +21,18 @@ import {
   errorText,
   pathContainedIn,
   physicallyContainedIn,
-  resolveActivationLedgerHome,
   resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
 import {
   NAVIGATOR_RECORD_KIND,
   navigatorWorkSubjectRecordDirectory,
+  resolveNavigatorWorkSubjectPlacement,
 } from "./archivist-record-topology.ts";
 
 export {
   NAVIGATOR_RECORD_KIND,
   navigatorWorkSubjectRecordDirectory,
+  resolveNavigatorWorkSubjectPlacement,
 } from "./archivist-record-topology.ts";
 
 const CURRENT_SESSION_LEDGER = "current-session.json";
@@ -61,6 +70,90 @@ function writeCurrentSession(sessionDir: string, sessionFile: string): void {
       { cause: error },
     );
   }
+}
+
+function currentSessionLedgerPath(sessionDir: string): string {
+  return join(sessionDir, CURRENT_SESSION_LEDGER);
+}
+
+/**
+ * Valid session principals already on disk under a navigator work-subject nest.
+ * Used only when the AK current-session sidecar is absent (pre-sidecar / T11 copy).
+ * Not a parallel scanner module — nest-local listing inside the sole record entry.
+ */
+function listNavigatorNestSessionFiles(sessionDir: string): string[] {
+  const absoluteSessionDir = resolve(sessionDir);
+  let names: string[];
+  try {
+    names = readdirSync(absoluteSessionDir);
+  } catch (error) {
+    throw new ActivationLedgerError(
+      `archivist navigator nest is not readable (${sessionDir}): ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+  const found: string[] = [];
+  for (const name of names) {
+    if (!name.endsWith(".jsonl")) continue;
+    const filePath = join(absoluteSessionDir, name);
+    let st;
+    try {
+      st = statSync(filePath);
+    } catch {
+      continue;
+    }
+    if (!st.isFile()) continue;
+    // Header must be a real session principal — skip empty/malformed debris.
+    try {
+      const firstLine = readFileSync(filePath, "utf8").split("\n", 1)[0] ?? "";
+      if (firstLine.trim() === "") continue;
+      const header: unknown = JSON.parse(firstLine);
+      if (
+        typeof header !== "object"
+        || header === null
+        || (header as { type?: unknown }).type !== "session"
+        || typeof (header as { id?: unknown }).id !== "string"
+        || (header as { id: string }).id.length === 0
+      ) {
+        continue;
+      }
+    } catch {
+      continue;
+    }
+    found.push(filePath);
+  }
+  return found;
+}
+
+/**
+ * Resume target for an existing navigator work-subject nest.
+ * Prefer the AK current-session sidecar. When absent (legal pre-sidecar / migrated
+ * shape), adopt the sole valid session file in the nest and write the sidecar once.
+ * Zero candidates or more than one valid session is durable damage / ambiguity — loud fail.
+ * Ordinary kinds and worker-submission-gate do not use this path.
+ */
+function resolveNavigatorNestContinuation(sessionDir: string): string {
+  const ledgerPath = currentSessionLedgerPath(sessionDir);
+  if (existsSync(ledgerPath)) {
+    const recentFile = readCurrentSession(sessionDir);
+    assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
+    return recentFile;
+  }
+  const candidates = listNavigatorNestSessionFiles(sessionDir);
+  if (candidates.length === 0) {
+    throw new ActivationLedgerError(
+      `archivist navigator nest has no current-session sidecar and no adoptable session file (${sessionDir})`,
+    );
+  }
+  if (candidates.length > 1) {
+    throw new ActivationLedgerError(
+      `archivist navigator nest has no current-session sidecar and multiple session files (${sessionDir}): ${candidates.length}`,
+    );
+  }
+  const adopted = candidates[0]!;
+  assertRecentFinalFileUnderSessionDir(sessionDir, adopted);
+  writeCurrentSession(sessionDir, adopted);
+  return adopted;
 }
 
 /** Durable parent session surface that links and nests the record. */
@@ -170,7 +263,7 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
   // #852 sole book-top exception: navigator/<work-subject> via one topology authority.
   // Holds for no parent / unmaterialized parent / materialized parent — never silent in-memory.
   if (options.kind === NAVIGATOR_RECORD_KIND && options.subject !== undefined) {
-    sessionDir = navigatorWorkSubjectRecordDirectory({
+    const placement = resolveNavigatorWorkSubjectPlacement({
       cwd,
       subject: options.subject,
       ...(parentFile === undefined || parentFile.length === 0
@@ -178,12 +271,10 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
         : { parentSessionFile: parentFile }),
       ...(options.home === undefined ? {} : { home: options.home }),
     });
+    sessionDir = placement.sessionDir;
+    ledgerHome = placement.ledgerHome;
     parentSession = parentFile && parentFile.length > 0 ? parentFile : undefined;
     mayResumeSameNest = true;
-    ledgerHome =
-      parentFile !== undefined && parentFile.length > 0
-        ? resolveActivationLedgerHomeForPath(parentFile)
-        : resolveActivationLedgerHome(options.home);
   } else if (parentFile === undefined || parentFile.length === 0) {
     if (options.subject === undefined) {
       // No durable principal requested: preserve prior in-memory child behavior.
@@ -208,8 +299,13 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
   // Directory-chain ownership: containment + physical components (no parallel assert).
   ensureRealDirectoryTree(ledgerHome, sessionDir);
   if (mayResumeSameNest && nestAlreadyExists) {
-    const recentFile = readCurrentSession(sessionDir);
-    assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
+    let recentFile: string;
+    if (options.kind === NAVIGATOR_RECORD_KIND) {
+      recentFile = resolveNavigatorNestContinuation(sessionDir);
+    } else {
+      recentFile = readCurrentSession(sessionDir);
+      assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
+    }
     return {
       session: SessionManager.open(recentFile, sessionDir, cwd),
       resumed: true,

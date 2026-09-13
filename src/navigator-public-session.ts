@@ -28,11 +28,11 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
     // unmaterialized/missing parent still gets a durable nest instead of silent in-memory.
     // Optional context.home is process identity for ledger root when no parent path (same
     // surface as seat resolution) — not env HOME, not a record destination.
-    const { createRecordSession } = await import("./archivist-record-entry.ts");
+    const { createRecordSession, NAVIGATOR_RECORD_KIND } = await import("./archivist-record-entry.ts");
     const contextHome = (context as { home?: unknown }).home;
     const sessionManager = createRecordSession({
       cwd: context.cwd,
-      kind: "navigator",
+      kind: NAVIGATOR_RECORD_KIND,
       subject,
       ...(context.sessionManager !== undefined ? { parent: context.sessionManager } : {}),
       ...(typeof contextHome === "string" && contextHome.length > 0 ? { home: contextHome } : {}),
