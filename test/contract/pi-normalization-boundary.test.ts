@@ -17,7 +17,7 @@
  */
 import assert from "node:assert/strict";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -35,7 +35,8 @@ test("Boundary Tracer 1: Duplicate processing of raw session returns same pointe
     await mkdir(project, { recursive: true });
     seedGitRepository(project);
 
-    const sessionFile = join(home, "session.jsonl");
+    const sessionFile = join(home, ".ak-roles/books/proj/runs/run-dup-1/session/session.jsonl");
+    await mkdir(dirname(sessionFile), { recursive: true });
     const rawContent = [
       JSON.stringify({ type: "session", id: "sess-dup-001", timestamp: "2026-08-28T01:00:00.000Z", cwd: project }),
       JSON.stringify({ type: "model_change", modelId: "gemini-2.5-pro", timestamp: "2026-08-28T01:00:01.000Z" }),
@@ -114,7 +115,8 @@ test("Boundary Tracer 2: Fault injection covering both torn-tail substates and R
     seedGitRepository(project);
 
     // --- Substate a: genuine short write (complete JSON without trailing newline) ---
-    const sessionFileA = join(home, "session-a.jsonl");
+    const sessionFileA = join(home, ".ak-roles/books/proj/runs/run-a/session/session.jsonl");
+    await mkdir(dirname(sessionFileA), { recursive: true });
     const rawContentA = [
       JSON.stringify({ type: "session", id: "sess-fault-a", timestamp: "2026-08-28T01:00:00.000Z", cwd: project }),
       JSON.stringify({
@@ -161,6 +163,7 @@ test("Boundary Tracer 2: Fault injection covering both torn-tail substates and R
       kind: "tool-call",
       cwd: project,
       home,
+      sessionParent: sessionFileA,
       subject: { runId: "run-fault-a" },
       identity: "sess-fault-a:call-short",
       payload: { toolName: "bash", toolCallId: "call-short" },
@@ -176,7 +179,8 @@ test("Boundary Tracer 2: Fault injection covering both torn-tail substates and R
     assert.equal(readA.diagnostics.length, 0);
 
     // --- Substate b: mid-fragment corruption (unparseable fragment without newline) ---
-    const sessionFileB = join(home, "session-b.jsonl");
+    const sessionFileB = join(home, ".ak-roles/books/proj/runs/run-b/session/session.jsonl");
+    await mkdir(dirname(sessionFileB), { recursive: true });
     const rawContentB = [
       JSON.stringify({ type: "session", id: "sess-fault-b", timestamp: "2026-08-28T01:00:00.000Z", cwd: project }),
       JSON.stringify({
@@ -214,6 +218,7 @@ test("Boundary Tracer 2: Fault injection covering both torn-tail substates and R
       kind: "tool-call",
       cwd: project,
       home,
+      sessionParent: sessionFileB,
       subject: { runId: "run-fault-b" },
       identity: "sess-fault-b:call-after-bad",
       payload: { toolName: "read_file" },
@@ -241,7 +246,8 @@ test("Normalization failure negative case: unparseable session frame produces no
     await mkdir(project, { recursive: true });
     seedGitRepository(project);
 
-    const sessionFile = join(home, "bad-frame-session.jsonl");
+    const sessionFile = join(home, ".ak-roles/books/proj/runs/run-bad/session/session.jsonl");
+    await mkdir(dirname(sessionFile), { recursive: true });
     const content = [
       JSON.stringify({ type: "session", id: "sess-bad-frame", timestamp: "2026-08-28T01:00:00.000Z", cwd: project }),
       "THIS IS NOT VALID JSON",

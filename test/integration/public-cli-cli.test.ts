@@ -539,6 +539,7 @@ test("public runs write one identity-bound invocation ledger for every role", as
 
       const runDirectory = join(
         activationBookDirectory(ledgerHome, bookKey),
+        "unbound",
         "runs",
         `${scenario.runId}@${scenario.role}`,
       );

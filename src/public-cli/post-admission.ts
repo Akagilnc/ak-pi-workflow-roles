@@ -145,9 +145,9 @@ function withOnceSuccessfulBeforeDispatch<
   let succeeded = false;
   return {
     ...adapters,
-    beforeDispatch: async (admitted) => {
+    beforeDispatch: async (admitted, lease) => {
       if (succeeded) return;
-      await hook(admitted);
+      await hook(admitted, lease);
       succeeded = true;
     },
   };
@@ -280,7 +280,13 @@ export type PostAdmissionAdapters<
     result: RoleTurnResult;
     sessionFile: string;
   }) => Promise<RoleTurnKnownFailure | undefined>;
-  beforeDispatch?: (admitted: A) => Promise<void> | void;
+  beforeDispatch?: (admitted: A, lease: RunWriterLease) => Promise<void> | void;
+  /**
+   * After the host turn settles and before the writer lease is released.
+   * Post-turn bind/relocate (e.g. Diarist first assert) must run here so the
+   * held lease follows the run directory and failures stay controlled.
+   */
+  afterDispatch?: (admitted: A, lease: RunWriterLease) => Promise<void> | void;
 };
 
 export type ControlledFailureInput = {
@@ -570,6 +576,60 @@ export async function dispatchPostAdmissionTurn<
   const deferredPersist = persistRunState ? {} : { needsPersist: true as const };
   const shouldPresent =
     adapters.shouldPresentSettled ?? ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
+  type DispatchOutcome = {
+    exitCode: number;
+    admitted: A;
+    terminal?: T;
+    skipAutoResume?: true;
+    turnDispatched?: true;
+    needsPersist?: true;
+  };
+  /**
+   * Once-only post-host-turn hook (Diarist bind/relocate, etc.) under the still-held
+   * writer lease. Every exit after the host turn has started must pass here before
+   * lease release — success and failure alike. When a primary failure terminal already
+   * exists, keep that cause and leave relocate failure on the shared diagnostic channel.
+   */
+  let afterDispatchApplied = false;
+  const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
+    if (adapters.afterDispatch === undefined || afterDispatchApplied) return result;
+    afterDispatchApplied = true;
+    try {
+      await adapters.afterDispatch(admitted, lease);
+      return result;
+    } catch (error) {
+      const primaryFailure =
+        result.terminal !== undefined
+        && !isLawfulTypedTerminalOutcome(result.terminal.roleOutcome);
+      if (primaryFailure) {
+        await recordBestEffortPostDispatchDiagnostic(
+          admitted,
+          env,
+          `afterDispatch failed beside primary terminal (best-effort continue): ${describeErrorIdentity(error)}`,
+          io,
+        );
+        return result;
+      }
+      return {
+        ...(await presentControlledFailure(
+          admitted,
+          {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+          },
+          adapters,
+          env.principalAuthority,
+          io,
+          persistRunState,
+        )) as { exitCode: number; admitted: A; terminal: T },
+        ...(result.turnDispatched === true ? { turnDispatched: true as const } : {}),
+        ...(result.skipAutoResume === true ? { skipAutoResume: true as const } : {}),
+        ...deferredPersist,
+      };
+    }
+  };
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
       env.model,
@@ -644,7 +704,7 @@ export async function dispatchPostAdmissionTurn<
     // (#840 父子不层叠).
     if (adapters.beforeDispatch !== undefined) {
       try {
-        await adapters.beforeDispatch(admitted);
+        await adapters.beforeDispatch(admitted, lease);
       } catch (error) {
         const settled = (await presentControlledFailure(
           admitted,
@@ -737,7 +797,7 @@ export async function dispatchPostAdmissionTurn<
         io,
         persistRunState,
       );
-      return { ...settled, turnDispatched: true as const, ...deferredPersist };
+      return await finishAfterTurn({ ...settled, turnDispatched: true as const, ...deferredPersist });
     }
 
     // `result.stderr` stays live in memory for the real classification below
@@ -941,7 +1001,7 @@ export async function dispatchPostAdmissionTurn<
         io,
         persistRunState,
       );
-      return { ...settledFailure, turnDispatched: true as const, ...deferredPersist };
+      return await finishAfterTurn({ ...settledFailure, turnDispatched: true as const, ...deferredPersist });
     }
     if (settledOutcome !== undefined) {
       if (persistRunState) {
@@ -972,12 +1032,12 @@ export async function dispatchPostAdmissionTurn<
             io,
             persistRunState,
           );
-          return { ...failed, turnDispatched: true as const, ...deferredPersist };
+          return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
         }
       }
       // Lawful persist + present is the caller's stop seam (auto-resume loop /
       // manual resume), not this retried host-turn function.
-      return { ...settledOutcome, ...deferredPersist };
+      return await finishAfterTurn({ ...settledOutcome, ...deferredPersist });
     }
 
     // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
@@ -1013,7 +1073,7 @@ export async function dispatchPostAdmissionTurn<
         io,
         persistRunState,
       );
-      return { ...failed, turnDispatched: true as const, ...deferredPersist };
+      return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
     }
 
     // Nothing else was wrong, but the durable stderr mirror itself failed to
@@ -1033,7 +1093,7 @@ export async function dispatchPostAdmissionTurn<
         io,
         persistRunState,
       );
-      return { ...failed, turnDispatched: true as const, ...deferredPersist };
+      return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
     }
 
     const noReceipt = await attachRecordedSubmissions(
@@ -1064,16 +1124,16 @@ export async function dispatchPostAdmissionTurn<
           io,
           persistRunState,
         );
-        return { ...failed, turnDispatched: true as const, ...deferredPersist };
+        return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
       }
     }
-    return {
+    return await finishAfterTurn({
       exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),
       admitted,
       terminal: noReceipt,
       turnDispatched: true as const,
       ...deferredPersist,
-    };
+    });
   } finally {
     try {
       await lease.release();

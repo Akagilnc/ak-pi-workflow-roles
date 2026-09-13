@@ -35,6 +35,12 @@ export const diaristOutputSchema = withInfrastructureFailureDeclaration(
             "本庭对象票号（正整数）或 null/省略＝真无票；下游走 typed 键；认不出用 status=escalate，不洗成无录。机械层不重判。",
         }),
       ),
+      courtTicketNumbers: Type.Optional(
+        Type.Unknown({
+          description:
+            "#871 本次合审应各自成录的票号集合（正整数数组，含主票）；单票可省略。机械层只做类型/去重投影，不从散文猜票。",
+        }),
+      ),
       reason: Type.Optional(
         Type.String({
           description: "status 为 escalate 时：认不出本庭对象的原因",

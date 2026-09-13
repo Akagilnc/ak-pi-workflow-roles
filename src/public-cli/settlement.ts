@@ -126,6 +126,7 @@ import type {
   DurablePrincipalAuthority,
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
+import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
 import {
   ensureRunArtifactsDir,
   homeFromRunDirectory,
@@ -162,9 +163,10 @@ export type SettlementCourtScope = {
 function ledgerReadScope(
   admitted: Pick<AdmittedRoleInvocation, "runDirectory">,
   scope?: SettlementCourtScope,
-): { home: string; attemptId?: string } {
+): { home: string; sessionParent: string; attemptId?: string } {
   return {
     home: sealedLedgerHome(admitted),
+    sessionParent: join(admitted.runDirectory, "session", "session.jsonl"),
     ...(scope?.courtAttemptId === undefined || scope.courtAttemptId.length === 0
       ? {}
       : { attemptId: scope.courtAttemptId }),
@@ -242,7 +244,7 @@ export async function attemptProducedFreshSubmission(
     admitted.projectRoot,
     admitted.runId,
     scope.courtAttemptId,
-    sealedLedgerHome(admitted),
+    ledgerReadScope(admitted, scope),
   );
 }
 
@@ -3844,7 +3846,7 @@ function uniqueFailureFallbackDirs(
 async function resolveFailureArtifactsBase(
   runDirectory: string,
 ): Promise<{ baseDir: string; attempt?: PublicationAttempt }> {
-  const artifactsDir = join(runDirectory, "artifacts");
+  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
   try {
     await ensureRunArtifactsDir(runDirectory);
     return { baseDir: artifactsDir };
@@ -3936,7 +3938,7 @@ export async function publishFailureArtifacts(
   // Prefer conventional names; unique fallback dirs keep colliding fixed paths
   // from stranding the original failure outside settlement. Include the ledger
   // runs/ parent so a locked run directory (EACCES) cannot exhaust durability.
-  const underArtifacts = baseDir === join(admitted.runDirectory, "artifacts");
+  const underArtifacts = baseDir === roleRunArtifactsDirectory(admitted.runDirectory);
   const uniqueFallbackDirs = uniqueFailureFallbackDirs(
     admitted.runDirectory,
     baseDir,

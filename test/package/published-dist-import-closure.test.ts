@@ -1,34 +1,23 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
- * #603: published non-bundle dist graph must stay closed under relative imports.
- * After untracking committed dist, prepack rebuild is the sole inventory — every
- * relative edge from a shipped dist module must resolve to a file that build
- * actually emitted (or that the pack carries beside it).
+ * #603 / #852: published dist relative-import graph must stay closed.
+ * Fresh build is the sole inventory — every real relative edge from a shipped
+ * dist JS/MJS module (including bundled artifacts) must resolve under that
+ * same dist tree. Syntax-aware resolution reuses the build wheel (esbuild);
+ * comments, JSDoc type imports, and embedded diagnostic strings are not edges.
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { access, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { readdir } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { build } from "esbuild";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { materializePackageTree } from "../helpers/pi-test-harness.ts";
 
 const execFileAsync = promisify(execFile);
-
-const RELATIVE_IMPORT_RE =
-  /(?:from\s*|import\s*\(\s*)(["'])(\.[^"']+)\1/g;
-
-async function pathExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function listJsFiles(dir: string): Promise<string[]> {
   const out: string[] = [];
@@ -55,42 +44,27 @@ async function listJsFiles(dir: string): Promise<string[]> {
   return out;
 }
 
-async function resolveRelativeTarget(
-  fromFile: string,
-  specifier: string,
-): Promise<string> {
-  const base = resolve(dirname(fromFile), specifier);
-  if (await pathExists(base)) return base;
-  if (await pathExists(`${base}.js`)) return `${base}.js`;
-  if (await pathExists(`${base}.mjs`)) return `${base}.mjs`;
-  if (await pathExists(join(base, "index.js"))) return join(base, "index.js");
-  return base;
-}
-
 /**
- * Walk every relative import under dist/. Missing targets are structured
- * facts (importer + specifier + resolved path) — no free-text oracles.
+ * Syntax-aware relative-import closure over every fresh dist JS/MJS entry.
+ * Reuses esbuild (same resolver the package build already owns): bundle
+ * resolution follows real relative edges; write:false keeps this a check.
+ * Missing real targets reject; JSDoc/comments/strings are not edges.
  */
-async function missingRelativeImports(distRoot: string): Promise<
-  Array<{ from: string; specifier: string; resolved: string }>
-> {
-  const missing: Array<{ from: string; specifier: string; resolved: string }> =
-    [];
+async function assertRelativeImportClosure(distRoot: string): Promise<void> {
   const files = await listJsFiles(distRoot);
-  for (const file of files) {
-    const source = await readFile(file, "utf8");
-    for (const match of source.matchAll(RELATIVE_IMPORT_RE)) {
-      const specifier = match[2]!;
-      const resolved = await resolveRelativeTarget(file, specifier);
-      if (await pathExists(resolved)) continue;
-      missing.push({
-        from: relative(distRoot, file).split("\\").join("/"),
-        specifier,
-        resolved: relative(distRoot, resolved).split("\\").join("/"),
-      });
-    }
-  }
-  return missing;
+  assert.ok(files.length > 0, "dist emitted no JS/MJS entries");
+  await build({
+    absWorkingDir: distRoot,
+    entryPoints: files,
+    // outdir required for multi-entry even with write:false
+    outdir: join(distRoot, ".closure-check-out"),
+    bundle: true,
+    write: false,
+    format: "esm",
+    platform: "node",
+    packages: "external",
+    logLevel: "silent",
+  });
 }
 
 test(
@@ -108,17 +82,12 @@ test(
       });
 
       const distRoot = resolve(root, "dist");
-      const missing = await missingRelativeImports(distRoot);
-      assert.deepEqual(
-        missing,
-        [],
-        `published dist relative-import graph has gaps: ${JSON.stringify(missing)}`,
-      );
+      await assertRelativeImportClosure(distRoot);
 
       // Loadable proof for the attendance root that failed on clean publish.
       await import(
         pathToFileURL(resolve(distRoot, "navigator-attendance.js")).href
       );
-        });
+    });
   },
 );

@@ -6,18 +6,23 @@
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
 
+import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
-import type { HostContext, RoleHost } from "../../src/host-contracts.ts";
-import {
-  issuePiDurablePrincipalCoordinates,
-  piDurablePrincipalAuthority,
-} from "../../src/pi/durable-principal.ts";
+import type {
+  DurablePrincipal,
+  DurablePrincipalAuthority,
+  HostContext,
+  RoleHost,
+} from "../../src/host-contracts.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import {
   readTicketProvenance,
   resolveTicketProvenanceVolume,
@@ -36,6 +41,27 @@ const TICKET = 708;
 /** Structured source pointer the protocol payload and volume must share. */
 const ENTRY_SESSION_FILE = "/probe/session.jsonl";
 const ENTRY_ID = "probe-entry-1";
+
+const immutablePrincipalAuthority: DurablePrincipalAuthority = {
+  issue(request) {
+    const coordinates = piDurablePrincipalAuthority.decode(
+      piDurablePrincipalAuthority.issue(request),
+    );
+    return Object.freeze({ coordinates }) as DurablePrincipal;
+  },
+  seal(coordinates) {
+    return Object.freeze({ coordinates, relocated: true }) as DurablePrincipal;
+  },
+  decode(principal) {
+    const wire = principal as { coordinates?: unknown };
+    return piDurablePrincipalAuthority.decode(wire.coordinates ?? principal);
+  },
+  async isAvailable(principal) {
+    return piDurablePrincipalAuthority.isAvailable(
+      piDurablePrincipalAuthority.seal(this.decode(principal)),
+    );
+  },
+};
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-diarist-", async (home) => scenario(home));
@@ -56,7 +82,10 @@ type RegisteredTool = {
  * Faux pi process for this seat: drives the production diarist role envelope.
  * Projects the spawn run identity into typed HostContext (#779/#879).
  */
-function diaristEnvelopeRunner(submitted: unknown): LegacyFauxPiRunner {
+function diaristEnvelopeRunner(
+  submitted: unknown,
+  behavior?: { readonly afterAdmit?: "throw" },
+): LegacyFauxPiRunner {
   return async (args, options) => {
     let registered: RegisteredTool | undefined;
     const host = {
@@ -67,18 +96,32 @@ function diaristEnvelopeRunner(submitted: unknown): LegacyFauxPiRunner {
       getAllTools: () => (registered === undefined ? [] : [{ name: registered.name }]),
     } as unknown as RoleHost;
     const runDir = options.env.AK_ROLE_RUN_DIR;
+    assert.ok(runDir);
+    const sessionDir = join(runDir, "session");
+    const sessionFile = join(sessionDir, "session.jsonl");
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(sessionFile, "");
     const runtime = createDiaristRoleRuntime(host, {
-        loadSoul: async () => "起居郎职分（测试装载）",
-      });
-      await runtime.activate();
-      assert.ok(registered, "diarist envelope registered no output tool");
-      const accepted = await registered.execute(
-        "call_diarist_1",
-        submitted,
-        undefined,
-        undefined,
-        { runDirectory: runDir } as HostContext,
-      );
+      loadSoul: async () => "起居郎职分（测试装载）",
+    });
+    await runtime.activate();
+    assert.ok(registered, "diarist envelope registered no output tool");
+    const accepted = await registered.execute(
+      "call_diarist_1",
+      submitted,
+      undefined,
+      undefined,
+      {
+        runDirectory: runDir,
+        sessionManager: {
+          getSessionDir: () => sessionDir,
+          getSessionFile: () => sessionFile,
+        },
+      } as HostContext,
+    );
+    if (behavior?.afterAdmit === "throw") {
+      throw new Error("host turn failed after diarist board bind");
+    }
     return scriptedTerminatingToolSession({
       role: "diarist",
       toolName: DIARIST_OUTPUT_TOOL_NAME,
@@ -103,9 +146,10 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
         cwd: project,
         io,
         createRunId: () => runId,
+        principalAuthority: immutablePrincipalAuthority,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
+          principalAuthority: immutablePrincipalAuthority,
           piRunner: diaristEnvelopeRunner({
             status: "completed",
             ticketNumber: TICKET,
@@ -136,15 +180,15 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(result.terminal?.roleOutcome.role, "diarist");
 
-    const coords = issuePiDurablePrincipalCoordinates({
-      cwd: project,
+    const placement = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey: resolveBookKeyFromGit(project),
+      subject: { ticketNumber: TICKET },
       runId,
       role: "diarist",
-      home,
     });
     const state = await readRoleRunState(
-      coords.runDirectory,
-      piDurablePrincipalAuthority,
+      placement.runDirectory,
+      immutablePrincipalAuthority,
     );
     assert.equal(state?.role, "diarist");
     assert.equal(state?.state, "terminal");
@@ -152,6 +196,16 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     const paths = resolveTicketProvenanceVolume(TICKET, project, home);
     const volume = await readTicketProvenance(TICKET, project, home);
     assert.equal(volume.recordFile, paths.recordFile);
+    // docs/dossier-topology.md authority: ticket dir holds records.jsonl + 起居录.md directly.
+    const ticketDir = join(
+      resolveActivationLedgerHome(home),
+      "books",
+      resolveBookKeyFromGit(project),
+      String(TICKET),
+    );
+    assert.equal(paths.recordFile, join(ticketDir, "records.jsonl"));
+    assert.equal(paths.humanViewFile, join(ticketDir, "起居录.md"));
+    assert.equal(paths.volumeDir, ticketDir);
     // Structured pointer identity only — no free-text / entry-count locks.
     const landed = volume.entries.find(
       (e) =>
@@ -204,15 +258,96 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
     assert.equal(facts?.ticketNumber ?? null, null);
     assert.equal(facts?.sitian, undefined);
 
-    // 真无票→无录: production volume category (via resolveTicketProvenanceVolume) unminted.
+    // 真无票→无录: ticket dir itself (topology authority) stays unminted.
     const sample = resolveTicketProvenanceVolume(1, project, home);
-    const provenanceCategory = dirname(sample.volumeDir);
     assert.equal(existsSync(sample.recordFile), false);
     assert.equal(existsSync(sample.humanViewFile), false);
     assert.equal(
-      existsSync(provenanceCategory),
+      existsSync(sample.volumeDir),
       false,
-      `true-unbound must not mint ticket-provenance under ${provenanceCategory}`,
+      `true-unbound must not mint ticket dir ${sample.volumeDir}`,
+    );
+  });
+});
+
+
+/**
+ * Host turn already started + board ticket already written by the accept hook,
+ * then the turn fails: failure stays honest and the run still relocates under the
+ * ticket before lease release (shared afterDispatch once-only finish).
+ */
+test("ak-role diarist host-turn failure still relocates board-bound run", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    // Temp-home config only — never the real seat table. Zero resume budget so
+    // this tracer stays on the post-turn relocate seam.
+    await mkdir(join(home, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(home, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ autoResumeLimit: 0 }, null, 2)}\n`,
+    );
+
+    const runId = "01a0diar00-0000-7000-8000-000000000003";
+    const { io } = captureIo();
+
+    const result = await runAkRole(
+      ["diarist", "--project", project, `整理 #${TICKET} 起居录`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => runId,
+        principalAuthority: immutablePrincipalAuthority,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: immutablePrincipalAuthority,
+          piRunner: diaristEnvelopeRunner(
+            {
+              status: "completed",
+              ticketNumber: TICKET,
+              entries: [
+                {
+                  sourceKind: "cc-session",
+                  sourceRef: { sessionFile: ENTRY_SESSION_FILE, entryId: ENTRY_ID },
+                  transcript: "board-bound before host failure",
+                  timestamp: "2026-09-08T00:00:00.000Z",
+                },
+              ],
+            },
+            { afterAdmit: "throw" },
+          ),
+        }),
+      },
+    );
+
+    assert.notEqual(result.exitCode, 0, "host failure must stay non-zero");
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const ticketPlacement = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey,
+      subject: { ticketNumber: TICKET },
+      runId,
+      role: "diarist",
+    });
+    const unboundPlacement = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey,
+      subject: { unbound: true },
+      runId,
+      role: "diarist",
+    });
+    assert.equal(
+      existsSync(join(ticketPlacement.runDirectory, "run-state.json")),
+      true,
+      `failure run must relocate under ticket with durable state at ${ticketPlacement.runDirectory}`,
+    );
+    assert.equal(
+      existsSync(join(unboundPlacement.runDirectory, "run-state.json")),
+      false,
+      "unbound must not keep the durable run-state after relocate",
     );
   });
 });

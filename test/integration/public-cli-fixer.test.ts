@@ -165,7 +165,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(
       admitted.runDirectory,
-      join(home, ".ak-roles", "books", bookKey, "runs", "run-fixer-plan-001@fixer"),
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-fixer-plan-001@fixer"),
     );
     const persisted = JSON.parse(
       await readFile(admitted.admittedRequestPath, "utf8"),
@@ -476,7 +476,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
           ".ak-roles",
           "books",
           resolveBookKeyFromGit(project),
-          "runs",
+          "unbound", "runs",
           "run-cli-fixer-plan@fixer",
           "admitted-request.json",
         ),
@@ -567,7 +567,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@fixer`,
     );
     const sessionDirectory = join(runDirectory, "session");

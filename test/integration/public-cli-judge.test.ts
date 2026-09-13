@@ -289,7 +289,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
     assert.equal(admitted.bookKey, bookKey);
     assert.equal(
       admitted.runDirectory,
-      join(home, ".ak-roles", "books", bookKey, "runs", "run-freeze-001@judge"),
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-freeze-001@judge"),
     );
     assert.equal(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, join(admitted.runDirectory, "session"));
     await access(admitted.admittedRequestPath);
@@ -1113,7 +1113,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       "run-cli-judge-001@judge",
     );
     const terminal = await settleJudgeTerminalResult(
@@ -1226,7 +1226,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       "run-empty-001@judge",
     );
     const terminal = await settleJudgeTerminalResult(

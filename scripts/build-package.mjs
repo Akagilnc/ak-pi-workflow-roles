@@ -22,12 +22,14 @@ const entries = [
   "activation-ledger-topology",
   "activation-reconciliation",
   "archivist-record-entry",
-  // Pure subject nest topology — cold discovery without SessionManager (#636).
-  "archivist-record-topology",
   // Session material loaders used by published non-bundle roots.
   "session-opening-materials",
   // Value-import closure of published non-bundle roots (build-package-only loadable).
   "auditor-dossier-tool",
+  // Static import of auditor-dossier-tool / placement path authority (#859).
+  "role-run-placement",
+  // Static import of role-run-placement (safe-positive ticket invariant).
+  "run-ticket-number",
   "canonical-json",
   "compliance-transport",
   "countersign-contracts",
@@ -141,6 +143,35 @@ export async function buildHeadlessProductionHost(
   );
 }
 
+/**
+ * Published one-shot book-topology migration CLI (#852).
+ * Node-executable ESM bundle — consumers must not need dev-only tsx.
+ * createRequire banner lets transitive CJS deps reach node builtins.
+ */
+export async function buildMigrateBookTopology(
+  outfile = "dist/migrate-book-topology.js",
+) {
+  await mkdir(dirname(outfile), { recursive: true });
+  await build({
+    entryPoints: ["scripts/migrate-book-topology.ts"],
+    outfile,
+    format: "esm",
+    platform: "node",
+    target: "node20",
+    bundle: true,
+    banner: {
+      js: [
+        "#!/usr/bin/env node",
+        "import { createRequire as __akCreateRequire } from 'node:module';",
+        "const require = __akCreateRequire(import.meta.url);",
+        "",
+      ].join("\n"),
+    },
+    logLevel: "silent",
+  });
+  await chmod(outfile, 0o755);
+}
+
 export async function buildPackageArtifacts() {
   await build({
     entryPoints: entries.map((name) => `src/${name}.ts`),
@@ -167,6 +198,7 @@ export async function buildPackageArtifacts() {
   await buildPublicAkRoleBin();
   await buildAcpProductionHost();
   await buildHeadlessProductionHost();
+  await buildMigrateBookTopology();
 }
 
 const isMain =

@@ -12,6 +12,7 @@ import {
   admitDiaristInvocation,
   bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
+  relocateAdmittedRunToTicket,
   type AdmittedDiaristInvocation,
   type ParseDiaristArgvResult,
 } from "./invocation.ts";
@@ -27,6 +28,7 @@ import {
   loadResumableDiaristRun,
   markRunAdmitted,
   type PublicResumeRequest,
+  type RunWriterLease,
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
@@ -40,7 +42,7 @@ import {
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
-import { readRunTicketNumber } from "../run-ticket-number.ts";
+import { readBoardTicketNumber } from "../run-ticket-number.ts";
 
 export type DiaristRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
@@ -66,11 +68,38 @@ export function buildDiaristTurnRequest(
   );
 }
 
-function diaristAdapters(): PostAdmissionAdapters<AdmittedDiaristInvocation> {
+/**
+ * Board-bound ticket on pages → memory bind + unbound→ticket relocate under lease.
+ * Shared by resume (interrupted board-bound unbound) and post-turn first assert.
+ */
+async function bindAndRelocateDiaristIfBoardBound(
+  admitted: AdmittedDiaristInvocation,
+  authority: DiaristRunEnv["principalAuthority"],
+  lease: RunWriterLease,
+): Promise<void> {
+  const boardTicket = await readBoardTicketNumber(admitted.runDirectory);
+  if (boardTicket === undefined) return;
+  if (admitted.ticketNumber === undefined) {
+    await bindAdmittedTicketNumber(admitted, boardTicket);
+  }
+  await relocateAdmittedRunToTicket(admitted, authority, lease);
+}
+
+function diaristAdapters(
+  env: DiaristRunEnv,
+): PostAdmissionAdapters<AdmittedDiaristInvocation> {
   return {
     trySettle: (admitted, authority, scope) =>
       trySettleDiaristTerminalResult(admitted, authority, scope),
     shouldPresentSettled: () => true,
+    // Resume interrupted state: board ticket already on pages, run still under unbound/.
+    beforeDispatch: async (admitted, lease) => {
+      await bindAndRelocateDiaristIfBoardBound(admitted, env.principalAuthority, lease);
+    },
+    // First post-turn assert: accept hook wrote board pages; relocate before lease release.
+    afterDispatch: async (admitted, lease) => {
+      await bindAndRelocateDiaristIfBoardBound(admitted, env.principalAuthority, lease);
+    },
   };
 }
 
@@ -141,6 +170,7 @@ export async function runPublicDiarist(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+      ...(handoffTicket === undefined ? {} : { assertedTicketNumber: handoffTicket }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -152,14 +182,6 @@ export async function runPublicDiarist(
 
   await markRunAdmitted(admitted, env.principalAuthority);
 
-  // Typed handoff: bind before the turn so identity is on durable pages.
-  if (
-    typeof handoffTicket === "number" &&
-    Number.isSafeInteger(handoffTicket) &&
-    handoffTicket >= 1
-  ) {
-    await bindAdmittedTicketNumber(admitted, handoffTicket);
-  }
 
   const turnProjection: RoleTurnRequestProjectionOptions = {
     packageRoot: env.packageRoot,
@@ -189,22 +211,8 @@ export async function runPublicDiarist(
     env,
     io,
     request: turnRequest,
-    adapters: diaristAdapters(),
+    adapters: diaristAdapters(env),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
-  }).then(async (result) => {
-    // Accept hook binds ticket onto durable pages (#771). Mirror that page fact
-    // onto the caller-visible admitted object — never pick a ticketNumber out of
-    // the payload sequence (#881 sole-collapse ban on ticket/escalate).
-    if (admitted.ticketNumber === undefined && result.admitted !== undefined) {
-      const fromPages = await readRunTicketNumber(admitted.runDirectory);
-      if (fromPages !== undefined) {
-        await bindAdmittedTicketNumber(admitted, fromPages);
-        if (result.admitted.ticketNumber === undefined) {
-          (result.admitted as { ticketNumber?: number }).ticketNumber = fromPages;
-        }
-      }
-    }
-    return result;
   });
 }
 
@@ -242,7 +250,7 @@ export async function runPublicDiaristResume(
         ),
       );
     },
-    adapters: diaristAdapters(),
+    adapters: diaristAdapters(env),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

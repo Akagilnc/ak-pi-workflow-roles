@@ -312,7 +312,7 @@ test("typed 429 failure Terminal carries resume command and reveals run id only 
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@judge`,
     );
     // Durable observation + Error Artifact remain on disk even though public
@@ -374,7 +374,7 @@ test("quota-like prose without typed 429 is not resumable", async () => {
     assert.equal(result.terminal!.resume, undefined);
     const bookKey = resolveBookKeyFromGit(project);
     const durable = await readRoleRunState(
-      join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`),
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`),
       piDurablePrincipalAuthority,
     );
     assert.equal(durable?.state, "terminal");
@@ -443,7 +443,7 @@ test("lawful terminal result wins over typed 429 observation", async () => {
     assert.equal(result.terminal!.resume, undefined);
     const bookKey = resolveBookKeyFromGit(project);
     const durable = await readRoleRunState(
-      join(home, ".ak-roles", "books", bookKey, "runs", `${runId}@judge`),
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@judge`),
       piDurablePrincipalAuthority,
     );
     assert.equal(durable?.state, "terminal");
@@ -517,7 +517,7 @@ test("within-attempt earlier 429 does not qualify resume after a later non-429 r
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@judge`,
     );
     assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
@@ -584,7 +584,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@judge`,
     );
     assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
@@ -679,7 +679,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@judge`,
     );
     assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
@@ -869,15 +869,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
           executeTurn: async (request) => {
             const out = await inner.executeTurn(request);
             // Poison the same ledger volume settlement reads.
-            const ledgerFile = resolveSitianRecordPathInLedger(
-                {
-                  level: "event",
-                  kind: "candidate",
-                  subject: { runId },
-                  cwd: project,
-                },
-                resolveActivationLedgerHome(home),
-              ).recordFile;
+            const ledgerFile = join(request.runDirectory, "session", "submission-ledger", "records.jsonl");
             await rm(ledgerFile, { force: true });
             await mkdir(ledgerFile, { recursive: true });
             await assert.rejects(
@@ -1000,7 +992,7 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@judge`,
     );
     const errorPath = join(runDirectory, "artifacts", "error.json");
@@ -1081,7 +1073,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@judge`,
     );
     const sessionDirectory = join(runDirectory, "session");
@@ -1580,7 +1572,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@judge`,
     );
     const lockPath = join(runDirectory, "writer.lock");
@@ -1945,7 +1937,7 @@ test("settleJudgeFailureTerminalResult attaches resume only for typed 429", asyn
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@judge`,
     );
     const sessionDirectory = join(runDirectory, "session");
@@ -2017,7 +2009,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
       seal(coordinates: Parameters<typeof piDurablePrincipalAuthority.seal>[0]) {
         return fixturePrincipal(
           coordinates.sessionDirectory,
-          coordinates.sessionFile,
+          join(coordinates.sessionDirectory, "host-issued-principal.jsonl"),
         );
       },
       decode(value: unknown) {
@@ -2050,7 +2042,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
           io,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
+            principalAuthority,
             piRunner: async (args) => {
             const sessionDir = (args as string[])[(args as string[]).indexOf("--session-dir") + 1]!;
             const sessionPath = (args as string[])[(args as string[]).indexOf("--session") + 1]!;
@@ -2085,12 +2077,16 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@judge`,
     );
     const durable = await readRoleRunState(runDirectory, principalAuthority);
     assert.ok(durable);
-    assert.equal(durable.sessionFile.endsWith("/session/host-issued-principal.jsonl"), true);
+    assert.equal(
+      durable.sessionFile.endsWith("/session/host-issued-principal.jsonl"),
+      true,
+      durable.sessionFile,
+    );
     assert.equal(durable.state, "resumable");
 
     // Host-denied availability must fail honestly without a typed accepted Terminal.
@@ -2183,7 +2179,7 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@judge`,
     );
     const sessionDirectory = join(runDirectory, "session");
@@ -2306,7 +2302,7 @@ test("typed 429 without a session principal is not offered as resumable", async 
       ".ak-roles",
       "books",
       bookKey,
-      "runs",
+      "unbound", "runs",
       `${runId}@judge`,
     );
     const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
@@ -2382,7 +2378,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
         ".ak-roles",
         "books",
         resolveBookKeyFromGit(project),
-        "runs",
+        "unbound", "runs",
         `${runId}@${role}`,
         "session",
       );

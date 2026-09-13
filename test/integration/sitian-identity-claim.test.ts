@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readdirSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -74,6 +74,7 @@ function spawnAppendChild(args: {
   readonly identity: string;
   readonly kind: string;
   readonly marker: string;
+  readonly sessionParent: string;
 }): ChildProcess {
   const script = `
     import { appendSitianRecord } from ${JSON.stringify(join(packageRoot, "src/sitian-appender.ts"))};
@@ -85,6 +86,7 @@ function spawnAppendChild(args: {
         identity: ${JSON.stringify(args.identity)},
         home: ${JSON.stringify(args.home)},
         cwd: ${JSON.stringify(args.cwd)},
+        sessionParent: ${JSON.stringify(args.sessionParent)},
         payload: { marker: ${JSON.stringify(args.marker)} },
       });
       process.stdout.write(JSON.stringify({ ok: true, identity: pointer.identity }) + "\\n");
@@ -161,20 +163,23 @@ test("two concurrent single-call attempts preserve uniqueness: one row, no sidec
   await withHermeticLedgerRoot(async ({ home, cwd }) => {
     const identity = "concurrent-same-identity-uniqueness";
     const kind = "identity-claim-concurrent-uniqueness";
+    const sessionParent = join(home, ".ak-roles", "books", "cwd", "runs", "run", "session", "session.jsonl");
+    mkdirSync(dirname(sessionParent), { recursive: true });
     const input: SitianRecordInput = {
       level: "event",
       kind,
       identity,
       home,
       cwd,
+      sessionParent,
       payload: { marker: "parent-observe" },
     };
     const { sessionDir, recordFile } = resolveSitianRecordPath(input);
     mkdirSync(sessionDir, { recursive: true });
 
     const children = [
-      spawnAppendChild({ home, cwd, identity, kind, marker: "child-a" }),
-      spawnAppendChild({ home, cwd, identity, kind, marker: "child-b" }),
+      spawnAppendChild({ home, cwd, identity, kind, marker: "child-a", sessionParent }),
+      spawnAppendChild({ home, cwd, identity, kind, marker: "child-b", sessionParent }),
     ];
 
     await withPrimaryAwareCleanup(

@@ -17,6 +17,29 @@ import {
   type NavigatorSessionFactory,
 } from "./navigator-session-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
+import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
+
+/**
+ * Ledger process home for navigator attendance: admitted HostContext.runDirectory
+ * first, else a parent session file under .ak-roles. Never context.home / env HOME /
+ * passwd guesses — those split the nest from the owning run (#852).
+ */
+async function resolveNavigatorLedgerHome(context: HostContext): Promise<string | undefined> {
+  const { tryHomeFromAkRolesPath } = await import(
+    "./activation-ledger-topology.ts"
+  );
+  const runDirectory = runDirectoryFromHostContext(context);
+  if (runDirectory !== undefined) {
+    const fromRun = tryHomeFromAkRolesPath(runDirectory);
+    if (fromRun !== undefined && fromRun.length > 0) return fromRun;
+  }
+  const parentFile = context.sessionManager?.getSessionFile?.();
+  if (typeof parentFile === "string" && parentFile.trim() !== "") {
+    const fromParent = tryHomeFromAkRolesPath(parentFile);
+    if (fromParent !== undefined && fromParent.length > 0) return fromParent;
+  }
+  return undefined;
+}
 
 export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
   return async ({ context, subject, tool }) => {
@@ -24,43 +47,23 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
     let thinkingLevel = resolved.thinkingLevel;
 
     // Archivist nest for attendance route memory only (ADR 0018 / 0065) — not a session open.
-    const { createRecordSession } = await import("./archivist-record-entry.ts");
+    // #852: navigator/<work-subject> is the sole book-top exception; always pass subject so
+    // unmaterialized/missing parent still gets a durable nest instead of silent in-memory.
+    // Home comes from HostContext.runDirectory (or ledger parent path) — never context.home.
+    const { createRecordSession, NAVIGATOR_RECORD_KIND } = await import("./archivist-record-entry.ts");
+    const home = await resolveNavigatorLedgerHome(context);
     const sessionManager = createRecordSession({
       cwd: context.cwd,
-      kind: "navigator",
+      kind: NAVIGATOR_RECORD_KIND,
       subject,
-      parent: context.sessionManager,
+      ...(context.sessionManager !== undefined ? { parent: context.sessionManager } : {}),
+      ...(home !== undefined ? { home } : {}),
     });
 
     let providerFailure: NavigatorProviderFailureFact | undefined;
     let noReceipt: NoReceiptLifecycleFacts | undefined;
     let disposed = false;
     let inFlightPrompt: Promise<unknown> | undefined;
-
-    const resolveHome = async (): Promise<string | undefined> => {
-      const parentFile = context.sessionManager?.getSessionFile?.();
-      if (typeof parentFile === "string" && parentFile.trim() !== "") {
-        try {
-          const { tryHomeFromAkRolesPath, homeFromRunDirectory } = await import(
-            "./activation-ledger-topology.ts"
-          );
-          const fromParent = tryHomeFromAkRolesPath(parentFile);
-          if (fromParent !== undefined && fromParent.length > 0) return fromParent;
-          const runDir = parentFile.replace(/\/session\/session\.jsonl$/, "");
-          if (runDir !== parentFile) {
-            try {
-              return homeFromRunDirectory(runDir);
-            } catch {
-              // fall through
-            }
-          }
-        } catch {
-          // fall through
-        }
-      }
-      const envHome = process.env.HOME;
-      return typeof envHome === "string" && envHome.trim() !== "" ? envHome : undefined;
-    };
 
     return {
       prompt: async (text) => {
@@ -72,13 +75,13 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
         const run = (async () => {
         try {
           const { summonPublicRole } = await import("./public-role-summons.ts");
-          const home = await resolveHome();
+          const summonHome = await resolveNavigatorLedgerHome(context);
           // Public activation — same face as `ak-role navigator <instruction>` (#675).
           const summoned = await summonPublicRole({
             role: "navigator",
             argv: [text],
             cwd: context.cwd,
-            ...(home === undefined ? {} : { home }),
+            ...(summonHome === undefined ? {} : { home: summonHome }),
           });
 
           const outcome = summoned.terminal?.roleOutcome;

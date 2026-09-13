@@ -50,12 +50,12 @@ export async function seedDoctorIssueRuns(
   bookKey: string,
   issueNumber: number,
 ): Promise<string> {
+  // Canonical topology: <book>/<ticket>/runs (legacy issues/ remains read-only compatible).
   const runs = join(
     home,
     ".ak-roles",
     "books",
     bookKey,
-    "issues",
     String(issueNumber),
     "runs",
   );

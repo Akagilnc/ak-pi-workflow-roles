@@ -116,7 +116,7 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
     const bookKey = resolveBookKeyFromGit(project);
     assert.equal(
       admitted.runDirectory,
-      join(home, ".ak-roles", "books", bookKey, "runs", "run-coder-plan-001@coder"),
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", "run-coder-plan-001@coder"),
     );
     const persisted = JSON.parse(
       await readFile(admitted.admittedRequestPath, "utf8"),
@@ -167,7 +167,7 @@ test("parseDoctorArgv requires positive issue; accepts optional runs and rejects
       "--issue",
       "7",
       "--runs",
-      ".ak-roles/books/demo/issues/7/runs",
+      ".ak-roles/books/demo/7/runs",
       "--project",
       "/tmp/p",
       "--attach",
@@ -175,7 +175,7 @@ test("parseDoctorArgv requires positive issue; accepts optional runs and rejects
     ]),
     {
       issueNumber: 7,
-      runs: ".ak-roles/books/demo/issues/7/runs",
+      runs: ".ak-roles/books/demo/7/runs",
       project: "/tmp/p",
       attachmentPaths: ["/tmp/a.md"],
       instruction: "",

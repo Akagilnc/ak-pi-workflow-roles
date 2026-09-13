@@ -2,6 +2,7 @@
  * Drive the production submission ledger producer for settlement tests.
  * Same createSubmissionLedgerHost path as role-runtime — not a parallel sitian write.
  */
+import { join } from "node:path";
 import { Type } from "typebox";
 import { buildAuditEscalationResult, isAuditEscalationProjection } from "../../src/audit-escalation.ts";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
@@ -57,19 +58,21 @@ async function driveLedgerProducer(input: {
     },
   });
   if (registered === undefined) throw new Error("submission ledger host did not register output tool");
+  const runDirectory = input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`;
+  const sessionDirectory = join(runDirectory, "session");
   const context = {
         cwd: input.cwd,
         mode: "json",
         model: undefined,
-        runDirectory: input.runDirectory ?? `${input.cwd}/runs/${input.runId}@${input.role}`,
+        runDirectory,
         ...(input.courtAttemptId === undefined ? {} : { courtAttemptId: input.courtAttemptId }),
         sessionManager: {
           getHeader: () => ({ type: "session", id: `${input.runId}:attempt` }),
           getLeafId: () => null,
           getLeafEntry: () => undefined,
           getEntries: () => [],
-          getSessionDir: () => "",
-          getSessionFile: () => undefined,
+          getSessionDir: () => sessionDirectory,
+          getSessionFile: () => join(sessionDirectory, "session.jsonl"),
         },
         abort() {},
       } as HostContext;

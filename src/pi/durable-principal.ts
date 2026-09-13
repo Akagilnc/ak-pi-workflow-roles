@@ -8,10 +8,8 @@ import type {
   NewDurablePrincipalRequest,
 } from "../host-contracts.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
-import {
-  activationBookDirectory,
-  resolveActivationLedgerHome,
-} from "../activation-ledger-topology.ts";
+import { resolveActivationLedgerHome } from "../activation-ledger-topology.ts";
+import { roleRunPlacement } from "../role-run-placement.ts";
 
 type PiDurablePrincipal = DurablePrincipal & {
   readonly sessionDirectory: string;
@@ -31,18 +29,16 @@ export function issuePiDurablePrincipalCoordinates(
 } {
   const ledgerHome = resolveActivationLedgerHome(request.home);
   const bookKey = resolveBookKeyFromGit(request.cwd);
-  const runDirectory = join(
-    activationBookDirectory(ledgerHome, bookKey),
-    "runs",
-    `${request.runId}@${request.role}`,
-  );
-  const sessionDirectory = join(runDirectory, "session");
+  const placement = roleRunPlacement(ledgerHome, {
+    bookKey,
+    subject: { unbound: true },
+    runId: request.runId,
+    role: request.role,
+  });
   return {
     ledgerHome,
     bookKey,
-    runDirectory,
-    sessionDirectory,
-    sessionFile: join(sessionDirectory, "session.jsonl"),
+    ...placement,
   };
 }
 

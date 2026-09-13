@@ -9,14 +9,18 @@ import type {
  * any existing run with an available Pi session principal may be resumed; caller decides.
  * Prose is never regex-classified as quota evidence.
  */
-import { chmod, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
+import { chmod, lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { basename, isAbsolute, join } from "node:path";
 
 import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
-import { readRunTicketNumber } from "../run-ticket-number.ts";
+import { listBookRunDirectories } from "../role-run-placement.ts";
+import {
+  isSafePositiveTicketNumber,
+  readBoardTicketNumber,
+} from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   readLatestTypedProviderHttpObservation,
@@ -30,6 +34,10 @@ export {
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import { parseCollectorRepository } from "../collector-config.ts";
+import {
+  interpretDurableCourtTicketNumbers,
+  sameCourtTicketNumbers,
+} from "../diarist-contracts.ts";
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import {
@@ -709,6 +717,8 @@ export class RunWriterLeaseHeldError extends Error {
 
 export type RunWriterLease = {
   readonly lockPath: string;
+  /** Keep lease cleanup anchored when its run is relocated while held. */
+  relocate(runDirectory: string): void;
   release(): Promise<void>;
 };
 
@@ -755,31 +765,34 @@ function isProcessAlive(pid: number): boolean {
 }
 
 
-type WriterLockAutopsy =
-  | { verdict: "absent"; readFailure?: unknown }
+export type WriterLockAutopsy =
+  | { verdict: "absent" }
+  | { verdict: "unknown"; reason: "unparseable"; content: string }
+  | { verdict: "unknown"; reason: "unreadable"; readFailure: unknown }
   | { verdict: "dead"; pid: number }
   | { verdict: "alive"; pid: number };
 
 /**
- * Holder autopsy for an existing writer.lock (#552). "absent" covers no file,
- * no parseable pid (a live creator mid-acquisition reads as empty, and so does
- * the crash-window leftover), and unreadable files — absent alone never
- * authorizes reclaim; only a "dead" verdict does. A non-ENOENT read failure
- * still decides "absent" but rides along as readFailure so the true cause can
- * land in the cleanup sink instead of being laundered away.
+ * The writer lease holder is the shared authority for current run activity.
+ * Only ENOENT proves no holder; malformed or unreadable locks remain unknown
+ * because they can be observed while a live creator is writing its pid.
  */
-async function autopsyWriterLock(lockPath: string): Promise<WriterLockAutopsy> {
+export async function autopsyWriterLock(lockPath: string): Promise<WriterLockAutopsy> {
   let content: string;
   try {
     content = await readFile(lockPath, "utf8");
   } catch (error) {
     if (errorCodeOf(error) === "ENOENT") return { verdict: "absent" };
-    return { verdict: "absent", readFailure: error };
+    return { verdict: "unknown", reason: "unreadable", readFailure: error };
   }
   const normalized = content.trim();
-  if (!/^[1-9]\d*$/.test(normalized)) return { verdict: "absent" };
+  if (!/^[1-9]\d*$/.test(normalized)) {
+    return { verdict: "unknown", reason: "unparseable", content };
+  }
   const pid = Number.parseInt(normalized, 10);
-  if (!Number.isSafeInteger(pid) || pid <= 0) return { verdict: "absent" };
+  if (!Number.isSafeInteger(pid) || pid <= 0) {
+    return { verdict: "unknown", reason: "unparseable", content };
+  }
   return isProcessAlive(pid) ? { verdict: "alive", pid } : { verdict: "dead", pid };
 }
 
@@ -790,9 +803,9 @@ function describeAutopsy(autopsy: WriterLockAutopsy): string {
     case "dead":
       return `dead pid ${autopsy.pid}`;
     case "absent":
-      return autopsy.readFailure !== undefined
-        ? "unreadable lock"
-        : "absent or unparseable holder";
+      return "absent holder";
+    case "unknown":
+      return autopsy.reason === "unreadable" ? "unreadable lock" : "unparseable holder";
   }
 }
 
@@ -839,7 +852,7 @@ async function reclaimStaleWriterLock(
 async function createWriterLease(
   lockPath: string,
   runDirectory: string,
-  reportCleanupFailure: (error: unknown) => void,
+  reportCleanupFailure: (error: unknown, lockPath: string) => void,
 ): Promise<RunWriterLease> {
   const handle = await open(lockPath, "wx");
   try {
@@ -850,24 +863,32 @@ async function createWriterLease(
     throw error;
   }
   let released = false;
+  let currentRunDirectory = runDirectory;
+  let currentLockPath = lockPath;
   return {
-    lockPath,
+    get lockPath() {
+      return currentLockPath;
+    },
+    relocate(nextRunDirectory: string) {
+      currentRunDirectory = nextRunDirectory;
+      currentLockPath = join(nextRunDirectory, WRITER_LOCK_FILE);
+    },
     async release() {
       if (released) return;
       released = true;
       await handle.close().catch(() => undefined);
       try {
-        await unlink(lockPath);
+        await unlink(currentLockPath);
       } catch (error) {
         if (errorCodeOf(error) === "EACCES") {
           try {
-            await chmod(runDirectory, 0o755);
-            await unlink(lockPath);
+            await chmod(currentRunDirectory, 0o755);
+            await unlink(currentLockPath);
           } catch (retryError) {
-            reportCleanupFailure(retryError);
+            reportCleanupFailure(retryError, currentLockPath);
           }
         } else {
-          reportCleanupFailure(error);
+          reportCleanupFailure(error, currentLockPath);
         }
       }
     },
@@ -925,9 +946,9 @@ export async function acquireRunWriterLease(
    * acquire reads it as live and rejects; nothing here may promise that the
    * next acquire reclaims it.
    */
-  const reportCleanupFailure = (error: unknown): void => {
+  const reportCleanupFailure = (error: unknown, lockPath: string): void => {
     reportDiagnostic(
-      `writer lease lock cleanup failed (release is best-effort; residual lock left in place) at ${join(runDirectory, WRITER_LOCK_FILE)}: ${describeErrorIdentity(error)}`,
+      `writer lease lock cleanup failed (release is best-effort; residual lock left in place) at ${lockPath}: ${describeErrorIdentity(error)}`,
     );
   };
   /** Contested-lock read failure: nothing was cleaned up; the lock stays exactly where it is. */
@@ -946,7 +967,7 @@ export async function acquireRunWriterLease(
       if (errorCodeOf(error) !== "EEXIST") throw error;
     }
     lastAutopsy = await autopsyWriterLock(lockPath);
-    if (lastAutopsy.verdict === "absent" && lastAutopsy.readFailure !== undefined) {
+    if (lastAutopsy.verdict === "unknown" && lastAutopsy.reason === "unreadable") {
       reportReadFailure(lastAutopsy.readFailure);
     }
     if (lastAutopsy.verdict === "alive") {
@@ -954,11 +975,16 @@ export async function acquireRunWriterLease(
         `role run writer lease is already held by live pid ${lastAutopsy.pid} at ${lockPath}`,
       );
     }
-    if (lastAutopsy.verdict === "absent") {
+    if (lastAutopsy.verdict === "unknown") {
       throw new RunWriterLeaseHeldError(
-        lastAutopsy.readFailure !== undefined
+        lastAutopsy.reason === "unreadable"
           ? `role run writer lease lock is unreadable at ${lockPath}: ${describeErrorIdentity(lastAutopsy.readFailure)}; holder liveness unverifiable, lock left in place`
           : `role run writer lease lock at ${lockPath} has no verifiable holder pid (empty or unparseable); holder liveness unverifiable, lock left in place`,
+      );
+    }
+    if (lastAutopsy.verdict === "absent") {
+      throw new RunWriterLeaseHeldError(
+        `role run writer lease disappeared before holder autopsy at ${lockPath}`,
       );
     }
     if (reclaimsLeft <= 0) break;
@@ -991,10 +1017,15 @@ export async function acquireRunWriterLease(
 /**
  * Locate a Role run directory by run ID under the ledger books home.
  * Returns undefined when the ID is unknown.
+ * Walk surface = listBookRunDirectories (flat legacy + subject-tree).
+ * Collects every match under the supplied book/role filters: zero → undefined,
+ * one → path, many → loud ambiguity (never readdir-first).
  */
 export async function findRunDirectoryById(
-  home: string,
+  home: string | undefined,
   runId: string,
+  onlyBookKey?: string,
+  onlyRole?: string,
 ): Promise<string | undefined> {
   if (runId.trim() === "") return undefined;
   const ledgerHome = resolveActivationLedgerHome(home);
@@ -1002,24 +1033,37 @@ export async function findRunDirectoryById(
   let bookKeys: string[];
   try {
     bookKeys = await readdir(booksRoot);
-  } catch {
-    return undefined;
+  } catch (error) {
+    // Only a missing books root is "unknown id"; permission/IO damage propagates.
+    if (errorCodeOf(error) === "ENOENT") return undefined;
+    throw error;
   }
+  const matches: string[] = [];
   for (const bookKey of bookKeys) {
-    const runsDir = join(activationBookDirectory(ledgerHome, bookKey), "runs");
-    let entries: string[];
+    if (onlyBookKey !== undefined && bookKey !== onlyBookKey) continue;
+    const bookDir = activationBookDirectory(ledgerHome, bookKey);
+    let runDirectories: string[];
     try {
-      entries = await readdir(runsDir);
-    } catch {
-      continue;
+      runDirectories = await listBookRunDirectories(bookDir);
+    } catch (error) {
+      if (errorCodeOf(error) === "ENOENT") continue;
+      throw error;
     }
-    for (const entry of entries) {
-      if (entry === `${runId}@judge` || entry.startsWith(`${runId}@`)) {
-        return join(runsDir, entry);
+    for (const runDirectory of runDirectories) {
+      const entry = basename(runDirectory);
+      if (
+        (onlyRole === undefined && (entry === `${runId}@judge` || entry.startsWith(`${runId}@`))) ||
+        entry === `${runId}@${onlyRole}`
+      ) {
+        matches.push(runDirectory);
       }
     }
   }
-  return undefined;
+  if (matches.length === 0) return undefined;
+  if (matches.length === 1) return matches[0];
+  throw new Error(
+    `ambiguous role run id ${runId}: ${matches.join(", ")}`,
+  );
 }
 
 /** Code-owned gate inspector summons prefix (public-role-summons / #747). */
@@ -1065,11 +1109,37 @@ export async function readRunParentPath(
 }
 
 /**
+ * True when durable run-state names a session principal that has actually formed
+ * (session file present as a real file). Provisional runs relocated+terminalized
+ * before dispatch never form one — same-ticket lookup must skip them so a newer
+ * abandoned mint cannot eclipse an older resumable principal (#859).
+ * Not a terminal-state gate: ADR/#416 allows terminal resume when principal exists.
+ */
+async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boolean> {
+  const disk = await readRoleRunStateDisk(runDirectory);
+  if (disk === undefined) return false;
+  const sessionFile =
+    typeof disk.principalWire.sessionFile === "string" &&
+    disk.principalWire.sessionFile.trim() !== ""
+      ? disk.principalWire.sessionFile
+      : join(disk.principalWire.sessionDirectory, "session.jsonl");
+  try {
+    const stat = await lstat(sessionFile);
+    return stat.isFile() && !stat.isSymbolicLink();
+  } catch (error) {
+    // Absent session file → not formed; permission/IO/damage keeps identity.
+    if (errorCodeOf(error) === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/**
  * Locate the latest retained run for one seat under a book (#637 / #747).
- * Same walk surface as findRunDirectoryById. Match by parent run path (officer
- * seats, #747) or by ticket number (countersign / diarist principal).
- * runId is UUIDv7 — lexicographic max is latest. No parallel index.
- * Only a truly missing runs directory means no history; damage/permission errors propagate.
+ * Same walk surface as findRunDirectoryById (listBookRunDirectories). Match by
+ * parent run path (officer seats, #747) or by ticket number (countersign /
+ * diarist principal). runId is UUIDv7 — lexicographic max is latest among runs
+ * that formed a session principal. No parallel index.
+ * Only a truly missing book directory means no history; damage/permission errors propagate.
  */
 export async function findLatestRunIdForSeatTicket(input: {
   readonly home: string;
@@ -1078,34 +1148,35 @@ export async function findLatestRunIdForSeatTicket(input: {
   readonly ticketNumber?: number;
   readonly parentRunPath?: string;
 }): Promise<string | undefined> {
+  if (input.ticketNumber === undefined && input.parentRunPath === undefined) {
+    return undefined;
+  }
   const ledgerHome = resolveActivationLedgerHome(input.home);
-  const runsDir = join(
-    activationBookDirectory(ledgerHome, input.bookKey),
-    "runs",
-  );
-  let entries: string[];
+  const bookDir = activationBookDirectory(ledgerHome, input.bookKey);
+  let runDirectories: string[];
   try {
-    entries = await readdir(runsDir);
+    runDirectories = await listBookRunDirectories(bookDir);
   } catch (error) {
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
   }
   const suffix = `@${input.role}`;
   let best: string | undefined;
-  for (const entry of entries) {
+  for (const runDirectory of runDirectories) {
+    const entry = basename(runDirectory);
     if (!entry.endsWith(suffix)) continue;
     const runId = entry.slice(0, entry.length - suffix.length);
     if (runId.length === 0) continue;
-    const runDirectory = join(runsDir, entry);
     if (input.parentRunPath !== undefined) {
       const parentPath = await readRunParentPath(runDirectory);
       if (parentPath !== input.parentRunPath) continue;
     } else if (input.ticketNumber !== undefined) {
-      const ticketNumber = await readRunTicketNumber(runDirectory);
+      // Same-ticket resume is board identity only — never migration-derived.
+      const ticketNumber = await readBoardTicketNumber(runDirectory);
       if (ticketNumber !== input.ticketNumber) continue;
-    } else {
-      continue;
     }
+    // Durable fact: never resume-select a provisional that never formed principal.
+    if (!(await runHasFormedSessionPrincipal(runDirectory))) continue;
     if (best === undefined || runId > best) best = runId;
   }
   return best;
@@ -1126,6 +1197,13 @@ type LoadedAdmittedRequestFields = {
   readonly derived?: DerivedMergerEnvelope;
   readonly correlationId?: string;
   readonly ticketNumber?: number;
+  /** #871 typed co-review set restored on countersign resume. */
+  readonly courtTicketNumbers?: readonly number[];
+  /**
+   * #871 durable set present-but-damaged diagnostic. Countersign resume settles
+   * controlled failure with this text; not a structural usage rejection.
+   */
+  readonly courtTicketNumbersDamage?: string;
   /** Collector — admitted repository/PR identity restored on resume (#633). */
   readonly prNumber?: number;
   readonly repository?: string;
@@ -1145,7 +1223,7 @@ type LoadedAdmittedRequestFields = {
   readonly model?: InvocationEffectiveModel;
 };
 
-/** Restore optional correlation + typed ticket identity from a durable admitted page. */
+/** Restore optional correlation + typed main-ticket identity from a durable page. */
 function parsePersistedTicketIdentity(
   record: Record<string, unknown>,
 ): {
@@ -1156,25 +1234,99 @@ function parsePersistedTicketIdentity(
     typeof record.correlationId === "string" && record.correlationId.trim() !== ""
       ? record.correlationId
       : undefined;
-  const ticketNumber =
-    typeof record.ticketNumber === "number" &&
-    Number.isSafeInteger(record.ticketNumber) &&
-    record.ticketNumber >= 1
-      ? record.ticketNumber
-      : undefined;
+  const ticketNumber = isSafePositiveTicketNumber(record.ticketNumber)
+    ? record.ticketNumber
+    : undefined;
   return {
     ...(correlationId === undefined ? {} : { correlationId }),
     ...(ticketNumber === undefined ? {} : { ticketNumber }),
   };
 }
 
+/**
+ * #871 durable set from one run page.
+ * Absent → absent. Present damage keeps the original reason (no throw here).
+ */
+function readDurableCourtTicketNumbersPage(
+  record: Record<string, unknown>,
+  principalTicket: number | undefined,
+  pageLabel: string,
+):
+  | { readonly kind: "absent" }
+  | { readonly kind: "ok"; readonly tickets: readonly number[] }
+  | { readonly kind: "damage"; readonly reason: string } {
+  const interpreted = interpretDurableCourtTicketNumbers(record, {
+    ...(principalTicket === undefined ? {} : { principalTicket }),
+  });
+  if (interpreted.kind === "damage") {
+    return {
+      kind: "damage",
+      reason: `role run ${pageLabel} courtTicketNumbers is damaged: ${interpreted.reason}`,
+    };
+  }
+  if (interpreted.kind === "ok") {
+    return { kind: "ok", tickets: interpreted.tickets };
+  }
+  return { kind: "absent" };
+}
+
+/**
+ * Merge admitted + invocation #871 sets.
+ * Both present must match; one present wins; both absent stays legacy.
+ * Damage / cross-page mismatch return a diagnostic — countersign resume settles
+ * controlled failure; load itself does not structural-reject.
+ */
+function mergeDurableCourtTicketNumbers(input: {
+  readonly admittedRecord: Record<string, unknown> | undefined;
+  readonly invocationRecord: Record<string, unknown> | undefined;
+  readonly principalTicket: number | undefined;
+}):
+  | { readonly kind: "ok"; readonly tickets?: readonly number[] }
+  | { readonly kind: "damage"; readonly reason: string } {
+  const fromAdmitted =
+    input.admittedRecord === undefined
+      ? ({ kind: "absent" } as const)
+      : readDurableCourtTicketNumbersPage(
+          input.admittedRecord,
+          input.principalTicket,
+          "admitted-request",
+        );
+  const fromInvocation =
+    input.invocationRecord === undefined
+      ? ({ kind: "absent" } as const)
+      : readDurableCourtTicketNumbersPage(
+          input.invocationRecord,
+          input.principalTicket,
+          "invocation",
+        );
+  if (fromAdmitted.kind === "damage") return fromAdmitted;
+  if (fromInvocation.kind === "damage") return fromInvocation;
+  if (fromAdmitted.kind === "ok" && fromInvocation.kind === "ok") {
+    if (!sameCourtTicketNumbers(fromAdmitted.tickets, fromInvocation.tickets)) {
+      return {
+        kind: "damage",
+        reason:
+          "role run courtTicketNumbers differs between admitted-request and invocation",
+      };
+    }
+    return { kind: "ok", tickets: fromAdmitted.tickets };
+  }
+  if (fromAdmitted.kind === "ok") return { kind: "ok", tickets: fromAdmitted.tickets };
+  if (fromInvocation.kind === "ok") return { kind: "ok", tickets: fromInvocation.tickets };
+  return { kind: "ok" };
+}
+
 function restoredTicketFields(fields: LoadedAdmittedRequestFields): {
   correlationId?: string;
   ticketNumber?: number;
+  courtTicketNumbers?: readonly number[];
 } {
   return {
     ...(fields.correlationId === undefined ? {} : { correlationId: fields.correlationId }),
     ...(fields.ticketNumber === undefined ? {} : { ticketNumber: fields.ticketNumber }),
+    ...(fields.courtTicketNumbers === undefined
+      ? {}
+      : { courtTicketNumbers: fields.courtTicketNumbers }),
   };
 }
 
@@ -1224,6 +1376,10 @@ async function loadResumableRunRecord(
   let derived: DerivedMergerEnvelope | undefined;
   let correlationId: string | undefined;
   let ticketNumber: number | undefined;
+  let courtTicketNumbers: readonly number[] | undefined;
+  let courtTicketNumbersDamage: string | undefined;
+  let admittedIdentityRecord: Record<string, unknown> | undefined;
+  let invocationIdentityRecord: Record<string, unknown> | undefined;
   let prNumber: number | undefined;
   let repository: string | undefined;
   let repositoryDisplay: string | undefined;
@@ -1382,6 +1538,7 @@ async function loadResumableRunRecord(
           };
         }
       }
+      admittedIdentityRecord = record;
       const fromAdmitted = parsePersistedTicketIdentity(record);
       correlationId = fromAdmitted.correlationId;
       ticketNumber = fromAdmitted.ticketNumber;
@@ -1405,6 +1562,7 @@ async function loadResumableRunRecord(
       !Array.isArray(invocationRaw)
     ) {
       const rec = invocationRaw as Record<string, unknown>;
+      invocationIdentityRecord = rec;
       if (typeof rec.provider === "string" && typeof rec.model === "string") {
         model = {
           provider: rec.provider,
@@ -1422,6 +1580,11 @@ async function loadResumableRunRecord(
     }
   } catch (error) {
     if (
+      error instanceof CliUsageError
+    ) {
+      throw error;
+    }
+    if (
       !(
         error instanceof Error &&
         "code" in error &&
@@ -1433,6 +1596,19 @@ async function loadResumableRunRecord(
         { cause: error },
       );
     }
+  }
+  // #871: resolve set after main ticket so principal membership can be checked.
+  // Present-but-damaged / cross-page mismatch keep diagnostic for countersign
+  // controlled-failure; both-absent stays legacy; single lawful page restores.
+  const mergedSet = mergeDurableCourtTicketNumbers({
+    admittedRecord: admittedIdentityRecord,
+    invocationRecord: invocationIdentityRecord,
+    principalTicket: ticketNumber,
+  });
+  if (mergedSet.kind === "damage") {
+    courtTicketNumbersDamage = mergedSet.reason;
+  } else if (mergedSet.tickets !== undefined) {
+    courtTicketNumbers = mergedSet.tickets;
   }
   return {
     run,
@@ -1453,6 +1629,10 @@ async function loadResumableRunRecord(
       ...(derived === undefined ? {} : { derived }),
       ...(correlationId === undefined ? {} : { correlationId }),
       ...(ticketNumber === undefined ? {} : { ticketNumber }),
+      ...(courtTicketNumbers === undefined ? {} : { courtTicketNumbers }),
+      ...(courtTicketNumbersDamage === undefined
+        ? {}
+        : { courtTicketNumbersDamage }),
       ...(prNumber === undefined ? {} : { prNumber }),
       ...(repository === undefined ? {} : { repository }),
       ...(repositoryDisplay === undefined ? {} : { repositoryDisplay }),
@@ -1721,9 +1901,19 @@ export async function loadResumableCountersignRun(
       `role run ${runId} belongs to ${loaded.run.role}, not countersign`,
     );
   }
+  const base = resumedBaseAdmitted(loaded);
   const admitted: AdmittedCountersignInvocation = {
     role: "countersign",
-    ...resumedBaseAdmitted(loaded),
+    ...base,
+    ...(base.courtTicketNumbers === undefined
+      ? {}
+      : { courtTicketNumbers: base.courtTicketNumbers }),
+    ...(loaded.admittedFields.courtTicketNumbersDamage === undefined
+      ? {}
+      : {
+          courtTicketNumbersDamage:
+            loaded.admittedFields.courtTicketNumbersDamage,
+        }),
   };
   return seatLoadedResult(loaded, admitted);
 }

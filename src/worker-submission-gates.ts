@@ -221,9 +221,8 @@ function reliableWindow(
 
 export type CreateWorkerSubmissionGateOptions = {
   /**
-   * Explicit package home for sitian writes when no parent session is armed.
-   * Existing injection point on sitianReport — does not change fallback when omitted
-   * (path-derive from parent, else package machine home). #604 Scope 2.
+   * Explicit package home for sitian writes (tests / admitted run).
+   * Path still derives from required parent session; home only pins ledger root. #604 Scope 2.
    */
   readonly home?: string;
 };
@@ -231,7 +230,8 @@ export type CreateWorkerSubmissionGateOptions = {
 export function createWorkerSubmissionGate(
   options: CreateWorkerSubmissionGateOptions = {},
 ): {
-  arm(cwd: string, parent?: WorkerSubmissionGateParent): void;
+  /** Durable parent is required — ownership must be known at arm (#857 loud failure). */
+  arm(cwd: string, parent: WorkerSubmissionGateParent): void;
   assertAcceptable(status: string, details?: unknown): void;
 } {
   let baseline: string | null | undefined;
@@ -267,11 +267,11 @@ export function createWorkerSubmissionGate(
     arm(cwd, parent) {
       uninstallPackageWorkerHooks(cwd);
       root = cwd;
-      sessionParent = parent?.getSessionFile();
+      sessionParent = parent.getSessionFile();
       record = createRecordSession({
         cwd,
         kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
-        ...(parent === undefined ? {} : { parent }),
+        parent,
       });
       const prior = readGateState(record);
       if (prior.baseline !== undefined) {

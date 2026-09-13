@@ -98,7 +98,7 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
 
     // ②: AK-owned run-state ledger reaches terminal regardless of the substituted host.
     const bookKey = resolveBookKeyFromGit(project);
-    const runsRoot = join(home, ".ak-roles", "books", bookKey, "runs");
+    const runsRoot = join(home, ".ak-roles", "books", bookKey, "unbound", "runs");
     const runDirs = await readdir(runsRoot);
     const judgeRun = runDirs.find((name) => name.endsWith("@judge"));
     assert.ok(judgeRun, `expected judge run under ${runsRoot}, got ${runDirs.join(", ")}`);

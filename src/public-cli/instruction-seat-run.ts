@@ -7,13 +7,12 @@
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
-import { readRunTicketNumber } from "../run-ticket-number.ts";
+import { readBoardTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitAuditorInvocation,
   admitGatekeeperInvocation,
   admitNavigatorInvocation,
-  bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
   persistAdmittedSourceRunPath,
   type AdmittedAuditorInvocation,
@@ -286,7 +285,8 @@ export async function runPublicInstructionSeat(
         home: env.home,
       });
       auditorSourceRun = resolved.runDirectory;
-      auditorSourceTicket = await readRunTicketNumber(resolved.runDirectory);
+      // Auditor inherits board identity only — migration-derived is display, not admission.
+      auditorSourceTicket = await readBoardTicketNumber(resolved.runDirectory);
     } catch (error) {
       presentStructuralRejection(
         new CliUsageError(error instanceof Error ? error.message : String(error)),
@@ -345,6 +345,9 @@ export async function runPublicInstructionSeat(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+      ...(auditorSourceTicket === undefined
+        ? {}
+        : { assertedTicketNumber: auditorSourceTicket }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -395,14 +398,7 @@ export async function runPublicInstructionSeat(
         env,
         io,
         request: turnRequest,
-        adapters: instructionSeatAdapters({
-          beforeDispatch: async (admittedSeat) => {
-            // Auditor inherits source-run ticket (notary face) — typed, not prose match.
-            if (auditorSourceTicket !== undefined) {
-              await bindAdmittedTicketNumber(admittedSeat, auditorSourceTicket);
-            }
-          },
-        }),
+        adapters: instructionSeatAdapters(),
         ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
       });
     },

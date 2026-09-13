@@ -8,7 +8,7 @@ import { DOCTOR_ACCEPTED_AUDIT_NO_RECEIPT_TEXT, DOCTOR_ACCEPTED_TEXT, DOCTOR_EVI
 import { sitianReport } from "./sitian-facade.ts";
 
 export { DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME };
-export const DOCTOR_CASE_FLAG = { name: "ak-doctor-case", definition: { description: "Retained .ak-roles/books/<book>/issues/<n>/runs directory", type: "string" as const } } as const;
+export const DOCTOR_CASE_FLAG = { name: "ak-doctor-case", definition: { description: "Retained .ak-roles/books/<book>/<n>/runs directory", type: "string" as const } } as const;
 export type DoctorRoleDependencies = { loadSoul(): Promise<string>; loadCase(path: string): Promise<DoctorCase>; auditCompliance(options: { context: HostContext; signal?: AbortSignal }): Promise<ComplianceDecision> };
 function appendCandidate(ctx: HostContext, data: unknown): void {
   try {

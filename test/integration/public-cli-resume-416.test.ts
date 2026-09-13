@@ -187,7 +187,7 @@ test("block1: session principal unavailable still fails honestly", async()=>{
         piRunner: async(args)=>{const sd=args[args.indexOf("--session-dir")+1]!;await mkdir(sd,{recursive:true});return{code:1,stderr:"x\n",timedOut:false,args:[...args]};},
       })});
     const bookKey=resolveBookKeyFromGit(project);
-    const runDir=join(home,".ak-roles","books",bookKey,"runs",`${runId}@judge`);
+    const runDir=join(home,".ak-roles","books",bookKey,"unbound","runs",`${runId}@judge`);
     await rm(join(runDir,"session","session.jsonl"),{force:true});
     await assert.rejects(()=>loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority),/Pi session principal is unavailable/);
     const {io:io2,stderr}=captureIo();let dispatched=false;
@@ -216,7 +216,7 @@ test("block2: auto retry up to 2 per single call, observation on terminal", asyn
     assert.equal(calls,3);
     assert.equal(result.exitCode,1);
     assert.equal(result.terminal?.autoResumeCount,2);
-    const state=await readRoleRunState(join(home,".ak-roles","books",resolveBookKeyFromGit(project),"runs",`${runId}@judge`), piDurablePrincipalAuthority);
+    const state=await readRoleRunState(join(home,".ak-roles","books",resolveBookKeyFromGit(project),"unbound","runs",`${runId}@judge`), piDurablePrincipalAuthority);
     assert.equal(state?.state,"terminal");
     // Only final terminal presented once
     assert.equal(calls,3);

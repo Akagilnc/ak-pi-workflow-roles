@@ -13,6 +13,7 @@ import {
   type RecordPointer,
   type SitianRecord,
 } from "./sitian-facade.ts";
+import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 import {
   TICKET_PROVENANCE_HUMAN_VIEW,
   TICKET_PROVENANCE_KIND,
@@ -25,7 +26,7 @@ import {
 
 /** Subject string for ticket-keyed volumes — history follows the ticket. */
 export function ticketProvenanceSubject(ticketNumber: number): string {
-  if (!Number.isSafeInteger(ticketNumber) || ticketNumber < 1) {
+  if (!isSafePositiveTicketNumber(ticketNumber)) {
     throw new Error(`ticket-provenance subject requires a positive ticket number, got ${String(ticketNumber)}`);
   }
   return String(ticketNumber);
@@ -57,6 +58,7 @@ export function ticketProvenanceEntryIdentity(
 export type AppendTicketProvenanceInput = {
   readonly ticketNumber: number;
   readonly cwd: string;
+  readonly sessionParent: string;
   /** Original diarist row (or `{ original, unprojected: true }` envelope). */
   readonly payload: unknown;
   /** Explicit package home (tests / admitted run); never process.env.HOME (#604). */
@@ -107,6 +109,7 @@ export function appendTicketProvenanceEntry(
     identity,
     subject,
     cwd: input.cwd,
+    sessionParent: input.sessionParent,
     ...(input.home === undefined ? {} : { home: input.home }),
     host: input.host ?? "diarist",
     source: input.source ?? "diarist",
