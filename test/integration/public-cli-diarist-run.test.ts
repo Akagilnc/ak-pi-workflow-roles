@@ -29,7 +29,6 @@ import {
 } from "../../src/ticket-provenance.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
 import {
-  createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
   type LegacyFauxPiRunner,
@@ -83,7 +82,10 @@ type RegisteredTool = {
  * Faux pi process for this seat: drives the production diarist role envelope.
  * Projects the spawn run identity into typed HostContext (#779/#879).
  */
-function diaristEnvelopeRunner(submitted: unknown): LegacyFauxPiRunner {
+function diaristEnvelopeRunner(
+  submitted: unknown,
+  behavior?: { readonly afterAdmit?: "throw" },
+): LegacyFauxPiRunner {
   return async (args, options) => {
     let registered: RegisteredTool | undefined;
     const host = {
@@ -100,23 +102,26 @@ function diaristEnvelopeRunner(submitted: unknown): LegacyFauxPiRunner {
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionFile, "");
     const runtime = createDiaristRoleRuntime(host, {
-        loadSoul: async () => "起居郎职分（测试装载）",
-      });
-      await runtime.activate();
-      assert.ok(registered, "diarist envelope registered no output tool");
-      const accepted = await registered.execute(
-        "call_diarist_1",
-        submitted,
-        undefined,
-        undefined,
-        {
-          runDirectory: runDir,
-          sessionManager: {
-            getSessionDir: () => sessionDir,
-            getSessionFile: () => sessionFile,
-          },
-        } as HostContext,
-      );
+      loadSoul: async () => "起居郎职分（测试装载）",
+    });
+    await runtime.activate();
+    assert.ok(registered, "diarist envelope registered no output tool");
+    const accepted = await registered.execute(
+      "call_diarist_1",
+      submitted,
+      undefined,
+      undefined,
+      {
+        runDirectory: runDir,
+        sessionManager: {
+          getSessionDir: () => sessionDir,
+          getSessionFile: () => sessionFile,
+        },
+      } as HostContext,
+    );
+    if (behavior?.afterAdmit === "throw") {
+      throw new Error("host turn failed after diarist board bind");
+    }
     return scriptedTerminatingToolSession({
       role: "diarist",
       toolName: DIARIST_OUTPUT_TOOL_NAME,
@@ -287,53 +292,6 @@ test("ak-role diarist host-turn failure still relocates board-bound run", async 
     const runId = "01a0diar00-0000-7000-8000-000000000003";
     const { io } = captureIo();
 
-    const failingHost = createMinimalHost(async (request) => {
-      let registered: RegisteredTool | undefined;
-      const host = {
-        registerTool(tool: unknown) {
-          registered = tool as RegisteredTool;
-        },
-        on() {},
-        getAllTools: () => (registered === undefined ? [] : [{ name: registered.name }]),
-      } as unknown as RoleHost;
-      const runDir = request.runDirectory;
-      const sessionDir = join(runDir, "session");
-      const sessionFile = join(sessionDir, "session.jsonl");
-      await mkdir(sessionDir, { recursive: true });
-      await writeFile(sessionFile, "");
-      const runtime = createDiaristRoleRuntime(host, {
-        loadSoul: async () => "起居郎职分（测试装载）",
-      });
-      await runtime.activate();
-      assert.ok(registered, "diarist envelope registered no output tool");
-      // Real accept hook writes typed board ticket under the still-unbound run.
-      await registered.execute(
-        "call_diarist_fail_1",
-        {
-          status: "completed",
-          ticketNumber: TICKET,
-          entries: [
-            {
-              sourceKind: "cc-session",
-              sourceRef: { sessionFile: ENTRY_SESSION_FILE, entryId: ENTRY_ID },
-              transcript: "board-bound before host failure",
-              timestamp: "2026-09-08T00:00:00.000Z",
-            },
-          ],
-        },
-        undefined,
-        undefined,
-        {
-          runDirectory: runDir,
-          sessionManager: {
-            getSessionDir: () => sessionDir,
-            getSessionFile: () => sessionFile,
-          },
-        } as HostContext,
-      );
-      throw new Error("host turn failed after diarist board bind");
-    });
-
     const result = await runAkRole(
       ["diarist", "--project", project, `整理 #${TICKET} 起居录`],
       {
@@ -343,7 +301,25 @@ test("ak-role diarist host-turn failure still relocates board-bound run", async 
         io,
         createRunId: () => runId,
         principalAuthority: immutablePrincipalAuthority,
-        roleTurnHost: failingHost,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: immutablePrincipalAuthority,
+          piRunner: diaristEnvelopeRunner(
+            {
+              status: "completed",
+              ticketNumber: TICKET,
+              entries: [
+                {
+                  sourceKind: "cc-session",
+                  sourceRef: { sessionFile: ENTRY_SESSION_FILE, entryId: ENTRY_ID },
+                  transcript: "board-bound before host failure",
+                  timestamp: "2026-09-08T00:00:00.000Z",
+                },
+              ],
+            },
+            { afterAdmit: "throw" },
+          ),
+        }),
       },
     );
 
