@@ -34,9 +34,13 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { payloadFacts , objectPayloads} from "../helpers/terminal-payload.ts";
+import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-cli-", scenario);
+  return withTempRoot("ak-public-cli-cli-", async (home) => {
+    await seedCallerSeatTable(home);
+    return scenario(home);
+  });
 }
 
 function captureIo() {
@@ -140,9 +144,9 @@ test("help document capabilities match typed registry without depending on layou
 // 并一——TSV 行型正则把列序/措辞变承重结构违 ADR 0052，改咬 loadPublicCliConfig /
 // resolveEffectiveSeat / public-cli.json 字节 / 退出码；进程级可见性契约保留)。
 test("config persistence round-trips across processes on the typed seat face", async () => {
-  await withTempHome(async (home) => {
-    // Fresh home: roles exits zero and every configurable seat enumerates from
-    // typed defaults — judge's startup default comes from available credentials.
+  // Bare temp root (no caller-seat seed): this case proves empty → set → reload (#178).
+  await withTempRoot("ak-public-cli-cli-config-", async (home) => {
+    // Fresh home: roles exits zero; seats stay unconfigured until caller sets them.
     const fresh = await runAkRole(["roles"], {
       packageRoot,
       home,
@@ -152,12 +156,8 @@ test("config persistence round-trips across processes on the typed seat face", a
     assert.equal(fresh.exitCode, 0);
     const codexOnly: CredentialProviders = { "openai-codex": true, xai: false };
     const judgeDefault = resolveEffectiveSeat(await loadPublicCliConfig(home), "judge", codexOnly);
-    assert.equal(judgeDefault.source, "startup");
-    assert.deepEqual(judgeDefault.selection, {
-      provider: "openai-codex",
-      model: "gpt-5.6-sol",
-      thinking: "high",
-    });
+    assert.equal(judgeDefault.source, "unconfigured");
+    assert.equal(judgeDefault.selection, undefined);
 
     // Bulk config set is visible to a subsequent process via the config bytes.
     const setResult = await runAkRole(
@@ -353,6 +353,11 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
           { packageRoot, home, io: captureIo().io },
         )
       ).exitCode,
+      0,
+    );
+    // #178 seed fills inspector; clear it so #620 inherit-gatekeeper is the only model source.
+    assert.equal(
+      (await runAkRole(["config", "unset", "inspector"], { packageRoot, home, io: captureIo().io })).exitCode,
       0,
     );
 

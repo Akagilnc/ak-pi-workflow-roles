@@ -1,5 +1,6 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #519 §5 shared public-cli real-entry tracer base.
  * One file, one subprocess entry helper, table-driven across 8 packaged roles.
@@ -105,6 +106,7 @@ async function conflictedRepository(root: string) {
 
 async function withSharedHome<T>(run: (home: string, project: string) => Promise<T>): Promise<T> {
   return await withTempRoot("ak-public-role-table-", async (home) => {
+    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project);
     seedGitProject(project);

@@ -5,6 +5,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #109 public Coder path — common Invocation, default apply / explicit plan,
  * package TDD provenance on shared success Terminal interface.
@@ -40,7 +41,10 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-coder-", scenario);
+  return withTempRoot("ak-public-cli-coder-", async (home) => {
+    await seedCallerSeatTable(home);
+    return scenario(home);
+  });
 }
 
 function captureIo() {

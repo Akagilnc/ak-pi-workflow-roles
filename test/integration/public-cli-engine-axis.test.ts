@@ -4,6 +4,7 @@ import {
   withNestedTrueUnboundDiaristPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
@@ -78,7 +79,10 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-engine-axis-", scenario);
+  return withTempRoot("ak-engine-axis-", async (home) => {
+    await seedCallerSeatTable(home);
+    return scenario(home);
+  });
 }
 
 function captureIo() {

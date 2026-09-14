@@ -36,6 +36,7 @@ import {
   installGhFixture,
 } from "../helpers/hermes-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 import {
   CANONICAL_SOURCE_ROLE,
   CANONICAL_SOURCE_RUN_ID,
@@ -136,6 +137,7 @@ async function openNotaryScratch(prefix: string): Promise<{
 }> {
   await mkdir(WORKTREE_SCRATCH, { recursive: true });
   const home = await mkdtemp(join(WORKTREE_SCRATCH, prefix));
+  await seedCallerSeatTable(home);
   const project = join(home, "project");
   await mkdir(project, { recursive: true });
   seedGitProject(project);
@@ -480,6 +482,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
 test("#637 public inspector: freeze-once attachment identity survives a no-seal court and resume-with-message continues the open no-seal court", async () => {
   await mkdir(WORKTREE_SCRATCH, { recursive: true });
   const home = await mkdtemp(join(WORKTREE_SCRATCH, "home-materials-"));
+  await seedCallerSeatTable(home);
   const priorPath = process.env.PATH;
   try {
     const project = join(home, "project");

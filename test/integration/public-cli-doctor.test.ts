@@ -4,6 +4,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -50,7 +51,10 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { assertPublicFailureSettlement } from "../helpers/failure-settlement-kit.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-doctor-", scenario);
+  return withTempRoot("ak-public-cli-doctor-", async (home) => {
+    await seedCallerSeatTable(home);
+    return scenario(home);
+  });
 }
 
 function captureIo() {

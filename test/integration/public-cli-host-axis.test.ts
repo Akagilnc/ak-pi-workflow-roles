@@ -13,6 +13,7 @@ import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 import { payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 
@@ -32,7 +33,10 @@ function adapter(name: string, selected: string[], accepts = true): NamedRoleTur
 }
 
 async function homeTest(fn: (home: string) => Promise<void>) {
-  await withTempRoot("ak-host-axis-", fn);
+  await withTempRoot("ak-host-axis-", async (home) => {
+    await seedCallerSeatTable(home);
+    await fn(home);
+  });
 }
 
 const base = (home: string, adapters: readonly NamedRoleTurnHostAdapter[]) => ({ packageRoot, home, credentials, io, hostAdapters: adapters });
@@ -57,6 +61,7 @@ test("host priority and pi equivalence run through the public call entry", async
 }));
 
 test("host selection failures are canonical and stop before role turn", async () => homeTest(async (home) => {
+  await configureJudge(home);
   let turnCalls = 0;
   const countingHost: RoleTurnHost = {
     executeTurn: async () => {
@@ -144,6 +149,7 @@ test("inspector model clear preserves independent host and engine residual axes"
 
 test("resume accepts --host and selects that host adapter", async () => {
   await withHermeticHome({ prefix: "ak-resume-host-flag-" }, async ({ home }) => {
+    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -456,6 +462,7 @@ async function seedResumableJudge(input: {
 /** #617 DK-3: bare resume follows the live seat table host, not birth host. */
 test("bare resume follows live seat table host when it drifts from birth host", async () => {
   await withHermeticHome({ prefix: "ak-seat-host-resume-" }, async ({ home }) => {
+    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);

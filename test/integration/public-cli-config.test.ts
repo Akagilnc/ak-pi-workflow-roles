@@ -100,64 +100,45 @@ test("command-local model/thinking overrides do not rewrite persistent configura
   });
 });
 
-test("effective seats prefer credentials: codex-only, xai-only, both prefers codex, neither unconfigured", () => {
+// #178: package startup candidates abolished — empty seat table stays unconfigured
+// regardless of credential presence (credentials only gate the selected provider).
+test("empty seat table resolves unconfigured for every seat (no package fill-in)", () => {
   const empty: PublicCliConfig = { seats: {} };
-
-  const codexOnly = effectiveSeatConfigurations(empty, { "openai-codex": true, xai: false });
-  assert.equal(codexOnly.find((s) => s.seat === "judge")?.source, "startup");
-  assert.deepEqual(codexOnly.find((s) => s.seat === "judge")?.selection, {
-    provider: "openai-codex",
-    model: "gpt-5.6-sol",
-    thinking: "high",
-  });
-  assert.deepEqual(codexOnly.find((s) => s.seat === "navigator")?.selection, {
-    provider: "openai-codex",
-    model: "gpt-5.6-luna",
-    thinking: "medium",
+  const withCreds = effectiveSeatConfigurations(empty, { "openai-codex": true, xai: true });
+  const withoutCreds = effectiveSeatConfigurations(empty, {
+    "openai-codex": false,
+    xai: false,
   });
 
-  const xaiOnly = effectiveSeatConfigurations(empty, { "openai-codex": false, xai: true });
-  assert.deepEqual(xaiOnly.find((s) => s.seat === "judge")?.selection, {
-    provider: "xai",
-    model: "grok-4.5",
-    thinking: "high",
-  });
+  for (const row of withCreds) {
+    assert.equal(row.source, "unconfigured", row.seat);
+    assert.equal(row.selection, undefined, row.seat);
+  }
+  for (const row of withoutCreds) {
+    assert.equal(row.source, "unconfigured", row.seat);
+    assert.equal(row.selection, undefined, row.seat);
+  }
 
-  const both = effectiveSeatConfigurations(empty, { "openai-codex": true, xai: true });
-  assert.equal(both.find((s) => s.seat === "coder")?.selection?.provider, "openai-codex");
-
-  const neither = effectiveSeatConfigurations(empty, { "openai-codex": false, xai: false });
-  assert.equal(neither.find((s) => s.seat === "judge")?.source, "unconfigured");
-  assert.equal(neither.find((s) => s.seat === "judge")?.selection, undefined);
-
-  const seats = neither.map((s) => s.seat);
-  assert.deepEqual(seats, [
-    "judge",
-    "fixer",
-    "coder",
-    "reviewer",
-    "collector",
-    "doctor",
-    "merger",
-    "notary",
-    "countersign",
-    "gleaner-left",
-    "inspector",
-    "gatekeeper",
-    "navigator",
-    "auditor",
-    "diarist",
-  ]);
-  assert.equal(seats.includes("auditor"), true);
-  // #744: evidence-child is not a public seat (deepEqual roster above).
-
-  // #453/#620/#639: gatekeeper keeps no package startup; subordinates have none either.
-  assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.source, "unconfigured");
-  assert.equal(codexOnly.find((s) => s.seat === "gatekeeper")?.selection, undefined);
-  assert.equal(codexOnly.find((s) => s.seat === "inspector")?.source, "unconfigured");
-  assert.equal(codexOnly.find((s) => s.seat === "inspector")?.selection, undefined);
-  assert.equal(codexOnly.find((s) => s.seat === "notary")?.source, "unconfigured");
-  assert.equal(codexOnly.find((s) => s.seat === "notary")?.selection, undefined);
+  assert.deepEqual(
+    withCreds.map((s) => s.seat),
+    [
+      "judge",
+      "fixer",
+      "coder",
+      "reviewer",
+      "collector",
+      "doctor",
+      "merger",
+      "notary",
+      "countersign",
+      "gleaner-left",
+      "inspector",
+      "gatekeeper",
+      "navigator",
+      "auditor",
+      "diarist",
+    ],
+  );
 });
 
 const CODEX_CREDS: CredentialProviders = { "openai-codex": true, xai: true };
@@ -353,7 +334,7 @@ test("#453 non-notary engine-only residual is rejected on persist boundary", asy
   });
 });
 
-test("persistent seat config wins over startup candidates", () => {
+test("persistent seat config supplies the effective model", () => {
   const config = setPersistentSeatConfig(
     { seats: {} },
     "fixer",

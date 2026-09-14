@@ -3,6 +3,7 @@ import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #106 public Judge path — admission, freeze, terminal settlement, grace, renderer.
  * Seams: parseJudgeArgv / admitJudgeInvocation / TerminalResult / raceNavigatorGrace /
@@ -75,7 +76,10 @@ function sessionToolResultLine(toolName: string, details: unknown): string {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-judge-", scenario);
+  return withTempRoot("ak-public-cli-judge-", async (home) => {
+    await seedCallerSeatTable(home);
+    return scenario(home);
+  });
 }
 
 /** Temp physical root + dir-symlink alias; owns cleanup after successful mkdtemp. */

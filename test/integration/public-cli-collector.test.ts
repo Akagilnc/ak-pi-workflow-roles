@@ -5,6 +5,7 @@ import { mkdirSync } from "node:fs";
 import { basename, join } from "node:path";
 import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 
 import { SessionManager, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 
@@ -363,6 +364,7 @@ async function settleBindNoReceipt(input: {
 
 test("typed groups travel from real output settlement into the report artifact", async () => {
   return await withTempRoot("collector-groups-", async (home) => {
+    await seedCallerSeatTable(home);
     const project = join(home, "project");
     await mkdir(project);
     seedProject(project);
@@ -562,6 +564,7 @@ test("#676 K2 envelope collector hooks: activation journal + tool_result release
 
 test("#676 J2 MERGED prState travels from sealed receipt into public Terminal", async () => {
   return await withTempRoot("collector-merged-", async (home) => {
+    await seedCallerSeatTable(home);
     const project = join(home, "project");
     await mkdir(project);
     seedProject(project);
@@ -611,6 +614,7 @@ test("#676 J2 MERGED prState travels from sealed receipt into public Terminal", 
 
 test("#676 J2 CLOSED non-OPEN prState still returns materials without inventing requests", async () => {
   return await withTempRoot("collector-closed-", async (home) => {
+    await seedCallerSeatTable(home);
     const project = join(home, "project");
     await mkdir(project);
     seedProject(project);
@@ -655,6 +659,7 @@ test("#676 J2 CLOSED non-OPEN prState still returns materials without inventing 
 
 test("#676 J2 explicit --pr is unique bound at admission", async () => {
   return await withTempRoot("collector-bound-", async (home) => {
+    await seedCallerSeatTable(home);
     const project = join(home, "project");
     await mkdir(project);
     seedProject(project);

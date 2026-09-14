@@ -1,4 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
+import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #448 public Notary seat — source-run locator only; four external terminal layers
  * via real runAkRole entry; default judge path adds no intake notary call.
@@ -53,7 +54,10 @@ import {
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-notary-", scenario);
+  return withTempRoot("ak-public-cli-notary-", async (home) => {
+    await seedCallerSeatTable(home);
+    return scenario(home);
+  });
 }
 
 function captureIo() {
@@ -137,6 +141,11 @@ test("#620 notary public entry injects gatekeeper inheritance into RoleTurnReque
           { home, packageRoot, io: captureIo().io },
         )
       ).exitCode,
+      0,
+    );
+    // #178 seed fills notary; clear it so #620 inherit-gatekeeper is the only model source.
+    assert.equal(
+      (await runAkRole(["config", "unset", "notary"], { home, packageRoot, io: captureIo().io })).exitCode,
       0,
     );
 

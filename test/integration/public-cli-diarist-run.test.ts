@@ -3,6 +3,7 @@
  * LLM submits bounds (+ optional amendments); mechanical layer reprojects records.jsonl.
  * Single seam: real entry, scripted host, on-disk session fixture, assert the unique diary file.
  */
+import { callerSeatTable, seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -63,7 +64,10 @@ const immutablePrincipalAuthority: DurablePrincipalAuthority = {
 };
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-diarist-", async (home) => scenario(home));
+  return withTempRoot("ak-public-cli-diarist-", async (home) => {
+    await seedCallerSeatTable(home);
+    return scenario(home);
+  });
 }
 
 type RegisteredTool = {
@@ -887,11 +891,11 @@ test("ak-role diarist host-turn failure still relocates board-bound run", async 
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     // Temp-home config only — never the real seat table. Zero resume budget so
-    // this tracer stays on the post-turn relocate seam.
+    // this tracer stays on the post-turn relocate seam. Keep caller seats (#178).
     await mkdir(join(home, ".ak-roles"), { recursive: true });
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ autoResumeLimit: 0 }, null, 2)}\n`,
+      `${JSON.stringify({ ...callerSeatTable(), autoResumeLimit: 0 }, null, 2)}\n`,
     );
 
     const runId = "01a0diar00-0000-7000-8000-000000000003";

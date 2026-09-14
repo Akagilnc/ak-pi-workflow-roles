@@ -1,5 +1,6 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #502 public Gleaner-Left seat — required --base, empty instruction admitted,
  * #599 resume continues the exact session; empty/nonempty 弹章 → typed Terminal.
@@ -29,7 +30,10 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-gleaner-left-", scenario);
+  return withTempRoot("ak-public-cli-gleaner-left-", async (home) => {
+    await seedCallerSeatTable(home);
+    return scenario(home);
+  });
 }
 
 function seedGitProject(root: string): void {

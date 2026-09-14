@@ -196,7 +196,7 @@ async function createSummonEnv(options: {
   readonly cwd: string;
   readonly packageRoot: string;
   readonly credentials: CredentialProviders;
-  readonly seat: EffectiveSeat;
+  readonly seat: EffectiveSeat & { selection: NonNullable<EffectiveSeat["selection"]> };
   readonly extraPiArgs?: readonly string[];
   readonly roleTurnHost?: RoleTurnHost;
   readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
@@ -226,15 +226,12 @@ async function createSummonEnv(options: {
   const { loadHostProvidersTable, projectHostFacingProvider } = await import(
     "./public-cli/host-providers.ts"
   );
-  const hostFacingSelection =
-    options.seat.selection === undefined
-      ? undefined
-      : projectHostFacingProvider(
-          options.seat.selection,
-          hostName,
-          loadHostProvidersTable(options.home),
-          options.home,
-        );
+  const hostFacingSelection = projectHostFacingProvider(
+    options.seat.selection,
+    hostName,
+    loadHostProvidersTable(options.home),
+    options.home,
+  );
   return {
     home: options.home,
     principalAuthority,
@@ -266,6 +263,7 @@ export async function summonPublicRole(
   const {
     loadCredentialProviders,
     loadPublicCliConfig,
+    missingResolvedSeatModelMessage,
     resolveEffectiveSeat,
   } = await import("./public-cli/config.ts");
   const credentials =
@@ -274,6 +272,10 @@ export async function summonPublicRole(
   // Nested summons resolve host on the officer seat only (flag>seat>default pi).
   // Parent run host is not an override channel (#821 / ADR 0082: --host 旗标>席位配置>缺省 pi).
   const seat = resolveEffectiveSeat(config, options.role, credentials);
+  // #178: same dispatch-time model guard as public CLI — no package fill-in.
+  if (seat.selection === undefined) {
+    throw new Error(missingResolvedSeatModelMessage(options.role));
+  }
   let summonEnv;
   try {
     summonEnv = await createSummonEnv({
@@ -283,7 +285,7 @@ export async function summonPublicRole(
       cwd: options.cwd,
       packageRoot,
       credentials,
-      seat,
+      seat: { ...seat, selection: seat.selection },
       ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
       ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
       ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),

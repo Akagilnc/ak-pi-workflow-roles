@@ -57,6 +57,7 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { callerSeatTable, seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 import {
   ensureTicketProvenanceVolume,
   readTicketProvenance,
@@ -65,6 +66,7 @@ import {
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-countersign-", async (home) => {
+    await seedCallerSeatTable(home);
     const binDir = join(home, "bin");
     const priorPath = process.env.PATH;
     process.env.PATH = `${binDir}:${priorPath ?? ""}`;
@@ -856,12 +858,15 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     // #771 LLM assert + #742 court diarist station; volume may or may not pre-exist.
     ensureTicketProvenanceVolume(582, project, home);
     // Temp-home seat row only — never write the real ~/.ak-roles table.
+    // Caller seats for every dispatch seat (#178); diarist keeps grok-build host.
     await mkdir(join(home, ".ak-roles"), { recursive: true });
+    const seats = {
+      ...callerSeatTable().seats,
+      diarist: { provider: "openai-codex", model: "gpt-5.6-sol", host: "grok-build" },
+    };
     await writeFile(
       publicCliConfigPath(home),
-      `${JSON.stringify({
-        seats: { diarist: { provider: "openai-codex", model: "gpt-5.6-sol", host: "grok-build" } },
-      })}\n`,
+      `${JSON.stringify({ seats })}\n`,
       "utf8",
     );
 

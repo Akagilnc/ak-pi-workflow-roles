@@ -617,10 +617,12 @@ test("public admitted-request projects typed subject/authority; missing/malforme
 
 test("station-child shared lifecycle omits Navigator attendance; top-level still creates it", async () => {
   const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+  const { seedCallerSeatTable } = await import("../helpers/seed-caller-seat-table.ts");
 
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   try {
     await withActivationHome({ prefix: "ak-nav-station-child-" }, async ({ home }) => {
+      await seedCallerSeatTable(home);
       async function attendanceCreatedFromTurn(request: RoleTurnRequest): Promise<boolean> {
         const runDir = request.runDirectory;
         await mkdir(join(runDir, "session"), { recursive: true });

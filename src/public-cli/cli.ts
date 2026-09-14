@@ -23,6 +23,7 @@ import {
   isGateOfficerSeat,
   loadCredentialProviders,
   loadPublicCliConfig,
+  missingResolvedSeatModelMessage,
   parseModelSpec,
   resolveEffectiveSeat,
   savePublicCliConfig,
@@ -317,6 +318,10 @@ function createRoleEnvironment(
   env: CliEnv,
   options: RoleEnvironmentOptions,
 ) {
+  // #178: model axis is caller-specified only — fail before host projection/dispatch.
+  if (options.seat.selection === undefined) {
+    throw new CliUsageError(missingResolvedSeatModelMessage(options.seat.seat));
+  }
   const role = options.role;
   const extraPiArgs =
     role === "coder"
@@ -355,11 +360,10 @@ function createRoleEnvironment(
                     ? env.notaryTimeoutMs
                     : undefined;
 
-  // #617 DK-3: resume and new legs share one seat resolution — model/host/engine
-  // come from the live seat table (invocation flag → persistent → default).
-  // #788 expectation 2: select a registered host first; only then project the
-  // host-facing provider (table > unique directory > fail). Bad host never
-  // reaches model resolution.
+  // #617 DK-3 / #178: resume and new legs share one seat resolution — model from
+  // live seat table (invocation flag → persistent → officer inherit); none → error.
+  // Host axis still ends at package default pi. #788: registered host first, then
+  // host-facing provider (table > unique directory > fail).
   // Nested summons reuse this table and select by the child seat — never the
   // already-selected parent adapter (#840 / ADR 0082: --host 旗标>席位配置>缺省 pi).
   const hostAdapters = composeRoleTurnHostAdapters(
@@ -376,15 +380,13 @@ function createRoleEnvironment(
     role,
     seat: options.seat,
   });
-  const hostFacingSelection =
-    options.seat.selection === undefined
-      ? undefined
-      : projectHostFacingProvider(
-          options.seat.selection,
-          options.seat.host,
-          loadHostProvidersTable(options.home),
-          options.home,
-        );
+  // selection is defined by the #178 guard above; projector still types undefined input.
+  const hostFacingSelection = projectHostFacingProvider(
+    options.seat.selection,
+    options.seat.host,
+    loadHostProvidersTable(options.home),
+    options.home,
+  );
   return {
     home: options.home,
     principalAuthority: env.principalAuthority!,
@@ -744,6 +746,7 @@ function renderHelp(): string {
     "Persistent engine (callable roles): ak-role config set-engine <seat> <name> [model] | unset-engine <seat> | set-engine-model <seat> <model> | unset-engine-model <seat>",
     "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
     "Host providers: ~/.ak-roles/host-providers.json (owner-edited; table > unique host directory > fail)",
+    "Model resolution: --model → persistent seat → officer inherit (#620); still none → error (#178)",
     "Host resolution: --host → persistent seat host → pi (resume uses the same order; #617)",
     "Resume flag position: --model/--thinking/--host/--engine go before <runId> (before `resume` or between `resume` and <runId>); the one argv after <runId> is always the opaque message, never a flag (#471)",
     "Effective seats: ak-role roles",
@@ -788,7 +791,7 @@ function renderRoles(seats: readonly EffectiveSeat[]): string {
 
 /**
  * #620 typed config display row. Non-subordinate seats stay on the persistent
- * disk face; notary/inspector may surface inherit-gatekeeper without startup.
+ * disk face; notary/inspector may surface inherit-gatekeeper.
  * Presentation formats these fields; tests assert the projection, not TSV.
  * source reuses the institutional authority domain — no parallel union.
  */
@@ -814,8 +817,8 @@ function diskAxes(disk: PublicCliConfig["seats"][PublicConfigurableSeat]): {
 
 /**
  * Single-seat config projection (#620).
- * - notary/inspector: institutional authority result (own > gatekeeper), never startup
- * - all other seats: disk model only (persistent face; no startup fill-in)
+ * - notary/inspector: institutional authority result (own > gatekeeper)
+ * - all other seats: disk model only (persistent face; no package fill-in, #178)
  */
 export function projectConfigSeatDisplay(
   config: PublicCliConfig,
@@ -1240,9 +1243,10 @@ export async function runAkRole(
         resumeRole === undefined
           ? RESUME_SEAT_DISPATCH.judge
           : RESUME_SEAT_DISPATCH[resumeRole];
-      // #617 DK-4: resume resolves model/host/engine from the live seat table
-      // exactly as a new leg would (flag → persistent → default). Cross-host
-      // resume delivers prior native records as context to the target host.
+      // #617 DK-4 / #178: resume resolves model/host/engine from the live seat
+      // table exactly as a new leg would (flag → persistent → officer inherit;
+      // model still none → error). Cross-host resume delivers prior native
+      // records as context to the target host.
       const seat = resolveEffectiveSeat(
         config,
         dispatch.seat,

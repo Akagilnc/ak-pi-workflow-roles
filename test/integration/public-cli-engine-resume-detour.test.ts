@@ -30,6 +30,7 @@ import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts"
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 import { mkdir as mkdirDir } from "node:fs/promises";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
@@ -217,6 +218,7 @@ async function readInvocationEngineModel(runDirectory: string): Promise<unknown>
 
 test("engine stays effective on the initial typed request for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-init-" }, async ({ home }) => {
+    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -245,6 +247,7 @@ test("engine stays effective on the initial typed request for all resumable seat
 
 test("engine stays effective across the auto-resume loop (initial + auto payloads) for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-auto-" }, async ({ home }) => {
+    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -310,6 +313,7 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
 
 test("explicit ak-role resume re-projects engine onto the resumed typed request for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-resume-" }, async ({ home }) => {
+    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -399,6 +403,7 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
 
 test("#883 explicit resume re-projects engineModel from the live seat table", async () => {
   await withHermeticHome({ prefix: "ak-engine-model-resume-" }, async ({ home }) => {
+    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -486,6 +491,7 @@ test("#883 explicit resume re-projects engineModel from the live seat table", as
 
 test("explicit resume clears invocation.engine when the live seat has no engine", async () => {
   await withHermeticHome({ prefix: "ak-engine-unset-resume-" }, async ({ home }) => {
+    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
