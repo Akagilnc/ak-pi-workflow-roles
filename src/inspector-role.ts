@@ -18,7 +18,7 @@ export { INSPECTOR_OUTPUT_TOOL_NAME as INSPECTOR_OUTPUT_TOOL };
 export type { InspectorOutput };
 export { validateRecordedInspectorOutput };
 
-/** 察院事后察举交卷形状；形状指引，非 schema 闸。 */
+/** 台院事后察举交卷形状；形状指引，非 schema 闸。 */
 export const inspectorOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
     Type.Object({
@@ -46,8 +46,8 @@ export type InspectorRuntimeDependencies = {
  */
 export const INSPECTOR_TOOL_SPEC = {
   name: INSPECTOR_OUTPUT_TOOL_NAME,
-  label: "察院输出",
-  description: "察院终局回执，状态为 pass、bounce 或 escalate。",
-  promptSnippet: "察院终局回执",
+  label: "台院输出",
+  description: "台院终局回执，状态为 pass、bounce 或 escalate。",
+  promptSnippet: "台院终局回执",
   parameters: inspectorOutputSchema,
 } as const;

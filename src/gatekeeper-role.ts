@@ -15,7 +15,7 @@ import type { TerminalResult } from "./public-cli/terminal.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 
-/** Gate review officers — 察院 / 符宝郎 / 审刑院 (#753 / #756). */
+/** Gate review officers — 台院 / 符宝郎 / 审刑院 (#753 / #756). */
 export type GateOfficer = "inspector" | "notary" | "auditor";
 
 /** Officer routing only — content is self-fetched via the shared run-dossier tool (#632). */
@@ -62,7 +62,7 @@ export type GatekeeperNonPassResult = Extract<
 >;
 
 function gateSeatLabel(stage: GateOfficer): string {
-  if (stage === "inspector") return "察院";
+  if (stage === "inspector") return "台院";
   if (stage === "auditor") return "审刑院";
   return "符宝郎";
 }

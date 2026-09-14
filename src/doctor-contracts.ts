@@ -48,7 +48,7 @@ export type DoctorCase = { version: 1; identity: DoctorCaseIdentity; evidence: D
 
 // #836 r16 class 1: case/finding/assetEvidence/guardrails/prescription/
 // lastRealBite/missingEvidence are LLM/human-read narrative content — Judge/
-// 察院 read the original volume, no code branches on their length or nested
+// 台院 read the original volume, no code branches on their length or nested
 // presence (src/doctor-contracts.ts:136-138 passes the submission through
 // unprojected). Field/type/description/Literal value stay; provider
 // required/minLength/minItems/minimum/nested additionalProperties:false is deleted.
@@ -144,7 +144,7 @@ export class DoctorEvidenceStore {
 /**
  * #836: cross-check rejection deleted (2.6). Shape guidance only — code does not
  * re-verify evidence citations, case identity, or bite completeness against the store.
- * Judge/察院 read the original volume.
+ * Judge/台院 read the original volume.
  */
 export function validateDoctorOutput(value: unknown, _patient: DoctorCase, _store: DoctorEvidenceStore): DoctorSubmission {
   return validateDoctorSubmissionShape(value);

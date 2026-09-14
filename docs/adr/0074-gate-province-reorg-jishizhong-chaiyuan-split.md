@@ -52,6 +52,22 @@ Status: accepted（owner 2026-08-30 两轮 grill 收口，decision keys 与绑�
 
 souls（countersign 新建；inspector/notary/judge/gatekeeper 修订）、CONTEXT.md（给事中改写、察院新条、门下省/大理寺/符宝郎修订）、README 双语名册与班子表、CLAUDE.md 锚定宪法条文、countersign 席位代码（CLI/工具 schema/package-contracts/roster）、契约测试。实施票 #572。
 
+## 具名修订（#584，owner 2026-09-14）
+
+**法源**：owner 2026-08-31 grill 定三院对位表（「可以。按照这个定」）；2026-09-14 复核「584那就是台院。可以改没问题」。
+
+本修订只改 `chaiyuan-split` 的**中文名**：察院 → **台院**。该键的「独立编制」「机器键 `inspector` 不动」两项不变；其余全部键（含 `deferred`）不改。`deferred` 的现行主体是**台院（`inspector`）**——挂靠御史台与 merge 硬闸对台院仍挂起。
+
+御史台三院现行对位（呈现层；机器键零改）：
+
+| 院 | 对位实体 | 机器键 |
+| --- | --- | --- |
+| **台院** | 现 LLM 复杂度/测试质量审计席（本键原中文名「察院」由 #584 修订） | `inspector`（不动） |
+| **殿院** | #560 机械定点测试巡查件（在建/待落地；产物 kind `test-report`） | 非席位，不占机器键 |
+| **察院** | 悬置——仅保留名号占位，巡按机制未建 | 无 |
+
+历史正文、陛下逐字引语与历史决策时点中的「察院」**原样保留**，不回改。不新建 ADR；文件名不改。
+
 ## 关联
 
 - [ADR 0010](0010-callers-own-role-composition-and-repetition.md)（调用者主权：署＝意见非硬闸）
