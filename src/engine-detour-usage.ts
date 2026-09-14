@@ -9,13 +9,14 @@
  * TerminalResult.decisiveFacts and are written live via sitian (ADR 0077).
  * No gate, no required field, no index bytes (ADR 0049 / 0057).
  *
- * Invocation scope is one public ak-role call (#537). Auto-resume attempts inside
+ * Invocation scope is one public ak-role call (#537), owned by the shared Host
+ * execution envelope (RoleTurnRequest / HostContext). Auto-resume attempts inside
  * that call share the same scope; only an explicit new public call (including
- * `ak-role resume`) mints a new one. Never courtAttemptId and never Pi session
- * toolResult join keys.
+ * `ak-role resume`) mints a new one. Never courtAttemptId, never Pi session
+ * toolResult join keys, and never a detour-owned sidecar file.
  */
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { ENGINE_DETOUR_TOOL_NAME } from "./engine-detour.ts";
@@ -31,6 +32,14 @@ export const ENGINE_DETOUR_CALL_KIND = "engine-detour-call" as const;
 
 /** decisiveFacts key — name states detour-tool scope, not full engine usage. */
 export const ENGINE_DETOUR_TOOL_USAGE_FACT_KEY = "engineDetourToolUsage" as const;
+
+/**
+ * Run-relative sitian volume path for one detour call.
+ * Openable once the run directory is known (resume.command / top-level runId);
+ * contains no runId bytes itself (#108 + #537 AC8).
+ */
+export const ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE =
+  `session/${ENGINE_DETOUR_CALL_KIND}/records.jsonl` as const;
 
 /** stdout UTF-8 byte length (ticket-frozen metric; empty stdout is real 0). */
 export function engineDetourStdoutByteLength(stdout: string): number {
@@ -68,19 +77,20 @@ export type ReportEngineDetourCallInput = {
   /** Real selected host (ADR 0077 / 0082). Never invent "pi". */
   readonly host?: string;
   readonly runId?: string;
-  /** Public-invocation scope id. Binds write + settlement filter. */
+  /** Public-invocation scope id from the shared Host envelope. */
   readonly invocationScopeId?: string;
 };
 
-/** Deterministic sitian identity: run + invocation scope + toolCallId (not bare toolCallId). */
+/**
+ * Deterministic sitian identity: invocation scope + toolCallId.
+ * Must not embed runId — public Terminal decisiveFacts re-expose identity (#108).
+ */
 export function engineDetourCallIdentity(input: {
   readonly toolCallId: string;
-  readonly runId?: string;
   readonly invocationScopeId?: string;
 }): string {
-  const run = input.runId ?? "";
   const scope = input.invocationScopeId ?? "";
-  return `engine-detour-call:${run}:${scope}:${input.toolCallId}`;
+  return `engine-detour-call:${scope}:${input.toolCallId}`;
 }
 
 /** Live sitian write for one detour call. Returns the call fact with pointer. */
@@ -117,7 +127,6 @@ export function reportEngineDetourCall(
     kind: ENGINE_DETOUR_CALL_KIND,
     identity: engineDetourCallIdentity({
       toolCallId: input.toolCallId,
-      ...(input.runId === undefined ? {} : { runId: input.runId }),
       ...(input.invocationScopeId === undefined
         ? {}
         : { invocationScopeId: input.invocationScopeId }),
@@ -238,8 +247,10 @@ export async function readEngineDetourToolUsage(input: {
 }
 
 /**
- * Resumable public Terminal must not re-disclose run ID via recordFile paths
- * (settlement #108 / terminal privacy). Identity stays for reconcilability.
+ * Project usage onto the public Terminal face.
+ * Non-resumable: keep absolute recordFile (runId already public via top-level runId).
+ * Resumable: keep an openable run-relative recordFile and identity with no runId
+ * bytes (#108 single disclosure + #537 AC8 reopen).
  */
 export function projectEngineDetourToolUsageForPublicTerminal(
   usage: EngineDetourToolUsageFact,
@@ -259,7 +270,7 @@ export function projectEngineDetourToolUsageForPublicTerminal(
         identity: call.recordPointer.identity,
         kind: call.recordPointer.kind,
         level: call.recordPointer.level,
-        recordFile: "",
+        recordFile: ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,
       },
     })),
   };
@@ -330,50 +341,31 @@ export function sessionFileFromSessionDirectory(sessionDirectory: string): strin
 }
 
 /**
- * Per public-invocation detour scope (#537).
- * Minted once per ak-role call (including explicit resume); all in-place
- * auto-resume dispatches of that call reuse it. Not courtAttemptId.
- */
-const ENGINE_DETOUR_INVOCATION_SCOPE_FILE = "engine-detour-invocation-scope";
-
-function engineDetourInvocationScopePath(runDirectory: string): string {
-  return join(runDirectory, "session", ENGINE_DETOUR_INVOCATION_SCOPE_FILE);
-}
-
-/** Write the current public-invocation detour scope. */
-export function writeEngineDetourInvocationScope(
-  runDirectory: string,
-  invocationScopeId: string,
-): void {
-  const path = engineDetourInvocationScopePath(runDirectory);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${invocationScopeId}\n`, "utf8");
-}
-
-/** Read the current public-invocation detour scope, if present. */
-export function readEngineDetourInvocationScope(
-  runDirectory: string,
-): string | undefined {
-  try {
-    const text = readFileSync(engineDetourInvocationScopePath(runDirectory), "utf8").trim();
-    return text.length > 0 ? text : undefined;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
-/**
- * Bind one invocation-scope id for this public call when an engine is mounted.
+ * Mint one public-invocation scope id when an engine is mounted.
  * Call once at the public-entry boundary — never inside the auto-resume loop.
+ * The id lives on RoleTurnRequest / HostContext only (no detour sidecar file).
  */
-export function bindEngineDetourInvocationScope(input: {
-  readonly runDirectory: string;
+export function mintEngineDetourInvocationScope(input: {
   readonly effectiveEngine?: string;
 }): string | undefined {
   const engine = input.effectiveEngine?.trim();
   if (engine === undefined || engine.length === 0) return undefined;
-  const invocationScopeId = randomUUID();
-  writeEngineDetourInvocationScope(input.runDirectory, invocationScopeId);
-  return invocationScopeId;
+  return randomUUID();
+}
+
+/** Attach a minted scope onto a turn request (shared Host envelope field). */
+export function withEngineDetourInvocationScope<T extends { readonly invocationScopeId?: string }>(
+  request: T,
+  invocationScopeId: string | undefined,
+): T {
+  if (invocationScopeId === undefined || invocationScopeId.length === 0) {
+    return request;
+  }
+  if (
+    typeof request.invocationScopeId === "string" &&
+    request.invocationScopeId.length > 0
+  ) {
+    return request;
+  }
+  return { ...request, invocationScopeId };
 }

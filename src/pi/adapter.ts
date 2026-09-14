@@ -52,6 +52,9 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
     ...(typeof process.env.AK_ROLE_COURT_ATTEMPT === "string" && process.env.AK_ROLE_COURT_ATTEMPT.trim() !== ""
       ? { courtAttemptId: process.env.AK_ROLE_COURT_ATTEMPT }
       : {}),
+    ...(typeof process.env.AK_ROLE_INVOCATION_SCOPE === "string" && process.env.AK_ROLE_INVOCATION_SCOPE.trim() !== ""
+      ? { invocationScopeId: process.env.AK_ROLE_INVOCATION_SCOPE }
+      : {}),
     sessionManager: {
       getLeafEntry: () => context.sessionManager.getLeafEntry(),
       getLeafId: () => context.sessionManager.getLeafId(),

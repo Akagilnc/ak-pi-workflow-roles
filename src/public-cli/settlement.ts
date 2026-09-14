@@ -53,7 +53,6 @@ import {
 import { ENGINE_DETOUR_TOOL_NAME } from "../engine-detour.ts";
 import {
   projectEngineDetourToolUsageForPublicTerminal,
-  readEngineDetourInvocationScope,
   readEngineDetourToolUsage,
   readInvocationEngineMounted,
   runDirectoryFromSessionDirectory,
@@ -167,6 +166,8 @@ function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">
  */
 export type SettlementCourtScope = {
   readonly courtAttemptId?: string;
+  /** Public-invocation scope from the shared Host envelope (#537). */
+  readonly invocationScopeId?: string;
 };
 
 function ledgerReadScope(
@@ -332,6 +333,7 @@ export async function settleHostEndedNoReceipt(
       runId: admitted.runId,
     },
     coordinates.sessionDirectory,
+    detourGateContext(admitted),
   );
 }
 
@@ -2212,6 +2214,7 @@ async function attachEngineDetourToolUsage<
   gateContext: {
     readonly runDirectory?: string;
     readonly courtAttemptId?: string;
+    readonly invocationScopeId?: string;
   } = {},
 ): Promise<T> {
   const runDirectory =
@@ -2221,9 +2224,13 @@ async function attachEngineDetourToolUsage<
   const engineMounted = await readInvocationEngineMounted(runDirectory);
   if (!engineMounted) return base;
 
-  // Public-invocation scope only (bound at entry). courtAttemptId is a different
-  // lifecycle concept and must not filter detour usage.
-  const invocationScopeId = readEngineDetourInvocationScope(runDirectory);
+  // Public-invocation scope from the shared Host envelope (settlement scope), never
+  // courtAttemptId and never a detour sidecar file.
+  const invocationScopeId =
+    typeof gateContext.invocationScopeId === "string" &&
+    gateContext.invocationScopeId.length > 0
+      ? gateContext.invocationScopeId
+      : undefined;
 
   const sessionFile = sessionFileFromSessionDirectory(sessionDirectory);
   const usage = await readEngineDetourToolUsage({
@@ -2236,12 +2243,32 @@ async function attachEngineDetourToolUsage<
     usage === undefined
       ? undefined
       : projectEngineDetourToolUsageForPublicTerminal(usage, {
-          // Resumable Terminal: run ID only in resume.command — strip path components.
+          // Resumable Terminal: run ID only in resume.command — relative openable path.
           discloseRecordFile: base.resume === undefined,
         });
   return {
     ...base,
     roleOutcome: withEngineDetourToolUsageFact(base.roleOutcome, projected),
+  };
+}
+
+/** Gate + detour projection context from admitted run + settlement scope. */
+function detourGateContext(
+  admitted: { readonly runDirectory: string },
+  scope?: SettlementCourtScope,
+): {
+  readonly runDirectory: string;
+  readonly courtAttemptId?: string;
+  readonly invocationScopeId?: string;
+} {
+  return {
+    runDirectory: admitted.runDirectory,
+    ...(scope?.courtAttemptId === undefined || scope.courtAttemptId.length === 0
+      ? {}
+      : { courtAttemptId: scope.courtAttemptId }),
+    ...(scope?.invocationScopeId === undefined || scope.invocationScopeId.length === 0
+      ? {}
+      : { invocationScopeId: scope.invocationScopeId }),
   };
 }
 
@@ -2259,6 +2286,7 @@ async function withOptionalGateProjection<
     readonly runDirectory?: string;
     readonly parentSessionFile?: string;
     readonly courtAttemptId?: string;
+    readonly invocationScopeId?: string;
   } = {},
 ): Promise<T & { gate?: TerminalGateFact }> {
   // A gate transport failure is already represented by typed evidence and has no
@@ -2572,6 +2600,7 @@ async function settleLawfulJudgeTerminalResult(
       runId: admitted.runId,
     },
     coordinates.sessionDirectory,
+    detourGateContext(admitted, scope),
   );
 }
 
@@ -2639,6 +2668,7 @@ async function settleLawfulCoderTerminalResult(
       runId: admitted.runId,
     },
     coordinates.sessionDirectory,
+    detourGateContext(admitted, scope),
   );
 }
 
@@ -2815,6 +2845,7 @@ async function settleLawfulFixerTerminalResult(
       runId: admitted.runId,
     },
     sessionDirectory,
+    detourGateContext(admitted, scope),
   );
 }
 
@@ -2912,11 +2943,18 @@ async function settleLawfulCollectorTerminalResult(
       if (residual === undefined) continue;
       const candidate = residual.candidate;
       const details = isRecord(candidate) ? candidate : { candidate };
-      const failed = await settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: residual.diagnostic,
-        details,
-      }, authority);
+      const failed = await settleFailureTerminalResult(
+        admitted,
+        {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details,
+        },
+        authority,
+        scope?.invocationScopeId === undefined || scope.invocationScopeId.length === 0
+          ? {}
+          : { invocationScopeId: scope.invocationScopeId },
+      );
       return attachRecordedSubmissions(admitted, failed, scope);
     }
     return undefined;
@@ -2938,6 +2976,7 @@ async function settleLawfulCollectorTerminalResult(
         runId: admitted.runId,
       },
       sessionDirectory,
+      detourGateContext(admitted, scope),
     ),
     scope,
   );
@@ -3089,6 +3128,7 @@ async function settleLawfulDoctorTerminalResult(
         runId: admitted.runId,
       },
       sessionDirectory,
+      detourGateContext(admitted, scope),
     );
   }
   const roleOutcome = sealed;
@@ -3112,6 +3152,7 @@ async function settleLawfulDoctorTerminalResult(
       runId: admitted.runId,
     },
     sessionDirectory,
+    detourGateContext(admitted, scope),
   );
 }
 
@@ -3201,11 +3242,18 @@ async function settleLawfulSeatAcceptedTerminalResult(
       const details = isRecord(residual.candidate)
         ? residual.candidate
         : { candidate: residual.candidate };
-      const failed = await settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: residual.diagnostic,
-        details,
-      }, authority);
+      const failed = await settleFailureTerminalResult(
+        admitted,
+        {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details,
+        },
+        authority,
+        scope?.invocationScopeId === undefined || scope.invocationScopeId.length === 0
+          ? {}
+          : { invocationScopeId: scope.invocationScopeId },
+      );
       return withSubmissions(failed, submissions);
     }
   }
@@ -3221,6 +3269,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
           runId: admitted.runId,
         },
         sessionDirectory,
+        detourGateContext(admitted, scope),
       ),
       submissions,
     );
@@ -3236,6 +3285,7 @@ async function settleLawfulSeatAcceptedTerminalResult(
           runId: admitted.runId,
         },
         sessionDirectory,
+        detourGateContext(admitted, scope),
       ),
       submissions,
     );
@@ -3632,6 +3682,7 @@ async function settleLawfulReviewerTerminalResult(
       runId: admitted.runId,
     },
     sessionDirectory,
+    detourGateContext(admitted, scope),
   );
 }
 
@@ -3784,11 +3835,18 @@ async function settleLawfulMergerTerminalResult(
       if (residual === undefined) continue;
       const candidate = residual.candidate;
       const details = isRecord(candidate) ? candidate : { candidate };
-      const failed = await settleFailureTerminalResult(admitted, {
-        cause: "output",
-        diagnostic: residual.diagnostic,
-        details,
-      }, authority);
+      const failed = await settleFailureTerminalResult(
+        admitted,
+        {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details,
+        },
+        authority,
+        scope?.invocationScopeId === undefined || scope.invocationScopeId.length === 0
+          ? {}
+          : { invocationScopeId: scope.invocationScopeId },
+      );
       return attachRecordedSubmissions(admitted, failed, scope);
     }
     return undefined;
@@ -3817,6 +3875,7 @@ async function settleLawfulMergerTerminalResult(
         runId: admitted.runId,
       },
       sessionDirectory,
+      detourGateContext(admitted, scope),
     ),
     scope,
   );
@@ -4082,7 +4141,10 @@ export async function settleFailureTerminalResult(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
   authority: DurablePrincipalAuthority,
-  options: { readonly resume?: TerminalResume } = {},
+  options: {
+    readonly resume?: TerminalResume;
+    readonly invocationScopeId?: string;
+  } = {},
 ): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const { sessionDirectory, sessionFile } = coordinates;
@@ -4125,6 +4187,12 @@ export async function settleFailureTerminalResult(
                 runId: admitted.runId,
               },
               sessionDirectory,
+              {
+                runDirectory: admitted.runDirectory,
+                ...(options.invocationScopeId === undefined || options.invocationScopeId.length === 0
+                  ? {}
+                  : { invocationScopeId: options.invocationScopeId }),
+              },
             );
           }
         } catch { /* malformed lifecycle bytes remain the existing nonzero output failure */ }
@@ -4168,6 +4236,12 @@ export async function settleFailureTerminalResult(
         resume: options.resume,
       },
       sessionDirectory,
+      {
+        runDirectory: admitted.runDirectory,
+        ...(options.invocationScopeId === undefined || options.invocationScopeId.length === 0
+          ? {}
+          : { invocationScopeId: options.invocationScopeId }),
+      },
     );
   }
   const roleOutcome: TerminalRoleOutcome = {
@@ -4186,6 +4260,12 @@ export async function settleFailureTerminalResult(
       runId: admitted.runId,
     },
     sessionDirectory,
+    {
+      runDirectory: admitted.runDirectory,
+      ...(options.invocationScopeId === undefined || options.invocationScopeId.length === 0
+        ? {}
+        : { invocationScopeId: options.invocationScopeId }),
+    },
   );
 }
 
@@ -4194,7 +4274,10 @@ export async function settleJudgeFailureTerminalResult(
   admitted: AdmittedJudgeInvocation,
   failure: ControlledFailure,
   authority: DurablePrincipalAuthority,
-  options: { readonly resume?: TerminalResume } = {},
+  options: {
+    readonly resume?: TerminalResume;
+    readonly invocationScopeId?: string;
+  } = {},
 ): Promise<TerminalResult> {
   return settleFailureTerminalResult(admitted, failure, authority, options);
 }

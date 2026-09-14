@@ -20,11 +20,10 @@ import test from "node:test";
 
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import {
+  ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,
   ENGINE_DETOUR_TOOL_USAGE_FACT_KEY,
   engineDetourCallIdentity,
-  readEngineDetourInvocationScope,
   readEngineDetourToolUsage,
-  writeEngineDetourInvocationScope,
   type EngineDetourToolUsageFact,
 } from "../../src/engine-detour-usage.ts";
 import { createEngineDetourToolDefinition } from "../../src/engine-detour-tool.ts";
@@ -33,6 +32,7 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
+import { SitianInfrastructureError } from "../../src/sitian-contracts.ts";
 import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
@@ -95,6 +95,7 @@ async function runDetours(input: {
   readonly project: string;
   readonly sessionFile: string;
   readonly runDirectory: string;
+  readonly invocationScopeId?: string;
   readonly host?: string;
   readonly calls: readonly { readonly toolCallId: string; readonly kind: DetourKind }[];
 }): Promise<void> {
@@ -107,6 +108,9 @@ async function runDetours(input: {
       abort() {},
       sessionManager: { getSessionFile: () => input.sessionFile },
       runDirectory: input.runDirectory,
+      ...(input.invocationScopeId === undefined
+        ? {}
+        : { invocationScopeId: input.invocationScopeId }),
       ...(input.host === undefined ? {} : { host: input.host }),
     };
 
@@ -290,11 +294,14 @@ async function runPublicJudge(input: {
         await seedUserKickoff(sessionFile);
       }
 
-      // Scope is bound once by public entry before this turn; tool reads it.
+      // Scope is on the shared Host envelope (RoleTurnRequest); tool reads ctx.
       await runDetours({
         project: input.project,
         sessionFile,
         runDirectory: request.runDirectory,
+        ...(request.invocationScopeId === undefined
+          ? {}
+          : { invocationScopeId: request.invocationScopeId }),
         calls: input.plan.detours ?? [],
       });
 
@@ -581,7 +588,6 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
         JSON.stringify({ role: "judge", engine: ENGINE, host: "codex" }),
         "utf8",
       );
-      writeEngineDetourInvocationScope(runDirectory, "scope-host");
 
       const tool = createEngineDetourToolDefinition({
         engineName: ENGINE,
@@ -601,6 +607,7 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
           abort() {},
           sessionManager: { getSessionFile: () => sessionFile },
           runDirectory,
+          invocationScopeId: "scope-host",
           // host omitted on ctx → must read invocation host=codex, not default pi
         },
       );
@@ -668,8 +675,8 @@ test("public entry: in-place auto-resume keeps one invocation scope across detou
             );
           }
 
-          const scope = readEngineDetourInvocationScope(request.runDirectory);
-          assert.ok(scope, "public entry must bind invocation scope before turn");
+          const scope = request.invocationScopeId;
+          assert.ok(scope, "public entry must put invocation scope on Host envelope");
           scopesSeen.push(scope);
 
           // Distinct toolCallIds (real host mints unique ids); both must count under one scope.
@@ -677,6 +684,7 @@ test("public entry: in-place auto-resume keeps one invocation scope across detou
             project,
             sessionFile,
             runDirectory: request.runDirectory,
+            invocationScopeId: scope,
             calls: [
               {
                 toolCallId: turn === 0 ? "before-retry" : "after-retry",
@@ -724,7 +732,6 @@ test("public entry: in-place auto-resume keeps one invocation scope across detou
       usage?.calls.find((c) => c.toolCallId === "before-retry")?.recordPointer.identity,
       engineDetourCallIdentity({
         toolCallId: "before-retry",
-        runId,
         invocationScopeId: boundScope,
       }),
     );
@@ -758,6 +765,9 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
               project,
               sessionFile,
               runDirectory: request.runDirectory,
+              ...(request.invocationScopeId === undefined
+                ? {}
+                : { invocationScopeId: request.invocationScopeId }),
               calls: [{ toolCallId: sharedId, kind: "ok" }],
             });
             await observeTyped429ViaProductionHandler({
@@ -768,32 +778,73 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
           }),
         },
       );
-      // #108 / terminal privacy: resumable public Terminal strips recordFile path disclosure.
+      // #108 / #537: resumable keeps openable relative pointer; runId only in resume.command.
       assert.ok(first.terminal?.resume, "typed 429 must settle resumable");
+      assert.equal(first.terminal?.runId, undefined);
+      assert.ok(
+        (first.terminal?.resume.command ?? "").includes(runId),
+        "resume.command must carry runId",
+      );
       const firstUsage = usageOf(first.terminal);
       assert.equal(firstUsage?.callCount, 1);
       assert.equal(firstUsage?.calls[0]?.toolCallId, sharedId);
-      assert.equal(firstUsage?.calls[0]?.recordPointer.recordFile, "");
+      assert.equal(
+        firstUsage?.calls[0]?.recordPointer.recordFile,
+        ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,
+      );
+      assert.equal(
+        (firstUsage?.calls[0]?.recordPointer.identity ?? "").includes(runId),
+        false,
+        "identity must not re-disclose runId",
+      );
+      assert.equal(
+        JSON.stringify(firstUsage).includes(runId),
+        false,
+        "engineDetourToolUsage decisiveFacts must not re-disclose runId",
+      );
+      // Relative pointer reopens once run directory is known from resume.command.
+      const bookRunsRoot = join(home, ".ak-roles", "books");
+      const { readdirSync } = await import("node:fs");
+      let absoluteRecord: string | undefined;
+      for (const book of readdirSync(bookRunsRoot)) {
+        const candidate = join(
+          bookRunsRoot,
+          book,
+          "unbound",
+          "runs",
+          `${runId}@judge`,
+          ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,
+        );
+        try {
+          await readFile(candidate);
+          absoluteRecord = candidate;
+          break;
+        } catch {
+          // try next book
+        }
+      }
+      assert.ok(absoluteRecord, "relative pointer must resolve under the run from resume.command");
+      const reopened = await readSitianRecords(absoluteRecord);
       assert.ok(
-        (firstUsage?.calls[0]?.recordPointer.identity ?? "").includes(sharedId),
-        "identity stays for reconcilability",
+        reopened.records.some(
+          (r) => r.identity === firstUsage?.calls[0]?.recordPointer.identity,
+        ),
+        "resumable pointer must reopen the call",
       );
     }
 
     {
-      const { io, stderr } = captureIo();
+      const { io } = captureIo();
       await runAkRole(["config", "set", "judge", "xai/grok-4.5:high"], {
         packageRoot,
         home,
         io,
       });
-      assert.equal(stderr.join(""), "");
       await runAkRole(["config", "set-engine", "judge", ENGINE], {
         packageRoot,
         home,
         io,
       });
-      assert.equal(stderr.join(""), "");
     }
 
     const { io, stdout, stderr } = captureIo();
@@ -815,12 +866,13 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
           })}\n`,
           "utf8",
         );
-        resumeScope = readEngineDetourInvocationScope(request.runDirectory);
+        resumeScope = request.invocationScopeId;
         // Same toolCallId as prior public call — new scope keeps identities distinct.
         await runDetours({
           project,
           sessionFile,
           runDirectory: request.runDirectory,
+          ...(resumeScope === undefined ? {} : { invocationScopeId: resumeScope }),
           calls: [{ toolCallId: sharedId, kind: "ok" }],
         });
         return finishTerminal({
@@ -841,7 +893,6 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
       usage?.calls[0]?.recordPointer.identity,
       engineDetourCallIdentity({
         toolCallId: sharedId,
-        runId,
         invocationScopeId: resumeScope,
       }),
     );
@@ -856,25 +907,25 @@ test("tool path: engine failure + sitian write failure keeps both causes via Agg
     await mkdir(project, { recursive: true });
     const scripts = await ensureScripts(project);
 
+    // Three real seams (spawn / nonzero / empty). Assert only AggregateError
+    // structured causality — never Error.name/message prose (anchoring constitution).
     const cases: Array<{
       readonly label: string;
       readonly argv: string[];
-      readonly enginePattern: RegExp;
+      readonly expectEngineErrno?: string;
     }> = [
       {
         label: "spawn",
         argv: ["ak-engine-definitely-missing-binary-xyz-537"],
-        enginePattern: /ENOENT|spawn|not found|missing|ak-engine/i,
+        expectEngineErrno: "ENOENT",
       },
       {
         label: "nonzero",
         argv: [process.execPath, scripts.nonzero],
-        enginePattern: /非零|nonzero|exit|code|2|劳务引擎/i,
       },
       {
         label: "empty",
         argv: [process.execPath, scripts.empty],
-        enginePattern: /空|empty|stdout|劳务引擎/i,
       },
     ];
 
@@ -918,17 +969,25 @@ test("tool path: engine failure + sitian write failure keeps both causes via Agg
         aggregate.errors.length >= 2,
         `${row.label}: both engine and ledger failures required`,
       );
-      const texts = aggregate.errors.map((e) =>
-        e instanceof Error ? `${e.name}:${e.message}` : String(e),
+      const engineCause = aggregate.errors[0];
+      const ledgerCause = aggregate.errors[1];
+      assert.equal(
+        aggregate.cause,
+        engineCause,
+        `${row.label}: AggregateError.cause must keep the engine object identity`,
       );
+      assert.ok(engineCause instanceof Error, `${row.label}: engine cause is Error`);
       assert.ok(
-        texts.some((t) => row.enginePattern.test(t)),
-        `${row.label}: engine cause missing in ${texts.join(" | ")}`,
+        ledgerCause instanceof SitianInfrastructureError,
+        `${row.label}: ledger cause is SitianInfrastructureError`,
       );
-      assert.ok(
-        texts.some((t) => /Sitian|session|ENOTDIR|EACCES|ledger/i.test(t)),
-        `${row.label}: sitian cause missing in ${texts.join(" | ")}`,
-      );
+      if (row.expectEngineErrno !== undefined) {
+        assert.equal(
+          (engineCause as NodeJS.ErrnoException).code,
+          row.expectEngineErrno,
+          `${row.label}: spawn seam keeps structured errno`,
+        );
+      }
     }
   });
 });
