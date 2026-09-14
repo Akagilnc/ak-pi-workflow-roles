@@ -24,6 +24,7 @@ import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import {
   readTicketProvenance,
+  reprojectTicketProvenance,
   resolveTicketProvenanceVolume,
 } from "../../src/ticket-provenance.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
@@ -171,6 +172,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   readonly mixedOwnerText: string;
   readonly codexOwnerText: string;
   readonly codexRunnerText: string;
+  readonly codexInjectionText: string;
   readonly interjectionId: string;
   readonly duplicateId: string;
   readonly unparsableLine: number;
@@ -186,6 +188,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const mixedOwnerText = "工具旁路的原话要留";
   const codexOwnerText = "Codex 上拍的决定";
   const codexRunnerText = "Codex runner 回话";
+  const codexInjectionText = "# AGENTS.md instructions for /workspace";
   const interjectionId = "queue-interject-1";
   const duplicateId = "msg-dup-1";
   const unparsableRaw = "{this is not json at all";
@@ -281,25 +284,49 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         ],
       },
     }),
-    // 12. Codex rollout owner (response_item + input_text)
+    // 12. Codex developer injection — never owner/runner dialogue
+    JSON.stringify({
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "developer",
+        content: [{ type: "input_text", text: "<permissions instructions> sandbox" }],
+      },
+    }),
+    // 13. Codex AGENTS/environment injection as response_item role=user — exclude
     JSON.stringify({
       type: "response_item",
       payload: {
         type: "message",
         role: "user",
-        content: [{ type: "input_text", text: codexOwnerText }],
+        content: [
+          { type: "input_text", text: codexInjectionText },
+          { type: "input_text", text: "<environment_context> cwd=/tmp" },
+        ],
       },
     }),
-    // 13. Codex rollout runner (response_item + output_text)
+    // 14. Codex structured owner channel (event_msg.user_message)
+    JSON.stringify({
+      type: "event_msg",
+      payload: {
+        type: "user_message",
+        message: codexOwnerText,
+        images: [],
+        local_images: [],
+        text_elements: [],
+      },
+    }),
+    // 15. Codex rollout runner (response_item + output_text)
     JSON.stringify({
       type: "response_item",
       payload: {
         type: "message",
         role: "assistant",
+        id: "msg-codex-runner",
         content: [{ type: "output_text", text: codexRunnerText }],
       },
     }),
-    // 14. absorbed interjection (enqueue + dequeue; no independent message record)
+    // 16. absorbed interjection (enqueue + dequeue; no independent message record)
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -311,7 +338,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       operation: "dequeue",
       uuid: "queue-deq-2",
     }),
-    // 15. first occurrence of duplicate id
+    // 17. first occurrence of duplicate id
     JSON.stringify({
       type: "assistant",
       uuid: duplicateId,
@@ -320,9 +347,9 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: "首现正文" }],
       },
     }),
-    // 16. unparsable line (completed by terminator)
+    // 18. unparsable line (completed by terminator)
     unparsableRaw,
-    // 17. duplicate id second occurrence — must not re-enter
+    // 19. duplicate id second occurrence — must not re-enter
     JSON.stringify({
       type: "assistant",
       uuid: duplicateId,
@@ -346,11 +373,12 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     mixedOwnerText,
     codexOwnerText,
     codexRunnerText,
+    codexInjectionText,
     interjectionId,
     duplicateId,
-    unparsableLine: 17,
+    unparsableLine: 19,
     unparsableRaw,
-    lastLine: 18,
+    lastLine: 20,
   };
 }
 
@@ -526,7 +554,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       volume.lines.filter((line) => line.text === fixture.mixedOwnerText).length,
       1,
     );
-    // Codex response_item dialogue enters.
+    // Codex: event_msg owner + response_item runner; injections excluded.
     assert.equal(
       volume.lines.filter((line) => line.text === fixture.codexOwnerText).length,
       1,
@@ -534,6 +562,16 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     assert.equal(
       volume.lines.filter((line) => line.text === fixture.codexRunnerText).length,
       1,
+    );
+    assert.equal(
+      volume.lines.some(
+        (line) =>
+          line.text.includes(fixture.codexInjectionText) ||
+          line.text.includes("permissions instructions") ||
+          line.text.includes("environment_context"),
+      ),
+      false,
+      "Codex structured injections must not become owner dialogue",
     );
     // Amendment at the unparsable line.
     const amended = volume.lines.find((line) => line.line === fixture.unparsableLine);
@@ -547,6 +585,48 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     assert.equal(JSON.parse(rawLines[0]!).ticket, TICKET);
     assert.equal(typeof JSON.parse(rawLines[1]!).speaker, "string");
     assert.equal(JSON.parse(rawLines[1]!).kind, undefined);
+
+    // Empty sessions must preserve any existing non-empty volume (damaged header too).
+    const damagedBody = `{"repo":"x","ticket":${TICKET},"createdAt":"t0","updatedAt":"t0","sessions":"bad"}\n{"speaker":"owner","s":0,"text":"opaque-preserved"}\n`;
+    await writeFile(paths.recordFile, damagedBody, "utf8");
+    await reprojectTicketProvenance({
+      ticketNumber: TICKET,
+      cwd: project,
+      home,
+      sessions: [],
+    });
+    assert.equal(
+      await readFile(paths.recordFile, "utf8"),
+      damagedBody,
+      "empty sessions must not wipe a non-empty volume lacking a lawful header",
+    );
+
+    // Broad host roots are not session sources: `.pi/not-a-session.jsonl` stays out.
+    const decoy = join(home, ".pi", "not-a-session.jsonl");
+    await mkdir(join(home, ".pi"), { recursive: true });
+    await writeFile(
+      decoy,
+      `${JSON.stringify({
+        type: "user",
+        message: { role: "user", content: [{ type: "text", text: "decoy" }] },
+      })}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      () =>
+        reprojectTicketProvenance({
+          ticketNumber: TICKET,
+          cwd: project,
+          home,
+          sessions: [{ path: decoy, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+        }),
+      /session unreadable/,
+    );
+    assert.equal(
+      await readFile(paths.recordFile, "utf8"),
+      damagedBody,
+      "rejected path must not rewrite the preserved volume",
+    );
   });
 });
 

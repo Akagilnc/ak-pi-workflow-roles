@@ -50,22 +50,100 @@ function textParts(content: unknown): string[] {
 }
 
 /**
- * 取出消息体：Pi/CC 的 `row.message`，或 Codex rollout 的
- * `type=response_item` + `payload.type=message`（ADR 0081 cross-host）。
+ * 取出 Pi/CC 消息体，或 Codex `response_item.payload.type=message`。
+ * developer 与注入用的 user 不在此层用正文识别——见整卷 Codex 规则。
  */
+function responseItemMessage(
+  row: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (row.type !== "response_item" || !isRecord(row.payload)) return undefined;
+  if (row.payload.type !== "message") return undefined;
+  return row.payload;
+}
+
 function messageBody(row: Record<string, unknown>): Record<string, unknown> | undefined {
   if (isRecord(row.message)) return row.message;
-  if (row.type === "response_item" && isRecord(row.payload) && row.payload.type === "message") {
-    return row.payload;
-  }
-  return undefined;
+  return responseItemMessage(row);
 }
 
 function speakerOf(message: Record<string, unknown>): DialogueSpeaker | undefined {
   if (message.role === "assistant") return "runner";
   if (message.role === "user") return "owner";
-  // 整行 toolResult 不是说话人回话。
+  // developer / toolResult 等不是说话人回话。
   return undefined;
+}
+
+/** Codex turn id：只读结构化 metadata，不读正文。 */
+function codexTurnId(message: Record<string, unknown>): string | undefined {
+  const pass = message.internal_chat_message_metadata_passthrough;
+  if (isRecord(pass) && typeof pass.turn_id === "string" && pass.turn_id !== "") {
+    return pass.turn_id;
+  }
+  const meta = message.metadata;
+  if (isRecord(meta) && typeof meta.turn_id === "string" && meta.turn_id !== "") {
+    return meta.turn_id;
+  }
+  return undefined;
+}
+
+/** Codex 事件通道：`event_msg.user_message` / 不用正文判注入。 */
+function fromCodexEventMsg(row: Record<string, unknown>): DialogueEvent[] {
+  if (row.type !== "event_msg" || !isRecord(row.payload)) return [];
+  const payload = row.payload;
+  if (payload.type === "user_message") {
+    const text = payload.message;
+    if (typeof text !== "string" || text === "") return [];
+    return [{ speaker: "owner", text }];
+  }
+  // agent_message 与 response_item assistant 成对出现时以后者为准（带原生 id）。
+  return [];
+}
+
+function isCodexEventUserMessage(row: Record<string, unknown> | undefined): boolean {
+  return (
+    row !== undefined &&
+    row.type === "event_msg" &&
+    isRecord(row.payload) &&
+    row.payload.type === "user_message"
+  );
+}
+
+function isCodexResponseItemUser(row: Record<string, unknown> | undefined): boolean {
+  if (row === undefined) return false;
+  const message = responseItemMessage(row);
+  return message !== undefined && message.role === "user";
+}
+
+/**
+ * Codex owner 来源（结构化，不咬正文）：
+ * - 卷内若有 `event_msg.user_message`，owner 只走该通道；一切 `response_item role=user`
+ *   （AGENTS / environment / worker entrypoint 等注入进模型上下文的副本）整卷跳过。
+ * - 否则（桌面交互卷常无 event_msg user）：同一 turn 内多条 response_item user
+ *   只取最后一条（先到的是同 turn 注入块），无 turn_id 的各成一组。
+ */
+function codexResponseItemUserKeepIndexes(
+  rows: readonly (Record<string, unknown> | undefined)[],
+): ReadonlySet<number> {
+  const keep = new Set<number>();
+  if (rows.some((row) => isCodexEventUserMessage(row))) {
+    return keep; // empty — event_msg owns owner channel
+  }
+  const lastByTurn = new Map<string, number>();
+  const noTurnIndexes: number[] = [];
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (!isCodexResponseItemUser(row)) continue;
+    const message = responseItemMessage(row!)!;
+    const turnId = codexTurnId(message);
+    if (turnId === undefined) {
+      noTurnIndexes.push(index);
+      continue;
+    }
+    lastByTurn.set(turnId, index);
+  }
+  for (const index of lastByTurn.values()) keep.add(index);
+  for (const index of noTurnIndexes) keep.add(index);
+  return keep;
 }
 
 /**
@@ -85,26 +163,43 @@ function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
  * 消息事件适配：助手回话，以及未经入队事件记录的人类输入。
  * 思考块、工具调用块、工具结果块按块排除；同消息的说话人 text 保留
  * （#901 排除按来源不按正文；混合块不得整条丢弃）。
- * 同一条消息的多个 text 块拼成一段正文（共享一个原生 id）——
- * 身份取首现针对的是卷被重写后的副本行，不是同条消息内的块。
+ * Codex response_item user 是否保留由整卷 keep 集合决定（注入块排除）。
  */
-function fromMessageEvent(row: Record<string, unknown>): DialogueEvent[] {
+function fromMessageEvent(
+  row: Record<string, unknown>,
+  options?: { readonly keepCodexResponseItemUser?: boolean },
+): DialogueEvent[] {
   const message = messageBody(row);
   if (message === undefined) return [];
   if (message.role === "toolResult") return [];
   const speaker = speakerOf(message);
   if (speaker === undefined) return [];
+  // Codex：response_item user 默认不取，除非整卷规则点名保留。
+  if (
+    row.type === "response_item" &&
+    speaker === "owner" &&
+    options?.keepCodexResponseItemUser !== true
+  ) {
+    return [];
+  }
   const parts = textParts(message.content);
   if (parts.length === 0) return [];
   const text = parts.join("");
   if (text === "") return [];
-  const id = nativeEventId(row);
+  // payload 上的 id（Codex msg_…）优先于行级 id。
+  const id =
+    (typeof message.id === "string" && message.id !== "" ? message.id : undefined) ??
+    nativeEventId(row);
   return [{ speaker, text, ...(id === undefined ? {} : { id }) }];
 }
 
 /** 该行是否为可产出 owner 对话正文的消息（工具结果块不算；旁路 text 算）。 */
 function isOwnerDialogueMessage(row: Record<string, unknown>): boolean {
-  return fromMessageEvent(row).some((event) => event.speaker === "owner");
+  // CC/Pi queue pairing only — Codex owner path is separate.
+  if (row.type === "response_item" || row.type === "event_msg") return false;
+  return fromMessageEvent(row, { keepCodexResponseItemUser: true }).some(
+    (event) => event.speaker === "owner",
+  );
 }
 
 /** 该行是否为 runner 回话事件（用于解除未物化的 dequeue 配对）。 */
@@ -159,17 +254,22 @@ function ownerMessagesMaterializingQueue(
 
 /**
  * 整卷适配：返回与入参行等长的对话事实数组（该行不是对话则为空数组）。
- * 需要整卷视野是因为 enqueue/dequeue 与物化 user 消息的配对跨行。
+ * 需要整卷视野：enqueue/dequeue 配对、Codex 注入块 vs 对话通道。
  */
 export function adaptSessionDialogue(
   rows: readonly (Record<string, unknown> | undefined)[],
 ): DialogueEvent[][] {
   const skipOwner = ownerMessagesMaterializingQueue(rows);
+  const codexUserKeep = codexResponseItemUserKeepIndexes(rows);
   return rows.map((row, index) => {
     if (row === undefined) return [];
     const queued = fromQueueEvent(row);
     if (queued.length > 0) return queued;
+    const fromEvent = fromCodexEventMsg(row);
+    if (fromEvent.length > 0) return fromEvent;
     if (skipOwner.has(index)) return [];
-    return fromMessageEvent(row);
+    return fromMessageEvent(row, {
+      keepCodexResponseItemUser: codexUserKeep.has(index),
+    });
   });
 }

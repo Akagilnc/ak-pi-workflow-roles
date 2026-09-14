@@ -4,7 +4,7 @@
  * 无 append 水位、无 SitianRecord 外壳。目的地解析与读写经司天台唯一入口
  * （ADR 0065 records-owner / record-entry；ADR 0081 入录经司天台）。
  */
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
@@ -38,9 +38,8 @@ import {
 } from "./ticket-provenance-contracts.ts";
 
 /**
- * Authorized dialogue session source roots (ADR 0038 / ADR 0081 cross-host).
- * Derived from the operator machine home + sitian topology — not Claude-only,
- * not free-text path allowlists.
+ * Host-owned session source roots (ADR 0038 / ADR 0081 cross-host).
+ * Narrow directory identities — not whole `.pi` / whole `.ak-roles`.
  */
 export function dialogueSessionSourceRoots(home?: string): readonly string[] {
   const machineHome =
@@ -48,17 +47,29 @@ export function dialogueSessionSourceRoots(home?: string): readonly string[] {
   return [
     join(machineHome, ".claude", "projects"),
     join(machineHome, ".codex", "sessions"),
-    join(machineHome, ".pi"),
-    resolveActivationLedgerHome(machineHome),
+    join(machineHome, ".pi", "agent", "sessions"),
   ];
 }
 
-/** Real I/O seam gate: model-selected path must sit under a live host/sitian root. */
+/**
+ * True when path is a sitian role-run session volume:
+ * `<ledger>/books/.../session/session.jsonl` (basename + parent only — no body probe).
+ */
+function isLedgerRoleSessionFile(absolute: string, home?: string): boolean {
+  const machineHome =
+    typeof home === "string" && home.trim() !== "" ? home : packageMachineHome();
+  const ledgerHome = resolveActivationLedgerHome(machineHome);
+  if (!physicallyContainedIn(ledgerHome, absolute)) return false;
+  return basename(absolute) === "session.jsonl" && basename(dirname(absolute)) === "session";
+}
+
+/** Real I/O seam gate: only host session stores or sitian role-run session.jsonl. */
 function assertDialogueSessionSourcePath(path: string, home?: string): void {
   const absolute = resolve(path);
   for (const root of dialogueSessionSourceRoots(home)) {
     if (physicallyContainedIn(root, absolute)) return;
   }
+  if (isLedgerRoleSessionFile(absolute, home)) return;
   throw new Error(
     `session unreadable: ${path} (outside authorized source roots)`,
   );
@@ -334,13 +345,27 @@ export async function reprojectTicketProvenance(input: {
     input.home,
   );
   const prior = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
+  const priorRaw = await readSitianVolumeText(recordInput);
+  const priorNonEmpty =
+    priorRaw.text !== undefined && priorRaw.text.trim() !== "";
 
-  // Empty selection on an existing volume = no new dialogue this turn: keep the
-  // authoritative file untouched (do not publish a header-only wipe).
-  if (input.sessions.length === 0 && prior.header !== undefined) {
+  // Empty selection on any existing non-empty volume = keep bytes untouched.
+  // Existence is the on-disk non-empty fact — not "header successfully projected"
+  // (damaged bare headers / legacy SitianRecord rows still must not be wiped).
+  if (input.sessions.length === 0 && priorNonEmpty) {
+    const now = new Date().toISOString();
+    const header: TicketProvenanceHeader =
+      prior.header ??
+      ({
+        repo: resolveBookKeyFromGit(input.cwd),
+        ticket: input.ticketNumber,
+        createdAt: now,
+        updatedAt: now,
+        sessions: [],
+      } satisfies TicketProvenanceHeader);
     return {
       recordFile: prior.recordFile,
-      header: prior.header,
+      header,
       lines: prior.lines,
       unparsable: [],
     };
