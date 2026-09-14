@@ -19,7 +19,6 @@ import {
 } from "./engine-detour.ts";
 import {
   engineDetourStdoutByteLength,
-  readInvocationSelectedHost,
   reportEngineDetourCall,
 } from "./engine-detour-usage.ts";
 
@@ -51,7 +50,7 @@ type EngineDetourContext = Pick<HostContext, "cwd" | "mode" | "abort"> & {
   runDirectory?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   invocationScopeId?: string;
-  /** Selected host when already projected onto HostContext. */
+  /** Selected host from the shared Host envelope (#537 / ADR 0082). */
   host?: string;
 };
 
@@ -133,7 +132,8 @@ export function createEngineDetourToolDefinition(input: {
         ? ctx.runDirectory
         : undefined;
       const runId = runDirectory === undefined ? undefined : basenameRunId(runDirectory);
-      // Public-invocation scope from Host envelope only — never courtAttemptId, never sidecar file.
+      // Public-invocation scope + selected host from Host envelope only — never
+      // courtAttemptId, never sidecar file, never pre-spawn invocation.json I/O.
       const invocationScopeId =
         typeof ctx.invocationScopeId === "string" && ctx.invocationScopeId.trim() !== ""
           ? ctx.invocationScopeId.trim()
@@ -141,9 +141,7 @@ export function createEngineDetourToolDefinition(input: {
       const host =
         typeof ctx.host === "string" && ctx.host.trim() !== ""
           ? ctx.host.trim()
-          : runDirectory === undefined
-            ? undefined
-            : readInvocationSelectedHost(runDirectory);
+          : undefined;
 
       const recordCall = (observed: {
         code?: number;

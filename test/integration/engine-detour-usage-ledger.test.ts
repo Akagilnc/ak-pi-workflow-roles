@@ -294,7 +294,7 @@ async function runPublicJudge(input: {
         await seedUserKickoff(sessionFile);
       }
 
-      // Scope is on the shared Host envelope (RoleTurnRequest); tool reads ctx.
+      // Scope + selected host ride the shared Host envelope (RoleTurnRequest).
       await runDetours({
         project: input.project,
         sessionFile,
@@ -302,6 +302,9 @@ async function runPublicJudge(input: {
         ...(request.invocationScopeId === undefined
           ? {}
           : { invocationScopeId: request.invocationScopeId }),
+        ...(request.host === undefined || request.host.trim() === ""
+          ? {}
+          : { host: request.host.trim() }),
         calls: input.plan.detours ?? [],
       });
 
@@ -555,58 +558,72 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
       }
     }
 
-    // Host provenance (shortest tool path, same home): ctx.host absent must read
-    // invocation host=codex — not invent default pi. Public-entry matrix alone
-    // cannot discriminate this when admission host is the default.
+    // Host provenance via shared public entry: --host codex projects onto
+    // RoleTurnRequest/HostContext and into sitian — never invent default pi,
+    // never pre-spawn invocation.json reread for the detour tool.
     {
-      const bookRuns = join(home, ".ak-roles", "books", "hostprov", "unbound", "runs");
-      const runDirectory = join(bookRuns, "hostprov@judge");
-      const sessionDir = join(runDirectory, "session");
-      await mkdir(sessionDir, { recursive: true });
-      const sessionFile = join(sessionDir, "session.jsonl");
-      await writeFile(sessionFile, "{}\n", "utf8");
-      await writeFile(
-        join(runDirectory, "invocation.json"),
-        JSON.stringify({ role: "judge", engine: ENGINE, host: "codex" }),
-        "utf8",
-      );
-
-      const tool = createEngineDetourToolDefinition({
-        engineName: ENGINE,
-        fail(error) {
-          throw error;
-        },
-      });
-      const scripts = await ensureScripts(project);
-      await tool.execute(
-        "host-call",
-        { argv: [process.execPath, scripts.echo] },
-        undefined,
-        undefined,
+      const runId = "r-hostprov";
+      const { io, stdout, stderr } = captureIo();
+      const result = await runAkRole(
+        ["judge", "--project", project, "host provenance", "--engine", ENGINE, "--host", "codex"],
         {
+          packageRoot,
+          home,
           cwd: project,
-          mode: "test",
-          abort() {},
-          sessionManager: { getSessionFile: () => sessionFile },
-          runDirectory,
-          invocationScopeId: "scope-host",
-          // host omitted on ctx → must read invocation host=codex, not default pi
+          io,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => runId,
+          principalAuthority: piDurablePrincipalAuthority,
+          hostAdapters: [
+            {
+              name: "codex",
+              create: () => ({
+                ok: true as const,
+                host: createMinimalHost(async (request) => {
+                  const { sessionDirectory, sessionFile } =
+                    piDurablePrincipalAuthority.decode(request.principal);
+                  await mkdir(sessionDirectory, { recursive: true });
+                  await seedUserKickoff(sessionFile);
+                  assert.equal(
+                    request.host,
+                    "codex",
+                    "selected host must ride RoleTurnRequest envelope",
+                  );
+                  await runDetours({
+                    project,
+                    sessionFile,
+                    runDirectory: request.runDirectory,
+                    ...(request.invocationScopeId === undefined
+                      ? {}
+                      : { invocationScopeId: request.invocationScopeId }),
+                    ...(request.host === undefined || request.host.trim() === ""
+                      ? {}
+                      : { host: request.host.trim() }),
+                    calls: [{ toolCallId: "host-call", kind: "ok" }],
+                  });
+                  return finishTerminal({
+                    plan: {
+                      detours: [{ toolCallId: "host-call", kind: "ok" }],
+                      terminal: { kind: "accepted" },
+                    },
+                    request,
+                    sessionFile,
+                    runId,
+                  });
+                }),
+              }),
+            },
+          ],
         },
       );
-
-      const hostUsage = await readEngineDetourToolUsage({
-        sessionParent: sessionFile,
-        engineMounted: true,
-        invocationScopeId: "scope-host",
-        cwd: runDirectory,
-        home,
-      });
-      assert.equal(hostUsage?.callCount, 1);
+      assert.equal(result.exitCode, 0, stdout.join("") + "\n" + stderr.join(""));
+      const usage = usageOf(result.terminal);
+      assert.equal(usage?.callCount, 1);
       const openedHost = await readSitianRecords(
-        hostUsage!.calls[0]!.recordPointer.recordFile,
+        usage!.calls[0]!.recordPointer.recordFile,
       );
       const hostRow = openedHost.records.find(
-        (r) => r.identity === hostUsage!.calls[0]!.recordPointer.identity,
+        (r) => r.identity === usage!.calls[0]!.recordPointer.identity,
       );
       assert.equal(hostRow?.host, "codex");
     }
@@ -667,6 +684,9 @@ test("public entry: in-place auto-resume keeps one invocation scope across detou
             sessionFile,
             runDirectory: request.runDirectory,
             invocationScopeId: scope,
+            ...(request.host === undefined || request.host.trim() === ""
+              ? {}
+              : { host: request.host.trim() }),
             calls: [
               {
                 toolCallId: turn === 0 ? "before-retry" : "after-retry",
@@ -750,6 +770,9 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
               ...(request.invocationScopeId === undefined
                 ? {}
                 : { invocationScopeId: request.invocationScopeId }),
+              ...(request.host === undefined || request.host.trim() === ""
+                ? {}
+                : { host: request.host.trim() }),
               calls: [{ toolCallId: sharedId, kind: "ok" }],
             });
             await observeTyped429ViaProductionHandler({
@@ -855,6 +878,9 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
           sessionFile,
           runDirectory: request.runDirectory,
           ...(resumeScope === undefined ? {} : { invocationScopeId: resumeScope }),
+          ...(request.host === undefined || request.host.trim() === ""
+            ? {}
+            : { host: request.host.trim() }),
           calls: [{ toolCallId: sharedId, kind: "ok" }],
         });
         return finishTerminal({

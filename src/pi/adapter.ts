@@ -55,6 +55,9 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
     ...(typeof process.env.AK_ROLE_INVOCATION_SCOPE === "string" && process.env.AK_ROLE_INVOCATION_SCOPE.trim() !== ""
       ? { invocationScopeId: process.env.AK_ROLE_INVOCATION_SCOPE }
       : {}),
+    ...(typeof process.env.AK_ROLE_HOST === "string" && process.env.AK_ROLE_HOST.trim() !== ""
+      ? { host: process.env.AK_ROLE_HOST.trim() }
+      : {}),
     sessionManager: {
       getLeafEntry: () => context.sessionManager.getLeafEntry(),
       getLeafId: () => context.sessionManager.getLeafId(),

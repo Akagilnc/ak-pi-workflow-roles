@@ -740,6 +740,11 @@ export async function dispatchPostAdmissionTurn<
     if (hostTransition !== undefined) {
       turnRequest = { ...turnRequest, hostTransition };
     }
+    // Selected host axis rides the shared Host envelope for in-turn tools
+    // (detour usage ledger) — never a pre-spawn invocation.json reread.
+    if (typeof liveHost === "string" && liveHost.trim() !== "") {
+      turnRequest = { ...turnRequest, host: liveHost.trim() };
+    }
     if (isStationChildOfficerDialogue(admitted.role, env)) {
       // 0081 non-body face: freeze pointer section under run/attachments/.
       // Peer dialogue continuation.prompt stays parent payload only — the seat

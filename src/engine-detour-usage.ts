@@ -301,8 +301,10 @@ export async function readInvocationEngineMounted(
 }
 
 /**
- * Selected host from admission invocation (host axis). Undefined when absent —
- * callers must not invent "pi".
+ * Selected host from the admission invocation page — for post-admission
+ * host-transition classification only. In-turn tools take host from the shared
+ * Host envelope (RoleTurnRequest / HostContext), never this reader.
+ * Undefined when absent — callers must not invent "pi".
  */
 export function readInvocationSelectedHost(runDirectory: string): string | undefined {
   const raw = readInvocationRecord(runDirectory);
