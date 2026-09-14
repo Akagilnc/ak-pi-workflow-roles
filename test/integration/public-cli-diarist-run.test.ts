@@ -153,39 +153,63 @@ function diaristEnvelopeRunner(
 
 /**
  * Session fixture covering the #901 external contracts in one volume:
- * owner queue input, runner reply, tool result (excluded), absorbed interjection
- * (enqueue-only), duplicate id (first-seen), and one unparsable line.
+ * ordinary owner message coexisting with enqueue, queue-sourced owner input +
+ * paired dequeue materialization (no double-count), runner reply, tool result
+ * (excluded), absorbed interjection (enqueue-only), duplicate id (first-seen),
+ * and one unparsable line.
  */
 async function writeDialogueSessionFixture(path: string): Promise<{
   readonly path: string;
+  readonly plainOwnerId: string;
+  readonly plainOwnerText: string;
   readonly ownerId: string;
   readonly runnerId: string;
   readonly interjectionId: string;
   readonly duplicateId: string;
   readonly unparsableLine: number;
   readonly unparsableRaw: string;
+  readonly lastLine: number;
 }> {
+  const plainOwnerId = "msg-plain-owner";
+  const plainOwnerText = "陛下的普通发言";
   const ownerId = "msg-owner-1";
   const runnerId = "msg-runner-1";
   const interjectionId = "queue-interject-1";
   const duplicateId = "msg-dup-1";
   const unparsableRaw = "{this is not json at all";
   const rows = [
-    // 1. owner via queue enqueue (sole human-input source when queue events exist)
+    // 1. ordinary owner message — must survive alongside later enqueue events
+    JSON.stringify({
+      type: "user",
+      uuid: plainOwnerId,
+      message: {
+        role: "user",
+        content: [{ type: "text", text: plainOwnerText }],
+      },
+    }),
+    // 2. owner via queue enqueue
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
       uuid: ownerId,
       content: "立文件。送司天台记录。",
     }),
-    // 2. paired dequeue — must not double-count
+    // 3. paired dequeue
     JSON.stringify({
       type: "queue-operation",
       operation: "dequeue",
       uuid: "queue-deq-1",
-      content: "立文件。送司天台记录。",
     }),
-    // 3. runner assistant reply — two text blocks share one native id (must both keep)
+    // 4. dequeue materialization — same words as enqueue; must not double-count
+    JSON.stringify({
+      type: "user",
+      uuid: "msg-owner-materialized",
+      message: {
+        role: "user",
+        content: [{ type: "text", text: "立文件。送司天台记录。" }],
+      },
+    }),
+    // 5. runner assistant reply — two text blocks share one native id (must both keep)
     JSON.stringify({
       type: "assistant",
       uuid: runnerId,
@@ -197,7 +221,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         ],
       },
     }),
-    // 4. tool result payload — must not enter the diary
+    // 6. tool result payload — must not enter the diary
     JSON.stringify({
       type: "user",
       uuid: "tool-result-1",
@@ -206,7 +230,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "tool_result", tool_use_id: "t1", content: "ls -la output 12085 chars" }],
       },
     }),
-    // 5. absorbed interjection (enqueue only; no independent message record)
+    // 7. absorbed interjection (enqueue + dequeue; no independent message record)
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -217,9 +241,8 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       type: "queue-operation",
       operation: "dequeue",
       uuid: "queue-deq-2",
-      content: "中途插一句：保留原话。",
     }),
-    // 6. first occurrence of duplicate id
+    // 8. first occurrence of duplicate id
     JSON.stringify({
       type: "assistant",
       uuid: duplicateId,
@@ -228,9 +251,9 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: "首现正文" }],
       },
     }),
-    // 7. unparsable line (completed by terminator)
+    // 9. unparsable line (completed by terminator)
     unparsableRaw,
-    // 8. duplicate id second occurrence — must not re-enter
+    // 10. duplicate id second occurrence — must not re-enter
     JSON.stringify({
       type: "assistant",
       uuid: duplicateId,
@@ -245,12 +268,15 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   // Line numbers are 1-based physical lines matching the file we just wrote.
   return {
     path,
+    plainOwnerId,
+    plainOwnerText,
     ownerId,
     runnerId,
     interjectionId,
     duplicateId,
-    unparsableLine: 8,
+    unparsableLine: 10,
     unparsableRaw,
+    lastLine: 11,
   };
 }
 
@@ -286,7 +312,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
                 sessions: [
                   {
                     path: fixture.path,
-                    ranges: [{ from: { line: 1 }, to: { line: 9 } }],
+                    ranges: [{ from: { line: 1 }, to: { line: fixture.lastLine } }],
                   },
                 ],
               };
@@ -301,7 +327,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
               sessions: [
                 {
                   path: fixture.path,
-                  ranges: [{ from: { line: 1 }, to: { line: 9 } }],
+                  ranges: [{ from: { line: 1 }, to: { line: fixture.lastLine } }],
                 },
               ],
               amendments: [
@@ -351,8 +377,20 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     const byId = new Map(
       volume.lines.filter((line) => line.id !== undefined).map((line) => [line.id!, line]),
     );
+    // Ordinary owner message coexists with enqueue in the same volume.
+    assert.equal(byId.get(fixture.plainOwnerId)?.speaker, "owner");
+    assert.equal(byId.get(fixture.plainOwnerId)?.text, fixture.plainOwnerText);
     assert.equal(byId.get(fixture.ownerId)?.speaker, "owner");
     assert.equal(byId.get(fixture.ownerId)?.text, "立文件。送司天台记录。");
+    // Dequeue materialization must not double-count the enqueue text.
+    assert.equal(
+      volume.lines.filter((line) => line.text === "立文件。送司天台记录。").length,
+      1,
+    );
+    assert.equal(
+      volume.lines.some((line) => line.id === "msg-owner-materialized"),
+      false,
+    );
     assert.equal(byId.get(fixture.runnerId)?.speaker, "runner");
     assert.equal(
       byId.get(fixture.runnerId)?.text,

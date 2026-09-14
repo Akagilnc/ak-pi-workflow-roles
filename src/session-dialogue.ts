@@ -55,7 +55,7 @@ function carriesToolResult(message: Record<string, unknown>): boolean {
 }
 
 /**
- * 入队事件适配：人类这次输入的唯一来源。
+ * 入队事件适配：人类这次输入经队列的来源。
  * 配对的出队事件不另取，也不做正文比对去重——被吸收的插话正是靠入队事件入录
  * （它没有独立的消息记录，#901 用户故事 11）。
  */
@@ -88,26 +88,65 @@ function fromMessageEvent(row: Record<string, unknown>): DialogueEvent[] {
   return [{ speaker, text, ...(id === undefined ? {} : { id }) }];
 }
 
-/** 已有入队事件的宿主：人类输入只从入队事件取，消息侧不重复取。 */
-function hostRecordsQueuedInput(rows: readonly Record<string, unknown>[]): boolean {
-  return rows.some((row) => row.type === "queue-operation" && row.operation === "enqueue");
+/** 该行是否为可产出 owner 对话正文的消息（工具结果不算）。 */
+function isOwnerDialogueMessage(row: Record<string, unknown>): boolean {
+  const message = isRecord(row.message) ? row.message : undefined;
+  if (message === undefined || message.role !== "user" || carriesToolResult(message)) {
+    return false;
+  }
+  const parts = textParts(message.content, "text");
+  return parts.length > 0 && parts.join("") !== "";
+}
+
+/** 该行是否为 runner 回话事件（用于解除未物化的 dequeue 配对）。 */
+function isRunnerMessage(row: Record<string, unknown>): boolean {
+  const message = isRecord(row.message) ? row.message : undefined;
+  return message !== undefined && message.role === "assistant";
+}
+
+/**
+ * 逐次来源配对：dequeue 之后、下一条 runner 回话之前的 owner 消息是队列物化，
+ * 已由对应 enqueue 入录，消息侧跳过以免双计。未配对的 dequeue（被吸收插话）
+ * 在遇到 runner 回话时解除，不殃及之后的普通 owner 消息。
+ * 不用「卷内曾出现 enqueue」整卷布尔，也不按正文过滤。
+ */
+function ownerMessagesMaterializingQueue(
+  rows: readonly (Record<string, unknown> | undefined)[],
+): ReadonlySet<number> {
+  const skip = new Set<number>();
+  let pending = 0;
+  for (let index = 0; index < rows.length; index += 1) {
+    const row = rows[index];
+    if (row === undefined) continue;
+    if (row.type === "queue-operation" && row.operation === "dequeue") {
+      pending += 1;
+      continue;
+    }
+    if (isRunnerMessage(row)) {
+      pending = 0;
+      continue;
+    }
+    if (pending > 0 && isOwnerDialogueMessage(row)) {
+      skip.add(index);
+      pending -= 1;
+    }
+  }
+  return skip;
 }
 
 /**
  * 整卷适配：返回与入参行等长的对话事实数组（该行不是对话则为空数组）。
- * 需要整卷视野是因为「人类输入的唯一来源」取决于本卷宿主是否记录入队事件。
+ * 需要整卷视野是因为 enqueue/dequeue 与物化 user 消息的配对跨行。
  */
 export function adaptSessionDialogue(
   rows: readonly (Record<string, unknown> | undefined)[],
 ): DialogueEvent[][] {
-  const present = rows.filter((row): row is Record<string, unknown> => row !== undefined);
-  const queuedInput = hostRecordsQueuedInput(present);
-  return rows.map((row) => {
+  const skipOwner = ownerMessagesMaterializingQueue(rows);
+  return rows.map((row, index) => {
     if (row === undefined) return [];
     const queued = fromQueueEvent(row);
     if (queued.length > 0) return queued;
-    const message = fromMessageEvent(row);
-    if (queuedInput) return message.filter((event) => event.speaker !== "owner");
-    return message;
+    if (skipOwner.has(index)) return [];
+    return fromMessageEvent(row);
   });
 }

@@ -1,11 +1,9 @@
 /**
  * 起居录 volume helpers — ADR 0075「2026-09-14 修订」/ #901。
  * 一册＝一个文件：首行册子头，其后裸对话行。每轮按当前区间重投影是唯一机制；
- * 不经 sitian appender（无 append 水位、无 SitianRecord 外壳）。路径仍走司天台拓扑。
+ * 无 append 水位、无 SitianRecord 外壳。目的地解析与读写经司天台唯一入口
+ * （ADR 0065 records-owner / record-entry；ADR 0081 入录经司天台）。
  */
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   readLedgerSessionJsonlLines,
@@ -13,7 +11,13 @@ import {
 } from "./ledger-session-read.ts";
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 import { adaptSessionDialogue, nativeEventId } from "./session-dialogue.ts";
-import { resolveSitianRecordPath } from "./sitian-facade.ts";
+import {
+  ensureSitianVolume,
+  readSitianVolumeText,
+  resolveSitianVolume,
+  rewriteSitianVolume,
+  type SitianRecordInput,
+} from "./sitian-facade.ts";
 import {
   TICKET_PROVENANCE_KIND,
   projectTicketProvenanceHeader,
@@ -35,6 +39,21 @@ export function ticketProvenanceSubject(ticketNumber: number): string {
   return String(ticketNumber);
 }
 
+/** Topology input only — no destination parameter (ADR 0065 record-entry). */
+function ticketProvenanceRecordInput(
+  ticketNumber: number,
+  cwd: string,
+  home?: string,
+): SitianRecordInput {
+  return {
+    level: "event",
+    kind: TICKET_PROVENANCE_KIND,
+    subject: ticketProvenanceSubject(ticketNumber),
+    cwd,
+    ...(home === undefined ? {} : { home }),
+  };
+}
+
 export type TicketProvenanceVolumePath = {
   readonly recordFile: string;
   readonly volumeDir: string;
@@ -46,17 +65,7 @@ export function resolveTicketProvenanceVolume(
   cwd: string,
   home?: string,
 ): TicketProvenanceVolumePath {
-  const path = resolveSitianRecordPath({
-    level: "event",
-    kind: TICKET_PROVENANCE_KIND,
-    subject: ticketProvenanceSubject(ticketNumber),
-    cwd,
-    ...(home === undefined ? {} : { home }),
-  });
-  return {
-    recordFile: path.recordFile,
-    volumeDir: path.sessionDir,
-  };
+  return resolveSitianVolume(ticketProvenanceRecordInput(ticketNumber, cwd, home));
 }
 
 export type ReadTicketProvenanceResult = {
@@ -71,15 +80,11 @@ export async function readTicketProvenance(
   cwd: string,
   home?: string,
 ): Promise<ReadTicketProvenanceResult> {
-  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
-  let text: string;
-  try {
-    text = await readFile(recordFile, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { header: undefined, lines: [], recordFile };
-    }
-    throw error;
+  const { recordFile, text } = await readSitianVolumeText(
+    ticketProvenanceRecordInput(ticketNumber, cwd, home),
+  );
+  if (text === undefined) {
+    return { header: undefined, lines: [], recordFile };
   }
   const physical = text.split("\n");
   let header: TicketProvenanceHeader | undefined;
@@ -110,17 +115,13 @@ export async function readTicketProvenance(
 /**
  * Ensure the per-ticket directory + volume file exist (ADR 0075 ticket-provenance-file).
  * Empty file is lawful (bound court with no dialogue yet). Does not forge entries.
- * Append-open creates an absent volume without truncating concurrent first writers.
  */
 export function ensureTicketProvenanceVolume(
   ticketNumber: number,
   cwd: string,
   home?: string,
 ): TicketProvenanceVolumePath {
-  const volume = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
-  mkdirSync(volume.volumeDir, { recursive: true });
-  appendFileSync(volume.recordFile, "", "utf8");
-  return volume;
+  return ensureSitianVolume(ticketProvenanceRecordInput(ticketNumber, cwd, home));
 }
 
 /** One session line the mechanical projector could not enter. */
@@ -246,6 +247,7 @@ async function projectSessionRanges(input: {
  * Reproject the unique diary file from the submitted bounds + optional amendments.
  * Header + locating fields may change; dialogue text is taken from the source
  * (or from a typed amendment). Does not append; the whole file is the projection.
+ * Persistence goes through the Sitian volume seam (rewriteSitianVolume).
  */
 export async function reprojectTicketProvenance(input: {
   readonly ticketNumber: number;
@@ -254,7 +256,11 @@ export async function reprojectTicketProvenance(input: {
   readonly sessions: readonly TicketProvenanceSession[];
   readonly amendments?: readonly TicketProvenanceAmendment[];
 }): Promise<ReprojectTicketProvenanceResult> {
-  const volume = ensureTicketProvenanceVolume(input.ticketNumber, input.cwd, input.home);
+  const recordInput = ticketProvenanceRecordInput(
+    input.ticketNumber,
+    input.cwd,
+    input.home,
+  );
   const prior = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
 
   const amendmentsByKey = new Map<string, TicketProvenanceAmendment>();
@@ -284,7 +290,7 @@ export async function reprojectTicketProvenance(input: {
   };
 
   const body = `${[JSON.stringify(header), ...lines.map((line) => JSON.stringify(line))].join("\n")}\n`;
-  writeFileSync(volume.recordFile, body, "utf8");
+  const volume = rewriteSitianVolume({ ...recordInput, body });
 
   return {
     recordFile: volume.recordFile,
