@@ -16,9 +16,6 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pathToFileURL } from "node:url";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 
 import {
   helpDocument,
@@ -49,7 +46,6 @@ import {
   parseAnalystArgv,
 } from "../../src/public-cli/invocation.ts";
 
-const execFileAsync = promisify(execFile);
 const isUsage = (error: unknown): boolean =>
   error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
