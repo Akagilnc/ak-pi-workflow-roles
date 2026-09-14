@@ -1,9 +1,9 @@
 /**
  * #537 typed ak_engine_detour tool usage ledger.
  *
- * Observes only the package detour tool path. Bash/CLI ordinary path is a
- * permanent blind spot (resources/engine-dispatch.md) — this fact must never
- * be read as "the seat did not use an engine".
+ * Observes only the package detour tool path. Bash/CLI ordinary path
+ * (resources/engine-dispatch.md ordinary path) stays outside this ledger — a
+ * permanent blind spot that must never be read as "the seat did not use an engine".
  *
  * Runtime owns these facts beside role payloads (ADR 0042); they land in
  * TerminalResult.decisiveFacts and are written live via sitian (ADR 0077).

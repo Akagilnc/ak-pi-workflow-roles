@@ -167,14 +167,13 @@ export function createEngineDetourToolDefinition(input: {
         );
       }
 
+      // Usage ledger lives in sitian + decisiveFacts only (#537) — not tool details.
       return {
         content: [{ type: "text" as const, text: result.stdout }],
         details: {
           tool: ENGINE_DETOUR_TOOL_NAME,
           code: result.code,
           stderr: result.stderr,
-          durationMs: Math.max(0, Date.now() - startedAt),
-          stdoutByteLength,
         },
       };
     },

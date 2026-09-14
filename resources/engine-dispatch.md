@@ -38,9 +38,6 @@ themselves. Stuffing large bodies into argv/prompt is the verified cause of
   engine note and invoke the CLI it documents (bash or equivalent is the
   ordinary path; a package detour tool is only another way to reach the same
   CLI when the session already has one).
-  Runtime usage ledger (`decisiveFacts.engineDetourToolUsage`, #537) observes
-  only the package detour tool `ak_engine_detour`. Bash/CLI ordinary path is a
-  permanent blind spot and must not be read as "this seat did not use an engine".
 - One labor turn = one process (not one process for the whole role run).
 
 ## Failure handling
