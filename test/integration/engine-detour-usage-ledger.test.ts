@@ -23,6 +23,8 @@ import {
   ENGINE_DETOUR_TOOL_USAGE_FACT_KEY,
   engineDetourCallIdentity,
   readEngineDetourInvocationScope,
+  readEngineDetourToolUsage,
+  writeEngineDetourInvocationScope,
   type EngineDetourToolUsageFact,
 } from "../../src/engine-detour-usage.ts";
 import { createEngineDetourToolDefinition } from "../../src/engine-detour-tool.ts";
@@ -562,6 +564,62 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
           ["c-a", "c-b"],
         );
       }
+    }
+
+    // Host provenance (shortest tool path, same home): ctx.host absent must read
+    // invocation host=codex — not invent default pi. Public-entry matrix alone
+    // cannot discriminate this when admission host is the default.
+    {
+      const bookRuns = join(home, ".ak-roles", "books", "hostprov", "unbound", "runs");
+      const runDirectory = join(bookRuns, "hostprov@judge");
+      const sessionDir = join(runDirectory, "session");
+      await mkdir(sessionDir, { recursive: true });
+      const sessionFile = join(sessionDir, "session.jsonl");
+      await writeFile(sessionFile, "{}\n", "utf8");
+      await writeFile(
+        join(runDirectory, "invocation.json"),
+        JSON.stringify({ role: "judge", engine: ENGINE, host: "codex" }),
+        "utf8",
+      );
+      writeEngineDetourInvocationScope(runDirectory, "scope-host");
+
+      const tool = createEngineDetourToolDefinition({
+        engineName: ENGINE,
+        fail(error) {
+          throw error;
+        },
+      });
+      const scripts = await ensureScripts(project);
+      await tool.execute(
+        "host-call",
+        { argv: [process.execPath, scripts.echo] },
+        undefined,
+        undefined,
+        {
+          cwd: project,
+          mode: "test",
+          abort() {},
+          sessionManager: { getSessionFile: () => sessionFile },
+          runDirectory,
+          // host omitted on ctx → must read invocation host=codex, not default pi
+        },
+      );
+
+      const hostUsage = await readEngineDetourToolUsage({
+        sessionParent: sessionFile,
+        engineMounted: true,
+        invocationScopeId: "scope-host",
+        cwd: runDirectory,
+        home,
+      });
+      assert.equal(hostUsage?.callCount, 1);
+      const openedHost = await readSitianRecords(
+        hostUsage!.calls[0]!.recordPointer.recordFile,
+      );
+      const hostRow = openedHost.records.find(
+        (r) => r.identity === hostUsage!.calls[0]!.recordPointer.identity,
+      );
+      assert.equal(hostRow?.host, "codex");
     }
   });
 });
