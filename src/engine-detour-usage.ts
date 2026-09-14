@@ -16,7 +16,6 @@
  */
 import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { ENGINE_DETOUR_TOOL_NAME } from "./engine-detour.ts";
@@ -266,7 +265,10 @@ export function projectEngineDetourToolUsageForPublicTerminal(
   };
 }
 
-function invocationRecord(runDirectory: string): Record<string, unknown> | undefined {
+/** One shared invocation.json reader (ENOENT → undefined; other errors propagate). */
+function readInvocationRecord(
+  runDirectory: string,
+): Record<string, unknown> | undefined {
   try {
     const raw = JSON.parse(
       readFileSync(join(runDirectory, "invocation.json"), "utf8"),
@@ -282,16 +284,9 @@ function invocationRecord(runDirectory: string): Record<string, unknown> | undef
 export async function readInvocationEngineMounted(
   runDirectory: string,
 ): Promise<boolean> {
-  try {
-    const raw = JSON.parse(
-      await readFile(join(runDirectory, "invocation.json"), "utf8"),
-    ) as unknown;
-    if (!isRecord(raw)) return false;
-    return typeof raw.engine === "string" && raw.engine.trim() !== "";
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return false;
-    throw error;
-  }
+  const raw = readInvocationRecord(runDirectory);
+  if (raw === undefined) return false;
+  return typeof raw.engine === "string" && raw.engine.trim() !== "";
 }
 
 /**
@@ -299,7 +294,7 @@ export async function readInvocationEngineMounted(
  * callers must not invent "pi".
  */
 export function readInvocationSelectedHost(runDirectory: string): string | undefined {
-  const raw = invocationRecord(runDirectory);
+  const raw = readInvocationRecord(runDirectory);
   if (raw === undefined) return undefined;
   return typeof raw.host === "string" && raw.host.trim() !== ""
     ? raw.host.trim()

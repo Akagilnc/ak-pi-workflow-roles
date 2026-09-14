@@ -8,10 +8,14 @@
  * Invocation scope is one public ak-role call: in-place auto-resume shares it;
  * explicit resume is a new unit. Not courtAttemptId and not Pi session
  * toolResult join keys.
+ *
+ * One shared public-entry tracer covers terminals / counts / payload / host /
+ * UTF-8 / header-only. Auto-resume, explicit resume, and dual-fail stay as
+ * separate boundaries (distinct contracts, prior judge order).
  */
 import assert from "node:assert/strict";
-import { appendFile, chmod, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { appendFile, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
@@ -19,7 +23,6 @@ import {
   ENGINE_DETOUR_TOOL_USAGE_FACT_KEY,
   engineDetourCallIdentity,
   readEngineDetourInvocationScope,
-  writeEngineDetourInvocationScope,
   type EngineDetourToolUsageFact,
 } from "../../src/engine-detour-usage.ts";
 import { createEngineDetourToolDefinition } from "../../src/engine-detour-tool.ts";
@@ -41,6 +44,9 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 
 const ENGINE = "kimi";
 const JUDGE_ACCEPTED = { judgeStatus: "converged" as const };
+/** Non-ASCII stdout — UTF-8 byte length is the ticket metric (你好 = 6). */
+const ECHO_STDOUT = "你好";
+const ECHO_STDOUT_BYTES = Buffer.byteLength(ECHO_STDOUT, "utf8");
 
 type DetourKind = "ok" | "spawn" | "nonzero" | "empty";
 
@@ -77,7 +83,7 @@ async function ensureScripts(project: string): Promise<{
   const echo = join(project, "detour-echo.mjs");
   const nonzero = join(project, "detour-nonzero.mjs");
   const empty = join(project, "detour-empty.mjs");
-  await writeFile(echo, 'process.stdout.write("hi")\n', "utf8");
+  await writeFile(echo, `process.stdout.write(${JSON.stringify(ECHO_STDOUT)})\n`, "utf8");
   await writeFile(nonzero, 'process.stdout.write("partial"); process.exit(2);\n', "utf8");
   await writeFile(empty, "process.exit(0);\n", "utf8");
   return { echo, nonzero, empty };
@@ -301,11 +307,56 @@ async function runPublicJudge(input: {
   return { result };
 }
 
-test("public entry: four terminals carry engineDetourToolUsage when engine is mounted", async () => {
-  await withHermeticHome({ prefix: "ak-detour-public-4term-" }, async ({ home }) => {
+/** Shared public-entry home: one hermetic project for the matrix tracer. */
+async function withDetourProject(
+  prefix: string,
+  fn: (ctx: { home: string; project: string }) => Promise<void>,
+): Promise<void> {
+  await withHermeticHome({ prefix }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    await fn({ home, project });
+  });
+}
+
+/** Walk up from a sitian recordFile to the run's invocation.json host. */
+async function invocationHostNear(recordFile: string): Promise<string | undefined> {
+  let dir = dirname(recordFile);
+  for (let i = 0; i < 8; i += 1) {
+    try {
+      const raw = JSON.parse(await readFile(join(dir, "invocation.json"), "utf8")) as {
+        host?: unknown;
+      };
+      if (typeof raw.host === "string" && raw.host.trim() !== "") return raw.host.trim();
+    } catch {
+      // keep walking
+    }
+    const parent = dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return undefined;
+}
+
+test("public entry: one tracer for terminals, counts, payload, host, utf8, header-only", async () => {
+  await withDetourProject("ak-detour-public-matrix-", async ({ home, project }) => {
+    // no-engine baseline — field absent; payload bytes are the conservation yardstick
+    const without = await runPublicJudge({
+      home,
+      project,
+      runId: "r-noeng",
+      plan: { terminal: { kind: "accepted" } },
+    });
+    assert.equal(without.result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(
+      ENGINE_DETOUR_TOOL_USAGE_FACT_KEY
+        in (without.result.terminal!.roleOutcome.decisiveFacts ?? {}),
+      false,
+    );
+    const baselinePayloadBytes = Buffer.from(
+      JSON.stringify(objectPayloads(without.result.terminal!.roleOutcome)),
+    );
 
     const rows: Array<{
       readonly label: string;
@@ -313,12 +364,15 @@ test("public entry: four terminals carry engineDetourToolUsage when engine is mo
       readonly expectKind: string;
       readonly expectCallCount: number;
       readonly expectToolCallId?: string;
+      readonly headerOnlySession?: boolean;
+      readonly checkPayload?: boolean;
     }> = [
       {
         label: "accepted-zero",
         plan: { terminal: { kind: "accepted" } },
         expectKind: "accepted",
         expectCallCount: 0,
+        checkPayload: true,
       },
       {
         label: "accepted-once",
@@ -329,6 +383,7 @@ test("public entry: four terminals carry engineDetourToolUsage when engine is mo
         expectKind: "accepted",
         expectCallCount: 1,
         expectToolCallId: "c-ok",
+        checkPayload: true,
       },
       {
         label: "accepted-multi",
@@ -341,6 +396,17 @@ test("public entry: four terminals carry engineDetourToolUsage when engine is mo
         },
         expectKind: "accepted",
         expectCallCount: 2,
+      },
+      {
+        label: "header-only",
+        plan: {
+          detours: [{ toolCallId: "c-header", kind: "ok" }],
+          terminal: { kind: "accepted" },
+        },
+        expectKind: "accepted",
+        expectCallCount: 1,
+        expectToolCallId: "c-header",
+        headerOnlySession: true,
       },
       {
         label: "audit-escalation-once",
@@ -418,6 +484,7 @@ test("public entry: four terminals carry engineDetourToolUsage when engine is mo
         runId: `r-${row.label}`,
         engine: ENGINE,
         plan: row.plan,
+        ...(row.headerOnlySession === true ? { headerOnlySession: true } : {}),
       });
       assert.ok(result.terminal, `${row.label}: terminal required`);
       assert.equal(result.terminal.roleOutcome.kind, row.expectKind, row.label);
@@ -427,6 +494,17 @@ test("public entry: four terminals carry engineDetourToolUsage when engine is mo
       assert.equal(usage.calls.length, row.expectCallCount, row.label);
       if (row.expectToolCallId !== undefined) {
         assert.equal(usage.calls[0]?.toolCallId, row.expectToolCallId, row.label);
+      }
+      if (row.checkPayload === true) {
+        const payloadBytes = Buffer.from(
+          JSON.stringify(objectPayloads(result.terminal.roleOutcome)),
+        );
+        assert.equal(
+          Buffer.compare(baselinePayloadBytes, payloadBytes),
+          0,
+          `${row.label}: detour usage must not alter role payload bytes`,
+        );
+        assert.deepEqual(objectPayloads(result.terminal.roleOutcome), [JUDGE_ACCEPTED]);
       }
       if (row.label === "failure-coexist-spawn") {
         assert.equal(usage.calls[0] !== undefined && "code" in usage.calls[0], false);
@@ -456,7 +534,8 @@ test("public entry: four terminals carry engineDetourToolUsage when engine is mo
       }
       if (row.label === "accepted-once") {
         assert.equal(usage.calls[0]?.code, 0);
-        assert.equal(usage.calls[0]?.stdoutByteLength, 2);
+        // UTF-8 non-ASCII byte length through the real tool → sitian → decisiveFacts path
+        assert.equal(usage.calls[0]?.stdoutByteLength, ECHO_STDOUT_BYTES);
         assert.equal(typeof usage.calls[0]?.durationMs, "number");
         const opened = await readSitianRecords(usage.calls[0]!.recordPointer.recordFile);
         assert.ok(
@@ -467,12 +546,15 @@ test("public entry: four terminals carry engineDetourToolUsage when engine is mo
           ),
           "sitian pointer must reopen the call",
         );
-        // Host provenance must not invent a false label when admission wrote host.
+        // Host provenance: recorded host is the admission invocation host (not invented).
         const hostRow = opened.records.find(
           (r) => r.identity === usage.calls[0]!.recordPointer.identity,
         );
-        assert.equal(typeof hostRow?.host, "string");
-        assert.ok((hostRow?.host as string).length > 0);
+        const invocationHost = await invocationHostNear(
+          usage.calls[0]!.recordPointer.recordFile,
+        );
+        assert.ok(invocationHost, "admission must write a host on invocation.json");
+        assert.equal(hostRow?.host, invocationHost);
       }
       if (row.label === "accepted-multi") {
         assert.deepEqual(
@@ -484,99 +566,8 @@ test("public entry: four terminals carry engineDetourToolUsage when engine is mo
   });
 });
 
-test("public entry: header-only session still counts invocation-bound detours", async () => {
-  await withHermeticHome({ prefix: "ak-detour-header-only-" }, async ({ home }) => {
-    const project = join(home, "work");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    const { result } = await runPublicJudge({
-      home,
-      project,
-      runId: "r-header-only",
-      engine: ENGINE,
-      headerOnlySession: true,
-      plan: {
-        detours: [{ toolCallId: "c-header", kind: "ok" }],
-        terminal: { kind: "accepted" },
-      },
-    });
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    const usage = usageOf(result.terminal);
-    assert.equal(usage?.callCount, 1);
-    assert.equal(usage?.calls[0]?.toolCallId, "c-header");
-  });
-});
-
-test("public entry: no engine → field absent; accepted payload bytes match sealed details", async () => {
-  await withHermeticHome({ prefix: "ak-detour-public-noeng-" }, async ({ home }) => {
-    const project = join(home, "work");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    const without = await runPublicJudge({
-      home,
-      project,
-      runId: "r-noeng",
-      plan: { terminal: { kind: "accepted" } },
-    });
-    assert.equal(without.result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(
-      ENGINE_DETOUR_TOOL_USAGE_FACT_KEY in (without.result.terminal!.roleOutcome.decisiveFacts ?? {}),
-      false,
-    );
-    const baselinePayloadBytes = Buffer.from(
-      JSON.stringify(objectPayloads(without.result.terminal!.roleOutcome)),
-    );
-
-    const withEngineZero = await runPublicJudge({
-      home,
-      project,
-      runId: "r-eng-zero",
-      engine: ENGINE,
-      plan: { terminal: { kind: "accepted" } },
-    });
-    assert.equal(withEngineZero.result.terminal?.roleOutcome.kind, "accepted");
-    assert.deepEqual(usageOf(withEngineZero.result.terminal), { callCount: 0, calls: [] });
-    const zeroPayloadBytes = Buffer.from(
-      JSON.stringify(objectPayloads(withEngineZero.result.terminal!.roleOutcome)),
-    );
-    assert.equal(
-      Buffer.compare(baselinePayloadBytes, zeroPayloadBytes),
-      0,
-      "engine zero-call must not alter role payload bytes",
-    );
-
-    const withCalls = await runPublicJudge({
-      home,
-      project,
-      runId: "r-eng-calls",
-      engine: ENGINE,
-      plan: {
-        detours: [{ toolCallId: "c-pay", kind: "ok" }],
-        terminal: { kind: "accepted" },
-      },
-    });
-    assert.equal(withCalls.result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(usageOf(withCalls.result.terminal)?.callCount, 1);
-    const callPayloadBytes = Buffer.from(
-      JSON.stringify(objectPayloads(withCalls.result.terminal!.roleOutcome)),
-    );
-    assert.equal(
-      Buffer.compare(baselinePayloadBytes, callPayloadBytes),
-      0,
-      "detour usage must not alter role payload bytes after real settlement",
-    );
-    assert.deepEqual(objectPayloads(withCalls.result.terminal!.roleOutcome), [JUDGE_ACCEPTED]);
-  });
-});
-
 test("public entry: in-place auto-resume keeps one invocation scope across detours", async () => {
-  await withHermeticHome({ prefix: "ak-detour-public-autoresume-" }, async ({ home }) => {
-    const project = join(home, "work");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
+  await withDetourProject("ak-detour-public-autoresume-", async ({ home, project }) => {
     {
       const { io } = captureIo();
       await runAkRole(["config", "set-auto-resume-limit", "2"], {
@@ -682,17 +673,14 @@ test("public entry: in-place auto-resume keeps one invocation scope across detou
   });
 });
 
-test("public entry: explicit resume is a new scope; reused toolCallId stays isolated", async () => {
-  await withHermeticHome({ prefix: "ak-detour-public-xresume-" }, async ({ home }) => {
-    const project = join(home, "work");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
+test("public entry: explicit resume is a new scope; reused toolCallId stays isolated; resumable redacts recordFile", async () => {
+  await withDetourProject("ak-detour-public-xresume-", async ({ home, project }) => {
     const runId = "r-xresume";
     const sharedId = "shared-tool-call-id";
 
     {
       const { io } = captureIo();
-      await runAkRole(
+      const first = await runAkRole(
         ["judge", "--project", project, "seed detour", "--engine", ENGINE],
         {
           packageRoot,
@@ -721,6 +709,16 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
             return { code: 1, stderr: "quota", timedOut: false };
           }),
         },
+      );
+      // #108 / terminal privacy: resumable public Terminal strips recordFile path disclosure.
+      assert.ok(first.terminal?.resume, "typed 429 must settle resumable");
+      const firstUsage = usageOf(first.terminal);
+      assert.equal(firstUsage?.callCount, 1);
+      assert.equal(firstUsage?.calls[0]?.toolCallId, sharedId);
+      assert.equal(firstUsage?.calls[0]?.recordPointer.recordFile, "");
+      assert.ok(
+        (firstUsage?.calls[0]?.recordPointer.identity ?? "").includes(sharedId),
+        "identity stays for reconcilability",
       );
     }
 
@@ -789,6 +787,8 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
         invocationScopeId: resumeScope,
       }),
     );
+    // Accepted (non-resumable) keeps recordFile for pointer reopen.
+    assert.ok((usage?.calls[0]?.recordPointer.recordFile ?? "").length > 0);
   });
 });
 
@@ -872,64 +872,5 @@ test("tool path: engine failure + sitian write failure keeps both causes via Agg
         `${row.label}: sitian cause missing in ${texts.join(" | ")}`,
       );
     }
-  });
-});
-
-test("host provenance: invocation host=codex is recorded, not default pi", async () => {
-  await withHermeticHome({ prefix: "ak-detour-host-prov-" }, async ({ home }) => {
-    const project = join(home, "work");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    // Place run under the hermetic ledger home so sitian accepts sessionParent.
-    const bookRuns = join(home, ".ak-roles", "books", "hostprov", "unbound", "runs");
-    const runDirectory = join(bookRuns, "hostprov@judge");
-    const sessionDir = join(runDirectory, "session");
-    await mkdir(sessionDir, { recursive: true });
-    const sessionFile = join(sessionDir, "session.jsonl");
-    await writeFile(sessionFile, "{}\n", "utf8");
-    await writeFile(
-      join(runDirectory, "invocation.json"),
-      JSON.stringify({ role: "judge", engine: ENGINE, host: "codex" }),
-      "utf8",
-    );
-    writeEngineDetourInvocationScope(runDirectory, "scope-host");
-
-    const tool = createEngineDetourToolDefinition({
-      engineName: ENGINE,
-      fail(error) {
-        throw error;
-      },
-    });
-    const scripts = await ensureScripts(project);
-    await tool.execute(
-      "host-call",
-      { argv: [process.execPath, scripts.echo] },
-      undefined,
-      undefined,
-      {
-        cwd: project,
-        mode: "test",
-        abort() {},
-        sessionManager: { getSessionFile: () => sessionFile },
-        runDirectory,
-        // host omitted on ctx → must read invocation host=codex, not default pi
-      },
-    );
-
-    const { readEngineDetourToolUsage } = await import("../../src/engine-detour-usage.ts");
-    const usage = await readEngineDetourToolUsage({
-      sessionParent: sessionFile,
-      engineMounted: true,
-      invocationScopeId: "scope-host",
-      cwd: runDirectory,
-      home,
-    });
-    assert.equal(usage?.callCount, 1);
-    const opened = await readSitianRecords(usage!.calls[0]!.recordPointer.recordFile);
-    const row = opened.records.find(
-      (r) => r.identity === usage!.calls[0]!.recordPointer.identity,
-    );
-    assert.equal(row?.host, "codex");
   });
 });
