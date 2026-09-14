@@ -6,7 +6,7 @@
 |---|---|---|
 | `role-envelope.ts` `buildSkillExpansion` | `References are relative to ${dirname}.` | 删。方法体原文即可。 |
 | `role-runtime.ts` reviewer parent prompt | `权威 Spec 不存在；未启动 Spec 取证腿。` | 删。Spec 有无由本席读材料自判。 |
-| `compliance-transport.ts` `AUDITOR_DOSSIER_PROMPT` | `本 run 卷宗已就绪。` | 改为察院同形路径指针。 |
+| `compliance-transport.ts` `AUDITOR_DOSSIER_PROMPT` | `本 run 卷宗已就绪。` | 改为台院同形路径指针。 |
 | `doctor-role.ts` case catalog | `provenance: "由留存 session 字节推导，封入受理回执。"` | 删。catalog 只留 cost 与证据指针。 |
 | `collector-role.ts` bounceInfrastructure | `请省略该字段后重新提交。` | 代码打回推翻自报已删。 |
 | `reviewer-role.ts` output description | `Standards/Spec 评审腿由 runtime 以取证子会话代跑…` | 改为「本席自调 code-review skill」。方法步骤在 `resources/methods/code-review/SKILL.md`。 |
