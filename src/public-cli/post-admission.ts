@@ -73,6 +73,7 @@ function isStationChildOfficerDialogue(
 ): boolean {
   return env.stationChild === true && isOfficerReviewSeat(role);
 }
+import { writeEngineDetourAttemptScope } from "../engine-detour-usage.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
@@ -779,6 +780,13 @@ export async function dispatchPostAdmissionTurn<
       env.host,
       env.engineModel,
     );
+
+    // #537: each public invocation (including resume) is one usage counting unit.
+    // Mint scope at dispatch so detour writes + settlement share a host-neutral id
+    // that is not Pi session toolResult join and not open-court courtAttemptId reuse.
+    if (typeof effectiveEngine === "string" && effectiveEngine.trim() !== "") {
+      writeEngineDetourAttemptScope(admitted.runDirectory, randomUUID());
+    }
 
     let result: RoleTurnResult;
     try {

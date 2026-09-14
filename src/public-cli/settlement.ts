@@ -52,7 +52,8 @@ import {
 } from "../collector-ledger.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../engine-detour.ts";
 import {
-  currentAttemptEngineDetourToolCallIds,
+  projectEngineDetourToolUsageForPublicTerminal,
+  readEngineDetourAttemptScope,
   readEngineDetourToolUsage,
   readInvocationEngineMounted,
   runDirectoryFromSessionDirectory,
@@ -2199,15 +2200,19 @@ export async function extractGateFactFromSessionDirectory(
  * #537: project this-invocation ak_engine_detour usage onto decisiveFacts.
  * Absent when engine is not mounted; callCount 0 when mounted with zero calls.
  * Never mutates role payloads (ADR 0003 / 0042 / 0052).
- * Session read damage propagates (failure honesty) — never fall back to an
- * unfiltered sitian volume that would cross the resume attempt boundary.
+ * Attempt scope is host-neutral courtAttemptId bound at sitian write time — never
+ * Pi session.jsonl toolResult join. Session damage therefore cannot replace an
+ * already-formed roleOutcome (no_receipt / failure).
  */
 async function attachEngineDetourToolUsage<
-  T extends { roleOutcome: TerminalRoleOutcome },
+  T extends { roleOutcome: TerminalRoleOutcome; resume?: TerminalResume },
 >(
   base: T,
   sessionDirectory: string,
-  gateContext: { readonly runDirectory?: string } = {},
+  gateContext: {
+    readonly runDirectory?: string;
+    readonly courtAttemptId?: string;
+  } = {},
 ): Promise<T> {
   const runDirectory =
     typeof gateContext.runDirectory === "string" && gateContext.runDirectory.length > 0
@@ -2216,19 +2221,30 @@ async function attachEngineDetourToolUsage<
   const engineMounted = await readInvocationEngineMounted(runDirectory);
   if (!engineMounted) return base;
 
+  // Per public-invocation scope (written at dispatch). Not courtAttemptId —
+  // open-court resume may reuse court id while still being a new counting unit.
+  let attemptId =
+    typeof gateContext.courtAttemptId === "string" && gateContext.courtAttemptId.length > 0
+      ? gateContext.courtAttemptId
+      : readEngineDetourAttemptScope(runDirectory);
+
   const sessionFile = sessionFileFromSessionDirectory(sessionDirectory);
-  // Bound session is the attempt-scope authority; errors keep their identity.
-  const entries = await readBoundSessionEntries(sessionFile);
-  const attemptToolCallIds = currentAttemptEngineDetourToolCallIds(entries);
   const usage = await readEngineDetourToolUsage({
     sessionParent: sessionFile,
     engineMounted: true,
-    attemptToolCallIds,
+    ...(attemptId === undefined ? {} : { attemptId }),
     cwd: runDirectory,
   });
+  const projected =
+    usage === undefined
+      ? undefined
+      : projectEngineDetourToolUsageForPublicTerminal(usage, {
+          // Resumable Terminal: run ID only in resume.command — strip path components.
+          discloseRecordFile: base.resume === undefined,
+        });
   return {
     ...base,
-    roleOutcome: withEngineDetourToolUsageFact(base.roleOutcome, usage),
+    roleOutcome: withEngineDetourToolUsageFact(base.roleOutcome, projected),
   };
 }
 
@@ -2237,6 +2253,7 @@ async function withOptionalGateProjection<
     roleOutcome: TerminalRoleOutcome;
     navigator: TerminalNavigatorFact;
     artifacts: readonly TerminalArtifactRef[];
+    resume?: TerminalResume;
   },
 >(
   base: T,
@@ -2244,6 +2261,7 @@ async function withOptionalGateProjection<
   gateContext: {
     readonly runDirectory?: string;
     readonly parentSessionFile?: string;
+    readonly courtAttemptId?: string;
   } = {},
 ): Promise<T & { gate?: TerminalGateFact }> {
   // A gate transport failure is already represented by typed evidence and has no

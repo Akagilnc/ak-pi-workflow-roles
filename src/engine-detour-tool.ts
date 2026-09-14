@@ -19,6 +19,8 @@ import {
 } from "./engine-detour.ts";
 import {
   engineDetourStdoutByteLength,
+  readEngineDetourAttemptScope,
+  readInvocationSelectedHost,
   reportEngineDetourCall,
 } from "./engine-detour-usage.ts";
 
@@ -48,6 +50,9 @@ type EngineDetourArgs = Static<typeof engineDetourArgsSchema>;
 type EngineDetourContext = Pick<HostContext, "cwd" | "mode" | "abort"> & {
   sessionManager?: Pick<HostContext["sessionManager"], "getSessionFile">;
   runDirectory?: string;
+  courtAttemptId?: string;
+  /** Selected host when already projected onto HostContext. */
+  host?: string;
 };
 
 export type EngineDetourHostActions = {
@@ -72,6 +77,12 @@ function isCallerCancellation(
     return true;
   }
   return false;
+}
+
+function asError(error: unknown, fallback: string): Error {
+  return error instanceof Error
+    ? error
+    : new Error(String(error).trim() || fallback);
 }
 
 /**
@@ -118,9 +129,26 @@ export function createEngineDetourToolDefinition(input: {
 
       const sessionParent = ctx.sessionManager?.getSessionFile?.();
       const startedAt = Date.now();
-      const runId = typeof ctx.runDirectory === "string" && ctx.runDirectory.length > 0
-        ? basenameRunId(ctx.runDirectory)
+      const runDirectory = typeof ctx.runDirectory === "string" && ctx.runDirectory.length > 0
+        ? ctx.runDirectory
         : undefined;
+      const runId = runDirectory === undefined ? undefined : basenameRunId(runDirectory);
+      // Prefer per-invocation scope file (resume = new unit); ctx.courtAttemptId
+      // is only a test/direct-call fallback (open court may reuse court id).
+      const attemptId =
+        (runDirectory === undefined
+          ? undefined
+          : readEngineDetourAttemptScope(runDirectory))
+        ?? (typeof ctx.courtAttemptId === "string" && ctx.courtAttemptId.trim() !== ""
+          ? ctx.courtAttemptId
+          : undefined);
+      const host =
+        typeof ctx.host === "string" && ctx.host.trim() !== ""
+          ? ctx.host.trim()
+          : runDirectory === undefined
+            ? undefined
+            : readInvocationSelectedHost(runDirectory);
+
       const recordCall = (observed: {
         code?: number;
         stdoutByteLength?: number;
@@ -132,6 +160,8 @@ export function createEngineDetourToolDefinition(input: {
           cwd: ctx.cwd,
           sessionParent,
           ...(runId === undefined ? {} : { runId }),
+          ...(attemptId === undefined ? {} : { attemptId }),
+          ...(host === undefined ? {} : { host }),
           ...(observed.code === undefined ? {} : { code: observed.code }),
           ...(observed.stdoutByteLength === undefined
             ? {}
@@ -149,11 +179,22 @@ export function createEngineDetourToolDefinition(input: {
       } catch (error) {
         if (isCallerCancellation(error, signal)) throw error;
         // Spawn path: duration only — code/stdout bytes absent (not forged 0).
-        recordCall({});
-        const cause = error instanceof Error
-          ? error
-          : new Error(String(error).trim() || "劳务引擎 spawn 失败");
-        input.fail(cause, toolCallId, ctx);
+        // If sitian append also fails, keep both real causes (失败诚实 / AggregateError).
+        const spawnCause = asError(error, "劳务引擎 spawn 失败");
+        try {
+          recordCall({});
+        } catch (recordError) {
+          input.fail(
+            new AggregateError(
+              [spawnCause, asError(recordError, "engine detour usage ledger write failed")],
+              "engine detour spawn and usage ledger both failed",
+              { cause: spawnCause },
+            ),
+            toolCallId,
+            ctx,
+          );
+        }
+        input.fail(spawnCause, toolCallId, ctx);
       }
 
       const stdoutByteLength = engineDetourStdoutByteLength(result.stdout);

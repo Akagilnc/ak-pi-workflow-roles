@@ -5,20 +5,20 @@
  * Asserts only structured TerminalResult.roleOutcome.decisiveFacts — never
  * stdout/table presentation (ADR 0052 / anchoring constitution).
  *
- * Tool execute still owns sitian live-write; settlement projects this-invocation
- * aggregate. Failure paths go through the tool fail seam (session toolResult
- * join key written there), not a pre-planted key.
+ * Attempt scope is courtAttemptId bound at sitian write — not Pi session
+ * toolResult join keys. Tests therefore do not plant session toolResults for
+ * ledger filtering (header-only session stays valid).
  */
 import assert from "node:assert/strict";
-import { appendFileSync } from "node:fs";
-import { appendFile, mkdir, writeFile } from "node:fs/promises";
+import { appendFile, chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
-import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import {
   ENGINE_DETOUR_TOOL_USAGE_FACT_KEY,
+  engineDetourCallIdentity,
+  writeEngineDetourAttemptScope,
   type EngineDetourToolUsageFact,
 } from "../../src/engine-detour-usage.ts";
 import { createEngineDetourToolDefinition } from "../../src/engine-detour-tool.ts";
@@ -48,8 +48,13 @@ type TurnPlan = {
     readonly toolCallId: string;
     readonly kind: DetourKind;
   }[];
-  /** Prior-attempt detours, then a fresh user row, then current-attempt detours. */
-  readonly resumeSplit?: {
+  /**
+   * Two attempt windows in one volume (prior attemptId then current).
+   * Settlement must count only current — including duplicate toolCallId.
+   */
+  readonly attemptSplit?: {
+    readonly priorAttemptId: string;
+    readonly currentAttemptId: string;
     readonly prior: readonly { readonly toolCallId: string; readonly kind: DetourKind }[];
     readonly current: readonly { readonly toolCallId: string; readonly kind: DetourKind }[];
   };
@@ -73,43 +78,6 @@ function usageOf(terminal: TerminalResult | undefined): EngineDetourToolUsageFac
   return usage as EngineDetourToolUsageFact | undefined;
 }
 
-/** Host-shaped fail: durable toolResult then stop (mirrors infrastructure seam). */
-function failWritingToolResult(sessionFile: string) {
-  return (error: Error, toolCallId: string): never => {
-    appendFileSync(
-      sessionFile,
-      `${JSON.stringify({
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolCallId,
-          toolName: ENGINE_DETOUR_TOOL_NAME,
-          isError: true,
-          content: [{ type: "text", text: error.message }],
-        },
-      })}\n`,
-      "utf8",
-    );
-    throw error;
-  };
-}
-
-async function appendSuccessToolResult(sessionFile: string, toolCallId: string): Promise<void> {
-  await appendFile(
-    sessionFile,
-    `${JSON.stringify({
-      type: "message",
-      message: {
-        role: "toolResult",
-        toolCallId,
-        toolName: ENGINE_DETOUR_TOOL_NAME,
-        isError: false,
-      },
-    })}\n`,
-    "utf8",
-  );
-}
-
 async function ensureScripts(project: string): Promise<{
   readonly echo: string;
   readonly nonzero: string;
@@ -128,11 +96,23 @@ async function runDetours(input: {
   readonly project: string;
   readonly sessionFile: string;
   readonly runDirectory: string;
+  readonly attemptId?: string;
+  readonly host?: string;
   readonly calls: readonly { readonly toolCallId: string; readonly kind: DetourKind }[];
 }): Promise<void> {
   if (input.calls.length === 0) return;
   const scripts = await ensureScripts(input.project);
   for (const call of input.calls) {
+    const ctx = {
+      cwd: input.project,
+      mode: "test",
+      abort() {},
+      sessionManager: { getSessionFile: () => input.sessionFile },
+      runDirectory: input.runDirectory,
+      ...(input.attemptId === undefined ? {} : { courtAttemptId: input.attemptId }),
+      ...(input.host === undefined ? {} : { host: input.host }),
+    };
+
     if (call.kind === "ok") {
       const tool = createEngineDetourToolDefinition({
         engineName: ENGINE,
@@ -145,21 +125,17 @@ async function runDetours(input: {
         { argv: [process.execPath, scripts.echo] },
         undefined,
         undefined,
-        {
-          cwd: input.project,
-          mode: "test",
-          abort() {},
-          sessionManager: { getSessionFile: () => input.sessionFile },
-          runDirectory: input.runDirectory,
-        },
+        ctx,
       );
-      await appendSuccessToolResult(input.sessionFile, call.toolCallId);
+      // Intentionally no session toolResult write — ledger is attempt-scoped sitian.
       continue;
     }
 
     const tool = createEngineDetourToolDefinition({
       engineName: ENGINE,
-      fail: failWritingToolResult(input.sessionFile),
+      fail(error) {
+        throw error;
+      },
     });
     const argv =
       call.kind === "spawn"
@@ -173,13 +149,7 @@ async function runDetours(input: {
         { argv },
         undefined,
         undefined,
-        {
-          cwd: input.project,
-          mode: "test",
-          abort() {},
-          sessionManager: { getSessionFile: () => input.sessionFile },
-          runDirectory: input.runDirectory,
-        },
+        ctx,
       ),
     );
   }
@@ -189,6 +159,25 @@ async function seedUserKickoff(sessionFile: string, text = "go"): Promise<void> 
   await writeFile(
     sessionFile,
     `${JSON.stringify({ type: "message", message: { role: "user", content: text } })}\n`,
+    "utf8",
+  );
+}
+
+/** Header-only session principal (non-Pi production shape). */
+async function seedHeaderOnlySession(
+  sessionFile: string,
+  runId: string,
+  cwd: string,
+): Promise<void> {
+  await writeFile(
+    sessionFile,
+    `${JSON.stringify({
+      type: "session",
+      version: 3,
+      id: runId,
+      timestamp: new Date().toISOString(),
+      cwd,
+    })}\n`,
     "utf8",
   );
 }
@@ -263,7 +252,6 @@ async function finishTerminal(input: {
   }
 
   if (plan.terminal.kind === "no_receipt") {
-    // Host ends cleanly with no sealed output → lawful no_receipt.
     return { code: 0, stderr: "", timedOut: false };
   }
 
@@ -281,6 +269,7 @@ async function runPublicJudge(input: {
   readonly runId: string;
   readonly engine?: string;
   readonly plan: TurnPlan;
+  readonly headerOnlySession?: boolean;
 }): Promise<{ readonly result: Awaited<ReturnType<typeof runAkRole>> }> {
   const { io } = captureIo();
   const args = ["judge", "--project", input.project, "engine usage ledger"];
@@ -299,30 +288,38 @@ async function runPublicJudge(input: {
         request.principal,
       );
       await mkdir(sessionDirectory, { recursive: true });
-      await seedUserKickoff(sessionFile);
+      if (input.headerOnlySession === true) {
+        await seedHeaderOnlySession(sessionFile, input.runId, request.cwd);
+      } else {
+        await seedUserKickoff(sessionFile);
+      }
 
-      if (input.plan.resumeSplit !== undefined) {
-        await runDetours({
-          project: input.project,
-          sessionFile,
-          runDirectory: request.runDirectory,
-          calls: input.plan.resumeSplit.prior,
-        });
-        await appendFile(
-          sessionFile,
-          `${JSON.stringify({
-            type: "message",
-            message: { role: "user", content: "resume" },
-          })}\n`,
-          "utf8",
+      if (input.plan.attemptSplit !== undefined) {
+        // Explicit attempt ids on both windows; pin scope file to current for settlement.
+        writeEngineDetourAttemptScope(
+          request.runDirectory,
+          input.plan.attemptSplit.priorAttemptId,
         );
         await runDetours({
           project: input.project,
           sessionFile,
           runDirectory: request.runDirectory,
-          calls: input.plan.resumeSplit.current,
+          attemptId: input.plan.attemptSplit.priorAttemptId,
+          calls: input.plan.attemptSplit.prior,
+        });
+        writeEngineDetourAttemptScope(
+          request.runDirectory,
+          input.plan.attemptSplit.currentAttemptId,
+        );
+        await runDetours({
+          project: input.project,
+          sessionFile,
+          runDirectory: request.runDirectory,
+          attemptId: input.plan.attemptSplit.currentAttemptId,
+          calls: input.plan.attemptSplit.current,
         });
       } else {
+        // Dispatch already wrote engine-detour-attempt-id; tool reads it.
         await runDetours({
           project: input.project,
           sessionFile,
@@ -508,6 +505,12 @@ test("public entry: four terminals carry engineDetourToolUsage when engine is mo
           ),
           "sitian pointer must reopen the call",
         );
+        // Host provenance must not invent a false label when admission wrote host.
+        const hostRow = opened.records.find(
+          (r) => r.identity === usage.calls[0]!.recordPointer.identity,
+        );
+        assert.equal(typeof hostRow?.host, "string");
+        assert.ok((hostRow?.host as string).length > 0);
       }
       if (row.label === "accepted-multi") {
         assert.deepEqual(
@@ -516,6 +519,30 @@ test("public entry: four terminals carry engineDetourToolUsage when engine is mo
         );
       }
     }
+  });
+});
+
+test("public entry: header-only session still counts attempt-bound detours", async () => {
+  await withHermeticHome({ prefix: "ak-detour-header-only-" }, async ({ home }) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const { result } = await runPublicJudge({
+      home,
+      project,
+      runId: "r-header-only",
+      engine: ENGINE,
+      headerOnlySession: true,
+      plan: {
+        detours: [{ toolCallId: "c-header", kind: "ok" }],
+        terminal: { kind: "accepted" },
+      },
+    });
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    const usage = usageOf(result.terminal);
+    assert.equal(usage?.callCount, 1);
+    assert.equal(usage?.calls[0]?.toolCallId, "c-header");
   });
 });
 
@@ -582,22 +609,24 @@ test("public entry: no engine → field absent; accepted payload bytes match sea
   });
 });
 
-test("public entry: resume attempt boundary counts only current-attempt toolCallIds", async () => {
+test("public entry: attemptId scope counts only current attempt; duplicate toolCallId ok", async () => {
   await withHermeticHome({ prefix: "ak-detour-public-resume-" }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
-    // Same-session resume boundary inside one public invocation (attempt split).
+    const sharedId = "shared-tool-call-id";
     const { result } = await runPublicJudge({
       home,
       project,
       runId: "r-resume-split",
       engine: ENGINE,
       plan: {
-        resumeSplit: {
-          prior: [{ toolCallId: "prior-attempt", kind: "ok" }],
-          current: [{ toolCallId: "this-attempt", kind: "ok" }],
+        attemptSplit: {
+          priorAttemptId: "attempt-prior",
+          currentAttemptId: "attempt-current",
+          prior: [{ toolCallId: sharedId, kind: "ok" }],
+          current: [{ toolCallId: sharedId, kind: "ok" }],
         },
         terminal: { kind: "accepted" },
       },
@@ -605,7 +634,15 @@ test("public entry: resume attempt boundary counts only current-attempt toolCall
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     const usage = usageOf(result.terminal);
     assert.equal(usage?.callCount, 1);
-    assert.equal(usage?.calls[0]?.toolCallId, "this-attempt");
+    assert.equal(usage?.calls[0]?.toolCallId, sharedId);
+    assert.equal(
+      usage?.calls[0]?.recordPointer.identity,
+      engineDetourCallIdentity({
+        toolCallId: sharedId,
+        runId: "r-resume-split",
+        attemptId: "attempt-current",
+      }),
+    );
   });
 });
 
@@ -616,7 +653,6 @@ test("public entry: explicit resume invocation does not carry prior-run detour c
     seedGitProject(project);
     const runId = "r-xresume";
 
-    // Birth leg: engine + one detour, then leave resumable via typed-429 observation.
     {
       const { io } = captureIo();
       await runAkRole(
@@ -677,8 +713,6 @@ test("public entry: explicit resume invocation does not carry prior-run detour c
       principalAuthority: piDurablePrincipalAuthority,
       roleTurnHost: createMinimalHost(async (request) => {
         const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
-        // Production resume appends a top-level user turn (settlement attempt boundary).
-        // createMinimalHost does not synthesize it — mirror that durable boundary here.
         await appendFile(
           sessionFile,
           `${JSON.stringify({
@@ -724,5 +758,120 @@ test("public entry: explicit resume invocation does not carry prior-run detour c
     const usage = usageOf(resumed.terminal);
     assert.equal(usage?.callCount, 1);
     assert.equal(usage?.calls[0]?.toolCallId, "resume-call");
+  });
+});
+
+test("tool path: spawn + sitian failure keeps both causes via AggregateError", async () => {
+  await withHermeticHome({ prefix: "ak-detour-dual-fail-" }, async ({ home }) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    // Make session parent a non-writable path so sitian append fails after spawn fails.
+    const blockedSession = join(project, "blocked-session-parent");
+    await writeFile(blockedSession, "not-a-dir\n", "utf8");
+    await chmod(blockedSession, 0o000);
+
+    const tool = createEngineDetourToolDefinition({
+      engineName: ENGINE,
+      fail(error) {
+        throw error;
+      },
+    });
+
+    let thrown: unknown;
+    try {
+      await tool.execute(
+        "dual-fail",
+        { argv: ["ak-engine-definitely-missing-binary-xyz-537"] },
+        undefined,
+        undefined,
+        {
+          cwd: project,
+          mode: "test",
+          abort() {},
+          sessionManager: { getSessionFile: () => blockedSession },
+          runDirectory: join(home, "runs", "dual@judge"),
+          courtAttemptId: "attempt-dual",
+          host: "codex",
+        },
+      );
+    } catch (error) {
+      thrown = error;
+    } finally {
+      await chmod(blockedSession, 0o644).catch(() => undefined);
+    }
+
+    assert.ok(thrown instanceof AggregateError, "expected AggregateError");
+    const aggregate = thrown as AggregateError;
+    assert.ok(aggregate.errors.length >= 2, "both spawn and ledger failures required");
+    const texts = aggregate.errors.map((e) =>
+      e instanceof Error ? `${e.name}:${e.message}` : String(e),
+    );
+    assert.ok(
+      texts.some((t) => /ENOENT|spawn|not found|missing|ak-engine/i.test(t)),
+      `spawn cause missing in ${texts.join(" | ")}`,
+    );
+    assert.ok(
+      texts.some((t) => /Sitian|session|ENOTDIR|EACCES|ledger/i.test(t)),
+      `sitian cause missing in ${texts.join(" | ")}`,
+    );
+  });
+});
+
+test("host provenance: invocation host=codex is recorded, not default pi", async () => {
+  await withHermeticHome({ prefix: "ak-detour-host-prov-" }, async ({ home }) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    // Place run under the hermetic ledger home so sitian accepts sessionParent.
+    const bookRuns = join(home, ".ak-roles", "books", "hostprov", "unbound", "runs");
+    const runDirectory = join(bookRuns, "hostprov@judge");
+    const sessionDir = join(runDirectory, "session");
+    await mkdir(sessionDir, { recursive: true });
+    const sessionFile = join(sessionDir, "session.jsonl");
+    await writeFile(sessionFile, "{}\n", "utf8");
+    await writeFile(
+      join(runDirectory, "invocation.json"),
+      JSON.stringify({ role: "judge", engine: ENGINE, host: "codex" }),
+      "utf8",
+    );
+    writeEngineDetourAttemptScope(runDirectory, "att-host");
+
+    const tool = createEngineDetourToolDefinition({
+      engineName: ENGINE,
+      fail(error) {
+        throw error;
+      },
+    });
+    const scripts = await ensureScripts(project);
+    await tool.execute(
+      "host-call",
+      { argv: [process.execPath, scripts.echo] },
+      undefined,
+      undefined,
+      {
+        cwd: project,
+        mode: "test",
+        abort() {},
+        sessionManager: { getSessionFile: () => sessionFile },
+        runDirectory,
+        // host omitted on ctx → must read invocation host=codex, not default pi
+      },
+    );
+
+    const { readEngineDetourToolUsage } = await import("../../src/engine-detour-usage.ts");
+    const usage = await readEngineDetourToolUsage({
+      sessionParent: sessionFile,
+      engineMounted: true,
+      attemptId: "att-host",
+      cwd: runDirectory,
+      home,
+    });
+    assert.equal(usage?.callCount, 1);
+    const opened = await readSitianRecords(usage!.calls[0]!.recordPointer.recordFile);
+    const row = opened.records.find(
+      (r) => r.identity === usage!.calls[0]!.recordPointer.identity,
+    );
+    assert.equal(row?.host, "codex");
   });
 });
