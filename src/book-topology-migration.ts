@@ -44,11 +44,6 @@ export type BookTopologyMigrationContext = {
   readonly backupBooksDirectory: string;
   /** Fresh destination at the former books/ path. */
   readonly booksDirectory: string;
-  /**
-   * Reserved accumulation bag for partition migrators that need cross-pass
-   * ticket identity. Human-view finalization was removed with #900.
-   */
-  readonly touchedTicketsByBook: Map<string, Set<number>>;
 };
 
 export type BookTopologyPartitionMigrator = {
@@ -202,7 +197,6 @@ export async function migrateBookTopology(input: {
   const context: BookTopologyMigrationContext = {
     backupBooksDirectory,
     booksDirectory,
-    touchedTicketsByBook: new Map(),
   };
   const partitions: MigrationPartitionReport[] = [];
   for (const migrator of input.migrators) {

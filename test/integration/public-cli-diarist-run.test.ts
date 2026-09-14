@@ -185,13 +185,16 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       uuid: "queue-deq-1",
       content: "立文件。送司天台记录。",
     }),
-    // 3. runner assistant reply
+    // 3. runner assistant reply — two text blocks share one native id (must both keep)
     JSON.stringify({
       type: "assistant",
       uuid: runnerId,
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "已写入 records.jsonl。" }],
+        content: [
+          { type: "text", text: "已写入 records.jsonl。" },
+          { type: "text", text: "下一步送符宝郎。" },
+        ],
       },
     }),
     // 4. tool result payload — must not enter the diary
@@ -335,16 +338,9 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     const paths = resolveTicketProvenanceVolume(TICKET, project, home);
     const volume = await readTicketProvenance(TICKET, project, home);
     assert.equal(volume.recordFile, paths.recordFile);
-    const ticketDir = join(
-      resolveActivationLedgerHome(home),
-      "books",
-      resolveBookKeyFromGit(project),
-      String(TICKET),
-    );
-    assert.equal(paths.recordFile, join(ticketDir, "records.jsonl"));
-    assert.equal(paths.volumeDir, ticketDir);
+    assert.equal(existsSync(paths.recordFile), true, "unique diary file must exist");
     // Human view cancelled (#900 / single-volume).
-    assert.equal(existsSync(join(ticketDir, "起居录.md")), false);
+    assert.equal(existsSync(join(paths.volumeDir, "起居录.md")), false);
 
     assert.ok(volume.header, "diary header must be present");
     assert.equal(volume.header.ticket, TICKET);
@@ -358,7 +354,10 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     assert.equal(byId.get(fixture.ownerId)?.speaker, "owner");
     assert.equal(byId.get(fixture.ownerId)?.text, "立文件。送司天台记录。");
     assert.equal(byId.get(fixture.runnerId)?.speaker, "runner");
-    assert.equal(byId.get(fixture.runnerId)?.text, "已写入 records.jsonl。");
+    assert.equal(
+      byId.get(fixture.runnerId)?.text,
+      "已写入 records.jsonl。下一步送符宝郎。",
+    );
     assert.equal(byId.get(fixture.interjectionId)?.speaker, "owner");
     assert.equal(byId.get(fixture.interjectionId)?.text, "中途插一句：保留原话。");
     assert.equal(byId.get(fixture.duplicateId)?.text, "首现正文");

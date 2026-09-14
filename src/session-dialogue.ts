@@ -70,6 +70,8 @@ function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
 /**
  * 消息事件适配：助手回话，以及未经入队事件记录的人类输入。
  * 思考块与工具调用块不是回话正文；工具结果载荷整行不取。
+ * 同一条消息的多个 text 块拼成一段正文（共享一个原生 id）——
+ * 身份取首现针对的是卷被重写后的副本行，不是同条消息内的块。
  */
 function fromMessageEvent(row: Record<string, unknown>): DialogueEvent[] {
   const message = isRecord(row.message) ? row.message : undefined;
@@ -78,12 +80,12 @@ function fromMessageEvent(row: Record<string, unknown>): DialogueEvent[] {
   const speaker: DialogueSpeaker | undefined =
     message.role === "assistant" ? "runner" : message.role === "user" ? "owner" : undefined;
   if (speaker === undefined) return [];
+  const parts = textParts(message.content, "text");
+  if (parts.length === 0) return [];
+  const text = parts.join("");
+  if (text === "") return [];
   const id = nativeEventId(row);
-  return textParts(message.content, "text").map((text) => ({
-    speaker,
-    text,
-    ...(id === undefined ? {} : { id }),
-  }));
+  return [{ speaker, text, ...(id === undefined ? {} : { id }) }];
 }
 
 /** 已有入队事件的宿主：人类输入只从入队事件取，消息侧不重复取。 */
