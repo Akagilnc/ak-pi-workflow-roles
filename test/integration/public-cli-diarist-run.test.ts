@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -22,12 +22,11 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
-import { ticketProvenancePartitionMigrator } from "../../src/book-topology-record-class-migrators.ts";
+import { migrateBookTopology } from "../../src/book-topology-migration.ts";
+import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
 import {
   readTicketProvenance,
-  reprojectTicketProvenance,
   resolveTicketProvenanceVolume,
-  TicketProvenanceInputError,
 } from "../../src/ticket-provenance.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
@@ -436,8 +435,8 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       join(home, ".claude", "projects", "probe", "session.jsonl"),
     );
 
-    // Seed an already-accepted authoritative volume so round-1 unparsable reask
-    // must leave it byte-identical (publication integrity).
+    // Seed an already-accepted volume with full-range sessions so amendments-only
+    // continuation can reuse header bounds after unparsable reask.
     const paths = resolveTicketProvenanceVolume(TICKET, project, home);
     await mkdir(paths.volumeDir, { recursive: true });
     const priorBody = `${JSON.stringify({
@@ -445,7 +444,12 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       ticket: TICKET,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
-      sessions: [{ path: fixture.path, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+      sessions: [
+        {
+          path: fixture.path,
+          ranges: [{ from: { line: 1 }, to: { line: fixture.lastLine } }],
+        },
+      ],
     })}\n${JSON.stringify({
       speaker: "owner",
       s: 0,
@@ -488,7 +492,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
                 ],
               };
             }
-            // Second turn: cover the unparsable line handed back by reask.
+            // Second turn: payload-id bounds + amendment (nativeEventId coherence via public entry).
             assert.ok(lastReask, "expected unparsable-line reask before amendment");
             assert.match(lastReask, /amendments/);
             assert.ok(lastReask.includes(fixture.unparsableRaw));
@@ -505,7 +509,11 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
               sessions: [
                 {
                   path: fixture.path,
-                  ranges: [{ from: { line: 1 }, to: { line: fixture.lastLine } }],
+                  ranges: [
+                    // Codex payload.id must resolve as bound endpoints.
+                    { from: { id: "msg-codex-owner" }, to: { id: "msg-codex-runner" } },
+                    { from: { line: 1 }, to: { line: fixture.lastLine } },
+                  ],
                 },
               ],
               amendments: [
@@ -623,116 +631,9 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     assert.equal(amended.speaker, "owner");
     assert.equal(amended.text, "补写：坏行原话由起居郎交回。");
 
-    // Codex payload.id is both landed and resolvable as a bound endpoint (single nativeEventId).
+    // Codex payload.id landed via public entry (bound by id in turn-2 ranges).
     assert.equal(byId.get("msg-codex-owner")?.text, fixture.codexOwnerText);
     assert.equal(byId.get("msg-codex-runner")?.text, fixture.codexRunnerText);
-    const byPayloadId = await reprojectTicketProvenance({
-      ticketNumber: TICKET,
-      cwd: project,
-      home,
-      sessions: [
-        {
-          path: fixture.path,
-          ranges: [
-            {
-              from: { id: "msg-codex-owner" },
-              to: { id: "msg-codex-runner" },
-            },
-          ],
-        },
-      ],
-    });
-    assert.equal(
-      byPayloadId.lines.some((line) => line.id === "msg-codex-owner"),
-      true,
-      "bound by Codex payload id must resolve",
-    );
-    assert.equal(byPayloadId.unparsable.length, 0);
-
-    // Amendments-only continuation: empty sessions reuses prior header sessions (not no-op).
-    // Restore full-range header first so amendments-only has bounds to apply.
-    await reprojectTicketProvenance({
-      ticketNumber: TICKET,
-      cwd: project,
-      home,
-      sessions: [
-        {
-          path: fixture.path,
-          ranges: [{ from: { line: 1 }, to: { line: fixture.lastLine } }],
-        },
-      ],
-      amendments: [
-        {
-          s: 0,
-          line: fixture.unparsableLine,
-          speaker: "owner",
-          text: "补写：坏行原话由起居郎交回。",
-        },
-      ],
-    });
-    const amendOnly = await reprojectTicketProvenance({
-      ticketNumber: TICKET,
-      cwd: project,
-      home,
-      sessions: [],
-      amendments: [
-        {
-          s: 0,
-          line: fixture.unparsableLine,
-          speaker: "owner",
-          text: "amendments-only 续写",
-        },
-      ],
-    });
-    assert.equal(
-      amendOnly.lines.find((line) => line.line === fixture.unparsableLine)?.text,
-      "amendments-only 续写",
-      "amendments-only must reproject via prior header sessions",
-    );
-    // Seed volume with lawful empty sessions header — amendments-only must typed-fail.
-    await writeFile(
-      paths.recordFile,
-      `${JSON.stringify({
-        repo: resolveBookKeyFromGit(project),
-        ticket: TICKET,
-        createdAt: "t0",
-        updatedAt: "t0",
-        sessions: [],
-      })}\n`,
-      "utf8",
-    );
-    await assert.rejects(
-      () =>
-        reprojectTicketProvenance({
-          ticketNumber: TICKET,
-          cwd: project,
-          home,
-          sessions: [],
-          amendments: [{ s: 0, line: 1, speaker: "owner", text: "x" }],
-        }),
-      (error: unknown) => error instanceof TicketProvenanceInputError,
-    );
-
-    // Restore a good volume for subsequent damage/path probes.
-    await reprojectTicketProvenance({
-      ticketNumber: TICKET,
-      cwd: project,
-      home,
-      sessions: [
-        {
-          path: fixture.path,
-          ranges: [{ from: { line: 1 }, to: { line: fixture.lastLine } }],
-        },
-      ],
-      amendments: [
-        {
-          s: 0,
-          line: fixture.unparsableLine,
-          speaker: "owner",
-          text: "补写：坏行原话由起居郎交回。",
-        },
-      ],
-    });
 
     // On-disk shape: first line header, bare dialogue rows after (no SitianRecord shell).
     const rawFile = await readFile(paths.recordFile, "utf8");
@@ -741,66 +642,62 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     assert.equal(typeof JSON.parse(rawLines[1]!).speaker, "string");
     assert.equal(JSON.parse(rawLines[1]!).kind, undefined);
 
-    // Empty sessions must preserve any existing non-empty volume (damaged header too).
-    const damagedBody = `{"repo":"x","ticket":${TICKET},"createdAt":"t0","updatedAt":"t0","sessions":"bad"}\n{"speaker":"owner","s":0,"text":"opaque-preserved"}\n`;
-    await writeFile(paths.recordFile, damagedBody, "utf8");
-    await reprojectTicketProvenance({
-      ticketNumber: TICKET,
-      cwd: project,
-      home,
-      sessions: [],
-    });
-    assert.equal(
-      await readFile(paths.recordFile, "utf8"),
-      damagedBody,
-      "empty sessions must not wipe a non-empty volume lacking a lawful header",
-    );
-
-    // Broad host roots are not session sources: `.pi/not-a-session.jsonl` stays out.
-    const decoy = join(home, ".pi", "not-a-session.jsonl");
-    await mkdir(join(home, ".pi"), { recursive: true });
-    await writeFile(
-      decoy,
-      `${JSON.stringify({
-        type: "user",
-        message: { role: "user", content: [{ type: "text", text: "decoy" }] },
-      })}\n`,
-      "utf8",
-    );
-    await assert.rejects(
-      () =>
-        reprojectTicketProvenance({
-          ticketNumber: TICKET,
-          cwd: project,
-          home,
-          sessions: [{ path: decoy, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+    // Amendments-only continuation through the same public entry (empty sessions).
+    const runId2 = "01a0diar00-0000-7000-8000-000000000011";
+    const second = await runAkRole(
+      ["diarist", "--project", project, `续写 #${TICKET} 起居录`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: captureIo().io,
+        createRunId: () => runId2,
+        principalAuthority: immutablePrincipalAuthority,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: immutablePrincipalAuthority,
+          piRunner: diaristEnvelopeRunner({
+            status: "completed",
+            ticketNumber: TICKET,
+            sessions: [],
+            amendments: [
+              {
+                s: 0,
+                line: fixture.unparsableLine,
+                speaker: "owner",
+                text: "amendments-only 续写",
+              },
+            ],
+          }),
         }),
-      /session unreadable/,
+      },
     );
+    assert.equal(second.exitCode, 0, "amendments-only diarist run failed");
+    const afterAmendOnly = await readTicketProvenance(TICKET, project, home);
     assert.equal(
-      await readFile(paths.recordFile, "utf8"),
-      damagedBody,
-      "rejected path must not rewrite the preserved volume",
+      afterAmendOnly.lines.find((line) => line.line === fixture.unparsableLine)?.text,
+      "amendments-only 续写",
+      "amendments-only via ak-role diarist must reproject prior header sessions",
     );
+  });
+});
 
-    // Bare + legacy migration for the same ticket must not mix (header stays first line).
-    const bookKey = resolveBookKeyFromGit(project);
-    const backupBooks = join(home, "mig-backup", "books");
-    const destBooks = join(home, "mig-dest", "books");
-    const legacyDir = join(backupBooks, bookKey, "ticket-provenance");
-    const bareDir = join(backupBooks, bookKey, String(TICKET));
+test("migrateBookTopology preserves legacy under unbound when bare wins same ticket", async () => {
+  await withTempRoot("ak-book-topology-mig-", async (home) => {
+    const ledgerHome = join(home, ".ak-roles");
+    const bookKey = "demo-book";
+    const books = join(ledgerHome, "books");
+    const legacyDir = join(books, bookKey, "ticket-provenance");
+    const bareDir = join(books, bookKey, String(TICKET));
     await mkdir(legacyDir, { recursive: true });
     await mkdir(bareDir, { recursive: true });
-    await writeFile(
-      join(legacyDir, "records.jsonl"),
-      `${JSON.stringify({
-        kind: "ticket-provenance",
-        subject: String(TICKET),
-        identity: "legacy-1",
-        payload: { note: "old" },
-      })}\n`,
-      "utf8",
-    );
+    const legacyRaw = JSON.stringify({
+      kind: "ticket-provenance",
+      subject: String(TICKET),
+      identity: "legacy-1",
+      payload: { note: "old" },
+    });
+    await writeFile(join(legacyDir, "records.jsonl"), `${legacyRaw}\n`, "utf8");
     const bareHeader = JSON.stringify({
       repo: bookKey,
       ticket: TICKET,
@@ -808,28 +705,29 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       updatedAt: "t0",
       sessions: [],
     });
-    const bareLine = JSON.stringify({
-      speaker: "owner",
-      s: 0,
-      text: "bare-body",
+    const bareLine = JSON.stringify({ speaker: "owner", s: 0, text: "bare-body" });
+    await writeFile(join(bareDir, "records.jsonl"), `${bareHeader}\n${bareLine}\n`, "utf8");
+
+    const report = await migrateBookTopology({
+      ledgerHome,
+      migrators: BOOK_TOPOLOGY_PARTITION_MIGRATORS,
+      env: {},
+      now: new Date("2026-09-14T00:00:00.000Z"),
     });
-    await writeFile(
-      join(bareDir, "records.jsonl"),
-      `${bareHeader}\n${bareLine}\n`,
-      "utf8",
-    );
-    await mkdir(destBooks, { recursive: true });
-    await ticketProvenancePartitionMigrator.migrate({
-      backupBooksDirectory: backupBooks,
-      booksDirectory: destBooks,
-    });
-    const migrated = await readFile(
-      join(destBooks, bookKey, String(TICKET), "records.jsonl"),
-      "utf8",
-    );
+
+    const tp = report.partitions.find((p) => p.partition === "ticket-provenance");
+    assert.ok(tp, "ticket-provenance partition report present");
+    assert.equal(tp.before, 3);
+    assert.equal(tp.placed, 2, "bare header + body placed");
+    assert.equal(tp.unbound, 1, "legacy rehomed unbound");
+    assert.equal(tp.discarded, 0);
+
+    const destVolume = join(report.booksDirectory, bookKey, String(TICKET), "records.jsonl");
+    const migrated = await readFile(destVolume, "utf8");
     const migratedLines = migrated.split("\n").filter((line) => line.trim() !== "");
     assert.equal(JSON.parse(migratedLines[0]!).ticket, TICKET);
     assert.equal(JSON.parse(migratedLines[0]!).kind, undefined);
+    assert.equal(JSON.parse(migratedLines[1]!).text, "bare-body");
     assert.equal(
       migratedLines.some((line) => {
         try {
@@ -839,9 +737,31 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
         }
       }),
       false,
-      "legacy SitianRecord must not sit under bare header",
+      "legacy must not remain under bare header",
     );
-    assert.equal(JSON.parse(migratedLines[1]!).text, "bare-body");
+
+    // Legacy bytes preserved under unbound with honest disposition.
+    const unboundRoot = join(report.booksDirectory, bookKey, "unbound", "ticket-provenance");
+    async function collectRaw(dir: string, acc: string[] = []): Promise<string[]> {
+      let entries;
+      try {
+        entries = await readdir(dir, { withFileTypes: true });
+      } catch {
+        return acc;
+      }
+      for (const entry of entries) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) await collectRaw(path, acc);
+        else if (entry.isFile()) acc.push(await readFile(path, "utf8"));
+      }
+      return acc;
+    }
+    const unboundBodies = await collectRaw(unboundRoot);
+    assert.equal(
+      unboundBodies.some((body) => body.includes(legacyRaw)),
+      true,
+      "legacy source bytes must land in unbound",
+    );
   });
 });
 

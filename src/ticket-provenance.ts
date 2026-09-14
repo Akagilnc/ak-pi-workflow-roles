@@ -8,6 +8,7 @@ import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
+  errnoCode,
   packageMachineHome,
   physicallyContainedIn,
   resolveActivationLedgerHome,
@@ -291,11 +292,17 @@ async function projectSessionRanges(input: {
     sessionLines = await readLedgerSessionJsonlLines(input.session.path);
   } catch (error) {
     if (error instanceof TicketProvenanceInputError) throw error;
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new TicketProvenanceInputError(
-      `session unreadable: ${input.session.path} (${detail})`,
-      { cause: error },
-    );
+    // Only absence/path-shape misses are model input errors → reask.
+    // EIO / EMFILE / EACCES / other runtime faults keep native identity + cause.
+    const code = errnoCode(error);
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new TicketProvenanceInputError(
+        `session unreadable: ${input.session.path} (${detail})`,
+        { cause: error },
+      );
+    }
+    throw error;
   }
 
   const rows = sessionLines.map((entry) => entry.row);
