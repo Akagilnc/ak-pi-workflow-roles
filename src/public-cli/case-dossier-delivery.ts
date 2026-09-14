@@ -56,7 +56,6 @@ export async function projectCaseDossierPointerSection(input: {
     CASE_DOSSIER_SECTION_HEADING,
     "",
     `票号：#${input.ticketNumber}`,
-    `人读视图：${describeDossierFile(volume.humanViewFile)}`,
     `记录卷宗：${describeDossierFile(volume.recordFile)}`,
   ].join("\n");
 }

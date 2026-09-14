@@ -1,16 +1,17 @@
 /**
- * Public 起居郎 (diarist) terminating receipt contracts — ADR 0075（起居郎是 LLM 角色）。
+ * Public 起居郎 (diarist) terminating receipt contracts — ADR 0075 `diarist-is-role` / #901.
  * Lawful explicit releases: completed (入录) | escalate (认不出本庭对象上抛).
- * Machine facts about the volume come from the mechanical sitian seam, never
+ * Machine facts about the volume come from the mechanical reproject seam, never
  * from model self-report (锚定宪法); this module owns the receipt shape only.
  *
- * #779: no frozen candidate catalog; LLM finds sources and submits whole blocks.
- * Mechanical layer does not judge LLM output (no quote/ticket/relevance verify).
+ * #901: LLM submits bounds (+ optional amendments); mechanical layer projects.
  */
 
-import type {
-  TicketProvenanceSourceKind,
-  TicketProvenanceSourceRef,
+import {
+  projectTicketProvenanceAmendments,
+  projectTicketProvenanceSessions,
+  type TicketProvenanceAmendment,
+  type TicketProvenanceSession,
 } from "./ticket-provenance-contracts.ts";
 import {
   isSafePositiveTicketNumber,
@@ -20,31 +21,17 @@ import {
 export const DIARIST_OUTPUT_TOOL_NAME = "ak_diarist_output";
 export const DIARIST_ACCEPTED_TEXT = "起居郎回执已接受";
 
-/**
- * One whole block the diarist chose to enter (ADR 0075 誊录整块对话)。
- * LLM supplies the block bytes + source pointer; mechanical layer appends as-is.
- */
-export type DiaristEntrySubmission = {
-  readonly sourceKind: TicketProvenanceSourceKind;
-  readonly sourceRef: TicketProvenanceSourceRef;
-  /** Whole-block transcript — not a pointer-only stand-in. */
-  readonly transcript: string;
-  readonly timestamp: string;
-  /** Human-facing note (relation to this case). Not a machine gate. */
-  readonly note?: string;
-};
-
 export type DiaristOutput =
   | {
       readonly status: "completed";
       /**
-       * Typed court-target assertion (ADR 0075 起居郎 LLM 自行认票)。
+       * Typed court-target assertion (ADR 0075 `diarist-resolves-ticket-llm-layer`).
        * Positive integer = 本庭对象=票N; null/absent = true-unbound (真无票→无录).
        * LLM owns recognition; mechanical layer does not re-judge the number.
        */
       readonly ticketNumber?: number | null;
       /**
-       * #871 typed co-review set (ADR 0075 合审票集 narrow extension)。
+       * #871 typed co-review set (ADR 0075 `diarist-resolves-ticket-llm-layer` narrow extension).
        * Positive integers = tickets that should each receive a diary this court (includes main).
        * Field absent → no new set this turn (resume keeps stored run fact; first court defaults to [main]).
        * Explicit empty array → single-ticket face [main] whole-set replace.
@@ -52,8 +39,17 @@ export type DiaristOutput =
        * Mechanical layer only type-projects/dedupes and guarantees principal membership when applying a set.
        */
       readonly courtTicketNumbers?: readonly number[] | null;
-      /** Whole blocks to append under the asserted ticket. Empty list is lawful. */
-      readonly entries?: readonly DiaristEntrySubmission[];
+      /**
+       * Dialogue bounds: one entry per session volume, each with one or more ranges.
+       * Empty / absent = lawful empty selection (no dialogue this turn).
+       * Malformed endpoints → accept hook reasks (`reask-not-explode`).
+       */
+      readonly sessions?: readonly TicketProvenanceSession[];
+      /**
+       * Optional amendments for unparsable source lines (s + line + speaker + text).
+       * Absent = no amendments this turn (not a shape rejection).
+       */
+      readonly amendments?: readonly TicketProvenanceAmendment[];
     }
   | {
       /** LLM cannot tell which ticket this summons is about — escalate, never wash into 无录. */
@@ -180,8 +176,25 @@ export function validateRecordedDiaristOutput(value: unknown): DiaristOutput {
   throw new Error("Diarist output has no execution discriminator");
 }
 
-/** Entries array as the diarist wrote it — no field rewrite (#836 B6.8/B6.9). */
-export function projectDiaristEntries(value: unknown): unknown[] {
-  const rows = (value as { entries?: unknown } | null)?.entries;
-  return Array.isArray(rows) ? [...rows] : [];
+/**
+ * Project sessions from a completed diarist payload.
+ * Absent key → empty (lawful). Present but unusable → undefined (caller reasks).
+ */
+export function projectDiaristSessions(
+  value: unknown,
+): readonly TicketProvenanceSession[] | undefined {
+  const raw = (value as { sessions?: unknown } | null)?.sessions;
+  if (raw === undefined) return [];
+  return projectTicketProvenanceSessions(raw);
+}
+
+/**
+ * Project optional amendments. Absent / non-array → empty (not a rejection).
+ */
+export function projectDiaristAmendments(
+  value: unknown,
+): readonly TicketProvenanceAmendment[] {
+  const raw = (value as { amendments?: unknown } | null)?.amendments;
+  if (raw === undefined) return [];
+  return projectTicketProvenanceAmendments(raw);
 }

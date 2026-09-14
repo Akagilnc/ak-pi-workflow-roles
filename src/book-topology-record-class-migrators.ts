@@ -2,7 +2,7 @@
  * #866 (T10): record-class partition migrators (build only; execution is #861).
  *
  * Line-closed placement by each row's typed kind (never by source directory alone):
- * - ticket-provenance → <ticket>/ (records.jsonl + human view; live topology)
+ * - ticket-provenance → <ticket>/records.jsonl (live topology; human view cancelled #900)
  * - submission-ledger kinds → owning run session/submission-ledger/
  * - attempt-history → owning run session/attempt-history/
  * - unknown ownership → unbound/ (never silent discard)
@@ -34,29 +34,11 @@ import {
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
 import { S4_SUBMISSION_LEDGER_KINDS } from "./sitian-appender.ts";
-import {
-  projectTicketProvenanceEntry,
-  TICKET_PROVENANCE_HUMAN_VIEW,
-} from "./ticket-provenance-contracts.ts";
-import { renderTicketProvenanceMarkdown } from "./ticket-provenance.ts";
 
 const TICKET_PROVENANCE = "ticket-provenance";
 const SUBMISSION_LEDGER = "submission-ledger";
 const ATTEMPT_HISTORY = "attempt-history";
 const MISPLACED = "misplaced-record-class";
-
-function noteTouchedTicket(
-  context: BookTopologyMigrationContext,
-  bookKey: string,
-  ticketNumber: number,
-): void {
-  let set = context.touchedTicketsByBook.get(bookKey);
-  if (set === undefined) {
-    set = new Set<number>();
-    context.touchedTicketsByBook.set(bookKey, set);
-  }
-  set.add(ticketNumber);
-}
 
 type RecordClass = typeof TICKET_PROVENANCE | typeof SUBMISSION_LEDGER | typeof ATTEMPT_HISTORY;
 
@@ -357,7 +339,6 @@ async function placeTicketProvenanceLine(
     join(context.booksDirectory, bookKey, String(ticketNumber), "records.jsonl"),
     raw,
   );
-  noteTouchedTicket(context, bookKey, ticketNumber);
   return { disposition: "placed", source };
 }
 
@@ -482,62 +463,6 @@ async function mergeOfferedIdentities(
   }
 }
 
-/**
- * Derive the human-read face once from the merged authoritative records.jsonl.
- * Never copy any pre-existing md as if it were the complete view.
- */
-async function writeMergedTicketHumanView(
-  destDir: string,
-  ticketNumber: number,
-): Promise<void> {
-  const lines = await readJsonlLines(join(destDir, "records.jsonl"));
-  const entries = [];
-  const unprojected: unknown[] = [];
-  for (const raw of lines) {
-    if (raw.trim() === "") continue;
-    const parsed = parseJsonlLine(raw);
-    if (!parsed.ok) continue;
-    if (recordClassOfKind(parsed.value.kind) !== TICKET_PROVENANCE) continue;
-    const entry = projectTicketProvenanceEntry(parsed.value.payload);
-    if (entry === undefined) {
-      if (parsed.value.payload !== undefined) unprojected.push(parsed.value.payload);
-      continue;
-    }
-    entries.push(entry);
-  }
-  await ensureDir(destDir);
-  await writeFile(
-    join(destDir, TICKET_PROVENANCE_HUMAN_VIEW),
-    renderTicketProvenanceMarkdown({
-      ticketNumber,
-      entries,
-      ...(unprojected.length > 0 ? { unprojected } : {}),
-    }),
-    "utf8",
-  );
-}
-
-/**
- * After all sources for a ticket have contributed records + offered-identities,
- * emit the single derived human view from the merged JSONL.
- */
-async function finalizeTicketCompanions(
-  context: BookTopologyMigrationContext,
-  bookKey: string,
-  ticketNumbers: ReadonlySet<number>,
-): Promise<void> {
-  for (const ticketNumber of ticketNumbers) {
-    const destDir = join(context.booksDirectory, bookKey, String(ticketNumber));
-    try {
-      await stat(join(destDir, "records.jsonl"));
-    } catch (error) {
-      if (isMigrationEnoent(error)) continue;
-      throw error;
-    }
-    await writeMergedTicketHumanView(destDir, ticketNumber);
-  }
-}
-
 /** Collect typed ticket numbers present in a source volume's records.jsonl. */
 async function ticketNumbersInVolume(volumeDir: string): Promise<number[]> {
   const lines = await readJsonlLines(join(volumeDir, "records.jsonl"));
@@ -563,7 +488,6 @@ async function mergeCompanionsFromVolume(
   writes: RecordWriteCache,
 ): Promise<void> {
   for (const ticketNumber of await ticketNumbersInVolume(volumeDir)) {
-    noteTouchedTicket(context, bookKey, ticketNumber);
     const destDir = join(context.booksDirectory, bookKey, String(ticketNumber));
     await ensureDir(destDir);
     await mergeOfferedIdentities(destDir, volumeDir, writes);
@@ -578,8 +502,6 @@ async function migrateHomePartitionBook(
   outcomes: MigrationItemOutcome[],
 ): Promise<void> {
   const backupBook = join(context.backupBooksDirectory, bookKey);
-  // Touches accumulate via noteTouchedTicket — human view finalizes once after
-  // misplaced lines also land (not here).
   // listVolumeRecordFiles covers partition-root records.jsonl + hashed sub-volumes.
   const rootFiles = await listVolumeRecordFiles(join(backupBook, category));
   for (const filePath of rootFiles) {
@@ -609,8 +531,6 @@ async function migrateHomePartitionBook(
       }
       await migrateJsonlFileByKind(context, bookKey, writes, recordsFile, TICKET_PROVENANCE, outcomes);
       await mergeCompanionsFromVolume(context, bookKey, volumeDir, writes);
-      // Ticket-dir name itself is a typed ticket when the volume lives under it.
-      noteTouchedTicket(context, bookKey, Number(entry.name));
     }
   }
 }
@@ -763,10 +683,6 @@ export const misplacedRecordClassPartitionMigrator: BookTopologyPartitionMigrato
   async migrate(context) {
     const outcomes: MigrationItemOutcome[] = [];
     await forEachBook(context, (bookKey, writes) => migrateMisplacedBook(context, bookKey, writes, outcomes));
-    // All record-class lines (home + misplaced) have landed — one human-view pass.
-    for (const [bookKey, tickets] of context.touchedTicketsByBook) {
-      await finalizeTicketCompanions(context, bookKey, tickets);
-    }
     return reconcileMigrationPartition(MISPLACED, "lines", outcomes);
   },
 };

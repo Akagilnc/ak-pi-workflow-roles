@@ -351,8 +351,17 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
     );
     const volume = resolveTicketProvenanceVolume(582, project, home);
     await mkdir(volume.volumeDir, { recursive: true });
-    await writeFile(volume.humanViewFile, "# 起居录 · #582\n", "utf8");
-    await writeFile(volume.recordFile, "{}\n", "utf8");
+    await writeFile(
+      volume.recordFile,
+      `${JSON.stringify({
+        repo: "project",
+        ticket: 582,
+        createdAt: "2026-09-14T00:00:00.000Z",
+        updatedAt: "2026-09-14T00:00:00.000Z",
+        sessions: [],
+      })}\n`,
+      "utf8",
+    );
 
     let turnPrompt = "";
     const baseHost = roleTurnHostFromLegacyPiRunner({
@@ -387,7 +396,7 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
-    assert.ok(turnPrompt.includes(volume.humanViewFile));
     assert.ok(turnPrompt.includes(volume.recordFile));
+    assert.equal(turnPrompt.includes("起居录.md"), false);
   });
 });

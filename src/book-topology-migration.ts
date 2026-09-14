@@ -45,9 +45,8 @@ export type BookTopologyMigrationContext = {
   /** Fresh destination at the former books/ path. */
   readonly booksDirectory: string;
   /**
-   * Ticket numbers whose records.jsonl grew during record-class placement.
-   * Human view is finalized once after all record-class migrators finish —
-   * never after ticket-provenance home alone (misplaced lines can still land).
+   * Reserved accumulation bag for partition migrators that need cross-pass
+   * ticket identity. Human-view finalization was removed with #900.
    */
   readonly touchedTicketsByBook: Map<string, Set<number>>;
 };

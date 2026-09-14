@@ -1,8 +1,7 @@
 /**
- * #708 / #779 public 起居郎 seat — `ak-role diarist` is a role like the other seats.
- * No frozen catalog; LLM submits whole blocks; mechanical layer appends only.
- * Owner testing ruling: only prove the 起居录 is generated and readable; content
- * quality is judged by 大理寺 and real use. No quote/note/entry-count locks.
+ * #708 / #779 / #901 public 起居郎 seat — `ak-role diarist` is a role like the other seats.
+ * LLM submits bounds (+ optional amendments); mechanical layer reprojects records.jsonl.
+ * Single seam: real entry, scripted host, on-disk session fixture, assert the unique diary file.
  */
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
@@ -28,6 +27,7 @@ import {
   resolveTicketProvenanceVolume,
 } from "../../src/ticket-provenance.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
+import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
@@ -38,9 +38,6 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const TICKET = 708;
-/** Structured source pointer the protocol payload and volume must share. */
-const ENTRY_SESSION_FILE = "/probe/session.jsonl";
-const ENTRY_ID = "probe-entry-1";
 
 const immutablePrincipalAuthority: DurablePrincipalAuthority = {
   issue(request) {
@@ -78,12 +75,14 @@ type RegisteredTool = {
   ): Promise<{ details?: unknown }>;
 };
 
+type DiaristSubmit = unknown | ((round: number, lastReask?: string) => unknown);
+
 /**
  * Faux pi process for this seat: drives the production diarist role envelope.
- * Projects the spawn run identity into typed HostContext (#779/#879).
+ * Supports the #901 reask loop (unusable bounds / unparsable-line amendments).
  */
 function diaristEnvelopeRunner(
-  submitted: unknown,
+  submitted: DiaristSubmit,
   behavior?: { readonly afterAdmit?: "throw" },
 ): LegacyFauxPiRunner {
   return async (args, options) => {
@@ -106,19 +105,41 @@ function diaristEnvelopeRunner(
     });
     await runtime.activate();
     assert.ok(registered, "diarist envelope registered no output tool");
-    const accepted = await registered.execute(
-      "call_diarist_1",
-      submitted,
-      undefined,
-      undefined,
-      {
-        runDirectory: runDir,
-        sessionManager: {
-          getSessionDir: () => sessionDir,
-          getSessionFile: () => sessionFile,
-        },
-      } as HostContext,
-    );
+
+    const ctx = {
+      runDirectory: runDir,
+      sessionManager: {
+        getSessionDir: () => sessionDir,
+        getSessionFile: () => sessionFile,
+      },
+    } as HostContext;
+
+    let round = 0;
+    let lastReask: string | undefined;
+    let accepted: { details?: unknown } | undefined;
+    // No round cap in production either — fixture stops after a generous bound
+    // so a stuck reask fails the test instead of hanging the suite.
+    while (round < 8) {
+      round += 1;
+      const payload =
+        typeof submitted === "function" ? submitted(round, lastReask) : submitted;
+      try {
+        accepted = await registered.execute(
+          `call_diarist_${round}`,
+          payload,
+          undefined,
+          undefined,
+          ctx,
+        );
+        break;
+      } catch (error) {
+        if (!(error instanceof ParentQueueReaskError)) throw error;
+        lastReask = error.message;
+        if (typeof submitted !== "function") throw error;
+      }
+    }
+    assert.ok(accepted, `diarist did not accept within ${round} rounds; last reask: ${lastReask ?? "(none)"}`);
+
     if (behavior?.afterAdmit === "throw") {
       throw new Error("host turn failed after diarist board bind");
     }
@@ -130,11 +151,115 @@ function diaristEnvelopeRunner(
   };
 }
 
-test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
+/**
+ * Session fixture covering the #901 external contracts in one volume:
+ * owner queue input, runner reply, tool result (excluded), absorbed interjection
+ * (enqueue-only), duplicate id (first-seen), and one unparsable line.
+ */
+async function writeDialogueSessionFixture(path: string): Promise<{
+  readonly path: string;
+  readonly ownerId: string;
+  readonly runnerId: string;
+  readonly interjectionId: string;
+  readonly duplicateId: string;
+  readonly unparsableLine: number;
+  readonly unparsableRaw: string;
+}> {
+  const ownerId = "msg-owner-1";
+  const runnerId = "msg-runner-1";
+  const interjectionId = "queue-interject-1";
+  const duplicateId = "msg-dup-1";
+  const unparsableRaw = "{this is not json at all";
+  const rows = [
+    // 1. owner via queue enqueue (sole human-input source when queue events exist)
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      uuid: ownerId,
+      content: "立文件。送司天台记录。",
+    }),
+    // 2. paired dequeue — must not double-count
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "dequeue",
+      uuid: "queue-deq-1",
+      content: "立文件。送司天台记录。",
+    }),
+    // 3. runner assistant reply
+    JSON.stringify({
+      type: "assistant",
+      uuid: runnerId,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "已写入 records.jsonl。" }],
+      },
+    }),
+    // 4. tool result payload — must not enter the diary
+    JSON.stringify({
+      type: "user",
+      uuid: "tool-result-1",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "t1", content: "ls -la output 12085 chars" }],
+      },
+    }),
+    // 5. absorbed interjection (enqueue only; no independent message record)
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      uuid: interjectionId,
+      content: "中途插一句：保留原话。",
+    }),
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "dequeue",
+      uuid: "queue-deq-2",
+      content: "中途插一句：保留原话。",
+    }),
+    // 6. first occurrence of duplicate id
+    JSON.stringify({
+      type: "assistant",
+      uuid: duplicateId,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "首现正文" }],
+      },
+    }),
+    // 7. unparsable line (completed by terminator)
+    unparsableRaw,
+    // 8. duplicate id second occurrence — must not re-enter
+    JSON.stringify({
+      type: "assistant",
+      uuid: duplicateId,
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "副本正文（应被首现吞掉）" }],
+      },
+    }),
+  ];
+  await mkdir(join(path, ".."), { recursive: true });
+  await writeFile(path, `${rows.join("\n")}\n`, "utf8");
+  // Line numbers are 1-based physical lines matching the file we just wrote.
+  return {
+    path,
+    ownerId,
+    runnerId,
+    interjectionId,
+    duplicateId,
+    unparsableLine: 8,
+    unparsableRaw,
+  };
+}
+
+test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands amendment", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+
+    const fixture = await writeDialogueSessionFixture(
+      join(home, "sessions", "probe-session.jsonl"),
+    );
 
     const runId = "01a0diar00-0000-7000-8000-000000000001";
     const { io, stdout } = captureIo();
@@ -150,27 +275,41 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: immutablePrincipalAuthority,
-          piRunner: diaristEnvelopeRunner({
-            status: "completed",
-            ticketNumber: TICKET,
-            entries: [
-              {
-                sourceKind: "cc-session",
-                sourceRef: {
-                  sessionFile: ENTRY_SESSION_FILE,
-                  entryId: ENTRY_ID,
+          piRunner: diaristEnvelopeRunner((round: number, lastReask?: string) => {
+            if (round === 1) {
+              return {
+                status: "completed",
+                ticketNumber: TICKET,
+                sessions: [
+                  {
+                    path: fixture.path,
+                    ranges: [{ from: { line: 1 }, to: { line: 9 } }],
+                  },
+                ],
+              };
+            }
+            // Second turn: cover the unparsable line handed back by reask.
+            assert.ok(lastReask, "expected unparsable-line reask before amendment");
+            assert.match(lastReask, /amendments/);
+            assert.ok(lastReask.includes(fixture.unparsableRaw));
+            return {
+              status: "completed",
+              ticketNumber: TICKET,
+              sessions: [
+                {
+                  path: fixture.path,
+                  ranges: [{ from: { line: 1 }, to: { line: 9 } }],
                 },
-                transcript: "owner decision block for diary commit probe",
-                timestamp: "2026-09-08T00:00:00.000Z",
-              },
-              // Passes transport projection; write-seam rejects unknown sourceKind.
-              {
-                sourceKind: "not-a-source-kind",
-                sourceRef: { sessionFile: "/probe/drop.jsonl" },
-                transcript: "dropped at write seam only",
-                timestamp: "2026-09-08T00:00:00.000Z",
-              },
-            ],
+              ],
+              amendments: [
+                {
+                  s: 0,
+                  line: fixture.unparsableLine,
+                  speaker: "owner",
+                  text: "补写：坏行原话由起居郎交回。",
+                },
+              ],
+            };
           }),
         }),
       },
@@ -196,7 +335,6 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
     const paths = resolveTicketProvenanceVolume(TICKET, project, home);
     const volume = await readTicketProvenance(TICKET, project, home);
     assert.equal(volume.recordFile, paths.recordFile);
-    // docs/dossier-topology.md authority: ticket dir holds records.jsonl + 起居录.md directly.
     const ticketDir = join(
       resolveActivationLedgerHome(home),
       "books",
@@ -204,19 +342,48 @@ test("ak-role diarist runs alone and leaves a readable 起居录", async () => {
       String(TICKET),
     );
     assert.equal(paths.recordFile, join(ticketDir, "records.jsonl"));
-    assert.equal(paths.humanViewFile, join(ticketDir, "起居录.md"));
     assert.equal(paths.volumeDir, ticketDir);
-    // Structured pointer identity only — no free-text / entry-count locks.
-    const landed = volume.entries.find(
-      (e) =>
-        e.sourceKind === "cc-session" &&
-        e.sourceRef.sessionFile === ENTRY_SESSION_FILE &&
-        e.sourceRef.entryId === ENTRY_ID,
+    // Human view cancelled (#900 / single-volume).
+    assert.equal(existsSync(join(ticketDir, "起居录.md")), false);
+
+    assert.ok(volume.header, "diary header must be present");
+    assert.equal(volume.header.ticket, TICKET);
+    assert.equal(volume.header.sessions.length, 1);
+    assert.equal(volume.header.sessions[0]?.path, fixture.path);
+
+    // Speakers + first-seen identity + no tool output + amendment landed.
+    const byId = new Map(
+      volume.lines.filter((line) => line.id !== undefined).map((line) => [line.id!, line]),
     );
-    assert.ok(landed, "volume missing entry with submitted sourceRef");
-    const humanView = await readFile(paths.humanViewFile, "utf8");
-    assert.equal(humanView.length > 0, true, "人读面必须有内容");
-    // Machine sitian facts stay beside the original payload, not injected into it (#836 B6.7).
+    assert.equal(byId.get(fixture.ownerId)?.speaker, "owner");
+    assert.equal(byId.get(fixture.ownerId)?.text, "立文件。送司天台记录。");
+    assert.equal(byId.get(fixture.runnerId)?.speaker, "runner");
+    assert.equal(byId.get(fixture.runnerId)?.text, "已写入 records.jsonl。");
+    assert.equal(byId.get(fixture.interjectionId)?.speaker, "owner");
+    assert.equal(byId.get(fixture.interjectionId)?.text, "中途插一句：保留原话。");
+    assert.equal(byId.get(fixture.duplicateId)?.text, "首现正文");
+    // Duplicate second occurrence must not produce a second line with that id.
+    assert.equal(
+      volume.lines.filter((line) => line.id === fixture.duplicateId).length,
+      1,
+    );
+    // Tool result never enters.
+    assert.equal(
+      volume.lines.some((line) => line.text.includes("ls -la")),
+      false,
+    );
+    // Amendment at the unparsable line.
+    const amended = volume.lines.find((line) => line.line === fixture.unparsableLine);
+    assert.ok(amended, "amended unparsable line must land");
+    assert.equal(amended.speaker, "owner");
+    assert.equal(amended.text, "补写：坏行原话由起居郎交回。");
+
+    // On-disk shape: first line header, bare dialogue rows after (no SitianRecord shell).
+    const rawFile = await readFile(paths.recordFile, "utf8");
+    const rawLines = rawFile.split("\n").filter((line) => line.trim() !== "");
+    assert.equal(JSON.parse(rawLines[0]!).ticket, TICKET);
+    assert.equal(typeof JSON.parse(rawLines[1]!).speaker, "string");
+    assert.equal(JSON.parse(rawLines[1]!).kind, undefined);
   });
 });
 
@@ -242,7 +409,7 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
           piRunner: diaristEnvelopeRunner({
             status: "completed",
             ticketNumber: null,
-            entries: [],
+            sessions: [],
           }),
         }),
       },
@@ -261,15 +428,14 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
     // 真无票→无录: ticket dir itself (topology authority) stays unminted.
     const sample = resolveTicketProvenanceVolume(1, project, home);
     assert.equal(existsSync(sample.recordFile), false);
-    assert.equal(existsSync(sample.humanViewFile), false);
     assert.equal(
       existsSync(sample.volumeDir),
       false,
       `true-unbound must not mint ticket dir ${sample.volumeDir}`,
     );
+    assert.equal(existsSync(join(sample.volumeDir, "起居录.md")), false);
   });
 });
-
 
 /**
  * Host turn already started + board ticket already written by the accept hook,
@@ -308,14 +474,7 @@ test("ak-role diarist host-turn failure still relocates board-bound run", async 
             {
               status: "completed",
               ticketNumber: TICKET,
-              entries: [
-                {
-                  sourceKind: "cc-session",
-                  sourceRef: { sessionFile: ENTRY_SESSION_FILE, entryId: ENTRY_ID },
-                  transcript: "board-bound before host failure",
-                  timestamp: "2026-09-08T00:00:00.000Z",
-                },
-              ],
+              sessions: [],
             },
             { afterAdmit: "throw" },
           ),

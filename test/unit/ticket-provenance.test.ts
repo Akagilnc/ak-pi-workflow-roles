@@ -1,21 +1,21 @@
 /**
- * #582 / ADR 0075 — pure ticket-provenance projectors / identity (no fs/git).
- * Medium append/read volume proofs live under test/integration/diarist-run.test.ts
- * and public-cli-countersign-run.test.ts (real entry).
+ * #901 / ADR 0075 — pure ticket-provenance projectors (no fs/git).
+ * Medium reproject proofs live under test/integration/public-cli-diarist-run.test.ts.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
-  projectTicketProvenanceDiagnostic,
-  projectTicketProvenanceEntry,
+  projectTicketProvenanceAmendments,
+  projectTicketProvenanceHeader,
+  projectTicketProvenanceLine,
+  projectTicketProvenanceSessions,
 } from "../../src/ticket-provenance-contracts.ts";
+import { ticketProvenanceSubject } from "../../src/ticket-provenance.ts";
 import {
-  ticketProvenanceEntryIdentity,
-  ticketProvenanceSubject,
-} from "../../src/ticket-provenance.ts";
-import { projectDiaristEntries } from "../../src/diarist-contracts.ts";
+  projectDiaristAmendments,
+  projectDiaristSessions,
+} from "../../src/diarist-contracts.ts";
 
 test("ticket-provenance subject is the ticket number string", () => {
   assert.equal(ticketProvenanceSubject(582), "582");
@@ -23,119 +23,87 @@ test("ticket-provenance subject is the ticket number string", () => {
   assert.throws(() => ticketProvenanceSubject(-1));
 });
 
-test("entry identity is stable for same source+transcript and differs otherwise", () => {
-  const base = {
-    ticketNumber: 582,
-    sourceKind: "cc-session" as const,
-    sourceRef: { sessionFile: "/s.jsonl", entryId: "u1" },
-    transcript: "立文件。送司天台记录。",
-  };
-  const a = ticketProvenanceEntryIdentity(base);
-  const b = ticketProvenanceEntryIdentity(base);
-  assert.equal(a, b);
-  assert.equal(a.length, 64);
-  assert.notEqual(
-    a,
-    ticketProvenanceEntryIdentity({ ...base, transcript: "other" }),
-  );
-});
-
-test("projectTicketProvenanceEntry keeps original entries; only non-objects are absent", () => {
-  const ok = projectTicketProvenanceEntry({
-    basis: { method: "llm-semantic", anchors: ["#582"] },
-    sourceKind: "cc-session",
-    sourceRef: { sessionFile: "/x", entryId: 1 },
-    transcript: "hello",
-    timestamp: "2026-08-31T00:00:00.000Z",
-  });
-  assert.ok(ok);
-  assert.equal(ok.sourceKind, "cc-session");
-  assert.equal(projectTicketProvenanceEntry(null), undefined);
-  const unknownMethod = projectTicketProvenanceEntry({
-    basis: { method: "nope" },
-    sourceKind: "cc-session",
-    sourceRef: {},
-    transcript: "x",
-    timestamp: "t",
-  });
-  assert.deepEqual(unknownMethod, {
-    basis: { method: "nope" },
-    sourceKind: "cc-session",
-    sourceRef: {},
-    transcript: "x",
-    timestamp: "t",
-  });
-  const extra = {
-    basis: { method: "llm-semantic" },
-    sourceKind: "cc-session",
-    sourceRef: { path: "/x", extraRef: 9 },
-    transcript: "hello",
-    timestamp: "t",
-    extra: { kept: true },
-  };
-  assert.deepEqual(projectTicketProvenanceEntry(extra), extra);
-  assert.equal(projectTicketProvenanceEntry({ original: "raw-row", unprojected: true }), undefined);
-});
-
-test("diagnostic projection: recordClass payload only; forged disguise rejected", () => {
-  const ok = projectTicketProvenanceDiagnostic({
-    recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
-    diagnosticKind: "collector-failed",
-    cause: "engine down",
-    recordedAt: "2026-08-31T00:00:00.000Z",
-  });
-  assert.ok(ok);
-  assert.equal(ok.diagnosticKind, "collector-failed");
-  // Entry projector must not accept diagnostic payload as body.
+test("projectTicketProvenanceSessions: empty is lawful; malformed is absent", () => {
+  assert.deepEqual(projectTicketProvenanceSessions([]), []);
+  assert.equal(projectTicketProvenanceSessions(null), undefined);
+  assert.equal(projectTicketProvenanceSessions("x"), undefined);
   assert.equal(
-    projectTicketProvenanceEntry({
-      recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
-      diagnosticKind: "collector-failed",
-      cause: "engine down",
-      recordedAt: "2026-08-31T00:00:00.000Z",
-    }),
+    projectTicketProvenanceSessions([{ path: "", ranges: [{ from: { line: 1 }, to: { line: 2 } }] }]),
     undefined,
   );
-  // Branch-intermediate disguised shape is not a product diagnostic contract.
   assert.equal(
-    projectTicketProvenanceDiagnostic({
-      basis: { method: "collector-failed", note: "old fail" },
-      sourceKind: "cc-session",
-      sourceRef: { path: "x" },
-      transcript: "old fail",
-      timestamp: "2026-08-31T00:00:00.000Z",
-    }),
+    projectTicketProvenanceSessions([
+      { path: "/s.jsonl", ranges: [{ from: {}, to: { line: 2 } }] },
+    ]),
     undefined,
   );
-  // Unknown method is still a body entry — no allowlist drop (#836 B6.9).
-  const kept = projectTicketProvenanceEntry({
-    basis: { method: "collector-failed", note: "old fail" },
-    sourceKind: "cc-session",
-    sourceRef: { path: "x" },
-    transcript: "old fail",
-    timestamp: "2026-08-31T00:00:00.000Z",
-  });
-  assert.deepEqual(kept, {
-    basis: { method: "collector-failed", note: "old fail" },
-    sourceKind: "cc-session",
-    sourceRef: { path: "x" },
-    transcript: "old fail",
-    timestamp: "2026-08-31T00:00:00.000Z",
-  });
-});
-
-test("projectDiaristEntries keeps original rows including extra fields and non-objects", () => {
-  const rows = [
+  const ok = projectTicketProvenanceSessions([
     {
-      sourceKind: "cc-session",
-      sourceRef: { path: "/a", extraRef: 1 },
-      transcript: "t",
-      timestamp: "ts",
-      extra: "kept",
+      path: "/s.jsonl",
+      ranges: [{ from: { id: "a" }, to: { line: 9 } }],
     },
-    "bare-string",
-    7,
-  ];
-  assert.deepEqual(projectDiaristEntries({ entries: rows, ignored: true }), rows);
-  assert.deepEqual(projectDiaristEntries({}), []);
+  ]);
+  assert.deepEqual(ok, [
+    {
+      path: "/s.jsonl",
+      ranges: [{ from: { id: "a" }, to: { line: 9 } }],
+    },
+  ]);
+});
+
+test("projectTicketProvenanceAmendments skips unusable members; non-array is empty", () => {
+  assert.deepEqual(projectTicketProvenanceAmendments(undefined), []);
+  assert.deepEqual(projectTicketProvenanceAmendments("x"), []);
+  assert.deepEqual(
+    projectTicketProvenanceAmendments([
+      { s: 0, line: 8, speaker: "owner", text: "补" },
+      { s: 0, line: 9, speaker: "nope", text: "x" },
+      { s: 1, line: 2, speaker: "runner" },
+    ]),
+    [{ s: 0, line: 8, speaker: "owner", text: "补" }],
+  );
+});
+
+test("projectTicketProvenanceHeader and line round-trip the diary shape", () => {
+  const header = projectTicketProvenanceHeader({
+    repo: "demo",
+    ticket: 900,
+    createdAt: "t0",
+    updatedAt: "t1",
+    sessions: [{ path: "/s", ranges: [{ from: { line: 1 }, to: { line: 2 } }] }],
+  });
+  assert.ok(header);
+  assert.equal(header.ticket, 900);
+  assert.equal(header.sessions.length, 1);
+
+  const line = projectTicketProvenanceLine({
+    speaker: "runner",
+    s: 0,
+    line: 3,
+    id: "m1",
+    text: "hi",
+  });
+  assert.deepEqual(line, {
+    speaker: "runner",
+    s: 0,
+    line: 3,
+    id: "m1",
+    text: "hi",
+  });
+  assert.equal(projectTicketProvenanceLine({ speaker: "x", s: 0, text: "t" }), undefined);
+});
+
+test("projectDiaristSessions/Amendments: absent fields are empty, not rejection", () => {
+  assert.deepEqual(projectDiaristSessions({}), []);
+  assert.deepEqual(projectDiaristAmendments({}), []);
+  assert.equal(
+    projectDiaristSessions({ sessions: [{ path: "/s", ranges: [] }] }),
+    undefined,
+  );
+  assert.deepEqual(
+    projectDiaristAmendments({
+      amendments: [{ s: 0, line: 1, speaker: "owner", text: "a" }],
+    }),
+    [{ s: 0, line: 1, speaker: "owner", text: "a" }],
+  );
 });

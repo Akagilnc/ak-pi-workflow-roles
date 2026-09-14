@@ -820,16 +820,16 @@ function courtPipelinePiRunner(
             ? {
                 status: "completed" as const,
                 ticketNumber: boundTicket,
-                entries: [] as const,
+                sessions: [] as const,
               }
             : ticketAssertion === "escalate"
               ? { status: "escalate" as const, reason: "cannot identify court target" }
               : ticketAssertion === null
-                ? { status: "completed" as const, ticketNumber: null, entries: [] as const }
+                ? { status: "completed" as const, ticketNumber: null, sessions: [] as const }
                 : {
                     status: "completed" as const,
                     ticketNumber: ticketAssertion,
-                    entries: [] as const,
+                    sessions: [] as const,
                     ...(courtTicketNumbers === undefined
                       ? {}
                       : { courtTicketNumbers: [...courtTicketNumbers] }),
@@ -980,8 +980,8 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     );
 
     const volume = resolveTicketProvenanceVolume(582, project, home);
-    assert.ok(turnPrompt.includes(volume.humanViewFile));
     assert.ok(turnPrompt.includes(volume.recordFile));
+    assert.equal(turnPrompt.includes("起居录.md"), false);
     await readTicketProvenance(582, project, home);
 
     assert.deepEqual(result.terminal?.gate?.actualSeats, ["notary"]);
@@ -1288,8 +1288,8 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
 
     // Unbound delivers no volume path; a known partition path must not appear.
     const volume = resolveTicketProvenanceVolume(582, project, home);
-    assert.equal(turnPrompt.includes(volume.humanViewFile), false);
     assert.equal(turnPrompt.includes(volume.recordFile), false);
+    assert.equal(turnPrompt.includes("起居录.md"), false);
   });
 });
 
@@ -1378,12 +1378,9 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
       const volume = await readTicketProvenance(ticketNumber, project, home);
       assert.ok(volume.recordFile, `ticket #${ticketNumber} must have a record file`);
       await readFile(volume.recordFile, "utf8");
-      const subjects = volume.records
-        .filter((row) => row.kind === "ticket-provenance")
-        .map((row) => row.subject);
-      // Empty-selection still ensures the volume; subject on any written row must match.
-      for (const subject of subjects) {
-        assert.equal(subject, String(ticketNumber));
+      // Empty-selection still ensures the volume; header ticket must match when present.
+      if (volume.header !== undefined) {
+        assert.equal(volume.header.ticket, ticketNumber);
       }
     }
 
@@ -1493,8 +1490,8 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     boundRefreshTickets.length = 0;
     countersignBodyTurns = 0;
     const beforeUnboundVolumes = {
-      parent: (await readTicketProvenance(parent, project, home)).records.length,
-      a: (await readTicketProvenance(childA, project, home)).records.length,
+      parent: (await readTicketProvenance(parent, project, home)).lines.length,
+      a: (await readTicketProvenance(childA, project, home)).lines.length,
     };
     const unbound = await runPublicCountersign(
       ["一般性程序问询，本庭无具体票号。"],
@@ -1512,11 +1509,11 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     assert.equal(countersignBodyTurns, 1, "true-unbound still runs countersign body");
     assert.deepEqual(boundRefreshTickets, [], "true-unbound must not bound-refresh any ticket");
     assert.equal(
-      (await readTicketProvenance(parent, project, home)).records.length,
+      (await readTicketProvenance(parent, project, home)).lines.length,
       beforeUnboundVolumes.parent,
     );
     assert.equal(
-      (await readTicketProvenance(childA, project, home)).records.length,
+      (await readTicketProvenance(childA, project, home)).lines.length,
       beforeUnboundVolumes.a,
     );
   });

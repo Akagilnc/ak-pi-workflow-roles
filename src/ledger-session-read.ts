@@ -37,6 +37,72 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * One physical JSONL line as the single kernel saw it.
+ * `row` present = syntactically complete session object at that 1-based line.
+ * `error` present = the line is complete but unreadable as a session object;
+ * `raw` carries its original bytes so a reader that must keep going (起居录
+ * projection, ADR 0075 `unparsable-line-to-diarist`) can hand the line back
+ * instead of inventing content. The unfinished final fragment at EOF is not a
+ * line — live tail is honest absence, never a bad line.
+ */
+export type LedgerSessionLine = {
+  readonly line: number;
+  readonly raw: string;
+  readonly row?: LedgerSessionRow;
+  readonly error?: string;
+};
+
+/**
+ * Sole line-level scan of a session volume (single parse kernel, two readings).
+ * Keeps live-tail semantics: a malformed line is reported only when a record
+ * terminator completed it; an unfinished final fragment at EOF ends the scan.
+ * This reading never throws on a bad line — `readLedgerSessionJsonl` puts the
+ * loud failure back on top for the consumers that require it.
+ */
+export async function readLedgerSessionJsonlLines(
+  path: string,
+): Promise<LedgerSessionLine[]> {
+  const text = await readFile(path, "utf8");
+  // split keeps a trailing empty segment iff text ends with "\n", so
+  // index < lines.length - 1 means this segment was terminated.
+  const lines = text.split("\n");
+  const out: LedgerSessionLine[] = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index]!;
+    if (!raw.trim()) continue;
+    const lineNumber = index + 1;
+    let row: unknown;
+    try {
+      row = JSON.parse(raw);
+    } catch (error) {
+      if (!(error instanceof SyntaxError)) throw error;
+      const completedByTerminator = index < lines.length - 1;
+      // unfinished fragment at EOF — not a line at all
+      if (!completedByTerminator) break;
+      out.push({
+        line: lineNumber,
+        raw,
+        error: `malformed JSONL record in ${path} at line ${lineNumber}: ${error.message}`,
+      });
+      continue;
+    }
+    // Syntactically complete line: must be a session object. Silent omission
+    // would under-count ledger evidence (failure honesty).
+    if (!isRecord(row)) {
+      const kind = row === null ? "null" : Array.isArray(row) ? "array" : typeof row;
+      out.push({
+        line: lineNumber,
+        raw,
+        error: `complete non-object JSONL record in ${path} at line ${lineNumber}: expected object, got ${kind}`,
+      });
+      continue;
+    }
+    out.push({ line: lineNumber, raw, row });
+  }
+  return out;
+}
+
+/**
  * Read session JSONL with honest live-tail semantics:
  * a malformed line is tolerated only when it is an unfinished final
  * fragment at EOF (no record terminator after it). Any malformed line
@@ -48,39 +114,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * single parse kernel can still expose facts obtained before the bad line.
  */
 export async function readLedgerSessionJsonl(path: string): Promise<LedgerSessionRow[]> {
-  const text = await readFile(path, "utf8");
-  // split keeps a trailing empty segment iff text ends with "\n", so
-  // index < lines.length - 1 means this segment was terminated.
-  const lines = text.split("\n");
   const rows: LedgerSessionRow[] = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index]!;
-    if (!line.trim()) continue;
-    let row: unknown;
-    try {
-      row = JSON.parse(line);
-    } catch (error) {
-      if (!(error instanceof SyntaxError)) throw error;
-      const completedByTerminator = index < lines.length - 1;
-      if (completedByTerminator) {
-        throw new LedgerSessionJsonlError(
-          `malformed JSONL record in ${path} at line ${index + 1}: ${error.message}`,
-          { path, line: index + 1, prefixRows: rows },
-        );
-      }
-      // unfinished fragment at EOF — keep prior complete rows
-      break;
+  for (const line of await readLedgerSessionJsonlLines(path)) {
+    if (line.row === undefined) {
+      throw new LedgerSessionJsonlError(line.error ?? `unreadable JSONL record in ${path} at line ${line.line}`, {
+        path,
+        line: line.line,
+        prefixRows: rows,
+      });
     }
-    // Syntactically complete line: must be a session object. Silent omission
-    // would under-count ledger evidence (failure honesty).
-    if (!isRecord(row)) {
-      const kind = row === null ? "null" : Array.isArray(row) ? "array" : typeof row;
-      throw new LedgerSessionJsonlError(
-        `complete non-object JSONL record in ${path} at line ${index + 1}: expected object, got ${kind}`,
-        { path, line: index + 1, prefixRows: rows },
-      );
-    }
-    rows.push(row);
+    rows.push(line.row);
   }
   return rows;
 }
