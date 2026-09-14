@@ -3,7 +3,7 @@
 export const REVIEWER_OUTPUT_TOOL_NAME = "ak_reviewer_output";
 export const REVIEWER_ACCEPTED_TEXT = "御史台回执已接受";
 
-/** Seat-owned per-axis delta relative to child reports — not a replacement report. */
+/** 御史台逐轴弹章正文（standards / spec）。 */
 export type ReviewerAmendments = Readonly<Partial<Record<"standards" | "spec", string>>>;
 export type ReviewerIntent =
   | Readonly<{ status: "completed"; amendments?: ReviewerAmendments }>
