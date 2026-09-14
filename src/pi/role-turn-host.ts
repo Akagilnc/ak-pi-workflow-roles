@@ -447,6 +447,12 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       };
       if (request.courtAttemptId === undefined) delete env.AK_ROLE_COURT_ATTEMPT;
       else env.AK_ROLE_COURT_ATTEMPT = request.courtAttemptId;
+      // Public-invocation scope (#537): omit must not inherit a parent env value.
+      if (request.invocationScopeId === undefined) delete env.AK_ROLE_INVOCATION_SCOPE;
+      else env.AK_ROLE_INVOCATION_SCOPE = request.invocationScopeId;
+      // Selected host axis (#537 / ADR 0082): omit must not inherit a parent env value.
+      if (request.host === undefined || request.host.trim() === "") delete env.AK_ROLE_HOST;
+      else env.AK_ROLE_HOST = request.host.trim();
       applyEngineChildEnv(env, request.engine);
       // Nested auditor dossier tool binds the parent run pointer when published.
       if (

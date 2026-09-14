@@ -5,6 +5,7 @@
  * Engine process failures stop through the host infrastructure-failure seam.
  * Caller AbortSignal cancellation propagates unchanged.
  */
+import { basename } from "node:path";
 import { Type, type Static } from "typebox";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "./host-contracts.ts";
 
@@ -16,6 +17,18 @@ import {
   resolveEngineName,
   runEngineDetourOnce,
 } from "./engine-detour.ts";
+import {
+  engineDetourStdoutByteLength,
+  reportEngineDetourCall,
+} from "./engine-detour-usage.ts";
+
+/** runDirectory leaf is `<runId>@<role>`; subject is optional. */
+function basenameRunId(runDirectory: string): string | undefined {
+  const leaf = basename(runDirectory);
+  const at = leaf.indexOf("@");
+  if (at <= 0) return undefined;
+  return leaf.slice(0, at);
+}
 
 // #836 r16 class 3: argv required/minItems/element-minLength stay — execute()
 // must obtain the first item as the executable and spawn it (below; #82-98).
@@ -32,7 +45,14 @@ const engineDetourArgsSchema = Type.Object(
 
 type EngineDetourArgs = Static<typeof engineDetourArgsSchema>;
 
-type EngineDetourContext = Pick<HostContext, "cwd" | "mode" | "abort">;
+type EngineDetourContext = Pick<HostContext, "cwd" | "mode" | "abort"> & {
+  sessionManager?: Pick<HostContext["sessionManager"], "getSessionFile">;
+  runDirectory?: string;
+  /** Public-invocation scope from the shared Host envelope (#537). */
+  invocationScopeId?: string;
+  /** Selected host from the shared Host envelope (#537 / ADR 0082). */
+  host?: string;
+};
 
 export type EngineDetourHostActions = {
   failInfrastructure(
@@ -56,6 +76,12 @@ function isCallerCancellation(
     return true;
   }
   return false;
+}
+
+function asError(error: unknown, fallback: string): Error {
+  return error instanceof Error
+    ? error
+    : new Error(String(error).trim() || fallback);
 }
 
 /**
@@ -100,6 +126,68 @@ export function createEngineDetourToolDefinition(input: {
         );
       }
 
+      const sessionParent = ctx.sessionManager?.getSessionFile?.();
+      const startedAt = Date.now();
+      const runDirectory = typeof ctx.runDirectory === "string" && ctx.runDirectory.length > 0
+        ? ctx.runDirectory
+        : undefined;
+      const runId = runDirectory === undefined ? undefined : basenameRunId(runDirectory);
+      // Public-invocation scope + selected host from Host envelope only — never
+      // courtAttemptId, never sidecar file, never pre-spawn invocation.json I/O.
+      const invocationScopeId =
+        typeof ctx.invocationScopeId === "string" && ctx.invocationScopeId.trim() !== ""
+          ? ctx.invocationScopeId.trim()
+          : undefined;
+      const host =
+        typeof ctx.host === "string" && ctx.host.trim() !== ""
+          ? ctx.host.trim()
+          : undefined;
+
+      const recordCall = (observed: {
+        code?: number;
+        stdoutByteLength?: number;
+      }): void => {
+        if (typeof sessionParent !== "string" || sessionParent.length === 0) return;
+        reportEngineDetourCall({
+          toolCallId,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          cwd: ctx.cwd,
+          sessionParent,
+          ...(runId === undefined ? {} : { runId }),
+          ...(invocationScopeId === undefined ? {} : { invocationScopeId }),
+          ...(host === undefined ? {} : { host }),
+          ...(observed.code === undefined ? {} : { code: observed.code }),
+          ...(observed.stdoutByteLength === undefined
+            ? {}
+            : { stdoutByteLength: observed.stdoutByteLength }),
+        });
+      };
+
+      /** Preserve engine cause; if ledger write also fails, keep both (失败诚实). */
+      const failAfterLedger = (
+        engineCause: Error,
+        observed: { code?: number; stdoutByteLength?: number },
+        aggregateMessage: string,
+      ): never => {
+        try {
+          recordCall(observed);
+        } catch (recordError) {
+          input.fail(
+            new AggregateError(
+              [
+                engineCause,
+                asError(recordError, "engine detour usage ledger write failed"),
+              ],
+              aggregateMessage,
+              { cause: engineCause },
+            ),
+            toolCallId,
+            ctx,
+          );
+        }
+        input.fail(engineCause, toolCallId, ctx);
+      };
+
       let result: Awaited<ReturnType<typeof runEngineDetourOnce>>;
       try {
         result = await runEngineDetourOnce({
@@ -109,20 +197,30 @@ export function createEngineDetourToolDefinition(input: {
         });
       } catch (error) {
         if (isCallerCancellation(error, signal)) throw error;
-        const cause = error instanceof Error
-          ? error
-          : new Error(String(error).trim() || "劳务引擎 spawn 失败");
-        input.fail(cause, toolCallId, ctx);
-      }
-
-      if (isEngineDetourFailure(result)) {
-        input.fail(
-          new Error(engineDetourFailureDiagnostic(result)),
-          toolCallId,
-          ctx,
+        // Spawn path: duration only — code/stdout bytes absent (not forged 0).
+        return failAfterLedger(
+          asError(error, "劳务引擎 spawn 失败"),
+          {},
+          "engine detour spawn and usage ledger both failed",
         );
       }
 
+      const stdoutByteLength = engineDetourStdoutByteLength(result.stdout);
+      const observed = { code: result.code, stdoutByteLength };
+
+      // Classify closed-child failure before ledger write so a sitian failure
+      // cannot erase nonzero/empty engine facts.
+      if (isEngineDetourFailure(result)) {
+        return failAfterLedger(
+          new Error(engineDetourFailureDiagnostic(result)),
+          observed,
+          "engine detour child-close and usage ledger both failed",
+        );
+      }
+
+      recordCall(observed);
+
+      // Usage ledger lives in sitian + decisiveFacts only (#537) — not tool details.
       return {
         content: [{ type: "text" as const, text: result.stdout }],
         details: {

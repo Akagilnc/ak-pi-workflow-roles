@@ -6,7 +6,7 @@
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { randomUUID } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -73,6 +73,11 @@ function isStationChildOfficerDialogue(
 ): boolean {
   return env.stationChild === true && isOfficerReviewSeat(role);
 }
+import {
+  mintEngineDetourInvocationScope,
+  readInvocationSelectedHost,
+  withEngineDetourInvocationScope,
+} from "../engine-detour-usage.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
@@ -208,19 +213,6 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
   }
 }
 
-/** Previous main-session host recorded on invocation.json, if any. */
-async function readInvocationHost(runDirectory: string): Promise<string | undefined> {
-  try {
-    const raw = JSON.parse(await readFile(join(runDirectory, "invocation.json"), "utf8")) as {
-      host?: unknown;
-    };
-    return typeof raw.host === "string" && raw.host.trim() !== "" ? raw.host : undefined;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-}
-
 export type PostAdmissionEnv = {
   home: string;
   agentDir: string;
@@ -312,6 +304,8 @@ export type ControlledFailureInput = {
    * already the reported cause.
    */
   skipRunStateWrite?: boolean;
+  /** Public-invocation scope from the shared Host envelope (#537). */
+  invocationScopeId?: string;
 };
 
 /** Result of seat prep after the single pre-lease admitted load. */
@@ -451,9 +445,15 @@ export async function presentControlledFailure<
       admitted,
       failure,
       authority,
-      resumable
-        ? { resume: { command: renderResumeCommand(admitted.runId) } }
-        : {},
+      {
+        ...(resumable
+          ? { resume: { command: renderResumeCommand(admitted.runId) } }
+          : {}),
+        ...(failureInput.invocationScopeId === undefined ||
+          failureInput.invocationScopeId.length === 0
+          ? {}
+          : { invocationScopeId: failureInput.invocationScopeId }),
+      },
     ),
   );
   presentFailureTerminal(terminal, io);
@@ -613,12 +613,12 @@ export async function dispatchPostAdmissionTurn<
       return {
         ...(await presentControlledFailure(
           admitted,
-          {
+          withEngineDetourInvocationScope({
             timedOut: false,
             code: null,
             stderr: "",
             thrown: error,
-          },
+          }, request.invocationScopeId),
           adapters,
           env.principalAuthority,
           io,
@@ -639,7 +639,7 @@ export async function dispatchPostAdmissionTurn<
       return {
         ...(await presentControlledFailure(
           admitted,
-          missingCredential,
+          withEngineDetourInvocationScope(missingCredential, request.invocationScopeId),
           adapters,
           env.principalAuthority,
           io,
@@ -659,7 +659,7 @@ export async function dispatchPostAdmissionTurn<
         : env.principalAuthority.decode(admitted.principal);
     let hostTransition: RoleTurnRequest["hostTransition"];
     try {
-      previousHost = await readInvocationHost(admitted.runDirectory);
+      previousHost = readInvocationSelectedHost(admitted.runDirectory);
       hostTransition =
         previousHost !== undefined && liveHost !== undefined && principalCoordinates !== undefined
           ? await projectHostTransitionPriorNative({
@@ -673,12 +673,12 @@ export async function dispatchPostAdmissionTurn<
       return {
         ...(await presentControlledFailure(
           admitted,
-          {
+          withEngineDetourInvocationScope({
             timedOut: false,
             code: null,
             stderr: "",
             thrown: error,
-          },
+          }, request.invocationScopeId),
           adapters,
           env.principalAuthority,
           io,
@@ -696,7 +696,7 @@ export async function dispatchPostAdmissionTurn<
     // executeTurn — not merely past beforeDispatch (#840 r9 判词 class 2). Any
     // pre-turn retry (beforeDispatch, dossier projection, continuation
     // assembly) must still see the prior invocation host on its next attempt;
-    // committing env.host earlier would make readInvocationHost read back the
+    // committing env.host earlier would make readInvocationSelectedHost read back the
     // new host on the retry and silently drop hostTransition.
     // Failures settle the run (presentControlledFailure); they must not leave it
     // permanently running. Call-local auto-resume retries this hook until it
@@ -708,12 +708,12 @@ export async function dispatchPostAdmissionTurn<
       } catch (error) {
         const settled = (await presentControlledFailure(
           admitted,
-          {
+          withEngineDetourInvocationScope({
             timedOut: false,
             code: null,
             stderr: "",
             thrown: error,
-          },
+          }, request.invocationScopeId),
           adapters,
           env.principalAuthority,
           io,
@@ -739,6 +739,11 @@ export async function dispatchPostAdmissionTurn<
     }
     if (hostTransition !== undefined) {
       turnRequest = { ...turnRequest, hostTransition };
+    }
+    // Selected host axis rides the shared Host envelope for in-turn tools
+    // (detour usage ledger) — never a pre-spawn invocation.json reread.
+    if (typeof liveHost === "string" && liveHost.trim() !== "") {
+      turnRequest = { ...turnRequest, host: liveHost.trim() };
     }
     if (isStationChildOfficerDialogue(admitted.role, env)) {
       // 0081 non-body face: freeze pointer section under run/attachments/.
@@ -780,18 +785,22 @@ export async function dispatchPostAdmissionTurn<
       env.engineModel,
     );
 
+    // #537 invocation scope is bound once at the public-entry boundary
+    // (runPostAdmissionResumable / ManualResume / station-child), not here:
+    // auto-resume re-enters this dispatch and must reuse the same scope.
+
     let result: RoleTurnResult;
     try {
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
       const settled = await settleAfterTurnStarted(
-        admitted,
-        {
+          admitted,
+          withEngineDetourInvocationScope({
           timedOut: false,
           code: null,
           stderr: "",
           thrown: error,
-        },
+        }, request.invocationScopeId),
         adapters,
         env.principalAuthority,
         io,
@@ -851,9 +860,18 @@ export async function dispatchPostAdmissionTurn<
     }
 
     const courtScope =
-      request.courtAttemptId === undefined || request.courtAttemptId.length === 0
+      (request.courtAttemptId === undefined || request.courtAttemptId.length === 0) &&
+      (request.invocationScopeId === undefined || request.invocationScopeId.length === 0)
         ? undefined
-        : { courtAttemptId: request.courtAttemptId };
+        : {
+            ...(request.courtAttemptId === undefined || request.courtAttemptId.length === 0
+              ? {}
+              : { courtAttemptId: request.courtAttemptId }),
+            ...(request.invocationScopeId === undefined ||
+              request.invocationScopeId.length === 0
+              ? {}
+              : { invocationScopeId: request.invocationScopeId }),
+          };
 
     // Single complete boundary (#840 r9 判词 class 1): resolving the
     // host/runner failure facts, trySettle, its shouldPresent gate, and the
@@ -989,13 +1007,13 @@ export async function dispatchPostAdmissionTurn<
       // Settle (or its shouldPresent gate, or the failure-fact resolution
       // above) throw is a real failure fact — never swallow into undefined.
       const settledFailure = await settleAfterTurnStarted(
-        admitted,
-        {
+          admitted,
+          withEngineDetourInvocationScope({
           timedOut: false,
           code: result.code,
           stderr: result.stderr,
           thrown: error,
-        },
+        }, request.invocationScopeId),
         adapters,
         env.principalAuthority,
         io,
@@ -1019,14 +1037,14 @@ export async function dispatchPostAdmissionTurn<
           // write presentControlledFailure would otherwise retry — don't
           // call a known-failing operation twice.
           const failed = await settleAfterTurnStarted(
-            admitted,
-            {
+          admitted,
+          withEngineDetourInvocationScope({
               timedOut: false,
               code: null,
               stderr: "",
               thrown: error,
               skipRunStateWrite: true,
-            },
+            }, request.invocationScopeId),
             adapters,
             env.principalAuthority,
             io,
@@ -1048,8 +1066,8 @@ export async function dispatchPostAdmissionTurn<
           ? undefined
           : { stderrLogWriteFailure: describeCaughtError(stderrLogWriteFailure) };
       const failed = await settleAfterTurnStarted(
-        admitted,
-        {
+          admitted,
+          withEngineDetourInvocationScope({
           timedOut: result.timedOut,
           code: result.code,
           stderr: result.stderr,
@@ -1067,7 +1085,7 @@ export async function dispatchPostAdmissionTurn<
                 },
               }
               : { knownDetails: stderrLogWriteDetails }),
-        },
+        }, request.invocationScopeId),
         adapters,
         env.principalAuthority,
         io,
@@ -1081,13 +1099,13 @@ export async function dispatchPostAdmissionTurn<
     // lawful absence of a receipt. Honest and loud, not silently no_receipt.
     if (stderrLogWriteFailure !== undefined) {
       const failed = await settleAfterTurnStarted(
-        admitted,
-        {
+          admitted,
+          withEngineDetourInvocationScope({
           timedOut: false,
           code: result.code,
           stderr: result.stderr,
           thrown: stderrLogWriteFailure,
-        },
+        }, request.invocationScopeId),
         adapters,
         env.principalAuthority,
         io,
@@ -1098,7 +1116,7 @@ export async function dispatchPostAdmissionTurn<
 
     const noReceipt = await attachRecordedSubmissions(
       admitted,
-      await settleHostEndedNoReceipt(admitted, env.principalAuthority) as T,
+      await settleHostEndedNoReceipt(admitted, env.principalAuthority, courtScope) as T,
       courtScope,
     );
     if (persistRunState) {
@@ -1112,13 +1130,13 @@ export async function dispatchPostAdmissionTurn<
         // skipRunStateWrite: don't retry the write that just threw.
         const failed = await settleAfterTurnStarted(
           admitted,
-          {
+          withEngineDetourInvocationScope({
             timedOut: false,
             code: null,
             stderr: "",
             thrown: error,
             skipRunStateWrite: true,
-          },
+          }, request.invocationScopeId),
           adapters,
           env.principalAuthority,
           io,
@@ -1463,6 +1481,12 @@ export async function runPostAdmissionSeatResume<
       let firstTurn: RoleTurnRequest | undefined;
       const stationAdapters = withOnceSuccessfulBeforeDispatch(adapters);
       type StationChildAttempt = { readonly resumeTurn: boolean };
+      // One public call → one detour scope across in-place auto-resume dispatches.
+      const invocationScopeId = mintEngineDetourInvocationScope({
+        ...(input.effectiveEngine === undefined
+          ? {}
+          : { effectiveEngine: input.effectiveEngine }),
+      });
       return await runWithAutoResumeLoop({
         admitted: loaded.admitted,
         principalAuthority: input.env.principalAuthority,
@@ -1500,7 +1524,10 @@ export async function runPostAdmissionSeatResume<
                   },
                 };
               }
-              const turnRequest = await buildRequestAfterLease();
+              const turnRequest = withEngineDetourInvocationScope(
+                await buildRequestAfterLease(),
+                invocationScopeId,
+              );
               firstTurn = turnRequest;
               return turnRequest;
             },
@@ -1621,6 +1648,15 @@ export async function runPostAdmissionResumable<
   const { admitted, env, io, buildInitialRequest, buildResumeRequest, effectiveEngine } = input;
   const adapters = withOnceSuccessfulBeforeDispatch(input.adapters);
 
+  // One public call → one detour scope across in-place auto-resume dispatches.
+  const invocationScopeId = mintEngineDetourInvocationScope({
+    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+  });
+  const buildScopedInitial = (): RoleTurnRequest =>
+    withEngineDetourInvocationScope(buildInitialRequest(), invocationScopeId);
+  const buildScopedResume = (): RoleTurnRequest =>
+    withEngineDetourInvocationScope(buildResumeRequest(), invocationScopeId);
+
   return runWithAutoResumeLoop({
     admitted,
     principalAuthority: env.principalAuthority,
@@ -1628,8 +1664,8 @@ export async function runPostAdmissionResumable<
     io,
     sessionAppender: env.sessionAppender,
     autoResumeLimit: env.autoResumeLimit,
-    buildInitialPayload: buildInitialRequest,
-    buildResumePayload: buildResumeRequest,
+    buildInitialPayload: buildScopedInitial,
+    buildResumePayload: buildScopedResume,
     dispatch: async (request, lease, _isFirst, attemptIo) => {
       const result = await dispatchPostAdmissionTurn({
         admitted,
@@ -1714,6 +1750,11 @@ export async function runPostAdmissionManualResume<
     throw error;
   }
 
+  // Explicit public resume is a new counting unit — mint once for this call.
+  const invocationScopeId = mintEngineDetourInvocationScope({
+    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+  });
+
   const result = await dispatchAfterWriterLease({
     lease,
     build: async () => {
@@ -1725,6 +1766,7 @@ export async function runPostAdmissionManualResume<
         }
         request = await buildRequestAfterLease();
       }
+      request = withEngineDetourInvocationScope(request, invocationScopeId);
       return request;
     },
     dispatch: (turnRequest) =>
