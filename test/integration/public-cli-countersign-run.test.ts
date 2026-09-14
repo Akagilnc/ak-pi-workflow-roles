@@ -1135,8 +1135,8 @@ test("beforeDispatch ticket-bind failure uses parent call-local auto-resume", as
 
 test("public countersign path: same-ticket re-summons resumes prior run via typed 起居郎 key", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    // ADR 0079 ticket-seat-memory-countersign-principal: same ticket → resume,
-    // not a fresh mint. Lookup key is 起居郎's typed assertion only (#771).
+    // ADR 0079: 给事中同票再传召 = resume 该席上一次 run，不新起 run.
+    // Lookup key is 起居郎's typed assertion only (#771).
     ensureTicketProvenanceVolume(582, project, home);
 
     const seen: Array<{ runId: string; kind: string }> = [];

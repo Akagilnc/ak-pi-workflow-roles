@@ -19,7 +19,7 @@
  * the same throw→ledger `auditor-roles` unreadable seam. Unknown/non-contract
  * dispatch status stays loud (#475 abolished Gatekeeper incomplete special-case).
  * Lawful province non-dispatch release (`pass` on a dispatch tool) opens no
- * round and must not throw (#597 / ADR 0074 gate-non-mandatory).
+ * round and must not throw (#597 / ADR 0074: 角色调动无强制，交卷闸派发不断).
  * True non-gate volumes (soul-audit noise, etc.) stay omitted from pairing.
  * Historical dispatch↔officer pairing requires a shared typed
  * `ak_auditor_parent_attempt_binding.parent.attemptEntryId` — never seat/time guessing.

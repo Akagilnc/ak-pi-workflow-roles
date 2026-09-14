@@ -38,7 +38,7 @@ function workIdentityFromCwd(cwd: string): string | undefined {
   return undefined;
 }
 
-/** Machine-ledger session paths are not work identity (ADR 0048 session-in-home). */
+/** Machine-ledger session paths are not work identity (ADR 0048: session 直落家). */
 function isMachineLedgerSessionPath(sessionPath: string): boolean {
   // Physical containment under the package ledger home — never directory spelling,
   // and stable across macOS /var ↔ /private/var realpath asymmetry. Path → ledger

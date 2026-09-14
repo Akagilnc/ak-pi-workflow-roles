@@ -87,7 +87,7 @@ export function resolveEngineMaterialPath(
 /**
  * Path-safety syntax gate for engine labels at real I/O seams.
  * Returns the canonical name on success; throws Error on illegal syntax.
- * Does not consult any material catalog (ADR 0069 pool-directive axis).
+ * Does not consult any material catalog (ADR 0069: 引擎权威是 owner 池令；能力通用可插拔).
  */
 export function assertLegalEngineName(name: string): string {
   if (!isEngineNameSyntax(name)) {

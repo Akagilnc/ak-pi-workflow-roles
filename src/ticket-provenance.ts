@@ -302,7 +302,7 @@ export function renderTicketProvenanceMarkdown(input: {
 /**
  * Ensure the per-ticket JSONL volume partition exists (empty file OK).
  * Every bound-ticket court establishes the volume even with zero diary entries
- * (ADR 0075 ticket-provenance-file — 每票一份起居录). Does not forge entries.
+ * (ADR 0075: 每票一份起居录送司天台). Does not forge entries.
  */
 export function ensureTicketProvenanceVolume(
   ticketNumber: number,

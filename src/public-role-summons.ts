@@ -272,7 +272,7 @@ export async function summonPublicRole(
     options.credentials ?? (await loadCredentialProviders(agentDir));
   const config = await loadPublicCliConfig(home);
   // Nested summons resolve host on the officer seat only (flag>seat>default pi).
-  // Parent run host is not an override channel (#821 / ADR 0082 host-flag-two-channels).
+  // Parent run host is not an override channel (#821 / ADR 0082: --host 旗标>席位配置>缺省 pi).
   const seat = resolveEffectiveSeat(config, options.role, credentials);
   let summonEnv;
   try {

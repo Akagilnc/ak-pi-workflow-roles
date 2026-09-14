@@ -223,7 +223,7 @@ async function invokeCourtDiarist(input: {
       ? {}
       : { boundTicketNumber: input.boundTicketNumber }),
     // Child seat selects from the composition-root table. Do not pass the
-    // already-selected parent adapter (#840 / ADR 0082 host-flag-two-channels).
+    // already-selected parent adapter (#840 / ADR 0082: --host 旗标>席位配置>缺省 pi).
     ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
   });
 
