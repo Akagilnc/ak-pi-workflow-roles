@@ -73,7 +73,8 @@ function runNodeTest(files) {
     fail(`duplicate discovered test files: ${dupes.join(", ")}`);
   }
 
-  const args = ["--import", "tsx", "--test", ...files];
+  // #252: fixed 5-minute bound on every case and whole file (Node inherits). No config seam.
+  const args = ["--import", "tsx", "--test-timeout=300000", "--test", ...files];
 
   // Resolve `node` from PATH so lawful tests may intercept children via an
   // isolated PATH seam. No test-only env hook is accepted here.
