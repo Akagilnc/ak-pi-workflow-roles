@@ -682,15 +682,18 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
   });
 });
 
-test("migrateBookTopology preserves legacy under unbound when bare wins same ticket", async () => {
+test("migrateBookTopology preserves legacy and prior bare under unbound when later bare wins", async () => {
   await withTempRoot("ak-book-topology-mig-", async (home) => {
     const ledgerHome = join(home, ".ak-roles");
     const bookKey = "demo-book";
     const books = join(ledgerHome, "books");
     const legacyDir = join(books, bookKey, "ticket-provenance");
-    const bareDir = join(books, bookKey, String(TICKET));
+    // Walk order per ticket: partial-nest then ticket root — two bares, second wins.
+    const bareFirstDir = join(books, bookKey, String(TICKET), "ticket-provenance");
+    const bareSecondDir = join(books, bookKey, String(TICKET));
     await mkdir(legacyDir, { recursive: true });
-    await mkdir(bareDir, { recursive: true });
+    await mkdir(bareFirstDir, { recursive: true });
+    await mkdir(bareSecondDir, { recursive: true });
     const legacyRaw = JSON.stringify({
       kind: "ticket-provenance",
       subject: String(TICKET),
@@ -698,15 +701,32 @@ test("migrateBookTopology preserves legacy under unbound when bare wins same tic
       payload: { note: "old" },
     });
     await writeFile(join(legacyDir, "records.jsonl"), `${legacyRaw}\n`, "utf8");
-    const bareHeader = JSON.stringify({
+    const bareHeaderFirst = JSON.stringify({
       repo: bookKey,
       ticket: TICKET,
       createdAt: "t0",
       updatedAt: "t0",
       sessions: [],
     });
-    const bareLine = JSON.stringify({ speaker: "owner", s: 0, text: "bare-body" });
-    await writeFile(join(bareDir, "records.jsonl"), `${bareHeader}\n${bareLine}\n`, "utf8");
+    const bareLineFirst = JSON.stringify({ speaker: "owner", s: 0, text: "bare-first" });
+    await writeFile(
+      join(bareFirstDir, "records.jsonl"),
+      `${bareHeaderFirst}\n${bareLineFirst}\n`,
+      "utf8",
+    );
+    const bareHeaderSecond = JSON.stringify({
+      repo: bookKey,
+      ticket: TICKET,
+      createdAt: "t1",
+      updatedAt: "t1",
+      sessions: [],
+    });
+    const bareLineSecond = JSON.stringify({ speaker: "owner", s: 0, text: "bare-second-wins" });
+    await writeFile(
+      join(bareSecondDir, "records.jsonl"),
+      `${bareHeaderSecond}\n${bareLineSecond}\n`,
+      "utf8",
+    );
 
     const report = await migrateBookTopology({
       ledgerHome,
@@ -717,30 +737,25 @@ test("migrateBookTopology preserves legacy under unbound when bare wins same tic
 
     const tp = report.partitions.find((p) => p.partition === "ticket-provenance");
     assert.ok(tp, "ticket-provenance partition report present");
-    assert.equal(tp.before, 3);
-    assert.equal(tp.placed, 2, "bare header + body placed");
-    assert.equal(tp.unbound, 1, "legacy rehomed unbound");
+    // 1 legacy + 2 bare volumes × 2 lines each = 5 source lines.
+    assert.equal(tp.before, 5);
+    assert.equal(tp.placed, 2, "only winning bare header+body stay placed");
+    assert.equal(tp.unbound, 3, "legacy + first bare header+body rehomed");
     assert.equal(tp.discarded, 0);
 
     const destVolume = join(report.booksDirectory, bookKey, String(TICKET), "records.jsonl");
     const migrated = await readFile(destVolume, "utf8");
     const migratedLines = migrated.split("\n").filter((line) => line.trim() !== "");
     assert.equal(JSON.parse(migratedLines[0]!).ticket, TICKET);
+    assert.equal(JSON.parse(migratedLines[0]!).updatedAt, "t1");
     assert.equal(JSON.parse(migratedLines[0]!).kind, undefined);
-    assert.equal(JSON.parse(migratedLines[1]!).text, "bare-body");
+    assert.equal(JSON.parse(migratedLines[1]!).text, "bare-second-wins");
     assert.equal(
-      migratedLines.some((line) => {
-        try {
-          return JSON.parse(line).kind === "ticket-provenance";
-        } catch {
-          return false;
-        }
-      }),
+      migratedLines.some((line) => line.includes("bare-first") || line.includes("legacy-1")),
       false,
-      "legacy must not remain under bare header",
+      "superseded bare/legacy must not remain under winning header",
     );
 
-    // Legacy bytes preserved under unbound with honest disposition.
     const unboundRoot = join(report.booksDirectory, bookKey, "unbound", "ticket-provenance");
     async function collectRaw(dir: string, acc: string[] = []): Promise<string[]> {
       let entries;
@@ -756,11 +771,13 @@ test("migrateBookTopology preserves legacy under unbound when bare wins same tic
       }
       return acc;
     }
-    const unboundBodies = await collectRaw(unboundRoot);
+    const unboundBodies = (await collectRaw(unboundRoot)).join("\n");
+    assert.equal(unboundBodies.includes(legacyRaw), true, "legacy bytes in unbound");
+    assert.equal(unboundBodies.includes("bare-first"), true, "first bare body in unbound");
     assert.equal(
-      unboundBodies.some((body) => body.includes(legacyRaw)),
+      unboundBodies.includes('"updatedAt":"t0"'),
       true,
-      "legacy source bytes must land in unbound",
+      "first bare header in unbound",
     );
   });
 });

@@ -122,7 +122,6 @@ class RecordWriteCache {
   markBareVolume(recordFile: string): void {
     this.bareVolumeFiles.add(recordFile);
     this.identities.set(recordFile, new Set());
-    this.destPlacements.delete(recordFile);
   }
 
   isBareVolume(recordFile: string): boolean {
@@ -130,8 +129,17 @@ class RecordWriteCache {
   }
 
   /**
+   * After a bare whole-file write, register its lines so a later bare for the
+   * same ticket can rehome them and flip dispositions (multi-bare honesty).
+   */
+  setDestPlacements(recordFile: string, placements: readonly DestLinePlacement[]): void {
+    this.destPlacements.set(recordFile, [...placements]);
+  }
+
+  /**
    * Install a bare volume as the sole ticket file. Any lines already placed on
-   * this dest are moved to unbound and their outcomes flipped — report stays honest.
+   * this dest (legacy appends or a prior bare) are moved to unbound and their
+   * outcomes flipped — report stays honest.
    */
   async replaceWholeBare(
     recordFile: string,
@@ -525,16 +533,21 @@ async function placeBareTicketProvenanceVolume(
     String(bare.ticket),
     "records.jsonl",
   );
-  // Whole-file bare install. Prior legacy lines on dest are rehomed to unbound
-  // and their outcomes flipped — header stays first; no silent erase.
+  // Whole-file bare install. Prior dest lines (legacy or earlier bare) rehome to
+  // unbound with flipped dispositions — header stays first; no silent erase.
   const body = bare.body.map((raw) => (raw.endsWith("\n") ? raw : `${raw}\n`)).join("");
   await writes.replaceWholeBare(dest, body, outcomes, (raw) =>
     unboundCategoryFile(context.booksDirectory, bookKey, TICKET_PROVENANCE, stableKey(raw)),
   );
+  const barePlacements: DestLinePlacement[] = [];
   for (let index = 0; index < bare.body.length; index += 1) {
     const source = lineSource(context.backupBooksDirectory, filePath, index);
+    const outcomeIndex = outcomes.length;
     outcomes.push({ disposition: "placed", source });
+    barePlacements.push({ raw: bare.body[index]!, outcomeIndex });
   }
+  // Register so a later bare for the same ticket can supersede honestly.
+  writes.setDestPlacements(dest, barePlacements);
 }
 
 async function migrateJsonlFileByKind(
