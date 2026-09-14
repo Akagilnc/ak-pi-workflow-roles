@@ -250,6 +250,22 @@ test("#879 Nth officer turn receives Nth parent submission — not history array
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 879 });
+    // #178: officer summons resolve model from the live seat table only (no package fill-in).
+    // Same caller-seat + auth write as #821 in this file — not a parallel seed helper.
+    await mkdir(join(home, ".ak-roles"), { recursive: true });
+    await writeFile(
+      publicCliConfigPath(home),
+      `${JSON.stringify({
+        seats: { notary: { provider: "openai-codex", model: "gpt-5.6-sol" } },
+      })}\n`,
+      "utf8",
+    );
+    await mkdir(join(home, ".pi", "agent"), { recursive: true });
+    await writeFile(
+      join(home, ".pi", "agent", "auth.json"),
+      `${JSON.stringify({ "openai-codex": {} })}\n`,
+      "utf8",
+    );
 
     const prompts: string[] = [];
     const baseHost = roleTurnHostFromLegacyPiRunner({
@@ -434,6 +450,21 @@ test("#879 station-child officer: case dossier once via shared envelope readingM
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 879 });
+    // #178: officer summons need a caller-specified seat model (same pattern as #821 above).
+    await mkdir(join(home, ".ak-roles"), { recursive: true });
+    await writeFile(
+      publicCliConfigPath(home),
+      `${JSON.stringify({
+        seats: { notary: { provider: "openai-codex", model: "gpt-5.6-sol" } },
+      })}\n`,
+      "utf8",
+    );
+    await mkdir(join(home, ".pi", "agent"), { recursive: true });
+    await writeFile(
+      join(home, ".pi", "agent", "auth.json"),
+      `${JSON.stringify({ "openai-codex": {} })}\n`,
+      "utf8",
+    );
 
     const prompts: string[] = [];
     const runDirs: string[] = [];
