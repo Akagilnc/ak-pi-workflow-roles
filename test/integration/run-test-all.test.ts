@@ -206,10 +206,14 @@ test("package.json test entries wire HOME redirect preload or run-test-all owner
     "test:all must delegate only to the scheduling owner",
   );
   const preload = "--import ./scripts/test-process-env-preload.mjs";
+  // #252: test:fast is a canonical entry — fixed per-test --test-timeout=300000, no config.
+  const testTimeout = "--test-timeout=300000";
   const bareUnitContract =
     `node --import tsx ${preload} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`;
+  const fastUnitContract =
+    `node --import tsx ${preload} ${testTimeout} --test test/unit/**/*.test.ts test/contract/**/*.test.ts`;
   assert.equal(pkg.scripts["test"], bareUnitContract);
-  assert.equal(pkg.scripts["test:fast"], bareUnitContract);
+  assert.equal(pkg.scripts["test:fast"], fastUnitContract);
   assert.equal(
     pkg.scripts["test:integration"],
     `node --import tsx ${preload} --test test/unit/**/*.test.ts test/contract/**/*.test.ts test/integration/**/*.test.ts`,
@@ -379,6 +383,11 @@ test("runner discovers seeded tree into one default-parallel child", async () =>
   const [child] = result.records;
   assert.ok(child);
   assert.ok(child.argv.includes("--test"), "child is a node --test invocation");
+  // #252: canonical run-test-all child must carry fixed per-test --test-timeout=300000.
+  assert.ok(
+    child.argv.includes("--test-timeout=300000"),
+    `child argv must include exact --test-timeout=300000; got ${JSON.stringify(child.argv)}`,
+  );
   assert.equal(
     hasConcurrencyTwo(child.argv),
     false,
