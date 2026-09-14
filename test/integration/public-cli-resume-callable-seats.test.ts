@@ -1,5 +1,4 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #633 abolish one-shot — collector/doctor/notary/inspector resume through the
  * public resume entry: same session principal reopened, each seat settles its
@@ -52,10 +51,7 @@ import { sampleCompletedDoctorOutput, seedDoctorIssueRuns } from "../helpers/doc
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-resume-four-seats-", async (home) => {
-    await seedCallerSeatTable(home);
-    return scenario(home);
-  });
+  return withTempRoot("ak-resume-four-seats-", scenario);
 }
 
 
@@ -264,7 +260,7 @@ for (const spec of SEAT_SPECS) {
       let resumeSessionFile: string | undefined;
 
       const { io, stderr } = captureIo();
-      const resumed = await runAkRole(["resume", runId], {
+      const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
         packageRoot,
         home,
         cwd: project,

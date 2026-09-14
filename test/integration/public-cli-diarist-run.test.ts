@@ -3,7 +3,6 @@
  * LLM submits bounds (+ optional amendments); mechanical layer reprojects records.jsonl.
  * Single seam: real entry, scripted host, on-disk session fixture, assert the unique diary file.
  */
-import { callerSeatTable, seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
@@ -64,10 +63,7 @@ const immutablePrincipalAuthority: DurablePrincipalAuthority = {
 };
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-diarist-", async (home) => {
-    await seedCallerSeatTable(home);
-    return scenario(home);
-  });
+  return withTempRoot("ak-public-cli-diarist-", async (home) => scenario(home));
 }
 
 type RegisteredTool = {
@@ -470,8 +466,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
 
     const runId = "01a0diar00-0000-7000-8000-000000000001";
     const { io, stdout } = captureIo();
-    const result = await runAkRole(
-      ["diarist", "--project", project, `整理 #${TICKET} 起居录`],
+    const result = await runAkRole(["diarist", "--model", "test/caller-seat:high", "--project", project, `整理 #${TICKET} 起居录`],
       {
         home,
         packageRoot,
@@ -671,8 +666,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
 
     // Amendments-only continuation through the same public entry (empty sessions).
     const runId2 = "01a0diar00-0000-7000-8000-000000000011";
-    const second = await runAkRole(
-      ["diarist", "--project", project, `续写 #${TICKET} 起居录`],
+    const second = await runAkRole(["diarist", "--model", "test/caller-seat:high", "--project", project, `续写 #${TICKET} 起居录`],
       {
         home,
         packageRoot,
@@ -838,8 +832,7 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
 
     const runId = "01a0diar00-0000-7000-8000-000000000002";
     const { io, stdout } = captureIo();
-    const result = await runAkRole(
-      ["diarist", "--project", project, "整理这份方案的依据"],
+    const result = await runAkRole(["diarist", "--model", "test/caller-seat:high", "--project", project, "整理这份方案的依据"],
       {
         home,
         packageRoot,
@@ -891,18 +884,17 @@ test("ak-role diarist host-turn failure still relocates board-bound run", async 
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     // Temp-home config only — never the real seat table. Zero resume budget so
-    // this tracer stays on the post-turn relocate seam. Keep caller seats (#178).
+    // this tracer stays on the post-turn relocate seam.
     await mkdir(join(home, ".ak-roles"), { recursive: true });
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ ...callerSeatTable(), autoResumeLimit: 0 }, null, 2)}\n`,
+      `${JSON.stringify({ autoResumeLimit: 0 }, null, 2)}\n`,
     );
 
     const runId = "01a0diar00-0000-7000-8000-000000000003";
     const { io } = captureIo();
 
-    const result = await runAkRole(
-      ["diarist", "--project", project, `整理 #${TICKET} 起居录`],
+    const result = await runAkRole(["diarist", "--model", "test/caller-seat:high", "--project", project, `整理 #${TICKET} 起居录`],
       {
         home,
         packageRoot,

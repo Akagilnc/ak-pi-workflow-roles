@@ -54,8 +54,7 @@ test("Error Artifact publication collisions retain original cause via durable fa
       await mkdir(project, { recursive: true });
       seedGitProject(project);
       const { io, stdout, stderr } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--project", project, `activation then ${row.label}`],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, `activation then ${row.label}`],
         {
           packageRoot,
           home,
@@ -121,8 +120,7 @@ test("malformed session JSONL settles as typed session failure retaining SyntaxE
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "malformed session transcript"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "malformed session transcript"],
       {
         packageRoot,
         home,
@@ -185,8 +183,7 @@ test("unwritable run directory retains activation cause with durable Error Artif
     const { io, stdout, stderr } = captureIo();
     let runDir: string | undefined;
     try {
-      const result = await runAkRole(
-        ["judge", "--project", project, "activation boom then unwritable run"],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "activation boom then unwritable run"],
         {
           packageRoot,
           home,
@@ -262,8 +259,7 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "stderr log blocked"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "stderr log blocked"],
       {
         packageRoot,
         home,
@@ -327,8 +323,7 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
     seedGitProject(project);
     const { io, stdout } = captureIo();
     const acceptedDetails = { judgeStatus: "converged", note: "ok" };
-    const result = await runAkRole(
-      ["judge", "--project", project, "accepted then stderr.log blocked"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "accepted then stderr.log blocked"],
       {
         packageRoot,
         home,
@@ -399,8 +394,7 @@ test("multiline thrown diagnostic keeps full artifact identity and one stderr li
       "event: tool_call continuation",
       "tokens=999 tool_calls=3",
     ].join("\n");
-    const result = await runAkRole(
-      ["judge", "--project", project, "multiline throw"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "multiline throw"],
       {
         packageRoot,
         home,
@@ -625,7 +619,7 @@ test("real Coder/Fixer runs settle on the recorded status, or honestly no_receip
         const status = "status" in details ? details.status : "missing";
         const { io } = captureIo();
         const result = await runAkRole(
-          [row.role, row.phase, "--project", project, `${row.role} ${status} discriminator`],
+          [row.role, "--model", "test/caller-seat:high", row.phase, "--project", project, `${row.role} ${status} discriminator`],
           {
             packageRoot,
             home,

@@ -5,7 +5,6 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #109 public Coder path — common Invocation, default apply / explicit plan,
  * package TDD provenance on shared success Terminal interface.
@@ -41,10 +40,7 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-coder-", async (home) => {
-    await seedCallerSeatTable(home);
-    return scenario(home);
-  });
+  return withTempRoot("ak-public-cli-coder-", scenario);
 }
 
 function captureIo() {
@@ -89,8 +85,7 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
 
     // Apply phase: TDD method binding present, phase = apply.
     {
-      await runAkRole(
-        ["coder", "--project", project, "Apply the approved plan."],
+      await runAkRole(["coder", "--model", "test/caller-seat:high", "--project", project, "Apply the approved plan."],
         {
           packageRoot,
           home,
@@ -120,8 +115,7 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
 
     // Plan phase: no method bindings.
     {
-      const result = await runAkRole(
-        ["coder", "plan", "--project", project, "Plan only."],
+      const result = await runAkRole(["coder", "--model", "test/caller-seat:high", "plan", "--project", project, "Plan only."],
         {
           packageRoot,
           home,
@@ -145,8 +139,7 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
     // Resume phase: default envelope (no explicit message) preserves apply bindings and selects typed resume continuation.
     {
       // First seed an admitted apply run with accessible session principal coordinates
-      await runAkRole(
-        ["coder", "--project", project, "Apply the approved plan."],
+      await runAkRole(["coder", "--model", "test/caller-seat:high", "--project", project, "Apply the approved plan."],
         {
           packageRoot,
           home,
@@ -165,8 +158,7 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
       );
 
       captured.current = undefined;
-      const result = await runAkRole(
-        ["resume", "run-coder-resume-typed"],
+      const result = await runAkRole(["resume", "--model", "test/caller-seat:high", "run-coder-resume-typed"],
         {
           packageRoot,
           home,
@@ -320,8 +312,7 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
       report: "Alternate host sealed through production ledger producer.",
     };
     const { io, stdout } = captureIo();
-    const result = await runAkRole(
-      ["coder", "--project", project, "Finish without a Pi session leaf."],
+    const result = await runAkRole(["coder", "--model", "test/caller-seat:high", "--project", project, "Finish without a Pi session leaf."],
       {
         packageRoot,
         home,
@@ -367,7 +358,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
     // Blank task → structural reject, no run.
     {
       const { io, stderr } = captureIo();
-      const result = await runAkRole(["coder", "plan", "   "], {
+      const result = await runAkRole(["coder", "--model", "test/caller-seat:high", "plan", "   "], {
         packageRoot,
         home,
         cwd: project,
@@ -388,9 +379,8 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
-      const result = await runAkRole(
-        [
-          "coder",
+      const result = await runAkRole([
+          "coder", "--model", "test/caller-seat:high",
           "plan",
           "--project",
           project,
@@ -473,8 +463,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
       const { io } = captureIo();
       let captured: string[] | undefined;
       let capturedStdin: string | undefined;
-      await runAkRole(
-        ["coder", "--project", project, "Implement the approved slice."],
+      await runAkRole(["coder", "--model", "test/caller-seat:high", "--project", project, "Implement the approved slice."],
         {
           packageRoot,
           home,
@@ -520,8 +509,7 @@ test("ak-role resume continues coder with preserved plan phase and exact session
 
     {
       const { io } = captureIo();
-      const first = await runAkRole(
-        ["coder", "plan", "--project", project, instruction],
+      const first = await runAkRole(["coder", "--model", "test/caller-seat:high", "plan", "--project", project, instruction],
         {
           packageRoot,
           home,
@@ -573,7 +561,7 @@ test("ak-role resume continues coder with preserved plan phase and exact session
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
-    const resumed = await runAkRole(["resume", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,

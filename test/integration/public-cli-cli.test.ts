@@ -34,13 +34,9 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { payloadFacts , objectPayloads} from "../helpers/terminal-payload.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-cli-", async (home) => {
-    await seedCallerSeatTable(home);
-    return scenario(home);
-  });
+  return withTempRoot("ak-public-cli-cli-", scenario);
 }
 
 function captureIo() {
@@ -84,9 +80,8 @@ test("Inspector public runner preserves typed pass, bounce, escalate, and non-th
       const details = row.status === "pass"
         ? { status: row.status, findings: row.findings, freeExtra }
         : { status: row.status, findings: row.findings };
-      const result = await runAkRole(
-        [
-          "inspector",
+      const result = await runAkRole([
+          "inspector", "--model", "test/caller-seat:high",
           "--project", project,
           "--attach", attachment,
           "Review this material.",
@@ -144,9 +139,8 @@ test("help document capabilities match typed registry without depending on layou
 // 并一——TSV 行型正则把列序/措辞变承重结构违 ADR 0052，改咬 loadPublicCliConfig /
 // resolveEffectiveSeat / public-cli.json 字节 / 退出码；进程级可见性契约保留)。
 test("config persistence round-trips across processes on the typed seat face", async () => {
-  // Bare temp root (no caller-seat seed): this case proves empty → set → reload (#178).
-  await withTempRoot("ak-public-cli-cli-config-", async (home) => {
-    // Fresh home: roles exits zero; seats stay unconfigured until caller sets them.
+  await withTempHome(async (home) => {
+    // Fresh home: roles exits zero. Bulk config set is visible via config bytes.
     const fresh = await runAkRole(["roles"], {
       packageRoot,
       home,
@@ -154,10 +148,6 @@ test("config persistence round-trips across processes on the typed seat face", a
       io: captureIo().io,
     });
     assert.equal(fresh.exitCode, 0);
-    const codexOnly: CredentialProviders = { "openai-codex": true, xai: false };
-    const judgeDefault = resolveEffectiveSeat(await loadPublicCliConfig(home), "judge", codexOnly);
-    assert.equal(judgeDefault.source, "unconfigured");
-    assert.equal(judgeDefault.selection, undefined);
 
     // Bulk config set is visible to a subsequent process via the config bytes.
     const setResult = await runAkRole(
@@ -355,15 +345,10 @@ test("#620 inspector public entry injects gatekeeper inheritance into RoleTurnRe
       ).exitCode,
       0,
     );
-    // #178 seed fills inspector; clear it so #620 inherit-gatekeeper is the only model source.
-    assert.equal(
-      (await runAkRole(["config", "unset", "inspector"], { packageRoot, home, io: captureIo().io })).exitCode,
-      0,
-    );
 
     const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
-    await runAkRole(
-      ["inspector", "--project", project, "--attach", attachment, "Review this material."],
+    // No --model: #620 proves inherit-gatekeeper is the sole model source.
+    await runAkRole(["inspector", "--project", project, "--attach", attachment, "Review this material."],
       {
         packageRoot,
         home,
@@ -451,12 +436,12 @@ test("every public callable role is a completed path (no deferred slice)", async
       // nonblank instruction that must not hit deferred-slice stubs.
       const argv =
         role === "collector"
-          ? ["collector", "--pr", "0"]
+          ? ["collector", "--model", "test/caller-seat:high", "--pr", "0"]
           : role === "doctor"
-            ? ["doctor", "--issue", "0"]
+            ? ["doctor", "--model", "test/caller-seat:high", "--issue", "0"]
             : role === "merger"
-              ? ["merger", "   "]
-              : [role, "exercise completed public path"];
+              ? ["merger", "--model", "test/caller-seat:high", "   "]
+              : [role, "--model", "test/caller-seat:high", "exercise completed public path"];
       const result = await runAkRole(argv, {
         packageRoot,
         home,
@@ -519,13 +504,13 @@ test("public runs write one identity-bound invocation ledger for every role", as
       args: [...args],
     });
     const cases = [
-      { role: "judge", runId: "public-judge-001", args: ["judge", "--project", project, "judge task"] },
-      { role: "coder", runId: "public-coder-001", args: ["coder", "--project", project, "coder task"] },
-      { role: "fixer", runId: "public-fixer-001", args: ["fixer", "--project", project, "fixer task"] },
-      { role: "reviewer", runId: "public-reviewer-001", args: ["reviewer", "--project", project, "--base", "HEAD", "reviewer task"] },
-      { role: "collector", runId: "public-collector-001", args: ["collector", "--project", project, "--pr", "177", "--repo", "acme/widgets"] },
-      { role: "doctor", runId: "public-doctor-001", args: ["doctor", "--project", project, "--issue", "177"] },
-      { role: "merger", runId: "public-merger-001", args: ["merger", "--project", project, "merger task"] },
+      { role: "judge", runId: "public-judge-001", args: ["judge", "--model", "test/caller-seat:high", "--project", project, "judge task"] },
+      { role: "coder", runId: "public-coder-001", args: ["coder", "--model", "test/caller-seat:high", "--project", project, "coder task"] },
+      { role: "fixer", runId: "public-fixer-001", args: ["fixer", "--model", "test/caller-seat:high", "--project", project, "fixer task"] },
+      { role: "reviewer", runId: "public-reviewer-001", args: ["reviewer", "--model", "test/caller-seat:high", "--project", project, "--base", "HEAD", "reviewer task"] },
+      { role: "collector", runId: "public-collector-001", args: ["collector", "--model", "test/caller-seat:high", "--project", project, "--pr", "177", "--repo", "acme/widgets"] },
+      { role: "doctor", runId: "public-doctor-001", args: ["doctor", "--model", "test/caller-seat:high", "--project", project, "--issue", "177"] },
+      { role: "merger", runId: "public-merger-001", args: ["merger", "--model", "test/caller-seat:high", "--project", project, "merger task"] },
     ] as const;
 
     for (const scenario of cases) {

@@ -30,7 +30,6 @@ import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts"
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 import { mkdir as mkdirDir } from "node:fs/promises";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
@@ -159,22 +158,24 @@ async function seedTerminalSession(input: {
 }
 
 function baseArgs(seat: Seat, project: string): string[] {
+  // #178: no package model fill-in — caller specifies per invocation.
+  const model = ["--model", "test/caller-seat:high"] as const;
   switch (seat) {
     case "judge":
-      return ["judge", "--project", project, "engine detour proof"];
+      return ["judge", ...model, "--project", project, "engine detour proof"];
     case "coder":
-      return ["coder", "--project", project, "engine detour proof"];
+      return ["coder", ...model, "--project", project, "engine detour proof"];
     case "fixer":
-      return ["fixer", "--project", project, "engine detour proof"];
+      return ["fixer", ...model, "--project", project, "engine detour proof"];
     case "reviewer":
-      return ["reviewer", "--project", project, "--base", "HEAD", "engine detour proof"];
+      return ["reviewer", ...model, "--project", project, "--base", "HEAD", "engine detour proof"];
     case "merger":
-      return ["merger", "--project", project, "engine detour proof"];
+      return ["merger", ...model, "--project", project, "engine detour proof"];
     case "countersign":
       // Unbound ticket: resume does not re-resolve; it still carries engine.
-      return ["countersign", "--project", project, "engine detour proof"];
+      return ["countersign", ...model, "--project", project, "engine detour proof"];
     case "gleaner-left":
-      return ["gleaner-left", "--project", project, "--base", "HEAD", "engine detour proof"];
+      return ["gleaner-left", ...model, "--project", project, "--base", "HEAD", "engine detour proof"];
   }
 }
 
@@ -218,7 +219,6 @@ async function readInvocationEngineModel(runDirectory: string): Promise<unknown>
 
 test("engine stays effective on the initial typed request for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-init-" }, async ({ home }) => {
-    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -247,7 +247,6 @@ test("engine stays effective on the initial typed request for all resumable seat
 
 test("engine stays effective across the auto-resume loop (initial + auto payloads) for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-auto-" }, async ({ home }) => {
-    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -313,10 +312,13 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
 
 test("explicit ak-role resume re-projects engine onto the resumed typed request for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-resume-" }, async ({ home }) => {
-    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    {
+      const { io } = captureIo();
+      await runAkRole(["config", "set", "diarist", "test/caller-seat:high"], { packageRoot, home, io });
+    }
 
     const seats: Seat[] = [
       "judge",
@@ -403,7 +405,6 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
 
 test("#883 explicit resume re-projects engineModel from the live seat table", async () => {
   await withHermeticHome({ prefix: "ak-engine-model-resume-" }, async ({ home }) => {
-    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -417,7 +418,7 @@ test("#883 explicit resume re-projects engineModel from the live seat table", as
       assert.equal(stderr.join(""), "");
       await runAkRole(["config", "set-engine", "judge", "cursor"], { packageRoot, home, io });
       assert.equal(stderr.join(""), "");
-      await runAkRole(["judge", "--project", project, "seed without model"], {
+      await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "seed without model"], {
         packageRoot,
         home,
         cwd: project,
@@ -491,7 +492,6 @@ test("#883 explicit resume re-projects engineModel from the live seat table", as
 
 test("explicit resume clears invocation.engine when the live seat has no engine", async () => {
   await withHermeticHome({ prefix: "ak-engine-unset-resume-" }, async ({ home }) => {
-    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -504,7 +504,7 @@ test("explicit resume clears invocation.engine when the live seat has no engine"
       assert.equal(stderr.join(""), "");
       await runAkRole(["config", "set-engine", "judge", ENGINE], { packageRoot, home, io });
       assert.equal(stderr.join(""), "");
-      await runAkRole(["judge", "--project", project, "seed with engine"], {
+      await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "seed with engine"], {
         packageRoot,
         home,
         cwd: project,

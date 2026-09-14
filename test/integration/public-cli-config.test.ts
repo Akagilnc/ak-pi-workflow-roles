@@ -100,45 +100,30 @@ test("command-local model/thinking overrides do not rewrite persistent configura
   });
 });
 
-// #178: package startup candidates abolished — empty seat table stays unconfigured
-// regardless of credential presence (credentials only gate the selected provider).
-test("empty seat table resolves unconfigured for every seat (no package fill-in)", () => {
-  const empty: PublicCliConfig = { seats: {} };
-  const withCreds = effectiveSeatConfigurations(empty, { "openai-codex": true, xai: true });
-  const withoutCreds = effectiveSeatConfigurations(empty, {
-    "openai-codex": false,
-    xai: false,
-  });
-
-  for (const row of withCreds) {
-    assert.equal(row.source, "unconfigured", row.seat);
-    assert.equal(row.selection, undefined, row.seat);
-  }
-  for (const row of withoutCreds) {
-    assert.equal(row.source, "unconfigured", row.seat);
-    assert.equal(row.selection, undefined, row.seat);
-  }
-
-  assert.deepEqual(
-    withCreds.map((s) => s.seat),
-    [
-      "judge",
-      "fixer",
-      "coder",
-      "reviewer",
-      "collector",
-      "doctor",
-      "merger",
-      "notary",
-      "countersign",
-      "gleaner-left",
-      "inspector",
-      "gatekeeper",
-      "navigator",
-      "auditor",
-      "diarist",
-    ],
-  );
+// Roster order only — package startup fill-in deleted with #178; no source/selection oracle here.
+test("effective seat configurations enumerate the public configurable roster", () => {
+  const seats = effectiveSeatConfigurations(
+    { seats: {} },
+    { "openai-codex": false, xai: false },
+  ).map((s) => s.seat);
+  assert.deepEqual(seats, [
+    "judge",
+    "fixer",
+    "coder",
+    "reviewer",
+    "collector",
+    "doctor",
+    "merger",
+    "notary",
+    "countersign",
+    "gleaner-left",
+    "inspector",
+    "gatekeeper",
+    "navigator",
+    "auditor",
+    "diarist",
+  ]);
+  // #744: evidence-child is not a public seat (deepEqual roster above).
 });
 
 const CODEX_CREDS: CredentialProviders = { "openai-codex": true, xai: true };
@@ -334,7 +319,7 @@ test("#453 non-notary engine-only residual is rejected on persist boundary", asy
   });
 });
 
-test("persistent seat config supplies the effective model", () => {
+test("persistent seat config is the effective model source", () => {
   const config = setPersistentSeatConfig(
     { seats: {} },
     "fixer",

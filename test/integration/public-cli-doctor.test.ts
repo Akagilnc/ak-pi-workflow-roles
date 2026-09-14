@@ -4,7 +4,6 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #113 public Doctor path — Issue identity + optional confined runs root
  * construct a truthful single-case evidence input; #78 locator remains sole
@@ -51,10 +50,7 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { assertPublicFailureSettlement } from "../helpers/failure-settlement-kit.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-doctor-", async (home) => {
-    await seedCallerSeatTable(home);
-    return scenario(home);
-  });
+  return withTempRoot("ak-public-cli-doctor-", scenario);
 }
 
 function captureIo() {
@@ -253,8 +249,7 @@ test("doctor activation projects casePath/isolation flags through typed request 
 
     const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
 
-    await runAkRole(
-      ["doctor", "--issue", "12", "--project", project, "diagnose retries"],
+    await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "12", "--project", project, "diagnose retries"],
       {
         packageRoot,
         home,
@@ -286,8 +281,7 @@ test("runAkRole doctor rejects malformed grammar before admission", async () => 
 
     let dispatched = false;
     const captured = captureIo();
-    const result = await runAkRole(
-      ["doctor", "--issue", "0", "--project", project],
+    const result = await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "0", "--project", project],
       {
         packageRoot,
         home,
@@ -325,8 +319,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     let candidateCost: unknown;
     let candidateDetails: unknown;
     const completedIo = captureIo();
-    const completed = await runAkRole(
-      ["doctor", "--issue", "40", "--project", project, "inspect"],
+    const completed = await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "40", "--project", project, "inspect"],
       {
         packageRoot,
         home,
@@ -418,8 +411,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
 
     // Refused path reuses the same Terminal settlement owner.
     const refusedIo = captureIo();
-    const refused = await runAkRole(
-      ["doctor", "--issue", "40", "--project", project],
+    const refused = await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "40", "--project", project],
       {
         packageRoot,
         home,
@@ -606,8 +598,7 @@ test("terminal persistence failure through public entry propagates loudly with n
     // is broken. Captured here so the assertion below checks against the
     // real recorded bytes, not a hand-authored duplicate.
     let recordedDetails: unknown;
-    const result = await runAkRole(
-      ["doctor", "--issue", "41", "--project", project, "inspect"],
+    const result = await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "41", "--project", project, "inspect"],
       {
         packageRoot,
         home,

@@ -1,5 +1,4 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #448 public Notary seat — source-run locator only; four external terminal layers
  * via real runAkRole entry; default judge path adds no intake notary call.
@@ -54,10 +53,7 @@ import {
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-notary-", async (home) => {
-    await seedCallerSeatTable(home);
-    return scenario(home);
-  });
+  return withTempRoot("ak-public-cli-notary-", scenario);
 }
 
 function captureIo() {
@@ -143,13 +139,9 @@ test("#620 notary public entry injects gatekeeper inheritance into RoleTurnReque
       ).exitCode,
       0,
     );
-    // #178 seed fills notary; clear it so #620 inherit-gatekeeper is the only model source.
-    assert.equal(
-      (await runAkRole(["config", "unset", "notary"], { home, packageRoot, io: captureIo().io })).exitCode,
-      0,
-    );
 
     const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
+    // No --model: #620 proves inherit-gatekeeper is the sole model source.
     await runAkRole(["notary", "--source-run", sourceRunPath], {
       home,
       packageRoot,
@@ -193,15 +185,13 @@ test("notary argv rejects caller prompt and attachment projection", async () => 
     seedGitProject(project);
     const sourceRunPath = await seedCanonicalSourceRun(home, project);
     const { io } = captureIo();
-    const withPrompt = await runAkRole(
-      ["notary", "--source-run", sourceRunPath, "caller framing must not admit"],
+    const withPrompt = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", sourceRunPath, "caller framing must not admit"],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(withPrompt.exitCode, 2);
     assert.equal(withPrompt.terminal, undefined);
 
-    const withAttach = await runAkRole(
-      ["notary", "--attach", "./note.md", "--source-run", sourceRunPath],
+    const withAttach = await runAkRole(["notary", "--model", "test/caller-seat:high", "--attach", "./note.md", "--source-run", sourceRunPath],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(withAttach.exitCode, 2);
@@ -216,8 +206,7 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
     seedGitProject(project);
     const { io } = captureIo();
 
-    const missing = await runAkRole(
-      ["notary", "--source-run", join(project, "no-such-run@judge")],
+    const missing = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", join(project, "no-such-run@judge")],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(missing.exitCode, 2);
@@ -225,8 +214,7 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
 
     const filePath = join(project, "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge");
     await writeFile(filePath, "not a directory\n", "utf8");
-    const notDir = await runAkRole(
-      ["notary", "--source-run", filePath],
+    const notDir = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", filePath],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(notDir.exitCode, 2);
@@ -234,8 +222,7 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
 
     const badNameDir = join(project, "not-a-run-id");
     await mkdir(badNameDir, { recursive: true });
-    const badName = await runAkRole(
-      ["notary", "--source-run", badNameDir],
+    const badName = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", badNameDir],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(badName.exitCode, 2);
@@ -243,8 +230,7 @@ test("notary bad source-run locator is structural reject (exit 2)", async () => 
 
     // Project-tree projection is not an authoritative source run.
     const projection = await seedProjectProjection(project);
-    const projected = await runAkRole(
-      ["notary", "--source-run", projection],
+    const projected = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", projection],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(projected.exitCode, 2);
@@ -324,7 +310,7 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
 
     const { io } = captureIo();
     const bare = `${runId}@${inventedRole}`;
-    const rejectedBare = await runAkRole(["notary", "--source-run", bare], {
+    const rejectedBare = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", bare], {
       home,
       packageRoot,
       cwd: project,
@@ -333,8 +319,7 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
     assert.equal(rejectedBare.exitCode, 2);
     assert.equal(rejectedBare.terminal, undefined);
 
-    const rejectedPath = await runAkRole(
-      ["notary", "--source-run", runDirectory],
+    const rejectedPath = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", runDirectory],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(rejectedPath.exitCode, 2);
@@ -381,8 +366,7 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
 
     // Real public entry: bare locator admits; project projection is exit 2.
     const { io } = captureIo();
-    const admittedBare = await runAkRole(
-      ["notary", "--source-run", bare],
+    const admittedBare = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", bare],
       {
         home,
         packageRoot,
@@ -400,8 +384,7 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
     assert.ok(admittedBare.terminal);
     assert.equal(admittedBare.terminal.roleOutcome.kind, "accepted");
 
-    const rejectedProjection = await runAkRole(
-      ["notary", "--source-run", projection],
+    const rejectedProjection = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", projection],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(rejectedProjection.exitCode, 2);
@@ -434,7 +417,7 @@ test("layer ① lawful pass/bounce/escalate exit 0 via public entry", async () =
       const { io } = captureIo();
       // #747: each receipt is an independent public admission, not same-parent resume.
       const result = await runAkRole(
-        ["new", "notary", "--source-run", sourceRunPath],
+        ["new", "notary", "--model", "test/caller-seat:high", "--source-run", sourceRunPath],
         {
           home,
           packageRoot,
@@ -473,8 +456,7 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
     const sourceRunPath = await seedCanonicalSourceRun(home, project);
     const { io } = captureIo();
 
-    const result = await runAkRole(
-      ["notary", "--source-run", sourceRunPath],
+    const result = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", sourceRunPath],
       {
         home,
         packageRoot,
@@ -548,8 +530,7 @@ test("layer ④ transport/provider failure is controlled non-zero failure", asyn
     seedGitProject(project);
     const sourceRunPath = await seedCanonicalSourceRun(home, project);
     const { io } = captureIo();
-    const result = await runAkRole(
-      ["notary", "--source-run", sourceRunPath],
+    const result = await runAkRole(["notary", "--model", "test/caller-seat:high", "--source-run", sourceRunPath],
       {
         home,
         packageRoot,
@@ -585,8 +566,7 @@ test("default judge public path admits no notary seat intake (observable run)", 
     let dispatchedArgs: readonly string[] | undefined;
     const judgeRunId = "01a0judge0-0000-7000-8000-000000000099";
 
-    await runAkRole(
-      ["judge", "--project", project, "ticket court intake probe"],
+    await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "ticket court intake probe"],
       {
         home,
         packageRoot,

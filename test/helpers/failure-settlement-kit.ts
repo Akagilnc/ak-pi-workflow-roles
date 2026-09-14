@@ -2,7 +2,6 @@
  * Shared fixtures for the failure-settlement test family (#420 整改拆分).
  * Extracted verbatim from public-cli-failure-settlement.test.ts — no behavior change.
  */
-import { seedCallerSeatTable } from "./seed-caller-seat-table.ts";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { access, readFile } from "node:fs/promises";
@@ -23,10 +22,7 @@ export async function withTempHome<T>(
   scenario: (home: string) => Promise<T>,
   options: { prefix?: string } = {},
 ): Promise<T> {
-  return withTempRoot(options.prefix ?? "ak-public-cli-fail-", async (home) => {
-    await seedCallerSeatTable(home);
-    return scenario(home);
-  });
+  return withTempRoot(options.prefix ?? "ak-public-cli-fail-", scenario);
 }
 
 export function captureIo() {

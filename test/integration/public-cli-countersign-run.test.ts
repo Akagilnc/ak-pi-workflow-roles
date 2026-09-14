@@ -57,7 +57,6 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { callerSeatTable, seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 import {
   ensureTicketProvenanceVolume,
   readTicketProvenance,
@@ -66,7 +65,30 @@ import {
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-countersign-", async (home) => {
-    await seedCallerSeatTable(home);
+    // Nested court seats resolve from the live table (no package fill-in, #178).
+    // Caller-specify via production config set — not a parallel seed helper.
+    const quiet = captureIo().io;
+    await runAkRole(
+      [
+        "config",
+        "set",
+        "countersign",
+        "test/caller-seat:high",
+        "diarist",
+        "test/caller-seat:high",
+        "judge",
+        "test/caller-seat:high",
+        "notary",
+        "test/caller-seat:high",
+        "inspector",
+        "test/caller-seat:high",
+        "auditor",
+        "test/caller-seat:high",
+        "gatekeeper",
+        "test/caller-seat:high",
+      ],
+      { packageRoot, home, io: quiet },
+    );
     const binDir = join(home, "bin");
     const priorPath = process.env.PATH;
     process.env.PATH = `${binDir}:${priorPath ?? ""}`;
@@ -221,8 +243,7 @@ test("countersign argv rejects unknown options", async () => {
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io } = captureIo();
-    const rejected = await runAkRole(
-      ["countersign", "--bogus", "裁"],
+    const rejected = await runAkRole(["countersign", "--model", "test/caller-seat:high", "--bogus", "裁"],
       { home, packageRoot, cwd: project, io },
     );
     assert.equal(rejected.exitCode, 2);
@@ -251,8 +272,7 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
     for (const [index, receipt] of receipts.entries()) {
       const { io } = captureIo();
       const runId = `01a0sign00-0000-7000-8000-${String(index).padStart(12, "0")}`;
-      const result = await runAkRole(
-        ["countersign", "--project", project, "裁：本票五问。"],
+      const result = await runAkRole(["countersign", "--model", "test/caller-seat:high", "--project", project, "裁：本票五问。"],
         {
           home,
           packageRoot,
@@ -344,8 +364,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
     const runId = "01a0sign00-0000-7000-8000-0000000000aa";
     // Ticket acceptance surface: interrupt first (unsealed), then resume lands a
     // distinct sealed verdict — not a vacuous re-read of a first-run seal (#599).
-    const first = await runAkRole(
-      ["countersign", "--project", project, "裁"],
+    const first = await runAkRole(["countersign", "--model", "test/caller-seat:high", "--project", project, "裁"],
       {
         home,
         packageRoot,
@@ -387,7 +406,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
     const { io: resumeIo, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
-    const resumed = await runAkRole(["resume", runId, "再裁一次"], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId, "再裁一次"], {
       home,
       packageRoot,
       cwd: project,
@@ -434,8 +453,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     seedGitProject(project);
 
     const runId = "01a0sign00-0000-7000-8000-0000000000ab";
-    const first = await runAkRole(
-      ["countersign", "--project", project, "裁"],
+    const first = await runAkRole(["countersign", "--model", "test/caller-seat:high", "--project", project, "裁"],
       {
         home,
         packageRoot,
@@ -466,7 +484,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
     const { io: resumeIo, stdout } = captureIo();
-    const resumed = await runAkRole(["resume", runId, "再裁一次"], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId, "再裁一次"], {
       home,
       packageRoot,
       cwd: project,
@@ -507,8 +525,7 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
     seedGitProject(project);
 
     const runId = "01a0sign00-0000-7000-8000-0000000000ac";
-    const first = await runAkRole(
-      ["countersign", "--project", project, "裁"],
+    const first = await runAkRole(["countersign", "--model", "test/caller-seat:high", "--project", project, "裁"],
       {
         home,
         packageRoot,
@@ -540,7 +557,7 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
     );
 
     const { io: resumeIo, stdout } = captureIo();
-    const resumed = await runAkRole(["resume", runId, "再试"], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId, "再试"], {
       home,
       packageRoot,
       cwd: project,
@@ -858,15 +875,12 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     // #771 LLM assert + #742 court diarist station; volume may or may not pre-exist.
     ensureTicketProvenanceVolume(582, project, home);
     // Temp-home seat row only — never write the real ~/.ak-roles table.
-    // Caller seats for every dispatch seat (#178); diarist keeps grok-build host.
     await mkdir(join(home, ".ak-roles"), { recursive: true });
-    const seats = {
-      ...callerSeatTable().seats,
-      diarist: { provider: "openai-codex", model: "gpt-5.6-sol", host: "grok-build" },
-    };
     await writeFile(
       publicCliConfigPath(home),
-      `${JSON.stringify({ seats })}\n`,
+      `${JSON.stringify({
+        seats: { diarist: { provider: "openai-codex", model: "gpt-5.6-sol", host: "grok-build" } },
+      })}\n`,
       "utf8",
     );
 
@@ -920,8 +934,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     };
 
     const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["countersign", "--project", project, "裁：继续审票 #582 是否足以开工。"],
+    const result = await runAkRole(["countersign", "--model", "test/caller-seat:high", "--project", project, "裁：继续审票 #582 是否足以开工。"],
       {
         home,
         agentDir: join(home, ".pi"),
@@ -1003,8 +1016,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
         details: { judgeStatus: "converged" },
       }),
     });
-    const unbound = await runAkRole(
-      ["judge", "--project", project, "Decide without a ticket."],
+    const unbound = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "Decide without a ticket."],
       {
         home,
         packageRoot,

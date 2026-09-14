@@ -1,7 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #110/#177 public Fixer path — common Invocation, structural prerequisites,
  * package diagnosing-bugs + tdd methods (available, not forced), shared Terminal.
@@ -54,10 +53,7 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-fixer-", async (home) => {
-    await seedCallerSeatTable(home);
-    return scenario(home);
-  });
+  return withTempRoot("ak-public-cli-fixer-", scenario);
 }
 
 function captureIo() {
@@ -367,7 +363,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
 
     {
       const { io, stderr } = captureIo();
-      const result = await runAkRole(["fixer", "plan", "   "], {
+      const result = await runAkRole(["fixer", "--model", "test/caller-seat:high", "plan", "   "], {
         packageRoot,
         home,
         cwd: project,
@@ -388,8 +384,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
       const bad = join(home, "bad.json");
       await writeFile(bad, "{", "utf8");
       const { io } = captureIo();
-      const result = await runAkRole(
-        ["fixer", "--project", project, "--prerequisites", bad, "Repair."],
+      const result = await runAkRole(["fixer", "--model", "test/caller-seat:high", "--project", project, "--prerequisites", bad, "Repair."],
         {
           packageRoot,
           home,
@@ -410,9 +405,8 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
-      const result = await runAkRole(
-        [
-          "fixer",
+      const result = await runAkRole([
+          "fixer", "--model", "test/caller-seat:high",
           "plan",
           "--project",
           project,
@@ -490,8 +484,7 @@ test("ak-role fixer defaults apply, preserves plan, rejects blank/malformed prer
     {
       const { io } = captureIo();
       let captured: string[] | undefined;
-      await runAkRole(
-        ["fixer", "--project", project, "Settle the approved repair."],
+      await runAkRole(["fixer", "--model", "test/caller-seat:high", "--project", project, "Settle the approved repair."],
         {
           packageRoot,
           home,
@@ -531,8 +524,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
 
     {
       const { io } = captureIo();
-      const first = await runAkRole(
-        ["fixer", "plan", "--project", project, instruction],
+      const first = await runAkRole(["fixer", "--model", "test/caller-seat:high", "plan", "--project", project, instruction],
         {
           packageRoot,
           home,
@@ -584,7 +576,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
-    const resumed = await runAkRole(["resume", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,
@@ -763,9 +755,8 @@ test("public CLI retains declared prerequisite_unmet judgment as accepted Termin
 
     // Full public CLI path: same judgment exits 0 with retained blocker facts.
     const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      [
-        "fixer",
+    const result = await runAkRole([
+        "fixer", "--model", "test/caller-seat:high",
         "plan",
         "--project",
         project,
@@ -916,8 +907,8 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
       const { io, stdout } = captureIo();
       const cliArgs =
         row.phase === "plan"
-          ? (["fixer", "plan", "--project", project, `CLI ${row.status}`] as string[])
-          : (["fixer", "--project", project, `CLI ${row.status}`] as string[]);
+          ? (["fixer", "--model", "test/caller-seat:high", "plan", "--project", project, `CLI ${row.status}`] as string[])
+          : (["fixer", "--model", "test/caller-seat:high", "--project", project, `CLI ${row.status}`] as string[]);
       const result = await runAkRole(cliArgs, {
         packageRoot,
         home,

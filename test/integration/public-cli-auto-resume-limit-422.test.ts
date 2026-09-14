@@ -1,6 +1,5 @@
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { callerSeatTable, seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #422: single-call auto-resume ceiling becomes configurable via
  * public-cli.json top-level key `autoResumeLimit` (sibling of `seats`).
@@ -33,10 +32,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
-  return withTempRoot("ak-422-", async (home) => {
-    await seedCallerSeatTable(home);
-    return fn(home);
-  });
+  return withTempRoot("ak-422-", fn);
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}
 function seedGitProject(root:string){execFileSync("git",["init","-b","main"],{cwd:root});execFileSync("git",["config","user.email","422@test.local"],{cwd:root});execFileSync("git",["config","user.name","422"],{cwd:root});execFileSync("git",["commit","--allow-empty","-m","seed"],{cwd:root});}
@@ -95,11 +91,11 @@ test("#422 loop with injected limit 0 disables auto resume (single dispatch)", a
 test("#422 configured autoResumeLimit=N changes ceiling via real entry (judge, N=1 → 2 dispatches)", async()=>{
   await withTempHome(async(home)=>{
     await mkdir(join(home,".ak-roles"),{recursive:true});
-    await writeFile(join(home,".ak-roles","public-cli.json"),`${JSON.stringify({...callerSeatTable(),autoResumeLimit:1})}\n`,"utf8");
+    await writeFile(join(home,".ak-roles","public-cli.json"),`${JSON.stringify({seats:{},autoResumeLimit:1})}\n`,"utf8");
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="422-e2e-n1";const callsRef={n:0};
     const {io}=captureIo();
-    const result=await runAkRole(["judge","--project",project,"auto"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
+    const result=await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"auto"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
@@ -114,11 +110,11 @@ test("#422 configured autoResumeLimit=N changes ceiling via real entry (judge, N
 test("#422 configured autoResumeLimit=0 disables auto resume via real entry (judge, single dispatch)", async()=>{
   await withTempHome(async(home)=>{
     await mkdir(join(home,".ak-roles"),{recursive:true});
-    await writeFile(join(home,".ak-roles","public-cli.json"),`${JSON.stringify({...callerSeatTable(),autoResumeLimit:0})}\n`,"utf8");
+    await writeFile(join(home,".ak-roles","public-cli.json"),`${JSON.stringify({seats:{},autoResumeLimit:0})}\n`,"utf8");
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="422-e2e-zero";const callsRef={n:0};
     const {io}=captureIo();
-    const result=await runAkRole(["judge","--project",project,"auto"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
+    const result=await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"auto"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
@@ -201,8 +197,7 @@ test("#422 ak-role config set-auto-resume-limit <N> writes durably and ak-role c
 });
 
 test("#422 set-auto-resume-limit rejects negative, fractional and non-numeric input loudly without writing", async()=>{
-  // Bare root: prove reject path writes nothing (seed would create the file first).
-  await withTempRoot("ak-422-reject-", async(home)=>{
+  await withTempHome(async(home)=>{
     for(const bad of ["-1","1.5","abc","","+2","1e2","0x10"]){
       const {io,stderr}=captureIo();
       // runAkRole catches CliUsageError structurally: exit 2 + diagnostic line.
@@ -218,7 +213,7 @@ test("#422 set-auto-resume-limit rejects negative, fractional and non-numeric in
 });
 
 test("#422 set-auto-resume-limit rejects integers beyond the number fidelity boundary loudly without writing", async()=>{
-  await withTempRoot("ak-422-fidelity-", async(home)=>{
+  await withTempHome(async(home)=>{
     // 9007199254740993 is a legal non-negative integer, but Number() rounds it
     // to ...992. The verb seam must refuse (exit 2 + diagnostic) instead of
     // silently persisting a different N — and must not touch the config file.
@@ -299,8 +294,7 @@ test("#422 NaN injected via role entry (judge) terminates the whole call loudly 
 });
 
 test("#422 seat write after set-auto-resume-limit keeps both keys on disk", async()=>{
-  // Bare root so seats start empty — asserts the set pair alone on disk.
-  await withTempRoot("ak-422-both-keys-", async(home)=>{
+  await withTempHome(async(home)=>{
     const {io}=captureIo();
     const setResult=await runAkRole(["config","set-auto-resume-limit","9"],{packageRoot,home,io});
     assert.equal(setResult.exitCode,0);

@@ -1,5 +1,4 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * Owner 2026-08-23 (immediate order, no separate ticket): a dispatch that exits
  * by throwing must not bypass the auto-resume retry mechanism.
@@ -27,10 +26,7 @@ import { recordNonSealedSubmission, sealAcceptedSubmission } from "../helpers/su
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
-  return withTempRoot("ak-dispatch-throw-", async (home) => {
-    await seedCallerSeatTable(home);
-    return fn(home);
-  });
+  return withTempRoot("ak-dispatch-throw-", fn);
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}
 

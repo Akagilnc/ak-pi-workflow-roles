@@ -27,15 +27,11 @@ import {
   setPersistentSeatEngine,
 } from "../../src/public-cli/config.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 
 const credentials = { "openai-codex": true, xai: true } as const;
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-parsers-", async (home) => {
-    await seedCallerSeatTable(home);
-    return scenario(home);
-  });
+  return withTempRoot("ak-public-cli-parsers-", scenario);
 }
 
 function seedGitProject(root: string): void {

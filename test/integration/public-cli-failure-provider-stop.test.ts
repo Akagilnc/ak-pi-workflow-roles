@@ -913,8 +913,7 @@ test("#307 typed HTTP non-absence failure settles once via controlled failure (n
     seedGitProject(project);
     const runId = "run-typed-http-resume-once-001";
     const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "typed http sidecar is a directory"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "typed http sidecar is a directory"],
       {
         packageRoot,
         home,

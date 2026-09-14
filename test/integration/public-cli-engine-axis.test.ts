@@ -4,7 +4,6 @@ import {
   withNestedTrueUnboundDiaristPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #356 T1 / #376 / #378 / #391 — all-role engine axis on config → activation material seams.
  * Covers: priority, path-safety rejection, public CLI tracer, default-path byte oracle.
@@ -79,10 +78,7 @@ function assertNoEngineFlagsInArgv(argv: readonly string[]): void {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-engine-axis-", async (home) => {
-    await seedCallerSeatTable(home);
-    return scenario(home);
-  });
+  return withTempRoot("ak-engine-axis-", scenario);
 }
 
 function captureIo() {
@@ -286,8 +282,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
     {
       let capturedArgs: string[] | undefined;
       const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--project", project, "engine persistent path"],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "engine persistent path"],
         {
           packageRoot,
           home,
@@ -382,8 +377,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       assert.equal(unset.exitCode, 0);
       let capturedArgs: string[] | undefined;
       const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--project", project, "engine absent path"],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "engine absent path"],
         {
           packageRoot,
           home,
@@ -424,8 +418,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       let capturedArgs: string[] | undefined;
       let capturedEnv: NodeJS.ProcessEnv | undefined;
       const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--engine", "nope-engine", "--project", project, "x"],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--engine", "nope-engine", "--project", project, "x"],
         {
           packageRoot,
           home,
@@ -480,8 +473,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       let capturedArgs: string[] | undefined;
       let capturedEnv: NodeJS.ProcessEnv | undefined;
       const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--engine", "company..opus", "--project", project, "x"],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--engine", "company..opus", "--project", project, "x"],
         {
           packageRoot,
           home,
@@ -524,8 +516,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
     // Syntax-illegal --engine → structural reject (exit 2), not role submission.
     {
       const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--engine", "has/slash", "--project", project, "x"],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--engine", "has/slash", "--project", project, "x"],
         { packageRoot, home, cwd: project, credentials, io },
       );
       assert.equal(result.exitCode, 2);
@@ -535,16 +526,14 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
     // Backslash separator and parent traversal still reject at the public entry.
     {
       const slash = captureIo();
-      const slashResult = await runAkRole(
-        ["judge", "--engine", "has\\slash", "--project", project, "x"],
+      const slashResult = await runAkRole(["judge", "--model", "test/caller-seat:high", "--engine", "has\\slash", "--project", project, "x"],
         { packageRoot, home, cwd: project, credentials, io: slash.io },
       );
       assert.equal(slashResult.exitCode, 2);
       assert.match(slash.stderr.join(""), /illegal engine name/);
 
       const escape = captureIo();
-      const escapeResult = await runAkRole(
-        ["judge", "--engine", "../escape", "--project", project, "x"],
+      const escapeResult = await runAkRole(["judge", "--model", "test/caller-seat:high", "--engine", "../escape", "--project", project, "x"],
         { packageRoot, home, cwd: project, credentials, io: escape.io },
       );
       assert.equal(escapeResult.exitCode, 2);
@@ -564,9 +553,8 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
       let capturedArgs: string[] | undefined;
       let capturedEnv: NodeJS.ProcessEnv | undefined;
       const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        [
-          "reviewer",
+      const result = await runAkRole([
+          "reviewer", "--model", "test/caller-seat:high",
           "--engine",
           "cursor",
           "--project",
@@ -638,8 +626,7 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
         "utf8",
       );
       const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--project", project, "x"],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "x"],
         { packageRoot, home, cwd: project, credentials, io },
       );
       assert.equal(result.exitCode, 2);
@@ -752,8 +739,7 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
       let capturedArgs: string[] | undefined;
       let capturedEnv: NodeJS.ProcessEnv | undefined;
       const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        ["fixer", "--project", project, "fixer engine persistent path"],
+      const result = await runAkRole(["fixer", "--model", "test/caller-seat:high", "--project", project, "fixer engine persistent path"],
         {
           packageRoot,
           home,
@@ -796,9 +782,8 @@ test("#391 fixer --engine and set-engine: env signal + material coordinates; fre
       let capturedArgs: string[] | undefined;
       let capturedEnv: NodeJS.ProcessEnv | undefined;
       const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        [
-          "fixer",
+      const result = await runAkRole([
+          "fixer", "--model", "test/caller-seat:high",
           "--engine",
           "nope-engine",
           "--project",
@@ -870,8 +855,7 @@ test("ambient AK_ROLE_ENGINE does not activate detour signal for engine-free jud
       let capturedEnv: NodeJS.ProcessEnv | undefined;
       let capturedArgs: string[] | undefined;
       const { io, stderr } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--project", project, "engine-free under ambient AK_ROLE_ENGINE"],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "engine-free under ambient AK_ROLE_ENGINE"],
         {
           packageRoot,
           home,
@@ -957,41 +941,45 @@ async function materializeConflictedRepo(root: string): Promise<void> {
  * instead of resuming a prior probe that has no durable Pi principal.
  */
 function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[] {
+  // #178: caller-specified model on the probe argv (no package fill-in).
+  const model = ["--model", "test/caller-seat:high"] as const;
   switch (role) {
     case "judge":
     case "fixer":
     case "coder":
     case "merger":
-      return [role, "--project", project, "engine axis probe"];
+      return [role, ...model, "--project", project, "engine axis probe"];
     case "reviewer":
-      return [role, "--project", project, "--base", "main", "engine axis probe"];
+      return [role, ...model, "--project", project, "--base", "main", "engine axis probe"];
     case "collector":
-      return [role, "--pr", "1", "--repo", "acme/widgets", "--project", project];
+      return [role, ...model, "--pr", "1", "--repo", "acme/widgets", "--project", project];
     case "doctor":
-      return [role, "--issue", "1", "--project", project, "engine axis probe"];
+      return [role, ...model, "--issue", "1", "--project", project, "engine axis probe"];
     case "notary":
       return [
         "new",
         role,
+        ...model,
         "--source-run",
         "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
         "--project",
         project,
       ];
     case "countersign":
-      return [role, "--project", project, "engine axis probe"];
+      return [role, ...model, "--project", project, "engine axis probe"];
     case "gleaner-left":
-      return [role, "--project", project, "--base", "main", "engine axis probe"];
+      return [role, ...model, "--project", project, "--base", "main", "engine axis probe"];
     case "inspector":
-      return [role, "--project", project, "engine axis probe"];
+      return [role, ...model, "--project", project, "engine axis probe"];
     case "gatekeeper":
-      return [role, "--project", project, "engine axis probe"];
+      return [role, ...model, "--project", project, "engine axis probe"];
     case "navigator":
-      return [role, "--project", project, "engine axis probe"];
+      return [role, ...model, "--project", project, "engine axis probe"];
     case "auditor":
       return [
         "new",
         role,
+        ...model,
         "--subject",
         "judge",
         "--source-run",
@@ -1001,7 +989,7 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
         "engine axis probe",
       ];
     case "diarist":
-      return [role, "--project", project, "engine axis probe"];
+      return [role, ...model, "--project", project, "engine axis probe"];
     default: {
       const _exhaustive: never = role;
       throw new Error(`unexpected role: ${String(_exhaustive)}`);
@@ -1047,6 +1035,16 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
         const mergerProject = join(home, "merger-project");
         await mkdir(mergerProject, { recursive: true });
         await materializeConflictedRepo(mergerProject);
+
+        // Nested court seats (countersign→diarist) need a caller-set model (#178).
+        {
+          const nest = captureIo();
+          const setNest = await runAkRole(
+            ["config", "set", "diarist", "test/caller-seat:high"],
+            { packageRoot, home, io: nest.io },
+          );
+          assert.equal(setNest.exitCode, 0, nest.stderr.join(""));
+        }
 
         for (const role of PUBLIC_CALLABLE_ROLES) {
           const project = role === "merger" ? mergerProject : baseProject;
@@ -1363,7 +1361,7 @@ test("#883 engine model axis: set/clear/opaque round-trip on real public entry",
 
       let requestEngine: string | undefined;
       let requestModel: string | undefined;
-      await runAkRole(["judge", "--project", project, "engine model request"], {
+      await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "engine model request"], {
         packageRoot,
         home,
         cwd: project,
@@ -1396,7 +1394,7 @@ test("#883 engine model axis: set/clear/opaque round-trip on real public entry",
       assert.equal((await loadPublicCliConfig(home)).seats.judge?.engineModel, undefined);
 
       let requestModel: string | undefined = "sentinel";
-      await runAkRole(["judge", "--project", project, `${engine} bare`], {
+      await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, `${engine} bare`], {
         packageRoot,
         home,
         cwd: project,
@@ -1433,7 +1431,7 @@ test("#883 engine model axis: set/clear/opaque round-trip on real public entry",
       assert.equal(persisted.seats.judge?.engineModel, undefined);
 
       let requestModel: string | undefined = "sentinel";
-      await runAkRole(["judge", "--project", project, "cleared model"], {
+      await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "cleared model"], {
         packageRoot,
         home,
         cwd: project,

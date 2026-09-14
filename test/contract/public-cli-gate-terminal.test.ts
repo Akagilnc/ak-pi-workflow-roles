@@ -224,8 +224,7 @@ async function runJudgePublic(input: {
   sealedAcceptance?: { readonly details: unknown };
 }): Promise<{ terminal: TerminalResult; exitCode: number; stdout: string[]; stderr: string[] }> {
   const { io, stdout, stderr } = captureIo();
-  const result = await runAkRole(
-    ["judge", "--project", input.project, "gate projection"],
+  const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", input.project, "gate projection"],
     {
       packageRoot,
       home: input.home,

@@ -3,7 +3,6 @@ import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #111 / #236 public Reviewer path — fixed base + package code-review only.
  * Caller instruction is optional provenance, never semantic control.
@@ -54,10 +53,7 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-reviewer-", async (home) => {
-    await seedCallerSeatTable(home);
-    return scenario(home);
-  });
+  return withTempRoot("ak-public-cli-reviewer-", scenario);
 }
 
 function captureIo() {
@@ -557,9 +553,8 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
-      const result = await runAkRole(
-        [
-          "reviewer",
+      const result = await runAkRole([
+          "reviewer", "--model", "test/caller-seat:high",
           "--project",
           project,
           "--base",
@@ -667,9 +662,8 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
-      const result = await runAkRole(
-        [
-          "reviewer",
+      const result = await runAkRole([
+          "reviewer", "--model", "test/caller-seat:high",
           "--project",
           project,
           "--base",
@@ -813,8 +807,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
 
     {
       const { io } = captureIo();
-      const first = await runAkRole(
-        ["reviewer", "--project", project, "--base", "main", instruction],
+      const first = await runAkRole(["reviewer", "--model", "test/caller-seat:high", "--project", project, "--base", "main", instruction],
         {
           packageRoot,
           home,
@@ -869,7 +862,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
-    const resumed = await runAkRole(["resume", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,

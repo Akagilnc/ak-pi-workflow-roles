@@ -52,13 +52,11 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 
 async function withTempHome(
   run: (home: string) => Promise<void>,
 ): Promise<void> {
   await withTempRoot("ak-seat-self-ticket-", async (home) => {
-    await seedCallerSeatTable(home);
     const binDir = join(home, "bin");
     const priorPath = process.env.PATH;
     process.env.PATH = `${binDir}:${priorPath ?? ""}`;

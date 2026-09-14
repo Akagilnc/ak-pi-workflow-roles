@@ -13,7 +13,6 @@ import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 import { payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import type { TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 
@@ -33,10 +32,7 @@ function adapter(name: string, selected: string[], accepts = true): NamedRoleTur
 }
 
 async function homeTest(fn: (home: string) => Promise<void>) {
-  await withTempRoot("ak-host-axis-", async (home) => {
-    await seedCallerSeatTable(home);
-    await fn(home);
-  });
+  await withTempRoot("ak-host-axis-", fn);
 }
 
 const base = (home: string, adapters: readonly NamedRoleTurnHostAdapter[]) => ({ packageRoot, home, credentials, io, hostAdapters: adapters });
@@ -149,12 +145,16 @@ test("inspector model clear preserves independent host and engine residual axes"
 
 test("resume accepts --host and selects that host adapter", async () => {
   await withHermeticHome({ prefix: "ak-resume-host-flag-" }, async ({ home }) => {
-    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "run-resume-host-flag";
     await seedResumableJudge({ home, project, runId });
+    await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], {
+      packageRoot,
+      home,
+      io: captureIo().io,
+    });
 
     const selected: string[] = [];
     const { io } = captureIo();
@@ -297,8 +297,7 @@ test("host provider resolution prefers table, then unique directory, else fails 
 
   // Unregistered host fails as host-unregistered — never as a model/provider error.
   // Production adapter table on this build has no hermes; use pi-only adapters.
-  const unregistered = await runAkRole(
-    ["judge", "--host", "hermes", "host-first"],
+  const unregistered = await runAkRole(["judge", "--host", "hermes", "host-first"],
     base(home, [probe("pi")]),
   );
   assert.equal(unregistered.exitCode, 1);
@@ -397,8 +396,7 @@ process.exit(0);
 test("admission writes typed birth host onto invocation.json", async () => homeTest(async (home) => {
   const selected: string[] = [];
   await configureJudge(home, "grok-build");
-  await runAkRole(
-    ["judge", "record-birth-host"],
+  await runAkRole(["judge", "record-birth-host"],
     base(home, [adapter("pi", selected), adapter("grok-build", selected)]),
   );
   assert.deepEqual(selected, ["grok-build"]);
@@ -426,7 +424,7 @@ async function seedResumableJudge(input: {
 }): Promise<void> {
   const { io } = captureIo();
   const principalAuthority = input.principalAuthority ?? piDurablePrincipalAuthority;
-  await runAkRole(["judge", `seed-${input.runId}`], {
+  await runAkRole(["judge", "--model", "openai-codex/gpt-5.6-sol:high", `seed-${input.runId}`], {
     packageRoot,
     home: input.home,
     cwd: input.project,
@@ -462,7 +460,6 @@ async function seedResumableJudge(input: {
 /** #617 DK-3: bare resume follows the live seat table host, not birth host. */
 test("bare resume follows live seat table host when it drifts from birth host", async () => {
   await withHermeticHome({ prefix: "ak-seat-host-resume-" }, async ({ home }) => {
-    await seedCallerSeatTable(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -659,8 +656,7 @@ rl.on("line", (line) => {
 
       await runAkRole(["config", "set", "coder", "xai/grok-4.5:high"], productionBase(home));
       await runAkRole(["config", "set-host", "coder", "grok-build"], productionBase(home));
-      const result = await runAkRole(
-        ["coder", "--project", project, assignment],
+      const result = await runAkRole(["coder", "--project", project, assignment],
         { ...productionBase(home), cwd: project, createRunId: () => "run-822-coder-grok" },
       );
 
@@ -708,8 +704,7 @@ process.exit(0);
 
       await runAkRole(["config", "set", "coder", "openai-codex/gpt-5.6-sol:high"], productionBase(home));
       await runAkRole(["config", "set-host", "coder", "claude"], productionBase(home));
-      const result = await runAkRole(
-        ["coder", "--project", project, assignment],
+      const result = await runAkRole(["coder", "--project", project, assignment],
         { ...productionBase(home), cwd: project, createRunId: () => "run-822-coder-claude" },
       );
 

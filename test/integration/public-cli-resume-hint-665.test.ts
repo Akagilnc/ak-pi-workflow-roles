@@ -9,7 +9,6 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 
 import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -23,7 +22,6 @@ import {
 
 test("#665 typed 429 failure projects resume uniformly (no per-seat fork)", async () => {
   await withTempRoot("ak-665-resume-hint-", async (home) => {
-    await seedCallerSeatTable(home);
     const runId = "run-665-uniform-429";
     // #836: home→runDirectory resolution requires the real .ak-roles/books/<bookKey>
     // topology (activation-ledger-topology.ts homeFromRunDirectory) — every

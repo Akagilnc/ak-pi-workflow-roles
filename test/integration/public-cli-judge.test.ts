@@ -3,7 +3,6 @@ import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #106 public Judge path — admission, freeze, terminal settlement, grace, renderer.
  * Seams: parseJudgeArgv / admitJudgeInvocation / TerminalResult / raceNavigatorGrace /
@@ -76,10 +75,7 @@ function sessionToolResultLine(toolName: string, details: unknown): string {
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-judge-", async (home) => {
-    await seedCallerSeatTable(home);
-    return scenario(home);
-  });
+  return withTempRoot("ak-public-cli-judge-", scenario);
 }
 
 /** Temp physical root + dir-symlink alias; owns cleanup after successful mkdtemp. */
@@ -164,8 +160,7 @@ test("S1: judge escalate public CLI prints every decisionGate option text in ord
     seedGitProject(project);
     const { io, stdout } = captureIo();
     const options = ["采纳既有法源", "改采审刑院意见"];
-    const result = await runAkRole(
-      ["judge", "--project", project, "show escalation options"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "show escalation options"],
       {
         packageRoot,
         home,
@@ -929,7 +924,7 @@ test("runAkRole judge rejects burden selector before admission", async () => {
   await withTempHome(async (home) => {
     const { io, stderr } = captureIo();
     let ran = false;
-    const result = await runAkRole(["judge", "--burden", "heavy", "task"], {
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--burden", "heavy", "task"], {
       packageRoot,
       home,
       io,
@@ -969,9 +964,8 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     let capturedEnv: NodeJS.ProcessEnv | undefined;
     let capturedStdin: string | undefined;
 
-    const result = await runAkRole(
-      [
-        "judge",
+    const result = await runAkRole([
+        "judge", "--model", "test/caller-seat:high",
         "--attach",
         attachment,
         "--project",
@@ -1182,7 +1176,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
     const { io, stdout } = captureIo();
     let prompt: string | undefined;
 
-    const result = await runAkRole(["judge", "--project", project], {
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project], {
       packageRoot,
       home,
       cwd: project,

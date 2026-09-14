@@ -1,6 +1,5 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 /**
  * #519 §5 shared public-cli real-entry tracer base.
  * One file, one subprocess entry helper, table-driven across 8 packaged roles.
@@ -106,7 +105,11 @@ async function conflictedRepository(root: string) {
 
 async function withSharedHome<T>(run: (home: string, project: string) => Promise<T>): Promise<T> {
   return await withTempRoot("ak-public-role-table-", async (home) => {
-    await seedCallerSeatTable(home);
+    // Nested court diarist (countersign) resolves from the live table (#178).
+    await runAkRole(
+      ["config", "set", "diarist", "test/caller-seat:high"],
+      { packageRoot, home, io: { stdout() {}, stderr() {} } },
+    );
     const project = join(home, "work");
     await mkdir(project);
     seedGitProject(project);
@@ -384,17 +387,19 @@ async function runAcceptedRow(row: AcceptedRow, home: string, project: string) {
   return { result, runId, stderr: stderr.join("") };
 }
 
+const CALLER_MODEL = ["--model", "test/caller-seat:high"] as const;
+
 const ACCEPTED_ROWS: readonly AcceptedRow[] = [
   {
     role: "judge",
     status: "converged",
-    args: (project) => ["judge", "--project", project, "Decide."],
+    args: (project) => ["judge", ...CALLER_MODEL, "--project", project, "Decide."],
     details: () => ({ judgeStatus: "converged" }),
   },
   {
     role: "coder",
     status: "completed",
-    args: (project) => ["coder", "--project", project, "Implement."],
+    args: (project) => ["coder", ...CALLER_MODEL, "--project", project, "Implement."],
     details: () => ({
       status: "completed",
       report: "TDD red/green evidence complete.",
@@ -403,13 +408,13 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
   {
     role: "fixer",
     status: "planned",
-    args: (project) => ["fixer", "plan", "--project", project, "Plan the repair."],
+    args: (project) => ["fixer", ...CALLER_MODEL, "plan", "--project", project, "Plan the repair."],
     details: () => ({ status: "planned", report: "Inspect root cause first." }),
   },
   {
     role: "reviewer",
     status: "completed",
-    args: (project) => ["reviewer", "--base", "HEAD", "--project", project],
+    args: (project) => ["reviewer", ...CALLER_MODEL, "--base", "HEAD", "--project", project],
     details: () => reviewerReceipt(),
   },
   {
@@ -417,7 +422,7 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
     status: "refused",
     args: async (project, home) => {
       await seedDoctorIssue(home, project, 40);
-      return ["doctor", "--issue", "40", "--project", project, "diagnose"];
+      return ["doctor", ...CALLER_MODEL, "--issue", "40", "--project", project, "diagnose"];
     },
     details: () => ({
       status: "refused",
@@ -430,7 +435,7 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
     status: "escalate",
     args: async (project) => {
       await conflictedRepository(project);
-      return ["merger", "--project", project, "Escalate incompatible intents."];
+      return ["merger", ...CALLER_MODEL, "--project", project, "Escalate incompatible intents."];
     },
     details: ({ runId }) => ({
       status: "escalate",
@@ -457,14 +462,14 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
     status: "pass",
     args: async (project, home) => {
       const source = await seedNotarySourceRun(home, project);
-      return ["notary", "--source-run", source];
+      return ["notary", ...CALLER_MODEL, "--source-run", source];
     },
     details: () => ({ status: "pass", findings: [] }),
   },
   {
     role: "countersign",
     status: "converged",
-    args: (project) => ["countersign", "--project", project, "裁：本票是否足以开工。"],
+    args: (project) => ["countersign", ...CALLER_MODEL, "--project", project, "裁：本票是否足以开工。"],
     details: () => ({ countersignStatus: "converged", findings: [] }),
   },
   {
@@ -473,6 +478,7 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
     status: undefined,
     args: (project) => [
       "collector",
+      ...CALLER_MODEL,
       "--pr",
       "3",
       "--repo",
@@ -570,8 +576,7 @@ test("host-neutral typed turns record every terminating submission without sole 
         return { code: 0, stderr: "", timedOut: false };
       },
     };
-    const result = await runAkRole(
-      ["judge", "--project", project, "two submissions"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "two submissions"],
       {
         packageRoot,
         home,
@@ -602,8 +607,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
     // Zero submissions: host ends cleanly → no_receipt, exit 0.
     {
       const { io } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--project", project, "No receipt."],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "No receipt."],
         {
           packageRoot,
           home,
@@ -626,8 +630,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
     // Host fails after a recorded submission: failure + original payload coexist.
     {
       const { io } = captureIo();
-      const result = await runAkRole(
-        ["coder", "--project", project, "Infra fail."],
+      const result = await runAkRole(["coder", "--model", "test/caller-seat:high", "--project", project, "Infra fail."],
         {
           packageRoot,
           home,
@@ -656,7 +659,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
     {
       const runId = "run-table-post-seal";
       const { io } = captureIo();
-      const result = await runAkRole(["judge", "--project", project, "Decide."], {
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "Decide."], {
         packageRoot,
         home,
         cwd: project,

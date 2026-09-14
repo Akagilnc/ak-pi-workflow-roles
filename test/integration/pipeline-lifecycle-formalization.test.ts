@@ -75,8 +75,7 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
       stderr: (t: string) => { stderr.push(t); },
     };
 
-    const result = await runAkRole(
-      ["judge", "--project", project, "arbitrate issue #517"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "arbitrate issue #517"],
       {
         packageRoot,
         home,

@@ -19,13 +19,11 @@ import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedCallerSeatTable } from "../helpers/seed-caller-seat-table.ts";
 import { isolatedTestProcessEnv, writeVersionAwarePiShim } from "../helpers/test-process-fixtures.ts";
 
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-explicit-internal-", async (home) => {
-    await seedCallerSeatTable(home);
     seedGitRepository(home);
     return await scenario(home);
   });
