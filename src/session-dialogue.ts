@@ -105,30 +105,44 @@ function isRunnerMessage(row: Record<string, unknown>): boolean {
 }
 
 /**
- * 逐次来源配对：dequeue 之后、下一条 runner 回话之前的 owner 消息是队列物化，
- * 已由对应 enqueue 入录，消息侧跳过以免双计。未配对的 dequeue（被吸收插话）
- * 在遇到 runner 回话时解除，不殃及之后的普通 owner 消息。
+ * 逐次来源配对：仅当对应 enqueue 已由 fromQueueEvent 实际形成 retained owner
+ * 对话时，才把随后的物化 user 当副本跳过。FIFO 对齐 enqueue→dequeue/remove。
+ * 无正文 enqueue、旧宿主或其他不可投影形状：dequeue 不产生 skip，后续真人
+ * user 原样保留。未物化的 retained dequeue（被吸收插话）遇 runner 解除。
  * 不用「卷内曾出现 enqueue」整卷布尔，也不按正文过滤。
  */
 function ownerMessagesMaterializingQueue(
   rows: readonly (Record<string, unknown> | undefined)[],
 ): ReadonlySet<number> {
   const skip = new Set<number>();
-  let pending = 0;
+  /** 各 enqueue 是否已留下 owner 对话，按入队顺序等 dequeue/remove 消费。 */
+  const retainedByEnqueue: boolean[] = [];
+  let pendingSkips = 0;
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     if (row === undefined) continue;
-    if (row.type === "queue-operation" && row.operation === "dequeue") {
-      pending += 1;
-      continue;
+    if (row.type === "queue-operation") {
+      if (row.operation === "enqueue") {
+        retainedByEnqueue.push(fromQueueEvent(row).length > 0);
+        continue;
+      }
+      if (row.operation === "dequeue" || row.operation === "remove") {
+        const retained = retainedByEnqueue.shift();
+        // 只在 enqueue 真留下对话且本事件是 dequeue 物化时才跳过后续 user。
+        // remove 只消费队列槽，不制造 skip（无物化消息）。
+        if (row.operation === "dequeue" && retained === true) {
+          pendingSkips += 1;
+        }
+        continue;
+      }
     }
     if (isRunnerMessage(row)) {
-      pending = 0;
+      pendingSkips = 0;
       continue;
     }
-    if (pending > 0 && isOwnerDialogueMessage(row)) {
+    if (pendingSkips > 0 && isOwnerDialogueMessage(row)) {
       skip.add(index);
-      pending -= 1;
+      pendingSkips -= 1;
     }
   }
   return skip;
