@@ -2199,6 +2199,8 @@ export async function extractGateFactFromSessionDirectory(
  * #537: project this-invocation ak_engine_detour usage onto decisiveFacts.
  * Absent when engine is not mounted; callCount 0 when mounted with zero calls.
  * Never mutates role payloads (ADR 0003 / 0042 / 0052).
+ * Session read damage propagates (failure honesty) — never fall back to an
+ * unfiltered sitian volume that would cross the resume attempt boundary.
  */
 async function attachEngineDetourToolUsage<
   T extends { roleOutcome: TerminalRoleOutcome },
@@ -2215,18 +2217,13 @@ async function attachEngineDetourToolUsage<
   if (!engineMounted) return base;
 
   const sessionFile = sessionFileFromSessionDirectory(sessionDirectory);
-  let attemptToolCallIds: ReadonlySet<string> | undefined;
-  try {
-    const entries = await readBoundSessionEntries(sessionFile);
-    attemptToolCallIds = currentAttemptEngineDetourToolCallIds(entries);
-  } catch {
-    // Unreadable session: still surface sitian volume for this sessionParent.
-  }
-
+  // Bound session is the attempt-scope authority; errors keep their identity.
+  const entries = await readBoundSessionEntries(sessionFile);
+  const attemptToolCallIds = currentAttemptEngineDetourToolCallIds(entries);
   const usage = await readEngineDetourToolUsage({
     sessionParent: sessionFile,
     engineMounted: true,
-    ...(attemptToolCallIds === undefined ? {} : { attemptToolCallIds }),
+    attemptToolCallIds,
     cwd: runDirectory,
   });
   return {
