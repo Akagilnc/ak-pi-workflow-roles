@@ -1239,7 +1239,7 @@ const ROLE_COMMAND_HELP = {
   },
   inspector: {
     command: "inspector",
-    summary: "Direct Inspector (察院) complexity and test-quality check; pass or bounce.",
+    summary: "Direct Inspector (台院) complexity and test-quality check; pass or bounce.",
     usage: ["ak-role inspector [options] [instruction]"],
     examples: [
       'ak-role inspector --attach ./change.patch "Review this material."',

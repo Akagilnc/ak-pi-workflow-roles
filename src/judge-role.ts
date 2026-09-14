@@ -125,7 +125,7 @@ export function createJudgeRoleRuntime(
               // #879: this-turn typed payload — identity-bound at submit site.
               submission: parameters,
             });
-            // #756: 审刑院合规路径 — same review-queue law as 符宝郎/察院.
+            // #756: 审刑院合规路径 — same review-queue law as 符宝郎/台院.
             // pass → accept; bounce|escalate → raw auditor receipt back to judge;
             // not three-state → resume auditor; no round cap; no disposeCompliance mapping.
             await pi.requireGatekeeperPass!({

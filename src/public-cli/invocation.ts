@@ -1345,7 +1345,7 @@ export async function admitJudgeInvocation(
 }
 
 /**
- * Admit a direct Inspector (察院) run: freeze attachments, persist the request,
+ * Admit a direct Inspector (台院) run: freeze attachments, persist the request,
  * and reserve session placement. Same instruction-seat face as Judge (#568).
  */
 export async function admitInspectorInvocation(

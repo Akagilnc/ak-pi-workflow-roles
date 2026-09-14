@@ -1,15 +1,15 @@
 /**
- * Public Inspector (察院) terminating receipt contracts.
+ * Public Inspector (台院) terminating receipt contracts.
  * Lawful explicit releases: pass | bounce | escalate.
  * Dual path: gate-dispatched and independently callable (#568 / ADR 0074).
  */
 
 export const INSPECTOR_OUTPUT_TOOL_NAME = "ak_inspector_output" as const;
-export const INSPECTOR_ACCEPTED_TEXT = "察院回执已接受";
+export const INSPECTOR_ACCEPTED_TEXT = "台院回执已接受";
 export const INSPECTOR_SOURCE_RUN_FLAG = {
   name: "ak-inspector-source-run",
   definition: {
-    description: "察院初铸绑定的父 run 绝对路径",
+    description: "台院初铸绑定的父 run 绝对路径",
     type: "string" as const,
   },
 } as const;
