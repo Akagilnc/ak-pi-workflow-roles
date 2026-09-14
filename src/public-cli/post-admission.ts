@@ -1134,7 +1134,7 @@ export async function dispatchPostAdmissionTurn<
 
     const noReceipt = await attachRecordedSubmissions(
       admitted,
-      await settleHostEndedNoReceipt(admitted, env.principalAuthority) as T,
+      await settleHostEndedNoReceipt(admitted, env.principalAuthority, courtScope) as T,
       courtScope,
     );
     if (persistRunState) {

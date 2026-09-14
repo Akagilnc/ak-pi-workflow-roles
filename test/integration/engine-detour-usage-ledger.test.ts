@@ -434,6 +434,16 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
         expectCallCount: 0,
       },
       {
+        label: "no-receipt-once",
+        plan: {
+          detours: [{ toolCallId: "c-nr", kind: "ok" }],
+          terminal: { kind: "no_receipt" },
+        },
+        expectKind: "no_receipt",
+        expectCallCount: 1,
+        expectToolCallId: "c-nr",
+      },
+      {
         label: "failure-coexist-spawn",
         plan: {
           detours: [{ toolCallId: "c-spawn", kind: "spawn" }],
@@ -541,7 +551,7 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
         assert.equal(usage.calls[0]?.stdoutByteLength, 0);
         assert.equal("stdoutByteLength" in (usage.calls[0] ?? {}), true);
       }
-      if (row.label === "accepted-once") {
+      if (row.label === "accepted-once" || row.label === "no-receipt-once") {
         assert.equal(usage.calls[0]?.code, 0);
         // UTF-8 non-ASCII byte length through the real tool → sitian → decisiveFacts path
         assert.equal(usage.calls[0]?.stdoutByteLength, ECHO_STDOUT_BYTES);
@@ -551,19 +561,21 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
           opened.records.some(
             (r) =>
               r.identity === usage.calls[0]!.recordPointer.identity
-              && (r.payload as { toolCallId?: string }).toolCallId === "c-ok",
+              && (r.payload as { toolCallId?: string }).toolCallId === row.expectToolCallId,
           ),
-          "sitian pointer must reopen the call",
+          `${row.label}: sitian pointer must reopen the call`,
         );
-        // Host provenance: recorded host is the admission invocation host (not invented).
-        const hostRow = opened.records.find(
-          (r) => r.identity === usage.calls[0]!.recordPointer.identity,
-        );
-        const invocationHost = await invocationHostNear(
-          usage.calls[0]!.recordPointer.recordFile,
-        );
-        assert.ok(invocationHost, "admission must write a host on invocation.json");
-        assert.equal(hostRow?.host, invocationHost);
+        if (row.label === "accepted-once") {
+          // Host provenance: recorded host is the admission invocation host (not invented).
+          const hostRow = opened.records.find(
+            (r) => r.identity === usage.calls[0]!.recordPointer.identity,
+          );
+          const invocationHost = await invocationHostNear(
+            usage.calls[0]!.recordPointer.recordFile,
+          );
+          assert.ok(invocationHost, "admission must write a host on invocation.json");
+          assert.equal(hostRow?.host, invocationHost);
+        }
       }
       if (row.label === "accepted-multi") {
         assert.deepEqual(

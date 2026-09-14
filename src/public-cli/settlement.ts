@@ -310,6 +310,7 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
 export async function settleHostEndedNoReceipt(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
   const facts = noReceiptLifecycleFacts({
     terminalToolCalled: false,
@@ -333,7 +334,7 @@ export async function settleHostEndedNoReceipt(
       runId: admitted.runId,
     },
     coordinates.sessionDirectory,
-    detourGateContext(admitted),
+    detourGateContext(admitted, scope),
   );
 }
 
