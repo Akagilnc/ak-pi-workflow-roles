@@ -293,30 +293,70 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "input_text", text: "<permissions instructions> sandbox" }],
       },
     }),
-    // 13. Codex AGENTS/environment injection as response_item role=user — exclude
+    // 13. Desktop Codex injection-only turn (kinds, no event_msg) — must not be owner
     JSON.stringify({
       type: "response_item",
       payload: {
         type: "message",
         role: "user",
+        id: "msg-codex-inject-only",
         content: [
           { type: "input_text", text: codexInjectionText },
           { type: "input_text", text: "<environment_context> cwd=/tmp" },
         ],
+        internal_chat_message_metadata_passthrough: {
+          turn_id: "turn-inject-only",
+          content_item_kinds: [
+            "plugins.recommendations",
+            "agents_md.instructions",
+            "environments.environment_context",
+          ],
+        },
       },
     }),
-    // 14. Codex structured owner channel (event_msg.user_message)
+    // 14. Same-turn injection + real user: injection kinds first
+    JSON.stringify({
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        id: "msg-codex-inject-paired",
+        content: [{ type: "input_text", text: codexInjectionText }],
+        internal_chat_message_metadata_passthrough: {
+          turn_id: "turn-paired",
+          content_item_kinds: [
+            "agents_md.instructions",
+            "environments.environment_context",
+          ],
+        },
+      },
+    }),
+    // 15. Desktop Codex real owner (content_item_kinds user.text) — no event_msg needed
+    JSON.stringify({
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        id: "msg-codex-owner",
+        content: [{ type: "input_text", text: codexOwnerText }],
+        internal_chat_message_metadata_passthrough: {
+          turn_id: "turn-paired",
+          content_item_kinds: ["user.text"],
+        },
+      },
+    }),
+    // 16. event_msg owner channel still accepted when present (exec-shaped volumes)
     JSON.stringify({
       type: "event_msg",
       payload: {
         type: "user_message",
-        message: codexOwnerText,
+        message: "event_msg 通道的原话",
         images: [],
         local_images: [],
         text_elements: [],
       },
     }),
-    // 15. Codex rollout runner (response_item + output_text)
+    // 17. Codex rollout runner (response_item + output_text)
     JSON.stringify({
       type: "response_item",
       payload: {
@@ -326,7 +366,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "output_text", text: codexRunnerText }],
       },
     }),
-    // 16. absorbed interjection (enqueue + dequeue; no independent message record)
+    // 18. absorbed interjection (enqueue + dequeue; no independent message record)
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -338,7 +378,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       operation: "dequeue",
       uuid: "queue-deq-2",
     }),
-    // 17. first occurrence of duplicate id
+    // 19. first occurrence of duplicate id
     JSON.stringify({
       type: "assistant",
       uuid: duplicateId,
@@ -347,9 +387,9 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: "首现正文" }],
       },
     }),
-    // 18. unparsable line (completed by terminator)
+    // 20. unparsable line (completed by terminator)
     unparsableRaw,
-    // 19. duplicate id second occurrence — must not re-enter
+    // 21. duplicate id second occurrence — must not re-enter
     JSON.stringify({
       type: "assistant",
       uuid: duplicateId,
@@ -376,9 +416,9 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     codexInjectionText,
     interjectionId,
     duplicateId,
-    unparsableLine: 19,
+    unparsableLine: 21,
     unparsableRaw,
-    lastLine: 20,
+    lastLine: 22,
   };
 }
 
@@ -554,9 +594,13 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       volume.lines.filter((line) => line.text === fixture.mixedOwnerText).length,
       1,
     );
-    // Codex: event_msg owner + response_item runner; injections excluded.
+    // Codex desktop: content_item_kinds user.text keeps owner; injection kinds drop.
     assert.equal(
       volume.lines.filter((line) => line.text === fixture.codexOwnerText).length,
+      1,
+    );
+    assert.equal(
+      volume.lines.filter((line) => line.text === "event_msg 通道的原话").length,
       1,
     );
     assert.equal(
