@@ -512,3 +512,44 @@ test("ledger append rejects every symlink escape vector without writing outside"
     assert.notEqual(realSession, decoyFile);
   });
 });
+
+/**
+ * #631 / ADR 0038: relative ledgerHome must fail closed before any FS side effect.
+ * Unit keeps pure path/error shape; this is the single real-I/O tracer that the
+ * target under an owned temp cwd was never created.
+ */
+test("relative ledgerHome fails closed before any filesystem side effect", async () => {
+  await withTempRoot("ak-ledger-rel-home-", async (root) => {
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(root);
+      const relativeLedgerHome = "relative-ledger-home";
+      const target = join(root, relativeLedgerHome);
+      assert.equal(isAbsolute(relativeLedgerHome), false);
+      assert.equal(existsSync(target), false);
+      assert.throws(
+        () => appendAcceptedActivationFact(
+          join(relativeLedgerHome, "books", "b", "waiting.jsonl"),
+          buildAcceptedActivationFact({
+            role: "judge",
+            observedAt: "2025-01-01T00:00:00.000Z",
+            bookKey: "b",
+            session: { kind: "session-file", path: "/s/x.jsonl" },
+            correlation: { kind: "absent" },
+          }),
+          { ledgerHome: relativeLedgerHome },
+        ),
+        (error: unknown) => {
+          assert.ok(error instanceof ActivationLedgerError);
+          assert.equal(error.code, "AK_ACTIVATION_LEDGER");
+          return true;
+        },
+      );
+      // Owned temp path: relative home must not materialize under cwd=root.
+      assert.equal(existsSync(target), false);
+      assert.equal(existsSync(join(target, "books")), false);
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+});

@@ -75,7 +75,7 @@ test("accepted-activation fact is closed at the typed API and omits injected con
   );
 });
 
-test("resolved ledger home rejects relative process home before filesystem writes", async () => {
+test("resolved ledger home rejects relative process home (pure path math)", () => {
   for (const relativeHome of [".", "relative-home", ""] as const) {
     assert.throws(
       () => resolveActivationLedgerHome(relativeHome),
@@ -93,6 +93,7 @@ test("resolved ledger home rejects relative process home before filesystem write
   assert.equal(isAbsolute(ledgerHome), true);
   assert.equal(ledgerHome, resolve(absoluteHome, ".ak-roles"));
 
+  // append + no-side-effect on real I/O: test/integration/activation-envelope-contract.test.ts (#631).
   const relativeLedgerHome = "relative-ledger-home";
   assert.equal(isAbsolute(relativeLedgerHome), false);
   assert.throws(

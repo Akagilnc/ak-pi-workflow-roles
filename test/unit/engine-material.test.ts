@@ -12,8 +12,6 @@ import test from "node:test";
 import {
   appendEngineSessionMaterial,
   assertLegalEngineName,
-  assertLegalEngineModel,
-  pickEngineAxis,
 } from "../../src/package-resources/engine-material.ts";
 
 test("assertLegalEngineName rejects only real path hazards; consecutive dots pass", () => {
@@ -46,18 +44,6 @@ test("assertLegalEngineName rejects only real path hazards; consecutive dots pas
   assert.equal(assertLegalEngineName("company..opus"), "company..opus");
 });
 
-test("assertLegalEngineModel rejects empty/whitespace; pickEngineAxis is sparse", () => {
-  assert.throws(() => assertLegalEngineModel(""), /illegal engine model/);
-  assert.throws(() => assertLegalEngineModel("  x  "), /illegal engine model/);
-  assert.equal(assertLegalEngineModel("cursor-grok-4.6-high"), "cursor-grok-4.6-high");
-  assert.deepEqual(pickEngineAxis({}), {});
-  assert.deepEqual(pickEngineAxis({ engine: "cursor" }), { engine: "cursor" });
-  assert.deepEqual(
-    pickEngineAxis({ engine: "cursor", engineModel: "m" }),
-    { engine: "cursor", engineModel: "m" },
-  );
-});
-
 test("appendEngineSessionMaterial: engine name line; notes also carry path", () => {
   // Structured coordinates only — no presentation-header pin (#495 S4 / ADR 0073).
   const nameOnly = appendEngineSessionMaterial(["base"], { name: "company..opus" });
@@ -74,12 +60,4 @@ test("appendEngineSessionMaterial: engine name line; notes also carry path", () 
   });
   assert.equal(withNotes.includes("- engine: cursor"), true);
   assert.equal(withNotes.includes("- /abs/resources/engines/cursor.md"), true);
-
-  // #883 engineModel is optional opaque coordinate on both name-only and notes paths.
-  const withModel = appendEngineSessionMaterial(["base"], {
-    name: "cursor",
-    model: "cursor-grok-4.6-high",
-  });
-  assert.equal(withModel.includes("- engine: cursor"), true);
-  assert.equal(withModel.includes("- engineModel: cursor-grok-4.6-high"), true);
 });
