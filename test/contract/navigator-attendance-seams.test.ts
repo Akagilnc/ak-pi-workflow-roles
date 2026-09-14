@@ -721,7 +721,7 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
             return scriptedTerminatingToolSession({
               role: "diarist",
               toolName: DIARIST_OUTPUT_TOOL_NAME,
-              details: { status: "completed", ticketNumber: 582, entries: [] },
+              details: { status: "completed", ticketNumber: 582, sessions: [] },
             })(args, options);
           }
           return scriptedTerminatingToolSession({

@@ -1,141 +1,198 @@
 /**
- * 起居录（ticket-provenance）typed contracts — ADR 0075 / #582.
- * JSONL is the sole authority; md is a derived human face.
+ * 起居录（ticket-provenance）typed 形状 —— ADR 0075「2026-09-14 修订」/ #901。
+ *
+ * 一册＝一个文件：第一行册子头，其后每行一条对话。
+ * 每轮按册子头当前各区间**重投影**这份唯一文件：册子头与各条定位可更新，
+ * 正文原样不改（`single-volume` / `one-volume-per-issue`）。
  */
 
 /** Sitian kind for per-ticket court diary volumes. */
 export const TICKET_PROVENANCE_KIND = "ticket-provenance" as const;
 
-/** Human-read view filename co-located with the JSONL volume. */
-export const TICKET_PROVENANCE_HUMAN_VIEW = "起居录.md" as const;
-
-/** Payload discriminator: diagnostic residue (not a diary body entry). */
-export const TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC = "diagnostic" as const;
-
-/** Source family as the diarist wrote it (#836: no allowlist drop). */
-export type TicketProvenanceSourceKind = string;
+/** 说话人取值域（`speaker-required`）。 */
+export type TicketProvenanceSpeaker = "owner" | "runner";
 
 /**
- * How a block entered the volume.
- * - llm-semantic: LLM selected and submitted the whole block (#779: no mechanical reverse-verify).
- *   basis.anchors may carry ticket # / human notes for audit only — not a gate.
+ * 区间端点：以**原生 id** 或**本轮行号**指名，二选一。
+ * 行号一端覆盖整卷不带原生 id 的来源；两者都缺即无法定位，属「输入错了就问」。
  */
-export type TicketProvenanceBasisMethod = "llm-semantic";
-
-/** Basis for inclusion — LLM judgment; anchors/notes are audit-only. */
-export type TicketProvenanceBasis = {
-  readonly method: TicketProvenanceBasisMethod;
-  /** Audit notes (ticket #, human labels). Not a machine gate. */
-  readonly anchors?: readonly string[];
-  /** Free diagnostic note. Not a machine gate. */
-  readonly note?: string;
+export type TicketProvenanceBound = {
+  readonly id?: string;
+  readonly line?: number;
 };
 
-/** Stable pointer back to immutable source bytes. */
-export type TicketProvenanceSourceRef = {
-  readonly sessionFile?: string;
-  readonly entryId?: string | number;
-  readonly path?: string;
-  readonly url?: string;
+/** 一卷内的一段对话区间。 */
+export type TicketProvenanceRange = {
+  readonly from: TicketProvenanceBound;
+  readonly to: TicketProvenanceBound;
 };
 
-/**
- * One transcribed block entry (payload of a sitian ticket-provenance row).
- * Whole-block transcript — no pointer-only substitution (ADR 0075).
- */
-export type TicketProvenanceEntry = {
-  readonly basis: TicketProvenanceBasis;
-  readonly sourceKind: TicketProvenanceSourceKind;
-  readonly sourceRef: TicketProvenanceSourceRef;
-  readonly transcript: string;
-  readonly timestamp: string;
+/** 册子头记的一卷：会话卷路径 + 本轮该卷的各区间。 */
+export type TicketProvenanceSession = {
+  readonly path: string;
+  readonly ranges: readonly TicketProvenanceRange[];
+};
+
+/** 册子头（文件第一行）。reopen 与跨宿主为新增区间，不新建册。 */
+export type TicketProvenanceHeader = {
+  readonly repo: string;
+  readonly ticket: number;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly sessions: readonly TicketProvenanceSession[];
 };
 
 /**
- * Typed diagnostic on the same ticket-provenance partition as diary entries.
- * Separated by recordClass discriminator — never disguised as a source entry.
+ * 一条对话（册子头之后每行一条）。
+ * `id` 与 `line` 按源事实存在则记、不存在不编；两者皆无的少数条目
+ * 靠录中前后有定位的条目锚定。
  */
-export type TicketProvenanceDiagnosticKind =
-  /** Historical rows only — retained for reading older volumes (#779 deleted writers). */
-  | "collector-failed"
-  | "issue-source-failed"
-  | "quote-verify-failed";
-
-export type TicketProvenanceDiagnostic = {
-  readonly recordClass: typeof TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC;
-  readonly diagnosticKind: TicketProvenanceDiagnosticKind;
-  /** True cause text (engine error, origin miss, tracker/gh failure). */
-  readonly cause: string;
-  readonly recordedAt: string;
-  /** Optional structured reason tag (issue-source family). */
-  readonly reason?: string;
+export type TicketProvenanceLine = {
+  readonly speaker: TicketProvenanceSpeaker;
+  /** 卷下标（册子头 `sessions` 的位置）。 */
+  readonly s: number;
+  readonly line?: number;
+  readonly id?: string;
+  readonly text: string;
 };
 
-/** Deterministic identity input — entry-level idempotency key material. */
-export type TicketProvenanceIdentityInput = {
-  readonly ticketNumber: number;
-  readonly sourceKind: TicketProvenanceSourceKind;
-  readonly sourceRef: TicketProvenanceSourceRef;
-  readonly transcript: string;
+/**
+ * 坏行补写：绑定源卷与行，带说话人与正文。
+ * 编没编由符宝郎读录核旨，代码不判断（`unparsable-line-to-diarist`）。
+ */
+export type TicketProvenanceAmendment = {
+  readonly s: number;
+  readonly line: number;
+  readonly speaker: TicketProvenanceSpeaker;
+  readonly text: string;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-const DIAGNOSTIC_KINDS = new Set<string>([
-  "collector-failed",
-  "issue-source-failed",
-  "quote-verify-failed",
-]);
+function positiveInteger(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 1) return value;
+  if (typeof value === "string" && /^[1-9][0-9]*$/.test(value)) {
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed)) return parsed;
+  }
+  return undefined;
+}
 
-/**
- * Project a typed diagnostic payload (recordClass discriminator only).
- * Disguised diary-entry shapes are not diagnostics — no branch-intermediate compat.
- */
-export function projectTicketProvenanceDiagnostic(
-  value: unknown,
-): TicketProvenanceDiagnostic | undefined {
+function nonNegativeInteger(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value;
+  if (typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value)) {
+    const parsed = Number(value);
+    if (Number.isSafeInteger(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function projectSpeaker(value: unknown): TicketProvenanceSpeaker | undefined {
+  return value === "owner" || value === "runner" ? value : undefined;
+}
+
+function projectBound(value: unknown): TicketProvenanceBound | undefined {
   if (!isRecord(value)) return undefined;
-  if (value.recordClass !== TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC) {
-    return undefined;
-  }
-  if (
-    typeof value.diagnosticKind !== "string" ||
-    !DIAGNOSTIC_KINDS.has(value.diagnosticKind)
-  ) {
-    return undefined;
-  }
-  if (typeof value.cause !== "string" || value.cause.length === 0) {
-    return undefined;
-  }
-  if (typeof value.recordedAt !== "string" || value.recordedAt.length === 0) {
-    return undefined;
-  }
-  return {
-    recordClass: TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC,
-    diagnosticKind: value.diagnosticKind as TicketProvenanceDiagnosticKind,
-    cause: value.cause,
-    recordedAt: value.recordedAt,
-    ...(typeof value.reason === "string" ? { reason: value.reason } : {}),
-  };
+  const id = typeof value.id === "string" && value.id !== "" ? value.id : undefined;
+  const line = positiveInteger(value.line);
+  if (id === undefined && line === undefined) return undefined;
+  return { ...(id === undefined ? {} : { id }), ...(line === undefined ? {} : { line }) };
 }
 
 /**
- * Project a lawful diary entry from unknown payload bytes.
- * Shape is not an admission gate for role output; this is the diarist/write seam
- * self-check so garbage does not enter the volume.
- * Diagnostics (recordClass discriminator) are not entries.
+ * 投影起居郎交上来的边界。
+ * 端点无法指名、卷路径缺失即返回 undefined——调用者据此走既有 reask 请其重交，
+ * 不猜、不补、不中止本轮（`reask-not-explode`）。
  */
-export function projectTicketProvenanceEntry(
+export function projectTicketProvenanceSessions(
   value: unknown,
-): TicketProvenanceEntry | undefined {
+): readonly TicketProvenanceSession[] | undefined {
+  // Empty array = lawful empty selection (no dialogue ranges this turn).
+  // Non-array / malformed member = unusable bounds → caller reasks.
+  if (!Array.isArray(value)) return undefined;
+  if (value.length === 0) return [];
+  const sessions: TicketProvenanceSession[] = [];
+  for (const raw of value) {
+    if (!isRecord(raw)) return undefined;
+    const path = raw.path;
+    if (typeof path !== "string" || path.trim() === "") return undefined;
+    if (!Array.isArray(raw.ranges) || raw.ranges.length === 0) return undefined;
+    const ranges: TicketProvenanceRange[] = [];
+    for (const rawRange of raw.ranges) {
+      if (!isRecord(rawRange)) return undefined;
+      const from = projectBound(rawRange.from);
+      const to = projectBound(rawRange.to);
+      if (from === undefined || to === undefined) return undefined;
+      ranges.push({ from, to });
+    }
+    sessions.push({ path, ranges });
+  }
+  return sessions;
+}
+
+/**
+ * 投影补写集合。缺该字段＝无补写（不拒收）；成员形状不成立的整条跳过——
+ * 它没有绑定位置，放不回去。
+ */
+export function projectTicketProvenanceAmendments(
+  value: unknown,
+): readonly TicketProvenanceAmendment[] {
+  if (!Array.isArray(value)) return [];
+  const out: TicketProvenanceAmendment[] = [];
+  for (const raw of value) {
+    if (!isRecord(raw)) continue;
+    const s = nonNegativeInteger(raw.s);
+    const line = positiveInteger(raw.line);
+    const speaker = projectSpeaker(raw.speaker);
+    const text = raw.text;
+    if (s === undefined || line === undefined || speaker === undefined) continue;
+    if (typeof text !== "string") continue;
+    out.push({ s, line, speaker, text });
+  }
+  return out;
+}
+
+/** 读回册子头（文件第一行）。形状不成立即 undefined——按无册处理，不猜。 */
+export function projectTicketProvenanceHeader(
+  value: unknown,
+): TicketProvenanceHeader | undefined {
   if (!isRecord(value)) return undefined;
-  if (value.recordClass === TICKET_PROVENANCE_RECORD_CLASS_DIAGNOSTIC) {
+  const ticket = positiveInteger(value.ticket);
+  if (ticket === undefined) return undefined;
+  if (typeof value.repo !== "string") return undefined;
+  if (typeof value.createdAt !== "string" || typeof value.updatedAt !== "string") {
     return undefined;
   }
-  if (typeof value.sourceKind !== "string" || typeof value.transcript !== "string") {
-    return undefined;
-  }
-  return value as TicketProvenanceEntry;
+  // Malformed sessions stay unusable — do not wash into lawful empty (失败诚实).
+  const sessions = projectTicketProvenanceSessions(value.sessions);
+  if (sessions === undefined) return undefined;
+  return {
+    repo: value.repo,
+    ticket,
+    createdAt: value.createdAt,
+    updatedAt: value.updatedAt,
+    sessions,
+  };
+}
+
+/** 读回一条对话行。 */
+export function projectTicketProvenanceLine(
+  value: unknown,
+): TicketProvenanceLine | undefined {
+  if (!isRecord(value)) return undefined;
+  const speaker = projectSpeaker(value.speaker);
+  const s = nonNegativeInteger(value.s);
+  if (speaker === undefined || s === undefined) return undefined;
+  if (typeof value.text !== "string") return undefined;
+  const line = positiveInteger(value.line);
+  const id = typeof value.id === "string" && value.id !== "" ? value.id : undefined;
+  return {
+    speaker,
+    s,
+    ...(line === undefined ? {} : { line }),
+    ...(id === undefined ? {} : { id }),
+    text: value.text,
+  };
 }

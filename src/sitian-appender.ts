@@ -229,7 +229,7 @@ export function resolveSitianRecordPathInLedger(
 
   let sessionDir: string;
   if (ticketNumber !== undefined) {
-    // docs/dossier-topology.md: ticket dir holds records.jsonl + 起居录.md directly.
+    // docs/dossier-topology.md: ticket dir holds the unique records.jsonl directly (#900).
     const bookDir = activationBookDirectory(
       ledgerHome,
       resolveBookKeyFromGit(input.cwd ?? process.cwd()),

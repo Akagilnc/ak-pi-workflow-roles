@@ -2,7 +2,7 @@
  * #866 (T10): record-class partition migrators (build only; execution is #861).
  *
  * Line-closed placement by each row's typed kind (never by source directory alone):
- * - ticket-provenance → <ticket>/ (records.jsonl + human view; live topology)
+ * - ticket-provenance → <ticket>/records.jsonl (live topology; human view cancelled #900)
  * - submission-ledger kinds → owning run session/submission-ledger/
  * - attempt-history → owning run session/attempt-history/
  * - unknown ownership → unbound/ (never silent discard)
@@ -34,29 +34,12 @@ import {
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
 import { S4_SUBMISSION_LEDGER_KINDS } from "./sitian-appender.ts";
-import {
-  projectTicketProvenanceEntry,
-  TICKET_PROVENANCE_HUMAN_VIEW,
-} from "./ticket-provenance-contracts.ts";
-import { renderTicketProvenanceMarkdown } from "./ticket-provenance.ts";
+import { projectTicketProvenanceHeader } from "./ticket-provenance-contracts.ts";
 
 const TICKET_PROVENANCE = "ticket-provenance";
 const SUBMISSION_LEDGER = "submission-ledger";
 const ATTEMPT_HISTORY = "attempt-history";
 const MISPLACED = "misplaced-record-class";
-
-function noteTouchedTicket(
-  context: BookTopologyMigrationContext,
-  bookKey: string,
-  ticketNumber: number,
-): void {
-  let set = context.touchedTicketsByBook.get(bookKey);
-  if (set === undefined) {
-    set = new Set<number>();
-    context.touchedTicketsByBook.set(bookKey, set);
-  }
-  set.add(ticketNumber);
-}
 
 type RecordClass = typeof TICKET_PROVENANCE | typeof SUBMISSION_LEDGER | typeof ATTEMPT_HISTORY;
 
@@ -108,9 +91,20 @@ async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
 }
 
+/** One provisional line written to a ticket dest before a bare volume may supersede it. */
+type DestLinePlacement = {
+  readonly raw: string;
+  /** Index into the partition outcomes array — flipped to unbound if bare replaces dest. */
+  readonly outcomeIndex: number;
+};
+
 /** Per-destination identity cache — one read per file, O(1) subsequent checks. */
 class RecordWriteCache {
   private readonly identities = new Map<string, Set<string>>();
+  /** Dest paths written as whole #901 bare volumes — legacy must not append under them. */
+  private readonly bareVolumeFiles = new Set<string>();
+  /** Lines currently on a dest that are still claimed `placed` in outcomes. */
+  private readonly destPlacements = new Map<string, DestLinePlacement[]>();
 
   private async load(recordFile: string): Promise<Set<string>> {
     const cached = this.identities.get(recordFile);
@@ -125,19 +119,81 @@ class RecordWriteCache {
     return set;
   }
 
-  async append(recordFile: string, raw: string): Promise<void> {
+  markBareVolume(recordFile: string): void {
+    this.bareVolumeFiles.add(recordFile);
+    this.identities.set(recordFile, new Set());
+  }
+
+  isBareVolume(recordFile: string): boolean {
+    return this.bareVolumeFiles.has(recordFile);
+  }
+
+  /**
+   * After a bare whole-file write, register its lines so a later bare for the
+   * same ticket can rehome them and flip dispositions (multi-bare honesty).
+   */
+  setDestPlacements(recordFile: string, placements: readonly DestLinePlacement[]): void {
+    this.destPlacements.set(recordFile, [...placements]);
+  }
+
+  /**
+   * Install a bare volume as the sole ticket file. Any lines already placed on
+   * this dest (legacy appends or a prior bare) are moved to unbound and their
+   * outcomes flipped — report stays honest.
+   */
+  async replaceWholeBare(
+    recordFile: string,
+    body: string,
+    outcomes: MigrationItemOutcome[],
+    unboundFileForRaw: (raw: string) => string,
+  ): Promise<void> {
+    const prior = this.destPlacements.get(recordFile) ?? [];
+    for (const placement of prior) {
+      await this.append(unboundFileForRaw(placement.raw), placement.raw);
+      const previous = outcomes[placement.outcomeIndex];
+      if (previous !== undefined) {
+        outcomes[placement.outcomeIndex] = {
+          disposition: "unbound",
+          source: previous.source,
+        };
+      }
+    }
+    this.destPlacements.delete(recordFile);
+    await ensureDir(dirname(recordFile));
+    const text = body.endsWith("\n") ? body : `${body}\n`;
+    await writeFile(recordFile, text, "utf8");
+    this.markBareVolume(recordFile);
+  }
+
+  async append(
+    recordFile: string,
+    raw: string,
+    options?: { readonly outcomeIndex?: number },
+  ): Promise<void> {
     await ensureDir(dirname(recordFile));
     const line = raw.endsWith("\n") ? raw : `${raw}\n`;
     const parsed = parseJsonlLine(raw);
     if (parsed.ok && typeof parsed.value.identity === "string") {
       const existing = await this.load(recordFile);
-      if (existing.has(parsed.value.identity)) return;
-      existing.add(parsed.value.identity);
-    } else if (!this.identities.has(recordFile)) {
-      // Ensure subsequent identity loads see a live map even when first rows lack identity.
-      this.identities.set(recordFile, await this.load(recordFile));
+      if (!existing.has(parsed.value.identity)) {
+        existing.add(parsed.value.identity);
+        await appendFile(recordFile, line, "utf8");
+      }
+      // Identity hit skips a second physical copy, but the source row still claims
+      // this dest — register outcome below so bare replace flips every claim.
+    } else {
+      if (!this.identities.has(recordFile)) {
+        // Ensure subsequent identity loads see a live map even when first rows lack identity.
+        this.identities.set(recordFile, await this.load(recordFile));
+      }
+      await appendFile(recordFile, line, "utf8");
     }
-    await appendFile(recordFile, line, "utf8");
+    // Register outcome claims on dest even when identity skipped a write.
+    if (options?.outcomeIndex !== undefined && !this.bareVolumeFiles.has(recordFile)) {
+      const list = this.destPlacements.get(recordFile) ?? [];
+      list.push({ raw, outcomeIndex: options.outcomeIndex });
+      this.destPlacements.set(recordFile, list);
+    }
   }
 }
 
@@ -342,6 +398,8 @@ async function placeTicketProvenanceLine(
   source: string,
   raw: string,
   value: Record<string, unknown> | undefined,
+  /** Outcomes length at call time = index of the outcome the caller is about to push. */
+  outcomeIndex: number,
 ): Promise<MigrationItemOutcome> {
   if (value === undefined) {
     await writes.append(unboundCategoryFile(context.booksDirectory, bookKey, TICKET_PROVENANCE, stableKey(raw)), raw);
@@ -353,11 +411,30 @@ async function placeTicketProvenanceLine(
     return { disposition: "unbound", source };
   }
   // Live topology (docs/dossier-topology.md): ticket root holds records.jsonl.
-  await writes.append(
-    join(context.booksDirectory, bookKey, String(ticketNumber), "records.jsonl"),
-    raw,
+  const dest = join(
+    context.booksDirectory,
+    bookKey,
+    String(ticketNumber),
+    "records.jsonl",
   );
-  noteTouchedTicket(context, bookKey, ticketNumber);
+  // Never append legacy SitianRecord under a bare #901 volume (header must stay first).
+  if (writes.isBareVolume(dest)) {
+    await writes.append(
+      unboundCategoryFile(context.booksDirectory, bookKey, TICKET_PROVENANCE, stableKey(raw)),
+      raw,
+    );
+    return { disposition: "unbound", source };
+  }
+  const existing = await readJsonlLines(dest);
+  if (tryBareTicketProvenanceVolume(existing) !== undefined) {
+    writes.markBareVolume(dest);
+    await writes.append(
+      unboundCategoryFile(context.booksDirectory, bookKey, TICKET_PROVENANCE, stableKey(raw)),
+      raw,
+    );
+    return { disposition: "unbound", source };
+  }
+  await writes.append(dest, raw, { outcomeIndex });
   return { disposition: "placed", source };
 }
 
@@ -409,10 +486,11 @@ async function placeRecordClassLine(
   raw: string,
   value: Record<string, unknown>,
   fallbackCategory: RecordClass,
+  outcomeIndex: number,
 ): Promise<MigrationItemOutcome> {
   const recordClass = recordClassOfKind(value.kind);
   if (recordClass === TICKET_PROVENANCE) {
-    return placeTicketProvenanceLine(context, bookKey, writes, source, raw, value);
+    return placeTicketProvenanceLine(context, bookKey, writes, source, raw, value, outcomeIndex);
   }
   if (recordClass === SUBMISSION_LEDGER || recordClass === ATTEMPT_HISTORY) {
     return placeRunOwnedLine(context, bookKey, writes, recordClass, source, raw, value);
@@ -426,6 +504,59 @@ async function placeRecordClassLine(
   return { disposition: "unbound", source };
 }
 
+/**
+ * #901 bare diary volume: first non-empty line is a header without SitianRecord
+ * `kind`. Recognise the whole file as one ticket volume — do not split rows into unbound.
+ */
+function tryBareTicketProvenanceVolume(
+  lines: readonly string[],
+): { readonly ticket: number; readonly body: readonly string[] } | undefined {
+  const body: string[] = [];
+  for (const raw of lines) {
+    if (raw.trim() === "") continue;
+    body.push(raw);
+  }
+  if (body.length === 0) return undefined;
+  const first = parseJsonlLine(body[0]!);
+  if (!first.ok) return undefined;
+  // Legacy SitianRecord rows carry a typed kind — leave them to line placement.
+  if (recordClassOfKind(first.value.kind) !== undefined) return undefined;
+  const header = projectTicketProvenanceHeader(first.value);
+  if (header === undefined) return undefined;
+  return { ticket: header.ticket, body };
+}
+
+async function placeBareTicketProvenanceVolume(
+  context: BookTopologyMigrationContext,
+  bookKey: string,
+  writes: RecordWriteCache,
+  filePath: string,
+  bare: { readonly ticket: number; readonly body: readonly string[] },
+  outcomes: MigrationItemOutcome[],
+): Promise<void> {
+  const dest = join(
+    context.booksDirectory,
+    bookKey,
+    String(bare.ticket),
+    "records.jsonl",
+  );
+  // Whole-file bare install. Prior dest lines (legacy or earlier bare) rehome to
+  // unbound with flipped dispositions — header stays first; no silent erase.
+  const body = bare.body.map((raw) => (raw.endsWith("\n") ? raw : `${raw}\n`)).join("");
+  await writes.replaceWholeBare(dest, body, outcomes, (raw) =>
+    unboundCategoryFile(context.booksDirectory, bookKey, TICKET_PROVENANCE, stableKey(raw)),
+  );
+  const barePlacements: DestLinePlacement[] = [];
+  for (let index = 0; index < bare.body.length; index += 1) {
+    const source = lineSource(context.backupBooksDirectory, filePath, index);
+    const outcomeIndex = outcomes.length;
+    outcomes.push({ disposition: "placed", source });
+    barePlacements.push({ raw: bare.body[index]!, outcomeIndex });
+  }
+  // Register so a later bare for the same ticket can supersede honestly.
+  writes.setDestPlacements(dest, barePlacements);
+}
+
 async function migrateJsonlFileByKind(
   context: BookTopologyMigrationContext,
   bookKey: string,
@@ -435,6 +566,13 @@ async function migrateJsonlFileByKind(
   outcomes: MigrationItemOutcome[],
 ): Promise<void> {
   const lines = await readJsonlLines(filePath);
+  if (fallbackCategory === TICKET_PROVENANCE) {
+    const bare = tryBareTicketProvenanceVolume(lines);
+    if (bare !== undefined) {
+      await placeBareTicketProvenanceVolume(context, bookKey, writes, filePath, bare, outcomes);
+      return;
+    }
+  }
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index]!;
     if (raw.trim() === "") continue;
@@ -443,14 +581,33 @@ async function migrateJsonlFileByKind(
     if (!parsed.ok) {
       // Malformed: preserve under the home partition's unbound bucket.
       if (fallbackCategory === TICKET_PROVENANCE) {
-        outcomes.push(await placeTicketProvenanceLine(context, bookKey, writes, source, raw, undefined));
+        outcomes.push(
+          await placeTicketProvenanceLine(
+            context,
+            bookKey,
+            writes,
+            source,
+            raw,
+            undefined,
+            outcomes.length,
+          ),
+        );
       } else {
         outcomes.push(await placeRunOwnedLine(context, bookKey, writes, fallbackCategory, source, raw, undefined));
       }
       continue;
     }
     outcomes.push(
-      await placeRecordClassLine(context, bookKey, writes, source, raw, parsed.value, fallbackCategory),
+      await placeRecordClassLine(
+        context,
+        bookKey,
+        writes,
+        source,
+        raw,
+        parsed.value,
+        fallbackCategory,
+        outcomes.length,
+      ),
     );
   }
 }
@@ -482,65 +639,11 @@ async function mergeOfferedIdentities(
   }
 }
 
-/**
- * Derive the human-read face once from the merged authoritative records.jsonl.
- * Never copy any pre-existing md as if it were the complete view.
- */
-async function writeMergedTicketHumanView(
-  destDir: string,
-  ticketNumber: number,
-): Promise<void> {
-  const lines = await readJsonlLines(join(destDir, "records.jsonl"));
-  const entries = [];
-  const unprojected: unknown[] = [];
-  for (const raw of lines) {
-    if (raw.trim() === "") continue;
-    const parsed = parseJsonlLine(raw);
-    if (!parsed.ok) continue;
-    if (recordClassOfKind(parsed.value.kind) !== TICKET_PROVENANCE) continue;
-    const entry = projectTicketProvenanceEntry(parsed.value.payload);
-    if (entry === undefined) {
-      if (parsed.value.payload !== undefined) unprojected.push(parsed.value.payload);
-      continue;
-    }
-    entries.push(entry);
-  }
-  await ensureDir(destDir);
-  await writeFile(
-    join(destDir, TICKET_PROVENANCE_HUMAN_VIEW),
-    renderTicketProvenanceMarkdown({
-      ticketNumber,
-      entries,
-      ...(unprojected.length > 0 ? { unprojected } : {}),
-    }),
-    "utf8",
-  );
-}
-
-/**
- * After all sources for a ticket have contributed records + offered-identities,
- * emit the single derived human view from the merged JSONL.
- */
-async function finalizeTicketCompanions(
-  context: BookTopologyMigrationContext,
-  bookKey: string,
-  ticketNumbers: ReadonlySet<number>,
-): Promise<void> {
-  for (const ticketNumber of ticketNumbers) {
-    const destDir = join(context.booksDirectory, bookKey, String(ticketNumber));
-    try {
-      await stat(join(destDir, "records.jsonl"));
-    } catch (error) {
-      if (isMigrationEnoent(error)) continue;
-      throw error;
-    }
-    await writeMergedTicketHumanView(destDir, ticketNumber);
-  }
-}
-
 /** Collect typed ticket numbers present in a source volume's records.jsonl. */
 async function ticketNumbersInVolume(volumeDir: string): Promise<number[]> {
   const lines = await readJsonlLines(join(volumeDir, "records.jsonl"));
+  const bare = tryBareTicketProvenanceVolume(lines);
+  if (bare !== undefined) return [bare.ticket];
   const out: number[] = [];
   const seen = new Set<number>();
   for (const raw of lines) {
@@ -563,7 +666,6 @@ async function mergeCompanionsFromVolume(
   writes: RecordWriteCache,
 ): Promise<void> {
   for (const ticketNumber of await ticketNumbersInVolume(volumeDir)) {
-    noteTouchedTicket(context, bookKey, ticketNumber);
     const destDir = join(context.booksDirectory, bookKey, String(ticketNumber));
     await ensureDir(destDir);
     await mergeOfferedIdentities(destDir, volumeDir, writes);
@@ -578,8 +680,6 @@ async function migrateHomePartitionBook(
   outcomes: MigrationItemOutcome[],
 ): Promise<void> {
   const backupBook = join(context.backupBooksDirectory, bookKey);
-  // Touches accumulate via noteTouchedTicket — human view finalizes once after
-  // misplaced lines also land (not here).
   // listVolumeRecordFiles covers partition-root records.jsonl + hashed sub-volumes.
   const rootFiles = await listVolumeRecordFiles(join(backupBook, category));
   for (const filePath of rootFiles) {
@@ -609,8 +709,6 @@ async function migrateHomePartitionBook(
       }
       await migrateJsonlFileByKind(context, bookKey, writes, recordsFile, TICKET_PROVENANCE, outcomes);
       await mergeCompanionsFromVolume(context, bookKey, volumeDir, writes);
-      // Ticket-dir name itself is a typed ticket when the volume lives under it.
-      noteTouchedTicket(context, bookKey, Number(entry.name));
     }
   }
 }
@@ -685,7 +783,17 @@ async function migrateMisplacedBook(
 
       const source = lineSource(context.backupBooksDirectory, filePath, index);
       if (recordClass === TICKET_PROVENANCE) {
-        outcomes.push(await placeTicketProvenanceLine(context, bookKey, writes, source, raw, parsed.value));
+        outcomes.push(
+          await placeTicketProvenanceLine(
+            context,
+            bookKey,
+            writes,
+            source,
+            raw,
+            parsed.value,
+            outcomes.length,
+          ),
+        );
       } else {
         outcomes.push(
           await placeRunOwnedLine(context, bookKey, writes, recordClass, source, raw, parsed.value),
@@ -763,10 +871,6 @@ export const misplacedRecordClassPartitionMigrator: BookTopologyPartitionMigrato
   async migrate(context) {
     const outcomes: MigrationItemOutcome[] = [];
     await forEachBook(context, (bookKey, writes) => migrateMisplacedBook(context, bookKey, writes, outcomes));
-    // All record-class lines (home + misplaced) have landed — one human-view pass.
-    for (const [bookKey, tickets] of context.touchedTicketsByBook) {
-      await finalizeTicketCompanions(context, bookKey, tickets);
-    }
     return reconcileMigrationPartition(MISPLACED, "lines", outcomes);
   },
 };

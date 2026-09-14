@@ -385,7 +385,7 @@ test("A2: station-child same-ticket resume enters the shared auto-resume loop", 
           return scriptedTerminatingToolSession({
             role: "diarist",
             toolName: DIARIST_OUTPUT_TOOL_NAME,
-            details: { status: "completed", ticketNumber: 582, entries: [] },
+            details: { status: "completed", ticketNumber: 582, sessions: [] },
           })(args, options);
         }
         const sd = args[args.indexOf("--session-dir") + 1]!;
@@ -466,7 +466,7 @@ test("A2: station-child after-lease build failure releases the lock and retries 
         piRunner: scriptedTerminatingToolSession({
           role: "diarist",
           toolName: DIARIST_OUTPUT_TOOL_NAME,
-          details: { status: "completed", ticketNumber: 582, entries: [] },
+          details: { status: "completed", ticketNumber: 582, sessions: [] },
         }),
       }),
       createRunId: () => "416-station-child-lease-001",

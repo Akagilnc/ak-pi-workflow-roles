@@ -16,13 +16,10 @@ export {
 export type { DiaristOutput };
 export { validateRecordedDiaristOutput };
 
-// #836 r16 class 1: entries[].sourceKind/sourceRef/transcript/timestamp are
-// LLM/human-read content — src/ticket-provenance-contracts.ts:130-140 reads
-// sourceKind/transcript, but the lawful path on a miss is to keep the entry as
-// unprojected raw payload (src/diarist.ts:52-75 never rejects or drops it), so
-// provider `required` would cut off that very branch; sourceRef/timestamp are
-// not branched on at all.
-/** 起居郎交卷形状；形状指引，非 schema 闸。 */
+/**
+ * 起居郎交卷形状；形状指引，非 schema 闸。
+ * #901：交边界（sessions）+ 可选坏行补写（amendments）；正文由机械投影。
+ */
 export const diaristOutputSchema = withInfrastructureFailureDeclaration(
   openToolObject(
     Type.Object({
@@ -46,34 +43,82 @@ export const diaristOutputSchema = withInfrastructureFailureDeclaration(
           description: "status 为 escalate 时：认不出本庭对象的原因",
         }),
       ),
-      entries: Type.Optional(
+      sessions: Type.Optional(
         Type.Array(
           Type.Object(
             {
-              sourceKind: Type.Optional(Type.String({
-                description:
-                  "来源族：cc-session | issue-body-comment | adr-decision-key | ticket-decree-block",
-              })),
-              sourceRef: Type.Optional(Type.Object(
-                {
-                  sessionFile: Type.Optional(Type.String()),
-                  entryId: Type.Optional(Type.Unknown()),
-                  path: Type.Optional(Type.String()),
-                  url: Type.Optional(Type.String()),
-                },
-                { additionalProperties: true, description: "不可变源指针" },
-              )),
-              transcript: Type.Optional(Type.String({
-                description: "整块原文（誊录整块，不指针化）",
-              })),
-              timestamp: Type.Optional(Type.String({ description: "源时间戳 ISO" })),
-              note: Type.Optional(
-                Type.String({ description: "该材料与本案的关系（人读）" }),
+              path: Type.Optional(
+                Type.String({ description: "会话卷绝对或可读路径" }),
+              ),
+              ranges: Type.Optional(
+                Type.Array(
+                  Type.Object(
+                    {
+                      from: Type.Optional(
+                        Type.Object(
+                          {
+                            id: Type.Optional(Type.String()),
+                            line: Type.Optional(Type.Unknown()),
+                          },
+                          {
+                            additionalProperties: true,
+                            description: "起点：原生 id 或本轮行号二选一",
+                          },
+                        ),
+                      ),
+                      to: Type.Optional(
+                        Type.Object(
+                          {
+                            id: Type.Optional(Type.String()),
+                            line: Type.Optional(Type.Unknown()),
+                          },
+                          {
+                            additionalProperties: true,
+                            description: "终点：原生 id 或本轮行号二选一",
+                          },
+                        ),
+                      ),
+                    },
+                    { additionalProperties: true, description: "一段对话区间" },
+                  ),
+                  { description: "本卷本轮各区间；至少一段" },
+                ),
               ),
             },
-            { additionalProperties: true, description: "一条入录整块" },
+            { additionalProperties: true, description: "一卷会话的边界" },
           ),
-          { description: "入录整块；空列表合法完局；escalate 时可不交" },
+          {
+            description:
+              "本票对话边界；空列表＝本轮无对话可划。端点无法指名时走 reask，不中止。",
+          },
+        ),
+      ),
+      amendments: Type.Optional(
+        Type.Array(
+          Type.Object(
+            {
+              s: Type.Optional(
+                Type.Unknown({ description: "卷下标（sessions 位置）" }),
+              ),
+              line: Type.Optional(
+                Type.Unknown({ description: "源卷 1-based 行号" }),
+              ),
+              speaker: Type.Optional(
+                Type.String({ description: "owner | runner" }),
+              ),
+              text: Type.Optional(
+                Type.String({ description: "补写正文（原话）" }),
+              ),
+            },
+            {
+              additionalProperties: true,
+              description: "一条坏行补写；缺字段的成员机械跳过",
+            },
+          ),
+          {
+            description:
+              "可选；机械解析不了的行交此补写。缺本字段＝无补写，不拒收。",
+          },
         ),
       ),
     }),
@@ -92,7 +137,8 @@ export type DiaristRuntimeDependencies = {
 export const DIARIST_TOOL_SPEC = {
   name: DIARIST_OUTPUT_TOOL_NAME,
   label: "起居郎输出",
-  description: "起居郎入录整块与本票身份断言；认不出本庭对象则 escalate。",
-  promptSnippet: "起居郎入录整块与本票身份",
+  description:
+    "起居郎交本票对话边界（sessions）与可选坏行补写（amendments）；认不出本庭对象则 escalate。",
+  promptSnippet: "起居郎交边界与可选补写",
   parameters: diaristOutputSchema,
 } as const;
