@@ -268,13 +268,6 @@ export function courtAttemptIdFromHostContext(context: HostContext): string | un
     : undefined;
 }
 
-/** Per-turn public-invocation scope (#537); absence never inherits ambient identity. */
-export function invocationScopeIdFromHostContext(context: HostContext): string | undefined {
-  return typeof context.invocationScopeId === "string" && context.invocationScopeId.trim() !== ""
-    ? context.invocationScopeId
-    : undefined;
-}
-
 export type HostToolDefinition<S extends TSchema = TSchema, D = unknown, C = HostContext> = { name: string; label: string; description: string; promptSnippet?: string; parameters: S; execute( toolCallId: string, params: Static<S>, signal: AbortSignal | undefined, update: ((result: HostToolResult<D>) => void) | undefined, context: C, ): Promise<HostToolResult<D>>; /**
  * #641 chain② opt-in: when the output params carry the shared infrastructure
  * declaration but the seat can machine-verify a lawful normal completion, the

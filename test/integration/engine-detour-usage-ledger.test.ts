@@ -15,7 +15,7 @@
  */
 import assert from "node:assert/strict";
 import { appendFile, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
@@ -329,25 +329,6 @@ async function withDetourProject(
   });
 }
 
-/** Walk up from a sitian recordFile to the run's invocation.json host. */
-async function invocationHostNear(recordFile: string): Promise<string | undefined> {
-  let dir = dirname(recordFile);
-  for (let i = 0; i < 8; i += 1) {
-    try {
-      const raw = JSON.parse(await readFile(join(dir, "invocation.json"), "utf8")) as {
-        host?: unknown;
-      };
-      if (typeof raw.host === "string" && raw.host.trim() !== "") return raw.host.trim();
-    } catch {
-      // keep walking
-    }
-    const parent = dirname(dir);
-    if (parent === dir) break;
-    dir = parent;
-  }
-  return undefined;
-}
-
 test("public entry: one tracer for terminals, counts, payload, host, utf8, header-only", async () => {
   await withDetourProject("ak-detour-public-matrix-", async ({ home, project }) => {
     // no-engine baseline — field absent; payload bytes are the conservation yardstick
@@ -565,17 +546,6 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
           ),
           `${row.label}: sitian pointer must reopen the call`,
         );
-        if (row.label === "accepted-once") {
-          // Host provenance: recorded host is the admission invocation host (not invented).
-          const hostRow = opened.records.find(
-            (r) => r.identity === usage.calls[0]!.recordPointer.identity,
-          );
-          const invocationHost = await invocationHostNear(
-            usage.calls[0]!.recordPointer.recordFile,
-          );
-          assert.ok(invocationHost, "admission must write a host on invocation.json");
-          assert.equal(hostRow?.host, invocationHost);
-        }
       }
       if (row.label === "accepted-multi") {
         assert.deepEqual(

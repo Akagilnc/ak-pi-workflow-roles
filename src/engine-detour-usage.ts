@@ -354,17 +354,15 @@ export function mintEngineDetourInvocationScope(input: {
 }
 
 /** Attach a minted scope onto a turn request (shared Host envelope field). */
-export function withEngineDetourInvocationScope<T extends { readonly invocationScopeId?: string }>(
+export function withEngineDetourInvocationScope<T>(
   request: T,
   invocationScopeId: string | undefined,
 ): T {
   if (invocationScopeId === undefined || invocationScopeId.length === 0) {
     return request;
   }
-  if (
-    typeof request.invocationScopeId === "string" &&
-    request.invocationScopeId.length > 0
-  ) {
+  const current = (request as { readonly invocationScopeId?: unknown }).invocationScopeId;
+  if (typeof current === "string" && current.length > 0) {
     return request;
   }
   return { ...request, invocationScopeId };

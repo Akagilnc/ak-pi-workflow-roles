@@ -574,17 +574,6 @@ export async function dispatchPostAdmissionTurn<
   const { admitted, env, io, request, lease, adapters, effectiveEngine } = input;
   const persistRunState = input.persistRunState !== false;
   const deferredPersist = persistRunState ? {} : { needsPersist: true as const };
-  const withDetourScope = <F extends ControlledFailureInput>(failureInput: F): F => {
-    const scopeId = request.invocationScopeId;
-    if (scopeId === undefined || scopeId.length === 0) return failureInput;
-    if (
-      typeof failureInput.invocationScopeId === "string" &&
-      failureInput.invocationScopeId.length > 0
-    ) {
-      return failureInput;
-    }
-    return { ...failureInput, invocationScopeId: scopeId };
-  };
   const shouldPresent =
     adapters.shouldPresentSettled ?? ((terminal: T) => isLawfulTypedTerminalOutcome(terminal.roleOutcome));
   type DispatchOutcome = {
@@ -624,12 +613,12 @@ export async function dispatchPostAdmissionTurn<
       return {
         ...(await presentControlledFailure(
           admitted,
-          withDetourScope({
+          withEngineDetourInvocationScope({
             timedOut: false,
             code: null,
             stderr: "",
             thrown: error,
-          }),
+          }, request.invocationScopeId),
           adapters,
           env.principalAuthority,
           io,
@@ -650,7 +639,7 @@ export async function dispatchPostAdmissionTurn<
       return {
         ...(await presentControlledFailure(
           admitted,
-          withDetourScope(missingCredential),
+          withEngineDetourInvocationScope(missingCredential, request.invocationScopeId),
           adapters,
           env.principalAuthority,
           io,
@@ -684,12 +673,12 @@ export async function dispatchPostAdmissionTurn<
       return {
         ...(await presentControlledFailure(
           admitted,
-          withDetourScope({
+          withEngineDetourInvocationScope({
             timedOut: false,
             code: null,
             stderr: "",
             thrown: error,
-          }),
+          }, request.invocationScopeId),
           adapters,
           env.principalAuthority,
           io,
@@ -719,12 +708,12 @@ export async function dispatchPostAdmissionTurn<
       } catch (error) {
         const settled = (await presentControlledFailure(
           admitted,
-          withDetourScope({
+          withEngineDetourInvocationScope({
             timedOut: false,
             code: null,
             stderr: "",
             thrown: error,
-          }),
+          }, request.invocationScopeId),
           adapters,
           env.principalAuthority,
           io,
@@ -801,12 +790,12 @@ export async function dispatchPostAdmissionTurn<
     } catch (error) {
       const settled = await settleAfterTurnStarted(
           admitted,
-          withDetourScope({
+          withEngineDetourInvocationScope({
           timedOut: false,
           code: null,
           stderr: "",
           thrown: error,
-        }),
+        }, request.invocationScopeId),
         adapters,
         env.principalAuthority,
         io,
@@ -1014,12 +1003,12 @@ export async function dispatchPostAdmissionTurn<
       // above) throw is a real failure fact — never swallow into undefined.
       const settledFailure = await settleAfterTurnStarted(
           admitted,
-          withDetourScope({
+          withEngineDetourInvocationScope({
           timedOut: false,
           code: result.code,
           stderr: result.stderr,
           thrown: error,
-        }),
+        }, request.invocationScopeId),
         adapters,
         env.principalAuthority,
         io,
@@ -1044,13 +1033,13 @@ export async function dispatchPostAdmissionTurn<
           // call a known-failing operation twice.
           const failed = await settleAfterTurnStarted(
           admitted,
-          withDetourScope({
+          withEngineDetourInvocationScope({
               timedOut: false,
               code: null,
               stderr: "",
               thrown: error,
               skipRunStateWrite: true,
-            }),
+            }, request.invocationScopeId),
             adapters,
             env.principalAuthority,
             io,
@@ -1073,7 +1062,7 @@ export async function dispatchPostAdmissionTurn<
           : { stderrLogWriteFailure: describeCaughtError(stderrLogWriteFailure) };
       const failed = await settleAfterTurnStarted(
           admitted,
-          withDetourScope({
+          withEngineDetourInvocationScope({
           timedOut: result.timedOut,
           code: result.code,
           stderr: result.stderr,
@@ -1091,7 +1080,7 @@ export async function dispatchPostAdmissionTurn<
                 },
               }
               : { knownDetails: stderrLogWriteDetails }),
-        }),
+        }, request.invocationScopeId),
         adapters,
         env.principalAuthority,
         io,
@@ -1106,12 +1095,12 @@ export async function dispatchPostAdmissionTurn<
     if (stderrLogWriteFailure !== undefined) {
       const failed = await settleAfterTurnStarted(
           admitted,
-          withDetourScope({
+          withEngineDetourInvocationScope({
           timedOut: false,
           code: result.code,
           stderr: result.stderr,
           thrown: stderrLogWriteFailure,
-        }),
+        }, request.invocationScopeId),
         adapters,
         env.principalAuthority,
         io,
@@ -1136,13 +1125,13 @@ export async function dispatchPostAdmissionTurn<
         // skipRunStateWrite: don't retry the write that just threw.
         const failed = await settleAfterTurnStarted(
           admitted,
-          withDetourScope({
+          withEngineDetourInvocationScope({
             timedOut: false,
             code: null,
             stderr: "",
             thrown: error,
             skipRunStateWrite: true,
-          }),
+          }, request.invocationScopeId),
           adapters,
           env.principalAuthority,
           io,
