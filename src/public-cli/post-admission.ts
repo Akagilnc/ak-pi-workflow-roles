@@ -6,7 +6,7 @@
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { randomUUID } from "node:crypto";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -75,6 +75,7 @@ function isStationChildOfficerDialogue(
 }
 import {
   mintEngineDetourInvocationScope,
+  readInvocationSelectedHost,
   withEngineDetourInvocationScope,
 } from "../engine-detour-usage.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
@@ -209,19 +210,6 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
         ),
       );
     }
-  }
-}
-
-/** Previous main-session host recorded on invocation.json, if any. */
-async function readInvocationHost(runDirectory: string): Promise<string | undefined> {
-  try {
-    const raw = JSON.parse(await readFile(join(runDirectory, "invocation.json"), "utf8")) as {
-      host?: unknown;
-    };
-    return typeof raw.host === "string" && raw.host.trim() !== "" ? raw.host : undefined;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
   }
 }
 
@@ -682,7 +670,7 @@ export async function dispatchPostAdmissionTurn<
         : env.principalAuthority.decode(admitted.principal);
     let hostTransition: RoleTurnRequest["hostTransition"];
     try {
-      previousHost = await readInvocationHost(admitted.runDirectory);
+      previousHost = readInvocationSelectedHost(admitted.runDirectory);
       hostTransition =
         previousHost !== undefined && liveHost !== undefined && principalCoordinates !== undefined
           ? await projectHostTransitionPriorNative({
@@ -719,7 +707,7 @@ export async function dispatchPostAdmissionTurn<
     // executeTurn — not merely past beforeDispatch (#840 r9 判词 class 2). Any
     // pre-turn retry (beforeDispatch, dossier projection, continuation
     // assembly) must still see the prior invocation host on its next attempt;
-    // committing env.host earlier would make readInvocationHost read back the
+    // committing env.host earlier would make readInvocationSelectedHost read back the
     // new host on the retry and silently drop hostTransition.
     // Failures settle the run (presentControlledFailure); they must not leave it
     // permanently running. Call-local auto-resume retries this hook until it
