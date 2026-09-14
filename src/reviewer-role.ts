@@ -22,8 +22,8 @@ export type ReviewerAdmittedInputs = Readonly<{
 }>;
 
 const reviewerAmendmentsSchema = Type.Object({
-  standards: Type.Optional(Type.String({ description: "Standards 轴弹章正文" })),
-  spec: Type.Optional(Type.String({ description: "Spec 轴弹章正文" })),
+  standards: Type.Optional(Type.String({ description: "标准轴弹章正文" })),
+  spec: Type.Optional(Type.String({ description: "规格轴弹章正文" })),
 }, { additionalProperties: true, description: "逐轴弹章正文；无弹章的轴可省略。" });
 // #836 r16 class 1: diagnostic is LLM/human-read narrative content — no code
 // branches on its length (src/reviewer-role.ts consumer: reviewer content is
