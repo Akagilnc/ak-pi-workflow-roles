@@ -623,9 +623,26 @@ export function missingPublicProviderCredential(
   return !providerConfigured(credentials, provider);
 }
 
+/** Effective seat whose model axis is present (#178). */
+export type EffectiveSeatWithModel = EffectiveSeat & {
+  selection: NonNullable<EffectiveSeat["selection"]>;
+};
+
+/**
+ * #178 single authority: resolved seat must carry a model.
+ * Returns the narrowed seat, or undefined when selection is missing.
+ * Call sites own error presentation — do not throw here.
+ */
+export function resolvedSeatWithModel(
+  seat: EffectiveSeat,
+): EffectiveSeatWithModel | undefined {
+  if (seat.selection === undefined) return undefined;
+  return seat as EffectiveSeatWithModel;
+}
+
 /**
  * #178 dispatch-time message when model resolution yields no selection.
- * Call sites throw before host projection / role turn.
+ * Shared wording only; throw site (CliUsageError vs Error) stays per entry.
  */
 export function missingResolvedSeatModelMessage(
   seat: PublicConfigurableSeat,

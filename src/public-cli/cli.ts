@@ -26,6 +26,7 @@ import {
   missingResolvedSeatModelMessage,
   parseModelSpec,
   resolveEffectiveSeat,
+  resolvedSeatWithModel,
   savePublicCliConfig,
   setAutoResumeLimit,
   setPersistentSeatConfig,
@@ -318,10 +319,6 @@ function createRoleEnvironment(
   env: CliEnv,
   options: RoleEnvironmentOptions,
 ) {
-  // #178: model axis is caller-specified only — fail before host projection/dispatch.
-  if (options.seat.selection === undefined) {
-    throw new CliUsageError(missingResolvedSeatModelMessage(options.seat.seat));
-  }
   const role = options.role;
   const extraPiArgs =
     role === "coder"
@@ -366,6 +363,8 @@ function createRoleEnvironment(
   // host-facing provider (table > unique directory > fail).
   // Nested summons reuse this table and select by the child seat — never the
   // already-selected parent adapter (#840 / ADR 0082: --host 旗标>席位配置>缺省 pi).
+  // Order: select registered host first; only then require model and project provider
+  // so unregistered host stays host-unregistered (not missing-model).
   const hostAdapters = composeRoleTurnHostAdapters(
     {
       packageRoot: env.packageRoot,
@@ -380,10 +379,14 @@ function createRoleEnvironment(
     role,
     seat: options.seat,
   });
-  // selection is defined by the #178 guard above; projector still types undefined input.
+  // #178: after host selection, before provider projection / dispatch.
+  const seatWithModel = resolvedSeatWithModel(options.seat);
+  if (seatWithModel === undefined) {
+    throw new CliUsageError(missingResolvedSeatModelMessage(options.seat.seat));
+  }
   const hostFacingSelection = projectHostFacingProvider(
-    options.seat.selection,
-    options.seat.host,
+    seatWithModel.selection,
+    seatWithModel.host,
     loadHostProvidersTable(options.home),
     options.home,
   );

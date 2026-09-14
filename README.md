@@ -20,7 +20,7 @@ Publish routing (Actions, not local stamp): successful `ci` push on the reposito
 `ak-role` is the only supported way to call the package. Every run writes its complete Terminal result to stdout—read or redirect it there, never scrape Pi session files:
 
 ```bash
-ak-role judge --attach ./plan.md "Review this plan." > result.txt
+ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review this plan." > result.txt
 ```
 
 Exit status reports lifecycle honesty, not business success: every lawful typed result (including `audit_escalation`) exits zero; a failure without a lawful result exits nonzero, and its Terminal carries the Error Artifact ref and original cause instead of a fabricated receipt.
@@ -67,60 +67,64 @@ Gate submission gate: on DONE-side submissions (`completed` / `partially_complet
 The examples below are usage sketches; option identity, aliases, requiredness, and mode faces are owned by `ak-role help <command>`, not by a second flag contract here.
 
 ```bash
+# model axis (#178): caller specifies — either configure the seat once…
+#   ak-role config set <seat> <provider/model[:thinking]>
+# …or pass --model on the call (shown below). No package default model.
+
 # countersign — ticket-court review before work starts; admission runs the ticket's diarist first (#742, caller-transparent); resume continues the exact session
-ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"
+ak-role countersign --model <provider/model[:thinking]> --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # gleaner-left — unanchored pre-merge memorials; resume continues the exact session; --base required; instruction may be empty; callers must not pass directional instruction
-ak-role gleaner-left --base main
+ak-role gleaner-left --model <provider/model[:thinking]> --base main
 
 # judge — adjudicate the supplied materials
-ak-role judge --attach ./findings.md --attach ./adr.md "Adjudicate every finding."
+ak-role judge --model <provider/model[:thinking]> --attach ./findings.md --attach ./adr.md "Adjudicate every finding."
 
 # coder — first implementation
-ak-role coder plan "Propose the first implementation plan."
-ak-role coder apply --attach ./plan.md "Implement the approved slice."
+ak-role coder --model <provider/model[:thinking]> plan "Propose the first implementation plan."
+ak-role coder --model <provider/model[:thinking]> apply --attach ./plan.md "Implement the approved slice."
 
 # reviewer — fixed-target two-axis review; completed ≠ approved, read the findings
-ak-role reviewer --base main "Review the branch."
+ak-role reviewer --model <provider/model[:thinking]> --base main "Review the branch."
 
 # collector — GitHub PR review evidence (bind target, read handbook/field activity, trigger as needed, wait window, return materials)
-ak-role collector --pr 42 --repo owner/repository "Collect findings for the assigned issue."
-ak-role collector --repo owner/repository "Collect findings for #42"
+ak-role collector --model <provider/model[:thinking]> --pr 42 --repo owner/repository "Collect findings for the assigned issue."
+ak-role collector --model <provider/model[:thinking]> --repo owner/repository "Collect findings for #42"
 # optional: wait-window ms after the work step opens (default 600000 = 10 minutes)
-ak-role collector --pr 42 --repo owner/repository --wait-ms 120000 "Collect with a 2-minute window."
+ak-role collector --model <provider/model[:thinking]> --pr 42 --repo owner/repository --wait-ms 120000 "Collect with a 2-minute window."
 
 # fixer — repair the assigned findings
-ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."
+ak-role fixer --model <provider/model[:thinking]> --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."
 
 # doctor — diagnose one retained case
-ak-role doctor --issue 115 "Diagnose this retained case."
+ak-role doctor --model <provider/model[:thinking]> --issue 115 "Diagnose this retained case."
 
 # merger — reconcile merge materials (role escalates when nothing is in progress)
-ak-role merger --project /path/to/worktree "Reconcile the merge."
+ak-role merger --model <provider/model[:thinking]> --project /path/to/worktree "Reconcile the merge."
 
 # notary — document-fidelity check on one retained source run; ticket key inherited from source-run admitted form
-ak-role notary --source-run <runId@role|path>
+ak-role notary --model <provider/model[:thinking]> --source-run <runId@role|path>
 
 # inspector — direct complexity and test-quality check
-ak-role inspector --attach ./change.patch "Review this material."
+ak-role inspector --model <provider/model[:thinking]> --attach ./change.patch "Review this material."
 
 # gatekeeper — direct Gate province review; dispatch an officer or pass
-ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"
+ak-role gatekeeper --model <provider/model[:thinking]> --attach ./submission.json "审：这批材料该谁审？"
 
 # navigator — direct route advice (ordered next-role candidates); attends automatically on top-level public entry legs only
-ak-role navigator "刚完成 coder apply 收敛，下一步？"
+ak-role navigator --model <provider/model[:thinking]> "刚完成 coder apply 收敛，下一步？"
 
 # diarist — gather and organize this case's decision basis into its per-ticket 起居录 (LLM resolves the ticket itself, no mechanical verification since #779; countersign admission runs it automatically, other stations summon it explicitly)
-ak-role diarist "整理 #708 的本案依据。"
+ak-role diarist --model <provider/model[:thinking]> "整理 #708 的本案依据。"
 
 # countersign — ticket-court five questions; ticket recognition via instruction; admission runs the ticket's diarist first (#742)
-ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"
+ak-role countersign --model <provider/model[:thinking]> --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
-# analyst — deterministic metrics; bare call = whole book
+# analyst — deterministic metrics; bare call = whole book (no model seat)
 ak-role analyst
 
 # after escalate: feed the owner ruling into the same session (standard chain)
-ak-role resume <runId> "<ruling>"
+ak-role --model <provider/model[:thinking]> resume <runId> "<ruling>"
 ```
 
 ## Names

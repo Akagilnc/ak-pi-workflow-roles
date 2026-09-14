@@ -196,20 +196,28 @@ async function createSummonEnv(options: {
   readonly cwd: string;
   readonly packageRoot: string;
   readonly credentials: CredentialProviders;
-  readonly seat: EffectiveSeat & { selection: NonNullable<EffectiveSeat["selection"]> };
+  readonly seat: EffectiveSeat;
   readonly extraPiArgs?: readonly string[];
   readonly roleTurnHost?: RoleTurnHost;
   readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
 }) {
-  const [{ piDurablePrincipalAuthority }, { appendPiSessionCustomEntry }, { resolveRoleTurnHost }] =
+  const [
+    { piDurablePrincipalAuthority },
+    { appendPiSessionCustomEntry },
+    { resolveRoleTurnHost },
+    { missingResolvedSeatModelMessage, resolvedSeatWithModel },
+  ] =
     await Promise.all([
       import("./pi/durable-principal.ts"),
       import("./pi/role-turn-host.ts"),
       import("./public-cli/role-turn-host-resolution.ts"),
+      import("./public-cli/config.ts"),
     ]);
   const principalAuthority = piDurablePrincipalAuthority;
   // Same host axis table as public CLI (#617 DK-3 / #675 / #840): child seat
   // selects; injected roleTurnHost is the pi adapter only.
+  // Order matches CLI: resolve host first, then require model, then project provider
+  // so unregistered host stays host-unregistered (not missing-model).
   const roleTurnHost = resolveRoleTurnHost(
     {
       packageRoot: options.packageRoot,
@@ -221,13 +229,19 @@ async function createSummonEnv(options: {
     },
     { role: options.role, seat: options.seat, principalAuthority },
   );
-  const hostName = options.seat.host ?? "pi";
+  // #178: after host resolution, before provider projection / dispatch.
+  // Summons owns Error presentation; CLI owns CliUsageError — policy is shared.
+  const seatWithModel = resolvedSeatWithModel(options.seat);
+  if (seatWithModel === undefined) {
+    throw new Error(missingResolvedSeatModelMessage(options.role));
+  }
+  const hostName = seatWithModel.host ?? "pi";
   // #788: host is registered above; only then project host-facing provider.
   const { loadHostProvidersTable, projectHostFacingProvider } = await import(
     "./public-cli/host-providers.ts"
   );
   const hostFacingSelection = projectHostFacingProvider(
-    options.seat.selection,
+    seatWithModel.selection,
     hostName,
     loadHostProvidersTable(options.home),
     options.home,
@@ -242,8 +256,8 @@ async function createSummonEnv(options: {
     cwd: options.cwd,
     credentials: options.credentials,
     ...(hostFacingSelection === undefined ? {} : { model: hostFacingSelection }),
-    ...projectSeatEngine(options.seat),
-    ...projectSeatHost(options.seat),
+    ...projectSeatEngine(seatWithModel),
+    ...projectSeatHost(seatWithModel),
   };
 }
 
@@ -263,7 +277,6 @@ export async function summonPublicRole(
   const {
     loadCredentialProviders,
     loadPublicCliConfig,
-    missingResolvedSeatModelMessage,
     resolveEffectiveSeat,
   } = await import("./public-cli/config.ts");
   const credentials =
@@ -271,11 +284,8 @@ export async function summonPublicRole(
   const config = await loadPublicCliConfig(home);
   // Nested summons resolve host on the officer seat only (flag>seat>default pi).
   // Parent run host is not an override channel (#821 / ADR 0082: --host 旗标>席位配置>缺省 pi).
+  // #178 model-required check runs inside createSummonEnv after host resolution.
   const seat = resolveEffectiveSeat(config, options.role, credentials);
-  // #178: same dispatch-time model guard as public CLI — no package fill-in.
-  if (seat.selection === undefined) {
-    throw new Error(missingResolvedSeatModelMessage(options.role));
-  }
   let summonEnv;
   try {
     summonEnv = await createSummonEnv({
@@ -285,7 +295,7 @@ export async function summonPublicRole(
       cwd: options.cwd,
       packageRoot,
       credentials,
-      seat: { ...seat, selection: seat.selection },
+      seat,
       ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
       ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
       ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),

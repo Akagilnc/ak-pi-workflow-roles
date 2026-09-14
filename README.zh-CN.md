@@ -20,7 +20,7 @@ export PATH="$HOME/.pi/agent/npm/node_modules/.bin:$PATH"
 `ak-role` 是唯一受支持的调用方式。每次运行的完整 Terminal 结果写在 stdout——从那里读或正常重定向，不要刮 Pi session 文件：
 
 ```bash
-ak-role judge --attach ./plan.md "Review this plan." > result.txt
+ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review this plan." > result.txt
 ```
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
@@ -67,54 +67,57 @@ ak-role config set-auto-resume-limit 3
 下例只是用法速写；option 身份、别名、必填性与 mode 面以 `ak-role help <command>` 为准，不另立第二份旗标合同。
 
 ```bash
+# model 轴（#178）：调用者指定——可先 `ak-role config set <seat> <provider/model[:thinking]>`
+# 配席，或如下逐次带 `--model`。无包内默认模型。
+
 # 大理寺——审断所供材料
-ak-role judge --attach ./findings.md --attach ./adr.md "Adjudicate every finding."
+ak-role judge --model <provider/model[:thinking]> --attach ./findings.md --attach ./adr.md "Adjudicate every finding."
 
 # 将作监——营造新作
-ak-role coder plan "Propose the first implementation plan."
-ak-role coder apply --attach ./plan.md "Implement the approved slice."
+ak-role coder --model <provider/model[:thinking]> plan "Propose the first implementation plan."
+ak-role coder --model <provider/model[:thinking]> apply --attach ./plan.md "Implement the approved slice."
 
 # 御史台——固定目标双轴察举；completed ≠ 准行，findings 在 Terminal 里
-ak-role reviewer --base main "Review the branch."
+ak-role reviewer --model <provider/model[:thinking]> --base main "Review the branch."
 
 # 通进司——GitHub PR 收证（认票、读手册/现场活动、按需触发、等待窗、交回材料）
-ak-role collector --pr 42 --repo owner/repository "为所指 issue 收证。"
-ak-role collector --repo owner/repository "为 #42 收证。"
+ak-role collector --model <provider/model[:thinking]> --pr 42 --repo owner/repository "为所指 issue 收证。"
+ak-role collector --model <provider/model[:thinking]> --repo owner/repository "为 #42 收证。"
 # 可选：工作步骤开启后的等待窗毫秒（默认 600000＝十分钟）
-ak-role collector --pr 42 --repo owner/repository --wait-ms 120000 "两分钟窗收证。"
+ak-role collector --model <provider/model[:thinking]> --pr 42 --repo owner/repository --wait-ms 120000 "两分钟窗收证。"
 
 # 修内司——缮修所指 findings
-ak-role fixer --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."
+ak-role fixer --model <provider/model[:thinking]> --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."
 
 # 太医署——单案诊断
-ak-role doctor --issue 115 "Diagnose this retained case."
+ak-role doctor --model <provider/model[:thinking]> --issue 115 "Diagnose this retained case."
 
 # 校书郎——调和工作树中的 merge 材料（无进行中合并时由角色 escalate）
-ak-role merger --project /path/to/worktree "Reconcile the merge."
+ak-role merger --model <provider/model[:thinking]> --project /path/to/worktree "Reconcile the merge."
 
 # 符宝郎——文书核验一份留存 source run；票号从 source-run admitted form 继承
-ak-role notary --source-run <runId@role|path>
+ak-role notary --model <provider/model[:thinking]> --source-run <runId@role|path>
 
 # 台院——直调复杂度与测试质量两轴
-ak-role inspector --attach ./change.patch "Review this material."
+ak-role inspector --model <provider/model[:thinking]> --attach ./change.patch "Review this material."
 
 # 门下省——直调省审：派官或放行
-ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"
+ak-role gatekeeper --model <provider/model[:thinking]> --attach ./submission.json "审：这批材料该谁审？"
 
 # 游奕使——直调路线建议（有序的下一步角色候选）；随公开入口顶层腿自动出席
-ak-role navigator "刚完成 coder apply 收敛，下一步？"
+ak-role navigator --model <provider/model[:thinking]> "刚完成 coder apply 收敛，下一步？"
 
 # 给事中——票庭五问；票号经由 instruction 识别；受理内先自动起居郎再本席（#742，调用者无感）
-ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"
+ak-role countersign --model <provider/model[:thinking]> --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
 # 左拾遗——合并前无锚定风闻；可 resume 续同一 session；--base 必填；instruction 可空；调用者不得传方向性 instruction
-ak-role gleaner-left --base main
+ak-role gleaner-left --model <provider/model[:thinking]> --base main
 
-# 太史——确定性指标；裸调＝整簿
+# 太史——确定性指标；裸调＝整簿（无 model 席）
 ak-role analyst
 
 # escalate 后：把 owner 裁定喂回同一 session（标准链）
-ak-role resume <runId> "<裁定>"
+ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 ```
 
 ## 班子（唐宋官署命名）
