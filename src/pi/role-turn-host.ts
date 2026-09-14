@@ -92,7 +92,8 @@ function buildMethodArgs(methods: readonly MethodBinding[]): string[] {
 }
 
 /**
- * Pi-native `/skill:<name>` for a single forced method (ADR 0082 `pi-no-privilege`).
+ * Pi-native `/skill:<name>` for a single forced method (ADR 0082: pi is one adapter
+ * with no privilege; Pi-only seams stay inside the pi adapter).
  * Driven by typed RoleTurnRequest.methods — middle-layer decision, Pi-only syntax.
  * Zero/many methods leave the prompt alone (Fixer optional pair stays `--skill` only).
  */

@@ -28,7 +28,7 @@ export type DispatchStubFactInput = Omit<DispatchStubFact, "event">;
 
 /**
  * Construct the closed dispatch stub from trusted typed inputs only.
- * Nested dispatch/correlation are rebuilt closed (ADR 0049 zero-content by construction).
+ * Nested dispatch/correlation are rebuilt closed (ADR 0049: first-phase ledger holds zero content bytes by construction).
  */
 export function buildDispatchStubFact(input: DispatchStubFactInput): DispatchStubFact {
   return {

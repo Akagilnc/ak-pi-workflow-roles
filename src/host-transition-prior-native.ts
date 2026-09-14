@@ -57,7 +57,7 @@ async function listSitianRecordPaths(sessionParent: string): Promise<string[]> {
  * still yields a typed switch (empty path list).
  *
  * Pi wrote its own session.jsonl; every other host's run volume is the sitian
- * record set on the live run (ADR 0077 `record-scope-phase-two`, #717) — the CLI's
+ * record set on the live run (ADR 0077 全宿主 session 卷宗统一直写, #717) — the CLI's
  * own journals stay in the operator home and are never copied here.
  */
 export async function projectHostTransitionPriorNative(input: {

@@ -1,5 +1,5 @@
 # 审刑院各状态只要求自身必需字段
 
-Status: accepted（authority/provenance: ADR 0019）
+Status: accepted
 
-削薄 F016：`pass` 只要求 `status: "pass"`；`revise` 要求 `status: "revise"` 与非空 `violations`。不再要求 pass 携带无意义的 `violations: []`，其他内容按 ADR 0025 一概不管。
+pass 只要求 status；bounce 的非空 violations 要求已由 ADR 0056 迁至 auditor soul，runtime 不再因空 violations 拒收。其他内容按 ADR 0025 一概不管。

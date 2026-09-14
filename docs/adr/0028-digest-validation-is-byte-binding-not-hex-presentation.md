@@ -1,7 +1,5 @@
-> Historical record: this ADR predates Issue #28 Navigator attendance and is retained only for provenance.
-
 # 摘要校验只保留真实字节绑定
 
-Status: accepted（authority/provenance: ADR 0019）
+Status: accepted
 
-F011 不再作为全车间通用格式契约。删除独立的“小写 64 位十六进制”外观校验；某个输入输出确实必须携带 SHA-256 时，只保留摘要存在且与现场实际字节重算结果相等的验证。Assisted 相关随机制删除，Navigator 相关归 #28。
+删除独立的十六进制外观校验；输入输出确实必须携带 SHA-256 时，只保留摘要存在且与现场字节重算相等的验证。

@@ -1,5 +1,5 @@
 /**
- * Public 起居郎 (diarist) terminating receipt contracts — ADR 0075 `diarist-is-role`.
+ * Public 起居郎 (diarist) terminating receipt contracts — ADR 0075（起居郎是 LLM 角色）。
  * Lawful explicit releases: completed (入录) | escalate (认不出本庭对象上抛).
  * Machine facts about the volume come from the mechanical sitian seam, never
  * from model self-report (锚定宪法); this module owns the receipt shape only.
@@ -21,7 +21,7 @@ export const DIARIST_OUTPUT_TOOL_NAME = "ak_diarist_output";
 export const DIARIST_ACCEPTED_TEXT = "起居郎回执已接受";
 
 /**
- * One whole block the diarist chose to enter (ADR 0075 `transcribe-whole-blocks`).
+ * One whole block the diarist chose to enter (ADR 0075 誊录整块对话)。
  * LLM supplies the block bytes + source pointer; mechanical layer appends as-is.
  */
 export type DiaristEntrySubmission = {
@@ -38,13 +38,13 @@ export type DiaristOutput =
   | {
       readonly status: "completed";
       /**
-       * Typed court-target assertion (ADR 0075 `diarist-resolves-ticket-llm-layer`).
+       * Typed court-target assertion (ADR 0075 起居郎 LLM 自行认票)。
        * Positive integer = 本庭对象=票N; null/absent = true-unbound (真无票→无录).
        * LLM owns recognition; mechanical layer does not re-judge the number.
        */
       readonly ticketNumber?: number | null;
       /**
-       * #871 typed co-review set (ADR 0075 `diarist-resolves-ticket-llm-layer` narrow extension).
+       * #871 typed co-review set (ADR 0075 合审票集 narrow extension)。
        * Positive integers = tickets that should each receive a diary this court (includes main).
        * Field absent → no new set this turn (resume keeps stored run fact; first court defaults to [main]).
        * Explicit empty array → single-ticket face [main] whole-set replace.

@@ -46,7 +46,8 @@ type ContentPart = { type: "text"; text: string } | { type: "image"; data: strin
 
 /**
  * Build host-side Skill expansion evidence from pre-read RoleTurnRequest.methods.
- * Non-pi hosts never parse Pi `/skill:` syntax (ADR 0082 `pi-no-privilege`);
+ * Non-pi hosts never parse Pi `/skill:` syntax (ADR 0082: pi is one adapter with
+ * no privilege; Pi-only seams stay inside the pi adapter);
  * a single bound method treats the plain prompt as the preserved user message.
  * Pi-native slash forms stay inside `src/pi/` only.
  */

@@ -119,8 +119,8 @@ export type AutoResumeDispatchResult = {
 /**
  * Thrown by dispatchPostAdmissionTurn when a failure happens inside its own
  * settlement authority (presentControlledFailure) after the host turn
- * genuinely started — never to fabricate a replacement terminal (ADR 0080
- * single-settlement-disposition: settlement stays exactly presentControlledFailure
+ * genuinely started — never to fabricate a replacement terminal (ADR 0080:
+ * one settlement disposition owner — settlement stays exactly presentControlledFailure
  * / settleFailureTerminalResult, or — once the retry budget is exhausted —
  * this loop's own dispatchExceptionFailureTerminal). Its only job is to carry
  * the "turn already started" fact across the throw boundary so this loop

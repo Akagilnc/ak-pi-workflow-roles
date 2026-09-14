@@ -361,7 +361,7 @@ function createRoleEnvironment(
   // host-facing provider (table > unique directory > fail). Bad host never
   // reaches model resolution.
   // Nested summons reuse this table and select by the child seat — never the
-  // already-selected parent adapter (#840 / ADR 0082 host-flag-two-channels).
+  // already-selected parent adapter (#840 / ADR 0082: --host 旗标>席位配置>缺省 pi).
   const hostAdapters = composeRoleTurnHostAdapters(
     {
       packageRoot: env.packageRoot,

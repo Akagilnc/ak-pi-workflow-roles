@@ -2,15 +2,14 @@
  * Public Countersign Role run: admit ticket materials → court-pipeline prior
  * station (起居郎) → shared post-admission coordinator → settle Terminal result
  * (#572 / ADR 0074 / ADR 0075 / #742 / #771). #599: manual resume continues the
- * exact session. ADR 0079: same-ticket re-summons resume the seat's previous run
- * (`ticket-seat-memory-countersign-principal`); explicit `ak-role new` mints fresh
- * (`explicit-fresh-summons`).
+ * exact session. ADR 0079: same-ticket re-summons resume the seat's previous run;
+ * explicit `ak-role new` mints fresh (显式派新腿入口与显式 resume 并列).
  *
  * Court admission auto-runs 起居郎 so the 起居郎 LLM asserts the court target;
  * mechanical layer only verifies; countersign reuses that typed identity for bind
  * and same-ticket resume lookup (ADR 0075 / 0081 / 0079). Code never matches
  * instruction text against book-known numbers. Who may call 起居郎 and in what
- * order is not written into law (ADR 0075 `no-call-rule`); the present admission
+ * order is not written into law (ADR 0075 不规定谁调用起居郎、顺序归调用者); the present admission
  * effect is what this seat currently does. 起居录 path delivery is owned once by
  * post-admission (#709 / ADR 0081).
  *
@@ -20,7 +19,7 @@
  * (incl. verification failure) settle as countersign controlled failure — never
  * wash into 真无票. Only a true missing lawful typed terminal stays unbound and
  * continues the body (r5 unbound-continue). Bound refresh hands the typed key to
- * 起居郎 so freeze loads issue face (`refresh-every-court` / typed handoff).
+ * 起居郎 so freeze loads issue face (ADR 0075: 每次过庭都跑是调用者用法 / typed handoff).
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
@@ -223,7 +222,7 @@ async function invokeCourtDiarist(input: {
       ? {}
       : { boundTicketNumber: input.boundTicketNumber }),
     // Child seat selects from the composition-root table. Do not pass the
-    // already-selected parent adapter (#840 / ADR 0082 host-flag-two-channels).
+    // already-selected parent adapter (#840 / ADR 0082: --host 旗标>席位配置>缺省 pi).
     ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
   });
 
@@ -267,7 +266,7 @@ async function invokeCourtDiarist(input: {
 
 /**
  * Court-pipeline prior station: refresh this ticket's 起居录 before the
- * countersign body turn when already bound (ADR 0075 `refresh-every-court`).
+ * countersign body turn when already bound (ADR 0075 每次过庭都跑)。
  * Caller-invisible — no diarist argv on the countersign command line.
  *
  * Missing ticketNumber (true-unbound / identity deferred) skips the refresh
@@ -285,7 +284,7 @@ export async function runCountersignCourtDiaristStation(
     await env.runCourtDiaristStation(admitted);
     return;
   }
-  // Production refresh-every-court only under a known ticket identity.
+  // Production court refresh (ADR 0075: 每次过庭都跑是调用者用法) only under a known ticket identity.
   // First-entry unbound identity is owned by runPublicCountersign.
   if (admitted.ticketNumber === undefined) return;
 
@@ -461,7 +460,7 @@ export async function runPublicCountersign(
           await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
           await markRunTerminal(admitted.runDirectory);
           // Identity 起居郎 asserted unbound (no issue face). Resume still runs
-          // the bound refresh station under the typed key (refresh-every-court).
+          // the bound refresh station under the typed key (ADR 0075: 每次过庭都跑是调用者用法).
           // #871: hand the identity set so resume can whole-replace the run fact
           // when this summons produced a new typed set (never union).
           return await runPublicCountersignResume(
@@ -590,7 +589,7 @@ function countersignAdapters(options?: {
 /**
  * Resume a previously admitted Countersign run (#599 / DK-3 / #637).
  * Restores role/ticket/session identity. Bound court re-entry runs the diarist
- * refresh station first (ADR 0075 `refresh-every-court`); unbound skips refresh.
+ * refresh station first (ADR 0075 每次过庭都跑); unbound skips refresh.
  * Same-ticket summons deliver this turn's instruction + frozen attachments on
  * the resume prompt; manual resume keeps package-envelope / caller-message
  * semantics and birth attachments. 起居录 path delivery remains post-admission's

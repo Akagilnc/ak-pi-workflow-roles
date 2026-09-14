@@ -467,8 +467,8 @@ export async function presentControlledFailure<
 /**
  * presentControlledFailure, called only where the host turn has already
  * genuinely started (#840 r9 判词 class 1 boundary). If presentControlledFailure
- * itself fails, this never fabricates a replacement terminal (ADR 0080
- * single-settlement-disposition — presentControlledFailure /
+ * itself fails, this never fabricates a replacement terminal (ADR 0080:
+ * one settlement disposition owner — presentControlledFailure /
  * settleFailureTerminalResult stays the one authority); it re-throws a
  * TurnDispatchedFailure so runWithAutoResumeLoop still learns the turn
  * started and selects a resume payload on the next attempt, while settling
@@ -505,8 +505,8 @@ async function settleAfterTurnStarted<
  * (needsPersist — station-child / resumable auto-resume loop, #416/#840):
  * that write must land outside the loop's own retried-dispatch try, but its
  * failure still settles through the single existing controlled-failure
- * authority (settleAfterTurnStarted / presentControlledFailure, ADR 0080
- * single-settlement-disposition) — never a second hand-rolled
+ * authority (settleAfterTurnStarted / presentControlledFailure, ADR 0080:
+ * one settlement disposition owner) — never a second hand-rolled
  * classify/artifact/Terminal (#836 r12 class 3), and never lawful/non-lawful
  * settling differently (#836 r13 class 2: a caller's io here may be a no-op,
  * so a stderr-only trace is never seen and the failure is otherwise
@@ -816,8 +816,8 @@ export async function dispatchPostAdmissionTurn<
     // 判词 class 1 boundary — 覆盖 executeTurn 已启动后至返回带 turnDispatched
     // 结果前的全部异常). Each fallible step routes any failure through the
     // single existing settlement authority (presentControlledFailure /
-    // settleFailureTerminalResult) rather than a second one (ADR 0080
-    // single-settlement-disposition) — never by fabricating a terminal here.
+    // settleFailureTerminalResult) rather than a second one (ADR 0080:
+    // one settlement disposition owner) — never by fabricating a terminal here.
     // A cleanup step that runs only after a real settlement (clearCurrentCourt)
     // is protected by logging and keeping that already-obtained result, never
     // by discarding it (#840 已交劳动只整理终局不重做). A failure inside the

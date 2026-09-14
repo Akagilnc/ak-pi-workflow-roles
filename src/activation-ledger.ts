@@ -100,7 +100,7 @@ export function correlationIdentityFromEnv(
 
 /**
  * Descriptor-driven top-level pick: only ACCEPTED_ACTIVATION_FACT_KEYS leave this boundary.
- * Nested session/correlation are rebuilt closed before the pick (ADR 0049 zero-content by construction).
+ * Nested session/correlation are rebuilt closed before the pick (ADR 0049: first-phase ledger holds zero content bytes by construction).
  */
 function projectAcceptedActivationFact(
   input: AcceptedActivationFactInput,

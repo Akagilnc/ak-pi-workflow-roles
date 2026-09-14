@@ -1,6 +1,5 @@
-# 0017 — Doctor reads retained Pi sessions
+# Doctor reads retained Pi sessions
 
-Status: accepted (陛下 ruling, 2026-08-01)
-Date: 2026-08-01
+Status: accepted
 
-Doctor's source is one retained `.ak/work/issues/<n>/runs` tree of Pi-native sessions, and its first-class completed output is a byte-rederivable single-case process-cost diagnosis; callers must not delete or rewrite those run directories before examination. Multi-case trends are a separate output unlocked only after multiple cases have been read.
+Doctor 的源是一份保留的 Pi-native runs 树，第一类 completed 输出是可字节重导的单案过程成本诊断；调用者在检查前不得删除或改写那些 run 目录。多案趋势是读过多案后的独立输出。

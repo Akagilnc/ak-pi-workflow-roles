@@ -211,7 +211,7 @@ export const PUBLIC_ROLE_RECORDS = [
     activationStage: "load-and-install",
     sessionMaterials: AUDITOR_PUBLIC_SESSION_MATERIALS,
   },
-  // #708 / ADR 0075 `diarist-is-role` / #779: 起居郎 is a seat like any other.
+  // #708 / ADR 0075（起居郎是 LLM 角色）/ #779: 起居郎 is a seat like any other.
   // No input flag — LLM finds materials itself (caller-transparent).
   {
     role: "diarist",
