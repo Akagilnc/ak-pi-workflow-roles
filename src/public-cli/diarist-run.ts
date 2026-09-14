@@ -1,9 +1,9 @@
 /**
- * Public Diarist (起居郎) Role run — #708 / ADR 0075 `diarist-is-role` / #779.
+ * Public Diarist (起居郎) Role run — #708 / ADR 0075（起居郎是 LLM 角色）/ #779.
  * Same admit → post-admission → settle shape as the other instruction seats.
  * Semantic collection is the role's own turn: LLM finds materials itself
  * (no frozen candidate catalog, no path/attachment burden on the caller).
- * Who calls it and in what order is the caller's business (ADR 0010 `no-call-rule`).
+ * Who calls it and in what order is the caller's business (ADR 0010; ADR 0075 不规定调用顺序).
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";

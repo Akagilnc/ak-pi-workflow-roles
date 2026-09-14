@@ -10,7 +10,7 @@
  * mechanical layer only verifies; countersign reuses that typed identity for bind
  * and same-ticket resume lookup (ADR 0075 / 0081 / 0079). Code never matches
  * instruction text against book-known numbers. Who may call 起居郎 and in what
- * order is not written into law (ADR 0075 `no-call-rule`); the present admission
+ * order is not written into law (ADR 0075 不规定谁调用起居郎、顺序归调用者); the present admission
  * effect is what this seat currently does. 起居录 path delivery is owned once by
  * post-admission (#709 / ADR 0081).
  *
@@ -267,7 +267,7 @@ async function invokeCourtDiarist(input: {
 
 /**
  * Court-pipeline prior station: refresh this ticket's 起居录 before the
- * countersign body turn when already bound (ADR 0075 `refresh-every-court`).
+ * countersign body turn when already bound (ADR 0075 每次过庭都跑)。
  * Caller-invisible — no diarist argv on the countersign command line.
  *
  * Missing ticketNumber (true-unbound / identity deferred) skips the refresh
@@ -590,7 +590,7 @@ function countersignAdapters(options?: {
 /**
  * Resume a previously admitted Countersign run (#599 / DK-3 / #637).
  * Restores role/ticket/session identity. Bound court re-entry runs the diarist
- * refresh station first (ADR 0075 `refresh-every-court`); unbound skips refresh.
+ * refresh station first (ADR 0075 每次过庭都跑); unbound skips refresh.
  * Same-ticket summons deliver this turn's instruction + frozen attachments on
  * the resume prompt; manual resume keeps package-envelope / caller-message
  * semantics and birth attachments. 起居录 path delivery remains post-admission's

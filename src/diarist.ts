@@ -1,5 +1,5 @@
 /**
- * 起居郎 volume commit — ADR 0075 `diarist-is-role` / #779.
+ * 起居郎 volume commit — ADR 0075（起居郎是 LLM 角色）/ #779.
  * Semantic collection is the diarist role's own LLM turn (finds materials itself).
  * This module only appends submitted whole blocks idempotently and refreshes the
  * human view. No frozen catalog, no quote reverse-verify, no ticket-number
