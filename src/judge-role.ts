@@ -11,11 +11,6 @@ import {
   type JudgeVerdict,
 } from "./package-contracts/judge-output.ts";
 
-// TEMP #907 green-proof bait — deliberate ADR 0057 zero-required breach + ADR 0073 English command. Delete after real run.
-export const TEMP_907_BAIT_SCHEMA = Type.Object({
-  mustFill: Type.String({ description: "You MUST provide this. Code will reject if empty." }),
-}, { required: ["mustFill"], additionalProperties: false });
-
 const JUDGE_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]);
 const JUDGE_STATUS_REASK =
   "judgeStatus 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
