@@ -949,7 +949,7 @@ async function materializeConflictedRepo(root: string): Promise<void> {
 /**
  * Minimal argv per callable role so the run reaches piRunner (shared fixture).
  * #747: notary/auditor resume by parent --source-run; this table probes engine
- * wiring twice against one fixture parent, so mint via `new` (explicit-fresh-summons)
+ * wiring twice against one fixture parent, so mint via `new` (ADR 0079: 显式派新腿入口)
  * instead of resuming a prior probe that has no durable Pi principal.
  */
 function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[] {

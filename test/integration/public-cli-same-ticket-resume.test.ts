@@ -953,7 +953,7 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
     const firstRunId = seen[0]!.runId;
     const firstRunDirectory = seen[0]!.runDirectory;
 
-    // 2) Explicit fresh summons: same parent, new verb → distinct run (explicit-fresh-summons).
+    // 2) Explicit fresh summons: same parent, new verb → distinct run (ADR 0079: 显式派新腿入口).
     const fresh = await runAkRole(
       [
         "new",
@@ -988,7 +988,7 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
     assert.equal(notaryRuns.length, 2, "ordinary + new must leave two notary run directories");
 
     // 3) Ordinary same-parent summons auto-resumes the latest leg under that parent
-    // (explicit-fresh-summons + #747 parent key — not the birth leg).
+    // (ADR 0079: 显式派新腿入口 + #747 parent key — not the birth leg).
     const third = await runAkRole(
       ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {

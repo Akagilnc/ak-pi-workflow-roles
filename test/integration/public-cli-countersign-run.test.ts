@@ -393,7 +393,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
-        // Resume still refreshes 起居郎 (refresh-every-court); true-unbound face.
+        // Resume still refreshes 起居郎 (ADR 0075: 每次过庭都跑是调用者用法); true-unbound face.
         piRunner: withTrueUnboundDiarist(async (args, options) => {
           resumeArgs = [...args];
           resumeStdin = options.stdin;
