@@ -4,7 +4,7 @@
  * Single seam: real entry, scripted host, on-disk session fixture, assert the unique diary file.
  */
 import assert from "node:assert/strict";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -155,9 +155,10 @@ function diaristEnvelopeRunner(
  * Session fixture covering the #901 external contracts in one volume:
  * ordinary owner message coexisting with enqueue, queue-sourced owner input +
  * paired dequeue materialization (no double-count), empty-content enqueue whose
- * sole materialization user must be kept, runner reply, tool result (excluded),
+ * sole materialization user must be kept, runner reply, pure tool result
+ * (excluded), mixed tool_result+text (text kept), Codex response_item dialogue,
  * absorbed interjection (enqueue-only), duplicate id (first-seen), and one
- * unparsable line.
+ * unparsable line. Path must sit under an authorized host session root.
  */
 async function writeDialogueSessionFixture(path: string): Promise<{
   readonly path: string;
@@ -167,6 +168,9 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   readonly emptyEnqueueOwnerId: string;
   readonly emptyEnqueueOwnerText: string;
   readonly runnerId: string;
+  readonly mixedOwnerText: string;
+  readonly codexOwnerText: string;
+  readonly codexRunnerText: string;
   readonly interjectionId: string;
   readonly duplicateId: string;
   readonly unparsableLine: number;
@@ -179,6 +183,9 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const emptyEnqueueOwnerId = "msg-empty-enq-owner";
   const emptyEnqueueOwnerText = "这种问题你联网搜一下好吗？直接copy过来能行吗？";
   const runnerId = "msg-runner-1";
+  const mixedOwnerText = "工具旁路的原话要留";
+  const codexOwnerText = "Codex 上拍的决定";
+  const codexRunnerText = "Codex runner 回话";
   const interjectionId = "queue-interject-1";
   const duplicateId = "msg-dup-1";
   const unparsableRaw = "{this is not json at all";
@@ -253,7 +260,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         ],
       },
     }),
-    // 10. tool result payload — must not enter the diary
+    // 10. pure tool result payload — must not enter the diary
     JSON.stringify({
       type: "user",
       uuid: "tool-result-1",
@@ -262,7 +269,37 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "tool_result", tool_use_id: "t1", content: "ls -la output 12085 chars" }],
       },
     }),
-    // 11. absorbed interjection (enqueue + dequeue; no independent message record)
+    // 11. mixed tool_result + speaker text — keep text only
+    JSON.stringify({
+      type: "user",
+      uuid: "mixed-tool-text",
+      message: {
+        role: "user",
+        content: [
+          { type: "tool_result", tool_use_id: "t2", content: "should not land" },
+          { type: "text", text: mixedOwnerText },
+        ],
+      },
+    }),
+    // 12. Codex rollout owner (response_item + input_text)
+    JSON.stringify({
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "user",
+        content: [{ type: "input_text", text: codexOwnerText }],
+      },
+    }),
+    // 13. Codex rollout runner (response_item + output_text)
+    JSON.stringify({
+      type: "response_item",
+      payload: {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text: codexRunnerText }],
+      },
+    }),
+    // 14. absorbed interjection (enqueue + dequeue; no independent message record)
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -274,7 +311,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       operation: "dequeue",
       uuid: "queue-deq-2",
     }),
-    // 12. first occurrence of duplicate id
+    // 15. first occurrence of duplicate id
     JSON.stringify({
       type: "assistant",
       uuid: duplicateId,
@@ -283,9 +320,9 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: "首现正文" }],
       },
     }),
-    // 13. unparsable line (completed by terminator)
+    // 16. unparsable line (completed by terminator)
     unparsableRaw,
-    // 14. duplicate id second occurrence — must not re-enter
+    // 17. duplicate id second occurrence — must not re-enter
     JSON.stringify({
       type: "assistant",
       uuid: duplicateId,
@@ -306,11 +343,14 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     emptyEnqueueOwnerId,
     emptyEnqueueOwnerText,
     runnerId,
+    mixedOwnerText,
+    codexOwnerText,
+    codexRunnerText,
     interjectionId,
     duplicateId,
-    unparsableLine: 14,
+    unparsableLine: 17,
     unparsableRaw,
-    lastLine: 15,
+    lastLine: 18,
   };
 }
 
@@ -320,9 +360,31 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
+    // Path under authorized host session root (ADR 0038 real I/O seam).
     const fixture = await writeDialogueSessionFixture(
-      join(home, "sessions", "probe-session.jsonl"),
+      join(home, ".claude", "projects", "probe", "session.jsonl"),
     );
+
+    // Seed an already-accepted authoritative volume so round-1 unparsable reask
+    // must leave it byte-identical (publication integrity).
+    const paths = resolveTicketProvenanceVolume(TICKET, project, home);
+    await mkdir(paths.volumeDir, { recursive: true });
+    const priorBody = `${JSON.stringify({
+      repo: resolveBookKeyFromGit(project),
+      ticket: TICKET,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      sessions: [{ path: fixture.path, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+    })}\n${JSON.stringify({
+      speaker: "owner",
+      s: 0,
+      line: 1,
+      id: "prior-seed",
+      text: "既有权威卷原文",
+    })}\n`;
+    await writeFile(paths.recordFile, priorBody, "utf8");
+    const priorBytes = priorBody;
+    let sawUnparsableReask = false;
 
     const runId = "01a0diar00-0000-7000-8000-000000000001";
     const { io, stdout } = captureIo();
@@ -346,7 +408,11 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
                 sessions: [
                   {
                     path: fixture.path,
-                    ranges: [{ from: { line: 1 }, to: { line: fixture.lastLine } }],
+                    // Overlapping ranges: must merge, not double-emit id-less rows.
+                    ranges: [
+                      { from: { line: 1 }, to: { line: fixture.lastLine } },
+                      { from: { line: 12 }, to: { line: fixture.lastLine } },
+                    ],
                   },
                 ],
               };
@@ -355,6 +421,13 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
             assert.ok(lastReask, "expected unparsable-line reask before amendment");
             assert.match(lastReask, /amendments/);
             assert.ok(lastReask.includes(fixture.unparsableRaw));
+            sawUnparsableReask = true;
+            // Rejected first submission must not have rewritten the prior volume.
+            assert.equal(
+              readFileSync(paths.recordFile, "utf8"),
+              priorBytes,
+              "first-round unparsable reask must not publish over the prior diary",
+            );
             return {
               status: "completed",
               ticketNumber: TICKET,
@@ -381,6 +454,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     assert.equal(result.exitCode, 0, stdout.join("") || "diarist run failed");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(result.terminal?.roleOutcome.role, "diarist");
+    assert.equal(sawUnparsableReask, true, "expected an unparsable reask before accept");
 
     const placement = roleRunPlacement(resolveActivationLedgerHome(home), {
       bookKey: resolveBookKeyFromGit(project),
@@ -395,7 +469,6 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     assert.equal(state?.role, "diarist");
     assert.equal(state?.state, "terminal");
 
-    const paths = resolveTicketProvenanceVolume(TICKET, project, home);
     const volume = await readTicketProvenance(TICKET, project, home);
     assert.equal(volume.recordFile, paths.recordFile);
     assert.equal(existsSync(paths.recordFile), true, "unique diary file must exist");
@@ -444,10 +517,23 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       volume.lines.filter((line) => line.id === fixture.duplicateId).length,
       1,
     );
-    // Tool result never enters.
+    // Pure tool result never enters; mixed message keeps speaker text only.
     assert.equal(
-      volume.lines.some((line) => line.text.includes("ls -la")),
+      volume.lines.some((line) => line.text.includes("ls -la") || line.text.includes("should not land")),
       false,
+    );
+    assert.equal(
+      volume.lines.filter((line) => line.text === fixture.mixedOwnerText).length,
+      1,
+    );
+    // Codex response_item dialogue enters.
+    assert.equal(
+      volume.lines.filter((line) => line.text === fixture.codexOwnerText).length,
+      1,
+    );
+    assert.equal(
+      volume.lines.filter((line) => line.text === fixture.codexRunnerText).length,
+      1,
     );
     // Amendment at the unparsable line.
     const amended = volume.lines.find((line) => line.line === fixture.unparsableLine);

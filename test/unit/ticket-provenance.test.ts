@@ -75,6 +75,37 @@ test("projectTicketProvenanceHeader and line round-trip the diary shape", () => 
   assert.ok(header);
   assert.equal(header.ticket, 900);
   assert.equal(header.sessions.length, 1);
+  // Lawful empty sessions stay empty — distinct from malformed below.
+  const emptySessions = projectTicketProvenanceHeader({
+    repo: "demo",
+    ticket: 900,
+    createdAt: "t0",
+    updatedAt: "t1",
+    sessions: [],
+  });
+  assert.ok(emptySessions);
+  assert.deepEqual(emptySessions.sessions, []);
+  // Damaged sessions metadata is not washed into lawful empty (失败诚实).
+  assert.equal(
+    projectTicketProvenanceHeader({
+      repo: "demo",
+      ticket: 900,
+      createdAt: "t0",
+      updatedAt: "t1",
+      sessions: "not-an-array",
+    }),
+    undefined,
+  );
+  assert.equal(
+    projectTicketProvenanceHeader({
+      repo: "demo",
+      ticket: 900,
+      createdAt: "t0",
+      updatedAt: "t1",
+      sessions: [{ path: "", ranges: [{ from: { line: 1 }, to: { line: 2 } }] }],
+    }),
+    undefined,
+  );
 
   const line = projectTicketProvenanceLine({
     speaker: "runner",

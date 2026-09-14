@@ -34,6 +34,7 @@ import {
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
 import { S4_SUBMISSION_LEDGER_KINDS } from "./sitian-appender.ts";
+import { projectTicketProvenanceHeader } from "./ticket-provenance-contracts.ts";
 
 const TICKET_PROVENANCE = "ticket-provenance";
 const SUBMISSION_LEDGER = "submission-ledger";
@@ -407,6 +408,50 @@ async function placeRecordClassLine(
   return { disposition: "unbound", source };
 }
 
+/**
+ * #901 bare diary volume: first non-empty line is a header without SitianRecord
+ * `kind`. Recognise the whole file as one ticket volume — do not split rows into unbound.
+ */
+function tryBareTicketProvenanceVolume(
+  lines: readonly string[],
+): { readonly ticket: number; readonly body: readonly string[] } | undefined {
+  const body: string[] = [];
+  for (const raw of lines) {
+    if (raw.trim() === "") continue;
+    body.push(raw);
+  }
+  if (body.length === 0) return undefined;
+  const first = parseJsonlLine(body[0]!);
+  if (!first.ok) return undefined;
+  // Legacy SitianRecord rows carry a typed kind — leave them to line placement.
+  if (recordClassOfKind(first.value.kind) !== undefined) return undefined;
+  const header = projectTicketProvenanceHeader(first.value);
+  if (header === undefined) return undefined;
+  return { ticket: header.ticket, body };
+}
+
+async function placeBareTicketProvenanceVolume(
+  context: BookTopologyMigrationContext,
+  bookKey: string,
+  writes: RecordWriteCache,
+  filePath: string,
+  bare: { readonly ticket: number; readonly body: readonly string[] },
+  outcomes: MigrationItemOutcome[],
+): Promise<void> {
+  const dest = join(
+    context.booksDirectory,
+    bookKey,
+    String(bare.ticket),
+    "records.jsonl",
+  );
+  for (let index = 0; index < bare.body.length; index += 1) {
+    const raw = bare.body[index]!;
+    const source = lineSource(context.backupBooksDirectory, filePath, index);
+    await writes.append(dest, raw);
+    outcomes.push({ disposition: "placed", source });
+  }
+}
+
 async function migrateJsonlFileByKind(
   context: BookTopologyMigrationContext,
   bookKey: string,
@@ -416,6 +461,13 @@ async function migrateJsonlFileByKind(
   outcomes: MigrationItemOutcome[],
 ): Promise<void> {
   const lines = await readJsonlLines(filePath);
+  if (fallbackCategory === TICKET_PROVENANCE) {
+    const bare = tryBareTicketProvenanceVolume(lines);
+    if (bare !== undefined) {
+      await placeBareTicketProvenanceVolume(context, bookKey, writes, filePath, bare, outcomes);
+      return;
+    }
+  }
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index]!;
     if (raw.trim() === "") continue;
@@ -466,6 +518,8 @@ async function mergeOfferedIdentities(
 /** Collect typed ticket numbers present in a source volume's records.jsonl. */
 async function ticketNumbersInVolume(volumeDir: string): Promise<number[]> {
   const lines = await readJsonlLines(join(volumeDir, "records.jsonl"));
+  const bare = tryBareTicketProvenanceVolume(lines);
+  if (bare !== undefined) return [bare.ticket];
   const out: number[] = [];
   const seen = new Set<number>();
   for (const raw of lines) {

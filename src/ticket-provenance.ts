@@ -4,7 +4,14 @@
  * 无 append 水位、无 SitianRecord 外壳。目的地解析与读写经司天台唯一入口
  * （ADR 0065 records-owner / record-entry；ADR 0081 入录经司天台）。
  */
+import { join, resolve } from "node:path";
+
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
+import {
+  packageMachineHome,
+  physicallyContainedIn,
+  resolveActivationLedgerHome,
+} from "./activation-ledger-topology.ts";
 import {
   readLedgerSessionJsonlLines,
   type LedgerSessionLine,
@@ -26,8 +33,36 @@ import {
   type TicketProvenanceBound,
   type TicketProvenanceHeader,
   type TicketProvenanceLine,
+  type TicketProvenanceRange,
   type TicketProvenanceSession,
 } from "./ticket-provenance-contracts.ts";
+
+/**
+ * Authorized dialogue session source roots (ADR 0038 / ADR 0081 cross-host).
+ * Derived from the operator machine home + sitian topology — not Claude-only,
+ * not free-text path allowlists.
+ */
+export function dialogueSessionSourceRoots(home?: string): readonly string[] {
+  const machineHome =
+    typeof home === "string" && home.trim() !== "" ? home : packageMachineHome();
+  return [
+    join(machineHome, ".claude", "projects"),
+    join(machineHome, ".codex", "sessions"),
+    join(machineHome, ".pi"),
+    resolveActivationLedgerHome(machineHome),
+  ];
+}
+
+/** Real I/O seam gate: model-selected path must sit under a live host/sitian root. */
+function assertDialogueSessionSourcePath(path: string, home?: string): void {
+  const absolute = resolve(path);
+  for (const root of dialogueSessionSourceRoots(home)) {
+    if (physicallyContainedIn(root, absolute)) return;
+  }
+  throw new Error(
+    `session unreadable: ${path} (outside authorized source roots)`,
+  );
+}
 
 /** Subject string for ticket-keyed volumes — history follows the ticket. */
 export function ticketProvenanceSubject(ticketNumber: number): string {
@@ -170,6 +205,47 @@ function amendmentKey(s: number, line: number): string {
 }
 
 /**
+ * Resolve submitted ranges against the session, then sort by source position and
+ * merge overlaps so each physical row is visited once (#901 source order).
+ */
+function normalizeResolvedRanges(
+  ranges: readonly TicketProvenanceRange[],
+  sessionLines: readonly LedgerSessionLine[],
+  sessionPath: string,
+): readonly { readonly fromIndex: number; readonly toIndex: number }[] {
+  const resolved: { fromIndex: number; toIndex: number }[] = [];
+  for (const range of ranges) {
+    const fromIndex = resolveBoundIndex(range.from, sessionLines);
+    const toIndex = resolveBoundIndex(range.to, sessionLines);
+    if (fromIndex === undefined || toIndex === undefined) {
+      throw new Error(
+        `bound endpoint not found in ${sessionPath} (from=${JSON.stringify(range.from)} to=${JSON.stringify(range.to)})`,
+      );
+    }
+    if (fromIndex > toIndex) {
+      throw new Error(
+        `bound range inverted in ${sessionPath} (from index ${fromIndex} > to index ${toIndex})`,
+      );
+    }
+    resolved.push({ fromIndex, toIndex });
+  }
+  resolved.sort(
+    (left, right) =>
+      left.fromIndex - right.fromIndex || left.toIndex - right.toIndex,
+  );
+  const merged: { fromIndex: number; toIndex: number }[] = [];
+  for (const range of resolved) {
+    const last = merged[merged.length - 1];
+    if (last !== undefined && range.fromIndex <= last.toIndex + 1) {
+      last.toIndex = Math.max(last.toIndex, range.toIndex);
+      continue;
+    }
+    merged.push({ fromIndex: range.fromIndex, toIndex: range.toIndex });
+  }
+  return merged;
+}
+
+/**
  * Project one session's ranges into diary lines.
  * Unusable bounds throw with a stable message the accept hook turns into reask.
  */
@@ -177,10 +253,13 @@ async function projectSessionRanges(input: {
   readonly s: number;
   readonly session: TicketProvenanceSession;
   readonly amendmentsByKey: ReadonlyMap<string, TicketProvenanceAmendment>;
+  readonly seenIds: Set<string>;
+  readonly home?: string;
 }): Promise<{
   readonly lines: TicketProvenanceLine[];
   readonly unparsable: UnparsableSessionLine[];
 }> {
+  assertDialogueSessionSourcePath(input.session.path, input.home);
   let sessionLines: LedgerSessionLine[];
   try {
     sessionLines = await readLedgerSessionJsonlLines(input.session.path);
@@ -191,24 +270,17 @@ async function projectSessionRanges(input: {
 
   const rows = sessionLines.map((entry) => entry.row);
   const dialogue = adaptSessionDialogue(rows);
-  const seenIds = new Set<string>();
+  const seenIds = input.seenIds;
   const lines: TicketProvenanceLine[] = [];
   const unparsable: UnparsableSessionLine[] = [];
+  const ranges = normalizeResolvedRanges(
+    input.session.ranges,
+    sessionLines,
+    input.session.path,
+  );
 
-  for (const range of input.session.ranges) {
-    const fromIndex = resolveBoundIndex(range.from, sessionLines);
-    const toIndex = resolveBoundIndex(range.to, sessionLines);
-    if (fromIndex === undefined || toIndex === undefined) {
-      throw new Error(
-        `bound endpoint not found in ${input.session.path} (from=${JSON.stringify(range.from)} to=${JSON.stringify(range.to)})`,
-      );
-    }
-    if (fromIndex > toIndex) {
-      throw new Error(
-        `bound range inverted in ${input.session.path} (from index ${fromIndex} > to index ${toIndex})`,
-      );
-    }
-    for (let index = fromIndex; index <= toIndex; index += 1) {
+  for (const range of ranges) {
+    for (let index = range.fromIndex; index <= range.toIndex; index += 1) {
       const entry = sessionLines[index]!;
       if (entry.row === undefined) {
         const key = amendmentKey(input.s, entry.line);
@@ -263,6 +335,17 @@ export async function reprojectTicketProvenance(input: {
   );
   const prior = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
 
+  // Empty selection on an existing volume = no new dialogue this turn: keep the
+  // authoritative file untouched (do not publish a header-only wipe).
+  if (input.sessions.length === 0 && prior.header !== undefined) {
+    return {
+      recordFile: prior.recordFile,
+      header: prior.header,
+      lines: prior.lines,
+      unparsable: [],
+    };
+  }
+
   const amendmentsByKey = new Map<string, TicketProvenanceAmendment>();
   for (const amendment of input.amendments ?? []) {
     amendmentsByKey.set(amendmentKey(amendment.s, amendment.line), amendment);
@@ -270,11 +353,15 @@ export async function reprojectTicketProvenance(input: {
 
   const lines: TicketProvenanceLine[] = [];
   const unparsable: UnparsableSessionLine[] = [];
+  // First-seen native id across the whole reproject (rewritten session copies).
+  const seenIds = new Set<string>();
   for (let s = 0; s < input.sessions.length; s += 1) {
     const projected = await projectSessionRanges({
       s,
       session: input.sessions[s]!,
       amendmentsByKey,
+      seenIds,
+      ...(input.home === undefined ? {} : { home: input.home }),
     });
     lines.push(...projected.lines);
     unparsable.push(...projected.unparsable);
@@ -289,8 +376,18 @@ export async function reprojectTicketProvenance(input: {
     sessions: input.sessions,
   };
 
+  // Still-open gaps → reask without publishing a partial/rejected projection.
+  if (unparsable.length > 0) {
+    return {
+      recordFile: prior.recordFile,
+      header,
+      lines,
+      unparsable,
+    };
+  }
+
   const body = `${[JSON.stringify(header), ...lines.map((line) => JSON.stringify(line))].join("\n")}\n`;
-  const volume = rewriteSitianVolume({ ...recordInput, body });
+  const volume = await rewriteSitianVolume({ ...recordInput, body });
 
   return {
     recordFile: volume.recordFile,

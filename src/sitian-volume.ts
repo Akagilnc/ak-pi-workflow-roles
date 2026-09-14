@@ -6,13 +6,14 @@
  * (ticket-provenance header + bare dialogue lines, #901). Appender kernel
  * stays append-only; this module does not restore append watermarks.
  */
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 import {
   ensureRealDirectoryTree,
   errorText,
 } from "./activation-ledger-topology.ts";
+import { writeFileAtomically } from "./atomic-write.ts";
 import { resolveSitianRecordPath } from "./sitian-appender.ts";
 import {
   SitianInfrastructureError,
@@ -69,14 +70,16 @@ export async function readSitianVolumeText(
 
 /**
  * Replace the entire volume body (whole-file reproject).
+ * Same-directory temp + rename — never truncate the live inode in place
+ * (#901 sole diary; reuse atomic-write, no parallel persist mechanism).
  * Not append; no identity claim / torn-tail watermark — those stay on appender.
  */
-export function rewriteSitianVolume(
+export async function rewriteSitianVolume(
   input: SitianRecordInput & { readonly body: string },
-): SitianVolumePath {
+): Promise<SitianVolumePath> {
   try {
     const volume = ensureSitianVolume(input);
-    writeFileSync(volume.recordFile, input.body, "utf8");
+    await writeFileAtomically(volume.recordFile, input.body);
     return volume;
   } catch (error) {
     if (error instanceof SitianInfrastructureError) throw error;

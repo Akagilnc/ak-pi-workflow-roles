@@ -165,7 +165,9 @@ export function projectTicketProvenanceHeader(
   if (typeof value.createdAt !== "string" || typeof value.updatedAt !== "string") {
     return undefined;
   }
-  const sessions = projectTicketProvenanceSessions(value.sessions) ?? [];
+  // Malformed sessions stay unusable — do not wash into lawful empty (失败诚实).
+  const sessions = projectTicketProvenanceSessions(value.sessions);
+  if (sessions === undefined) return undefined;
   return {
     repo: value.repo,
     ticket,

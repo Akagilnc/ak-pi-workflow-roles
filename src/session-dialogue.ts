@@ -33,25 +33,39 @@ export function nativeEventId(row: Record<string, unknown>): string | undefined 
   return undefined;
 }
 
-/** 文本块串接：content 为字符串即其本身，为数组则取其文本片段。 */
-function textParts(content: unknown, partType: string): string[] {
+/** 说话人文本块类型：Pi/CC `text`；Codex rollout `input_text` / `output_text`。 */
+const SPEAKER_TEXT_PART_TYPES = new Set(["text", "input_text", "output_text"]);
+
+/** 文本块串接：content 为字符串即其本身，为数组则只取说话人文本片段（逐块过滤）。 */
+function textParts(content: unknown): string[] {
   if (typeof content === "string") return content === "" ? [] : [content];
   if (!Array.isArray(content)) return [];
   const out: string[] = [];
   for (const part of content) {
-    if (!isRecord(part) || part.type !== partType) continue;
+    if (!isRecord(part) || !SPEAKER_TEXT_PART_TYPES.has(String(part.type))) continue;
     const text = part.text;
     if (typeof text === "string" && text !== "") out.push(text);
   }
   return out;
 }
 
-/** 该行是否携带工具结果载荷（外层类型可能与人类输入同名）。 */
-function carriesToolResult(message: Record<string, unknown>): boolean {
-  if (message.role === "toolResult") return true;
-  const content = message.content;
-  if (!Array.isArray(content)) return false;
-  return content.some((part) => isRecord(part) && part.type === "tool_result");
+/**
+ * 取出消息体：Pi/CC 的 `row.message`，或 Codex rollout 的
+ * `type=response_item` + `payload.type=message`（ADR 0081 cross-host）。
+ */
+function messageBody(row: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (isRecord(row.message)) return row.message;
+  if (row.type === "response_item" && isRecord(row.payload) && row.payload.type === "message") {
+    return row.payload;
+  }
+  return undefined;
+}
+
+function speakerOf(message: Record<string, unknown>): DialogueSpeaker | undefined {
+  if (message.role === "assistant") return "runner";
+  if (message.role === "user") return "owner";
+  // 整行 toolResult 不是说话人回话。
+  return undefined;
 }
 
 /**
@@ -69,18 +83,18 @@ function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
 
 /**
  * 消息事件适配：助手回话，以及未经入队事件记录的人类输入。
- * 思考块与工具调用块不是回话正文；工具结果载荷整行不取。
+ * 思考块、工具调用块、工具结果块按块排除；同消息的说话人 text 保留
+ * （#901 排除按来源不按正文；混合块不得整条丢弃）。
  * 同一条消息的多个 text 块拼成一段正文（共享一个原生 id）——
  * 身份取首现针对的是卷被重写后的副本行，不是同条消息内的块。
  */
 function fromMessageEvent(row: Record<string, unknown>): DialogueEvent[] {
-  const message = isRecord(row.message) ? row.message : undefined;
+  const message = messageBody(row);
   if (message === undefined) return [];
-  if (carriesToolResult(message)) return [];
-  const speaker: DialogueSpeaker | undefined =
-    message.role === "assistant" ? "runner" : message.role === "user" ? "owner" : undefined;
+  if (message.role === "toolResult") return [];
+  const speaker = speakerOf(message);
   if (speaker === undefined) return [];
-  const parts = textParts(message.content, "text");
+  const parts = textParts(message.content);
   if (parts.length === 0) return [];
   const text = parts.join("");
   if (text === "") return [];
@@ -88,19 +102,14 @@ function fromMessageEvent(row: Record<string, unknown>): DialogueEvent[] {
   return [{ speaker, text, ...(id === undefined ? {} : { id }) }];
 }
 
-/** 该行是否为可产出 owner 对话正文的消息（工具结果不算）。 */
+/** 该行是否为可产出 owner 对话正文的消息（工具结果块不算；旁路 text 算）。 */
 function isOwnerDialogueMessage(row: Record<string, unknown>): boolean {
-  const message = isRecord(row.message) ? row.message : undefined;
-  if (message === undefined || message.role !== "user" || carriesToolResult(message)) {
-    return false;
-  }
-  const parts = textParts(message.content, "text");
-  return parts.length > 0 && parts.join("") !== "";
+  return fromMessageEvent(row).some((event) => event.speaker === "owner");
 }
 
 /** 该行是否为 runner 回话事件（用于解除未物化的 dequeue 配对）。 */
 function isRunnerMessage(row: Record<string, unknown>): boolean {
-  const message = isRecord(row.message) ? row.message : undefined;
+  const message = messageBody(row);
   return message !== undefined && message.role === "assistant";
 }
 
