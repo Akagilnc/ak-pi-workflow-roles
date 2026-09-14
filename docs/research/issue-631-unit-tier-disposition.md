@@ -1,16 +1,17 @@
 # #631 unit 档外部资源名实不符 — 扫描处置账
 
 票庭 run `01a09f5b-b21a-722e-91ff-81dce8631870@countersign` r3 `converged`（sealed `2026-09-14T10:31:00.037Z`）。
-缮修大理寺 run `01a09f9b-eb26-7d07-b177-c63fdb7f8f20@judge`：r1 continue（处置账/relative home/无据新测/合 main）；r2 continue（宿主 profile 漏扫 / 最终扫描不可复现）。
+缮修大理寺 run `01a09f9b-eb26-7d07-b177-c63fdb7f8f20@judge`：r1–r3 continue；宿主 profile 已结清；本轮修 network 判据与 scanner 对齐。
 
 ## 可重放命令与判据
 
 ### 资源命中判据（代码面）
 
-去 `//` 行注释后匹配任一即命中：
+去 `//` 行注释后匹配任一即命中（三类；与下方 inline scanner 一一对应）：
 
-1. **本机 FS / 子进程 / 网络**：`mkdtemp`|`tmpdir(`|`child_process`|`spawn(Sync)?`|`execFile(Sync)?`|`writeFile`|`mkdir`|`rm(Sync)?`|`copyFile`|`chmod`|`symlink`|`from "node:fs"`
-2. **宿主 profile（r2 补类）**：`userInfo`|`os.homedir`|`packageMachineHome(` — 真 passwd/user-profile 查询（非一切进程全局状态）
+1. **本机 FS / 子进程**：`mkdtemp`|`tmpdir(`|`child_process`|`spawn(Sync)?`|`execFile(Sync)?`|`writeFile`|`mkdir`|`rm(Sync)?`|`copyFile`|`chmod`|`symlink`|`from "node:fs"`
+2. **网络**：`from "node:http"`|`from "node:https"`|`from "node:net"`|`from "node:tls"`|`from "node:dgram"`|`from "node:dns"`（及单引号形）|`fetch(`|`WebSocket`
+3. **宿主 profile（r2 补类）**：`userInfo`|`os.homedir`|`packageMachineHome(` — 真 passwd/user-profile 查询（非一切进程全局状态）
 
 耗时：TAP `duration_ms`；`> 100` 为预警项（非硬闸）。suite 墙钟：footer `duration_ms`。
 
@@ -37,10 +38,16 @@ cd "$(git rev-parse --show-toplevel)"
 python3 - <<'PY'
 import re, glob, sys
 files = sorted(glob.glob("test/unit/**/*.test.ts", recursive=True))
-# FS / subprocess / network
+# FS / subprocess (local machine resources)
 pat_fs = re.compile(
     r"\bmkdtemp\b|tmpdir\s*\(|child_process|\bspawn(?:Sync)?\b|\bexecFile(?:Sync)?\b"
     r"|\bwriteFile|\bmkdir|\brm(?:Sync)?|\bcopyFile|\bchmod|\bsymlink|from [\"']node:fs"
+)
+# Network: node net stack imports + fetch/WebSocket entrypoints (#631 class)
+pat_net = re.compile(
+    r"from [\"']node:(?:http|https|net|tls|dgram|dns)(?:\/[^\"']*)?[\"']"
+    r"|from [\"'](?:http|https|net|tls|dgram|dns)[\"']"
+    r"|\bfetch\s*\(|\bWebSocket\b"
 )
 # Host profile (passwd / userInfo / packageMachineHome)
 pat_profile = re.compile(r"\buserInfo\b|os\.homedir|\bpackageMachineHome\s*\(")
@@ -49,6 +56,7 @@ for f in files:
     code = "\n".join(line.split("//")[0] for line in open(f, encoding="utf-8"))
     kinds = []
     if pat_fs.search(code): kinds.append("fs/subprocess")
+    if pat_net.search(code): kinds.append("network")
     if pat_profile.search(code): kinds.append("host-profile")
     if kinds:
         hits.append((f, kinds))
@@ -64,9 +72,10 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs \
 ```
 
 - unit 文件数：26
-- 代码面资源命中（含 host-profile 类）：**0 文件 / 0 案**（假阳性注释/字符串不算命中）
+- 代码面资源命中（fs/subprocess + **network** + host-profile）：**0 文件 / 0 案**（假阳性注释/字符串不算命中）
 - `duration_ms > 100`：**0**
 - unit suite：案数以当次 TAP `tests` 为准（r2 后 package-home-seam 缩为 2 纯案）
+- r3 重跑确认：`unit_files 26` / `hit_files 0` / scanner exit 0（含 network kind）
 
 ---
 
