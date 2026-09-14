@@ -73,7 +73,9 @@ function runNodeTest(files) {
     fail(`duplicate discovered test files: ${dupes.join(", ")}`);
   }
 
-  // #252: fixed 5-minute bound on every case and whole file (Node inherits). No config seam.
+  // #252: fixed --test-timeout=300000 as per-test upper bound. No config seam.
+  // Callers on Node 22: upstream still uses the old per-execution/file timeout
+  // boundary (nodejs/node#57656; per-test fix landed in #57672 / Node 24+).
   const args = ["--import", "tsx", "--test-timeout=300000", "--test", ...files];
 
   // Resolve `node` from PATH so lawful tests may intercept children via an
