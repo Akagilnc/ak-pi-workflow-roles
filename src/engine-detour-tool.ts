@@ -5,6 +5,7 @@
  * Engine process failures stop through the host infrastructure-failure seam.
  * Caller AbortSignal cancellation propagates unchanged.
  */
+import { basename } from "node:path";
 import { Type, type Static } from "typebox";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "./host-contracts.ts";
 
@@ -16,6 +17,18 @@ import {
   resolveEngineName,
   runEngineDetourOnce,
 } from "./engine-detour.ts";
+import {
+  engineDetourStdoutByteLength,
+  reportEngineDetourCall,
+} from "./engine-detour-usage.ts";
+
+/** runDirectory leaf is `<runId>@<role>`; subject is optional. */
+function basenameRunId(runDirectory: string): string | undefined {
+  const leaf = basename(runDirectory);
+  const at = leaf.indexOf("@");
+  if (at <= 0) return undefined;
+  return leaf.slice(0, at);
+}
 
 // #836 r16 class 3: argv required/minItems/element-minLength stay — execute()
 // must obtain the first item as the executable and spawn it (below; #82-98).
@@ -32,7 +45,10 @@ const engineDetourArgsSchema = Type.Object(
 
 type EngineDetourArgs = Static<typeof engineDetourArgsSchema>;
 
-type EngineDetourContext = Pick<HostContext, "cwd" | "mode" | "abort">;
+type EngineDetourContext = Pick<HostContext, "cwd" | "mode" | "abort"> & {
+  sessionManager?: Pick<HostContext["sessionManager"], "getSessionFile">;
+  runDirectory?: string;
+};
 
 export type EngineDetourHostActions = {
   failInfrastructure(
@@ -100,6 +116,29 @@ export function createEngineDetourToolDefinition(input: {
         );
       }
 
+      const sessionParent = ctx.sessionManager?.getSessionFile?.();
+      const startedAt = Date.now();
+      const runId = typeof ctx.runDirectory === "string" && ctx.runDirectory.length > 0
+        ? basenameRunId(ctx.runDirectory)
+        : undefined;
+      const recordCall = (observed: {
+        code?: number;
+        stdoutByteLength?: number;
+      }): void => {
+        if (typeof sessionParent !== "string" || sessionParent.length === 0) return;
+        reportEngineDetourCall({
+          toolCallId,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          cwd: ctx.cwd,
+          sessionParent,
+          ...(runId === undefined ? {} : { runId }),
+          ...(observed.code === undefined ? {} : { code: observed.code }),
+          ...(observed.stdoutByteLength === undefined
+            ? {}
+            : { stdoutByteLength: observed.stdoutByteLength }),
+        });
+      };
+
       let result: Awaited<ReturnType<typeof runEngineDetourOnce>>;
       try {
         result = await runEngineDetourOnce({
@@ -109,11 +148,16 @@ export function createEngineDetourToolDefinition(input: {
         });
       } catch (error) {
         if (isCallerCancellation(error, signal)) throw error;
+        // Spawn path: duration only — code/stdout bytes absent (not forged 0).
+        recordCall({});
         const cause = error instanceof Error
           ? error
           : new Error(String(error).trim() || "劳务引擎 spawn 失败");
         input.fail(cause, toolCallId, ctx);
       }
+
+      const stdoutByteLength = engineDetourStdoutByteLength(result.stdout);
+      recordCall({ code: result.code, stdoutByteLength });
 
       if (isEngineDetourFailure(result)) {
         input.fail(
@@ -129,6 +173,8 @@ export function createEngineDetourToolDefinition(input: {
           tool: ENGINE_DETOUR_TOOL_NAME,
           code: result.code,
           stderr: result.stderr,
+          durationMs: Math.max(0, Date.now() - startedAt),
+          stdoutByteLength,
         },
       };
     },

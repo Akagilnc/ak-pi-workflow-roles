@@ -52,6 +52,14 @@ import {
 } from "../collector-ledger.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../engine-detour.ts";
 import {
+  currentAttemptEngineDetourToolCallIds,
+  readEngineDetourToolUsage,
+  readInvocationEngineMounted,
+  runDirectoryFromSessionDirectory,
+  sessionFileFromSessionDirectory,
+  withEngineDetourToolUsageFact,
+} from "../engine-detour-usage.ts";
+import {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
 } from "../package-contracts/judge-output.ts";
@@ -2187,6 +2195,46 @@ export async function extractGateFactFromSessionDirectory(
  * or swallowed); callers that already hold a controlled failure still surface the
  * JSONL/session cause rather than pretend the gate was absent.
  */
+/**
+ * #537: project this-invocation ak_engine_detour usage onto decisiveFacts.
+ * Absent when engine is not mounted; callCount 0 when mounted with zero calls.
+ * Never mutates role payloads (ADR 0003 / 0042 / 0052).
+ */
+async function attachEngineDetourToolUsage<
+  T extends { roleOutcome: TerminalRoleOutcome },
+>(
+  base: T,
+  sessionDirectory: string,
+  gateContext: { readonly runDirectory?: string } = {},
+): Promise<T> {
+  const runDirectory =
+    typeof gateContext.runDirectory === "string" && gateContext.runDirectory.length > 0
+      ? gateContext.runDirectory
+      : runDirectoryFromSessionDirectory(sessionDirectory);
+  const engineMounted = await readInvocationEngineMounted(runDirectory);
+  if (!engineMounted) return base;
+
+  const sessionFile = sessionFileFromSessionDirectory(sessionDirectory);
+  let attemptToolCallIds: ReadonlySet<string> | undefined;
+  try {
+    const entries = await readBoundSessionEntries(sessionFile);
+    attemptToolCallIds = currentAttemptEngineDetourToolCallIds(entries);
+  } catch {
+    // Unreadable session: still surface sitian volume for this sessionParent.
+  }
+
+  const usage = await readEngineDetourToolUsage({
+    sessionParent: sessionFile,
+    engineMounted: true,
+    ...(attemptToolCallIds === undefined ? {} : { attemptToolCallIds }),
+    cwd: runDirectory,
+  });
+  return {
+    ...base,
+    roleOutcome: withEngineDetourToolUsageFact(base.roleOutcome, usage),
+  };
+}
+
 async function withOptionalGateProjection<
   T extends {
     roleOutcome: TerminalRoleOutcome;
@@ -2207,19 +2255,23 @@ async function withOptionalGateProjection<
   const secondaryEvidence = base.roleOutcome.kind === "failure"
     ? base.roleOutcome.decisiveFacts.secondaryEvidence
     : undefined;
-  if (
+  const skipGate =
     isRecord(secondaryEvidence)
     && secondaryEvidence.kind === "role_infrastructure_failure"
     && (
       secondaryEvidence.stage === "gatekeeper"
       || secondaryEvidence.stage === "inspector"
       || secondaryEvidence.stage === "notary"
-    )
-  ) return base;
+    );
 
-  // Defaults live solely in extractGateFactFromSessionDirectory — do not re-derive.
-  const gate = await extractGateFactFromSessionDirectory(sessionDirectory, gateContext);
-  return gate === undefined ? base : { ...base, gate };
+  let next: T & { gate?: TerminalGateFact } = base;
+  if (!skipGate) {
+    // Defaults live solely in extractGateFactFromSessionDirectory — do not re-derive.
+    const gate = await extractGateFactFromSessionDirectory(sessionDirectory, gateContext);
+    if (gate !== undefined) next = { ...base, gate };
+  }
+
+  return attachEngineDetourToolUsage(next, sessionDirectory, gateContext);
 }
 
 export function extractNavigatorFact(
