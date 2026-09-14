@@ -345,12 +345,13 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         },
       },
     }),
-    // 16. event_msg owner channel still accepted when present (exec-shaped volumes)
+    // 16. event_msg.user_message has no provenance kinds — must NOT become owner
+    // (exec volumes pair this with worker-entrypoint injection; cannot prove owner).
     JSON.stringify({
       type: "event_msg",
       payload: {
         type: "user_message",
-        message: "event_msg 通道的原话",
+        message: "# Coder worker entrypoint\n\nRead the baked role soul first",
         images: [],
         local_images: [],
         text_elements: [],
@@ -600,10 +601,6 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       1,
     );
     assert.equal(
-      volume.lines.filter((line) => line.text === "event_msg 通道的原话").length,
-      1,
-    );
-    assert.equal(
       volume.lines.filter((line) => line.text === fixture.codexRunnerText).length,
       1,
     );
@@ -612,10 +609,11 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
         (line) =>
           line.text.includes(fixture.codexInjectionText) ||
           line.text.includes("permissions instructions") ||
-          line.text.includes("environment_context"),
+          line.text.includes("environment_context") ||
+          line.text.includes("Coder worker entrypoint"),
       ),
       false,
-      "Codex structured injections must not become owner dialogue",
+      "Codex structured injections and unproven event_msg must not become owner",
     );
     // Amendment at the unparsable line.
     const amended = volume.lines.find((line) => line.line === fixture.unparsableLine);

@@ -99,19 +99,6 @@ function isCodexOwnerResponseItemUser(message: Record<string, unknown>): boolean
   return kinds.some((kind) => kind.startsWith("user."));
 }
 
-/** Codex 事件通道：`event_msg.user_message`（与 response_item 并列，不互斥一刀切）。 */
-function fromCodexEventMsg(row: Record<string, unknown>): DialogueEvent[] {
-  if (row.type !== "event_msg" || !isRecord(row.payload)) return [];
-  const payload = row.payload;
-  if (payload.type === "user_message") {
-    const text = payload.message;
-    if (typeof text !== "string" || text === "") return [];
-    return [{ speaker: "owner", text }];
-  }
-  // agent_message 与 response_item assistant 成对出现时以后者为准（带原生 id）。
-  return [];
-}
-
 /**
  * 入队事件适配：人类这次输入经队列的来源。
  * 配对的出队事件不另取，也不做正文比对去重——被吸收的插话正是靠入队事件入录
@@ -221,8 +208,8 @@ export function adaptSessionDialogue(
     if (row === undefined) return [];
     const queued = fromQueueEvent(row);
     if (queued.length > 0) return queued;
-    const fromEvent = fromCodexEventMsg(row);
-    if (fromEvent.length > 0) return fromEvent;
+    // Codex event_msg.user_message 无 content_item_kinds 等 provenance，旧 exec
+    // 卷中与 worker entrypoint 注入同形——无法证明为 owner 则不取（不猜、不咬正文）。
     if (skipOwner.has(index)) return [];
     return fromMessageEvent(row);
   });
