@@ -9,9 +9,12 @@
  * TerminalResult.decisiveFacts and are written live via sitian (ADR 0077).
  * No gate, no required field, no index bytes (ADR 0049 / 0057).
  *
- * Attempt scope is the shared host-neutral courtAttemptId / invocation identity
- * bound at write time — never Pi session.jsonl toolResult join keys.
+ * Invocation scope is one public ak-role call (#537). Auto-resume attempts inside
+ * that call share the same scope; only an explicit new public call (including
+ * `ak-role resume`) mints a new one. Never courtAttemptId and never Pi session
+ * toolResult join keys.
  */
+import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -66,19 +69,19 @@ export type ReportEngineDetourCallInput = {
   /** Real selected host (ADR 0077 / 0082). Never invent "pi". */
   readonly host?: string;
   readonly runId?: string;
-  /** Host-neutral attempt identity (courtAttemptId). Binds write + settlement filter. */
-  readonly attemptId?: string;
+  /** Public-invocation scope id. Binds write + settlement filter. */
+  readonly invocationScopeId?: string;
 };
 
-/** Deterministic sitian identity: run + attempt + toolCallId (not bare toolCallId). */
+/** Deterministic sitian identity: run + invocation scope + toolCallId (not bare toolCallId). */
 export function engineDetourCallIdentity(input: {
   readonly toolCallId: string;
   readonly runId?: string;
-  readonly attemptId?: string;
+  readonly invocationScopeId?: string;
 }): string {
   const run = input.runId ?? "";
-  const attempt = input.attemptId ?? "";
-  return `engine-detour-call:${run}:${attempt}:${input.toolCallId}`;
+  const scope = input.invocationScopeId ?? "";
+  return `engine-detour-call:${run}:${scope}:${input.toolCallId}`;
 }
 
 /** Live sitian write for one detour call. Returns the call fact with pointer. */
@@ -94,16 +97,20 @@ export function reportEngineDetourCall(
   if (input.stdoutByteLength !== undefined) {
     payload.stdoutByteLength = input.stdoutByteLength;
   }
-  if (input.attemptId !== undefined) payload.attemptId = input.attemptId;
+  if (input.invocationScopeId !== undefined) {
+    payload.invocationScopeId = input.invocationScopeId;
+  }
   if (input.runId !== undefined) payload.runId = input.runId;
 
-  // SitianSubject object form requires runId; attemptId rides payload always.
+  // SitianSubject object form requires runId; invocation scope rides payload always.
   const subject =
     input.runId === undefined
       ? undefined
       : {
           runId: input.runId,
-          ...(input.attemptId === undefined ? {} : { attemptId: input.attemptId }),
+          ...(input.invocationScopeId === undefined
+            ? {}
+            : { invocationScopeId: input.invocationScopeId }),
         };
 
   const pointer = sitianReport({
@@ -112,7 +119,9 @@ export function reportEngineDetourCall(
     identity: engineDetourCallIdentity({
       toolCallId: input.toolCallId,
       ...(input.runId === undefined ? {} : { runId: input.runId }),
-      ...(input.attemptId === undefined ? {} : { attemptId: input.attemptId }),
+      ...(input.invocationScopeId === undefined
+        ? {}
+        : { invocationScopeId: input.invocationScopeId }),
     }),
     cwd: input.cwd,
     sessionParent: input.sessionParent,
@@ -165,16 +174,16 @@ function callFactFromSitianPayload(
   };
 }
 
-function attemptIdOfRecord(record: {
+function invocationScopeIdOfRecord(record: {
   readonly subject?: unknown;
   readonly payload?: unknown;
 }): string | undefined {
   if (isRecord(record.subject)) {
-    const fromSubject = record.subject.attemptId;
+    const fromSubject = record.subject.invocationScopeId;
     if (typeof fromSubject === "string" && fromSubject.length > 0) return fromSubject;
   }
   if (isRecord(record.payload)) {
-    const fromPayload = record.payload.attemptId;
+    const fromPayload = record.payload.invocationScopeId;
     if (typeof fromPayload === "string" && fromPayload.length > 0) return fromPayload;
   }
   return undefined;
@@ -182,15 +191,15 @@ function attemptIdOfRecord(record: {
 
 /**
  * Read this-invocation detour-tool usage from sitian volume.
- * When `attemptId` is provided, only records bound to that attempt count
- * (host-neutral resume boundary — not session toolResult join keys).
+ * When `invocationScopeId` is provided, only records bound to that public call count
+ * (host-neutral boundary — not session toolResult join keys, not courtAttemptId).
  * When engineMounted is false, returns undefined (field absent).
  * When engineMounted is true and no calls, returns callCount 0.
  */
 export async function readEngineDetourToolUsage(input: {
   readonly sessionParent: string;
   readonly engineMounted: boolean;
-  readonly attemptId?: string;
+  readonly invocationScopeId?: string;
   readonly home?: string;
   readonly cwd?: string;
 }): Promise<EngineDetourToolUsageFact | undefined> {
@@ -208,11 +217,11 @@ export async function readEngineDetourToolUsage(input: {
   const calls: EngineDetourCallFact[] = [];
   for (const record of records) {
     if (record.kind !== ENGINE_DETOUR_CALL_KIND) continue;
-    const boundAttempt = attemptIdOfRecord(record);
-    if (input.attemptId !== undefined && input.attemptId.length > 0) {
-      if (boundAttempt !== input.attemptId) continue;
-    } else if (boundAttempt !== undefined) {
-      // Unscoped settlement must not pull attempt-bound rows across resume.
+    const boundScope = invocationScopeIdOfRecord(record);
+    if (input.invocationScopeId !== undefined && input.invocationScopeId.length > 0) {
+      if (boundScope !== input.invocationScopeId) continue;
+    } else if (boundScope !== undefined) {
+      // Unscoped settlement must not pull invocation-bound rows across resume.
       continue;
     }
     const pointer: RecordPointer = {
@@ -327,35 +336,49 @@ export function sessionFileFromSessionDirectory(sessionDirectory: string): strin
 
 /**
  * Per public-invocation detour scope (#537).
- * Minted once per ak-role dispatch (resume = new invocation); binds sitian
- * writes and settlement filter. Not courtAttemptId — open-court resume may
- * reuse court id while still being a new counting unit.
+ * Minted once per ak-role call (including explicit resume); all in-place
+ * auto-resume dispatches of that call reuse it. Not courtAttemptId.
  */
-const ENGINE_DETOUR_ATTEMPT_SCOPE_FILE = "engine-detour-attempt-id";
+const ENGINE_DETOUR_INVOCATION_SCOPE_FILE = "engine-detour-invocation-scope";
 
-function engineDetourAttemptScopePath(runDirectory: string): string {
-  return join(runDirectory, "session", ENGINE_DETOUR_ATTEMPT_SCOPE_FILE);
+function engineDetourInvocationScopePath(runDirectory: string): string {
+  return join(runDirectory, "session", ENGINE_DETOUR_INVOCATION_SCOPE_FILE);
 }
 
-/** Write the current public-invocation detour scope (call at dispatch boundary). */
-export function writeEngineDetourAttemptScope(
+/** Write the current public-invocation detour scope. */
+export function writeEngineDetourInvocationScope(
   runDirectory: string,
-  attemptId: string,
+  invocationScopeId: string,
 ): void {
-  const path = engineDetourAttemptScopePath(runDirectory);
+  const path = engineDetourInvocationScopePath(runDirectory);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${attemptId}\n`, "utf8");
+  writeFileSync(path, `${invocationScopeId}\n`, "utf8");
 }
 
 /** Read the current public-invocation detour scope, if present. */
-export function readEngineDetourAttemptScope(
+export function readEngineDetourInvocationScope(
   runDirectory: string,
 ): string | undefined {
   try {
-    const text = readFileSync(engineDetourAttemptScopePath(runDirectory), "utf8").trim();
+    const text = readFileSync(engineDetourInvocationScopePath(runDirectory), "utf8").trim();
     return text.length > 0 ? text : undefined;
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === "ENOENT") return undefined;
     throw error;
   }
+}
+
+/**
+ * Bind one invocation-scope id for this public call when an engine is mounted.
+ * Call once at the public-entry boundary — never inside the auto-resume loop.
+ */
+export function bindEngineDetourInvocationScope(input: {
+  readonly runDirectory: string;
+  readonly effectiveEngine?: string;
+}): string | undefined {
+  const engine = input.effectiveEngine?.trim();
+  if (engine === undefined || engine.length === 0) return undefined;
+  const invocationScopeId = randomUUID();
+  writeEngineDetourInvocationScope(input.runDirectory, invocationScopeId);
+  return invocationScopeId;
 }

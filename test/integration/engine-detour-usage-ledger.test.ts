@@ -5,9 +5,9 @@
  * Asserts only structured TerminalResult.roleOutcome.decisiveFacts — never
  * stdout/table presentation (ADR 0052 / anchoring constitution).
  *
- * Attempt scope is courtAttemptId bound at sitian write — not Pi session
- * toolResult join keys. Tests therefore do not plant session toolResults for
- * ledger filtering (header-only session stays valid).
+ * Invocation scope is one public ak-role call: in-place auto-resume shares it;
+ * explicit resume is a new unit. Not courtAttemptId and not Pi session
+ * toolResult join keys.
  */
 import assert from "node:assert/strict";
 import { appendFile, chmod, mkdir, writeFile } from "node:fs/promises";
@@ -18,7 +18,8 @@ import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import {
   ENGINE_DETOUR_TOOL_USAGE_FACT_KEY,
   engineDetourCallIdentity,
-  writeEngineDetourAttemptScope,
+  readEngineDetourInvocationScope,
+  writeEngineDetourInvocationScope,
   type EngineDetourToolUsageFact,
 } from "../../src/engine-detour-usage.ts";
 import { createEngineDetourToolDefinition } from "../../src/engine-detour-tool.ts";
@@ -48,16 +49,6 @@ type TurnPlan = {
     readonly toolCallId: string;
     readonly kind: DetourKind;
   }[];
-  /**
-   * Two attempt windows in one volume (prior attemptId then current).
-   * Settlement must count only current — including duplicate toolCallId.
-   */
-  readonly attemptSplit?: {
-    readonly priorAttemptId: string;
-    readonly currentAttemptId: string;
-    readonly prior: readonly { readonly toolCallId: string; readonly kind: DetourKind }[];
-    readonly current: readonly { readonly toolCallId: string; readonly kind: DetourKind }[];
-  };
   readonly terminal:
     | { readonly kind: "accepted" }
     | { readonly kind: "audit_escalation" }
@@ -96,7 +87,6 @@ async function runDetours(input: {
   readonly project: string;
   readonly sessionFile: string;
   readonly runDirectory: string;
-  readonly attemptId?: string;
   readonly host?: string;
   readonly calls: readonly { readonly toolCallId: string; readonly kind: DetourKind }[];
 }): Promise<void> {
@@ -109,7 +99,6 @@ async function runDetours(input: {
       abort() {},
       sessionManager: { getSessionFile: () => input.sessionFile },
       runDirectory: input.runDirectory,
-      ...(input.attemptId === undefined ? {} : { courtAttemptId: input.attemptId }),
       ...(input.host === undefined ? {} : { host: input.host }),
     };
 
@@ -127,7 +116,6 @@ async function runDetours(input: {
         undefined,
         ctx,
       );
-      // Intentionally no session toolResult write — ledger is attempt-scoped sitian.
       continue;
     }
 
@@ -294,39 +282,13 @@ async function runPublicJudge(input: {
         await seedUserKickoff(sessionFile);
       }
 
-      if (input.plan.attemptSplit !== undefined) {
-        // Explicit attempt ids on both windows; pin scope file to current for settlement.
-        writeEngineDetourAttemptScope(
-          request.runDirectory,
-          input.plan.attemptSplit.priorAttemptId,
-        );
-        await runDetours({
-          project: input.project,
-          sessionFile,
-          runDirectory: request.runDirectory,
-          attemptId: input.plan.attemptSplit.priorAttemptId,
-          calls: input.plan.attemptSplit.prior,
-        });
-        writeEngineDetourAttemptScope(
-          request.runDirectory,
-          input.plan.attemptSplit.currentAttemptId,
-        );
-        await runDetours({
-          project: input.project,
-          sessionFile,
-          runDirectory: request.runDirectory,
-          attemptId: input.plan.attemptSplit.currentAttemptId,
-          calls: input.plan.attemptSplit.current,
-        });
-      } else {
-        // Dispatch already wrote engine-detour-attempt-id; tool reads it.
-        await runDetours({
-          project: input.project,
-          sessionFile,
-          runDirectory: request.runDirectory,
-          calls: input.plan.detours ?? [],
-        });
-      }
+      // Scope is bound once by public entry before this turn; tool reads it.
+      await runDetours({
+        project: input.project,
+        sessionFile,
+        runDirectory: request.runDirectory,
+        calls: input.plan.detours ?? [],
+      });
 
       return finishTerminal({
         plan: input.plan,
@@ -522,7 +484,7 @@ test("public entry: four terminals carry engineDetourToolUsage when engine is mo
   });
 });
 
-test("public entry: header-only session still counts attempt-bound detours", async () => {
+test("public entry: header-only session still counts invocation-bound detours", async () => {
   await withHermeticHome({ prefix: "ak-detour-header-only-" }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -609,49 +571,124 @@ test("public entry: no engine → field absent; accepted payload bytes match sea
   });
 });
 
-test("public entry: attemptId scope counts only current attempt; duplicate toolCallId ok", async () => {
-  await withHermeticHome({ prefix: "ak-detour-public-resume-" }, async ({ home }) => {
+test("public entry: in-place auto-resume keeps one invocation scope across detours", async () => {
+  await withHermeticHome({ prefix: "ak-detour-public-autoresume-" }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
-    const sharedId = "shared-tool-call-id";
-    const { result } = await runPublicJudge({
-      home,
-      project,
-      runId: "r-resume-split",
-      engine: ENGINE,
-      plan: {
-        attemptSplit: {
-          priorAttemptId: "attempt-prior",
-          currentAttemptId: "attempt-current",
-          prior: [{ toolCallId: sharedId, kind: "ok" }],
-          current: [{ toolCallId: sharedId, kind: "ok" }],
-        },
-        terminal: { kind: "accepted" },
+    {
+      const { io } = captureIo();
+      await runAkRole(["config", "set-auto-resume-limit", "2"], {
+        packageRoot,
+        home,
+        io,
+      });
+    }
+
+    const runId = "r-autoresume-scope";
+    let turn = 0;
+    const scopesSeen: string[] = [];
+
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["judge", "--project", project, "auto-resume scope", "--engine", ENGINE],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        io,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        principalAuthority: piDurablePrincipalAuthority,
+        roleTurnHost: createMinimalHost(async (request) => {
+          const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
+            request.principal,
+          );
+          await mkdir(sessionDirectory, { recursive: true });
+          if (turn === 0) {
+            await seedUserKickoff(sessionFile, "first");
+          } else {
+            await appendFile(
+              sessionFile,
+              `${JSON.stringify({
+                type: "message",
+                message: { role: "user", content: "auto-resume" },
+              })}\n`,
+              "utf8",
+            );
+          }
+
+          const scope = readEngineDetourInvocationScope(request.runDirectory);
+          assert.ok(scope, "public entry must bind invocation scope before turn");
+          scopesSeen.push(scope);
+
+          // Distinct toolCallIds (real host mints unique ids); both must count under one scope.
+          await runDetours({
+            project,
+            sessionFile,
+            runDirectory: request.runDirectory,
+            calls: [
+              {
+                toolCallId: turn === 0 ? "before-retry" : "after-retry",
+                kind: "ok",
+              },
+            ],
+          });
+
+          if (turn === 0) {
+            turn += 1;
+            await observeTyped429ViaProductionHandler({
+              runDirectory: request.runDirectory,
+              provider: "xai",
+            });
+            return { code: 1, stderr: "quota", timedOut: false };
+          }
+
+          turn += 1;
+          return finishTerminal({
+            plan: { terminal: { kind: "accepted" } },
+            request,
+            sessionFile,
+            runId,
+          });
+        }),
       },
-    });
+    );
+
+    assert.equal(result.exitCode, 0, stdout.join("") + "\n" + stderr.join(""));
+    assert.ok(turn >= 2, "auto-resume must re-dispatch at least once");
+    assert.equal(scopesSeen.length >= 2, true);
+    assert.ok(
+      scopesSeen.every((s) => s === scopesSeen[0]),
+      `in-place auto-resume must reuse one scope, got ${scopesSeen.join(",")}`,
+    );
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     const usage = usageOf(result.terminal);
-    assert.equal(usage?.callCount, 1);
-    assert.equal(usage?.calls[0]?.toolCallId, sharedId);
+    assert.equal(usage?.callCount, 2, "pre-retry and post-retry detours share the invocation");
+    assert.deepEqual(
+      usage?.calls.map((c) => c.toolCallId).sort(),
+      ["after-retry", "before-retry"],
+    );
+    const boundScope = scopesSeen[0]!;
     assert.equal(
-      usage?.calls[0]?.recordPointer.identity,
+      usage?.calls.find((c) => c.toolCallId === "before-retry")?.recordPointer.identity,
       engineDetourCallIdentity({
-        toolCallId: sharedId,
-        runId: "r-resume-split",
-        attemptId: "attempt-current",
+        toolCallId: "before-retry",
+        runId,
+        invocationScopeId: boundScope,
       }),
     );
   });
 });
 
-test("public entry: explicit resume invocation does not carry prior-run detour calls", async () => {
+test("public entry: explicit resume is a new scope; reused toolCallId stays isolated", async () => {
   await withHermeticHome({ prefix: "ak-detour-public-xresume-" }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const runId = "r-xresume";
+    const sharedId = "shared-tool-call-id";
 
     {
       const { io } = captureIo();
@@ -675,7 +712,7 @@ test("public entry: explicit resume invocation does not carry prior-run detour c
               project,
               sessionFile,
               runDirectory: request.runDirectory,
-              calls: [{ toolCallId: "birth-call", kind: "ok" }],
+              calls: [{ toolCallId: sharedId, kind: "ok" }],
             });
             await observeTyped429ViaProductionHandler({
               runDirectory: request.runDirectory,
@@ -704,6 +741,7 @@ test("public entry: explicit resume invocation does not carry prior-run detour c
     }
 
     const { io, stdout, stderr } = captureIo();
+    let resumeScope: string | undefined;
     const resumed = await runAkRole(["resume", runId], {
       packageRoot,
       home,
@@ -721,99 +759,119 @@ test("public entry: explicit resume invocation does not carry prior-run detour c
           })}\n`,
           "utf8",
         );
+        resumeScope = readEngineDetourInvocationScope(request.runDirectory);
+        // Same toolCallId as prior public call — new scope keeps identities distinct.
         await runDetours({
           project,
           sessionFile,
           runDirectory: request.runDirectory,
-          calls: [{ toolCallId: "resume-call", kind: "ok" }],
+          calls: [{ toolCallId: sharedId, kind: "ok" }],
         });
-        await appendFile(
+        return finishTerminal({
+          plan: { terminal: { kind: "accepted" } },
+          request,
           sessionFile,
-          `${JSON.stringify({
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolCallId: "judge-out",
-              toolName: JUDGE_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: JUDGE_ACCEPTED,
-            },
-          })}\n`,
-          "utf8",
-        );
-        await sealAcceptedSubmission({
-          cwd: request.cwd,
-          home: request.home,
           runId,
-          runDirectory: request.runDirectory,
-          role: "judge",
-          details: JUDGE_ACCEPTED,
-          toolCallId: "judge-out",
         });
-        return { code: 0, stderr: "", timedOut: false };
       }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") + "\n" + stderr.join(""));
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     const usage = usageOf(resumed.terminal);
     assert.equal(usage?.callCount, 1);
-    assert.equal(usage?.calls[0]?.toolCallId, "resume-call");
+    assert.equal(usage?.calls[0]?.toolCallId, sharedId);
+    assert.ok(resumeScope, "explicit resume must mint a fresh invocation scope");
+    assert.equal(
+      usage?.calls[0]?.recordPointer.identity,
+      engineDetourCallIdentity({
+        toolCallId: sharedId,
+        runId,
+        invocationScopeId: resumeScope,
+      }),
+    );
   });
 });
 
-test("tool path: spawn + sitian failure keeps both causes via AggregateError", async () => {
+test("tool path: engine failure + sitian write failure keeps both causes via AggregateError", async () => {
   await withHermeticHome({ prefix: "ak-detour-dual-fail-" }, async ({ home }) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
-    // Make session parent a non-writable path so sitian append fails after spawn fails.
-    const blockedSession = join(project, "blocked-session-parent");
-    await writeFile(blockedSession, "not-a-dir\n", "utf8");
-    await chmod(blockedSession, 0o000);
+    const scripts = await ensureScripts(project);
 
-    const tool = createEngineDetourToolDefinition({
-      engineName: ENGINE,
-      fail(error) {
-        throw error;
+    const cases: Array<{
+      readonly label: string;
+      readonly argv: string[];
+      readonly enginePattern: RegExp;
+    }> = [
+      {
+        label: "spawn",
+        argv: ["ak-engine-definitely-missing-binary-xyz-537"],
+        enginePattern: /ENOENT|spawn|not found|missing|ak-engine/i,
       },
-    });
+      {
+        label: "nonzero",
+        argv: [process.execPath, scripts.nonzero],
+        enginePattern: /非零|nonzero|exit|code|2|劳务引擎/i,
+      },
+      {
+        label: "empty",
+        argv: [process.execPath, scripts.empty],
+        enginePattern: /空|empty|stdout|劳务引擎/i,
+      },
+    ];
 
-    let thrown: unknown;
-    try {
-      await tool.execute(
-        "dual-fail",
-        { argv: ["ak-engine-definitely-missing-binary-xyz-537"] },
-        undefined,
-        undefined,
-        {
-          cwd: project,
-          mode: "test",
-          abort() {},
-          sessionManager: { getSessionFile: () => blockedSession },
-          runDirectory: join(home, "runs", "dual@judge"),
-          courtAttemptId: "attempt-dual",
-          host: "codex",
+    for (const row of cases) {
+      const blockedSession = join(project, `blocked-session-parent-${row.label}`);
+      await writeFile(blockedSession, "not-a-dir\n", "utf8");
+      await chmod(blockedSession, 0o000);
+
+      const tool = createEngineDetourToolDefinition({
+        engineName: ENGINE,
+        fail(error) {
+          throw error;
         },
-      );
-    } catch (error) {
-      thrown = error;
-    } finally {
-      await chmod(blockedSession, 0o644).catch(() => undefined);
-    }
+      });
 
-    assert.ok(thrown instanceof AggregateError, "expected AggregateError");
-    const aggregate = thrown as AggregateError;
-    assert.ok(aggregate.errors.length >= 2, "both spawn and ledger failures required");
-    const texts = aggregate.errors.map((e) =>
-      e instanceof Error ? `${e.name}:${e.message}` : String(e),
-    );
-    assert.ok(
-      texts.some((t) => /ENOENT|spawn|not found|missing|ak-engine/i.test(t)),
-      `spawn cause missing in ${texts.join(" | ")}`,
-    );
-    assert.ok(
-      texts.some((t) => /Sitian|session|ENOTDIR|EACCES|ledger/i.test(t)),
-      `sitian cause missing in ${texts.join(" | ")}`,
-    );
+      let thrown: unknown;
+      try {
+        await tool.execute(
+          `dual-fail-${row.label}`,
+          { argv: row.argv },
+          undefined,
+          undefined,
+          {
+            cwd: project,
+            mode: "test",
+            abort() {},
+            sessionManager: { getSessionFile: () => blockedSession },
+            runDirectory: join(home, "runs", `dual-${row.label}@judge`),
+            host: "codex",
+          },
+        );
+      } catch (error) {
+        thrown = error;
+      } finally {
+        await chmod(blockedSession, 0o644).catch(() => undefined);
+      }
+
+      assert.ok(thrown instanceof AggregateError, `${row.label}: expected AggregateError`);
+      const aggregate = thrown as AggregateError;
+      assert.ok(
+        aggregate.errors.length >= 2,
+        `${row.label}: both engine and ledger failures required`,
+      );
+      const texts = aggregate.errors.map((e) =>
+        e instanceof Error ? `${e.name}:${e.message}` : String(e),
+      );
+      assert.ok(
+        texts.some((t) => row.enginePattern.test(t)),
+        `${row.label}: engine cause missing in ${texts.join(" | ")}`,
+      );
+      assert.ok(
+        texts.some((t) => /Sitian|session|ENOTDIR|EACCES|ledger/i.test(t)),
+        `${row.label}: sitian cause missing in ${texts.join(" | ")}`,
+      );
+    }
   });
 });
 
@@ -835,7 +893,7 @@ test("host provenance: invocation host=codex is recorded, not default pi", async
       JSON.stringify({ role: "judge", engine: ENGINE, host: "codex" }),
       "utf8",
     );
-    writeEngineDetourAttemptScope(runDirectory, "att-host");
+    writeEngineDetourInvocationScope(runDirectory, "scope-host");
 
     const tool = createEngineDetourToolDefinition({
       engineName: ENGINE,
@@ -863,7 +921,7 @@ test("host provenance: invocation host=codex is recorded, not default pi", async
     const usage = await readEngineDetourToolUsage({
       sessionParent: sessionFile,
       engineMounted: true,
-      attemptId: "att-host",
+      invocationScopeId: "scope-host",
       cwd: runDirectory,
       home,
     });

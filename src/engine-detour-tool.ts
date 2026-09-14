@@ -19,7 +19,7 @@ import {
 } from "./engine-detour.ts";
 import {
   engineDetourStdoutByteLength,
-  readEngineDetourAttemptScope,
+  readEngineDetourInvocationScope,
   readInvocationSelectedHost,
   reportEngineDetourCall,
 } from "./engine-detour-usage.ts";
@@ -50,7 +50,6 @@ type EngineDetourArgs = Static<typeof engineDetourArgsSchema>;
 type EngineDetourContext = Pick<HostContext, "cwd" | "mode" | "abort"> & {
   sessionManager?: Pick<HostContext["sessionManager"], "getSessionFile">;
   runDirectory?: string;
-  courtAttemptId?: string;
   /** Selected host when already projected onto HostContext. */
   host?: string;
 };
@@ -133,15 +132,11 @@ export function createEngineDetourToolDefinition(input: {
         ? ctx.runDirectory
         : undefined;
       const runId = runDirectory === undefined ? undefined : basenameRunId(runDirectory);
-      // Prefer per-invocation scope file (resume = new unit); ctx.courtAttemptId
-      // is only a test/direct-call fallback (open court may reuse court id).
-      const attemptId =
-        (runDirectory === undefined
+      // Public-invocation scope only — never courtAttemptId (open court may reuse it).
+      const invocationScopeId =
+        runDirectory === undefined
           ? undefined
-          : readEngineDetourAttemptScope(runDirectory))
-        ?? (typeof ctx.courtAttemptId === "string" && ctx.courtAttemptId.trim() !== ""
-          ? ctx.courtAttemptId
-          : undefined);
+          : readEngineDetourInvocationScope(runDirectory);
       const host =
         typeof ctx.host === "string" && ctx.host.trim() !== ""
           ? ctx.host.trim()
@@ -160,13 +155,38 @@ export function createEngineDetourToolDefinition(input: {
           cwd: ctx.cwd,
           sessionParent,
           ...(runId === undefined ? {} : { runId }),
-          ...(attemptId === undefined ? {} : { attemptId }),
+          ...(invocationScopeId === undefined ? {} : { invocationScopeId }),
           ...(host === undefined ? {} : { host }),
           ...(observed.code === undefined ? {} : { code: observed.code }),
           ...(observed.stdoutByteLength === undefined
             ? {}
             : { stdoutByteLength: observed.stdoutByteLength }),
         });
+      };
+
+      /** Preserve engine cause; if ledger write also fails, keep both (失败诚实). */
+      const failAfterLedger = (
+        engineCause: Error,
+        observed: { code?: number; stdoutByteLength?: number },
+        aggregateMessage: string,
+      ): never => {
+        try {
+          recordCall(observed);
+        } catch (recordError) {
+          input.fail(
+            new AggregateError(
+              [
+                engineCause,
+                asError(recordError, "engine detour usage ledger write failed"),
+              ],
+              aggregateMessage,
+              { cause: engineCause },
+            ),
+            toolCallId,
+            ctx,
+          );
+        }
+        input.fail(engineCause, toolCallId, ctx);
       };
 
       let result: Awaited<ReturnType<typeof runEngineDetourOnce>>;
@@ -179,34 +199,27 @@ export function createEngineDetourToolDefinition(input: {
       } catch (error) {
         if (isCallerCancellation(error, signal)) throw error;
         // Spawn path: duration only — code/stdout bytes absent (not forged 0).
-        // If sitian append also fails, keep both real causes (失败诚实 / AggregateError).
-        const spawnCause = asError(error, "劳务引擎 spawn 失败");
-        try {
-          recordCall({});
-        } catch (recordError) {
-          input.fail(
-            new AggregateError(
-              [spawnCause, asError(recordError, "engine detour usage ledger write failed")],
-              "engine detour spawn and usage ledger both failed",
-              { cause: spawnCause },
-            ),
-            toolCallId,
-            ctx,
-          );
-        }
-        input.fail(spawnCause, toolCallId, ctx);
+        return failAfterLedger(
+          asError(error, "劳务引擎 spawn 失败"),
+          {},
+          "engine detour spawn and usage ledger both failed",
+        );
       }
 
       const stdoutByteLength = engineDetourStdoutByteLength(result.stdout);
-      recordCall({ code: result.code, stdoutByteLength });
+      const observed = { code: result.code, stdoutByteLength };
 
+      // Classify closed-child failure before ledger write so a sitian failure
+      // cannot erase nonzero/empty engine facts.
       if (isEngineDetourFailure(result)) {
-        input.fail(
+        return failAfterLedger(
           new Error(engineDetourFailureDiagnostic(result)),
-          toolCallId,
-          ctx,
+          observed,
+          "engine detour child-close and usage ledger both failed",
         );
       }
+
+      recordCall(observed);
 
       // Usage ledger lives in sitian + decisiveFacts only (#537) — not tool details.
       return {

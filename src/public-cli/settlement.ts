@@ -53,7 +53,7 @@ import {
 import { ENGINE_DETOUR_TOOL_NAME } from "../engine-detour.ts";
 import {
   projectEngineDetourToolUsageForPublicTerminal,
-  readEngineDetourAttemptScope,
+  readEngineDetourInvocationScope,
   readEngineDetourToolUsage,
   readInvocationEngineMounted,
   runDirectoryFromSessionDirectory,
@@ -2200,9 +2200,9 @@ export async function extractGateFactFromSessionDirectory(
  * #537: project this-invocation ak_engine_detour usage onto decisiveFacts.
  * Absent when engine is not mounted; callCount 0 when mounted with zero calls.
  * Never mutates role payloads (ADR 0003 / 0042 / 0052).
- * Attempt scope is host-neutral courtAttemptId bound at sitian write time — never
- * Pi session.jsonl toolResult join. Session damage therefore cannot replace an
- * already-formed roleOutcome (no_receipt / failure).
+ * Scope is the public-invocation id bound once per ak-role call — never
+ * courtAttemptId and never Pi session.jsonl toolResult join. Session damage
+ * therefore cannot replace an already-formed roleOutcome (no_receipt / failure).
  */
 async function attachEngineDetourToolUsage<
   T extends { roleOutcome: TerminalRoleOutcome; resume?: TerminalResume },
@@ -2221,18 +2221,15 @@ async function attachEngineDetourToolUsage<
   const engineMounted = await readInvocationEngineMounted(runDirectory);
   if (!engineMounted) return base;
 
-  // Per public-invocation scope (written at dispatch). Not courtAttemptId —
-  // open-court resume may reuse court id while still being a new counting unit.
-  let attemptId =
-    typeof gateContext.courtAttemptId === "string" && gateContext.courtAttemptId.length > 0
-      ? gateContext.courtAttemptId
-      : readEngineDetourAttemptScope(runDirectory);
+  // Public-invocation scope only (bound at entry). courtAttemptId is a different
+  // lifecycle concept and must not filter detour usage.
+  const invocationScopeId = readEngineDetourInvocationScope(runDirectory);
 
   const sessionFile = sessionFileFromSessionDirectory(sessionDirectory);
   const usage = await readEngineDetourToolUsage({
     sessionParent: sessionFile,
     engineMounted: true,
-    ...(attemptId === undefined ? {} : { attemptId }),
+    ...(invocationScopeId === undefined ? {} : { invocationScopeId }),
     cwd: runDirectory,
   });
   const projected =

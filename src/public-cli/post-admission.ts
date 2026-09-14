@@ -73,7 +73,7 @@ function isStationChildOfficerDialogue(
 ): boolean {
   return env.stationChild === true && isOfficerReviewSeat(role);
 }
-import { writeEngineDetourAttemptScope } from "../engine-detour-usage.ts";
+import { bindEngineDetourInvocationScope } from "../engine-detour-usage.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
@@ -781,12 +781,9 @@ export async function dispatchPostAdmissionTurn<
       env.engineModel,
     );
 
-    // #537: each public invocation (including resume) is one usage counting unit.
-    // Mint scope at dispatch so detour writes + settlement share a host-neutral id
-    // that is not Pi session toolResult join and not open-court courtAttemptId reuse.
-    if (typeof effectiveEngine === "string" && effectiveEngine.trim() !== "") {
-      writeEngineDetourAttemptScope(admitted.runDirectory, randomUUID());
-    }
+    // #537 invocation scope is bound once at the public-entry boundary
+    // (runPostAdmissionResumable / ManualResume / station-child), not here:
+    // auto-resume re-enters this dispatch and must reuse the same scope.
 
     let result: RoleTurnResult;
     try {
@@ -1471,6 +1468,13 @@ export async function runPostAdmissionSeatResume<
       let firstTurn: RoleTurnRequest | undefined;
       const stationAdapters = withOnceSuccessfulBeforeDispatch(adapters);
       type StationChildAttempt = { readonly resumeTurn: boolean };
+      // One public call → one detour scope across in-place auto-resume dispatches.
+      bindEngineDetourInvocationScope({
+        runDirectory: loaded.admitted.runDirectory,
+        ...(input.effectiveEngine === undefined
+          ? {}
+          : { effectiveEngine: input.effectiveEngine }),
+      });
       return await runWithAutoResumeLoop({
         admitted: loaded.admitted,
         principalAuthority: input.env.principalAuthority,
@@ -1629,6 +1633,12 @@ export async function runPostAdmissionResumable<
   const { admitted, env, io, buildInitialRequest, buildResumeRequest, effectiveEngine } = input;
   const adapters = withOnceSuccessfulBeforeDispatch(input.adapters);
 
+  // One public call → one detour scope across in-place auto-resume dispatches.
+  bindEngineDetourInvocationScope({
+    runDirectory: admitted.runDirectory,
+    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+  });
+
   return runWithAutoResumeLoop({
     admitted,
     principalAuthority: env.principalAuthority,
@@ -1721,6 +1731,12 @@ export async function runPostAdmissionManualResume<
     }
     throw error;
   }
+
+  // Explicit public resume is a new counting unit — bind once for this call.
+  bindEngineDetourInvocationScope({
+    runDirectory: admitted.runDirectory,
+    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+  });
 
   const result = await dispatchAfterWriterLease({
     lease,

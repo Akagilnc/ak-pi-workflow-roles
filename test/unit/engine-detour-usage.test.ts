@@ -19,18 +19,18 @@ test("stdout byte length is UTF-8 Buffer.byteLength (empty is real 0)", () => {
   assert.equal(engineDetourStdoutByteLength("你好"), 6);
 });
 
-test("engineDetourCallIdentity binds run + attempt + toolCallId (not bare id)", () => {
+test("engineDetourCallIdentity binds run + invocation scope + toolCallId (not bare id)", () => {
   assert.equal(
     engineDetourCallIdentity({
       toolCallId: "t1",
       runId: "r1",
-      attemptId: "a1",
+      invocationScopeId: "s1",
     }),
-    "engine-detour-call:r1:a1:t1",
+    "engine-detour-call:r1:s1:t1",
   );
   assert.notEqual(
-    engineDetourCallIdentity({ toolCallId: "t1", runId: "r1", attemptId: "a1" }),
-    engineDetourCallIdentity({ toolCallId: "t1", runId: "r1", attemptId: "a2" }),
+    engineDetourCallIdentity({ toolCallId: "t1", runId: "r1", invocationScopeId: "s1" }),
+    engineDetourCallIdentity({ toolCallId: "t1", runId: "r1", invocationScopeId: "s2" }),
   );
 });
 
