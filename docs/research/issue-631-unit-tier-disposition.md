@@ -1,33 +1,62 @@
 # #631 unit 档外部资源名实不符 — 扫描处置账
 
 票庭 run `01a09f5b-b21a-722e-91ff-81dce8631870@countersign` r3 `converged`（sealed `2026-09-14T10:31:00.037Z`）。
-缮修大理寺 run `01a09f9b-eb26-7d07-b177-c63fdb7f8f20@judge` continue（处置账逐案 / relative ledgerHome 无副作用 / 无据新测 / 合 main #884）。
+缮修大理寺 run `01a09f9b-eb26-7d07-b177-c63fdb7f8f20@judge`：r1 continue（处置账/relative home/无据新测/合 main）；r2 continue（宿主 profile 漏扫 / 最终扫描不可复现）。
 
 ## 可重放命令与判据
+
+### 资源命中判据（代码面）
+
+去 `//` 行注释后匹配任一即命中：
+
+1. **本机 FS / 子进程 / 网络**：`mkdtemp`|`tmpdir(`|`child_process`|`spawn(Sync)?`|`execFile(Sync)?`|`writeFile`|`mkdir`|`rm(Sync)?`|`copyFile`|`chmod`|`symlink`|`from "node:fs"`
+2. **宿主 profile（r2 补类）**：`userInfo`|`os.homedir`|`packageMachineHome(` — 真 passwd/user-profile 查询（非一切进程全局状态）
+
+耗时：TAP `duration_ms`；`> 100` 为预警项（非硬闸）。suite 墙钟：footer `duration_ms`。
 
 ### 基线扫描（`dadb5318`，本账实测）
 
 ```bash
 git worktree add /tmp/631-baseline-dadb5318 dadb5318
+ln -sfn "$PWD/node_modules" /tmp/631-baseline-dadb5318/node_modules
 cd /tmp/631-baseline-dadb5318
-# node_modules → 本仓
 node --import tsx --import ./scripts/test-process-env-preload.mjs \
   --test --test-reporter=tap \
   test/unit/**/*.test.ts test/contract/**/*.test.ts
 ```
 
-- **资源命中判据（代码面，去 `//` 行注释）**：`mkdtemp`|`tmpdir(`|`child_process`|`spawn(Sync)?`|`execFile(Sync)?`|`writeFile`|`mkdir`|`rm(Sync)?`|`copyFile`|`chmod`|`symlink`|`from "node:fs"`。
-- **耗时判据**：TAP `duration_ms`；`> 100` 为预警项（quality-law「预警参考线」，非硬闸）。
-- **suite 墙钟**：TAP footer `duration_ms`（并发，与单案合计不可直接相减）。
+（`$PWD` 为含已安装 devDeps 的本仓工作树，例如 `/Users/…/worktree-roles-631`。）
 
 本账基线实测：unit+contract **314 pass**；suite 墙钟 **6548 ms**；`duration_ms > 100` → **33 案**（票面 runner 曾报 38；同命令并发计时有方差，本账以 dadb5318 重测 33 案为可复算真源，逐案列下）。
 
-### 最终扫描（本分支 HEAD）
+### 最终扫描（本分支 HEAD；完整 inline，可直接粘贴运行）
 
 ```bash
-# 代码面资源命中（去行注释）
+cd "$(git rev-parse --show-toplevel)"
+
 python3 - <<'PY'
-# 同基线判据扫 test/unit/**/*.test.ts
+import re, glob, sys
+files = sorted(glob.glob("test/unit/**/*.test.ts", recursive=True))
+# FS / subprocess / network
+pat_fs = re.compile(
+    r"\bmkdtemp\b|tmpdir\s*\(|child_process|\bspawn(?:Sync)?\b|\bexecFile(?:Sync)?\b"
+    r"|\bwriteFile|\bmkdir|\brm(?:Sync)?|\bcopyFile|\bchmod|\bsymlink|from [\"']node:fs"
+)
+# Host profile (passwd / userInfo / packageMachineHome)
+pat_profile = re.compile(r"\buserInfo\b|os\.homedir|\bpackageMachineHome\s*\(")
+hits = []
+for f in files:
+    code = "\n".join(line.split("//")[0] for line in open(f, encoding="utf-8"))
+    kinds = []
+    if pat_fs.search(code): kinds.append("fs/subprocess")
+    if pat_profile.search(code): kinds.append("host-profile")
+    if kinds:
+        hits.append((f, kinds))
+print("unit_files", len(files))
+print("hit_files", len(hits))
+for f, kinds in hits:
+    print(f"HIT\t{f}\t{','.join(kinds)}")
+sys.exit(1 if hits else 0)
 PY
 
 node --import tsx --import ./scripts/test-process-env-preload.mjs \
@@ -35,9 +64,9 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs \
 ```
 
 - unit 文件数：26
-- 代码面资源命中：**0 文件 / 0 案**（假阳性注释/字符串不算命中）
+- 代码面资源命中（含 host-profile 类）：**0 文件 / 0 案**（假阳性注释/字符串不算命中）
 - `duration_ms > 100`：**0**
-- unit suite：84 pass（改纯后案数）
+- unit suite：案数以当次 TAP `tests` 为准（r2 后 package-home-seam 缩为 2 纯案）
 
 ---
 
@@ -186,10 +215,11 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs \
 | engine-material FS 两案 | `test/integration/engine-material.test.ts` |
 | relative ledgerHome 无副作用 | unit 只留错误码；integration `activation-envelope-contract` 新增 tracer 断言自有 temp 下目标未创建 |
 | public-cli 死 import | 已删；案行为不变 |
+| §5 host-profile（r2） | 见下表；unit 无 userInfo/packageMachineHome |
 
 ### 3.2 最终 unit 残余资源扫描
 
-判据同基线代码面。结果：**0 命中文件、0 命中案**。
+判据：§「最终扫描」完整 inline（FS/subprocess **与** host-profile）。结果：**0 命中文件、0 命中案**。
 
 **保留账**（非资源命中，勿作残余）：
 
@@ -197,15 +227,17 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs \
 - `user-dialogue-stdin.test.ts` — 路径字符串
 - `submission-status-open-domain.test.ts` — 从未命中
 - `activation-envelope-module` / `engine-material` 纯案 — §1.3 / §1.1
+- `package-home-seam.test.ts` — 仅显式路径数学（r2 后）；无 userInfo
 
-**无「保留为 unit 但仍碰外部资源」项。**
+**无「保留为 unit 但仍碰外部资源 / 宿主 profile」项。**
 
 ### 3.3 本票未新增机制
 
-- 无新 harness/夹具/分档框架
+- 无新 harness/夹具/分档框架/常驻 scanner
 - 仅 git mv、删死 import、路径字符串、既有 integration 目录承接
 - `host-session-acp-write-fail.test.ts` 仅为避文件名碰撞
-- r2：删除曾新增的 `assertLegalEngineModel`/`pickEngineAxis` helper 案与 `engineModel` 呈现字符串锁
+- r1：删除曾新增的 `assertLegalEngineModel`/`pickEngineAxis` helper 案与 `engineModel` 呈现字符串锁
+- r2：host-profile 并入既有 `test-user-profile-preload` integration，不造注入机制
 
 ### 3.4 分支整合
 
@@ -213,8 +245,34 @@ node --import tsx --import ./scripts/test-process-env-preload.mjs \
 
 ---
 
-## 四、验证（本轮聚焦，非全量）
+## 五、r2 补类：宿主 profile（passwd / userInfo / packageMachineHome）
 
-- unit：`node … --test test/unit/**/*.test.ts` → pass；>100ms = 0；代码面资源 0
-- integration 触及：activation-envelope-contract（含 relative tracer）、engine-material、移档文件 → pass
-- workflow：`rg 'checkout@v7|setup-node@v7|pnpm/action-setup@v6' .github/workflows` 六处在
+判词：不是把进程内全局状态机械判为外部资源；钉在**真实 passwd/user-profile 查询**。`packageMachineHome()` → `userInfo().homedir`；unit 模块顶层读 homedir 与已迁 integration 的 parent-process 案同一行为。
+
+补扫：`test/unit/**/*.test.ts` 代码面 `userInfo`|`os.homedir`|`packageMachineHome(` → 命中仅 `package-home-seam.test.ts`（处置前）。
+
+| 文件 | 完整案名 | 资源形态 | 基线 ms | 外部行为契约 | ADR/spec | 处置 | 理由 |
+|---|---|---|---:|---|---|---|---|
+| `test/unit/package-home-seam.test.ts` | packageMachineHome resolves passwd/user-profile homedir, never process.env.HOME | `userInfo()` + `packageMachineHome()` | 0.3 | package home = passwd homedir，忽略 `HOME` | #604；activation-ledger-topology | **并入 integration 后删 unit 重复** | 与 `test/integration/test-user-profile-preload.test.ts` 同一宿主 profile 行为；并入并加强 HOME 忽略 |
+| 同上 | resolveActivationLedgerHome default uses packageMachineHome, ignoring process.env.HOME | 默认 `packageMachineHome()` | 0.1 | 默认 ledger home 跟真实 profile，忽略 `HOME`；显式 home 路径数学 | 同左 | **拆** | 默认/真实 profile → integration；显式 absolute home → 留 unit 纯 |
+| 同上 | tryHomeFromAkRolesPath / homeFromRunDirectory: derive or typed fail, no HOME fallback | 路径推导 + 一处 non-ledger fallback 读真实 profile | 0.3 | `.ak-roles` 推导或 typed fail；non-ledger fallback 默认 profile | 同左 | **拆** | 显式路径推导/typed fail 留 unit；`resolveActivationLedgerHomeForPath(non-ledger)` 真实 fallback → integration |
+
+**integration 承接**（既有文件，无新 harness）：
+
+- 案名：`packageMachineHome and default ledger home follow real profile, ignore process.env.HOME`
+- 覆盖：`packageMachineHome()`、`resolveActivationLedgerHome()` 默认、`resolveActivationLedgerHomeForPath(non-ledger)` 在伪造 `HOME` 下仍等于 `resolve(userInfo().homedir, …)`
+- 替换原薄案 `parent process packageMachineHome still follows real user profile`（行为子集）
+
+**unit 保留**（纯显式路径，无 userInfo）：
+
+- `resolveActivationLedgerHome with explicit absolute home ignores process.env.HOME`
+- `tryHomeFromAkRolesPath / homeFromRunDirectory: derive or typed fail, no HOME fallback`（无 non-ledger→profile 断言）
+
+---
+
+## 六、验证（本轮聚焦，非全量）
+
+- 最终 inline scanner（含 host-profile）：exit 0，hit_files 0
+- unit：`node … --test test/unit/**/*.test.ts` → pass；>100ms = 0
+- integration 触及：`test-user-profile-preload`（含合并后 host-profile 案）→ pass
+- 未跑全量（中间轮次）

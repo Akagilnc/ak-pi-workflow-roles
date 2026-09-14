@@ -1,39 +1,24 @@
 /**
- * Small seam: package home topology ignores process.env.HOME (#604).
- * Pure path/default resolution only — CLI write-surface lives in integration.
+ * Small seam: package home topology path math (#604 / #631).
+ * Explicit-path derivation only — real passwd/user-profile queries live in
+ * test/integration/test-user-profile-preload.test.ts (same host-profile class).
  */
 import assert from "node:assert/strict";
-import { userInfo } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
 
 import {
   ActivationLedgerError,
   homeFromRunDirectory,
-  packageMachineHome,
   resolveActivationLedgerHome,
   resolveActivationLedgerHomeForPath,
   tryHomeFromAkRolesPath,
 } from "../../src/activation-ledger-topology.ts";
 
-const REAL_PASSWD_HOME = resolve(userInfo().homedir);
-
-test("packageMachineHome resolves passwd/user-profile homedir, never process.env.HOME", () => {
+test("resolveActivationLedgerHome with explicit absolute home ignores process.env.HOME", () => {
   const previousHome = process.env.HOME;
   try {
     process.env.HOME = "/tmp/ak-fake-home-must-not-win";
-    assert.equal(packageMachineHome(), REAL_PASSWD_HOME);
-  } finally {
-    if (previousHome === undefined) delete process.env.HOME;
-    else process.env.HOME = previousHome;
-  }
-});
-
-test("resolveActivationLedgerHome default uses packageMachineHome, ignoring process.env.HOME", () => {
-  const previousHome = process.env.HOME;
-  try {
-    process.env.HOME = "/tmp/ak-fake-home-must-not-win";
-    assert.equal(resolveActivationLedgerHome(), resolve(REAL_PASSWD_HOME, ".ak-roles"));
     const customHome = "/custom/injected/home";
     assert.equal(resolveActivationLedgerHome(customHome), resolve(customHome, ".ak-roles"));
   } finally {
@@ -57,15 +42,12 @@ test("tryHomeFromAkRolesPath / homeFromRunDirectory: derive or typed fail, no HO
 
     const nonAkRolesDir = "/some/random/dir/not/in/ledger";
     assert.equal(tryHomeFromAkRolesPath(nonAkRolesDir), undefined);
-    assert.equal(
-      resolveActivationLedgerHomeForPath(nonAkRolesDir),
-      resolve(REAL_PASSWD_HOME, ".ak-roles"),
-    );
     assert.throws(
       () => homeFromRunDirectory(nonAkRolesDir),
       (error: unknown) =>
         error instanceof ActivationLedgerError && error.code === "AK_ACTIVATION_LEDGER",
     );
+    // non-ledger → real profile default is integration (test-user-profile-preload).
 
     // F5 regression: path containing .ak-roles as substring of directory name must NOT derive
     assert.equal(tryHomeFromAkRolesPath("/home/x.ak-roles-backup/foo"), undefined);
