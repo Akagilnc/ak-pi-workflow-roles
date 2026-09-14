@@ -8,21 +8,42 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import assert from "node:assert/strict";
 import { copyFileSync, mkdtempSync, rmSync } from "node:fs";
 import { userInfo } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 
-import { packageMachineHome } from "../../src/activation-ledger-topology.ts";
+import {
+  packageMachineHome,
+  resolveActivationLedgerHome,
+  resolveActivationLedgerHomeForPath,
+} from "../../src/activation-ledger-topology.ts";
 import { withTestUserProfileEnv } from "../helpers/public-cli-subprocess.ts";
 import { runTestSubprocess } from "../helpers/test-subprocess.ts";
 
-const REAL_PASSWD_HOME = userInfo().homedir;
+const REAL_PASSWD_HOME = resolve(userInfo().homedir);
 const PRELOAD = fileURLToPath(
   new URL("../../scripts/test-user-profile-preload.cjs", import.meta.url),
 );
 
-test("parent process packageMachineHome still follows real user profile", async () => {
-  assert.equal(packageMachineHome(), REAL_PASSWD_HOME);
+/**
+ * #604 / #631 host-profile class: real passwd/user-profile queries (not unit).
+ * Absorbs former unit package-home-seam cases that called packageMachineHome()
+ * or default ledger home — same external behavior, one medium seam.
+ */
+test("packageMachineHome and default ledger home follow real profile, ignore process.env.HOME", () => {
+  const previousHome = process.env.HOME;
+  try {
+    process.env.HOME = "/tmp/ak-fake-home-must-not-win";
+    assert.equal(packageMachineHome(), REAL_PASSWD_HOME);
+    assert.equal(resolveActivationLedgerHome(), resolve(REAL_PASSWD_HOME, ".ak-roles"));
+    assert.equal(
+      resolveActivationLedgerHomeForPath("/some/random/dir/not/in/ledger"),
+      resolve(REAL_PASSWD_HOME, ".ak-roles"),
+    );
+  } finally {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+  }
 });
 
 test("withTestUserProfileEnv child: package home = temp; realMachineHome stays operator", async () => {

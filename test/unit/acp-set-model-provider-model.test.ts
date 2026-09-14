@@ -1,10 +1,9 @@
 /**
  * #644 protocol probe: hermes set_model receives seat provider:model.
  * One external contract — fake ACP connection only; no real leg, no ~/.hermes.
+ * Paths are opaque coordinates (no real FS). #631 unit-tier honesty.
  */
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -18,72 +17,69 @@ test("hermes set_model RPC modelId is seat provider:model", async () => {
   assert.ok(hermes);
   assert.equal(hermes.modelPassing, "set_model");
 
-  const runDirectory = await mkdtemp(join(tmpdir(), "ak-set-model-"));
+  // Opaque path coordinates only — fake connection never touches disk.
+  const runDirectory = "/tmp/ak-set-model-pure";
   const calls: Array<{ method: string; params: Readonly<Record<string, unknown>> }> = [];
-  try {
-    const connection: AcpConnection = {
-      async request(method, params) {
-        calls.push({ method, params });
-        if (method === "initialize") return { protocolVersion: 1 };
-        if (method === "session/new") return { sessionId: "sess-1" };
-        if (method === "session/load") return { sessionId: params.sessionId ?? "sess-1" };
-        if (method === "session/set_model") return {};
-        if (method === "session/prompt") return { stopReason: "end_turn" };
-        if (method === "session/close") return {};
-        return {};
+  const connection: AcpConnection = {
+    async request(method, params) {
+      calls.push({ method, params });
+      if (method === "initialize") return { protocolVersion: 1 };
+      if (method === "session/new") return { sessionId: "sess-1" };
+      if (method === "session/load") return { sessionId: params.sessionId ?? "sess-1" };
+      if (method === "session/set_model") return {};
+      if (method === "session/prompt") return { stopReason: "end_turn" };
+      if (method === "session/close") return {};
+      return {};
+    },
+    notify() {},
+    async close() {},
+  };
+  const host = createAcpRoleTurnHost({
+    hostName: "hermes",
+    modelPassing: hermes.modelPassing,
+    boundResume: hermes.boundResume,
+    sessionIdentity: {
+      async load() {
+        return undefined;
       },
-      notify() {},
-      async close() {},
-    };
-    const host = createAcpRoleTurnHost({
-      hostName: "hermes",
-      modelPassing: hermes.modelPassing,
-      boundResume: hermes.boundResume,
-      sessionIdentity: {
-        async load() {
-          return undefined;
-        },
-        async bind() {},
-        resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
+      async bind() {},
+      resolveSessionFile: () => join(runDirectory, "session", "session.jsonl"),
+    },
+    connect: async () => connection,
+    prepare: async () => ({
+      mcpServers: [{ name: "ak-probe", type: "stdio" }],
+      systemPrompt: { body: "probe", materials: [] },
+      prompt: "probe",
+      jsonSchema: { type: "object" },
+      terminatingToolName: "ak_judge_output",
+      async ingestStructuredOutput() {},
+      async closeRound() {
+        return { accepted: true as const };
       },
-      connect: async () => connection,
-      prepare: async () => ({
-        mcpServers: [{ name: "ak-probe", type: "stdio" }],
-        systemPrompt: { body: "probe", materials: [] },
-        prompt: "probe",
-        jsonSchema: { type: "object" },
-        terminatingToolName: "ak_judge_output",
-        async ingestStructuredOutput() {},
-        async closeRound() {
-          return { accepted: true as const };
-        },
-      }),
-    });
+    }),
+  });
 
-    const provider = "seat-provider";
-    const model = "seat-model";
-    const request: RoleTurnRequest = {
-      principal: fixturePrincipal(join(runDirectory, "session")),
-      activation: { role: "judge" },
-      methods: [],
-      continuation: { kind: "initial", prompt: "probe" },
-      model: { provider, model },
-      cwd: runDirectory,
-      home: runDirectory,
-      agentDir: join(runDirectory, "agent"),
-      runDirectory,
-    };
-    const result = await host.executeTurn(request);
-    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
-    assert.equal(result.code, 0);
+  const provider = "seat-provider";
+  const model = "seat-model";
+  const request: RoleTurnRequest = {
+    principal: fixturePrincipal(join(runDirectory, "session")),
+    activation: { role: "judge" },
+    methods: [],
+    continuation: { kind: "initial", prompt: "probe" },
+    model: { provider, model },
+    cwd: runDirectory,
+    home: runDirectory,
+    agentDir: join(runDirectory, "agent"),
+    runDirectory,
+  };
+  const result = await host.executeTurn(request);
+  assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+  assert.equal(result.code, 0);
 
-    const setModel = calls.filter((c) => c.method === "session/set_model");
-    assert.equal(setModel.length, 1);
-    assert.deepEqual(setModel[0]?.params, {
-      sessionId: "sess-1",
-      modelId: `${provider}:${model}`,
-    });
-  } finally {
-    await rm(runDirectory, { recursive: true, force: true });
-  }
+  const setModel = calls.filter((c) => c.method === "session/set_model");
+  assert.equal(setModel.length, 1);
+  assert.deepEqual(setModel[0]?.params, {
+    sessionId: "sess-1",
+    modelId: `${provider}:${model}`,
+  });
 });

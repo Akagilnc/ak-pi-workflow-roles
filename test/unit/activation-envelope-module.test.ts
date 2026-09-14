@@ -2,17 +2,11 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 // #420 整改移档（自 test/integration/activation-envelope-contract.test.ts 与
 // test/integration/activation-reconciliation.test.ts）：纯进程内模块逻辑按性质
 // 归位快档；stdin-parked 真子进程条仍留 integration。契约断言一字不减。
+// #631: drop real temp-root scaffolding — relative-home reject is pure path math.
 import assert from "node:assert/strict";
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  rmSync,
-} from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import test from "node:test";
 import { Value } from "typebox/value";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import {
   ACCEPTED_ACTIVATION_EVENT,
@@ -81,7 +75,7 @@ test("accepted-activation fact is closed at the typed API and omits injected con
   );
 });
 
-test("resolved ledger home rejects relative process home before filesystem writes", async () => {
+test("resolved ledger home rejects relative process home (pure path math)", () => {
   for (const relativeHome of [".", "relative-home", ""] as const) {
     assert.throws(
       () => resolveActivationLedgerHome(relativeHome),
@@ -93,35 +87,33 @@ test("resolved ledger home rejects relative process home before filesystem write
     );
   }
 
+  // Prefix string only — resolveActivationLedgerHome is pure path math, no mkdir.
   const absoluteHome = worktreeTempPrefix("ak-ledger-abs-home");
   const ledgerHome = resolveActivationLedgerHome(absoluteHome);
   assert.equal(isAbsolute(ledgerHome), true);
   assert.equal(ledgerHome, resolve(absoluteHome, ".ak-roles"));
 
-  return await withTempRoot("ak-ledger-rel-home-", async (root) => {
-    const relativeLedgerHome = "relative-ledger-home";
-    assert.equal(isAbsolute(relativeLedgerHome), false);
-    assert.throws(
-      () => appendAcceptedActivationFact(
-        join(relativeLedgerHome, "books", "b", "waiting.jsonl"),
-        buildAcceptedActivationFact({
-          role: "judge",
-          observedAt: "2025-01-01T00:00:00.000Z",
-          bookKey: "b",
-          session: { kind: "session-file", path: "/s/x.jsonl" },
-          correlation: { kind: "absent" },
-        }),
-        { ledgerHome: relativeLedgerHome },
-      ),
-      (error: unknown) => {
-        assert.ok(error instanceof ActivationLedgerError);
-        assert.equal(error.code, "AK_ACTIVATION_LEDGER");
-        return true;
-      },
-    );
-    assert.equal(existsSync(join(root, relativeLedgerHome)), false);
-    assert.equal(existsSync(resolve(relativeLedgerHome)), false);
-    });
+  // append + no-side-effect on real I/O: test/integration/activation-envelope-contract.test.ts (#631).
+  const relativeLedgerHome = "relative-ledger-home";
+  assert.equal(isAbsolute(relativeLedgerHome), false);
+  assert.throws(
+    () => appendAcceptedActivationFact(
+      join(relativeLedgerHome, "books", "b", "waiting.jsonl"),
+      buildAcceptedActivationFact({
+        role: "judge",
+        observedAt: "2025-01-01T00:00:00.000Z",
+        bookKey: "b",
+        session: { kind: "session-file", path: "/s/x.jsonl" },
+        correlation: { kind: "absent" },
+      }),
+      { ledgerHome: relativeLedgerHome },
+    ),
+    (error: unknown) => {
+      assert.ok(error instanceof ActivationLedgerError);
+      assert.equal(error.code, "AK_ACTIVATION_LEDGER");
+      return true;
+    },
+  );
 });
 
 function dispatchStub(input: {

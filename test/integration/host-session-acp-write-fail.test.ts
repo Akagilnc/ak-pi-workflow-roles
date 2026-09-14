@@ -1,6 +1,7 @@
 /**
- * #811 unit: ACP host-session write failure aborts pending prompt (deterministic race).
- * Cross-process headless live/failure cases live under test/integration/.
+ * #811 medium: ACP host-session write failure aborts pending prompt (deterministic race).
+ * Real FS chmod freeze — unit-tier name was dishonest (#631).
+ * Cross-process headless live/failure cases: host-session-live-records.test.ts.
  */
 import assert from "node:assert/strict";
 import { chmod, mkdir, writeFile } from "node:fs/promises";

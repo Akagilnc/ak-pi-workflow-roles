@@ -1,11 +1,9 @@
 /**
  * #813: ACP last-mile resumes with shared-envelope retry.message.
- * Fake ACP connection only — single process, no spawn (unit size).
+ * Fake ACP connection only — single process, opaque path coordinates, no FS (#631).
  * Headless dual-entry proof: test/integration/host-retry-verdict-relay.test.ts (#820).
  */
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -93,11 +91,6 @@ async function captureAcpResumePrompts(runDirectory: string, retryMessage: strin
 }
 
 test("ACP resume delivers opaque retry.message unchanged", async () => {
-  const runDirectory = await mkdtemp(join(tmpdir(), "ak-813-acp-relay-"));
-  try {
-    const prompts = await captureAcpResumePrompts(runDirectory, OPAQUE_RETRY_MESSAGE);
-    assert.deepEqual(prompts, ["initial-assignment", OPAQUE_RETRY_MESSAGE]);
-  } finally {
-    await rm(runDirectory, { recursive: true, force: true });
-  }
+  const prompts = await captureAcpResumePrompts("/tmp/ak-813-acp-relay-pure", OPAQUE_RETRY_MESSAGE);
+  assert.deepEqual(prompts, ["initial-assignment", OPAQUE_RETRY_MESSAGE]);
 });
