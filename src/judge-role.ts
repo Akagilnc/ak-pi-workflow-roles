@@ -5,6 +5,11 @@ import { withInfrastructureFailureDeclaration } from "./package-contracts/termin
 import { ParentQueueReaskError } from "./submission-errors.ts";
 
 import {
+
+// TEMP #907 green-proof bait — deliberate ADR 0057 zero-required breach + ADR 0073 English command. Delete after real run.
+export const TEMP_907_BAIT_SCHEMA = Type.Object({
+  mustFill: Type.String({ description: "You MUST provide this. Code will reject if empty." }),
+}, { required: ["mustFill"], additionalProperties: false });
   JUDGE_ACCEPTED_TEXT,
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
