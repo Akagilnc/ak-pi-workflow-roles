@@ -24,11 +24,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** 原生 id：宿主各自的消息主键（Pi `id` / Claude Code `uuid`）。 */
+/**
+ * 原生 id：行级或消息体级主键的单一实现（bound 解析与落盘共用）。
+ * Pi/CC：行上 `uuid`/`id`；Codex：`response_item.payload.id`（或 `message.id`）。
+ */
 export function nativeEventId(row: Record<string, unknown>): string | undefined {
   for (const key of ["uuid", "id"]) {
     const value = row[key];
     if (typeof value === "string" && value !== "") return value;
+  }
+  for (const nestKey of ["message", "payload"] as const) {
+    const nested = row[nestKey];
+    if (!isRecord(nested)) continue;
+    for (const key of ["uuid", "id"]) {
+      const value = nested[key];
+      if (typeof value === "string" && value !== "") return value;
+    }
   }
   return undefined;
 }
@@ -132,10 +143,8 @@ function fromMessageEvent(row: Record<string, unknown>): DialogueEvent[] {
   if (parts.length === 0) return [];
   const text = parts.join("");
   if (text === "") return [];
-  // payload 上的 id（Codex msg_…）优先于行级 id。
-  const id =
-    (typeof message.id === "string" && message.id !== "" ? message.id : undefined) ??
-    nativeEventId(row);
+  // 与 bound lookup 同源：nativeEventId 已含 payload/message id。
+  const id = nativeEventId(row);
   return [{ speaker, text, ...(id === undefined ? {} : { id }) }];
 }
 

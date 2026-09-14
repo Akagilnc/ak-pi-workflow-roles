@@ -22,10 +22,12 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
+import { ticketProvenancePartitionMigrator } from "../../src/book-topology-record-class-migrators.ts";
 import {
   readTicketProvenance,
   reprojectTicketProvenance,
   resolveTicketProvenanceVolume,
+  TicketProvenanceInputError,
 } from "../../src/ticket-provenance.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
@@ -621,6 +623,117 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     assert.equal(amended.speaker, "owner");
     assert.equal(amended.text, "补写：坏行原话由起居郎交回。");
 
+    // Codex payload.id is both landed and resolvable as a bound endpoint (single nativeEventId).
+    assert.equal(byId.get("msg-codex-owner")?.text, fixture.codexOwnerText);
+    assert.equal(byId.get("msg-codex-runner")?.text, fixture.codexRunnerText);
+    const byPayloadId = await reprojectTicketProvenance({
+      ticketNumber: TICKET,
+      cwd: project,
+      home,
+      sessions: [
+        {
+          path: fixture.path,
+          ranges: [
+            {
+              from: { id: "msg-codex-owner" },
+              to: { id: "msg-codex-runner" },
+            },
+          ],
+        },
+      ],
+    });
+    assert.equal(
+      byPayloadId.lines.some((line) => line.id === "msg-codex-owner"),
+      true,
+      "bound by Codex payload id must resolve",
+    );
+    assert.equal(byPayloadId.unparsable.length, 0);
+
+    // Amendments-only continuation: empty sessions reuses prior header sessions (not no-op).
+    // Restore full-range header first so amendments-only has bounds to apply.
+    await reprojectTicketProvenance({
+      ticketNumber: TICKET,
+      cwd: project,
+      home,
+      sessions: [
+        {
+          path: fixture.path,
+          ranges: [{ from: { line: 1 }, to: { line: fixture.lastLine } }],
+        },
+      ],
+      amendments: [
+        {
+          s: 0,
+          line: fixture.unparsableLine,
+          speaker: "owner",
+          text: "补写：坏行原话由起居郎交回。",
+        },
+      ],
+    });
+    const amendOnly = await reprojectTicketProvenance({
+      ticketNumber: TICKET,
+      cwd: project,
+      home,
+      sessions: [],
+      amendments: [
+        {
+          s: 0,
+          line: fixture.unparsableLine,
+          speaker: "owner",
+          text: "amendments-only 续写",
+        },
+      ],
+    });
+    assert.equal(
+      amendOnly.lines.find((line) => line.line === fixture.unparsableLine)?.text,
+      "amendments-only 续写",
+      "amendments-only must reproject via prior header sessions",
+    );
+    // Seed volume with lawful empty sessions header — amendments-only must typed-fail.
+    await writeFile(
+      paths.recordFile,
+      `${JSON.stringify({
+        repo: resolveBookKeyFromGit(project),
+        ticket: TICKET,
+        createdAt: "t0",
+        updatedAt: "t0",
+        sessions: [],
+      })}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      () =>
+        reprojectTicketProvenance({
+          ticketNumber: TICKET,
+          cwd: project,
+          home,
+          sessions: [],
+          amendments: [{ s: 0, line: 1, speaker: "owner", text: "x" }],
+        }),
+      (error: unknown) => error instanceof TicketProvenanceInputError,
+    );
+
+    // Restore a good volume for subsequent damage/path probes.
+    await reprojectTicketProvenance({
+      ticketNumber: TICKET,
+      cwd: project,
+      home,
+      sessions: [
+        {
+          path: fixture.path,
+          ranges: [{ from: { line: 1 }, to: { line: fixture.lastLine } }],
+        },
+      ],
+      amendments: [
+        {
+          s: 0,
+          line: fixture.unparsableLine,
+          speaker: "owner",
+          text: "补写：坏行原话由起居郎交回。",
+        },
+      ],
+    });
+
     // On-disk shape: first line header, bare dialogue rows after (no SitianRecord shell).
     const rawFile = await readFile(paths.recordFile, "utf8");
     const rawLines = rawFile.split("\n").filter((line) => line.trim() !== "");
@@ -669,6 +782,66 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       damagedBody,
       "rejected path must not rewrite the preserved volume",
     );
+
+    // Bare + legacy migration for the same ticket must not mix (header stays first line).
+    const bookKey = resolveBookKeyFromGit(project);
+    const backupBooks = join(home, "mig-backup", "books");
+    const destBooks = join(home, "mig-dest", "books");
+    const legacyDir = join(backupBooks, bookKey, "ticket-provenance");
+    const bareDir = join(backupBooks, bookKey, String(TICKET));
+    await mkdir(legacyDir, { recursive: true });
+    await mkdir(bareDir, { recursive: true });
+    await writeFile(
+      join(legacyDir, "records.jsonl"),
+      `${JSON.stringify({
+        kind: "ticket-provenance",
+        subject: String(TICKET),
+        identity: "legacy-1",
+        payload: { note: "old" },
+      })}\n`,
+      "utf8",
+    );
+    const bareHeader = JSON.stringify({
+      repo: bookKey,
+      ticket: TICKET,
+      createdAt: "t0",
+      updatedAt: "t0",
+      sessions: [],
+    });
+    const bareLine = JSON.stringify({
+      speaker: "owner",
+      s: 0,
+      text: "bare-body",
+    });
+    await writeFile(
+      join(bareDir, "records.jsonl"),
+      `${bareHeader}\n${bareLine}\n`,
+      "utf8",
+    );
+    await mkdir(destBooks, { recursive: true });
+    await ticketProvenancePartitionMigrator.migrate({
+      backupBooksDirectory: backupBooks,
+      booksDirectory: destBooks,
+    });
+    const migrated = await readFile(
+      join(destBooks, bookKey, String(TICKET), "records.jsonl"),
+      "utf8",
+    );
+    const migratedLines = migrated.split("\n").filter((line) => line.trim() !== "");
+    assert.equal(JSON.parse(migratedLines[0]!).ticket, TICKET);
+    assert.equal(JSON.parse(migratedLines[0]!).kind, undefined);
+    assert.equal(
+      migratedLines.some((line) => {
+        try {
+          return JSON.parse(line).kind === "ticket-provenance";
+        } catch {
+          return false;
+        }
+      }),
+      false,
+      "legacy SitianRecord must not sit under bare header",
+    );
+    assert.equal(JSON.parse(migratedLines[1]!).text, "bare-body");
   });
 });
 

@@ -94,6 +94,8 @@ async function ensureDir(path: string): Promise<void> {
 /** Per-destination identity cache — one read per file, O(1) subsequent checks. */
 class RecordWriteCache {
   private readonly identities = new Map<string, Set<string>>();
+  /** Dest paths written as whole #901 bare volumes — legacy must not append under them. */
+  private readonly bareVolumeFiles = new Set<string>();
 
   private async load(recordFile: string): Promise<Set<string>> {
     const cached = this.identities.get(recordFile);
@@ -106,6 +108,22 @@ class RecordWriteCache {
     }
     this.identities.set(recordFile, set);
     return set;
+  }
+
+  markBareVolume(recordFile: string): void {
+    this.bareVolumeFiles.add(recordFile);
+    this.identities.set(recordFile, new Set());
+  }
+
+  isBareVolume(recordFile: string): boolean {
+    return this.bareVolumeFiles.has(recordFile);
+  }
+
+  async replaceWhole(recordFile: string, body: string): Promise<void> {
+    await ensureDir(dirname(recordFile));
+    const text = body.endsWith("\n") ? body : `${body}\n`;
+    await writeFile(recordFile, text, "utf8");
+    this.markBareVolume(recordFile);
   }
 
   async append(recordFile: string, raw: string): Promise<void> {
@@ -336,10 +354,30 @@ async function placeTicketProvenanceLine(
     return { disposition: "unbound", source };
   }
   // Live topology (docs/dossier-topology.md): ticket root holds records.jsonl.
-  await writes.append(
-    join(context.booksDirectory, bookKey, String(ticketNumber), "records.jsonl"),
-    raw,
+  const dest = join(
+    context.booksDirectory,
+    bookKey,
+    String(ticketNumber),
+    "records.jsonl",
   );
+  // Never append legacy SitianRecord under a bare #901 volume (header must stay first).
+  if (writes.isBareVolume(dest)) {
+    await writes.append(
+      unboundCategoryFile(context.booksDirectory, bookKey, TICKET_PROVENANCE, stableKey(raw)),
+      raw,
+    );
+    return { disposition: "unbound", source };
+  }
+  const existing = await readJsonlLines(dest);
+  if (tryBareTicketProvenanceVolume(existing) !== undefined) {
+    writes.markBareVolume(dest);
+    await writes.append(
+      unboundCategoryFile(context.booksDirectory, bookKey, TICKET_PROVENANCE, stableKey(raw)),
+      raw,
+    );
+    return { disposition: "unbound", source };
+  }
+  await writes.append(dest, raw);
   return { disposition: "placed", source };
 }
 
@@ -444,10 +482,12 @@ async function placeBareTicketProvenanceVolume(
     String(bare.ticket),
     "records.jsonl",
   );
+  // Whole-file replace: bare is one atomic volume. Overwrites any prior legacy
+  // lines for the same ticket so the header stays the first physical line.
+  const body = bare.body.map((raw) => (raw.endsWith("\n") ? raw : `${raw}\n`)).join("");
+  await writes.replaceWhole(dest, body);
   for (let index = 0; index < bare.body.length; index += 1) {
-    const raw = bare.body[index]!;
     const source = lineSource(context.backupBooksDirectory, filePath, index);
-    await writes.append(dest, raw);
     outcomes.push({ disposition: "placed", source });
   }
 }

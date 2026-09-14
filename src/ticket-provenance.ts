@@ -38,6 +38,21 @@ import {
 } from "./ticket-provenance-contracts.ts";
 
 /**
+ * Typed input failure for diarist bounds/session path (reask, not infrastructure).
+ * Accept hook discriminates with instanceof — never Error.message prefixes.
+ */
+export class TicketProvenanceInputError extends Error {
+  readonly code = "ticket-provenance-input" as const;
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(
+      message,
+      options?.cause === undefined ? undefined : { cause: options.cause },
+    );
+    this.name = "TicketProvenanceInputError";
+  }
+}
+
+/**
  * Host-owned session source roots (ADR 0038 / ADR 0081 cross-host).
  * Narrow directory identities — not whole `.pi` / whole `.ak-roles`.
  */
@@ -70,7 +85,7 @@ function assertDialogueSessionSourcePath(path: string, home?: string): void {
     if (physicallyContainedIn(root, absolute)) return;
   }
   if (isLedgerRoleSessionFile(absolute, home)) return;
-  throw new Error(
+  throw new TicketProvenanceInputError(
     `session unreadable: ${path} (outside authorized source roots)`,
   );
 }
@@ -229,12 +244,12 @@ function normalizeResolvedRanges(
     const fromIndex = resolveBoundIndex(range.from, sessionLines);
     const toIndex = resolveBoundIndex(range.to, sessionLines);
     if (fromIndex === undefined || toIndex === undefined) {
-      throw new Error(
+      throw new TicketProvenanceInputError(
         `bound endpoint not found in ${sessionPath} (from=${JSON.stringify(range.from)} to=${JSON.stringify(range.to)})`,
       );
     }
     if (fromIndex > toIndex) {
-      throw new Error(
+      throw new TicketProvenanceInputError(
         `bound range inverted in ${sessionPath} (from index ${fromIndex} > to index ${toIndex})`,
       );
     }
@@ -275,8 +290,12 @@ async function projectSessionRanges(input: {
   try {
     sessionLines = await readLedgerSessionJsonlLines(input.session.path);
   } catch (error) {
+    if (error instanceof TicketProvenanceInputError) throw error;
     const detail = error instanceof Error ? error.message : String(error);
-    throw new Error(`session unreadable: ${input.session.path} (${detail})`);
+    throw new TicketProvenanceInputError(
+      `session unreadable: ${input.session.path} (${detail})`,
+      { cause: error },
+    );
   }
 
   const rows = sessionLines.map((entry) => entry.row);
@@ -349,30 +368,41 @@ export async function reprojectTicketProvenance(input: {
   const priorNonEmpty =
     priorRaw.text !== undefined && priorRaw.text.trim() !== "";
 
-  // Empty selection on any existing non-empty volume = keep bytes untouched.
-  // Existence is the on-disk non-empty fact — not "header successfully projected"
-  // (damaged bare headers / legacy SitianRecord rows still must not be wiped).
-  if (input.sessions.length === 0 && priorNonEmpty) {
-    const now = new Date().toISOString();
-    const header: TicketProvenanceHeader =
-      prior.header ??
-      ({
-        repo: resolveBookKeyFromGit(input.cwd),
-        ticket: input.ticketNumber,
-        createdAt: now,
-        updatedAt: now,
-        sessions: [],
-      } satisfies TicketProvenanceHeader);
-    return {
-      recordFile: prior.recordFile,
-      header,
-      lines: prior.lines,
-      unparsable: [],
-    };
+  const amendments = input.amendments ?? [];
+  // Empty sessions: pure empty selection preserves non-empty volume. Amendments-only
+  // continuation reuses prior header sessions — never wash into accepted no-op.
+  let sessions = input.sessions;
+  if (sessions.length === 0) {
+    if (amendments.length > 0) {
+      const priorSessions = prior.header?.sessions;
+      if (priorSessions === undefined || priorSessions.length === 0) {
+        throw new TicketProvenanceInputError(
+          "amendments require sessions bounds (none submitted and no prior header sessions)",
+        );
+      }
+      sessions = priorSessions;
+    } else if (priorNonEmpty) {
+      const now = new Date().toISOString();
+      const header: TicketProvenanceHeader =
+        prior.header ??
+        ({
+          repo: resolveBookKeyFromGit(input.cwd),
+          ticket: input.ticketNumber,
+          createdAt: now,
+          updatedAt: now,
+          sessions: [],
+        } satisfies TicketProvenanceHeader);
+      return {
+        recordFile: prior.recordFile,
+        header,
+        lines: prior.lines,
+        unparsable: [],
+      };
+    }
   }
 
   const amendmentsByKey = new Map<string, TicketProvenanceAmendment>();
-  for (const amendment of input.amendments ?? []) {
+  for (const amendment of amendments) {
     amendmentsByKey.set(amendmentKey(amendment.s, amendment.line), amendment);
   }
 
@@ -380,10 +410,10 @@ export async function reprojectTicketProvenance(input: {
   const unparsable: UnparsableSessionLine[] = [];
   // First-seen native id across the whole reproject (rewritten session copies).
   const seenIds = new Set<string>();
-  for (let s = 0; s < input.sessions.length; s += 1) {
+  for (let s = 0; s < sessions.length; s += 1) {
     const projected = await projectSessionRanges({
       s,
-      session: input.sessions[s]!,
+      session: sessions[s]!,
       amendmentsByKey,
       seenIds,
       ...(input.home === undefined ? {} : { home: input.home }),
@@ -398,7 +428,7 @@ export async function reprojectTicketProvenance(input: {
     ticket: input.ticketNumber,
     createdAt: prior.header?.createdAt ?? now,
     updatedAt: now,
-    sessions: input.sessions,
+    sessions,
   };
 
   // Still-open gaps → reask without publishing a partial/rejected projection.

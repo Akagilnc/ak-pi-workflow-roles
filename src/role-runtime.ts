@@ -90,6 +90,7 @@ import {
   projectDiaristSessions,
 } from "./diarist-contracts.ts";
 import { commitDiaristProjection } from "./diarist.ts";
+import { TicketProvenanceInputError } from "./ticket-provenance.ts";
 import { bindTicketNumberOnRunDirectory } from "./public-cli/invocation.ts";
 import {
   GATEKEEPER_TOOL_SPEC,
@@ -1006,15 +1007,13 @@ export function createDiaristRoleRuntime(
               amendments,
             });
           } catch (error) {
-            // Bound resolution / session open failures are input errors → reask.
+            // Bound/session input failures → reask via typed identity (not message prefix).
             // Unexpected infrastructure keeps its own identity (do not wash).
             if (error instanceof ParentQueueReaskError) throw error;
-            const message = error instanceof Error ? error.message : String(error);
-            if (
-              message.startsWith("bound ") ||
-              message.startsWith("session unreadable:")
-            ) {
-              throw new ParentQueueReaskError(`${DIARIST_BOUNDS_REASK}\n${message}`);
+            if (error instanceof TicketProvenanceInputError) {
+              throw new ParentQueueReaskError(
+                `${DIARIST_BOUNDS_REASK}\n${error.message}`,
+              );
             }
             throw error;
           }
