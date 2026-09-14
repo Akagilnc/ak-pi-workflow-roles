@@ -175,13 +175,20 @@ class RecordWriteCache {
     const parsed = parseJsonlLine(raw);
     if (parsed.ok && typeof parsed.value.identity === "string") {
       const existing = await this.load(recordFile);
-      if (existing.has(parsed.value.identity)) return;
-      existing.add(parsed.value.identity);
-    } else if (!this.identities.has(recordFile)) {
-      // Ensure subsequent identity loads see a live map even when first rows lack identity.
-      this.identities.set(recordFile, await this.load(recordFile));
+      if (!existing.has(parsed.value.identity)) {
+        existing.add(parsed.value.identity);
+        await appendFile(recordFile, line, "utf8");
+      }
+      // Identity hit skips a second physical copy, but the source row still claims
+      // this dest — register outcome below so bare replace flips every claim.
+    } else {
+      if (!this.identities.has(recordFile)) {
+        // Ensure subsequent identity loads see a live map even when first rows lack identity.
+        this.identities.set(recordFile, await this.load(recordFile));
+      }
+      await appendFile(recordFile, line, "utf8");
     }
-    await appendFile(recordFile, line, "utf8");
+    // Register outcome claims on dest even when identity skipped a write.
     if (options?.outcomeIndex !== undefined && !this.bareVolumeFiles.has(recordFile)) {
       const list = this.destPlacements.get(recordFile) ?? [];
       list.push({ raw, outcomeIndex: options.outcomeIndex });

@@ -459,7 +459,10 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     })}\n`;
     await writeFile(paths.recordFile, priorBody, "utf8");
     const priorBytes = priorBody;
+    let sawDirPathReask = false;
     let sawUnparsableReask = false;
+    // Authorized-root directory (not a session file) — EISDIR must reask, not fail the court.
+    const sessionDirOnly = join(home, ".claude", "projects", "probe");
 
     const runId = "01a0diar00-0000-7000-8000-000000000001";
     const { io, stdout } = captureIo();
@@ -482,6 +485,26 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
                 ticketNumber: TICKET,
                 sessions: [
                   {
+                    path: sessionDirOnly,
+                    ranges: [{ from: { line: 1 }, to: { line: 1 } }],
+                  },
+                ],
+              };
+            }
+            if (round === 2) {
+              assert.ok(lastReask, "expected bounds reask for directory session path");
+              assert.match(lastReask, /边界无法使用|session unreadable/);
+              sawDirPathReask = true;
+              assert.equal(
+                readFileSync(paths.recordFile, "utf8"),
+                priorBytes,
+                "directory-path reask must not publish over the prior diary",
+              );
+              return {
+                status: "completed",
+                ticketNumber: TICKET,
+                sessions: [
+                  {
                     path: fixture.path,
                     // Overlapping ranges: must merge, not double-emit id-less rows.
                     ranges: [
@@ -492,16 +515,15 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
                 ],
               };
             }
-            // Second turn: payload-id bounds + amendment (nativeEventId coherence via public entry).
+            // Third turn: payload-id bounds + amendment (nativeEventId coherence via public entry).
             assert.ok(lastReask, "expected unparsable-line reask before amendment");
             assert.match(lastReask, /amendments/);
             assert.ok(lastReask.includes(fixture.unparsableRaw));
             sawUnparsableReask = true;
-            // Rejected first submission must not have rewritten the prior volume.
             assert.equal(
               readFileSync(paths.recordFile, "utf8"),
               priorBytes,
-              "first-round unparsable reask must not publish over the prior diary",
+              "unparsable reask must not publish over the prior diary",
             );
             return {
               status: "completed",
@@ -533,6 +555,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     assert.equal(result.exitCode, 0, stdout.join("") || "diarist run failed");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(result.terminal?.roleOutcome.role, "diarist");
+    assert.equal(sawDirPathReask, true, "expected directory session path reask");
     assert.equal(sawUnparsableReask, true, "expected an unparsable reask before accept");
 
     const placement = roleRunPlacement(resolveActivationLedgerHome(home), {
@@ -700,7 +723,19 @@ test("migrateBookTopology preserves legacy and prior bare under unbound when lat
       identity: "legacy-1",
       payload: { note: "old" },
     });
-    await writeFile(join(legacyDir, "records.jsonl"), `${legacyRaw}\n`, "utf8");
+    // Two source rows share identity — second skips physical write but must still
+    // claim dest so bare replace flips both outcomes (no phantom placed).
+    const legacyRawDup = JSON.stringify({
+      kind: "ticket-provenance",
+      subject: String(TICKET),
+      identity: "legacy-1",
+      payload: { note: "old-dup-source" },
+    });
+    await writeFile(
+      join(legacyDir, "records.jsonl"),
+      `${legacyRaw}\n${legacyRawDup}\n`,
+      "utf8",
+    );
     const bareHeaderFirst = JSON.stringify({
       repo: bookKey,
       ticket: TICKET,
@@ -737,10 +772,14 @@ test("migrateBookTopology preserves legacy and prior bare under unbound when lat
 
     const tp = report.partitions.find((p) => p.partition === "ticket-provenance");
     assert.ok(tp, "ticket-provenance partition report present");
-    // 1 legacy + 2 bare volumes × 2 lines each = 5 source lines.
-    assert.equal(tp.before, 5);
+    // 2 same-identity legacy + 2 bare volumes × 2 lines each = 6 source lines.
+    assert.equal(tp.before, 6);
     assert.equal(tp.placed, 2, "only winning bare header+body stay placed");
-    assert.equal(tp.unbound, 3, "legacy + first bare header+body rehomed");
+    assert.equal(
+      tp.unbound,
+      4,
+      "both legacy claims + first bare header+body rehomed (identity dup still counted)",
+    );
     assert.equal(tp.discarded, 0);
 
     const destVolume = join(report.booksDirectory, bookKey, String(TICKET), "records.jsonl");
@@ -773,6 +812,11 @@ test("migrateBookTopology preserves legacy and prior bare under unbound when lat
     }
     const unboundBodies = (await collectRaw(unboundRoot)).join("\n");
     assert.equal(unboundBodies.includes(legacyRaw), true, "legacy bytes in unbound");
+    assert.equal(
+      unboundBodies.includes("old-dup-source"),
+      true,
+      "duplicate-identity legacy source row also preserved in unbound",
+    );
     assert.equal(unboundBodies.includes("bare-first"), true, "first bare body in unbound");
     assert.equal(
       unboundBodies.includes('"updatedAt":"t0"'),

@@ -293,9 +293,10 @@ async function projectSessionRanges(input: {
   } catch (error) {
     if (error instanceof TicketProvenanceInputError) throw error;
     // Only absence/path-shape misses are model input errors → reask.
+    // EISDIR = authorized-root path that is a directory, not a session file.
     // EIO / EMFILE / EACCES / other runtime faults keep native identity + cause.
     const code = errnoCode(error);
-    if (code === "ENOENT" || code === "ENOTDIR") {
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "EISDIR") {
       const detail = error instanceof Error ? error.message : String(error);
       throw new TicketProvenanceInputError(
         `session unreadable: ${input.session.path} (${detail})`,
