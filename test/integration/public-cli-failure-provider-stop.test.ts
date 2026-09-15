@@ -373,29 +373,48 @@ test("retained auditor failure is bound to the latest parent resume attempt", as
     assert.equal(await readBoundAuditorKnownFailure(sessionFile), undefined);
   });
 });
-// #600 / 8e767152 / #858: bare resume is an empty user turn (typed). Settlement
-// must ignore that envelope so first-attempt auditor retentionFailure/compliance
-// is not dropped as stale. No engine-handbook prose lock.
-test("bare resume empty turn keeps first-attempt auditor retention bound", async () => {
+// #600 / 8e767152 / #858: package bare/auto resume identity is typed session
+// custom entry (packageTrigger). Settlement skips that turn so first-attempt
+// auditor retention is not dropped. Historical volumes without the entry keep
+// production-byte shapes (transport token / empty-first-line separator). Fully
+// empty without the typed entry is a real court turn (same-ticket no-instruction).
+test("package resume keeps first-attempt auditor retention bound", async () => {
   await withTempHome(async (home) => {
     const sessionDir = join(home, "session");
     const sessionFile = join(sessionDir, "parent.jsonl");
     const childDir = join(sessionDir, "auditor-roles");
     await mkdir(childDir, { recursive: true });
-    // Production bare resume writes empty user-turn bytes (selectResumeContinuationPrompt).
-    const bareResumePrompt = "";
 
-    const shapes: ReadonlyArray<{ label: string; message: Record<string, unknown> }> = [
-      // text-string form (message.content string)
-      { label: "content-string", message: { role: "user", content: bareResumePrompt } },
-      // message.text string form
-      { label: "text-string", message: { role: "user", text: bareResumePrompt } },
-      // real pi content-array form
+    const shapes: ReadonlyArray<{
+      label: string;
+      message: Record<string, unknown>;
+      typedEntry?: boolean;
+    }> = [
+      { label: "typed-content-string", message: { role: "user", content: "" }, typedEntry: true },
+      { label: "typed-text-string", message: { role: "user", text: "" }, typedEntry: true },
       {
-        label: "content-array",
-        message: { role: "user", content: [{ type: "text", text: bareResumePrompt }] },
+        label: "typed-content-array",
+        message: { role: "user", content: [{ type: "text", text: "" }] },
+        typedEntry: true,
       },
+      // Historical production shapes (no typed entry).
+      { label: "historical-engine-separator", message: { role: "user", content: "\n- engine: historical" } },
+      { label: "historical-transport-token", message: { role: "user", content: "[ak-role:resume-continue]" } },
     ];
+
+    const expected = {
+      cause: "provider" as const,
+      diagnostic: "WebSocket error",
+      identity: { name: "faux-1", code: "openai-codex" },
+      details: {
+        provider: "openai-codex",
+        model: "faux-1",
+        retentionFailure: {
+          name: "ComplianceResponseRetentionError",
+          cause: { code: "EISDIR" },
+        },
+      },
+    };
 
     for (const shape of shapes) {
       await writeFile(sessionFile, [
@@ -412,6 +431,13 @@ test("bare resume empty turn keeps first-attempt auditor retention bound", async
             model: "faux-1",
           },
         },
+        ...(shape.typedEntry === true
+          ? [{
+              type: "custom" as const,
+              customType: "ak_package_resume_turn",
+              data: { version: 1, packageTrigger: true },
+            }]
+          : []),
         { type: "message", id: `resume-${shape.label}`, message: shape.message },
         {
           type: "message",
@@ -478,22 +504,73 @@ test("bare resume empty turn keeps first-attempt auditor retention bound", async
       const known = await readBoundAuditorKnownFailure(sessionFile);
       assert.deepEqual(
         known,
-        {
-          cause: "provider",
-          diagnostic: "WebSocket error",
-          identity: { name: "faux-1", code: "openai-codex" },
-          details: {
-            provider: "openai-codex",
-            model: "faux-1",
-            retentionFailure: {
-              name: "ComplianceResponseRetentionError",
-              cause: { code: "EISDIR" },
-            },
-          },
-        },
-        `${shape.label}: bare resume empty turn must not stale first-attempt auditor retention`,
+        expected,
+        `${shape.label}: package resume must not stale first-attempt auditor retention`,
       );
     }
+
+    // Same-ticket no-instruction: empty prompt, no package entry → real court, stales prior.
+    await writeFile(sessionFile, [
+      { type: "session", id: "parent-session" },
+      { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
+      {
+        type: "message",
+        id: "attempt-first",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "first failure",
+          provider: "openai-codex",
+          model: "faux-1",
+        },
+      },
+      { type: "message", id: "user-summons", message: { role: "user", content: "" } },
+      {
+        type: "message",
+        id: "attempt-second",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "second failure",
+          provider: "openai-codex",
+          model: "faux-1",
+        },
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    await writeFile(join(childDir, "child.jsonl"), [
+      { type: "session", id: "child-session", parentSession: sessionFile },
+      {
+        type: "custom",
+        customType: "ak_auditor_parent_attempt_binding",
+        data: {
+          version: 1,
+          parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-first" },
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "stale prior",
+          provider: "openai-codex",
+          model: "faux-1",
+        },
+      },
+      {
+        type: "custom",
+        customType: "ak_auditor_compliance_failure",
+        data: {
+          parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-first" },
+          failure: { cause: "provider", diagnostic: "stale prior court" },
+        },
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    assert.equal(
+      await readBoundAuditorKnownFailure(sessionFile),
+      undefined,
+      "same-ticket empty prompt without package entry must stale prior auditor retention",
+    );
   });
 });
 test("bound auditor assistant supplies primary when secondary enrichment is absent", async () => {

@@ -345,24 +345,6 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
       "utf8",
     );
 
-    // #742: bound notary materials carry the ticket's 起居录 paths (feature observation).
-    const { resolveTicketProvenanceVolume } = await import(
-      "../../src/ticket-provenance.ts"
-    );
-    const volume = resolveTicketProvenanceVolume(582, project, home);
-    await mkdir(volume.volumeDir, { recursive: true });
-    await writeFile(
-      volume.recordFile,
-      `${JSON.stringify({
-        repo: "project",
-        ticket: 582,
-        createdAt: "2026-09-14T00:00:00.000Z",
-        updatedAt: "2026-09-14T00:00:00.000Z",
-        sessions: [],
-      })}\n`,
-      "utf8",
-    );
-
     const result = await runPublicNotary(
       ["--source-run", sourceRunPath],
       {
@@ -389,7 +371,5 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
-    // Typed identity + volume readability only — no prompt/freeze path substring lock (#858/#859).
-    await readFile(volume.recordFile, "utf8");
   });
 });

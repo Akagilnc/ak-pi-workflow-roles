@@ -60,7 +60,6 @@ import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-
 import {
   ensureTicketProvenanceVolume,
   readTicketProvenance,
-  resolveTicketProvenanceVolume,
 } from "../../src/ticket-provenance.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -995,10 +994,8 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       "the first ticket-identifying leg is relocated after its typed assertion",
     );
 
-    // Typed ticket identity + volume readability only — no prompt/freeze substring lock (#858/#859).
+    // Typed ticket identity via real provenance read — no raw re-read of the same file.
     await readTicketProvenance(582, project, home);
-    const volume = resolveTicketProvenanceVolume(582, project, home);
-    await readFile(volume.recordFile, "utf8");
 
     assert.deepEqual(result.terminal?.gate?.actualSeats, ["notary"]);
     await readFile(join(ticketRun, "session", "auditor-roles", "o01_notary.jsonl"), "utf8");

@@ -138,7 +138,16 @@ export type RoleTurnActivation =
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }
-  | { readonly kind: "resume"; readonly prompt: string };
+  | {
+      readonly kind: "resume";
+      readonly prompt: string;
+      /**
+       * Package bare/auto resume trigger (#600 / #836 / #858): no caller message
+       * and no same-ticket summons content. Typed identity for engine materials
+       * face and settlement retention — never inferred from prompt bytes.
+       */
+      readonly packageTrigger?: true;
+    };
 
 /** Seat model consumed by the turn host (provider/model/thinking). */
 export type RoleTurnModelConfig = {

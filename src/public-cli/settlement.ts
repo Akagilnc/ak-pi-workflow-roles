@@ -29,6 +29,7 @@ import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
 import { readReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
   isV1ResumableProvider,
+  PACKAGE_RESUME_TURN_ENTRY,
   readLatestTypedProviderHttpObservation,
   readTypedHttp429Observation,
   RESUME_TRANSPORT_ENVELOPE,
@@ -1087,31 +1088,62 @@ async function loadBoundAuditorVolumes(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
-  // Typed resume markers only (#600 / #836 / #858): empty bare-resume turn, or
-  // package transport token as first line (station-child / historical sessions).
-  // Never sniff engine handbook presentation bytes.
-  const isResumeEnvelopeBytes = (value: unknown): boolean => {
-    if (typeof value !== "string") return false;
-    if (value.length === 0) return true;
-    const nl = value.indexOf("\n");
-    const firstLine = nl === -1 ? value : value.slice(0, nl);
-    return firstLine === RESUME_TRANSPORT_ENVELOPE;
-  };
-  const isResumeEnvelope = (msg: unknown): boolean => {
-    if (!isRecord(msg) || msg.role !== "user") return false;
-    const text = typeof msg.text === "string" ? msg.text : typeof (msg as { content?: unknown }).content === "string" ? (msg as { content: string }).content : undefined;
-    if (isResumeEnvelopeBytes(text)) return true;
+  // Package bare/auto resume identity (#600 / #836 / #858):
+  // Primary = typed session custom entry written at session_start when
+  // continuation.packageTrigger is set. Never prompt emptiness or first-line
+  // tokens as live identity (same-ticket no-instruction also has empty prompt).
+  // Historical volumes without the entry keep production-byte shapes only:
+  // RESUME_TRANSPORT_ENVELOPE first line, or empty first line with trailing body
+  // (appendEngineSessionMaterial blank separator before engine coordinates).
+  // Fully empty without the typed entry is NOT package resume (C3).
+  // Never sniff engine handbook presentation prose.
+  const userMessageText = (msg: unknown): string | undefined => {
+    if (!isRecord(msg) || msg.role !== "user") return undefined;
+    if (typeof msg.text === "string") return msg.text;
+    if (typeof (msg as { content?: unknown }).content === "string") {
+      return (msg as { content: string }).content;
+    }
     const content = (msg as { content?: unknown }).content;
     if (Array.isArray(content)) {
-      return content.some((p) => isRecord(p) && (isResumeEnvelopeBytes(p.text) || isResumeEnvelopeBytes(p.content)));
+      const parts: string[] = [];
+      for (const part of content) {
+        if (!isRecord(part)) continue;
+        if (typeof part.text === "string") parts.push(part.text);
+        else if (typeof part.content === "string") parts.push(part.content);
+      }
+      if (parts.length > 0) return parts.join("\n");
     }
-    return false;
+    return undefined;
+  };
+  const isHistoricalPackageResumeBytes = (value: string): boolean => {
+    if (value.length === 0) return false;
+    const nl = value.indexOf("\n");
+    const firstLine = nl === -1 ? value : value.slice(0, nl);
+    if (firstLine === RESUME_TRANSPORT_ENVELOPE) return true;
+    // appendEngineSessionMaterial on empty caller lines yields "\n…engine…".
+    return firstLine === "" && nl !== -1;
+  };
+  const isPackageResumeUserTurn = (index: number): boolean => {
+    for (let j = index - 1; j >= 0; j -= 1) {
+      const prior = parentEntries[j];
+      if (prior?.type === "message" && prior.message?.role === "user") break;
+      if (
+        prior?.type === "custom"
+        && prior.customType === PACKAGE_RESUME_TURN_ENTRY
+        && isRecord(prior.data)
+        && prior.data.packageTrigger === true
+      ) {
+        return true;
+      }
+    }
+    const text = userMessageText(parentEntries[index]?.message);
+    return typeof text === "string" && isHistoricalPackageResumeBytes(text);
   };
   let latestParentUserIndex = -1;
   for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
     const entry = parentEntries[i];
     if (entry?.type !== "message" || entry.message?.role !== "user") continue;
-    if (isResumeEnvelope(entry.message)) continue;
+    if (isPackageResumeUserTurn(i)) continue;
     latestParentUserIndex = i;
     break;
   }

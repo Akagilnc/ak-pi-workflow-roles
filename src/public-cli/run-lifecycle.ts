@@ -1,6 +1,7 @@
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
+  RoleTurnContinuation,
 } from "../host-contracts.ts";
 /**
  * Durable Role run lifecycle for public CLI (ADR 0052 / #11 / #108 / #416).
@@ -124,8 +125,29 @@ export type RoleRunRecord = {
   readonly resumable?: TypedHttp429Observation;
 };
 
-/** Package-owned turn trigger for resume. Not caller instruction and not semantic task content. */
+/**
+ * Historical package resume token still written by station-child auto-resume
+ * (#840). Settlement recognizes it only as a historical session-byte shape when
+ * no typed package-resume entry is present — never the live identity (#858).
+ */
 export const RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]" as const;
+
+/**
+ * Typed session custom entry for package bare/auto resume (#600 / #858).
+ * Written at session_start when continuation.packageTrigger is set. Settlement
+ * consumes this key — not prompt emptiness or transport-token first lines.
+ */
+export const PACKAGE_RESUME_TURN_ENTRY = "ak_package_resume_turn" as const;
+
+/** Activation flag projecting continuation.packageTrigger into role-runtime. */
+export const PACKAGE_RESUME_FLAG = Object.freeze({
+  name: "ak-package-resume",
+  definition: {
+    description: "Package bare/auto resume trigger (typed; not caller dialogue)",
+    type: "boolean" as const,
+    default: false,
+  },
+});
 
 /** Public manual resume request after the unique CLI parser owns runId + optional message. */
 export type PublicResumeRequest = {
@@ -168,9 +190,9 @@ export type SameTicketSummonsMaterials = {
 /**
  * Unique continuation-prompt selector for manual/auto engine-axis resume
  * (#471 / #600 / #736 / #836 / #858). Message present → those bytes + engine
- * coordinates (real user turn). Message absent → empty user turn (typed resume
- * marker for settlement retention); engine coordinates ride RoleTurnRequest.engine
- * + readingMaterial face — never bare-resume user-turn prose for settlement to sniff.
+ * coordinates (caller turn). Message absent → empty prompt bytes; identity is
+ * continuation.packageTrigger (not emptiness). Engine coordinates for package
+ * resume ride RoleTurnRequest.engine + readingMaterial face.
  */
 export function selectResumeContinuationPrompt(
   message?: string,
@@ -178,6 +200,13 @@ export function selectResumeContinuationPrompt(
 ): string {
   if (message === undefined) return "";
   return appendEngineSessionMaterial([message], engineMaterial).join("\n");
+}
+
+/** Package bare/auto resume continuation: prompt bytes + typed packageTrigger. */
+export function packageResumeContinuation(
+  prompt = "",
+): Extract<RoleTurnContinuation, { kind: "resume" }> {
+  return { kind: "resume", prompt, packageTrigger: true };
 }
 
 /**

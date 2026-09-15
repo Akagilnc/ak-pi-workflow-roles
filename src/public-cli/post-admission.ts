@@ -11,6 +11,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildResumeContinuationPrompt,
+  packageResumeContinuation,
   RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
@@ -51,7 +52,7 @@ function describeCaughtError(error: unknown): { name?: string; message: string; 
   return { message: String(error) };
 }
 
-/** Append one system section to a continuation prompt, keeping its kind. */
+/** Append one system section to a continuation prompt, keeping its kind + packageTrigger. */
 function appendContinuationSection(
   continuation: RoleTurnContinuation,
   section: string,
@@ -59,7 +60,17 @@ function appendContinuationSection(
   const prompt = `${continuation.prompt}\n\n${section}`;
   return continuation.kind === "initial"
     ? { kind: "initial", prompt }
-    : { kind: "resume", prompt };
+    : {
+        kind: "resume",
+        prompt,
+        ...(continuation.packageTrigger === true ? { packageTrigger: true as const } : {}),
+      };
+}
+
+function isPackageResumeContinuation(
+  continuation: RoleTurnContinuation,
+): boolean {
+  return continuation.kind === "resume" && continuation.packageTrigger === true;
 }
 
 /**
@@ -731,10 +742,10 @@ export async function dispatchPostAdmissionTurn<
     // writes (#742). Case dossier delivery (ADR 0081 / #709 / #858) rides here once
     // for every public entry:
     // - station-child officer: attachments freeze (peer body stays opaque, #879)
-    // - bound ordinary: BASE continuation.prompt section (concrete file)
-    // - unbound ordinary: same attachments freeze — path shape reaches the LLM via
-    //   existing readingMaterial fold, never spliced into caller dialogue / empty
-    //   request / opaque resume message (#858).
+    // - package bare/auto resume: same attachments freeze — must not splice into
+    //   the empty package-trigger prompt (typed packageTrigger identity, #858)
+    // - bound ordinary initial / caller resume: BASE continuation.prompt section
+    // - unbound ordinary: attachments freeze via readingMaterial fold
     let turnRequest: RoleTurnRequest =
       env.signal === undefined ? request : { ...request, signal: env.signal };
     if (env.stationChild !== undefined) {
@@ -751,9 +762,10 @@ export async function dispatchPostAdmissionTurn<
     if (
       isStationChildOfficerDialogue(admitted.role, env)
       || admitted.ticketNumber === undefined
+      || isPackageResumeContinuation(turnRequest.continuation)
     ) {
-      // 0081 non-body face (station-child + unbound ordinary): freeze pointer
-      // under run/attachments/. Peer/unbound dialogue stays free of path splice;
+      // Non-body face: freeze pointer under run/attachments/. Package resume and
+      // unbound/station-child keep dialogue (or empty trigger) free of path splice;
       // seat loads freeze via loadCaseDossierReadingMaterial → materials fold.
       await deliverCaseDossierAsAttachment({
         ticketNumber: admitted.ticketNumber,
@@ -762,7 +774,7 @@ export async function dispatchPostAdmissionTurn<
         runDirectory: admitted.runDirectory,
       });
     } else {
-      // BASE bound ordinary-entry face: append the concrete path pointer.
+      // BASE bound ordinary-entry face (initial / caller-or-summons resume only).
       const dossierSection = await projectCaseDossierPointerSection({
         ticketNumber: admitted.ticketNumber,
         projectRoot: admitted.projectRoot,
@@ -1202,6 +1214,13 @@ export function resumeTurnRequestProjectionOptions(
   // no code-authored constant substitute, no attachment-list wrap of peer body.
   // Binding pointer stays on summons sourceRunPath / activation / attachments.
   const officerDialogue = isStationChildOfficerDialogue(admitted.role, env);
+  // Package bare resume only when no caller message and no same-ticket summons.
+  // Same-ticket no-instruction stays a real court turn (courtAttemptId) — never
+  // packageTrigger — so empty prompt bytes are not the resume identity (#858 C3).
+  const packageTrigger =
+    request.message === undefined
+    && summonsPrepared === undefined
+    && request.summons === undefined;
   let prompt: string;
   if (request.message !== undefined) {
     if (summonsPrepared !== undefined) {
@@ -1218,7 +1237,7 @@ export function resumeTurnRequestProjectionOptions(
       // #755: same-ticket summons without prepared materials — caller words only.
       prompt = request.message;
     } else {
-      // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
+      // Caller-message resume — engine coordinates stay on transport prompt.
       prompt = buildResumeContinuationPrompt({
         packageRoot: env.packageRoot,
         ...pickEngineAxis(env),
@@ -1234,9 +1253,11 @@ export function resumeTurnRequestProjectionOptions(
   } else if (request.summons !== undefined) {
     // #879: same-ticket summons with no instruction (e.g. notary source-run binding
     // only). Pointer is activation/sourceRun material — not dialogue content.
+    // Not packageTrigger: courtAttemptId marks the new court.
     prompt = "";
   } else {
-    // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
+    // Package bare resume — empty prompt; engine rides readingMaterial via
+    // packageTrigger (#600/#858). Identity is the typed flag, not emptiness.
     prompt = buildResumeContinuationPrompt({
       packageRoot: env.packageRoot,
       ...pickEngineAxis(env),
@@ -1252,10 +1273,9 @@ export function resumeTurnRequestProjectionOptions(
     ...(admitted.correlationId === undefined && env.correlationId === undefined
       ? {}
       : { correlationId: admitted.correlationId ?? env.correlationId }),
-    continuation: {
-      kind: "resume",
-      prompt,
-    },
+    continuation: packageTrigger
+      ? packageResumeContinuation(prompt)
+      : { kind: "resume", prompt },
     ...(request.message === undefined ? {} : { courtAttemptId: randomUUID() }),
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
   };
@@ -1521,10 +1541,7 @@ export async function runPostAdmissionSeatResume<
               if (payload.resumeTurn && firstTurn !== undefined) {
                 return {
                   ...firstTurn,
-                  continuation: {
-                    kind: "resume",
-                    prompt: RESUME_TRANSPORT_ENVELOPE,
-                  },
+                  continuation: packageResumeContinuation(RESUME_TRANSPORT_ENVELOPE),
                 };
               }
               const turnRequest = withEngineDetourInvocationScope(
@@ -1612,16 +1629,15 @@ export async function runPostAdmissionOneShot<
     buildInitialRequest: () => input.request,
     buildResumeRequest: () => ({
       ...input.request,
-      continuation: {
-        kind: "resume",
-        prompt: buildResumeContinuationPrompt({
+      continuation: packageResumeContinuation(
+        buildResumeContinuationPrompt({
           packageRoot: input.env.packageRoot,
           ...pickEngineAxis({
             engine: input.effectiveEngine ?? input.env.engine,
             engineModel: input.env.engineModel,
           }),
         }),
-      },
+      ),
     }),
     adapters: input.adapters,
     ...(input.effectiveEngine === undefined ? {} : { effectiveEngine: input.effectiveEngine }),
