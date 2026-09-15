@@ -134,22 +134,15 @@ async function admitReviewerInvocation(
 }
 
 
-test("buildReviewerTransportPrompt projects typed base/lens/authority into Skill args", () => {
-  const prompt = buildReviewerTransportPrompt({
-    role: "reviewer",
+test("buildReviewerTransportPrompt projects typed base/lens/authority into Skill args", async () => {
+  const { fixtureReviewerAdmitted } = await import("../helpers/admitted-principal-fixture.ts");
+  const admitted = fixtureReviewerAdmitted({
     runId: "run-prompt-proj",
     bookKey: "book",
     projectRoot: "/tmp/p",
+    runDirectory: "/tmp/r",
     instruction: "caller note",
     instructionEmpty: false,
-    attachments: [],
-    runDirectory: "/tmp/r",
-    principal: {
-      kind: "pi",
-      sessionDirectory: "/tmp/s",
-      sessionFile: "/tmp/s/session.jsonl",
-    },
-    admittedRequestPath: "/tmp/r/admitted-request.json",
     baseRevision: "origin/main",
     lens: "correctness",
     authorityRefs: Object.freeze([
@@ -157,6 +150,7 @@ test("buildReviewerTransportPrompt projects typed base/lens/authority into Skill
       "docs/adr/0001-roles-grow-by-demand.md",
     ]),
   });
+  const prompt = buildReviewerTransportPrompt(admitted);
   assert.equal(
     prompt.startsWith(
       "--base origin/main --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
