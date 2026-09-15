@@ -578,18 +578,10 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
           const sessionFile = args[args.indexOf("--session") + 1]!;
           // Append a resumed user turn; keep the prior residual so the scan
           // boundary is exercised (production resume appends, does not wipe).
-          const prior = await readFile(sessionFile, "utf8");
-          const resumeUser = {
-            type: "message",
-            id: "user-resume",
-            parentId: null,
-            timestamp: "2026-08-30T00:01:00.000Z",
-            message: { role: "user", content: "再试", timestamp: 10 },
-          };
-          await writeFile(
+          await writeSessionJsonl(
             sessionFile,
-            `${prior}${JSON.stringify(resumeUser)}\n`,
-            "utf8",
+            [sessionUserMessageRow("user-resume", "再试", 60)],
+            "append",
           );
           return {
             code: 1,
