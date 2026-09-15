@@ -113,7 +113,7 @@ function isCodexOwnerResponseItemUser(message: Record<string, unknown>): boolean
 /**
  * 入队事件适配：人类这次输入经队列的来源。
  * 被吸收的插话靠入队事件入录（无独立消息记录，#901 用户故事 11）。
- * 机器入队由整卷适配层按宿主结构化来源排除（#918）；本函数不读正文、不自判机器。
+ * 机器入队由整卷适配层排除（#918）；本函数不读正文、不自判机器。
  */
 function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
   if (row.type !== "queue-operation" || row.operation !== "enqueue") return [];
@@ -123,11 +123,27 @@ function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
   return [{ speaker: "owner", text: content, ...(id === undefined ? {} : { id }) }];
 }
 
-/** 物化 user 行上的 origin 对象（CC top-level）。 */
-function materializationOrigin(
-  row: Record<string, unknown>,
-): Record<string, unknown> | undefined {
-  return isRecord(row.origin) ? row.origin : undefined;
+/**
+ * 陛下 2026-09-15 拍定：冻结卷宗上的固定起始形状，不是自由文本。
+ * 只认这两个御批元素开标签；不得按内部正文语义或措辞变体扩表。
+ * 开标签后可直接 `>`（无属性）或空白再接属性（活体 peer 常带 from=…）。
+ */
+const FIXED_NON_OWNER_ENQUEUE_TAGS = [
+  "<task-notification",
+  "<cross-session-message",
+] as const;
+
+/** enqueue.content 是否以御批固定机器开标签起头。 */
+function isFixedNonOwnerEnqueueShape(content: string): boolean {
+  for (const tag of FIXED_NON_OWNER_ENQUEUE_TAGS) {
+    if (!content.startsWith(tag)) continue;
+    const next = content.charAt(tag.length);
+    // 元素开标签终止符：`>` 或空白（其后为属性）；其他字符不是这两个形状。
+    if (next === "" || next === ">" || next === " " || next === "\t" || next === "\n" || next === "\r") {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -137,23 +153,9 @@ function materializationOrigin(
 function materializationOriginKind(
   row: Record<string, unknown>,
 ): string | undefined {
-  const origin = materializationOrigin(row);
-  if (origin === undefined) return undefined;
-  const kind = origin.kind;
+  if (!isRecord(row.origin)) return undefined;
+  const kind = row.origin.kind;
   return typeof kind === "string" && kind !== "" ? kind : undefined;
-}
-
-/**
- * peer 等物化 origin 上的结构化 payload 体（`origin.body`）。
- * 活体 enqueue.content 为 XML 壳，物化 text 另有 wrap 前缀；body 才是两侧共有的宿主标识。
- */
-function materializationOriginBody(
-  row: Record<string, unknown>,
-): string | undefined {
-  const origin = materializationOrigin(row);
-  if (origin === undefined) return undefined;
-  const body = origin.body;
-  return typeof body === "string" && body !== "" ? body : undefined;
 }
 
 /**
@@ -165,64 +167,6 @@ function materializationOriginBody(
 function isNonOwnerOriginKind(kind: string | undefined): boolean {
   if (kind === undefined) return false;
   return kind !== "human";
-}
-
-/**
- * 队列项是否由宿主结构化字段标明非陛下来源。
- * - `attachment.origin.kind`：human / peer / …（peer 活体常伴随 commandMode=prompt）
- * - 否则 `attachment.commandMode`：prompt＝真人路；task-notification 等＝机器
- * 缺字段不判。不按正文形态猜。
- */
-function isNonOwnerQueuedCommandSource(input: {
-  readonly commandMode?: string;
-  readonly originKind?: string;
-}): boolean {
-  if (input.originKind !== undefined) {
-    return isNonOwnerOriginKind(input.originKind);
-  }
-  if (input.commandMode === undefined) return false;
-  return input.commandMode !== "prompt" && input.commandMode !== "human";
-}
-
-type QueuedCommandSource = {
-  readonly commandMode?: string;
-  readonly originKind?: string;
-};
-
-/**
- * 宿主用 `attachment.queued_command.prompt` 标识同一队列项（enqueue 常无 uuid）。
- * 收集 prompt → {commandMode, origin.kind}，供 enqueue/remove 按关联键取结构化来源。
- */
-function queuedCommandSourceByIdentity(
-  rows: readonly (Record<string, unknown> | undefined)[],
-): ReadonlyMap<string, QueuedCommandSource> {
-  const sources = new Map<string, QueuedCommandSource>();
-  for (const row of rows) {
-    if (row === undefined || row.type !== "attachment") continue;
-    if (!isRecord(row.attachment)) continue;
-    if (row.attachment.type !== "queued_command") continue;
-    const prompt = row.attachment.prompt;
-    if (typeof prompt !== "string" || prompt === "") continue;
-    const source: {
-      commandMode?: string;
-      originKind?: string;
-    } = {};
-    if (
-      typeof row.attachment.commandMode === "string" &&
-      row.attachment.commandMode !== ""
-    ) {
-      source.commandMode = row.attachment.commandMode;
-    }
-    if (isRecord(row.attachment.origin)) {
-      const kind = row.attachment.origin.kind;
-      if (typeof kind === "string" && kind !== "") source.originKind = kind;
-    }
-    if (source.commandMode === undefined && source.originKind === undefined) {
-      continue;
-    }
-    sources.set(prompt, source);
-  }
-  return sources;
 }
 
 /** 物化 user 行的说话人正文（与 fromMessageEvent 同源切片；无说话人 text 则无）。 */
@@ -268,118 +212,56 @@ type QueuePairing = {
 };
 
 /**
- * 整卷队列来源关联（#918）：不靠全局 FIFO，不按正文形态猜来源。
+ * 整卷队列来源分类（#918）：不靠全局 FIFO，不用可变载荷做 identity join。
  *
- * 来源真值（宿主结构化字段）：
- * - 物化 user 的 `origin.kind`（human / task-notification / peer / …）
- * - `attachment.queued_command.origin.kind`（peer 活体常 commandMode=prompt 仍标 peer）
- * - `attachment.queued_command.commandMode`（无 origin 时：prompt＝真人；task-notification 等＝机器）
+ * 机器 enqueue 分类（陛下 2026-09-15 拍定的冻结形状前缀）：
+ * - content 以 `<task-notification>` / `<cross-session-message>` 开头 → 非 owner
+ *   覆盖无物化、remove、重渲染 task、hostInjected/no-body peer；不据内部正文或变体扩表
  *
- * 关联键（宿主标识同一队列项；enqueue 常无 uuid）：
- * - enqueue.content ↔ attachment.prompt ↔ remove.content ↔ 物化说话人 text（等文）
- * - peer 等：`origin.body` 落入 enqueue.content（物化 text 可有 wrap 前缀，不等于 enqueue）
- * 关联键只把结构化来源接到对应 enqueue，不按正文形态猜「像机器」。
+ * 物化分类（宿主结构化字段）：
+ * - `origin.kind` 非 human → 跳过该物化（不反扣任何 enqueue）
+ * - 真人/旧形物化与仍将入录的同文 enqueue 并存 → 留 enqueue、跳过物化副本（避免双计）
  *
- * 规则：
- * - attachment 结构化来源非陛下 → 抑制同键 enqueue
- * - origin.kind 非 human → 跳过该物化；经等文或 origin.body 关联抑制对应 enqueue
- * - 真人/旧形物化与同键 enqueue 并存 → 留 enqueue、跳过物化副本（避免双计）
- * - 无正文 enqueue 的 sole 物化、被吸收插话（enqueue 无物化）照常保留
- * - 来源不足时不倒扣：无关联结构化证据，不得因 FIFO 漂移把机器来源扣到另一条真人 enqueue
+ * 无正文 enqueue 的 sole 物化、被吸收插话（enqueue 无物化）照常保留。
+ * 来源不足时不倒扣：不得因 FIFO 漂移把机器来源扣到另一条真人 enqueue。
  */
 function ownerMessagesMaterializingQueue(
   rows: readonly (Record<string, unknown> | undefined)[],
 ): QueuePairing {
   const skipMaterializations = new Set<number>();
   const suppressEnqueues = new Set<number>();
-  const queuedSources = queuedCommandSourceByIdentity(rows);
-  /** attachment.prompt 与 enqueue 可能属性序不同；origin.body 是更稳的共有标识。 */
-  const nonOwnerBodies: string[] = [];
-  for (const row of rows) {
-    if (row === undefined || row.type !== "attachment") continue;
-    if (!isRecord(row.attachment) || row.attachment.type !== "queued_command") {
-      continue;
-    }
-    if (!isRecord(row.attachment.origin)) continue;
-    const kind = row.attachment.origin.kind;
-    if (typeof kind !== "string" || !isNonOwnerOriginKind(kind)) continue;
-    const body = row.attachment.origin.body;
-    if (typeof body === "string" && body !== "") nonOwnerBodies.push(body);
-  }
 
-  /** content 键 → 同键 enqueue 下标（可多条同文）。 */
+  /** 同文 enqueue 下标——仅供真人物化去重，不用于机器来源归因。 */
   const enqueuesByContent = new Map<string, number[]>();
-  /** 有正文的 enqueue：下标 + content，供 origin.body 关联（peer wrap 形）。 */
-  const contentEnqueues: { readonly index: number; readonly content: string }[] =
-    [];
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     if (row === undefined) continue;
     if (row.type !== "queue-operation" || row.operation !== "enqueue") continue;
     const content = row.content;
     if (typeof content !== "string" || content === "") continue;
+    if (isFixedNonOwnerEnqueueShape(content)) {
+      suppressEnqueues.add(index);
+    }
     const list = enqueuesByContent.get(content);
     if (list === undefined) enqueuesByContent.set(content, [index]);
     else list.push(index);
-    contentEnqueues.push({ index, content });
-    const source = queuedSources.get(content);
-    if (source !== undefined && isNonOwnerQueuedCommandSource(source)) {
-      suppressEnqueues.add(index);
-      continue;
-    }
-    // prompt 与 enqueue 属性差导致等文未命中时，用 attachment.origin.body 关联。
-    if (nonOwnerBodies.some((body) => content.includes(body))) {
-      suppressEnqueues.add(index);
-    }
   }
-
-  const suppressByContent = (content: string): void => {
-    const list = enqueuesByContent.get(content);
-    if (list === undefined) return;
-    for (const index of list) suppressEnqueues.add(index);
-  };
-
-  /** origin.body 是 peer 等物化上的结构化 payload；落入 enqueue.content 即同一队列项。 */
-  const suppressByOriginBody = (body: string): void => {
-    for (const entry of contentEnqueues) {
-      if (entry.content.includes(body)) suppressEnqueues.add(entry.index);
-    }
-  };
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     if (row === undefined) continue;
-
-    // remove.content：等文接 attachment 来源；属性差时 body 已在 enqueue 扫描阶段抑制。
-    if (row.type === "queue-operation" && row.operation === "remove") {
-      const content = row.content;
-      if (typeof content === "string" && content !== "") {
-        const source = queuedSources.get(content);
-        if (source !== undefined && isNonOwnerQueuedCommandSource(source)) {
-          suppressByContent(content);
-        } else if (nonOwnerBodies.some((body) => content.includes(body))) {
-          suppressByContent(content);
-        }
-      }
-      continue;
-    }
 
     const originKind = materializationOriginKind(row);
     const text = ownerMaterializationText(row);
     if (text === undefined) continue;
 
     if (isNonOwnerOriginKind(originKind)) {
-      // 非陛下物化：自身不入录；来源在 origin.kind，经关联键接回 enqueue。
+      // 非陛下物化：自身不入录。不把来源倒扣到任何 enqueue（固定前缀已在入队侧分类）。
       skipMaterializations.add(index);
-      // task-notification 等：物化 text 与 enqueue.content 等文。
-      suppressByContent(text);
-      // peer 等：物化 text 有 wrap，enqueue 为 XML 壳；origin.body 才是共有标识。
-      const body = materializationOriginBody(row);
-      if (body !== undefined) suppressByOriginBody(body);
       continue;
     }
 
-    // 真人/旧形物化：若同键 enqueue 仍将入录，则本行是副本。
+    // 真人/旧形物化：若同文 enqueue 仍将入录，则本行是副本。
     const matched = enqueuesByContent.get(text);
     if (matched !== undefined && matched.some((i) => !suppressEnqueues.has(i))) {
       skipMaterializations.add(index);

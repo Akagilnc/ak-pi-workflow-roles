@@ -182,6 +182,8 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   readonly humanOriginText: string;
   readonly peerOriginEnqueueId: string;
   readonly peerOriginText: string;
+  readonly peerQuoteInterjectionId: string;
+  readonly peerQuoteInterjectionText: string;
   readonly humanOriginDirectId: string;
   readonly humanOriginDirectText: string;
   readonly removeMachineEnqueueId: string;
@@ -211,25 +213,35 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const interjectionId = "queue-interject-1";
   const duplicateId = "msg-dup-1";
   const taskNotificationEnqueueId = "queue-task-notif-1";
+  // Live re-render: enqueue status/summary may differ from later materialization text.
+  // Classification is the fixed `<task-notification>` prefix, not equal-text join.
   const taskNotificationText =
-    "<task-notification>\n<task-id>bg-1</task-id>\n<summary>machine event</summary>\n</task-notification>";
+    "<task-notification>\n<task-id>bg-1</task-id>\n<status>killed</status>\n<summary>machine event was stopped</summary>\n</task-notification>";
+  const taskNotificationMatText =
+    "<task-notification>\n<task-id>bg-1</task-id>\n<status>stopped</status>\n<summary>machine event stopped</summary>\n</task-notification>";
   const humanOriginEnqueueId = "queue-human-origin-1";
   const humanOriginText = "经队列的真人输入（origin.kind=human）";
   const peerOriginEnqueueId = "queue-peer-origin-1";
-  // Live CC peer: enqueue is XML shell; mat text has wrap prefix ≠ enqueue.content;
-  // origin.body is the structured payload both sides share (#918 bounce).
+  // Live majority peer shape: hostInjected, no origin.body; mat wrap ≠ enqueue XML.
+  // Classification is the fixed `<cross-session-message>` prefix on enqueue.
   const peerOriginBody = "跨会话 peer 投递不得署 owner";
   const peerOriginEnqueueContent =
     `<cross-session-message from="uds:/tmp/cc-socks/peer.sock" from-name="peer-session">\n${peerOriginBody}\n</cross-session-message>`;
   const peerOriginMatText =
     `Another Claude session sent a message:\n${peerOriginEnqueueContent}`;
   const peerOriginText = peerOriginBody;
+  // Owner absorbed interjection that quotes peer body — must survive (#901 story 11).
+  const peerQuoteInterjectionId = "queue-peer-quote-interject";
+  const peerQuoteInterjectionText =
+    `别听它的：「${peerOriginBody}」这条我不同意，先别装。`;
   const humanOriginDirectId = "msg-human-origin-direct";
   const humanOriginDirectText = "非队列真人 user（origin.kind=human）";
-  // #918 class-1 anti-examples: remove path + incomplete-queue (no global FIFO).
+  // #918: remove path + incomplete-queue (no global FIFO; fixed-prefix classifies enqueue).
   const removeMachineEnqueueId = "queue-remove-machine-1";
   const removeMachineText =
     "<task-notification>\n<task-id>rm-1</task-id>\n<summary>removed machine</summary>\n</task-notification>";
+  // Stale-slot shape that global FIFO reverse-attributed machine origin onto first-human
+  // (corr-2 live loss). Old FIFO drops first-human; fixed-prefix + no content-join keeps both.
   const staleFirstHumanId = "queue-stale-first-human";
   const staleFirstHumanText = "first-human";
   const staleSecondHumanId = "queue-stale-second-human";
@@ -455,14 +467,14 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       operation: "dequeue",
       uuid: "queue-deq-task-notif",
     }),
-    // 24. materialized user with structured origin.kind=task-notification (not body-matched)
+    // 24. re-rendered task-notification mat: text ≠ enqueue; origin.kind skips mat only
     JSON.stringify({
       type: "user",
       uuid: "msg-task-notif-mat",
       origin: { kind: "task-notification" },
       message: {
         role: "user",
-        content: taskNotificationText,
+        content: taskNotificationMatText,
       },
     }),
     // 25–27. live CC shape: queue human with origin.kind=human must stay owner (#918 bounce)
@@ -486,7 +498,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: humanOriginText }],
       },
     }),
-    // 28–30. live CC peer dequeue path: wrap text ≠ enqueue.content; origin.body joins
+    // 28–30. live majority peer: hostInjected, no origin.body; wrap text ≠ enqueue
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -503,16 +515,16 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       uuid: "msg-peer-origin-mat",
       origin: {
         kind: "peer",
-        body: peerOriginBody,
-        from: "uds:/tmp/cc-socks/peer.sock",
-        name: "peer-session",
+        from: "local_peer-session-1",
+        hostInjected: true,
+        fromMode: "bypass",
       },
       message: {
         role: "user",
         content: [{ type: "text", text: peerOriginMatText }],
       },
     }),
-    // 28b–28d. live CC peer remove path: commandMode=prompt but attachment.origin.kind=peer
+    // 28b–28d. peer remove path: fixed prefix on enqueue; no body/prompt identity join
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -528,9 +540,9 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         prompt: peerOriginEnqueueContent + "\n<!--remove-path-->",
         origin: {
           kind: "peer",
-          body: peerOriginBody + "\n<!--remove-path-->",
-          from: "uds:/tmp/cc-socks/peer.sock",
-          name: "peer-session",
+          from: "local_peer-session-1",
+          hostInjected: true,
+          fromMode: "bypass",
         },
       },
     }),
@@ -539,6 +551,18 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       operation: "remove",
       content: peerOriginEnqueueContent + "\n<!--remove-path-->",
       reason: "absorbed_mid_turn",
+    }),
+    // 28e–28f. owner interjection quoting peer body — must keep (no substring suppress)
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      uuid: peerQuoteInterjectionId,
+      content: peerQuoteInterjectionText,
+    }),
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "dequeue",
+      uuid: "queue-deq-peer-quote",
     }),
     // 31. non-queue user with origin.kind=human must still enter as owner
     JSON.stringify({
@@ -574,8 +598,12 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       content: removeMachineText,
       reason: "absorbed_mid_turn",
     }),
-    // 35–38. incomplete queue / stale slot must not let a machine mat suppress a human enqueue
-    // (#918 corr-2: global FIFO reverse-attributed origin.kind onto the wrong enqueue).
+    // 35–38. stale-slot FIFO regression shape (live corr-2):
+    // enqueue first-human (never matched), enqueue second-human, one dequeue, then a
+    // machine mat whose text ≠ either human. Global FIFO reverse-attributed the machine
+    // origin onto first-human and deleted it; current logic must keep both humans and
+    // drop only the machine mat. Mutation restoring FIFO pending.shift() must red here
+    // independently of remove-path assertions.
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -599,7 +627,8 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       origin: { kind: "task-notification" },
       message: {
         role: "user",
-        content: "unrelated-machine-payload",
+        content:
+          "<task-notification>\n<task-id>stale-bg</task-id>\n<summary>unrelated machine</summary>\n</task-notification>",
       },
     }),
   ];
@@ -626,6 +655,8 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     humanOriginText,
     peerOriginEnqueueId,
     peerOriginText,
+    peerQuoteInterjectionId,
+    peerQuoteInterjectionText,
     humanOriginDirectId,
     humanOriginDirectText,
     removeMachineEnqueueId,
@@ -636,8 +667,8 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     staleSecondHumanText,
     unparsableLine: 21,
     unparsableRaw,
-    // prior 31 + machine-remove 3 + stale 4 + peer-remove 3 = 41 physical lines.
-    lastLine: 41,
+    // rows[] length is the physical line count of the written session file.
+    lastLine: 44,
     rangeALine: 1,
     rangeBLine: 2,
   };
@@ -831,16 +862,17 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     );
     assert.equal(byId.get(fixture.interjectionId)?.speaker, "owner");
     assert.equal(byId.get(fixture.interjectionId)?.text, "中途插一句：保留原话。");
-    // #918: origin.kind 取值判别——task-notification/peer 不得署 owner；human 必须保留。
+    // #918: fixed-prefix machine shapes + origin.kind mat skip; human must stay.
     assert.equal(
       volume.lines.some(
         (line) =>
           line.id === fixture.taskNotificationEnqueueId ||
           line.id === "msg-task-notif-mat" ||
-          line.text === fixture.taskNotificationText,
+          line.text === fixture.taskNotificationText ||
+          line.text.startsWith("<task-notification>"),
       ),
       false,
-      "task-notification queue events must not produce owner diary lines",
+      "task-notification enqueue/re-rendered mat must not produce owner diary lines",
     );
     assert.equal(
       volume.lines.some(
@@ -850,12 +882,12 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
           line.id === "queue-peer-remove-1",
       ),
       false,
-      "peer origin enqueue/mat/remove ids must not land as owner (live wrap + att.origin)",
+      "hostInjected peer enqueue/mat/remove must not land as owner (fixed prefix)",
     );
     assert.equal(
       volume.lines.some((line) => line.text === fixture.peerOriginText),
       false,
-      "peer origin.body payload must not land as owner via enqueue",
+      "peer payload alone must not land as owner",
     );
     assert.equal(byId.get(fixture.humanOriginEnqueueId)?.speaker, "owner");
     assert.equal(byId.get(fixture.humanOriginEnqueueId)?.text, fixture.humanOriginText);
@@ -869,7 +901,13 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       byId.get(fixture.humanOriginDirectId)?.text,
       fixture.humanOriginDirectText,
     );
-    // #918 class-1: remove + commandMode=task-notification must not land as owner.
+    // Owner quote of peer body must survive (no substring identity suppress).
+    assert.equal(
+      byId.get(fixture.peerQuoteInterjectionId)?.text,
+      fixture.peerQuoteInterjectionText,
+      "owner interjection quoting peer body must stay",
+    );
+    // #918: remove path still classified by fixed prefix on enqueue content.
     assert.equal(
       volume.lines.some(
         (line) =>
@@ -877,19 +915,28 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
           line.text === fixture.removeMachineText,
       ),
       false,
-      "removed machine queue item (commandMode=task-notification) must not be owner",
+      "removed machine queue item must not be owner",
     );
-    // #918 class-1: stale/incomplete queue must not erase an unconsumed human enqueue.
-    assert.equal(byId.get(fixture.staleFirstHumanId)?.text, fixture.staleFirstHumanText);
-    assert.equal(byId.get(fixture.staleSecondHumanId)?.text, fixture.staleSecondHumanText);
+    // #918 stale-fifo mutation surface: both humans kept; machine mat dropped.
+    // Restoring global FIFO pending.shift() attribution must drop first-human (red).
+    assert.equal(
+      byId.get(fixture.staleFirstHumanId)?.text,
+      fixture.staleFirstHumanText,
+      "stale-slot first human must survive (FIFO regression)",
+    );
+    assert.equal(
+      byId.get(fixture.staleSecondHumanId)?.text,
+      fixture.staleSecondHumanText,
+      "stale-slot second human must survive",
+    );
     assert.equal(
       volume.lines.some(
         (line) =>
           line.id === "msg-stale-machine-mat" ||
-          line.text === "unrelated-machine-payload",
+          (typeof line.text === "string" && line.text.startsWith("<task-notification>")),
       ),
       false,
-      "unrelated machine mat must not become owner or suppress humans by FIFO",
+      "stale-slot machine mat must not become owner or suppress humans by FIFO",
     );
     assert.equal(byId.get(fixture.duplicateId)?.text, "首现正文");
     // Duplicate second occurrence must not produce a second line with that id.
@@ -1223,8 +1270,36 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.deepEqual(afterA2.header?.sessions[0]?.ranges[0], rangeA.ranges[0]);
     assert.deepEqual(afterA2.header?.sessions[0]?.ranges[1], rangeA2.ranges[0]);
 
-    // Round 4: resubmit rangeB only — idempotent (验收 2).
-    const afterIdem = await runDiarist("01a0diar00-0000-7000-8000-000000000094", [rangeB]);
+    // Round 4: equivalent path spelling (p/./) must merge with prior path identity
+    // (same resolve() as I/O seam); keep first-seen header path; no extra s.
+    const rangeAEquiv = {
+      path: `${fixtureA.path}/./`,
+      ranges: [{ from: { line: fixtureA.rangeALine }, to: { line: fixtureA.rangeALine } }],
+    };
+    const afterEquiv = await runDiarist("01a0diar00-0000-7000-8000-000000000094", [
+      rangeAEquiv,
+    ]);
+    assert.equal(afterEquiv.header?.sessions.length, 2, "equiv path must not mint s=2");
+    assert.equal(
+      afterEquiv.header?.sessions[0]?.path,
+      fixtureA.path,
+      "first-seen path spelling retained",
+    );
+    assert.equal(afterEquiv.header?.sessions[0]?.ranges.length, 2);
+    assert.equal(afterEquiv.lines.length, 3);
+    assert.equal(
+      afterEquiv.lines.filter((line) => line.id === fixtureA.plainOwnerId).length,
+      1,
+      "no-id-safe: plain owner not duplicated via equiv path",
+    );
+    assert.equal(
+      afterEquiv.lines.filter((line) => line.s === 0 && line.id === fixtureA.plainOwnerId).length,
+      1,
+    );
+    assert.equal(afterEquiv.lines.find((line) => line.id === sessionBOwnerId)?.s, 1);
+
+    // Round 5: resubmit rangeB only — idempotent (验收 2).
+    const afterIdem = await runDiarist("01a0diar00-0000-7000-8000-000000000095", [rangeB]);
     assert.equal(afterIdem.lines.length, 3);
     assert.equal(
       afterIdem.lines.filter((line) => line.id === fixtureA.plainOwnerId).length,
@@ -1241,8 +1316,8 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(afterIdem.header?.sessions.length, 2);
     assert.equal(afterIdem.header?.sessions[0]?.ranges.length, 2);
 
-    // Round 5: submit only rangeA — later ranges must remain (验收 3b 遗漏不删除).
-    const afterOmit = await runDiarist("01a0diar00-0000-7000-8000-000000000095", [rangeA]);
+    // Round 6: submit only rangeA — later ranges must remain (验收 3b 遗漏不删除).
+    const afterOmit = await runDiarist("01a0diar00-0000-7000-8000-000000000096", [rangeA]);
     const byIdOmit = new Map(
       afterOmit.lines.filter((line) => line.id !== undefined).map((line) => [line.id!, line]),
     );
@@ -1254,9 +1329,9 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(afterOmit.header?.sessions.length, 2);
     assert.equal(afterOmit.header?.sessions[0]?.ranges.length, 2);
 
-    // Round 6: pure empty sessions still no-op (验收 3).
+    // Round 7: pure empty sessions still no-op (验收 3).
     const beforeEmpty = await readFile(paths.recordFile, "utf8");
-    const afterEmpty = await runDiarist("01a0diar00-0000-7000-8000-000000000096", []);
+    const afterEmpty = await runDiarist("01a0diar00-0000-7000-8000-000000000097", []);
     assert.equal(await readFile(paths.recordFile, "utf8"), beforeEmpty);
     assert.equal(afterEmpty.lines.length, 3);
 
@@ -1272,7 +1347,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
         packageRoot,
         cwd: project,
         io,
-        createRunId: () => "01a0diar00-0000-7000-8000-000000000097",
+        createRunId: () => "01a0diar00-0000-7000-8000-000000000098",
         principalAuthority: immutablePrincipalAuthority,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,

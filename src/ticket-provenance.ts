@@ -242,7 +242,8 @@ function rangeDeclarationKey(range: TicketProvenanceRange): string {
 
 /**
  * #918 甲案：prior ranges ∪ 本轮 ranges。按 path 合并；先保 prior 序，再追加新 path。
- * 遗漏不代表删除——调用方不得以本轮未交的 path/range 收缩结果。
+ * path identity 与 I/O 接缝同用 lexical `resolve(path)`，故 `p` 与 `p/./` 合为一条；
+ * 保留首见 path 字面与累计 ranges。遗漏不代表删除。
  * 交卷 sessions 仍是「本轮边界」输入；本函数是机械合并，不改角色交什么。
  */
 function mergeSessionBounds(
@@ -261,15 +262,16 @@ function mergeSessionBounds(
       })),
     }),
   );
-  const indexByPath = new Map<string, number>();
+  const indexByIdentity = new Map<string, number>();
   for (let index = 0; index < merged.length; index += 1) {
-    indexByPath.set(merged[index]!.path, index);
+    indexByIdentity.set(resolve(merged[index]!.path), index);
   }
 
   for (const session of incoming) {
-    const existingIndex = indexByPath.get(session.path);
+    const identity = resolve(session.path);
+    const existingIndex = indexByIdentity.get(identity);
     if (existingIndex === undefined) {
-      indexByPath.set(session.path, merged.length);
+      indexByIdentity.set(identity, merged.length);
       merged.push({
         path: session.path,
         ranges: session.ranges.map((range) => ({
