@@ -396,7 +396,13 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
-    assert.ok(turnPrompt.includes(volume.recordFile));
+    // #858: opaque continuation.prompt stays caller words; dossier rides attachment freeze.
+    assert.equal(turnPrompt.includes(volume.recordFile), false);
     assert.equal(turnPrompt.includes("起居录.md"), false);
+    const dossierFreeze = await readFile(
+      join(result.admitted!.runDirectory, "attachments", "case-dossier", "00-case-dossier-pointer.md"),
+      "utf8",
+    );
+    assert.ok(dossierFreeze.includes(volume.recordFile));
   });
 });

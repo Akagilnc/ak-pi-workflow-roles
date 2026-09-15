@@ -998,8 +998,14 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     );
 
     const volume = resolveTicketProvenanceVolume(582, project, home);
-    assert.ok(turnPrompt.includes(volume.recordFile));
+    // #858: opaque continuation.prompt stays caller words; dossier rides attachment freeze.
+    assert.equal(turnPrompt.includes(volume.recordFile), false);
     assert.equal(turnPrompt.includes("起居录.md"), false);
+    const dossierFreeze = await readFile(
+      join(countersignRunDirectory, "attachments", "case-dossier", "00-case-dossier-pointer.md"),
+      "utf8",
+    );
+    assert.ok(dossierFreeze.includes(volume.recordFile));
     await readTicketProvenance(582, project, home);
 
     assert.deepEqual(result.terminal?.gate?.actualSeats, ["notary"]);
