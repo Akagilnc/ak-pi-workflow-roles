@@ -2286,7 +2286,6 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
             auditCompliance,
           }, testHostActions());
         } else {
-          const pin = { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "target", refs: {} };
           runtime = reviewerRole.createReviewerRoleRuntime(piHostAdapter.host, {
             loadSoul: async () => "reviewer law",
             loadCanonicalSkillBinding: async () => ({
@@ -2294,18 +2293,6 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
               snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: Object.freeze({ text: skill }) },
               captureExpansion: () => ({ name: "ak-cross-m-review" as const, location: "/skill", content: skill, userMessage: "" }),
             }),
-            createPinnedGitReader: async () => ({
-              pin,
-              snapshot: async () => pin,
-              resolve: async () => "base",
-              range: async () => ({ base: "base", target: "target", diffCommand: "git diff base...target", diffSha256: "a".repeat(64), commits: ["target"] }),
-              featureTokens: async () => Object.freeze([]),
-              listSpecCandidatePaths: async () => Object.freeze([]),
-              originRepository: async () => undefined,
-              commitMessagesNewestFirst: async () => Object.freeze([]),
-              readPinnedText: async () => undefined,
-            }),
-            runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
           }, testHostActions());
         }
         return {

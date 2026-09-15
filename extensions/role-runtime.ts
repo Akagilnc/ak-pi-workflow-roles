@@ -15,7 +15,6 @@ import {
 import type { Message } from "@earendil-works/pi-ai";
 
 import { createGhCollectorGitHubTransport } from "../src/collector-github.ts";
-import { createReviewerPinnedGitReader } from "../src/reviewer-pinned-git.ts";
 import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
 import {
   createNativeNavigatorSessionFactory,
@@ -118,7 +117,6 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadCoderSoul: () => loadMainRoleSessionMaterials("coder"),
     loadCoderTask: (path) => readFile(path, "utf8"),
     loadReviewerSoul: () => loadMainRoleSessionMaterials("reviewer"),
-    createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
     loadCollectorSoul: () => loadMainRoleSessionMaterials("collector"),
     loadCollectorHandbookSeed: () => readFile(collectorHandbookSeedPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),

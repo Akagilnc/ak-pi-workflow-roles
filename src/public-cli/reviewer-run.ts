@@ -23,6 +23,7 @@ import {
   buildReviewerResumeTransportPrompt,
   buildReviewerTransportPrompt,
   type AdmittedReviewerInvocation,
+  type ReviewerLens,
 } from "./invocation.ts";
 import {
   loadResumableReviewerRun,
@@ -147,7 +148,7 @@ export async function runPublicReviewer(
     instruction: string;
     attachmentPaths: string[];
     baseRevision: string;
-    lens: "completeness" | "correctness";
+    lens: ReviewerLens;
     authorityRefs: string[];
     project?: string;
   },

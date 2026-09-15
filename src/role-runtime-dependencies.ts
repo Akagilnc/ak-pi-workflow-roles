@@ -10,7 +10,6 @@ import { loadNavigatorWorkContext } from "./navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "./notary-source-run.ts";
 import { loadPackagedCanonicalSkillBinding } from "./package-resources/method-skill-binding.ts";
 import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "./role-runtime.ts";
-import { createReviewerPinnedGitReader } from "./reviewer-pinned-git.ts";
 import { loadAuditorSoulFromSubjectInput } from "./auditor-soul.ts";
 import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "./session-opening-materials.ts";
 
@@ -33,7 +32,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     loadCoderSoul: () => loadMainRoleSessionMaterials("coder"),
     loadCoderTask: (path) => readFile(path, "utf8"),
     loadReviewerSoul: () => loadMainRoleSessionMaterials("reviewer"),
-    createReviewerPinnedGitReader: () => createReviewerPinnedGitReader(),
     loadCollectorSoul: () => loadMainRoleSessionMaterials("collector"),
     loadCollectorHandbookSeed: () => readFile(collectorHandbookSeedPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),

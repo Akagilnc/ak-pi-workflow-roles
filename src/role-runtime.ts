@@ -127,7 +127,6 @@ import {
   type ReviewerActivation,
   type ReviewerAdmittedInputs,
 } from "./reviewer-role.ts";
-import type { ReviewerPinnedGitReader } from "./reviewer-pinned-git.ts";
 import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
 
 /**
@@ -400,7 +399,6 @@ export {
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 } from "./collector-role.ts";
-export type { ReviewerPinnedGitReader } from "./reviewer-pinned-git.ts";
 export type { CollectorReceipt } from "./package-contracts/collector-output.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
@@ -574,7 +572,6 @@ export type RoleRuntimeDependencies = {
   loadCoderSoul?(): Promise<string>;
   loadCoderTask?(path: string): Promise<string>;
   loadReviewerSoul?(): Promise<string>;
-  createReviewerPinnedGitReader?(): Promise<ReviewerPinnedGitReader>;
   loadCollectorSoul?(): Promise<string>;
   /** #677: optional packaged seed for first-use general bot handbook. */
   loadCollectorHandbookSeed?(): Promise<string>;
@@ -1604,10 +1601,6 @@ export function createRoleRuntimeExtension(
             throw new Error("reviewer soul loader is not configured");
           }
           return dependencies.loadReviewerSoul();
-        },
-        async createPinnedGitReader() {
-          if (dependencies.createReviewerPinnedGitReader === undefined) throw new Error("Reviewer runtime dependencies are not configured");
-          return dependencies.createReviewerPinnedGitReader();
         },
         async loadCanonicalSkillBinding(name) {
           if (dependencies.loadCanonicalSkillBinding === undefined) {

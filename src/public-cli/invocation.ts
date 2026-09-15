@@ -995,10 +995,15 @@ export function requireReviewerBaseRevision(value: string | undefined): string {
   });
 }
 
+/** Shared ReviewerLens predicate — sole interpretation owner for fresh + durable. */
+export function isReviewerLens(value: unknown): value is ReviewerLens {
+  return value === "completeness" || value === "correctness";
+}
+
 /** Public --lens enum; sole owner for parse + fresh admission. */
 export function requireReviewerLens(value: string | undefined): ReviewerLens {
   const trimmed = (value ?? "").trim();
-  if (trimmed !== "completeness" && trimmed !== "correctness") {
+  if (!isReviewerLens(trimmed)) {
     throw new CliUsageError("--lens requires completeness or correctness");
   }
   return trimmed;

@@ -624,49 +624,10 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal(terminal.roleOutcome.role, "reviewer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
-    const completedPayload = objectPayloads(terminal.roleOutcome)[0] ?? {};
-    assert.equal(
-      ((completedPayload.amendments as Record<string, string> | undefined)?.completeness),
-      "completeness-axis-report",
-    );
-    assert.equal((completedPayload.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
-    assert.match(formatTerminalResult(terminal), /auditNoReceipt/);
     assert.equal(terminal.runId, "run-reviewer-settle-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
-
-    // Same entry: hard-stop refused + mismatched axis key still lands (仓级第 0 条).
-    const refusedReceipt = lawfulReviewerReceipt("completeness", "refused", {
-      axisKey: "not-a-declared-axis",
-      report: "partial-report-before-stop",
-    });
-    await sealAcceptedSubmission({
-      runId: admitted.runId,
-      cwd: project,
-      home,
-      runDirectory: admitted.runDirectory,
-      role: "reviewer",
-      details: refusedReceipt,
-      toolCallId: "r-refused",
-    });
-    const refusedTerminal = await settleReviewerTerminalResult(admitted, piDurablePrincipalAuthority, {
-      methodProvenance: material.provenance,
-      methodSkillPath: material.skillPath,
-      methodSkillConfiguredPath: skillPath,
-    });
-    assert.equal(refusedTerminal.roleOutcome.kind, "accepted");
-    // Same entry lands both projections; sequence is chronological ledger order.
-    assert.deepEqual(payloadStatusSequence(refusedTerminal.roleOutcome), [
-      "completed",
-      "refused",
-    ]);
-    const refusedPayload =
-      objectPayloads(refusedTerminal.roleOutcome).find((p) => p.status === "refused") ?? {};
-    assert.equal(refusedPayload.diagnostic, "hard-stop: review cannot proceed");
-    assert.equal(
-      (refusedPayload.amendments as Record<string, string> | undefined)?.["not-a-declared-axis"],
-      "partial-report-before-stop",
-    );
+    assert.match(formatTerminalResult(terminal), /auditNoReceipt/);
 
     const evidence = JSON.parse(
       await readFile(
@@ -852,6 +813,139 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       assert.equal(evidence.methodProvenance.name, "ak-cross-m-review");
       assert.equal(evidence.methodInvocationObserved, true);
       assert.equal("callerProvenance" in evidence, false);
+
+      // Durable complete report lives in report.json structured outcome/amendments.
+      const completedReport = JSON.parse(
+        await readFile(join(runDirectory, "artifacts", "report.json"), "utf8"),
+      ) as {
+        role: string;
+        outcome?: {
+          kind?: string;
+          payloads?: ReadonlyArray<Record<string, unknown>>;
+        };
+      };
+      assert.equal(completedReport.role, "reviewer");
+      assert.equal(completedReport.outcome?.kind, "accepted");
+      const completedDurable =
+        completedReport.outcome?.payloads?.find((p) => p.status === "completed") ?? {};
+      assert.equal(
+        (completedDurable.amendments as Record<string, string> | undefined)?.completeness,
+        "completeness-axis-report",
+      );
+    }
+
+    // Same public entry: hard-stop refused + mismatched axis key still lands (仓级第 0 条).
+    {
+      const { io, stdout } = captureIo();
+      const refusedReceipt = lawfulReviewerReceipt("completeness", "refused", {
+        axisKey: "not-a-declared-axis",
+        report: "partial-report-before-stop",
+      });
+      const refused = await runAkRole([
+          "reviewer", "--model", "test/caller-seat:high",
+          "--project",
+          project,
+          "--base",
+          "HEAD~1",
+          "--lens",
+          "completeness",
+          "--authority-ref",
+          "CLAUDE.md",
+        ],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          createRunId: () => "run-cli-reviewer-hard-stop",
+          io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot: packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+            const sessionIdx = args.indexOf("--session");
+            const sessionFile = args[sessionIdx + 1]!;
+            await mkdir(join(sessionFile, ".."), { recursive: true });
+            const material = await loadPackagedMethodSkillMaterial(
+              packageRoot,
+              "ak-cross-m-review",
+            );
+            const skillPath = resolvePackagedMethodSkillPath(
+              packageRoot,
+              "ak-cross-m-review",
+            );
+            const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
+            await writeFile(
+              sessionFile,
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "user",
+                  content: [{ type: "text", text: expansion }],
+                },
+              })}\n${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "r-refused",
+                  toolName: REVIEWER_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details: refusedReceipt,
+                },
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              sealedAcceptance: {
+                role: "reviewer" as const,
+                details: refusedReceipt,
+                toolCallId: "r-refused",
+              },
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+          }),
+        },
+      );
+      assert.equal(refused.exitCode, 0, stdout.join("") || "reviewer hard-stop failed");
+      assert.equal(refused.terminal?.roleOutcome.role, "reviewer");
+      assert.deepEqual(
+        refused.terminal?.roleOutcome.kind === "accepted"
+          ? payloadStatusSequence(refused.terminal.roleOutcome)
+          : [],
+        ["refused"],
+      );
+      const bookKey = resolveBookKeyFromGit(project);
+      const refusedReport = JSON.parse(
+        await readFile(
+          join(
+            home,
+            ".ak-roles",
+            "books",
+            bookKey,
+            "unbound", "runs",
+            "run-cli-reviewer-hard-stop@reviewer",
+            "artifacts",
+            "report.json",
+          ),
+          "utf8",
+        ),
+      ) as {
+        outcome?: {
+          kind?: string;
+          payloads?: ReadonlyArray<Record<string, unknown>>;
+        };
+      };
+      assert.equal(refusedReport.outcome?.kind, "accepted");
+      const refusedDurable =
+        refusedReport.outcome?.payloads?.find((p) => p.status === "refused") ?? {};
+      assert.equal(refusedDurable.diagnostic, "hard-stop: review cannot proceed");
+      assert.equal(
+        (refusedDurable.amendments as Record<string, string> | undefined)?.["not-a-declared-axis"],
+        "partial-report-before-stop",
+      );
     }
 
     {
@@ -1009,6 +1103,38 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
         error instanceof CliUsageError &&
         error.code === "AK_ROLE_USAGE" &&
         (/nonempty durable reference|not inline Spec prose/i.test(error.message)),
+    );
+
+    // Base damage keeps durable run identity — never rebrand as fresh --base input.
+    persisted.authorityRefs = ["https://example.com/durable-ref"];
+    persisted.baseRevision = "";
+    await writeFile(
+      admitted.admittedRequestPath,
+      `${JSON.stringify(persisted, null, 2)}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
+      (error: unknown) =>
+        error instanceof CliUsageError &&
+        error.code === "AK_ROLE_USAGE" &&
+        error.message.includes(`role run admitted reviewer base revision is missing: ${admitted.runId}`) &&
+        !error.message.includes("--base"),
+    );
+
+    persisted.baseRevision = "--lens";
+    await writeFile(
+      admitted.admittedRequestPath,
+      `${JSON.stringify(persisted, null, 2)}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
+      (error: unknown) =>
+        error instanceof CliUsageError &&
+        error.code === "AK_ROLE_USAGE" &&
+        error.message.includes(`role run admitted reviewer base revision is damaged: ${admitted.runId}`) &&
+        !error.message.includes("--base"),
     );
   });
 });
