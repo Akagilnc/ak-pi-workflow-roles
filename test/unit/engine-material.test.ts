@@ -46,12 +46,8 @@ test("assertLegalEngineName rejects only real path hazards; consecutive dots pas
 
 test("appendEngineSessionMaterial: engine name line; notes also carry path", () => {
   // Structured coordinates only — no presentation-header pin (#495 S4 / ADR 0073).
-  // Chinese labels (ADR 0073); name/path are opaque coordinates, not prose lock.
   const nameOnly = appendEngineSessionMaterial(["base"], { name: "company..opus" });
-  assert.equal(
-    nameOnly.some((line) => line.includes("company..opus")),
-    true,
-  );
+  assert.equal(nameOnly.includes("- engine: company..opus"), true);
   assert.equal(
     nameOnly.some((line) => line.startsWith("- /") || line.includes("/resources/engines/")),
     false,
@@ -62,6 +58,6 @@ test("appendEngineSessionMaterial: engine name line; notes also carry path", () 
     name: "cursor",
     materialPath: "/abs/resources/engines/cursor.md",
   });
-  assert.equal(withNotes.some((line) => line.includes("cursor")), true);
+  assert.equal(withNotes.includes("- engine: cursor"), true);
   assert.equal(withNotes.includes("- /abs/resources/engines/cursor.md"), true);
 });

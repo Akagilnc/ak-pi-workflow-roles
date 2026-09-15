@@ -729,10 +729,12 @@ export async function dispatchPostAdmissionTurn<
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
     // settled — the seat's ticket bind re-projection and any court diarist station
     // writes (#742). Case dossier delivery (ADR 0081 / #709 / #858) rides here once
-    // for every public entry. #879: station-child officer dialogue keeps peer body
-    // intact — 起居录 hangs via existing attachments freeze (not prompt wrap,
-    // not RoleTurnRequest.materials). Ordinary entries keep the baseline
-    // continuation.prompt section (path shape when unbound; concrete file when bound).
+    // for every public entry:
+    // - station-child officer: attachments freeze (peer body stays opaque, #879)
+    // - bound ordinary: BASE continuation.prompt section (concrete file)
+    // - unbound ordinary: same attachments freeze — path shape reaches the LLM via
+    //   existing readingMaterial fold, never spliced into caller dialogue / empty
+    //   request / opaque resume message (#858).
     let turnRequest: RoleTurnRequest =
       env.signal === undefined ? request : { ...request, signal: env.signal };
     if (env.stationChild !== undefined) {
@@ -757,9 +759,8 @@ export async function dispatchPostAdmissionTurn<
         home: env.home,
         runDirectory: admitted.runDirectory,
       });
-    } else {
-      // Baseline ordinary-entry face: append the path pointer to continuation.
-      // #858: unbound seats still receive the canonical path shape.
+    } else if (admitted.ticketNumber !== undefined) {
+      // BASE bound ordinary-entry face: append the concrete path pointer.
       const dossierSection = await projectCaseDossierPointerSection({
         ticketNumber: admitted.ticketNumber,
         projectRoot: admitted.projectRoot,
@@ -772,6 +773,14 @@ export async function dispatchPostAdmissionTurn<
           dossierSection,
         ),
       };
+    } else {
+      // #858 unbound ordinary: non-dialogue materials face only.
+      await deliverCaseDossierAsAttachment({
+        ticketNumber: admitted.ticketNumber,
+        projectRoot: admitted.projectRoot,
+        home: env.home,
+        runDirectory: admitted.runDirectory,
+      });
     }
 
     // Authoritative host write happens here, at the real dispatch boundary —

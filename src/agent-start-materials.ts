@@ -1,12 +1,12 @@
 /**
  * Sole production fold of typed agent-start materials into provider-visible
  * system-prompt bytes. Pi adapter and Grok ACP adapter both call this at the
- * send boundary; structured materials stay the internal authority, this string
- * is the provider wire form (ADR 0073: 机器文本全中文，无英文键/JSON 外壳).
+ * send boundary; structured materials are the authority, this string is the
+ * provider wire form.
  *
- * Producers own the Chinese face: a string material, or a record with pre-assembled
- * `section` (case-dossier freeze, notary/engine/inspector bindings). No generic
- * field whitelist and no JSON shell.
+ * Case-dossier freeze may arrive as a pre-assembled Chinese `section` string
+ * body (attachment face). Prefer that when present; every other material keeps
+ * the BASE JSON projection — never silently drop unknown producers (#858).
  */
 
 function providerVisibleMaterial(material: unknown): string {
@@ -16,10 +16,11 @@ function providerVisibleMaterial(material: unknown): string {
     && typeof material === "object"
     && !Array.isArray(material)
     && typeof (material as { section?: unknown }).section === "string"
+    && (material as { section: string }).section.trim() !== ""
   ) {
     return (material as { section: string }).section.replace(/\n+$/u, "");
   }
-  return "";
+  return JSON.stringify(material);
 }
 
 export function renderAgentStartMaterials(
@@ -27,9 +28,5 @@ export function renderAgentStartMaterials(
   materials: readonly unknown[],
 ): string {
   if (materials.length === 0) return body;
-  const visible = materials
-    .map(providerVisibleMaterial)
-    .filter((text) => text.length > 0);
-  if (visible.length === 0) return body;
-  return [body, ...visible].join("\n\n");
+  return [body, ...materials.map(providerVisibleMaterial)].join("\n\n");
 }

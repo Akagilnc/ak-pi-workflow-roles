@@ -426,14 +426,10 @@ test("#879 inspector parent binding rides readingMaterial, not prompt", async ()
         && (material as { kind?: unknown }).kind === "inspector-parent-binding",
     );
     assert.equal(bindings.length, 1);
-    const binding = bindings[0] as {
-      kind?: unknown;
-      sourceRunPath?: unknown;
-      section?: unknown;
-    };
-    assert.equal(binding.kind, "inspector-parent-binding");
-    assert.equal(binding.sourceRunPath, INSPECTOR_PARENT);
-    assert.equal(typeof binding.section, "string");
+    assert.deepEqual(bindings[0], {
+      kind: "inspector-parent-binding",
+      sourceRunPath: INSPECTOR_PARENT,
+    });
   } finally {
     await prepared.dispose?.();
     await rm(home, { recursive: true, force: true });
@@ -493,18 +489,12 @@ test("#879 station-child officer engine material stays off dialogue", async () =
             && (material as { kind?: unknown }).kind === "engine-session-material",
         );
         assert.equal(engines.length, 1, `${activation.role} must keep engine material`);
-        const engineMaterial = engines[0] as {
-          kind?: unknown;
-          name?: unknown;
-          model?: unknown;
-          materialPath?: unknown;
-          section?: unknown;
-        };
-        assert.equal(engineMaterial.kind, "engine-session-material");
-        assert.equal(engineMaterial.name, ENGINE);
-        assert.equal(engineMaterial.model, ENGINE_MODEL);
-        assert.equal(engineMaterial.materialPath, notesPath);
-        assert.equal(typeof engineMaterial.section, "string");
+        assert.deepEqual(engines[0], {
+          kind: "engine-session-material",
+          name: ENGINE,
+          model: ENGINE_MODEL,
+          materialPath: notesPath,
+        });
       } finally {
         await prepared.dispose?.();
       }
