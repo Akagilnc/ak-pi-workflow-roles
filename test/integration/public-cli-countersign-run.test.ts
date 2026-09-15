@@ -1309,7 +1309,8 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
       true,
     );
 
-    // Unbound delivers no volume path; a known partition path must not appear.
+    // Opaque turnPrompt stays caller words (no volume path splice). System
+    // attachment/material delivery is a separate face — not asserted here.
     const volume = resolveTicketProvenanceVolume(582, project, home);
     assert.equal(turnPrompt.includes(volume.recordFile), false);
     assert.equal(turnPrompt.includes("起居录.md"), false);

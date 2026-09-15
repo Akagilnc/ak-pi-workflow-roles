@@ -14,11 +14,9 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { projectTicketRecordsPathShape } from "../sitian-facade.ts";
 import { resolveTicketProvenanceVolume } from "../ticket-provenance.ts";
-import {
-  freezeAttachmentsIntoRun,
-  type FrozenAttachment,
-} from "./invocation.ts";
+import { freezeAttachmentsIntoRun } from "./invocation.ts";
 
 /** Section heading of the system-delivered dossier pointer (presentation only; no 本票 claim). */
 const CASE_DOSSIER_SECTION_HEADING = "## 起居录路径（系统随案提供）" as const;
@@ -29,23 +27,15 @@ const CASE_DOSSIER_ATTACH_KEY = "case-dossier" as const;
 /** Leaf name of the frozen pointer section (content = purpose + paths). */
 const CASE_DOSSIER_ATTACH_FILE = "case-dossier-pointer.md" as const;
 
-/** Canonical 起居录 path shape (dossier-topology / 陛下 2026-09-15). LLM fills 簿 and 票号. */
-const CANONICAL_RECORDS_PATH =
-  "~/.ak-roles/books/<簿>/<票号>/records.jsonl" as const;
-
-/** Pointer only — presence/absence is for the role to observe at the path. */
-function describeDossierFile(path: string): string {
-  return path;
-}
-
 /**
  * Neutral 起居录 path pointer for every public entry (ADR 0081 delivery seam).
  * Always tells the canonical path shape so the seat LLM can read the diary
  * itself (陛下 2026-09-15: 只需要告诉llm这个路径). When a typed ticket identity is
  * already on the run, also project the concrete resolved file. Never claims a
  * volume or「本票」exists when unbound; never extracts a ticket from instruction.
+ * Under-book shape comes only from sitian topology projection — no local replica.
  */
-export async function projectCaseDossierPointerSection(input: {
+async function projectCaseDossierPointerSection(input: {
   readonly ticketNumber: number | undefined;
   readonly projectRoot: string;
   readonly home: string;
@@ -54,7 +44,7 @@ export async function projectCaseDossierPointerSection(input: {
     return [
       CASE_DOSSIER_SECTION_HEADING,
       "",
-      `记录卷宗：${CANONICAL_RECORDS_PATH}`,
+      `记录卷宗：${projectTicketRecordsPathShape()}`,
     ].join("\n");
   }
   const volume = resolveTicketProvenanceVolume(
@@ -66,7 +56,7 @@ export async function projectCaseDossierPointerSection(input: {
     CASE_DOSSIER_SECTION_HEADING,
     "",
     `票号：#${input.ticketNumber}`,
-    `记录卷宗：${describeDossierFile(volume.recordFile)}`,
+    `记录卷宗：${volume.recordFile}`,
   ].join("\n");
 }
 
@@ -77,13 +67,14 @@ export async function projectCaseDossierPointerSection(input: {
  * folds it into systemPrompt.materials. Caller continuation.prompt stays opaque;
  * never RoleTurnRequest.materials. Always freezes the path pointer (canonical
  * shape, or concrete file when a typed ticket is already bound).
+ * Side-effect only — freeze detail is not a caller contract.
  */
 export async function deliverCaseDossierAsAttachment(input: {
   readonly ticketNumber: number | undefined;
   readonly projectRoot: string;
   readonly home: string;
   readonly runDirectory: string;
-}): Promise<readonly FrozenAttachment[]> {
+}): Promise<void> {
   const section = await projectCaseDossierPointerSection({
     ticketNumber: input.ticketNumber,
     projectRoot: input.projectRoot,
@@ -94,7 +85,7 @@ export async function deliverCaseDossierAsAttachment(input: {
   try {
     const stagingPath = join(stagingDir, CASE_DOSSIER_ATTACH_FILE);
     await writeFile(stagingPath, `${section}\n`, "utf8");
-    return await freezeAttachmentsIntoRun(
+    await freezeAttachmentsIntoRun(
       [stagingPath],
       input.runDirectory,
       CASE_DOSSIER_ATTACH_KEY,

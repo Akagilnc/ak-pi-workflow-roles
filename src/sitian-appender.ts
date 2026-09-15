@@ -250,6 +250,21 @@ export function resolveSitianRecordPathInLedger(
   return { sessionDir, recordFile, ledgerHome };
 }
 
+/**
+ * Owner-visible ticket 起居录 path shape from the same joins as the ticket branch
+ * of resolveSitianRecordPathInLedger (docs/dossier-topology.md sole under-book
+ * authority). Variable slots keep owner labels; no cwd/home path inference.
+ * ledgerHome presentation matches resolveActivationLedgerHome (`~` + `.ak-roles`).
+ */
+export function projectTicketRecordsPathShape(): string {
+  const recordFile = join(
+    activationBookDirectory(".ak-roles", "<簿>"),
+    "<票号>",
+    "records.jsonl",
+  );
+  return `~/${recordFile.replace(/\\/g, "/")}`;
+}
+
 /** Compute a write destination from ambient ledger topology (ADR 0065). */
 export function resolveSitianRecordPath(input: SitianRecordInput): SitianRecordPath {
   const ledgerHome =
