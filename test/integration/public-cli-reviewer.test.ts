@@ -32,6 +32,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitReviewerInvocation as admitReviewerInvocationRaw,
+  buildReviewerResumeTransportPrompt,
   buildReviewerTransportPrompt,
   parseReviewerArgv,
 } from "../../src/public-cli/invocation.ts";
@@ -138,6 +139,19 @@ test("buildReviewerTransportPrompt projects typed base/lens/authority into Skill
     prompt,
   );
   assert.match(prompt, /caller note/);
+  // Resume shares frozen Skill args; first-call prose must not replay.
+  const resumePrompt = buildReviewerResumeTransportPrompt(admitted, {
+    message: "owner note after quota",
+  });
+  assert.equal(
+    resumePrompt.startsWith(
+      "--base origin/main --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
+    ),
+    true,
+    resumePrompt,
+  );
+  assert.match(resumePrompt, /owner note after quota/);
+  assert.equal(resumePrompt.includes("caller note"), false);
 });
 
 test("parseReviewerArgv requires base, lens, authority-ref and accepts optional provenance instruction", () => {
@@ -257,6 +271,22 @@ test("parseReviewerArgv requires base, lens, authority-ref and accepts optional 
   );
   assert.throws(() => parseReviewerArgv(["--unknown-flag"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--base", "", "task"]), isUsage);
+  // Whitespace-bearing --base smuggles Skill flags; single-token only (same rule as authority-ref).
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "main --lens all",
+        "--lens",
+        "completeness",
+        "--authority-ref",
+        "CLAUDE.md",
+      ]),
+    (error: unknown) =>
+      isUsage(error) &&
+      error instanceof Error &&
+      error.message === "--base requires a single-token revision",
+  );
   assert.throws(() => parseReviewerArgv(["--project", "", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--attach", "spec.md", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--attach=spec.md", "task"]), isUsage);
@@ -1064,7 +1094,16 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
           args.some((a) => a.includes("[ak-role:resume-continue]")),
           false,
         );
-        assert.equal(readUserDialogueStdin(resumeStdin ?? "").startsWith("/skill:ak-cross-m-review"), true);
+        // Frozen Skill args must ride resume; bare `/skill:` is not green.
+        const resumeDialogue = readUserDialogueStdin(resumeStdin ?? "");
+        assert.equal(
+          resumeDialogue.startsWith(
+            "/skill:ak-cross-m-review --base main --lens correctness --authority CLAUDE.md",
+          ),
+          true,
+          resumeDialogue,
+        );
+        assert.equal(resumeDialogue.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         const material = await loadPackagedMethodSkillMaterial(
           packageRoot,

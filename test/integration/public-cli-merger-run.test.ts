@@ -194,31 +194,12 @@ function collectorReceipt() {
   };
 }
 
+/** Production ReviewerIntent face — completeness|correctness amendments only. */
 function reviewerReceipt() {
   return {
-    version: 2 as const,
     status: "completed" as const,
-    acceptedBatch: {
-      identity: "dispatch",
-      legs: [{ axis: "standards" as const, prompt: { text: "s\n" } }],
-    },
-    reports: { standards: { text: "ok" } },
-    outcomes: {
-      standards: {
-        status: "successful",
-        prompt: { text: "s\n" },
-        workspaceDisposition: "deleted",
-      },
-    },
-    identities: {
-      canonicalSkill: { text: "skill\n" },
-      construction: { recipe: "reviewer-common-bundle-v1" },
-      target: {
-        repositoryRoot: "/repo",
-        objectFormat: "sha1",
-        targetHead: "a".repeat(40),
-        refs: { tag: { objectId: "b".repeat(40), peeledCommitId: null } },
-      },
+    amendments: {
+      completeness: "completeness candidates, dispositions, and verdict",
     },
   };
 }

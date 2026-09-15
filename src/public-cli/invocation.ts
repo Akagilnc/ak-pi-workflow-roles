@@ -960,6 +960,21 @@ function requireOptionPath(
   return value;
 }
 
+/**
+ * Reviewer --base admission: nonempty single token (same whitespace rule as
+ * requireAuthorityRef). Skill args are space-joined; multi-token values smuggle
+ * extra flags (e.g. `--lens all`). Not a general free-text gate.
+ */
+export function requireReviewerBaseRevision(value: string | undefined): string {
+  if (value === undefined || value.trim() === "") {
+    throw new CliUsageError("--base requires a nonempty revision");
+  }
+  if (/\s/.test(value)) {
+    throw new CliUsageError("--base requires a single-token revision");
+  }
+  return value;
+}
+
 /** True when token is a retained rejected spelling for the owner (#342). */
 function isRejectedPublicSpelling(owner: OptionOwner, token: string): boolean {
   for (const entry of REJECTED_PUBLIC_SPELLINGS) {
@@ -2816,7 +2831,7 @@ export function parseReviewerArgv(
         continue;
       }
       if (taken.def.id === "base") {
-        baseRevision = requireOptionPath(taken.def.canonical, taken.value);
+        baseRevision = requireReviewerBaseRevision(taken.value);
         continue;
       }
       if (taken.def.id === "lens") {
@@ -2884,9 +2899,7 @@ export async function admitReviewerInvocation(
   if (options.project !== undefined) {
     requireOptionPath("--project", options.project);
   }
-  if (options.baseRevision.trim() === "") {
-    throw new CliUsageError("--base requires a nonempty revision");
-  }
+  const baseRevision = requireReviewerBaseRevision(options.baseRevision);
   if (options.lens !== "completeness" && options.lens !== "correctness") {
     throw new CliUsageError("--lens requires completeness or correctness");
   }
@@ -2929,7 +2942,7 @@ export async function admitReviewerInvocation(
     principal,
     instruction,
     instructionEmpty,
-    baseRevision: options.baseRevision,
+    baseRevision,
     lens: options.lens,
     authorityRefs: [...authorityRefs],
     attachments: attachments.map((a) => ({
@@ -2958,14 +2971,25 @@ export async function admitReviewerInvocation(
     runDirectory,
     principal,
     admittedRequestPath,
-    baseRevision: options.baseRevision,
+    baseRevision,
     lens: options.lens,
     authorityRefs,
   };
 }
 
+/** Frozen Skill arg projection shared by initial and resume (never reverse-parsed). */
+export function buildReviewerSkillArgProjection(
+  admitted: Pick<AdmittedReviewerInvocation, "baseRevision" | "lens" | "authorityRefs">,
+): string {
+  return [
+    `--base ${admitted.baseRevision}`,
+    `--lens ${admitted.lens}`,
+    ...admitted.authorityRefs.map((ref) => `--authority ${ref}`),
+  ].join(" ");
+}
+
 /**
- * Build the Pi prompt transport for an admitted Reviewer request.
+ * Build the host-neutral prompt transport for an admitted Reviewer request.
  * Typed base/lens/authority project to Skill invocation args (never reverse-parsed from prose).
  * Optional caller words + engine material follow.
  */
@@ -2973,16 +2997,29 @@ export function buildReviewerTransportPrompt(
   admitted: AdmittedReviewerInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const skillArgs = [
-    `--base ${admitted.baseRevision}`,
-    `--lens ${admitted.lens}`,
-    ...admitted.authorityRefs.map((ref) => `--authority ${ref}`),
-  ].join(" ");
-  const lines = [skillArgs];
+  const lines = [buildReviewerSkillArgProjection(admitted)];
   if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
     lines.push("", admitted.instruction);
   }
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+}
+
+/**
+ * Resume projection: same frozen Skill args as initial; message/engine may only
+ * append. Does not replay first-call caller prose.
+ */
+export function buildReviewerResumeTransportPrompt(
+  admitted: Pick<AdmittedReviewerInvocation, "baseRevision" | "lens" | "authorityRefs">,
+  options: {
+    engineMaterial?: EngineSessionMaterial;
+    message?: string;
+  } = {},
+): string {
+  const lines = [buildReviewerSkillArgProjection(admitted)];
+  if (options.message !== undefined) {
+    lines.push("", options.message);
+  }
+  return appendEngineSessionMaterial(lines, options.engineMaterial).join("\n");
 }
 
 /**

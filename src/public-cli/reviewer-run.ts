@@ -20,13 +20,13 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitReviewerInvocation,
+  buildReviewerResumeTransportPrompt,
   buildReviewerTransportPrompt,
   type AdmittedReviewerInvocation,
 } from "./invocation.ts";
 import {
   loadResumableReviewerRun,
   markRunAdmitted,
-  buildResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -121,6 +121,22 @@ async function loadReviewerMethodMaterial(
   packageRoot: string,
 ): Promise<PackagedMethodSkillMaterial> {
   return await loadPackagedMethodSkillMaterial(packageRoot, "ak-cross-m-review");
+}
+
+/** Resume prompt: frozen Skill args + optional message/engine (never first-call prose). */
+function reviewerResumePrompt(
+  admitted: AdmittedReviewerInvocation,
+  env: ReviewerRunEnv,
+  message?: string,
+): string {
+  const engineMaterial = engineSessionMaterialFromOptions({
+    ...pickEngineAxis(env),
+    packageRoot: env.packageRoot,
+  });
+  return buildReviewerResumeTransportPrompt(admitted, {
+    ...(engineMaterial === undefined ? {} : { engineMaterial }),
+    ...(message === undefined ? {} : { message }),
+  });
 }
 
 export async function runPublicReviewer(
@@ -223,10 +239,7 @@ export async function runPublicReviewer(
           : { correlationId: admitted.correlationId ?? env.correlationId }),
         continuation: {
           kind: "resume",
-          prompt: buildResumeContinuationPrompt({
-            packageRoot: env.packageRoot,
-            ...pickEngineAxis(env),
-          }),
+          prompt: reviewerResumePrompt(admitted, env),
         },
       }),
     adapters: reviewerAdapters(env.packageRoot, methodMaterial),
@@ -253,11 +266,16 @@ export async function runPublicReviewerResume(
     io,
     load: (effective) =>
       loadResumableReviewerRun(env.home, effective.runId, env.principalAuthority),
-    buildTurnRequest: (admitted, effective) =>
-      buildReviewerTurnRequest(
-        admitted,
-        resumeTurnRequestProjectionOptions(admitted, effective, env),
-      ),
+    buildTurnRequest: (admitted, effective) => {
+      const base = resumeTurnRequestProjectionOptions(admitted, effective, env);
+      return buildReviewerTurnRequest(admitted, {
+        ...base,
+        continuation: {
+          kind: "resume",
+          prompt: reviewerResumePrompt(admitted, env, effective.message),
+        },
+      });
+    },
     adapters: reviewerAdapters(env.packageRoot),
     afterAdmittedLoad: (admitted) =>
       resolveResumeMethodMaterialAdapters({

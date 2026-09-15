@@ -1315,7 +1315,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   runner: RoleTurnKnownFailure | undefined;
   sessionFile: string;
   credential: RoleTurnKnownFailure | undefined;
-  /** Reviewer only: recover child-written rejection page into knownFailure.details. */
+  /** Optional run directory for typed provider HTTP observation (resume/429). */
   runDirectory?: string;
 }): Promise<AuditedRunnerFailureResolution> {
   if (input.runner !== undefined) return resolutionOf(input.runner);
@@ -1417,7 +1417,7 @@ export async function resolveAuditedRunnerKnownFailure(input: {
   runner: RoleTurnKnownFailure | undefined;
   sessionFile: string;
   credential: RoleTurnKnownFailure | undefined;
-  /** Reviewer only: recover child-written rejection page into knownFailure.details. */
+  /** Optional run directory for typed provider HTTP observation (resume/429). */
   runDirectory?: string;
 }): Promise<RoleTurnKnownFailure | undefined> {
   return (await resolveAuditedRunnerFailureResolution(input)).knownFailure;

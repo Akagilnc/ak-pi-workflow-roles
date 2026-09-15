@@ -127,7 +127,7 @@ import {
   type ReviewerActivation,
   type ReviewerAdmittedInputs,
 } from "./reviewer-role.ts";
-import type { ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
+import type { ReviewerPinnedGitReader } from "./reviewer-pinned-git.ts";
 import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
 
 /**
@@ -146,13 +146,6 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
     name: "ak-review-lens",
     definition: Object.freeze({
       description: "Caller-selected single review lens: completeness or correctness",
-      type: "string" as const,
-    }),
-  }),
-  Object.freeze({
-    name: "ak-review-scope-keys",
-    definition: Object.freeze({
-      description: "Optional comma-separated exact class keys limiting Reviewer scope",
       type: "string" as const,
     }),
   }),
@@ -201,19 +194,6 @@ export const STATION_CHILD_FLAG = Object.freeze({
  * Envelope-owned; necessary JSON decode only (public --authority-ref owns grammar).
  */
 function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): ReviewerAdmittedInputs {
-  let reviewScopeKeys: readonly string[] | undefined;
-  const rawScopeKeys = getFlag("ak-review-scope-keys");
-  if (rawScopeKeys !== undefined) {
-    if (typeof rawScopeKeys !== "string" || rawScopeKeys.length === 0) {
-      throw new Error("Reviewer scope keys must be a nonempty comma-separated string");
-    }
-    const parsed = rawScopeKeys.split(",");
-    if (parsed.some((key) => key.trim().length === 0) || new Set(parsed).size !== parsed.length) {
-      throw new Error("Reviewer scope keys contain a blank or exact duplicate key");
-    }
-    reviewScopeKeys = Object.freeze(parsed);
-  }
-
   let authorityRefs: readonly string[] | undefined;
   const rawAuthorityRefs = getFlag("ak-review-authority-refs");
   if (rawAuthorityRefs !== undefined) {
@@ -252,7 +232,6 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
   return Object.freeze({
     baseRevision,
     lens: rawLens,
-    ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
     ...(authorityRefs === undefined ? {} : { authorityRefs }),
     ...(ticketNumber === undefined ? {} : { ticketNumber }),
   });
@@ -421,7 +400,7 @@ export {
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 } from "./collector-role.ts";
-export type { ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
+export type { ReviewerPinnedGitReader } from "./reviewer-pinned-git.ts";
 export type { CollectorReceipt } from "./package-contracts/collector-output.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";

@@ -15,7 +15,7 @@ import {
 import type { Message } from "@earendil-works/pi-ai";
 
 import { createGhCollectorGitHubTransport } from "../src/collector-github.ts";
-import { createReviewerPinnedGitReader } from "../src/reviewer-dispatch.ts";
+import { createReviewerPinnedGitReader } from "../src/reviewer-pinned-git.ts";
 import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
 import {
   createNativeNavigatorSessionFactory,

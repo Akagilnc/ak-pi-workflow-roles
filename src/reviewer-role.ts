@@ -16,23 +16,34 @@ export type ReviewerAdmittedInputs = Readonly<{
   baseRevision: string;
   /** Caller-selected single lens; required, no default. */
   lens: "completeness" | "correctness";
-  reviewScopeKeys?: readonly string[];
   authorityRefs?: readonly string[];
   /** Typed #176 ticketNumber from admitted invocation (Spec self-fetch primary). */
   ticketNumber?: number;
 }>;
 
 const reviewerAmendmentsSchema = Type.Object({
-  completeness: Type.Optional(Type.String({ description: "completeness lens 弹章正文" })),
-  correctness: Type.Optional(Type.String({ description: "correctness lens 弹章正文" })),
-}, { additionalProperties: true, description: "逐 lens 弹章正文；无弹章的 lens 可省略。" });
+  completeness: Type.Optional(Type.String({
+    description:
+      "completeness lens 完整报告：candidates、逐条处置与 verdict；非仅 verdict 一行",
+  })),
+  correctness: Type.Optional(Type.String({
+    description:
+      "correctness lens 完整报告：candidates、逐条处置与 verdict；非仅 verdict 一行",
+  })),
+}, {
+  additionalProperties: true,
+  description:
+    "所选 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；未选 lens 可省略。形状指引，非 schema 闸。",
+});
 // #836 r16 class 1: diagnostic is LLM/human-read narrative content — no code
 // branches on its length (src/reviewer-role.ts consumer: reviewer content is
 // returned as submitted, ADR 0057).
 // #836 (ADR 0003 Amendment): status kept open like countersignStatus
 // (src/countersign-role.ts) — one shared description across both variants
 // so openToolObjectFromUnion's identical-declaration collapse drops none of it.
-const REVIEWER_STATUS_DESCRIPTION = "completed | refused — 形状指引，非 schema 闸" as const;
+// #917 §6: both normal lens verdicts → completed; hard-stop/usage error → refused.
+const REVIEWER_STATUS_DESCRIPTION =
+  "completed | refused — 形状指引，非 schema 闸。两种正常 lens verdict（completeness / correctness）均 completed；hard-stop 与 usage error 为 refused。" as const;
 const reviewerOutputVariants = Type.Union([
   Type.Object({
     status: Type.Unknown({ description: REVIEWER_STATUS_DESCRIPTION }),
