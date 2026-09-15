@@ -10,7 +10,7 @@ import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { join, sep } from "node:path";
 
-import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./compliance-transport.ts";
+import { AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE } from "./auditor-parent-attempt-contract.ts";
 
 const ADMITTED_PAGE_FIELDS = [
   "runDirectory",

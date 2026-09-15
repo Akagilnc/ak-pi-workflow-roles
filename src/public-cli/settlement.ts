@@ -1070,9 +1070,43 @@ export async function readBoundEvidenceChildKnownFailure(
 type BoundAuditorVolume = {
   readonly entries: SessionEntry[];
   readonly attemptEntryId?: string;
+  readonly courtAttemptId?: string;
+  /** Binding outcome: pass supersedes earlier same-court failure (#858). */
+  readonly outcome?: "pass" | "failure";
   readonly parentId: string;
   readonly sessionFile: string;
 };
+
+async function resolveAuditorSessionPathFromNestEntry(
+  nestPath: string,
+  name: string,
+): Promise<string | undefined> {
+  const full = join(nestPath, name);
+  if (!name.endsWith(".pointer.json")) return full;
+  try {
+    const raw = JSON.parse(await readFile(full, "utf8")) as unknown;
+    if (!isRecord(raw) || raw.kind !== "direct-officer-run-pointer" || raw.version !== 1) {
+      throw sessionReadFailure(
+        new Error(`direct officer run pointer has unknown shape in ${full}`),
+        "failed to read bound auditor pointer",
+      );
+    }
+    const pointed =
+      typeof raw.sessionFile === "string" && raw.sessionFile.trim() !== ""
+        ? raw.sessionFile
+        : undefined;
+    if (pointed === undefined) {
+      throw sessionReadFailure(
+        new Error(`direct officer run pointer missing sessionFile in ${full}`),
+        "failed to read bound auditor pointer",
+      );
+    }
+    return pointed;
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("failed to read")) throw error;
+    throw sessionReadFailure(error, "failed to read bound auditor pointer");
+  }
+}
 
 async function loadBoundAuditorVolumes(
   sessionFile: string,
@@ -1088,19 +1122,15 @@ async function loadBoundAuditorVolumes(
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
   // Court boundary = typed courtAttemptId on SettlementCourtScope vs auditor
-  // parent-attempt binding (#637 / #858). Same court (open-court resume / in-place
-  // retry) keeps first-attempt retention; a different courtAttemptId stales prior
-  // auditors. Never user-message bytes, empty prompt, first-line token, or prose.
+  // parent-attempt binding (#637 / #858). Never user-message bytes.
   const scopeCourtAttemptId =
     scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0
       ? scope.courtAttemptId
       : undefined;
   const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
-  // Prefer any valid compliance failure before falling back to provider stop
-  // (owner A / #840): in-place retry without a new compliance entry must still
-  // surface the first attempt's retentionFailure.
   const valid: BoundAuditorVolume[] = [];
   let sawAnyDirectory = false;
+  const seenOfficerSessions = new Set<string>();
   for (const childDirectory of childDirectories) {
     let names: string[];
     try {
@@ -1110,17 +1140,30 @@ async function loadBoundAuditorVolumes(
       if (isMissingPathError(error)) continue;
       throw sessionReadFailure(error, "failed to read bound auditor session directory");
     }
-    for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
+    const nestNames = names
+      .filter((name) => name.endsWith(".jsonl") || name.endsWith(".pointer.json"))
+      .sort()
+      .reverse();
+    for (const file of nestNames) {
+      const officerSessionPath = await resolveAuditorSessionPathFromNestEntry(
+        childDirectory,
+        file,
+      );
+      if (officerSessionPath === undefined) continue;
+      if (file.endsWith(".pointer.json")) {
+        if (seenOfficerSessions.has(officerSessionPath)) continue;
+        seenOfficerSessions.add(officerSessionPath);
+      }
       let entries: SessionEntry[];
       try {
-        entries = await readBoundSessionEntries(join(childDirectory, file));
+        entries = await readBoundSessionEntries(officerSessionPath);
       } catch (error) {
+        if (isMissingPathError(error)) continue;
         throw sessionReadFailure(error, "failed to read discovered auditor session");
       }
       const header = entries.find((entry) => entry.type === "session");
       if (!isRecord(header)) continue;
-      // Parent-attempt binding owns its interval on multi-attempt volumes
-      // (never whole-volume provider/compliance).
+      // Parent-attempt binding owns its interval on multi-attempt volumes.
       const bindingIndexes: number[] = [];
       for (let i = 0; i < entries.length; i += 1) {
         const entry = entries[i];
@@ -1137,11 +1180,11 @@ async function loadBoundAuditorVolumes(
             }))
           : [{ entry: undefined, start: 0, end: entries.length }];
       for (const { entry: bindingEntry, start, end } of bindingPasses) {
+        const bindingData =
+          bindingEntry !== undefined && isRecord(bindingEntry.data) ? bindingEntry.data : undefined;
         const bindingParent =
-          bindingEntry !== undefined &&
-          isRecord(bindingEntry.data) &&
-          isRecord(bindingEntry.data.parent)
-            ? bindingEntry.data.parent
+          bindingData !== undefined && isRecord(bindingData.parent)
+            ? bindingData.parent
             : undefined;
         const attemptEntryId =
           typeof bindingParent?.attemptEntryId === "string"
@@ -1152,6 +1195,10 @@ async function loadBoundAuditorVolumes(
           bindingParent.courtAttemptId.length > 0
             ? bindingParent.courtAttemptId
             : undefined;
+        const outcome =
+          bindingData?.outcome === "pass" || bindingData?.outcome === "failure"
+            ? bindingData.outcome
+            : undefined;
         const boundSessionFile =
           typeof bindingParent?.sessionFile === "string"
             ? bindingParent.sessionFile
@@ -1161,8 +1208,7 @@ async function loadBoundAuditorVolumes(
         if (boundSessionFile !== sessionFile) continue;
         if (bindingParent !== undefined && bindingParent.sessionId !== parentId) continue;
         // Typed court settlement: only the same courtAttemptId qualifies.
-        // Legacy bindings without the field cannot claim a later typed court
-        // (must not silently stay valid for every future court).
+        // Legacy bindings without the field cannot claim a later typed court.
         if (
           scopeCourtAttemptId !== undefined &&
           boundCourtAttemptId !== scopeCourtAttemptId
@@ -1175,9 +1221,9 @@ async function loadBoundAuditorVolumes(
           parentId,
           sessionFile,
           ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
+          ...(boundCourtAttemptId === undefined ? {} : { courtAttemptId: boundCourtAttemptId }),
+          ...(outcome === undefined ? {} : { outcome }),
         });
-        // Keep every qualifying interval for this court/session.
-        // A single first-match break drops later same-user summons failures (#636).
       }
     }
   }
@@ -1188,7 +1234,17 @@ async function loadBoundAuditorVolumes(
 function complianceFailureFromAuditorVolumes(
   volumes: readonly BoundAuditorVolume[],
 ): RoleTurnKnownFailure | undefined {
-  for (const { entries, attemptEntryId, parentId, sessionFile } of volumes) {
+  // Newest-first: a later same-court `pass` supersedes earlier retained failures.
+  // An interrupted retry that wrote nothing leaves the earlier failure recoverable.
+  const supersededCourts = new Set<string>();
+  for (const volume of volumes) {
+    const courtKey = volume.courtAttemptId;
+    if (courtKey !== undefined && supersededCourts.has(courtKey)) continue;
+    if (volume.outcome === "pass") {
+      if (courtKey !== undefined) supersededCourts.add(courtKey);
+      continue;
+    }
+    const { entries, attemptEntryId, parentId, sessionFile } = volume;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
       const entry = entries[i];
       if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord(entry.data)) continue;
@@ -1196,8 +1252,6 @@ function complianceFailureFromAuditorVolumes(
       const failure = isRecord(entry.data.failure) ? entry.data.failure : undefined;
       if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId) continue;
       // #881: keep the recorded failure as written — typed cause when present, else raw diagnostic only.
-      // Retained compliance failure is authoritative alone; do not require a native
-      // assistant provider-stop in the same volume (archivist custom-entry path).
       if (failure === undefined) continue;
       const identity = isRecord(failure.identity) ? failure.identity : undefined;
       const typedCause =

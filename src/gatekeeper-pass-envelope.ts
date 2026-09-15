@@ -13,14 +13,9 @@
  * Code does not judge content, map next-step for parent, or label unreadable/unusable.
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import {
-  bookAuditorParentAttemptBinding,
-  bookDirectOfficerRunPointer,
-} from "./archivist-record-entry.ts";
-import {
-  courtAttemptIdFromHostContext,
-  type HostContext,
-} from "./host-contracts.ts";
+import { bookDirectOfficerRunPointer } from "./archivist-record-entry.ts";
+import { projectAuditorParentAttemptBinding } from "./compliance-transport.ts";
+import type { HostContext } from "./host-contracts.ts";
 import {
   GatekeeperDecisionError,
   OFFICER_CONCLUSION_REASK,
@@ -113,41 +108,30 @@ export async function requireGatekeeperPass(options: {
         options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
       }
     }
-    // Auditor transport failure: archivist-owned fresh volume with existing
-    // courtAttemptId so same-court resume can recover retention (#858 / #840).
+    // Auditor pass/failure on the real summoned session via the sole projection
+    // helper (courtAttemptId Host identity; pass supersedes earlier failure).
     if (
       projected.officer === "auditor" &&
-      gatekeeper.status === "transport_failure"
+      projected.summoned !== undefined &&
+      (gatekeeper.status === "transport_failure" || gatekeeper.status === "pass")
     ) {
       try {
-        const hostContext = options.context as HostContext;
-        const parentFile = hostContext.sessionManager?.getSessionFile?.();
-        if (typeof parentFile === "string" && parentFile.trim() !== "") {
-          const header = hostContext.sessionManager?.getHeader?.();
-          const leafId = hostContext.sessionManager?.getLeafId?.();
-          const courtAttemptId = courtAttemptIdFromHostContext(hostContext);
-          bookAuditorParentAttemptBinding({
-            parentSessionFile: parentFile,
-            cwd: hostContext.cwd,
-            ...(header !== null &&
-              header !== undefined &&
-              typeof header.id === "string" &&
-              header.id.length > 0
-              ? { parentSessionId: header.id }
-              : {}),
-            ...(typeof leafId === "string" && leafId.length > 0
-              ? { attemptEntryId: leafId }
-              : {}),
-            ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
-            failure: {
-              cause: "provider",
-              diagnostic: gatekeeper.reason,
-              ...(gatekeeper.submission === undefined
-                ? {}
-                : { details: { submission: gatekeeper.submission } }),
-            },
-          });
-        }
+        projectAuditorParentAttemptBinding({
+          context: options.context as HostContext,
+          summoned: projected.summoned,
+          outcome: gatekeeper.status === "pass" ? "pass" : "failure",
+          ...(gatekeeper.status === "transport_failure"
+            ? {
+                failure: {
+                  cause: "provider",
+                  diagnostic: gatekeeper.reason,
+                  ...(gatekeeper.submission === undefined
+                    ? {}
+                    : { details: { submission: gatekeeper.submission } }),
+                },
+              }
+            : {}),
+        });
       } catch (error) {
         options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
       }

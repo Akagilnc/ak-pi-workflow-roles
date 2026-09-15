@@ -349,8 +349,8 @@ test("bound auditor provider failure outranks the parent abort it caused", async
     );
   });
 });
-// #600 / #840 / #858: auditor retention court boundary is typed courtAttemptId
-// written via archivist createRecordSession on the compliance transport_failure path.
+// #600 / #840 / #858: binding on real summoned auditor session; courtAttemptId
+// keep/stale/supersede — never user-message bytes.
 test("same-court resume keeps first-attempt auditor retention via production writer", async () => {
   const { withHermeticHome, machineLedgerHome, seedGitRepository } = await import(
     "../helpers/pi-test-harness.ts"
@@ -361,14 +361,8 @@ test("same-court resume keeps first-attempt auditor retention via production wri
     await mkdir(project, { recursive: true });
     seedGitRepository(project);
 
-    const runDir = join(
-      machineLedgerHome(home),
-      "books",
-      "proj",
-      "runs",
-      "activation",
-      "parent-run",
-    );
+    const bookRuns = join(machineLedgerHome(home), "books", "proj", "runs", "activation");
+    const runDir = join(bookRuns, "parent-run");
     const sessionDir = join(runDir, "session");
     const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
@@ -409,69 +403,19 @@ test("same-court resume keeps first-attempt auditor retention via production wri
       },
     };
 
-    const failingSummon = async () => ({
-      exitCode: 1,
-      terminal: {
-        roleOutcome: {
-          kind: "failure" as const,
-          role: "auditor" as const,
-          cause: "provider" as const,
-          diagnostic: "WebSocket error",
-          decisiveFacts: {
-            cause: "provider",
-            identity: { name: "faux-1", code: "openai-codex" },
-            details: {
-              provider: "openai-codex",
-              model: "faux-1",
-              retentionFailure: {
-                name: "ComplianceResponseRetentionError",
-                cause: { code: "EISDIR" },
-              },
-            },
-          },
-        },
-        navigator: { disposition: "no-advice" as const },
-        artifacts: [] as const,
-        runId: "auditor-run",
-      },
-    });
+    async function materializeAuditorRun(label: string): Promise<string> {
+      const auditorRun = join(bookRuns, label);
+      const auditorSessionDir = join(auditorRun, "session");
+      await mkdir(auditorSessionDir, { recursive: true });
+      await writeFile(
+        join(auditorSessionDir, "session.jsonl"),
+        `${JSON.stringify({ type: "session", id: `auditor-${label}`, cwd: project })}\n`,
+      );
+      return auditorRun;
+    }
 
-    // Attempt 1: transport failure — archivist mints a fresh volume with binding+failure.
-    const first = await runComplianceAudit({
-      subject: "judge",
-      context: context as never,
-      runDirectory: runDir,
-      summonAuditor: failingSummon,
-    });
-    assert.equal(first.status, "transport_failure");
-
-    // Attempt 2 same court: resume/retry that does NOT produce a replacement failure.
-    const second = await runComplianceAudit({
-      subject: "judge",
-      context: context as never,
-      runDirectory: runDir,
-      summonAuditor: async () => ({
-        exitCode: 0,
-        terminal: {
-          roleOutcome: {
-            kind: "accepted" as const,
-            role: "auditor" as const,
-            status: "pass",
-            decisiveFacts: { status: "pass" },
-          },
-          navigator: { disposition: "no-advice" as const },
-          artifacts: [] as const,
-          runId: "auditor-retry",
-          submissions: [{ status: "pass" }],
-        },
-      }),
-    });
-    assert.equal(second.status, "pass");
-
-    // Same court still recovers first-attempt retention (not destroyed by retry).
-    const known = await readBoundAuditorKnownFailure(sessionFile, { courtAttemptId });
-    assert.deepEqual(known, {
-      cause: "provider",
+    const expectedFailure = {
+      cause: "provider" as const,
       diagnostic: "WebSocket error",
       identity: { name: "faux-1", code: "openai-codex" },
       details: {
@@ -482,53 +426,89 @@ test("same-court resume keeps first-attempt auditor retention via production wri
           cause: { code: "EISDIR" },
         },
       },
-    });
+    };
 
-    // Typed new court stales the prior binding.
+    // Attempt 1: transport failure on real auditor session.
+    const failRun = await materializeAuditorRun("auditor-fail");
+    const first = await runComplianceAudit({
+      subject: "judge",
+      context: context as never,
+      runDirectory: runDir,
+      summonAuditor: async () => ({
+        exitCode: 1,
+        runDirectory: failRun,
+        terminal: {
+          roleOutcome: {
+            kind: "failure" as const,
+            role: "auditor" as const,
+            cause: "provider" as const,
+            diagnostic: "WebSocket error",
+            decisiveFacts: {
+              cause: "provider",
+              identity: { name: "faux-1", code: "openai-codex" },
+              details: expectedFailure.details,
+            },
+          },
+          navigator: { disposition: "no-advice" as const },
+          artifacts: [] as const,
+          runId: "auditor-fail",
+        },
+      }),
+    });
+    assert.equal(first.status, "transport_failure");
+
+    // Attempt 2 same court: interrupted / no compliance result (empty summon terminal).
+    // Must NOT wipe first-attempt retention.
+    const interrupted = await runComplianceAudit({
+      subject: "judge",
+      context: context as never,
+      runDirectory: runDir,
+      summonAuditor: async () => {
+        throw new Error("attempt interrupted before compliance result");
+      },
+    }).catch((error: unknown) => error);
+    assert.ok(interrupted instanceof Error);
+
+    assert.deepEqual(
+      await readBoundAuditorKnownFailure(sessionFile, { courtAttemptId }),
+      expectedFailure,
+      "interrupted same-court retry must keep first-attempt retentionFailure",
+    );
+
+    // Attempt 3 same court: real pass supersedes the earlier failure.
+    const passRun = await materializeAuditorRun("auditor-pass");
+    const third = await runComplianceAudit({
+      subject: "judge",
+      context: context as never,
+      runDirectory: runDir,
+      summonAuditor: async () => ({
+        exitCode: 0,
+        runDirectory: passRun,
+        terminal: {
+          roleOutcome: {
+            kind: "accepted" as const,
+            role: "auditor" as const,
+            status: "pass",
+            decisiveFacts: { status: "pass" },
+          },
+          navigator: { disposition: "no-advice" as const },
+          artifacts: [] as const,
+          runId: "auditor-pass",
+          submissions: [{ status: "pass" }],
+        },
+      }),
+    });
+    assert.equal(third.status, "pass");
+    assert.equal(
+      await readBoundAuditorKnownFailure(sessionFile, { courtAttemptId }),
+      undefined,
+      "same-court pass must supersede earlier retained failure",
+    );
+
+    // Typed new court does not see the superseded prior court.
     assert.equal(
       await readBoundAuditorKnownFailure(sessionFile, { courtAttemptId: "court-new" }),
       undefined,
-      "typed new courtAttemptId must stale prior auditor retention",
-    );
-
-    // Legacy binding without courtAttemptId cannot claim a later typed court.
-    const childDir = join(sessionDir, "auditor-roles");
-    await writeFile(
-      join(childDir, "legacy.jsonl"),
-      [
-        { type: "session", id: "legacy-child", parentSession: sessionFile },
-        {
-          type: "custom",
-          customType: "ak_auditor_parent_attempt_binding",
-          data: {
-            version: 1,
-            parent: {
-              sessionId: "parent-session",
-              sessionFile,
-              attemptEntryId: "attempt-first",
-            },
-          },
-        },
-        {
-          type: "custom",
-          customType: "ak_auditor_compliance_failure",
-          data: {
-            parent: {
-              sessionId: "parent-session",
-              sessionFile,
-              attemptEntryId: "attempt-first",
-            },
-            failure: { cause: "provider", diagnostic: "legacy without court id" },
-          },
-        },
-      ]
-        .map((entry) => JSON.stringify(entry))
-        .join("\n") + "\n",
-    );
-    assert.equal(
-      await readBoundAuditorKnownFailure(sessionFile, { courtAttemptId: "court-later" }),
-      undefined,
-      "legacy binding without courtAttemptId must not stay valid for later typed courts",
     );
   });
 });
