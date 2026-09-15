@@ -222,8 +222,8 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const humanOriginEnqueueId = "queue-human-origin-1";
   const humanOriginText = "经队列的真人输入（origin.kind=human）";
   const peerOriginEnqueueId = "queue-peer-origin-1";
-  // Live majority peer shape: hostInjected, no origin.body; mat wrap ≠ enqueue XML.
-  // Classification is the fixed `<cross-session-message>` prefix on enqueue.
+  // Live majority peer shape: hostInjected mat with origin.kind=peer; wrap ≠ enqueue XML.
+  // Machine exclusion = structured origin on paired mat/attachment — not an unauthorized tag table.
   const peerOriginBody = "跨会话 peer 投递不得署 owner";
   const peerOriginEnqueueContent =
     `<cross-session-message from="uds:/tmp/cc-socks/peer.sock" from-name="peer-session">\n${peerOriginBody}\n</cross-session-message>`;
@@ -653,6 +653,34 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: bareMachineText,
       },
     }),
+    // 41–43. G4: non-task-notification machine enqueue + mat origin.kind non-human
+    // must not sign owner (causal pair suppresses enqueue; no unauthorized tag table).
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      uuid: "queue-system-reminder-1",
+      content:
+        "<system-reminder>\nbackground shell exited\n</system-reminder>",
+    }),
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "dequeue",
+      uuid: "queue-deq-system-reminder",
+    }),
+    JSON.stringify({
+      type: "user",
+      uuid: "msg-system-reminder-mat",
+      origin: { kind: "task-notification" },
+      message: {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: "<system-reminder>\nbackground shell exited\n</system-reminder>",
+          },
+        ],
+      },
+    }),
   ];
   await mkdir(join(path, ".."), { recursive: true });
   await writeFile(path, `${rows.join("\n")}\n`, "utf8");
@@ -690,7 +718,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     unparsableLine: 21,
     unparsableRaw,
     // rows[] length is the physical line count of the written session file.
-    lastLine: 47,
+    lastLine: 50,
     rangeALine: 1,
     rangeBLine: 2,
   };
@@ -721,7 +749,8 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     })}\n${JSON.stringify({
       speaker: "owner",
       s: 0,
-      line: 1,
+      // High line — must not collide with fixture physical lines under (s,line) carry priority.
+      line: 9000,
       id: "prior-seed",
       text: "既有权威卷原文",
     })}\n`;
@@ -900,7 +929,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
           line.id === "queue-peer-remove-1",
       ),
       false,
-      "hostInjected peer enqueue/mat/remove must not land as owner (fixed prefix)",
+      "hostInjected peer enqueue/mat/remove must not land as owner (origin.kind causal pair)",
     );
     assert.equal(
       volume.lines.some((line) => line.text === fixture.peerOriginText),
@@ -947,6 +976,17 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       ),
       false,
       "slash-command expanded mat must not become owner",
+    );
+    // G4: system-reminder machine via mat origin.kind — enqueue must not sign owner.
+    assert.equal(
+      volume.lines.some(
+        (line) =>
+          line.id === "queue-system-reminder-1" ||
+          line.id === "msg-system-reminder-mat" ||
+          (typeof line.text === "string" && line.text.includes("<system-reminder>")),
+      ),
+      false,
+      "system-reminder machine enqueue/mat must not become owner (causal origin pair)",
     );
     // Fixed-prefix enqueue + same-text no-origin mat: both out (not mat fall-through).
     assert.equal(
@@ -1578,6 +1618,362 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       ),
       true,
       "unprovable other prefix stock must stay untouched",
+    );
+
+    // C4：合法投影的同前缀真人正文在后续非 empty 轮次必须稳定保留（非永久过滤器）。
+    const pastePath = join(home, ".claude", "projects", "probe", "session-paste.jsonl");
+    const pasteId = "msg-human-paste-task-notif";
+    const pasteText =
+      "<task-notification> 这是我贴进来要你解释的东西，别删。</task-notification>";
+    await writeFile(
+      pastePath,
+      `${JSON.stringify({
+        type: "user",
+        uuid: pasteId,
+        message: {
+          role: "user",
+          content: [{ type: "text", text: pasteText }],
+        },
+      })}\n`,
+      "utf8",
+    );
+    const rangePaste = {
+      path: pastePath,
+      ranges: [{ from: { line: 1 }, to: { line: 1 } }],
+    };
+    const afterPaste = await runDiarist("01a0diar00-0000-7000-8000-00000000009a", [
+      rangePaste,
+    ]);
+    assert.equal(
+      afterPaste.lines.some((line) => line.id === pasteId && line.text === pasteText),
+      true,
+      "human paste of task-notification prefix must project as owner",
+    );
+    // Next round: unrelated new range — paste must survive carry (not permanent body filter).
+    const keepPath = join(home, ".claude", "projects", "probe", "session-keep.jsonl");
+    const keepId = "msg-keep-after-paste";
+    await writeFile(
+      keepPath,
+      `${JSON.stringify({
+        type: "user",
+        uuid: keepId,
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "后一句不相干范围" }],
+        },
+      })}\n`,
+      "utf8",
+    );
+    const afterKeep = await runDiarist("01a0diar00-0000-7000-8000-00000000009b", [
+      { path: keepPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] },
+    ]);
+    assert.equal(
+      afterKeep.lines.some((line) => line.id === pasteId && line.text === pasteText),
+      true,
+      "projected human task-notification paste must survive later non-empty rounds",
+    );
+    assert.equal(
+      afterKeep.lines.some((line) => line.id === keepId),
+      true,
+      "new range after paste must still land",
+    );
+
+    // G5：dequeue 后不可解析行不得让 pending 槽吞掉下一条真实 owner。
+    // ranges 跳过不可解析物理行以免 reask；adaptSessionDialogue 仍整卷扫描，
+    // undefined 行必须就地消费 pending，不得把 line 4 真 owner 当副本丢掉。
+    const gapPath = join(home, ".claude", "projects", "probe", "session-gap.jsonl");
+    await writeFile(
+      gapPath,
+      [
+        JSON.stringify({
+          type: "queue-operation",
+          operation: "enqueue",
+          uuid: "queue-before-gap",
+          content: "队列后不可解析不得吞下一条",
+        }),
+        JSON.stringify({
+          type: "queue-operation",
+          operation: "dequeue",
+          uuid: "queue-deq-gap",
+        }),
+        "{not-json-between-dequeue-and-owner",
+        JSON.stringify({
+          type: "user",
+          uuid: "msg-after-gap-owner",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "不可解析之后的真实陛下发言" }],
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const afterGap = await runDiarist("01a0diar00-0000-7000-8000-00000000009h", [
+      {
+        path: gapPath,
+        ranges: [
+          { from: { line: 1 }, to: { line: 1 } },
+          { from: { line: 4 }, to: { line: 4 } },
+        ],
+      },
+    ]);
+    assert.equal(
+      afterGap.lines.some(
+        (line) => line.id === "queue-before-gap" && line.text === "队列后不可解析不得吞下一条",
+      ),
+      true,
+      "enqueue before unparsable gap must stay",
+    );
+    assert.equal(
+      afterGap.lines.some(
+        (line) =>
+          line.id === "msg-after-gap-owner" && line.text === "不可解析之后的真实陛下发言",
+      ),
+      true,
+      "real owner after unparsable gap must not be swallowed by pending slot",
+    );
+
+    // C2/G1/G6：重叠超集重投影不得复制无 id 行（既有 (s,line) 优先）。
+    const noIdPath = join(home, ".claude", "projects", "probe", "session-noid.jsonl");
+    const noIdText = "无 id 的陛下发言";
+    const noIdSecondId = "msg-noid-second";
+    await writeFile(
+      noIdPath,
+      [
+        JSON.stringify({
+          type: "user",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: noIdText }],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          uuid: noIdSecondId,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "第二行有 id" }],
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const afterNoId1 = await runDiarist("01a0diar00-0000-7000-8000-00000000009c", [
+      { path: noIdPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] },
+    ]);
+    const noIdSessionIndex = afterNoId1.header?.sessions.findIndex(
+      (session) => session.path === noIdPath,
+    );
+    assert.ok(noIdSessionIndex !== undefined && noIdSessionIndex >= 0);
+    assert.equal(
+      afterNoId1.lines.filter(
+        (line) =>
+          line.s === noIdSessionIndex && line.line === 1 && line.text === noIdText,
+      ).length,
+      1,
+      "first projection of id-less line once",
+    );
+    // Overlapping wider sweep — must not duplicate the id-less line at (s,1).
+    const afterNoId2 = await runDiarist("01a0diar00-0000-7000-8000-00000000009d", [
+      { path: noIdPath, ranges: [{ from: { line: 1 }, to: { line: 2 } }] },
+    ]);
+    assert.equal(
+      afterNoId2.lines.filter(
+        (line) =>
+          line.s === noIdSessionIndex && line.line === 1 && line.text === noIdText,
+      ).length,
+      1,
+      "overlapping reproject must not duplicate id-less line at same (s,line)",
+    );
+    assert.equal(
+      afterNoId2.lines.filter((line) => line.id === noIdSecondId).length,
+      1,
+      "second line of wider sweep still lands once",
+    );
+
+    // G8：无法投影的 body 原字节在后续合法重写时原样留存。
+    const headerForRaw = afterNoId2.header!;
+    const unprojectedRaw = '{"not":"a-diary-line","raw":true}';
+    const damagedRaw = "{this-is-not-json";
+    const withRaw = `${JSON.stringify({
+      ...headerForRaw,
+      updatedAt: "2026-01-03T00:00:00.000Z",
+    })}\n${[
+      ...afterNoId2.lines.map((line) => JSON.stringify(line)),
+      unprojectedRaw,
+      damagedRaw,
+    ].join("\n")}\n`;
+    await writeFile(paths.recordFile, withRaw, "utf8");
+    const afterRaw = await runDiarist("01a0diar00-0000-7000-8000-00000000009e", [
+      { path: keepPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] },
+    ]);
+    const rawBytes = await readFile(paths.recordFile, "utf8");
+    assert.equal(
+      rawBytes.includes(unprojectedRaw),
+      true,
+      "unprojectable JSON body row must survive rewrite",
+    );
+    assert.equal(
+      rawBytes.includes(damagedRaw),
+      true,
+      "damaged non-JSON body row must survive rewrite",
+    );
+    assert.equal(
+      afterRaw.lines.some((line) => line.id === noIdSecondId),
+      true,
+      "projected lines still present alongside unprojected passthrough",
+    );
+
+    // C3：amendment s 越出既有 session 索引 → reask，不得写入伪 s。
+    const priorBeforeBadAmend = await readFile(paths.recordFile, "utf8");
+    let sawOutOfRangeAmendReask = false;
+    const { io: amendIo, stdout: amendOut } = captureIo();
+    const badAmend = await runAkRole(
+      ["diarist", "--model", "test/caller-seat:high", "--project", project, `整理 #${TICKET} 起居录`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: amendIo,
+        createRunId: () => "01a0diar00-0000-7000-8000-00000000009f",
+        principalAuthority: immutablePrincipalAuthority,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: immutablePrincipalAuthority,
+          piRunner: diaristEnvelopeRunner((round: number, lastReask?: string) => {
+            if (round === 1) {
+              return {
+                status: "completed",
+                ticketNumber: TICKET,
+                sessions: [],
+                amendments: [
+                  {
+                    s: 99,
+                    line: 4242,
+                    speaker: "owner",
+                    text: "凭空插入的『陛下原话』",
+                  },
+                ],
+              };
+            }
+            assert.ok(lastReask, "expected out-of-range amendment reask");
+            assert.match(lastReask, /amendment s=99|session index/);
+            sawOutOfRangeAmendReask = true;
+            assert.equal(
+              readFileSync(paths.recordFile, "utf8"),
+              priorBeforeBadAmend,
+              "out-of-range amendment must not publish",
+            );
+            return {
+              status: "completed",
+              ticketNumber: TICKET,
+              sessions: [],
+            };
+          }),
+        }),
+      },
+    );
+    assert.equal(badAmend.exitCode, 0, amendOut.join("") || "out-of-range amend recovery failed");
+    assert.equal(sawOutOfRangeAmendReask, true);
+    assert.equal(
+      (await readTicketProvenance(TICKET, project, home)).lines.some(
+        (line) => line.s === 99 || line.text.includes("凭空插入"),
+      ),
+      false,
+      "out-of-range amendment must never land",
+    );
+  });
+});
+
+/**
+ * C5：首轮 prior 无 sessions 时，incoming 自身仍按 physicalPathIdentity 归并；
+ * 真路径 + symlink 别名不得铸出两个 s。
+ */
+test("ak-role diarist first-round coalesces symlink aliases into one session index", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const realDir = join(home, ".claude", "projects", "probe-first");
+    const aliasDir = join(home, ".claude", "projects", "probe-first-alias");
+    await mkdir(realDir, { recursive: true });
+    await mkdir(join(home, ".claude", "projects"), { recursive: true });
+    await symlink(realDir, aliasDir);
+
+    const sessionPath = join(realDir, "session.jsonl");
+    const aliasPath = join(aliasDir, "session.jsonl");
+    const idA = "msg-first-coalesce-a";
+    const idB = "msg-first-coalesce-b";
+    await writeFile(
+      sessionPath,
+      [
+        JSON.stringify({
+          type: "user",
+          uuid: idA,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "首轮真路径" }],
+          },
+        }),
+        JSON.stringify({
+          type: "user",
+          uuid: idB,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "首轮别名路径" }],
+          },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    const { io, stdout } = captureIo();
+    const result = await runAkRole(
+      ["diarist", "--model", "test/caller-seat:high", "--project", project, `整理 #${TICKET} 起居录`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => "01a0diar00-0000-7000-8000-0000000000c5",
+        principalAuthority: immutablePrincipalAuthority,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: immutablePrincipalAuthority,
+          piRunner: diaristEnvelopeRunner({
+            status: "completed",
+            ticketNumber: TICKET,
+            sessions: [
+              {
+                path: sessionPath,
+                ranges: [{ from: { line: 1 }, to: { line: 1 } }],
+              },
+              {
+                path: aliasPath,
+                ranges: [{ from: { line: 2 }, to: { line: 2 } }],
+              },
+            ],
+          }),
+        }),
+      },
+    );
+    assert.equal(result.exitCode, 0, stdout.join("") || "first-round coalesce failed");
+    const volume = await readTicketProvenance(TICKET, project, home);
+    assert.equal(
+      volume.header?.sessions.length,
+      1,
+      "first-round real path + symlink alias must mint exactly one session index",
+    );
+    assert.equal(volume.header?.sessions[0]?.path, sessionPath, "first-seen path retained");
+    assert.equal(volume.header?.sessions[0]?.ranges.length, 2);
+    assert.equal(volume.lines.filter((line) => line.s === 0).length, volume.lines.length);
+    assert.equal(volume.lines.some((line) => line.id === idA), true);
+    assert.equal(volume.lines.some((line) => line.id === idB), true);
+    assert.equal(
+      volume.lines.some((line) => line.s === 1),
+      false,
+      "must not mint s=1 for the same physical volume on first round",
     );
   });
 });

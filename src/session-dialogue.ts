@@ -124,23 +124,16 @@ function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
 }
 
 /**
- * 陛下 2026-09-15 拍定（decision key `queue-source-fixed-shape-prefix=lawful`）：
- * 冻结卷宗上的固定起始形状，不是自由文本。只认这两个御批元素开标签；
- * 不得按内部正文语义或措辞变体扩表。开标签后可直接 `>`（无属性）或空白再接属性。
+ * 票面 #918 准许的唯一固定起始形状：`<task-notification`。
+ * 其它标签不在御裁射程内——不得扩表，不得伪造 decision key / 「陛下拍定」。
+ * 开标签后可直接 `>`（无属性）、EOF 或空白再接属性；其它字符不成立。
  *
- * 用固定前缀判「是不是机器 enqueue」合法；用可变载荷/说话人正文（全等或子串）
- * 决定「属于哪一条 enqueue」仍为锚定宪法所禁。
+ * 机器 enqueue 的完整判据＝结构化来源（origin.kind）／本固定形状／真实因果与位置；
+ * 用可变载荷正文（全等或子串）做 identity join 仍为锚定宪法所禁。
  */
-const FIXED_NON_OWNER_ENQUEUE_TAGS = [
-  "<task-notification",
-  "<cross-session-message",
-] as const;
+const TASK_NOTIFICATION_OPEN_TAG = "<task-notification";
 
-/**
- * 御批固定开标签前缀（decision key `queue-source-fixed-shape-prefix=lawful`）。
- * 开标签后可直接 `>`、EOF 或空白再接属性；其它字符不成立。
- */
-export function hasFixedOpenTagPrefix(content: string, tag: string): boolean {
+function hasFixedOpenTagPrefix(content: string, tag: string): boolean {
   if (!content.startsWith(tag)) return false;
   const next = content.charAt(tag.length);
   return (
@@ -153,20 +146,17 @@ export function hasFixedOpenTagPrefix(content: string, tag: string): boolean {
   );
 }
 
-/** enqueue.content 是否以御批固定机器开标签起头。 */
+/** enqueue.content 是否以票面准许的 `<task-notification` 固定开标签起头。 */
 function isFixedNonOwnerEnqueueShape(content: string): boolean {
-  for (const tag of FIXED_NON_OWNER_ENQUEUE_TAGS) {
-    if (hasFixedOpenTagPrefix(content, tag)) return true;
-  }
-  return false;
+  return hasFixedOpenTagPrefix(content, TASK_NOTIFICATION_OPEN_TAG);
 }
 
 /**
  * #918 存量清除：卷 body 无 origin.kind，仅 `<task-notification` 固定起始可就地移除。
- * 其它前缀证不出则原样留存——不扩到 cross-session-message 或语义分类表。
+ * 其它前缀证不出则原样留存——不扩标签表。一次性迁移用，不作每轮永久正文过滤器。
  */
 export function isStockTaskNotificationOwnerText(text: string): boolean {
-  return hasFixedOpenTagPrefix(text, "<task-notification");
+  return hasFixedOpenTagPrefix(text, TASK_NOTIFICATION_OPEN_TAG);
 }
 
 /**
@@ -237,25 +227,37 @@ type QueuePairing = {
   readonly suppressEnqueues: ReadonlySet<number>;
 };
 
+/** attachment.queued_command 上的结构化 origin.kind（不读 prompt 正文）。 */
+function queuedCommandAttachmentOriginKind(
+  row: Record<string, unknown>,
+): string | undefined {
+  if (row.type !== "attachment" || !isRecord(row.attachment)) return undefined;
+  if (row.attachment.type !== "queued_command") return undefined;
+  if (!isRecord(row.attachment.origin)) return undefined;
+  const kind = row.attachment.origin.kind;
+  return typeof kind === "string" && kind !== "" ? kind : undefined;
+}
+
 /**
- * 整卷队列来源分类（#918 / 给事中署词）：
- * 「利用配对 materialized user 的结构化来源事实排除机器 enqueue；不得匹配正文；
- *  同时必须保住经队列到达的真人输入。」
+ * 整卷队列来源分类（#918）：
+ * 机器块不署 owner——结构化来源 / 票面准许的 `<task-notification` 固定形状 /
+ * 真实因果与位置关系；不得匹配正文；不得另造未授权标签表；
+ * 同时必须保住经队列到达的真人输入。
  *
- * 机器 enqueue 分类（decision key `queue-source-fixed-shape-prefix=lawful`）：
- * - content 以 `<task-notification` / `<cross-session-message` 开头 → 非 owner
- *   覆盖无物化、remove、重渲染 task、hostInjected peer；不据内部正文或变体扩表
- * - 不靠物化反扣 enqueue（避免 FIFO 漂移把机器 origin 扣到真人 enqueue）
+ * 机器 enqueue：
+ * - content 以 `<task-notification` 起头 → 非 owner（票面唯一固定形状）
+ * - 因果配对的物化 `origin.kind` 非 human → 抑制**该**配对 enqueue（真实位置，
+ *   非全局 FIFO 反扣；覆盖 system-reminder 等无固定前缀、但物化带机器 origin 的形）
+ * - remove 路径：enqueue 与 remove 之间的 queued_command attachment 若带非 human
+ *   origin，抑制该 enqueue（peer remove 等无物化形）
  *
- * 物化分类：
- * - `origin.kind` 非 human → 跳过该物化（自身；不反扣 enqueue）
+ * 物化：
+ * - `origin.kind` 非 human → 跳过该物化
  * - 位置配对（enqueue→dequeue→下一 owner 物化）：有正文 enqueue 的副本物化跳过，
- *   避免双计；配对只消费因果位置，**不**用正文全等/子串做 identity join
- * - 斜杠命令展开等「包装正文 ≠ enqueue」且无 origin 的物化：靠位置配对跳过副本，
- *   enqueue 侧若非固定机器形状则保留为真人输入
+ *   避免双计；**不**用正文全等/子串做 identity join
  *
- * 无正文 enqueue 的 sole 物化、被吸收插话（enqueue 无物化）照常保留。
- * 不用可变载荷做 identity join；不恢复「以物化 origin 反扣 enqueue」的全局 FIFO 归因。
+ * 缺失/不可解析物化：pending 槽在 undefined 行上就地消费，不得吞掉下一条真实 owner。
+ * 被吸收插话（dequeue 后 runner 续写、无物化）由 runner 清 pending，enqueue 保留。
  */
 function ownerMessagesMaterializingQueue(
   rows: readonly (Record<string, unknown> | undefined)[],
@@ -263,14 +265,22 @@ function ownerMessagesMaterializingQueue(
   const skipMaterializations = new Set<number>();
   const suppressEnqueues = new Set<number>();
 
-  /** 各 enqueue：下标 + 是否有可投影正文，按入队顺序等 dequeue/remove 消费。 */
-  type EnqueueSlot = { readonly index: number; readonly hasContent: boolean };
+  /** 各 enqueue：下标 + 是否有可投影正文 + attachment 非 human 提示。 */
+  type EnqueueSlot = {
+    readonly index: number;
+    readonly hasContent: boolean;
+    nonOwnerAttachment: boolean;
+  };
   const enqueueQueue: EnqueueSlot[] = [];
   let pending: EnqueueSlot[] = [];
 
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
-    if (row === undefined) continue;
+    // 不可解析源行：消费一个 pending 槽（若有），不让它漂移到下一条真实 owner。
+    if (row === undefined) {
+      if (pending.length > 0) pending.shift();
+      continue;
+    }
 
     if (row.type === "queue-operation") {
       if (row.operation === "enqueue") {
@@ -282,17 +292,33 @@ function ownerMessagesMaterializingQueue(
         if (hasContent && typeof content === "string" && isFixedNonOwnerEnqueueShape(content)) {
           suppressEnqueues.add(index);
         }
-        enqueueQueue.push({ index, hasContent });
+        enqueueQueue.push({ index, hasContent, nonOwnerAttachment: false });
         continue;
       }
       if (row.operation === "dequeue" || row.operation === "remove") {
         const enqueued = enqueueQueue.shift();
-        // remove 只消费队列槽，不制造物化配对（机器项已由固定前缀在入队侧分类）。
-        if (row.operation === "dequeue" && enqueued !== undefined) {
-          pending.push(enqueued);
+        if (enqueued === undefined) continue;
+        if (row.operation === "remove") {
+          // remove：无物化。固定前缀已在入队侧抑制；attachment 非 human origin 在此补上。
+          if (enqueued.nonOwnerAttachment) suppressEnqueues.add(enqueued.index);
+          continue;
         }
+        pending.push(enqueued);
         continue;
       }
+    }
+
+    // queued_command attachment 的结构化 origin——标到仍在队中的最近一条 enqueue。
+    const attachmentOrigin = queuedCommandAttachmentOriginKind(row);
+    if (isNonOwnerOriginKind(attachmentOrigin)) {
+      for (let i = enqueueQueue.length - 1; i >= 0; i -= 1) {
+        const slot = enqueueQueue[i]!;
+        if (!slot.nonOwnerAttachment) {
+          enqueueQueue[i] = { ...slot, nonOwnerAttachment: true };
+          break;
+        }
+      }
+      continue;
     }
 
     if (isRunnerMessage(row)) {
@@ -304,11 +330,12 @@ function ownerMessagesMaterializingQueue(
       const paired = pending.shift()!;
       const originKind = materializationOriginKind(row);
       if (isNonOwnerOriginKind(originKind)) {
-        // 非陛下物化：自身不入录。不把来源倒扣到任何 enqueue。
+        // 非陛下来源物化：自身不入录；因果位置上抑制配对 enqueue（#918 机器块一般规则）。
         skipMaterializations.add(index);
+        suppressEnqueues.add(paired.index);
       } else if (paired.hasContent) {
         // 有正文 enqueue 的物化副本（含包装正文 ≠ enqueue、无 origin 的斜杠展开）：
-        // 留 enqueue（若未被固定前缀抑制），跳过物化避免双计。不读正文做 join。
+        // 留 enqueue（若未被抑制），跳过物化避免双计。不读正文做 join。
         skipMaterializations.add(index);
       }
       // 无正文 enqueue 的真人物化：不 skip，sole materialization 保留。
