@@ -1,10 +1,4 @@
-/**
- * #922 host-native forced-method delivery.
- * claude/grok → --plugin-dir (dist/method-host-plugin, build-only);
- * codex/hermes → cwd `.agents/skills` → resources/methods (envelope-owned).
- * Catalog: create-if-absent; never overwrite foreign; delete only links this
- * process created. Cross-process same-cwd ownership awaits design ruling.
- */
+/** #922 host-native methods: plugin-dir | cwd `.agents/skills` (envelope). */
 import { constants } from "node:fs";
 import {
   access, lstat, mkdir, readFile, readlink, realpath, readdir, rm, symlink, unlink,
@@ -163,7 +157,7 @@ export async function findGitProjectRoot(start: string): Promise<string | undefi
   return undefined;
 }
 
-/** Exact skills.trusted_project_dirs entries (comments / other keys never pass). */
+/** Exact skills.trusted_project_dirs entries (comments never pass). */
 export function parseHermesTrustedProjectDirs(yaml: string): readonly string[] {
   const out: string[] = [];
   let inSkills = false, inTrusted = false, skillsIndent = -1, trustedIndent = -1;
@@ -179,8 +173,7 @@ export function parseHermesTrustedProjectDirs(yaml: string): readonly string[] {
     if (!inTrusted) {
       const m = t.match(/^trusted_project_dirs:\s*(.*)$/);
       if (!m) continue;
-      inTrusted = true;
-      trustedIndent = indent;
+      inTrusted = true; trustedIndent = indent;
       const rest = m[1]!.trim();
       if (rest.startsWith("[") && rest.endsWith("]")) {
         for (const p of rest.slice(1, -1).split(",")) {
@@ -214,8 +207,10 @@ export async function assertHermesProjectSkillsTrusted(options: {
   const readDirs = async (hermesHome: string) => {
     try {
       return parseHermesTrustedProjectDirs(await readFile(join(hermesHome, "config.yaml"), "utf8"));
-    } catch {
-      return [] as const;
+    } catch (error) {
+      // Missing config = untrusted. Other I/O faults keep their real cause (失败诚实).
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [] as const;
+      throw error;
     }
   };
   const dirs = [

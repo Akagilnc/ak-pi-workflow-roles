@@ -1,19 +1,22 @@
 /** #922 host-native method delivery (catalog ownership shape frozen pending design). */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
+import { createProductionAcpRoleTurnHost } from "../../src/acp-host/production-host.ts";
+import { HOST_DESCRIPTIONS } from "../../src/host-descriptions.ts";
 import {
   assertHermesProjectSkillsTrusted,
   ensurePackagedMethodPlugin,
   installWorkspaceAgentsSkillsLink,
-  parseHermesTrustedProjectDirs,
   packagedMethodPluginDir,
   packagedMethodsDir,
 } from "../../src/host-native-method.ts";
+import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
@@ -52,31 +55,58 @@ test("#922 workspace .agents/skills: create/release, overlap, idempotent, foreig
   }
 });
 
-test("#922 hermes trust exact; plugin build-only", async () => {
-  assert.deepEqual(
-    [...parseHermesTrustedProjectDirs("skills:\n  trusted_project_dirs:\n    - /tmp/trusted\n")],
-    ["/tmp/trusted"],
-  );
-  assert.deepEqual(
-    [...parseHermesTrustedProjectDirs("skills:\n  # trusted_project_dirs:\n  #   - /tmp/fake\n")],
-    [],
-  );
+test("#922 hermes untrusted + I/O honesty at production connect; plugin build-only", async () => {
+  const hermes = HOST_DESCRIPTIONS.hermes;
+  assert.ok(hermes);
+
   const home = await mkdtemp(worktreeTempPrefix("ak-922-hermes-home-"));
   const cwd = await mkdtemp(worktreeTempPrefix("ak-922-hermes-cwd-"));
+  const runDirectory = await mkdtemp(worktreeTempPrefix("ak-922-hermes-run-"));
   try {
     await mkdir(join(cwd, ".git"));
-    const root = await realpath(cwd);
+    await mkdir(join(runDirectory, "session"), { recursive: true });
     await mkdir(join(home, ".hermes"), { recursive: true });
-    await writeFile(join(home, ".hermes", "config.yaml"), `skills:\n  # ${root}\n  trusted_project_dirs: []\n`);
+    // Comment-only "trust" must not pass; empty dirs = untrusted.
+    await writeFile(join(home, ".hermes", "config.yaml"), "skills:\n  # trusted_project_dirs:\n  #   - /tmp/fake\n");
+
+    const host = createProductionAcpRoleTurnHost({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      description: hermes,
+      hostName: "hermes",
+    });
+    const skillPath = join(packageRoot, "resources/methods/tdd/SKILL.md");
+    const request = {
+      principal: fixturePrincipal(join(runDirectory, "session")),
+      activation: { role: "judge" as const },
+      methods: [{ kind: "skill" as const, path: skillPath }],
+      continuation: { kind: "initial" as const, prompt: "probe" },
+      cwd,
+      home,
+      agentDir: join(runDirectory, "agent"),
+      runDirectory,
+      host: "hermes",
+    };
+
+    // Production ACP entry: connect checks trust before spawning hermes binary.
+    await assert.rejects(() => host.executeTurn(request), /not trusted|skills trust/);
+
+    // Non-ENOENT read fault must not be laundered as "not trusted".
+    await rm(join(home, ".hermes", "config.yaml"), { force: true });
+    await mkdir(join(home, ".hermes", "config.yaml")); // EISDIR on readFile
     await assert.rejects(
-      () => assertHermesProjectSkillsTrusted({ home, cwd, profileName: "ak-fixer" }),
-      /not trusted|skills trust/,
+      () => assertHermesProjectSkillsTrusted({ home, cwd, profileName: "ak-judge" }),
+      (error: unknown) => {
+        assert.equal((error as NodeJS.ErrnoException).code, "EISDIR");
+        assert.equal(/not trusted|skills trust/.test(String(error)), false);
+        return true;
+      },
     );
-    await writeFile(join(home, ".hermes", "config.yaml"), `skills:\n  trusted_project_dirs:\n    - ${root}\n`);
-    await assertHermesProjectSkillsTrusted({ home, cwd, profileName: "ak-fixer" });
   } finally {
+    await chmod(join(home, ".hermes"), 0o755).catch(() => undefined);
     await rm(home, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });
+    await rm(runDirectory, { recursive: true, force: true });
   }
 
   await execFileAsync(process.execPath, [join(packageRoot, "scripts/materialize-method-host-plugin.mjs")], {
