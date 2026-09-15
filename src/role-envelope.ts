@@ -34,6 +34,11 @@ import {
   buildNavigatorInfrastructureFailureFact,
   extractInfrastructureFailureEvidence,
 } from "./navigator-invocation-identity.ts";
+import {
+  hostMethodSkills,
+  hostUsesWorkspaceAgentsSkills,
+  installWorkspaceAgentsSkillsLink,
+} from "./host-native-method.ts";
 
 export { projectActivationFlags };
 
@@ -112,6 +117,8 @@ export async function prepareRoleEnvelope(options: {
   const hostAbort = new AbortController();
   const runId = request.runDirectory.split("/").filter(Boolean).at(-1) ?? randomUUID();
   await mkdir(request.runDirectory, { recursive: true });
+  // Set just before successful return; dispose closes over this binding (ADR 0018 / #922).
+  let releaseWorkspaceAgentsSkills: (() => Promise<void>) | undefined;
 
   // Durable principal file for isAvailable / resumable settlement (public-cli).
   // #617 DK-4: header layout only — never host conversation/tool writeback into Pi JSONL.
@@ -520,6 +527,13 @@ export async function prepareRoleEnvelope(options: {
     } catch (error) {
       cleanupFailures.push(error);
     }
+    if (releaseWorkspaceAgentsSkills !== undefined) {
+      try {
+        await releaseWorkspaceAgentsSkills();
+      } catch (error) {
+        cleanupFailures.push(error);
+      }
+    }
     if (cleanupFailures.length === 1) throw cleanupFailures[0];
     if (cleanupFailures.length > 1) {
       throw new AggregateError(cleanupFailures, "ACP envelope dispose cleanup failures", {
@@ -623,6 +637,23 @@ export async function prepareRoleEnvelope(options: {
       throw new Error(`terminating tool not registered after activation: ${terminatingToolName}`);
     }
     const jsonSchema = terminatingToolJsonSchema(terminating.parameters);
+
+    // #922: codex/hermes catalog link — install only on successful prepare so
+    // failed activation never leaves a cwd symlink; dispose always releases it.
+    const packageRoot = options.dependencies.packageRoot;
+    if (
+      hostUsesWorkspaceAgentsSkills(request.host) &&
+      hostMethodSkills(request.methods).length > 0 &&
+      typeof packageRoot === "string" &&
+      packageRoot !== ""
+    ) {
+      const link = await installWorkspaceAgentsSkillsLink({
+        cwd: request.cwd,
+        packageRoot,
+      });
+      releaseWorkspaceAgentsSkills = () => link.release();
+    }
+
     return {
       mcpServers: [{
         name: `ak-${request.activation.role}`,

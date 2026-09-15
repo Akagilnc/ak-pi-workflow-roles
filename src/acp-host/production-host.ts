@@ -14,8 +14,9 @@ import type { RoleRuntimeDependencies } from "../role-runtime.ts";
 import { createRoleRuntimeDependencies } from "../role-runtime-dependencies.ts";
 import { createSessionIdentityAuthority } from "../session-identity.ts";
 import {
+  assertHermesProjectSkillsTrusted,
+  ensurePackagedMethodPlugin,
   hostMethodSkills,
-  packagedMethodPluginDir,
 } from "../host-native-method.ts";
 import { acpStdioArgs, resolveAcpBinary, type AcpHostDescription } from "./description.ts";
 import {
@@ -79,12 +80,17 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
           packageRoot,
           role: request.activation.role,
         });
-      // #922: grok loads packaged methods via --plugin-dir.
-      // Hermes ACP: top-level --skills is dropped by cmd_acp (_ACP_FLAGS only) —
-      // official gap; do not fake-wire argv (bounce #922).
+      // #922: grok → --plugin-dir; hermes → cwd `.agents/skills` (envelope) + operator trust.
       const skills = hostMethodSkills(request.methods);
+      if (hostName === "hermes" && skills.length > 0) {
+        await assertHermesProjectSkillsTrusted({
+          home: request.home,
+          cwd: request.cwd,
+          profileName: profileName ?? `ak-${request.activation.role}`,
+        });
+      }
       const pluginDir = hostName === "grok-build" && skills.length > 0
-        ? packagedMethodPluginDir(packageRoot)
+        ? await ensurePackagedMethodPlugin(packageRoot)
         : undefined;
       return connectAcpStdio({
         binary: resolveAcpBinary(description, request.home),

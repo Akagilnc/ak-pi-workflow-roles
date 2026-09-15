@@ -26,9 +26,9 @@ import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
   applyCodexSkillInvocation,
   applyHostSlashSkillInvocation,
+  ensurePackagedMethodPlugin,
   forcedPluginSlashToken,
   hostMethodSkills,
-  packagedMethodPluginDir,
 } from "../host-native-method.ts";
 import {
   closeJsonSchemaForCodex,
@@ -485,8 +485,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
         const closed = closeJsonSchemaForCodex(prepared.jsonSchema);
         await writeFile(outputSchemaPath, `${JSON.stringify(closed, null, 2)}\n`, "utf8");
-        // Official catalog mention only — no HOME rewrite (#922 bounce).
-        // Empty-home package discovery has no CLI/`-c` skill-root key (see host-native-method.ts).
+        // Catalog is cwd `.agents/skills` (envelope-owned symlink); mention selects it.
         const skills = hostMethodSkills(request.methods);
         if (skills.length > 0) {
           applyMethodPrompt = (prompt) => applyCodexSkillInvocation(skills, prompt);
@@ -504,7 +503,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           if (typeof packageRoot !== "string" || packageRoot === "") {
             throw new Error("claude method plugin-dir requires AK_PACKAGE_ROOT");
           }
-          pluginDir = packagedMethodPluginDir(packageRoot);
+          pluginDir = await ensurePackagedMethodPlugin(packageRoot);
           const slashToken = forcedPluginSlashToken(request.methods);
           if (slashToken !== undefined) {
             applyMethodPrompt = (prompt) => applyHostSlashSkillInvocation(slashToken, prompt);

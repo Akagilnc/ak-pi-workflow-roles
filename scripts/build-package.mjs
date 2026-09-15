@@ -2,6 +2,7 @@ import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
+import { materializeMethodHostPlugin } from "./materialize-method-host-plugin.mjs";
 
 const entries = [
   "packaged-role-registry",
@@ -199,6 +200,7 @@ export async function buildPackageArtifacts() {
   await buildAcpProductionHost();
   await buildHeadlessProductionHost();
   await buildMigrateBookTopology();
+  await materializeMethodHostPlugin();
 }
 
 const isMain =

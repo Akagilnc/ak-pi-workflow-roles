@@ -96,6 +96,7 @@ test("#922 Claude/Grok argv: plugin-dir; no operator skill closers; Codex keeps 
   assert.ok(claude && claude.protocol === "claude-print");
   assert.equal(claude.fixedArgs.includes("--setting-sources"), false);
   const pluginDir = packagedMethodPluginDir(process.cwd());
+  assert.equal(pluginDir.endsWith("dist/method-host-plugin"), true);
   const claudeArgv = headlessTurnArgs({
     description: claude,
     systemPromptPath: "/tmp/sys.txt",

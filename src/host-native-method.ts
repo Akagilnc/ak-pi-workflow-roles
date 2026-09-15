@@ -1,37 +1,32 @@
 /**
- * #922 host-native forced-method delivery (method-skill-delivery=host-native-loader).
- * Package never pastes method bodies into systemPrompt. Host adapters only point
- * official loaders at packaged method material and invoke via host-native forms.
- *
- * Codex has no CLI/`-c` skill-root key (config schema: enable/disable only). Empty
- * home discovery without rewriting HOME or writing operator/project skill dirs is
- * an official surface gap — report upward; do not invent HOME overlays.
- * Hermes `acp` drops top-level `--skills` (cmd_acp → _ACP_FLAGS only) — gap.
+ * #922 host-native forced-method delivery.
+ * claude/grok → --plugin-dir (dist/method-host-plugin);
+ * codex/hermes → cwd `.agents/skills` → resources/methods (envelope-owned).
  */
-import { basename, dirname, join } from "node:path";
-
+import { constants } from "node:fs";
+import {
+  access, lstat, mkdir, readdir, readFile, readlink, realpath, rm, symlink, unlink,
+} from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import type { MethodBinding } from "./host-contracts.ts";
 
 export type HostMethodSkill = Readonly<{ name: string; dir: string; path: string }>;
 export const HOST_METHOD_PLUGIN_NAME = "ak-methods" as const;
 
-/** Packaged Claude/Grok plugin root (`resources/method-host-plugin`). */
-export function packagedMethodPluginDir(packageRoot: string): string {
-  return join(packageRoot, "resources", "method-host-plugin");
-}
+export const packagedMethodsDir = (packageRoot: string) => join(packageRoot, "resources", "methods");
+export const packagedMethodPluginDir = (packageRoot: string) => join(packageRoot, "dist", "method-host-plugin");
 
 export function hostMethodSkills(methods: readonly MethodBinding[]): readonly HostMethodSkill[] {
-  return Object.freeze(methods.flatMap((method) => {
-    if (method.kind !== "skill") return [];
-    const dir = dirname(method.path);
+  return Object.freeze(methods.flatMap((m) => {
+    if (m.kind !== "skill") return [];
+    const dir = dirname(m.path);
     const name = basename(dir);
-    return name ? [Object.freeze({ name, dir, path: method.path })] : [];
+    return name ? [Object.freeze({ name, dir, path: m.path })] : [];
   }));
 }
 
-export function pluginSkillToken(pluginName: string, skillName: string): string {
-  return `${pluginName}:${skillName}`;
-}
+export const pluginSkillToken = (plugin: string, skill: string) => `${plugin}:${skill}`;
 
 export function applyHostSlashSkillInvocation(token: string, prompt: string): string {
   if (!token) return prompt;
@@ -41,10 +36,6 @@ export function applyHostSlashSkillInvocation(token: string, prompt: string): st
   return prompt ? `${slash} ${prompt}` : slash;
 }
 
-/**
- * Codex explicit skill mention: linked `[$name](/abs/SKILL.md)` selects by path
- * when the skill is already in the host catalog (official mentions).
- */
 export function applyCodexSkillInvocation(skills: readonly HostMethodSkill[], prompt: string): string {
   if (skills.length !== 1) return prompt;
   const s = skills[0]!;
@@ -57,10 +48,167 @@ export function applyCodexSkillInvocation(skills: readonly HostMethodSkill[], pr
   return prompt ? `${linked} ${prompt}` : linked;
 }
 
-/** Single forced skill slash token for the packaged plugin, if any. */
 export function forcedPluginSlashToken(methods: readonly MethodBinding[]): string | undefined {
   const skills = hostMethodSkills(methods);
-  return skills.length === 1
-    ? pluginSkillToken(HOST_METHOD_PLUGIN_NAME, skills[0]!.name)
-    : undefined;
+  return skills.length === 1 ? pluginSkillToken(HOST_METHOD_PLUGIN_NAME, skills[0]!.name) : undefined;
+}
+
+export const hostUsesWorkspaceAgentsSkills = (host?: string) => {
+  const n = host?.trim();
+  return n === "codex" || n === "hermes";
+};
+
+const exists = async (p: string) => access(p, constants.F_OK).then(() => true, () => false);
+const sameReal = async (a: string, b: string) => {
+  try { return (await realpath(a)) === (await realpath(b)); }
+  catch { return resolve(a) === resolve(b); }
+};
+
+/** Real skill trees under dist/ — sole implementation: scripts/materialize-method-host-plugin.mjs. */
+export async function materializeMethodHostPlugin(packageRoot: string): Promise<string> {
+  const mod = await import(
+    pathToFileURL(join(packageRoot, "scripts", "materialize-method-host-plugin.mjs")).href,
+  ) as { materializeMethodHostPlugin(root?: string): Promise<string> };
+  return mod.materializeMethodHostPlugin(packageRoot);
+}
+
+export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<string> {
+  const outDir = packagedMethodPluginDir(packageRoot);
+  try {
+    if ((await lstat(join(outDir, "skills/tdd/SKILL.md"))).isFile()) return outDir;
+  } catch { /* rebuild */ }
+  return materializeMethodHostPlugin(packageRoot);
+}
+
+export type WorkspaceAgentsSkillsLink = Readonly<{ path: string; created: boolean; release(): Promise<void> }>;
+
+const conflict = (path: string, detail: string) => new Error(
+  `workspace method catalog conflict at ${path}: ${detail}. ` +
+  "ak-role only creates `.agents/skills` when absent; never overwrites an existing catalog (#922).",
+);
+
+/** Envelope-owned cwd `.agents/skills` → packaged methods. */
+export async function installWorkspaceAgentsSkillsLink(options: {
+  readonly cwd: string; readonly packageRoot: string;
+}): Promise<WorkspaceAgentsSkillsLink> {
+  const target = await realpath(packagedMethodsDir(options.packageRoot));
+  const linkPath = join(options.cwd, ".agents/skills");
+  const agentsDir = dirname(linkPath);
+  let createdAgentsDir = false;
+  let created = false;
+  const release = async () => {
+    if (!created) return;
+    try {
+      if (!(await lstat(linkPath)).isSymbolicLink()) return;
+      if (!(await sameReal(linkPath, target))) return;
+      await unlink(linkPath);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    if (!createdAgentsDir) return;
+    try { if ((await readdir(agentsDir)).length === 0) await rm(agentsDir, { force: true }); }
+    catch { /* best-effort */ }
+  };
+
+  try {
+    const st = await lstat(linkPath);
+    if (!st.isSymbolicLink()) throw conflict(linkPath, st.isDirectory() ? "pre-existing directory" : "pre-existing non-symlink");
+    if (!(await sameReal(linkPath, target))) {
+      throw conflict(linkPath, `pre-existing symlink → ${await readlink(linkPath).catch(() => "?")}`);
+    }
+    created = true;
+    return Object.freeze({ path: linkPath, created, release });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  }
+
+  if (!(await exists(agentsDir))) {
+    await mkdir(agentsDir, { recursive: true });
+    createdAgentsDir = true;
+  }
+  try {
+    await symlink(target, linkPath);
+  } catch (e) {
+    if (createdAgentsDir) await rm(agentsDir, { recursive: true, force: true }).catch(() => undefined);
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") throw conflict(linkPath, "appeared during create");
+    throw e;
+  }
+  created = true;
+  return Object.freeze({ path: linkPath, created, release });
+}
+
+export async function findGitProjectRoot(start: string): Promise<string | undefined> {
+  for (let cur = resolve(start), i = 0; i < 64; i++) {
+    if (await exists(join(cur, ".git"))) return cur;
+    const parent = dirname(cur);
+    if (parent === cur) return undefined;
+    cur = parent;
+  }
+  return undefined;
+}
+
+/** Fail-closed extract of skills.trusted_project_dirs from Hermes config.yaml. */
+export function parseHermesTrustedProjectDirs(yaml: string): readonly string[] {
+  const out: string[] = [];
+  let inSkills = false, inTrusted = false, skillsIndent = -1, trustedIndent = -1;
+  for (const raw of yaml.split(/\r?\n/)) {
+    if (/^\s*#/.test(raw) || !raw.trim()) continue;
+    const indent = raw.match(/^ */)?.[0]?.length ?? 0;
+    const t = raw.trim();
+    if (!inSkills) {
+      if (/^skills:\s*$/.test(t)) { inSkills = true; skillsIndent = indent; }
+      continue;
+    }
+    if (indent <= skillsIndent) break;
+    if (!inTrusted) {
+      const m = t.match(/^trusted_project_dirs:\s*(.*)$/);
+      if (!m) continue;
+      inTrusted = true; trustedIndent = indent;
+      const rest = m[1]!.trim();
+      if (rest.startsWith("[") && rest.endsWith("]")) {
+        for (const p of rest.slice(1, -1).split(",")) {
+          const v = p.trim().replace(/^["']|["']$/g, "");
+          if (v) out.push(v);
+        }
+        break;
+      }
+      continue;
+    }
+    if (indent <= trustedIndent) break;
+    const item = t.match(/^- \s*(.+)$/);
+    if (!item) continue;
+    let v = item[1]!.trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    if (v) out.push(v);
+  }
+  return Object.freeze(out);
+}
+
+export async function readHermesTrustedProjectDirs(hermesHome: string): Promise<readonly string[]> {
+  try { return parseHermesTrustedProjectDirs(await readFile(join(hermesHome, "config.yaml"), "utf8")); }
+  catch { return Object.freeze([]); }
+}
+
+export async function assertHermesProjectSkillsTrusted(options: {
+  readonly home: string; readonly cwd: string; readonly profileName: string;
+}): Promise<void> {
+  const projectRoot = await findGitProjectRoot(options.cwd);
+  if (!projectRoot) {
+    throw new Error("hermes packaged methods need a git project root under cwd so `.agents/skills` can load.");
+  }
+  const projectReal = await realpath(projectRoot).catch(() => resolve(projectRoot));
+  const dirs = [
+    ...await readHermesTrustedProjectDirs(join(options.home, ".hermes/profiles", options.profileName)),
+    ...await readHermesTrustedProjectDirs(join(options.home, ".hermes")),
+  ];
+  for (const entry of dirs) {
+    const expanded = entry.startsWith("~") ? join(options.home, entry.slice(1).replace(/^\//, "")) : entry;
+    try { if ((await realpath(expanded)) === projectReal) return; }
+    catch { if (resolve(expanded) === projectReal) return; }
+  }
+  throw new Error(
+    `hermes project skills are not trusted for ${projectReal}. ` +
+    `Operator must run \`hermes skills trust\` (same \`-p ${options.profileName}\` if used); ` +
+    "ak-role does not write host trust config (#922).",
+  );
 }

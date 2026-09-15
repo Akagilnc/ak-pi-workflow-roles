@@ -56,6 +56,8 @@ ak-role config set-auto-resume-limit 3
 
 **宿主 provider 表（#788）：** 席位行只写一份 provider 名。owner 手改 `~/.ak-roles/host-providers.json`（形如 `{ "hermes": { "xai": "xai-oauth" } }`）；代码只读。表里没有的问宿主目录（本票 hermes）：唯一即用，零个或多个响亮失败。优先级：表 > 唯一 > 失败，代码无裁量。`config show` 原样打印该表。
 
+**强制方法 Skill（#922）：** claude／grok 经 `--plugin-dir` 装载随包方法；codex／hermes 经每次调用在 cwd 放置的 `.agents/skills` 符号链接指向随包方法树（共享信封创建与清理；绝不覆盖既有 catalog）。hermes 另需操作员对该项目执行一次 `hermes skills trust`（若席位用 `-p ak-<role>` 配置，trust 也须在同一 profile 下）；工厂不写宿主 trust 配置，未 trust 时响亮失败。
+
 门下省官席解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。配置用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。持久配置是全机共享单文件、多 CLI 版本同读：本构建不认识的席位键读时跳过（不报错）；已知席位上的未知字段沿用现行容忍。
 
 回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
