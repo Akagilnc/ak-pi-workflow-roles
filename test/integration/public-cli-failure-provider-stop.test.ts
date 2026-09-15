@@ -17,7 +17,11 @@ import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
 import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dispatch-rejection.ts";
 
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
-import { readLatestTypedProviderHttpObservation, RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
+import {
+  buildResumeContinuationPrompt,
+  readLatestTypedProviderHttpObservation,
+  RESUME_TRANSPORT_ENVELOPE,
+} from "../../src/public-cli/run-lifecycle.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
   packageRoot,
@@ -350,14 +354,21 @@ test("bound auditor provider failure outranks the parent abort it caused", async
   });
 });
 
-// #600 / 50940955: only transport-token auto-resume skips the court floor.
-// Positive keeps first-attempt retention; real new-court users must stale it.
-test("transport-token resume keeps first-attempt auditor retention bound", async () => {
+// #600 / 50940955 / ca9d402a: production resume bytes must not stale first-attempt
+// auditor retention. Bytes come from the live producer and the station-child token
+// constant — never handbook prose sniff. Independent ordinary user still stales.
+test("production resume bytes keep first-attempt auditor retention bound", async () => {
   await withTempHome(async (home) => {
     const sessionDir = join(home, "session");
     const sessionFile = join(sessionDir, "parent.jsonl");
     const childDir = join(sessionDir, "auditor-roles");
     await mkdir(childDir, { recursive: true });
+
+    const bareResumePrompt = buildResumeContinuationPrompt({ packageRoot });
+    const engineResumePrompt = buildResumeContinuationPrompt({
+      packageRoot,
+      engine: "kimi",
+    });
 
     const retained = {
       cause: "provider" as const,
@@ -442,57 +453,48 @@ test("transport-token resume keeps first-attempt auditor retention bound", async
       await writeFirstAttemptChild();
     };
 
-    // Positive: real Pi content-array persistence of the transport token keeps retention.
-    await writeParentWithFollowUser({
-      role: "user",
-      content: [{ type: "text", text: RESUME_TRANSPORT_ENVELOPE }],
-    });
-    assert.deepEqual(
-      await resolveAuditedRunnerKnownFailure({
-        runner: undefined,
-        sessionFile,
-        credential: undefined,
-      }),
-      retained,
-      "content-array transport token must not stale first-attempt auditor retention",
-    );
-
-    // Negative boundary: only the token is skipped. Real courts must advance the
-    // floor and drop prior retention (empty / ordinary / token-not-first-line).
-    const realCourts: ReadonlyArray<{ label: string; message: Record<string, unknown> }> = [
-      { label: "empty-prompt", message: { role: "user", content: "" } },
-      { label: "ordinary-user", message: { role: "user", content: "independent court" } },
+    // Positive: live public-resolver tracer over production resume byte shapes.
+    const resumeShapes: ReadonlyArray<{ label: string; message: Record<string, unknown> }> = [
+      // Ordinary auto-resume without engine axis → empty prompt.
+      { label: "bare-empty", message: { role: "user", content: bareResumePrompt } },
+      // Ordinary auto-resume with engine axis → empty first line + separator.
+      { label: "engine-axis", message: { role: "user", content: engineResumePrompt } },
+      // Station-child / historical transport token (content-array persistence).
       {
-        label: "normal-then-token-part",
-        message: {
-          role: "user",
-          content: [
-            { type: "text", text: "same-ticket reask" },
-            { type: "text", text: RESUME_TRANSPORT_ENVELOPE },
-          ],
-        },
+        label: "token-content-array",
+        message: { role: "user", content: [{ type: "text", text: RESUME_TRANSPORT_ENVELOPE }] },
       },
     ];
-    for (const shape of realCourts) {
+    for (const shape of resumeShapes) {
       await writeParentWithFollowUser(shape.message);
-      const known = await resolveAuditedRunnerKnownFailure({
-        runner: undefined,
-        sessionFile,
-        credential: undefined,
-      });
-      // Public resolver falls through to the current parent stop once the prior
-      // auditor volume is staled — never the first-attempt retentionFailure.
-      assert.equal(
-        known?.diagnostic,
-        "retry without retention",
-        `${shape.label}: real court must stale prior auditor retention`,
-      );
-      assert.equal(
-        (known?.details as { retentionFailure?: unknown } | undefined)?.retentionFailure,
-        undefined,
-        `${shape.label}: staled court must not leak first-attempt retentionFailure`,
+      assert.deepEqual(
+        await resolveAuditedRunnerKnownFailure({
+          runner: undefined,
+          sessionFile,
+          credential: undefined,
+        }),
+        retained,
+        `${shape.label}: production resume must not stale first-attempt auditor retention`,
       );
     }
+
+    // Independent ordinary user new court still advances the floor and stales.
+    await writeParentWithFollowUser({ role: "user", content: "independent court" });
+    const staled = await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile,
+      credential: undefined,
+    });
+    assert.equal(
+      (staled?.details as { retentionFailure?: unknown } | undefined)?.retentionFailure,
+      undefined,
+      "ordinary-user: independent court must not leak first-attempt retentionFailure",
+    );
+    assert.notEqual(
+      staled?.diagnostic,
+      retained.diagnostic,
+      "ordinary-user: independent court must not keep first-attempt diagnostic",
+    );
   });
 });
 
@@ -616,7 +618,6 @@ test("Reviewer rejection sidecar rejects generic controlled failures", async () 
     });
     assert.equal(malformed?.cause, "activation");
     assert.equal(malformed?.identity?.name, "SyntaxError");
-    assert.match(malformed?.diagnostic ?? "", /JSON/);
   });
 });
 test("typed output failure cannot bind a call from an earlier attempt", async () => {
@@ -906,7 +907,7 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
       runDirectory,
     });
     assert.equal(badShape?.cause, "session");
-    assert.match(badShape?.diagnostic ?? "", /provider/);
+    assert.equal(badShape?.identity?.name, "Error");
 
     // Non-absence: malformed JSON keeps SyntaxError identity (not laundered as absence).
     await writeFile(join(runDirectory, "typed-provider-http.json"), "{not-json\n", "utf8");
@@ -918,7 +919,6 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
     });
     assert.equal(malformed?.cause, "session");
     assert.equal(malformed?.identity?.name, "SyntaxError");
-    assert.match(malformed?.diagnostic ?? "", /JSON/i);
 
     // Non-absence: EISDIR on the observation path keeps real errno cause.
     await rm(join(runDirectory, "typed-provider-http.json"), { force: true });

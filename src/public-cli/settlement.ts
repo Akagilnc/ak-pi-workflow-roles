@@ -1087,11 +1087,14 @@ async function loadBoundAuditorVolumes(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
-  // #600 / #840 / #858: court floor skips only the package transport-token resume
-  // user (station-child auto-resume / historical). First line of whole message
-  // text must equal RESUME_TRANSPORT_ENVELOPE — never engine-handbook prose,
-  // empty prompt, or per-part some() hits. Restores 50940955 retention across
-  // in-place auto-resume without call-local / packageTrigger / courtAttemptId.
+  // #600 / #836 / #858: court floor skips production resume bytes so in-place
+  // auto-resume does not stale first-attempt retention (50940955 / ca9d402a):
+  // - ordinary bare/auto resume: "" or empty first line before engine separator
+  //   (selectResumeContinuationPrompt → appendEngineSessionMaterial)
+  // - station-child / historical: first line === RESUME_TRANSPORT_ENVELOPE
+  // Whole-message first line only — never handbook prose sniff, per-part some(),
+  // call-local / packageTrigger / courtAttemptId. Independent caller-word users
+  // still advance latestParentUserIndex.
   const userMessageText = (msg: unknown): string | undefined => {
     if (!isRecord(msg) || msg.role !== "user") return undefined;
     if (typeof msg.text === "string") return msg.text;
@@ -1110,10 +1113,13 @@ async function loadBoundAuditorVolumes(
   };
   const isResumeEnvelope = (msg: unknown): boolean => {
     const text = userMessageText(msg);
-    if (typeof text !== "string" || text.length === 0) return false;
+    if (typeof text !== "string") return false;
+    // Bare/auto resume with no engine axis writes an empty user turn.
+    if (text.length === 0) return true;
     const nl = text.indexOf("\n");
     const firstLine = nl === -1 ? text : text.slice(0, nl);
-    return firstLine === RESUME_TRANSPORT_ENVELOPE;
+    // Token (station-child) or empty first line (engine-separator blank).
+    return firstLine === RESUME_TRANSPORT_ENVELOPE || firstLine === "";
   };
   let latestParentUserIndex = -1;
   for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
