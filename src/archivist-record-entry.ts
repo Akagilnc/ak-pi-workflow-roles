@@ -519,3 +519,56 @@ export function bookDirectOfficerRunPointer(options: {
   );
   return pointer;
 }
+
+/** Ordinary kind for compliance retention volumes under parent session/auditor-roles. */
+export const AUDITOR_ROLES_RECORD_KIND = "auditor-roles" as const;
+
+// Wire customType strings — same literals as compliance-transport constants.
+// Do not import compliance-transport here (callers already depend on archivist).
+const AUDITOR_PARENT_ATTEMPT_BINDING_CUSTOM_TYPE = "ak_auditor_parent_attempt_binding" as const;
+const AUDITOR_COMPLIANCE_FAILURE_CUSTOM_TYPE = "ak_auditor_compliance_failure" as const;
+
+/**
+ * Book a fresh auditor-roles child volume with parent-attempt binding (+ optional
+ * compliance failure) via the sole createRecordSession / appendCustomEntry seam.
+ * Always mints fresh (ordinary kind) so same-court retry never overwrites a prior
+ * retained failure. courtAttemptId is the existing Host court identity (#637 / #858).
+ */
+export function bookAuditorParentAttemptBinding(options: {
+  readonly parentSessionFile: string;
+  readonly cwd: string;
+  readonly parentSessionId?: string;
+  readonly attemptEntryId?: string;
+  readonly courtAttemptId?: string;
+  readonly home?: string;
+  readonly failure?: {
+    readonly cause?: string;
+    readonly diagnostic?: string;
+    readonly identity?: { readonly name?: string; readonly code?: string | number };
+    readonly details?: Readonly<Record<string, unknown>>;
+  };
+}): void {
+  const session = createRecordSession({
+    kind: AUDITOR_ROLES_RECORD_KIND,
+    cwd: options.cwd,
+    parent: { getSessionFile: () => options.parentSessionFile },
+    ...(options.home === undefined ? {} : { home: options.home }),
+  });
+  const binding = {
+    version: 1 as const,
+    parent: {
+      sessionFile: options.parentSessionFile,
+      ...(options.parentSessionId === undefined ? {} : { sessionId: options.parentSessionId }),
+      ...(options.attemptEntryId === undefined ? {} : { attemptEntryId: options.attemptEntryId }),
+      ...(options.courtAttemptId === undefined ? {} : { courtAttemptId: options.courtAttemptId }),
+    },
+  };
+  session.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_CUSTOM_TYPE, binding);
+  if (options.failure !== undefined) {
+    session.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_CUSTOM_TYPE, {
+      version: 1,
+      parent: binding.parent,
+      failure: options.failure,
+    });
+  }
+}

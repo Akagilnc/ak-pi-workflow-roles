@@ -350,17 +350,32 @@ test("bound auditor provider failure outranks the parent abort it caused", async
   });
 });
 // #600 / #840 / #858: auditor retention court boundary is typed courtAttemptId
-// written by the production compliance summon path — never user-message bytes.
+// written via archivist createRecordSession on the compliance transport_failure path.
 test("same-court resume keeps first-attempt auditor retention via production writer", async () => {
-  await withTempHome(async (home) => {
-    const { runComplianceAudit } = await import("../../src/compliance-transport.ts");
-    const sessionDir = join(home, "session");
-    const sessionFile = join(sessionDir, "parent.jsonl");
+  const { withHermeticHome, machineLedgerHome, seedGitRepository } = await import(
+    "../helpers/pi-test-harness.ts"
+  );
+  const { runComplianceAudit } = await import("../../src/compliance-transport.ts");
+  await withHermeticHome({ prefix: "ak-858-auditor-retention-" }, async ({ home }) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitRepository(project);
+
+    const runDir = join(
+      machineLedgerHome(home),
+      "books",
+      "proj",
+      "runs",
+      "activation",
+      "parent-run",
+    );
+    const sessionDir = join(runDir, "session");
+    const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
     await writeFile(
       sessionFile,
       [
-        { type: "session", id: "parent-session" },
+        { type: "session", id: "parent-session", cwd: project },
         { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
         {
           type: "message",
@@ -380,7 +395,7 @@ test("same-court resume keeps first-attempt auditor retention via production wri
 
     const courtAttemptId = "court-same";
     const context = {
-      cwd: home,
+      cwd: project,
       mode: "json",
       model: undefined,
       courtAttemptId,
@@ -394,40 +409,66 @@ test("same-court resume keeps first-attempt auditor retention via production wri
       },
     };
 
-    const decision = await runComplianceAudit({
-      subject: "judge",
-      context: context as never,
-      runDirectory: home,
-      summonAuditor: async () => ({
-        exitCode: 1,
-        terminal: {
-          roleOutcome: {
-            kind: "failure",
-            role: "auditor",
+    const failingSummon = async () => ({
+      exitCode: 1,
+      terminal: {
+        roleOutcome: {
+          kind: "failure" as const,
+          role: "auditor" as const,
+          cause: "provider" as const,
+          diagnostic: "WebSocket error",
+          decisiveFacts: {
             cause: "provider",
-            diagnostic: "WebSocket error",
-            decisiveFacts: {
-              cause: "provider",
-              identity: { name: "faux-1", code: "openai-codex" },
-              details: {
-                provider: "openai-codex",
-                model: "faux-1",
-                retentionFailure: {
-                  name: "ComplianceResponseRetentionError",
-                  cause: { code: "EISDIR" },
-                },
+            identity: { name: "faux-1", code: "openai-codex" },
+            details: {
+              provider: "openai-codex",
+              model: "faux-1",
+              retentionFailure: {
+                name: "ComplianceResponseRetentionError",
+                cause: { code: "EISDIR" },
               },
             },
           },
-          navigator: { disposition: "no-advice" },
-          artifacts: [],
-          runId: "auditor-run",
+        },
+        navigator: { disposition: "no-advice" as const },
+        artifacts: [] as const,
+        runId: "auditor-run",
+      },
+    });
+
+    // Attempt 1: transport failure — archivist mints a fresh volume with binding+failure.
+    const first = await runComplianceAudit({
+      subject: "judge",
+      context: context as never,
+      runDirectory: runDir,
+      summonAuditor: failingSummon,
+    });
+    assert.equal(first.status, "transport_failure");
+
+    // Attempt 2 same court: resume/retry that does NOT produce a replacement failure.
+    const second = await runComplianceAudit({
+      subject: "judge",
+      context: context as never,
+      runDirectory: runDir,
+      summonAuditor: async () => ({
+        exitCode: 0,
+        terminal: {
+          roleOutcome: {
+            kind: "accepted" as const,
+            role: "auditor" as const,
+            status: "pass",
+            decisiveFacts: { status: "pass" },
+          },
+          navigator: { disposition: "no-advice" as const },
+          artifacts: [] as const,
+          runId: "auditor-retry",
+          submissions: [{ status: "pass" }],
         },
       }),
     });
-    assert.equal(decision.status, "transport_failure");
+    assert.equal(second.status, "pass");
 
-    // Same court (open-court / in-place retry): keep first-attempt retention.
+    // Same court still recovers first-attempt retention (not destroyed by retry).
     const known = await readBoundAuditorKnownFailure(sessionFile, { courtAttemptId });
     assert.deepEqual(known, {
       cause: "provider",

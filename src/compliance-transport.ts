@@ -1,9 +1,7 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { randomUUID } from "node:crypto";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AuditorSoulRole } from "./auditor-soul.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
+import { bookAuditorParentAttemptBinding } from "./archivist-record-entry.ts";
 import {
   courtAttemptIdFromHostContext,
   type HostContext,
@@ -64,103 +62,35 @@ export type AuditorParentAttemptBinding = {
   };
 };
 
-export type AuditorComplianceFailureRecord = {
-  readonly version: 1;
-  readonly parent: AuditorParentAttemptBinding["parent"];
-  readonly failure: {
+/** Project Host context onto the archivist-owned parent-attempt binding write. */
+function bookAuditorBindingFromHostContext(
+  context: HostContext,
+  failure?: {
     readonly cause?: string;
     readonly diagnostic?: string;
     readonly identity?: { readonly name?: string; readonly code?: string | number };
     readonly details?: Readonly<Record<string, unknown>>;
-  };
-};
-
-/**
- * Persist parent-attempt binding (+ optional compliance failure) under the parent
- * session's auditor-roles nest — the volume `loadBoundAuditorVolumes` reads.
- * courtAttemptId is the existing Host court identity (#637), not a resume flag.
- * Missing parent session file is a no-op (offline mocks without a durable principal).
- */
-export function persistAuditorParentAttemptBinding(options: {
-  readonly context: HostContext;
-  readonly failure?: AuditorComplianceFailureRecord["failure"];
-}): AuditorParentAttemptBinding | undefined {
-  const parentSessionFile = options.context.sessionManager?.getSessionFile?.();
-  if (typeof parentSessionFile !== "string" || parentSessionFile.trim() === "") {
-    return undefined;
-  }
-  const header = options.context.sessionManager?.getHeader?.();
+  },
+): void {
+  const parentSessionFile = context.sessionManager?.getSessionFile?.();
+  if (typeof parentSessionFile !== "string" || parentSessionFile.trim() === "") return;
+  const header = context.sessionManager?.getHeader?.();
   const parentSessionId =
     header !== null && header !== undefined && typeof header.id === "string" && header.id.length > 0
       ? header.id
       : undefined;
-  const leafId = options.context.sessionManager?.getLeafId?.();
+  const leafId = context.sessionManager?.getLeafId?.();
   const attemptEntryId =
     typeof leafId === "string" && leafId.length > 0 ? leafId : undefined;
-  const courtAttemptId = courtAttemptIdFromHostContext(options.context);
-  const binding: AuditorParentAttemptBinding = {
-    version: 1,
-    parent: {
-      sessionFile: parentSessionFile,
-      ...(parentSessionId === undefined ? {} : { sessionId: parentSessionId }),
-      ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
-      ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
-    },
-  };
-  const nest = join(dirname(parentSessionFile), "auditor-roles");
-  mkdirSync(nest, { recursive: true });
-  // One leaf per court attempt when known; else a unique leaf so multi-summons
-  // under unscoped parents do not overwrite each other.
-  const leafName =
-    courtAttemptId !== undefined
-      ? `compliance-${courtAttemptId}.jsonl`
-      : `compliance-${randomUUID()}.jsonl`;
-  const rows: unknown[] = [
-    {
-      type: "session",
-      id: `auditor-binding-${courtAttemptId ?? randomUUID()}`,
-      parentSession: parentSessionFile,
-    },
-    {
-      type: "custom",
-      customType: AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
-      data: binding,
-    },
-  ];
-  if (options.failure !== undefined) {
-    const failureData: AuditorComplianceFailureRecord = {
-      version: 1,
-      parent: binding.parent,
-      failure: options.failure,
-    };
-    // Settlement compliance recovery requires a provider-stop assistant in the
-    // same volume interval before the retained failure entry.
-    const details = options.failure.details;
-    rows.push({
-      type: "message",
-      message: {
-        role: "assistant",
-        stopReason: "error",
-        errorMessage:
-          typeof options.failure.diagnostic === "string" && options.failure.diagnostic.length > 0
-            ? options.failure.diagnostic
-            : "auditor transport failure",
-        ...(typeof details?.provider === "string" ? { provider: details.provider } : {}),
-        ...(typeof details?.model === "string" ? { model: details.model } : {}),
-      },
-    });
-    rows.push({
-      type: "custom",
-      customType: AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
-      data: failureData,
-    });
-  }
-  writeFileSync(
-    join(nest, leafName),
-    `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
-    "utf8",
-  );
-  return binding;
+  const courtAttemptId = courtAttemptIdFromHostContext(context);
+  bookAuditorParentAttemptBinding({
+    parentSessionFile,
+    cwd: context.cwd,
+    ...(parentSessionId === undefined ? {} : { parentSessionId }),
+    ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
+    ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
+    ...(failure === undefined ? {} : { failure }),
+  });
 }
 
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
@@ -326,16 +256,15 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     });
   let reask: string | undefined;
   for (;;) {
-    // Durable parent-attempt binding is a prerequisite for later retention
-    // recovery across same-court resume (#840 / #858). courtAttemptId rides the
-    // existing Host court identity — never a parallel resume marker.
-    persistAuditorParentAttemptBinding({ context: options.context });
     const summoned = await summon(subject, runDirectory, options.signal, reask);
     const decision = await projectAuditorTerminal(summoned);
     if (decision.status === "received") {
       reask = OFFICER_CONCLUSION_REASK;
       continue;
     }
+    // Transport failure only: mint a fresh auditor-roles volume via the archivist
+    // seam (never overwrite a prior same-court retained failure). courtAttemptId
+    // is Host court identity (#637 / #858), not a resume marker.
     if (decision.status === "transport_failure") {
       const outcome =
         summoned.terminal?.roleOutcome !== undefined &&
@@ -349,18 +278,17 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
             })
           : undefined;
       const facts = outcome?.decisiveFacts;
+      const identityRaw =
+        facts !== undefined && isRecord(facts.identity) ? facts.identity : undefined;
       const identity =
-        facts !== undefined && typeof facts === "object" && isRecord(facts.identity)
-          ? {
-              ...(typeof facts.identity.name === "string"
-                ? { name: facts.identity.name }
+        identityRaw === undefined
+          ? undefined
+          : {
+              ...(typeof identityRaw.name === "string" ? { name: identityRaw.name } : {}),
+              ...(typeof identityRaw.code === "string" || typeof identityRaw.code === "number"
+                ? { code: identityRaw.code }
                 : {}),
-              ...(typeof facts.identity.code === "string" ||
-                typeof facts.identity.code === "number"
-                ? { code: facts.identity.code }
-                : {}),
-            }
-          : undefined;
+            };
       const details =
         facts !== undefined && isRecord(facts.details)
           ? facts.details
@@ -369,16 +297,11 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
                 Object.entries(facts).filter(([key]) => key !== "identity"),
               ) as Readonly<Record<string, unknown>>)
             : undefined;
-      persistAuditorParentAttemptBinding({
-        context: options.context,
-        failure: {
-          ...(typeof outcome?.cause === "string" ? { cause: outcome.cause } : { cause: "provider" }),
-          diagnostic: decision.diagnostic,
-          ...(identity === undefined || Object.keys(identity).length === 0
-            ? {}
-            : { identity }),
-          ...(details === undefined ? {} : { details }),
-        },
+      bookAuditorBindingFromHostContext(options.context, {
+        ...(typeof outcome?.cause === "string" ? { cause: outcome.cause } : { cause: "provider" }),
+        diagnostic: decision.diagnostic,
+        ...(identity === undefined || Object.keys(identity).length === 0 ? {} : { identity }),
+        ...(details === undefined ? {} : { details }),
       });
     }
     return decision;

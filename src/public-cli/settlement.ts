@@ -1189,8 +1189,6 @@ function complianceFailureFromAuditorVolumes(
   volumes: readonly BoundAuditorVolume[],
 ): RoleTurnKnownFailure | undefined {
   for (const { entries, attemptEntryId, parentId, sessionFile } of volumes) {
-    const stop = extractSessionProviderStop(entries);
-    if (stop === undefined) continue;
     for (let i = entries.length - 1; i >= 0; i -= 1) {
       const entry = entries[i];
       if (entry?.type !== "custom" || entry.customType !== AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE || !isRecord(entry.data)) continue;
@@ -1198,6 +1196,8 @@ function complianceFailureFromAuditorVolumes(
       const failure = isRecord(entry.data.failure) ? entry.data.failure : undefined;
       if (parent?.sessionId !== parentId || parent.sessionFile !== sessionFile || parent.attemptEntryId !== attemptEntryId) continue;
       // #881: keep the recorded failure as written — typed cause when present, else raw diagnostic only.
+      // Retained compliance failure is authoritative alone; do not require a native
+      // assistant provider-stop in the same volume (archivist custom-entry path).
       if (failure === undefined) continue;
       const identity = isRecord(failure.identity) ? failure.identity : undefined;
       const typedCause =
