@@ -90,6 +90,8 @@ export function headlessTurnArgs(options: {
   readonly effort?: string;
   /** Fresh session: pass as session id. Resume: pass as resume id. */
   readonly session: { readonly kind: "new"; readonly id: string } | { readonly kind: "resume"; readonly id: string };
+  /** Staged plugin directory for packaged method skills (`--plugin-dir`). */
+  readonly pluginDir?: string;
 }): string[] {
   const { description } = options;
   const args: string[] = [
@@ -100,6 +102,9 @@ export function headlessTurnArgs(options: {
     description.jsonSchemaFlag,
     JSON.stringify(options.jsonSchema),
   ];
+  if (options.pluginDir !== undefined && options.pluginDir !== "") {
+    args.push("--plugin-dir", options.pluginDir);
+  }
   if (options.mcpConfigPath !== undefined && options.mcpConfigPath !== "") {
     args.push(description.mcpConfigFlag, options.mcpConfigPath);
   }
@@ -422,9 +427,7 @@ export function codexTurnArgs(options: {
 
   // JSONL event stream: thread_id + final agent_message + turn.completed/failed.
   args.push("--json");
-  // Operator config/MCP off; auth still uses CODEX_HOME (official).
-  // Project/system config and AGENTS.md have no official suppression switch.
-  args.push("--ignore-user-config", "--ignore-rules");
+  // Operator config/skills stay open (#922 host-native-loader). Auth uses CODEX_HOME.
   const roots = (options.writableRoots ?? []).filter((root) => root !== "");
   if (roots.length > 0) {
     // Resume has no --add-dir; the config key keeps extra roots available on both paths.

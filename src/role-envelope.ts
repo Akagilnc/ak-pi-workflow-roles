@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -13,7 +13,6 @@ import { requireGatekeeperPass } from "./gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
   HostEventRegistration,
-  HostSkillExpansionEvidence,
   HostToolDefinition,
   RoleEnvelopeHost,
   RoleHost,
@@ -21,7 +20,6 @@ import type {
   RoleTurnRequest,
 } from "./host-contracts.ts";
 import { packagedRoleOutputTool } from "./packaged-role-registry.ts";
-import { stripSkillFrontmatter } from "./package-resources/method-skill.ts";
 import {
   createRoleRuntimeExtension,
   type RoleRuntimeDependencies,
@@ -43,30 +41,6 @@ type Handler = HostEventRegistration[1];
 type RpcRequest = { readonly id: number; readonly token: string; readonly method: string; readonly params?: Record<string, unknown> };
 type ToolCallParams = { readonly name?: unknown; readonly arguments?: unknown };
 type ContentPart = { type: "text"; text: string } | { type: "image"; data: string; mimeType: string };
-
-/**
- * Build host-side Skill expansion evidence from pre-read RoleTurnRequest.methods.
- * Non-pi hosts never parse Pi `/skill:` syntax (ADR 0082: pi is one adapter with
- * no privilege; Pi-only seams stay inside the pi adapter);
- * a single bound method treats the plain prompt as the preserved user message.
- * Pi-native slash forms stay inside `src/pi/` only.
- */
-export function buildSkillExpansion(
-  methodSkills: ReadonlyMap<string, { readonly path: string; readonly body: string }>,
-  prompt: string,
-): HostSkillExpansionEvidence | undefined {
-  if (methodSkills.size !== 1) return undefined;
-  const entry = methodSkills.entries().next().value;
-  if (entry === undefined) return undefined;
-  const [name, method] = entry;
-  return Object.freeze({
-    name,
-    location: method.path,
-    content: method.body,
-    // Non-pi typed chain keeps original task bytes (ticket #822 r3); no consumer trim.
-    userMessage: prompt,
-  });
-}
 
 async function listen(server: Server, path: string): Promise<void> {
   await new Promise<void>((resolve, reject) => {
@@ -129,7 +103,6 @@ export async function prepareRoleEnvelope(options: {
   const customEntries: Array<{ customType: string; data: unknown }> = [];
   /** In-memory turn books for role lifecycle and audit subjects. */
   const sessionEntries: Array<Record<string, unknown>> = [];
-  const methodSkills = new Map<string, { path: string; body: string }>();
   let preferredTools: string[] = [];
   let rejection:
     | { readonly code: string; readonly toolCallIds: readonly string[]; readonly message: string }
@@ -139,14 +112,6 @@ export async function prepareRoleEnvelope(options: {
   const hostAbort = new AbortController();
   const runId = request.runDirectory.split("/").filter(Boolean).at(-1) ?? randomUUID();
   await mkdir(request.runDirectory, { recursive: true });
-
-  // Canonical Skill expansion consumes RoleTurnRequest.methods (typed true source).
-  for (const method of request.methods) {
-    if (method.kind !== "skill") continue;
-    const name = basename(dirname(method.path));
-    const raw = await readFile(method.path, "utf8");
-    methodSkills.set(name, { path: method.path, body: stripSkillFrontmatter(raw).trim() });
-  }
 
   // Durable principal file for isAvailable / resumable settlement (public-cli).
   // #617 DK-4: header layout only — never host conversation/tool writeback into Pi JSONL.
@@ -219,8 +184,10 @@ export async function prepareRoleEnvelope(options: {
       // #836 删 1/A4.5: do not arm closeRound retry with「终局交卷并非本轮唯一工具调用」.
     },
     capabilities: {
-      skillExpansion(prompt): HostSkillExpansionEvidence | undefined {
-        return buildSkillExpansion(methodSkills, prompt);
+      // Non-pi hosts expand methods via their native loaders (#922). Evidence is
+      // host-session observation, not package pre-read body paste (ADR 0032).
+      skillExpansion() {
+        return undefined;
       },
     },
     registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); },
@@ -625,14 +592,14 @@ export async function prepareRoleEnvelope(options: {
         message: { role: "user", content: prompt },
       });
     }
-    // Method notes only here — role before_agent_start injects soul once.
+    // Soul / materials only — forced methods ride each host's native skill loader
+    // (#922), never package-read bodies on the systemPrompt channel.
     // Preloading session materials duplicated soul under the role tag (#632).
     // #879: case-dossier owner reads runDirectory from this turn's HostContext.
 
-    const methodPrompt = (await Promise.all(request.methods.map(({ path }) => readFile(path, "utf8")))).join("\n\n");
     const promptResults = await emit("before_agent_start", {
       prompt,
-      systemPrompt: methodPrompt,
+      systemPrompt: "",
       systemPromptOptions: {},
     });
     const systemPromptParts = promptResults.flatMap((value) => {
@@ -640,7 +607,7 @@ export async function prepareRoleEnvelope(options: {
       if (!("systemPrompt" in value) || typeof value.systemPrompt !== "string") return [];
       return [value.systemPrompt];
     });
-    const systemPromptBody = systemPromptParts.length > 0 ? systemPromptParts.join("\n\n") : methodPrompt;
+    const systemPromptBody = systemPromptParts.join("\n\n");
     // Typed reading materials from agent-start handlers (incl. single shared
     // case-dossier owner). Folded into provider-visible systemPrompt at send.
     const readingMaterials: unknown[] = [];
