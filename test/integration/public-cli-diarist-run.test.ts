@@ -216,7 +216,14 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const humanOriginEnqueueId = "queue-human-origin-1";
   const humanOriginText = "经队列的真人输入（origin.kind=human）";
   const peerOriginEnqueueId = "queue-peer-origin-1";
-  const peerOriginText = "跨会话 peer 投递不得署 owner";
+  // Live CC peer: enqueue is XML shell; mat text has wrap prefix ≠ enqueue.content;
+  // origin.body is the structured payload both sides share (#918 bounce).
+  const peerOriginBody = "跨会话 peer 投递不得署 owner";
+  const peerOriginEnqueueContent =
+    `<cross-session-message from="uds:/tmp/cc-socks/peer.sock" from-name="peer-session">\n${peerOriginBody}\n</cross-session-message>`;
+  const peerOriginMatText =
+    `Another Claude session sent a message:\n${peerOriginEnqueueContent}`;
+  const peerOriginText = peerOriginBody;
   const humanOriginDirectId = "msg-human-origin-direct";
   const humanOriginDirectText = "非队列真人 user（origin.kind=human）";
   // #918 class-1 anti-examples: remove path + incomplete-queue (no global FIFO).
@@ -479,12 +486,12 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: humanOriginText }],
       },
     }),
-    // 28–30. peer origin is cross-session delivery — not 陛下
+    // 28–30. live CC peer dequeue path: wrap text ≠ enqueue.content; origin.body joins
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
       uuid: peerOriginEnqueueId,
-      content: peerOriginText,
+      content: peerOriginEnqueueContent,
     }),
     JSON.stringify({
       type: "queue-operation",
@@ -494,11 +501,44 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     JSON.stringify({
       type: "user",
       uuid: "msg-peer-origin-mat",
-      origin: { kind: "peer" },
+      origin: {
+        kind: "peer",
+        body: peerOriginBody,
+        from: "uds:/tmp/cc-socks/peer.sock",
+        name: "peer-session",
+      },
       message: {
         role: "user",
-        content: [{ type: "text", text: peerOriginText }],
+        content: [{ type: "text", text: peerOriginMatText }],
       },
+    }),
+    // 28b–28d. live CC peer remove path: commandMode=prompt but attachment.origin.kind=peer
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      uuid: "queue-peer-remove-1",
+      content: peerOriginEnqueueContent + "\n<!--remove-path-->",
+    }),
+    JSON.stringify({
+      type: "attachment",
+      uuid: "att-peer-remove-1",
+      attachment: {
+        type: "queued_command",
+        commandMode: "prompt",
+        prompt: peerOriginEnqueueContent + "\n<!--remove-path-->",
+        origin: {
+          kind: "peer",
+          body: peerOriginBody + "\n<!--remove-path-->",
+          from: "uds:/tmp/cc-socks/peer.sock",
+          name: "peer-session",
+        },
+      },
+    }),
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "remove",
+      content: peerOriginEnqueueContent + "\n<!--remove-path-->",
+      reason: "absorbed_mid_turn",
     }),
     // 31. non-queue user with origin.kind=human must still enter as owner
     JSON.stringify({
@@ -596,8 +636,8 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     staleSecondHumanText,
     unparsableLine: 21,
     unparsableRaw,
-    // 31 prior rows + remove cluster (3) + stale cluster (4) = 38 physical lines.
-    lastLine: 38,
+    // prior 31 + machine-remove 3 + stale 4 + peer-remove 3 = 41 physical lines.
+    lastLine: 41,
     rangeALine: 1,
     rangeBLine: 2,
   };
@@ -807,10 +847,15 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
         (line) =>
           line.id === fixture.peerOriginEnqueueId ||
           line.id === "msg-peer-origin-mat" ||
-          line.text === fixture.peerOriginText,
+          line.id === "queue-peer-remove-1",
       ),
       false,
-      "peer origin queue events must not produce owner diary lines",
+      "peer origin enqueue/mat/remove ids must not land as owner (live wrap + att.origin)",
+    );
+    assert.equal(
+      volume.lines.some((line) => line.text === fixture.peerOriginText),
+      false,
+      "peer origin.body payload must not land as owner via enqueue",
     );
     assert.equal(byId.get(fixture.humanOriginEnqueueId)?.speaker, "owner");
     assert.equal(byId.get(fixture.humanOriginEnqueueId)?.text, fixture.humanOriginText);
