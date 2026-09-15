@@ -161,12 +161,16 @@ test("projectSecretariatSummonResult keeps typed terminal kinds (gatekeeper prec
       roleOutcome: {
         kind: "accepted",
         role: "countersign",
+        status: "continue",
         payloads: [{ countersignStatus: "continue", fix: { summary: "x" } }],
+        decisiveFacts: { note: "accepted-facts" },
       },
     } as never,
   });
   assert.equal(accepted.outcomeKind, "accepted");
+  assert.equal(accepted.status, "continue");
   assert.equal(accepted.countersignStatus, "continue");
+  assert.deepEqual(accepted.decisiveFacts, { note: "accepted-facts" });
   assert.deepEqual(accepted.receipt, {
     countersignStatus: "continue",
     fix: { summary: "x" },
@@ -181,11 +185,14 @@ test("projectSecretariatSummonResult keeps typed terminal kinds (gatekeeper prec
         role: "countersign",
         status: "audit_escalation",
         payloads: [{ countersignStatus: "escalate", decisionGate: { question: "q" } }],
+        decisiveFacts: { gate: "open" },
       },
     } as never,
   });
   assert.equal(escalation.outcomeKind, "audit_escalation");
+  assert.equal(escalation.status, "audit_escalation");
   assert.equal(escalation.countersignStatus, "escalate");
+  assert.deepEqual(escalation.decisiveFacts, { gate: "open" });
   assert.ok(escalation.receipt);
 
   const failure = projectSecretariatSummonResult({

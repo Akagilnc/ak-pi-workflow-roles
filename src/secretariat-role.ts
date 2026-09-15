@@ -167,9 +167,18 @@ export function projectSecretariatSummonResult(
     return {
       ...base,
       outcomeKind: roleOutcome.kind,
+      // audit_escalation carries typed status; accepted may carry fixture/compat status.
+      ...("status" in roleOutcome &&
+      typeof roleOutcome.status === "string" &&
+      roleOutcome.status.length > 0
+        ? { status: roleOutcome.status }
+        : {}),
       ...(countersignStatus === undefined ? {} : { countersignStatus }),
       ...(latest === undefined ? {} : { receipt: latest }),
       ...(payloads === undefined ? {} : { payloads }),
+      ...(roleOutcome.decisiveFacts === undefined
+        ? {}
+        : { decisiveFacts: roleOutcome.decisiveFacts }),
     };
   }
 
