@@ -189,25 +189,24 @@ function hostSelectionFailureFromUnknown(error: unknown): HostSelectionFailure |
   return failure;
 }
 
-/** #178: createSummonEnv outcome — missing model is a typed fact, not a thrown message. */
+type SummonEnvOk = {
+  readonly home: string;
+  readonly principalAuthority: import("./host-contracts.ts").DurablePrincipalAuthority;
+  readonly agentDir: string;
+  readonly sessionAppender: typeof import("./pi/role-turn-host.ts").appendPiSessionCustomEntry;
+  readonly packageRoot: string;
+  readonly roleTurnHost: RoleTurnHost;
+  readonly cwd: string;
+  readonly credentials: CredentialProviders;
+  readonly model?: import("./host-contracts.ts").HostInstitutionalModelSelection;
+  readonly engine?: string;
+  readonly engineModel?: string;
+  readonly host?: string;
+};
+
+/** #178: missing model is ok:false (typed fact), not a thrown message. */
 type SummonEnvBuild =
-  | {
-      readonly ok: true;
-      readonly env: {
-        readonly home: string;
-        readonly principalAuthority: import("./host-contracts.ts").DurablePrincipalAuthority;
-        readonly agentDir: string;
-        readonly sessionAppender: typeof import("./pi/role-turn-host.ts").appendPiSessionCustomEntry;
-        readonly packageRoot: string;
-        readonly roleTurnHost: RoleTurnHost;
-        readonly cwd: string;
-        readonly credentials: CredentialProviders;
-        readonly model?: import("./host-contracts.ts").HostInstitutionalModelSelection;
-        readonly engine?: string;
-        readonly engineModel?: string;
-        readonly host?: string;
-      };
-    }
+  | { readonly ok: true; readonly env: SummonEnvOk }
   | { readonly ok: false; readonly missingModelMessage: string };
 
 async function createSummonEnv(
@@ -231,17 +230,14 @@ async function createSummonEnv(
     { appendPiSessionCustomEntry },
     { resolveRoleTurnHost },
     { missingResolvedSeatModelMessage, resolvedSeatWithModel },
-  ] =
-    await Promise.all([
-      import("./pi/durable-principal.ts"),
-      import("./pi/role-turn-host.ts"),
-      import("./public-cli/role-turn-host-resolution.ts"),
-      import("./public-cli/config.ts"),
-    ]);
+  ] = await Promise.all([
+    import("./pi/durable-principal.ts"),
+    import("./pi/role-turn-host.ts"),
+    import("./public-cli/role-turn-host-resolution.ts"),
+    import("./public-cli/config.ts"),
+  ]);
   const principalAuthority = piDurablePrincipalAuthority;
-  // Same host axis table as public CLI (#617 DK-3 / #675 / #840): child seat
-  // selects; injected roleTurnHost is the pi adapter only.
-  // Order: host first → argv (afterHost) → missing-model → provider projection.
+  // Host first → argv (afterHost) → missing-model → provider projection (#617/#178/#840).
   const roleTurnHost = resolveRoleTurnHost(
     {
       packageRoot: options.packageRoot,
@@ -254,7 +250,6 @@ async function createSummonEnv(
     { role: options.role, seat: options.seat, principalAuthority },
   );
   afterHost?.();
-  // #178: typed fact via resolvedSeatWithModel — callers project via ok:false, never message compare.
   const seatWithModel = resolvedSeatWithModel(options.seat);
   if (seatWithModel === undefined) {
     return {
@@ -263,7 +258,6 @@ async function createSummonEnv(
     };
   }
   const hostName = seatWithModel.host ?? "pi";
-  // #788: host is registered above; only then project host-facing provider.
   const { loadHostProvidersTable, projectHostFacingProvider } = await import(
     "./public-cli/host-providers.ts"
   );
@@ -312,9 +306,7 @@ export async function summonPublicRole(
   const credentials =
     options.credentials ?? (await loadCredentialProviders(agentDir));
   const config = await loadPublicCliConfig(home);
-  // Nested summons resolve host on the officer seat only (flag>seat>default pi).
-  // Parent run host is not an override channel (#821 / ADR 0082: --host 旗标>席位配置>缺省 pi).
-  // #178 order: host selection → argv structural parse once → missing-model → runner.
+  // Nested summons: officer seat only (flag>seat>default pi). #178 order below.
   const seat = resolveEffectiveSeat(config, options.role, credentials);
   const captured = options.io === undefined ? createCapturingIo() : undefined;
   const io = options.io ?? captured!.io;
@@ -332,24 +324,21 @@ export async function summonPublicRole(
     ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
   } as const;
 
-  /** Host → afterHost(argv) → missing-model; project expected failures as summon results. */
-  async function prepareSummonEnv(afterHost: () => void): Promise<
+  type Prepared =
     | { readonly ok: true; readonly env: Record<string, unknown> }
-    | { readonly ok: false; readonly exitCode: number; readonly stderr?: string }
-  > {
+    | { readonly ok: false; readonly exitCode: number; readonly stderr?: string };
+
+  async function prepareSummonEnv(afterHost: () => void): Promise<Prepared> {
     try {
       const built = await createSummonEnv(summonEnvInput, afterHost);
       if (!built.ok) {
-        // Direct control flow on resolvedSeatWithModel fact — not Error.message.
         return { ok: false, exitCode: 1, stderr: built.missingModelMessage };
       }
       return {
         ok: true,
         env: {
           ...built.env,
-          // Station child role run (#840): omit automatic navigator attendance.
           stationChild: true,
-          // Host config passthrough only — same face as public CLI (#422 / #675).
           ...(config.autoResumeLimit === undefined
             ? {}
             : { autoResumeLimit: config.autoResumeLimit }),
@@ -380,15 +369,35 @@ export async function summonPublicRole(
     }
   }
 
-  function projectPrepareFailure(
-    prepared: { readonly ok: false; readonly exitCode: number; readonly stderr?: string },
-  ): PublicSummonResult {
-    const parts = [prepared.stderr, captured?.stderrText()].filter((s): s is string => typeof s === "string" && s !== "");
+  function projectPrepareFailure(prepared: Extract<Prepared, { ok: false }>): PublicSummonResult {
+    const parts = [prepared.stderr, captured?.stderrText()].filter(
+      (s): s is string => typeof s === "string" && s !== "",
+    );
     const stderr = parts.length === 0 ? undefined : parts.join("");
     return {
       exitCode: prepared.exitCode,
       ...(stderr === undefined ? {} : { stderr }),
     };
+  }
+
+  /** Host → argv once → missing-model → runner. */
+  async function runPrepared<TParsed>(
+    parse: (argv: readonly string[]) => TParsed,
+    run: (
+      env: Record<string, unknown>,
+      parseOnce: () => TParsed,
+    ) => Promise<{
+      exitCode: number;
+      terminal?: TerminalResult;
+      admitted?: { readonly runDirectory?: string };
+    }>,
+  ) {
+    let parsedArgv!: TParsed;
+    const prepared = await prepareSummonEnv(() => {
+      parsedArgv = parse(options.argv);
+    });
+    if (!prepared.ok) return { fail: projectPrepareFailure(prepared) as PublicSummonResult };
+    return { ok: await run(prepared.env, () => parsedArgv) };
   }
 
   let result: {
@@ -402,12 +411,10 @@ export async function summonPublicRole(
         import("./public-cli/notary-run.ts"),
         import("./public-cli/invocation.ts"),
       ]);
-      let parsedArgv: ReturnType<typeof parseNotaryArgv>;
-      const prepared = await prepareSummonEnv(() => {
-        parsedArgv = parseNotaryArgv(options.argv);
-      });
-      if (!prepared.ok) return projectPrepareFailure(prepared);
-      result = await runPublicNotary(options.argv, prepared.env as never, io, () => parsedArgv);
+      const stepped = await runPrepared(parseNotaryArgv, (env, once) =>
+        runPublicNotary(options.argv, env as never, io, once));
+      if ("fail" in stepped) return stepped.fail;
+      result = stepped.ok;
       break;
     }
     case "inspector": {
@@ -415,69 +422,30 @@ export async function summonPublicRole(
         import("./public-cli/inspector-run.ts"),
         import("./public-cli/invocation.ts"),
       ]);
-      let parsedArgv: ReturnType<typeof parseInspectorArgv>;
-      const prepared = await prepareSummonEnv(() => {
-        parsedArgv = parseInspectorArgv(options.argv);
-      });
-      if (!prepared.ok) return projectPrepareFailure(prepared);
-      result = await runPublicInspector(options.argv, prepared.env as never, io, () => parsedArgv);
+      const stepped = await runPrepared(parseInspectorArgv, (env, once) =>
+        runPublicInspector(options.argv, env as never, io, once));
+      if ("fail" in stepped) return stepped.fail;
+      result = stepped.ok;
       break;
     }
-    case "auditor": {
-      const [{ runPublicInstructionSeat }, { parseAuditorArgv }] = await Promise.all([
-        import("./public-cli/instruction-seat-run.ts"),
-        import("./public-cli/invocation.ts"),
-      ]);
-      let parsedArgv: ReturnType<typeof parseAuditorArgv>;
-      const prepared = await prepareSummonEnv(() => {
-        parsedArgv = parseAuditorArgv(options.argv);
-      });
-      if (!prepared.ok) return projectPrepareFailure(prepared);
-      result = await runPublicInstructionSeat(
-        options.argv,
-        prepared.env as never,
-        io,
-        "auditor",
-        () => parsedArgv,
-      );
-      break;
-    }
-    case "navigator": {
-      const [{ runPublicInstructionSeat }, { parseNavigatorArgv }] = await Promise.all([
-        import("./public-cli/instruction-seat-run.ts"),
-        import("./public-cli/invocation.ts"),
-      ]);
-      let parsedArgv: ReturnType<typeof parseNavigatorArgv>;
-      const prepared = await prepareSummonEnv(() => {
-        parsedArgv = parseNavigatorArgv(options.argv);
-      });
-      if (!prepared.ok) return projectPrepareFailure(prepared);
-      result = await runPublicInstructionSeat(
-        options.argv,
-        prepared.env as never,
-        io,
-        "navigator",
-        () => parsedArgv,
-      );
-      break;
-    }
+    case "auditor":
+    case "navigator":
     case "gatekeeper": {
-      const [{ runPublicInstructionSeat }, { parseGatekeeperArgv }] = await Promise.all([
+      const seat = options.role;
+      const [{ runPublicInstructionSeat }, invocation] = await Promise.all([
         import("./public-cli/instruction-seat-run.ts"),
         import("./public-cli/invocation.ts"),
       ]);
-      let parsedArgv: ReturnType<typeof parseGatekeeperArgv>;
-      const prepared = await prepareSummonEnv(() => {
-        parsedArgv = parseGatekeeperArgv(options.argv);
-      });
-      if (!prepared.ok) return projectPrepareFailure(prepared);
-      result = await runPublicInstructionSeat(
-        options.argv,
-        prepared.env as never,
-        io,
-        "gatekeeper",
-        () => parsedArgv,
-      );
+      const parse =
+        seat === "auditor"
+          ? invocation.parseAuditorArgv
+          : seat === "navigator"
+            ? invocation.parseNavigatorArgv
+            : invocation.parseGatekeeperArgv;
+      const stepped = await runPrepared(parse, (env, once) =>
+        runPublicInstructionSeat(options.argv, env as never, io, seat, once));
+      if ("fail" in stepped) return stepped.fail;
+      result = stepped.ok;
       break;
     }
     case "judge": {
@@ -485,12 +453,10 @@ export async function summonPublicRole(
         import("./public-cli/judge-run.ts"),
         import("./public-cli/invocation.ts"),
       ]);
-      let parsedArgv: ReturnType<typeof parseJudgeArgv>;
-      const prepared = await prepareSummonEnv(() => {
-        parsedArgv = parseJudgeArgv(options.argv);
-      });
-      if (!prepared.ok) return projectPrepareFailure(prepared);
-      result = await runPublicJudge(options.argv, prepared.env as never, io, () => parsedArgv);
+      const stepped = await runPrepared(parseJudgeArgv, (env, once) =>
+        runPublicJudge(options.argv, env as never, io, once));
+      if ("fail" in stepped) return stepped.fail;
+      result = stepped.ok;
       break;
     }
     case "doctor": {
@@ -498,12 +464,10 @@ export async function summonPublicRole(
         import("./public-cli/doctor-run.ts"),
         import("./public-cli/invocation.ts"),
       ]);
-      let parsedArgv: ReturnType<typeof parseDoctorArgv>;
-      const prepared = await prepareSummonEnv(() => {
-        parsedArgv = parseDoctorArgv(options.argv);
-      });
-      if (!prepared.ok) return projectPrepareFailure(prepared);
-      result = await runPublicDoctor(options.argv, prepared.env as never, io, () => parsedArgv);
+      const stepped = await runPrepared(parseDoctorArgv, (env, once) =>
+        runPublicDoctor(options.argv, env as never, io, once));
+      if ("fail" in stepped) return stepped.fail;
+      result = stepped.ok;
       break;
     }
     case "diarist": {
@@ -511,12 +475,10 @@ export async function summonPublicRole(
         import("./public-cli/diarist-run.ts"),
         import("./public-cli/invocation.ts"),
       ]);
-      let parsedArgv: ReturnType<typeof parseDiaristArgv>;
-      const prepared = await prepareSummonEnv(() => {
-        parsedArgv = parseDiaristArgv(options.argv);
-      });
-      if (!prepared.ok) return projectPrepareFailure(prepared);
-      result = await runPublicDiarist(options.argv, prepared.env as never, io, () => parsedArgv);
+      const stepped = await runPrepared(parseDiaristArgv, (env, once) =>
+        runPublicDiarist(options.argv, env as never, io, once));
+      if ("fail" in stepped) return stepped.fail;
+      result = stepped.ok;
       break;
     }
   }

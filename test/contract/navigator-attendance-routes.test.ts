@@ -10,7 +10,7 @@ import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { createHash } from "node:crypto";
 import {
-  context,
+  contextWithCallerSeat,
   candidate,
   sessionHarness,
   attendance,
@@ -143,11 +143,6 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
 
 test("dispose during pending createSession drains the created session without prompt or assignment", async () => {
   await withTempRoot("navigator-dispose-race-", async (root) => {
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     let releaseCreate!: () => void;
@@ -161,7 +156,7 @@ test("dispose during pending createSession drains the created session without pr
     let setModelCalls = 0;
     const events: any[] = [];
     const nav = createNavigatorAttendance({
-      context: context(root),
+      context: await contextWithCallerSeat(root),
       role: "coder",
       phase: "apply",
       subjectKey: "/repo/.ak/work/issues/28",
@@ -198,11 +193,6 @@ test("dispose during pending createSession drains the created session without pr
 
 test("attendance dispose settles session close rejection on the caller", async () => {
   await withTempRoot("navigator-attendance-close-", async (root) => {
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-    );
     let releasePrompt: (() => void) | undefined;
     try {
       const setting = join(root, "model.json");
@@ -212,7 +202,7 @@ test("attendance dispose settles session close rejection on the caller", async (
       const prompted = new Promise<void>((resolve) => { promptStarted = resolve; });
       const heldPrompt = new Promise<void>((resolve) => { releasePrompt = resolve; });
       const nav = createNavigatorAttendance({
-        context: context(root),
+        context: await contextWithCallerSeat(root),
         role: "coder",
         phase: "apply",
         subjectKey: "/repo/.ak/work/issues/28",
@@ -334,11 +324,6 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
 
   for (const row of rows) {
     await withTempRoot("navigator-rebind-as-is-", async (root) => {
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-    );
       const setting = join(root, "model.json");
       await writeFile(setting, JSON.stringify({ model: "provider/model" }));
       const harness = sessionHarness();
@@ -362,7 +347,7 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
         : row.settlement;
 
       const nav = createNavigatorAttendance({
-        context: context(root),
+        context: await contextWithCallerSeat(root),
         role: row.role,
         phase: row.phase,
         subjectKey: row.subjectKey,
@@ -421,17 +406,12 @@ test("settlement-bound rebind is always reachable and passes divergent advice th
 test("settlement-bound rebind that repeats divergent advice still emits recommendation as-is", async () => {
   // Former "still contradicts → unavailable" path deleted: code has no authority to discard advice.
   await withTempRoot("navigator-rebind-keep-divergent-", async (root) => {
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = createNavigatorAttendance({
-      context: context(root),
+      context: await contextWithCallerSeat(root),
       role: "collector",
       phase: null,
       subjectKey: "/repo/.ak/work",
@@ -477,17 +457,12 @@ test("settlement-matched speculative advice is not rebound and divergent next st
   // matches keys the candidate to this settlement — not a next.role legality check.
   // Divergent next is still emitted as-is; no second prepare.
   await withTempRoot("navigator-matched-no-rebind-", async (root) => {
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = createNavigatorAttendance({
-      context: context(root),
+      context: await contextWithCallerSeat(root),
       role: "collector",
       phase: null,
       subjectKey: "/repo/.ak/work",
@@ -551,11 +526,6 @@ test("status-specific route candidates outrank generics regardless of declaratio
 
 test("resumed setModel session failures preserve typed source and cause", async () => {
   await withTempRoot("navigator-resumed-cause-", async (root) => {
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-    );
     const setting = join(root, "model.json");
     // Thinking stick/availability re-check is gone (#683); only session setModel failures remain typed here.
     const cases = [
@@ -567,7 +537,7 @@ test("resumed setModel session failures preserve typed source and cause", async 
       let setModelCalls = 0;
       let created = false;
       const nav = createNavigatorAttendance({
-        context: context(root),
+        context: await contextWithCallerSeat(root),
         role: "judge",
         phase: null,
         subjectKey: "/repo/.ak/work/issues/28",

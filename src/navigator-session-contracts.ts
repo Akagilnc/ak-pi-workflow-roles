@@ -228,7 +228,7 @@ export async function readNavigatorModelSetting(path = navigatorModelSettingPath
     }
     return raw.model;
   } catch (error) {
-    // #178: no package default fill-in — missing file is a real absence.
+    // #178: missing file is absence (no package default).
     if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error("Navigator model setting is missing");
     }
@@ -294,8 +294,7 @@ export async function resolveNavigatorSeatSelection(
           : packageMachineHome();
     const config = await loadPublicCliConfig(home);
     const modelOnly = seatModelOnly(config.seats.navigator);
-    // Seat table is the only model authority — no package default, no legacy file.
-    // Missing navigator seat → typed model-unavailable (same family as #178).
+    // Seat table only — missing navigator seat → typed model-unavailable (#178).
     if (modelOnly === undefined) {
       const { missingResolvedSeatModelMessage } = await import("./public-cli/config.ts");
       throw navigatorUnavailableError(

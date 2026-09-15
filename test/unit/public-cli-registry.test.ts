@@ -198,4 +198,3 @@ test("help capabilities derive from typed public registry facts", () => {
     "analyst is deterministic, not an LLM-configurable seat",
   );
 });
-
