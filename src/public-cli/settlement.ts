@@ -1092,7 +1092,9 @@ async function loadBoundAuditorVolumes(
     const nl = value.indexOf("\n");
     const firstLine = nl === -1 ? value : value.slice(0, nl);
     const body = firstLine === "" && nl !== -1 ? value.slice(nl + 1) : value;
-    return body.startsWith("本次配置的劳务引擎及其手册：") || body.startsWith("- engine:");
+    return body.startsWith("本次配置的劳务引擎及其手册：")
+      || body.startsWith("- 引擎：")
+      || body.startsWith("- engine:"); // historical session bytes
   };
   const isResumeEnvelope = (msg: unknown): boolean => {
     if (!isRecord(msg) || msg.role !== "user") return false;

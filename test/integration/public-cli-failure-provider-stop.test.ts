@@ -387,7 +387,7 @@ test("engine-suffixed resume envelope keeps first-attempt auditor retention boun
       engine: "kimi",
     });
     assert.equal(engineResumePrompt.includes("[ak-role:resume-continue]"), false);
-    assert.match(engineResumePrompt, /engine:/);
+    assert.equal(engineResumePrompt.includes("kimi"), true);
 
     const shapes: ReadonlyArray<{ label: string; message: Record<string, unknown> }> = [
       // text-string form (message.content string)

@@ -63,10 +63,21 @@ export function projectNotarySessionBound(input: {
 }): {
   readonly sourceRun: NotarySourceRunLocator;
   readonly ticketNumber?: number;
+  /** Provider-visible Chinese face (ADR 0073); fold reads this, not English keys. */
+  readonly section: string;
 } {
+  const lines = [
+    `来源目录：${input.sourceRun.runDirectory}`,
+    `来源标识：${input.sourceRun.runId}`,
+    `来源角色：${input.sourceRun.role}`,
+  ];
+  if (input.ticketNumber !== undefined) {
+    lines.push(`票号：#${input.ticketNumber}`);
+  }
   return {
     sourceRun: input.sourceRun,
     ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
+    section: lines.join("\n"),
   };
 }
 

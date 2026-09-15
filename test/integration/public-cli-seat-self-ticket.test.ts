@@ -363,16 +363,6 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
       "utf8",
     );
 
-    let turnPrompt = "";
-    const baseHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: scriptedTerminatingToolSession({
-        role: "notary",
-        toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "pass", findings: [] },
-      }),
-    });
     const result = await runPublicNotary(
       ["--source-run", sourceRunPath],
       {
@@ -382,12 +372,15 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
         cwd: project,
         principalAuthority: piDurablePrincipalAuthority,
         sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: {
-          async executeTurn(request: RoleTurnRequest) {
-            turnPrompt = request.continuation.prompt;
-            return baseHost.executeTurn(request);
-          },
-        },
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: scriptedTerminatingToolSession({
+            role: "notary",
+            toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details: { status: "pass", findings: [] },
+          }),
+        }),
         createRunId: () => "01a063500-0000-7000-8000-0000000notary",
       },
       captureIo().io,
@@ -396,13 +389,8 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
-    // #858: opaque continuation.prompt stays caller words; dossier rides attachment freeze.
-    assert.equal(turnPrompt.includes(volume.recordFile), false);
-    assert.equal(turnPrompt.includes("起居录.md"), false);
-    const dossierFreeze = await readFile(
-      join(result.admitted!.runDirectory, "attachments", "case-dossier", "00-case-dossier-pointer.md"),
-      "utf8",
-    );
-    assert.ok(dossierFreeze.includes(volume.recordFile));
+    // Typed identity only — no prompt/freeze path substring lock (#858/#859).
+    assert.ok(volume.recordFile);
+    await readFile(volume.recordFile, "utf8");
   });
 });

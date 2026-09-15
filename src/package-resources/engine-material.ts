@@ -143,16 +143,16 @@ export function appendEngineSessionMaterial(
   out.push("");
   if (engineMaterial.materialPath !== undefined) {
     out.push("本次配置的劳务引擎及其手册：");
-    out.push(`- engine: ${engineMaterial.name}`);
+    out.push(`- 引擎：${engineMaterial.name}`);
     if (engineMaterial.model !== undefined) {
-      out.push(`- engineModel: ${engineMaterial.model}`);
+      out.push(`- 模型：${engineMaterial.model}`);
     }
     out.push(`- ${engineMaterial.materialPath}`);
   } else {
     // Name-only pass-through: no packaged bytes to claim as handbook.
-    out.push(`- engine: ${engineMaterial.name}`);
+    out.push(`- 引擎：${engineMaterial.name}`);
     if (engineMaterial.model !== undefined) {
-      out.push(`- engineModel: ${engineMaterial.model}`);
+      out.push(`- 模型：${engineMaterial.model}`);
     }
   }
   return out;

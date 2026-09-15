@@ -44,7 +44,10 @@ import {
   resolveEngineModel,
   resolveEngineName,
 } from "./engine-detour.ts";
-import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
+import {
+  appendEngineSessionMaterial,
+  engineSessionMaterialFromOptions,
+} from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
@@ -1332,6 +1335,7 @@ export function createRoleRuntimeExtension(
     });
     // #879: engine coordinates ride readingMaterial only when station-child
     // officer dialogue replaced the ordinary transport prompt (no double fold).
+    // Chinese section reuses appendEngineSessionMaterial (ADR 0073; no English keys).
     roleHost.on("before_agent_start", () => {
       const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
       if (typeof role !== "string" || !isOfficerReviewSeat(role)) return;
@@ -1345,12 +1349,16 @@ export function createRoleRuntimeExtension(
         packageRoot: dependencies.packageRoot,
       });
       if (material === undefined) return;
+      const section = appendEngineSessionMaterial([], material)
+        .filter((line) => line.length > 0)
+        .join("\n");
       return {
         readingMaterial: {
           kind: "engine-session-material" as const,
           name: material.name,
           ...(material.model === undefined ? {} : { model: material.model }),
           ...(material.materialPath === undefined ? {} : { materialPath: material.materialPath }),
+          section,
         },
       };
     });
@@ -1361,12 +1369,13 @@ export function createRoleRuntimeExtension(
         readingMaterial: {
           kind: "inspector-parent-binding" as const,
           sourceRunPath: path,
+          section: `父会话目录：${path}`,
         },
       };
     });
-    // #858/#879: single shared owner of 0081 case-dossier → readingMaterial fold.
-    // post-admission freezes under run/attachments/case-dossier/ for every public entry;
-    // this handler alone projects it onto the existing agent-start materials face.
+    // #879: station-child 0081 case-dossier → readingMaterial fold.
+    // post-admission freezes under run/attachments/case-dossier/ for officer dialogue;
+    // ordinary entries keep the continuation.prompt section (baseline delivery face).
     // Role modules must not re-read the freeze (ADR 0018 lifecycle; no duplicate fold).
     roleHost.on("before_agent_start", async (_event, ctx) => {
       const runDir = runDirectoryFromHostContext(ctx);

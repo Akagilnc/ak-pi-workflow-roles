@@ -29,6 +29,7 @@ import type {
   ControlledFailureCause,
   DurablePrincipal,
   DurablePrincipalAuthority,
+  RoleTurnContinuation,
   RoleTurnHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
@@ -36,7 +37,10 @@ import type {
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { isOfficerReviewSeat } from "../host-contracts.ts";
-import { deliverCaseDossierAsAttachment } from "./case-dossier-delivery.ts";
+import {
+  deliverCaseDossierAsAttachment,
+  projectCaseDossierPointerSection,
+} from "./case-dossier-delivery.ts";
 
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
 function describeCaughtError(error: unknown): { name?: string; message: string; code?: string | number } {
@@ -47,11 +51,21 @@ function describeCaughtError(error: unknown): { name?: string; message: string; 
   return { message: String(error) };
 }
 
+/** Append one system section to a continuation prompt, keeping its kind. */
+function appendContinuationSection(
+  continuation: RoleTurnContinuation,
+  section: string,
+): RoleTurnContinuation {
+  const prompt = `${continuation.prompt}\n\n${section}`;
+  return continuation.kind === "initial"
+    ? { kind: "initial", prompt }
+    : { kind: "resume", prompt };
+}
+
 /**
  * Nested gate summons (station child) on an officer seat: dialogue content is
- * peer words only (#879). ADR 0081 case dossier hangs via the shared attachments
- * freeze seam for every public entry — never into the dialogue body, never
- * RoleTurnRequest.materials.
+ * peer words only (#879). ADR 0081 case dossier still hangs via the existing
+ * attachments freeze seam — never into the peer body, never RoleTurnRequest.materials.
  */
 function isStationChildOfficerDialogue(
   role: string,
@@ -715,10 +729,10 @@ export async function dispatchPostAdmissionTurn<
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
     // settled — the seat's ticket bind re-projection and any court diarist station
     // writes (#742). Case dossier delivery (ADR 0081 / #709 / #858) rides here once
-    // for every public entry via the existing attachments freeze →
-    // loadCaseDossierReadingMaterial → systemPrompt.materials fold. Caller
-    // initial/resume continuation.prompt bytes stay opaque (not prompt splice,
-    // not RoleTurnRequest.materials).
+    // for every public entry. #879: station-child officer dialogue keeps peer body
+    // intact — 起居录 hangs via existing attachments freeze (not prompt wrap,
+    // not RoleTurnRequest.materials). Ordinary entries keep the baseline
+    // continuation.prompt section (path shape when unbound; concrete file when bound).
     let turnRequest: RoleTurnRequest =
       env.signal === undefined ? request : { ...request, signal: env.signal };
     if (env.stationChild !== undefined) {
@@ -732,12 +746,33 @@ export async function dispatchPostAdmissionTurn<
     if (typeof liveHost === "string" && liveHost.trim() !== "") {
       turnRequest = { ...turnRequest, host: liveHost.trim() };
     }
-    await deliverCaseDossierAsAttachment({
-      ticketNumber: admitted.ticketNumber,
-      projectRoot: admitted.projectRoot,
-      home: env.home,
-      runDirectory: admitted.runDirectory,
-    });
+    if (isStationChildOfficerDialogue(admitted.role, env)) {
+      // 0081 non-body face: freeze pointer section under run/attachments/.
+      // Peer dialogue continuation.prompt stays parent payload only — the seat
+      // consumes the freeze via loadCaseDossierReadingMaterial → existing
+      // agent-start readingMaterial / systemPrompt.materials fold.
+      await deliverCaseDossierAsAttachment({
+        ticketNumber: admitted.ticketNumber,
+        projectRoot: admitted.projectRoot,
+        home: env.home,
+        runDirectory: admitted.runDirectory,
+      });
+    } else {
+      // Baseline ordinary-entry face: append the path pointer to continuation.
+      // #858: unbound seats still receive the canonical path shape.
+      const dossierSection = await projectCaseDossierPointerSection({
+        ticketNumber: admitted.ticketNumber,
+        projectRoot: admitted.projectRoot,
+        home: env.home,
+      });
+      turnRequest = {
+        ...turnRequest,
+        continuation: appendContinuationSection(
+          turnRequest.continuation,
+          dossierSection,
+        ),
+      };
+    }
 
     // Authoritative host write happens here, at the real dispatch boundary —
     // immediately before the turn actually starts, after every retryable

@@ -5,9 +5,10 @@
  * 只告诉路径：不刷新、不生成、不校验内容、不新增拒收或停工条件、不从 instruction 抽票号。
  * 机器文本仅中立标识材料（ADR 0073），用途说明归角色材料所有。
  *
- * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口经 attachments
+ * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口挂载。
+ * 普通入口把本段追加进 continuation；station-child 审核轮次走 attachments
  * 冻结 + role-runtime `loadCaseDossierReadingMaterial` → readingMaterial →
- * systemPrompt.materials fold（#858/#879：continuation.prompt 保持调用者 opaque 原文；
+ * systemPrompt.materials fold（#879：对话 instruction 保持父腿 payload 原文；
  * 起居录作独立附件面，不新造 RoleTurnRequest.materials）。
  */
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -16,12 +17,15 @@ import { join } from "node:path";
 
 import { projectTicketRecordsPathShape } from "../sitian-facade.ts";
 import { resolveTicketProvenanceVolume } from "../ticket-provenance.ts";
-import { freezeAttachmentsIntoRun } from "./invocation.ts";
+import {
+  freezeAttachmentsIntoRun,
+  type FrozenAttachment,
+} from "./invocation.ts";
 
 /** Section heading of the system-delivered dossier pointer (presentation only; no 本票 claim). */
 const CASE_DOSSIER_SECTION_HEADING = "## 起居录路径（系统随案提供）" as const;
 
-/** Stable freeze key under run/attachments/ for 0081 delivery. */
+/** Stable freeze key under run/attachments/ for station-child 0081 delivery. */
 const CASE_DOSSIER_ATTACH_KEY = "case-dossier" as const;
 
 /** Leaf name of the frozen pointer section (content = purpose + paths). */
@@ -33,9 +37,9 @@ const CASE_DOSSIER_ATTACH_FILE = "case-dossier-pointer.md" as const;
  * itself (陛下 2026-09-15: 只需要告诉llm这个路径). When a typed ticket identity is
  * already on the run, also project the concrete resolved file. Never claims a
  * volume or「本票」exists when unbound; never extracts a ticket from instruction.
- * Under-book shape comes only from sitian topology projection — no local replica.
+ * Under-book shape comes only from sitian writer joins — no local replica.
  */
-async function projectCaseDossierPointerSection(input: {
+export async function projectCaseDossierPointerSection(input: {
   readonly ticketNumber: number | undefined;
   readonly projectRoot: string;
   readonly home: string;
@@ -61,20 +65,19 @@ async function projectCaseDossierPointerSection(input: {
 }
 
 /**
- * ADR 0081 delivery for every public-entry turn (#858/#879): freeze the pointer
+ * ADR 0081 delivery for station-child officer turns (#879): freeze the pointer
  * section through the existing attachments seam. Role-runtime loads that freeze
  * via loadCaseDossierReadingMaterial onto readingMaterial; the envelope then
- * folds it into systemPrompt.materials. Caller continuation.prompt stays opaque;
- * never RoleTurnRequest.materials. Always freezes the path pointer (canonical
- * shape, or concrete file when a typed ticket is already bound).
- * Side-effect only — freeze detail is not a caller contract.
+ * folds it into systemPrompt.materials. Peer dialogue instruction stays the
+ * parent payload; never RoleTurnRequest.materials. Always freezes the path
+ * pointer (canonical shape, or concrete file when a typed ticket is already bound).
  */
 export async function deliverCaseDossierAsAttachment(input: {
   readonly ticketNumber: number | undefined;
   readonly projectRoot: string;
   readonly home: string;
   readonly runDirectory: string;
-}): Promise<void> {
+}): Promise<readonly FrozenAttachment[]> {
   const section = await projectCaseDossierPointerSection({
     ticketNumber: input.ticketNumber,
     projectRoot: input.projectRoot,
@@ -85,7 +88,7 @@ export async function deliverCaseDossierAsAttachment(input: {
   try {
     const stagingPath = join(stagingDir, CASE_DOSSIER_ATTACH_FILE);
     await writeFile(stagingPath, `${section}\n`, "utf8");
-    await freezeAttachmentsIntoRun(
+    return await freezeAttachmentsIntoRun(
       [stagingPath],
       input.runDirectory,
       CASE_DOSSIER_ATTACH_KEY,
@@ -95,7 +98,7 @@ export async function deliverCaseDossierAsAttachment(input: {
   }
 }
 
-/** Typed reading-material face for a frozen 0081 case-dossier attachment. */
+/** Typed reading-material face for a frozen station-child 0081 attachment. */
 export type CaseDossierReadingMaterial = {
   readonly kind: "case-dossier-pointer";
   readonly frozenPath: string;
