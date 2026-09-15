@@ -17,7 +17,7 @@ import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
 import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dispatch-rejection.ts";
 
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
-import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
+import { readLatestTypedProviderHttpObservation, RESUME_TRANSPORT_ENVELOPE } from "../../src/public-cli/run-lifecycle.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
   packageRoot,
@@ -347,6 +347,190 @@ test("bound auditor provider failure outranks the parent abort it caused", async
         },
       },
     );
+  });
+});
+
+// #600 / 50940955: transport-token auto-resume must not stale first-attempt
+// auditor retention (ComplianceResponseRetentionError / EISDIR). Public face only.
+test("transport-token resume keeps first-attempt auditor retention bound", async () => {
+  await withTempHome(async (home) => {
+    const sessionDir = join(home, "session");
+    const sessionFile = join(sessionDir, "parent.jsonl");
+    const childDir = join(sessionDir, "auditor-roles");
+    await mkdir(childDir, { recursive: true });
+    await writeFile(sessionFile, [
+      { type: "session", id: "parent-session" },
+      { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
+      {
+        type: "message",
+        id: "attempt-first",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "This operation was aborted",
+          provider: "openai-codex",
+          model: "faux-1",
+        },
+      },
+      {
+        type: "message",
+        id: "resume-token",
+        message: { role: "user", content: RESUME_TRANSPORT_ENVELOPE },
+      },
+      {
+        type: "message",
+        id: "attempt-retry",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "retry without retention",
+          provider: "openai-codex",
+          model: "faux-1",
+        },
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    await writeFile(join(childDir, "child.jsonl"), [
+      { type: "session", id: "child-session", parentSession: sessionFile },
+      {
+        type: "custom",
+        customType: "ak_auditor_parent_attempt_binding",
+        data: {
+          version: 1,
+          parent: {
+            sessionId: "parent-session",
+            sessionFile,
+            attemptEntryId: "attempt-first",
+          },
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "WebSocket error",
+          provider: "openai-codex",
+          model: "faux-1",
+        },
+      },
+      {
+        type: "custom",
+        customType: "ak_auditor_compliance_failure",
+        data: {
+          parent: {
+            sessionId: "parent-session",
+            sessionFile,
+            attemptEntryId: "attempt-first",
+          },
+          failure: {
+            cause: "provider",
+            diagnostic: "WebSocket error",
+            identity: { name: "faux-1", code: "openai-codex" },
+            details: {
+              provider: "openai-codex",
+              model: "faux-1",
+              retentionFailure: {
+                name: "ComplianceResponseRetentionError",
+                cause: { code: "EISDIR" },
+              },
+            },
+          },
+        },
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+
+    assert.deepEqual(
+      await resolveAuditedRunnerKnownFailure({
+        runner: undefined,
+        sessionFile,
+        credential: undefined,
+      }),
+      {
+        cause: "provider",
+        diagnostic: "WebSocket error",
+        identity: { name: "faux-1", code: "openai-codex" },
+        details: {
+          provider: "openai-codex",
+          model: "faux-1",
+          retentionFailure: {
+            name: "ComplianceResponseRetentionError",
+            cause: { code: "EISDIR" },
+          },
+        },
+      },
+    );
+  });
+});
+
+// No compliance entry: live public resolver falls back to auditor provider-stop
+// with secondaryEvidence:"unavailable" (was hung on deleted readBoundAuditorKnownFailure).
+test("bound auditor assistant supplies primary when secondary enrichment is absent", async () => {
+  await withTempHome(async (home) => {
+    const sessionDir = join(home, "session");
+    const sessionFile = join(sessionDir, "parent.jsonl");
+    const childDir = join(sessionDir, "auditor-roles");
+    await mkdir(childDir, { recursive: true });
+    await writeFile(sessionFile, [
+      { type: "session", id: "parent-session" },
+      { type: "message", id: "user-current", message: { role: "user" } },
+      { type: "message", id: "attempt-current", message: { role: "assistant" } },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    await writeFile(join(childDir, "child.jsonl"), [
+      { type: "session", id: "child-session", parentSession: sessionFile },
+      {
+        type: "custom",
+        customType: "ak_auditor_parent_attempt_binding",
+        data: {
+          version: 1,
+          parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-current" },
+        },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "WebSocket error",
+          provider: "xai",
+          model: "audit-model",
+        },
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    assert.deepEqual(
+      await resolveAuditedRunnerKnownFailure({
+        runner: undefined,
+        sessionFile,
+        credential: undefined,
+      }),
+      {
+        diagnostic: "WebSocket error",
+        details: {
+          errorMessage: "WebSocket error",
+          secondaryEvidence: "unavailable",
+        },
+      },
+    );
+  });
+});
+
+// Discovered auditor JSONL corruption stays an honest session failure on the
+// public resolver (was hung on deleted readBoundAuditorKnownFailure throw path).
+test("bound auditor reader propagates malformed discovered JSONL", async () => {
+  await withTempHome(async (home) => {
+    const sessionDir = join(home, "session");
+    const sessionFile = join(sessionDir, "parent.jsonl");
+    const childDir = join(sessionDir, "auditor-roles");
+    await mkdir(childDir, { recursive: true });
+    await writeFile(sessionFile, JSON.stringify({ type: "session", id: "parent-session" }) + "\n");
+    await writeFile(join(childDir, "child.jsonl"), "{malformed\n");
+    const malformed = await resolveAuditedRunnerKnownFailure({
+      runner: undefined,
+      sessionFile,
+      credential: undefined,
+    });
+    assert.equal(malformed?.cause, "session");
+    assert.equal(malformed?.identity?.name, "SyntaxError");
+    assert.match(malformed?.diagnostic ?? "", /JSON/i);
   });
 });
 

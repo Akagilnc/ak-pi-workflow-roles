@@ -31,6 +31,7 @@ import {
   isV1ResumableProvider,
   readLatestTypedProviderHttpObservation,
   readTypedHttp429Observation,
+  RESUME_TRANSPORT_ENVELOPE,
   type TypedHttp429Observation,
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
@@ -1086,15 +1087,41 @@ async function loadBoundAuditorVolumes(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
-  // Latest parent user turn owns the court floor — no free-text resume sniff,
-  // no call-local entry-count mechanism (#858 r11: tell a path, not a mechanism).
+  // #600 / #840 / #858: court floor skips only the package transport-token resume
+  // user (station-child auto-resume / historical). First line of whole message
+  // text must equal RESUME_TRANSPORT_ENVELOPE — never engine-handbook prose,
+  // empty prompt, or per-part some() hits. Restores 50940955 retention across
+  // in-place auto-resume without call-local / packageTrigger / courtAttemptId.
+  const userMessageText = (msg: unknown): string | undefined => {
+    if (!isRecord(msg) || msg.role !== "user") return undefined;
+    if (typeof msg.text === "string") return msg.text;
+    const content = (msg as { content?: unknown }).content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      const parts: string[] = [];
+      for (const part of content) {
+        if (!isRecord(part)) continue;
+        if (typeof part.text === "string") parts.push(part.text);
+        else if (typeof part.content === "string") parts.push(part.content);
+      }
+      if (parts.length > 0) return parts.join("\n");
+    }
+    return undefined;
+  };
+  const isResumeEnvelope = (msg: unknown): boolean => {
+    const text = userMessageText(msg);
+    if (typeof text !== "string" || text.length === 0) return false;
+    const nl = text.indexOf("\n");
+    const firstLine = nl === -1 ? text : text.slice(0, nl);
+    return firstLine === RESUME_TRANSPORT_ENVELOPE;
+  };
   let latestParentUserIndex = -1;
   for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
     const entry = parentEntries[i];
-    if (entry?.type === "message" && entry.message?.role === "user") {
-      latestParentUserIndex = i;
-      break;
-    }
+    if (entry?.type !== "message" || entry.message?.role !== "user") continue;
+    if (isResumeEnvelope(entry.message)) continue;
+    latestParentUserIndex = i;
+    break;
   }
   const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
   const valid: BoundAuditorVolume[] = [];
