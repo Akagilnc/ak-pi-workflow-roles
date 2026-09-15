@@ -1,49 +1,16 @@
 /**
  * Shared fixtures for Navigator attendance coverage (#420 整改拆分).
- * Extracted from test/contract/navigator-attendance.test.ts.
- * #178: package navigator default removed — fixtures supply a caller seat model.
+ * Extracted verbatim from test/contract/navigator-attendance.test.ts — no behavior change.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
 import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorCandidate, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
 import { RECEIPT_DELIVERY_TURN_LIMIT, type NoReceiptLifecycleFacts } from "../../src/receipt-delivery-policy.ts";
 
-const FIXTURE_NAVIGATOR_SEAT = { provider: "provider", model: "model" } as const;
-
-/** Seed navigator seat only when the home has no model yet — never overwrite caller config. */
-function ensureFixtureNavigatorSeat(
-  home: string,
-  seat: { provider: string; model: string } = FIXTURE_NAVIGATOR_SEAT,
-): void {
-  if (home.trim() === "") return;
-  const path = join(home, ".ak-roles", "public-cli.json");
-  let doc: { seats?: Record<string, Record<string, unknown>> } = { seats: {} };
-  try {
-    if (existsSync(path)) {
-      doc = JSON.parse(readFileSync(path, "utf8")) as typeof doc;
-      const row = doc.seats?.navigator;
-      if (typeof row?.provider === "string" && typeof row?.model === "string") return;
-    }
-  } catch {
-    doc = { seats: {} };
-  }
-  mkdirSync(dirname(path), { recursive: true });
-  doc.seats = {
-    ...(doc.seats ?? {}),
-    navigator: { ...(doc.seats?.navigator ?? {}), ...seat },
-  };
-  writeFileSync(path, `${JSON.stringify(doc, null, 2)}\n`);
-}
-
-export function context(home = process.env.HOME ?? "") {
-  ensureFixtureNavigatorSeat(home);
+export function context() {
   return {
     sessionManager: {
       getSessionId: () => "invocation",
     },
     cwd: "/repo",
-    home,
   } as never;
 }
 
@@ -138,26 +105,8 @@ export function sessionHarness() {
 }
 
 export async function attendance(path: string, harness: ReturnType<typeof sessionHarness>, events: any[], loadRoleHelp: (role: string) => Promise<string> = async (role) => `pi --ak-role ${role} --help`) {
-  const home = dirname(path);
-  let seat: { provider: string; model: string } = FIXTURE_NAVIGATOR_SEAT;
-  try {
-    const raw = JSON.parse(await readFile(path, "utf8")) as { model?: unknown };
-    if (typeof raw.model === "string") {
-      const slash = raw.model.indexOf("/");
-      if (slash > 0 && slash < raw.model.length - 1) {
-        const provider = raw.model.slice(0, slash);
-        const rest = raw.model.slice(slash + 1);
-        const colon = rest.lastIndexOf(":");
-        const model = colon < 0 ? rest : rest.slice(0, colon);
-        if (provider !== "" && model !== "") seat = { provider, model };
-      }
-    }
-  } catch {
-    // Missing legacy setting file is fine — fixture seat still applies.
-  }
-  ensureFixtureNavigatorSeat(home, seat);
   return createNavigatorAttendance({
-    context: context(home), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
+    context: context(), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
     subject: "Fix issue 28", authority: "owner decision",
     loadSoul: async () => "route judgment",
     loadRoutePlaybook: async () => "arbitrary advisory prose",

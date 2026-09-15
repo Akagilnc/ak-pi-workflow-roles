@@ -12,7 +12,6 @@ import {
   navigatorProviderFailureFromError,
   navigatorUnavailableError,
   parseNavigatorModelSetting,
-  resolveNavigatorSeatSelection,
   type NavigatorProviderFailureFact,
   type NavigatorSessionFactory,
 } from "./navigator-session-contracts.ts";
@@ -43,8 +42,9 @@ async function resolveNavigatorLedgerHome(context: HostContext): Promise<string 
 
 export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
   return async ({ context, subject, tool }) => {
-    const resolved = await resolveNavigatorSeatSelection(context);
-    let thinkingLevel = resolved.thinkingLevel;
+    // Model is enforced at prepare (attendance seat resolve) and at prompt (summon).
+    // Factory open only books the archivist nest — no package default, no eager seat read.
+    let thinkingLevel: string | undefined;
 
     // Archivist nest for attendance route memory only (ADR 0018 / 0065) — not a session open.
     // #852: navigator/<work-subject> is the sole book-top exception; always pass subject so
