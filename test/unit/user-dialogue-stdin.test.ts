@@ -91,12 +91,11 @@ test("#879 Codex exec argv selects stdin", () => {
   assert.deepEqual(argv.slice(-2), ["--", "-"]);
 });
 
-test("#922 Claude/Grok argv: plugin-dir; no operator skill closers; Codex keeps user config", () => {
+test("#922 plugin-dir open; no skill closers; Codex keeps user config", () => {
   const claude = HEADLESS_HOST_DESCRIPTIONS.claude;
   assert.ok(claude && claude.protocol === "claude-print");
-  assert.equal(claude.fixedArgs.includes("--setting-sources"), false);
   const pluginDir = packagedMethodPluginDir(process.cwd());
-  assert.equal(pluginDir.endsWith("dist/method-host-plugin"), true);
+  assert.equal(claude.fixedArgs.includes("--setting-sources"), false);
   const claudeArgv = headlessTurnArgs({
     description: claude,
     systemPromptPath: "/tmp/sys.txt",
@@ -106,12 +105,10 @@ test("#922 Claude/Grok argv: plugin-dir; no operator skill closers; Codex keeps 
     pluginDir,
   });
   assert.equal(claudeArgv[claudeArgv.indexOf("--plugin-dir") + 1], pluginDir);
-
   const grok = HOST_DESCRIPTIONS["grok-build"]!;
   assert.equal(Object.keys(grok.childEnv).some((k) => k.includes("SKILLS_ENABLED")), false);
   const grokArgv = acpStdioArgs(grok, { model: "m" }, undefined, { pluginDir });
   assert.ok(grokArgv.indexOf("--plugin-dir") < grokArgv.indexOf("stdio"));
-
   const codexArgv = codexTurnArgs({
     systemPromptPath: "/tmp/sys.txt",
     outputSchemaPath: "/tmp/out.json",

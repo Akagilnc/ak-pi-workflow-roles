@@ -207,17 +207,16 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
     await access(resolve(extracted.root, "package", path));
   }
 
-  // #922 C1: Claude/Grok plugin ships real skill bodies (not empty symlink stubs).
-  const pluginSkill = "dist/method-host-plugin/skills/tdd/SKILL.md";
-  assert.ok(
-    extracted.paths.includes(pluginSkill),
-    `npm pack must include ${pluginSkill}`,
-  );
-  await access(resolve(extracted.root, "package", pluginSkill));
+  // #922 C1: Claude/Grok plugin ships every method body (not empty symlink stubs).
   assert.ok(
     extracted.paths.includes("dist/method-host-plugin/.claude-plugin/plugin.json"),
     "npm pack must include method-host-plugin manifest",
   );
+  for (const method of ["tdd", "code-review", "diagnosing-bugs", "resolving-merge-conflicts"]) {
+    const pluginSkill = `dist/method-host-plugin/skills/${method}/SKILL.md`;
+    assert.ok(extracted.paths.includes(pluginSkill), `npm pack must include ${pluginSkill}`);
+    await access(resolve(extracted.root, "package", pluginSkill));
+  }
 
   // Frozen provenance bindings per family.
   const expectations = [

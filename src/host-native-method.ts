@@ -2,11 +2,8 @@
  * #922 host-native forced-method delivery.
  * claude/grok → --plugin-dir (dist/method-host-plugin, build-only);
  * codex/hermes → cwd `.agents/skills` → resources/methods (envelope-owned).
- *
  * Catalog: create-if-absent; never overwrite foreign; delete only links this
- * process created (in-process hold count). Cross-process concurrent same-cwd
- * ownership needs a design ruling (stable non-delete catalog vs approved lock);
- * not inventing either here after escalate.
+ * process created. Cross-process same-cwd ownership awaits design ruling.
  */
 import { constants } from "node:fs";
 import {
@@ -17,9 +14,13 @@ import type { MethodBinding } from "./host-contracts.ts";
 
 export type HostMethodSkill = Readonly<{ name: string; dir: string; path: string }>;
 export const HOST_METHOD_PLUGIN_NAME = "ak-methods" as const;
-
 export const packagedMethodsDir = (r: string) => join(r, "resources", "methods");
 export const packagedMethodPluginDir = (r: string) => join(r, "dist", "method-host-plugin");
+export const pluginSkillToken = (plugin: string, skill: string) => `${plugin}:${skill}`;
+export const hostUsesWorkspaceAgentsSkills = (host?: string) => {
+  const n = host?.trim();
+  return n === "codex" || n === "hermes";
+};
 
 export function hostMethodSkills(methods: readonly MethodBinding[]): readonly HostMethodSkill[] {
   return Object.freeze(methods.flatMap((m) => {
@@ -30,13 +31,15 @@ export function hostMethodSkills(methods: readonly MethodBinding[]): readonly Ho
   }));
 }
 
-export const pluginSkillToken = (plugin: string, skill: string) => `${plugin}:${skill}`;
+const alreadyPrefixed = (prompt: string, token: string) => {
+  const t = prompt.trimStart();
+  return t === token || t.startsWith(`${token} `) || t.startsWith(`${token}\n`);
+};
 
 export function applyHostSlashSkillInvocation(token: string, prompt: string): string {
   if (!token) return prompt;
   const slash = token.startsWith("/") ? token : `/${token}`;
-  const t = prompt.trimStart();
-  if (t === slash || t.startsWith(`${slash} `) || t.startsWith(`${slash}\n`)) return prompt;
+  if (alreadyPrefixed(prompt, slash)) return prompt;
   return prompt ? `${slash} ${prompt}` : slash;
 }
 
@@ -44,11 +47,7 @@ export function applyCodexSkillInvocation(skills: readonly HostMethodSkill[], pr
   if (skills.length !== 1) return prompt;
   const s = skills[0]!;
   const linked = `[$${s.name}](${s.path})`;
-  const bare = `$${s.name}`;
-  const t = prompt.trimStart();
-  for (const token of [linked, bare]) {
-    if (t === token || t.startsWith(`${token} `) || t.startsWith(`${token}\n`)) return prompt;
-  }
+  if (alreadyPrefixed(prompt, linked) || alreadyPrefixed(prompt, `$${s.name}`)) return prompt;
   return prompt ? `${linked} ${prompt}` : linked;
 }
 
@@ -56,11 +55,6 @@ export function forcedPluginSlashToken(methods: readonly MethodBinding[]): strin
   const skills = hostMethodSkills(methods);
   return skills.length === 1 ? pluginSkillToken(HOST_METHOD_PLUGIN_NAME, skills[0]!.name) : undefined;
 }
-
-export const hostUsesWorkspaceAgentsSkills = (host?: string) => {
-  const n = host?.trim();
-  return n === "codex" || n === "hermes";
-};
 
 const exists = async (p: string) => access(p, constants.F_OK).then(() => true, () => false);
 const sameReal = async (a: string, b: string) => {
@@ -169,6 +163,7 @@ export async function findGitProjectRoot(start: string): Promise<string | undefi
   return undefined;
 }
 
+/** Exact skills.trusted_project_dirs entries (comments / other keys never pass). */
 export function parseHermesTrustedProjectDirs(yaml: string): readonly string[] {
   const out: string[] = [];
   let inSkills = false, inTrusted = false, skillsIndent = -1, trustedIndent = -1;
@@ -208,14 +203,6 @@ export function parseHermesTrustedProjectDirs(yaml: string): readonly string[] {
   return Object.freeze(out);
 }
 
-export async function readHermesTrustedProjectDirs(hermesHome: string): Promise<readonly string[]> {
-  try {
-    return parseHermesTrustedProjectDirs(await readFile(join(hermesHome, "config.yaml"), "utf8"));
-  } catch {
-    return Object.freeze([]);
-  }
-}
-
 export async function assertHermesProjectSkillsTrusted(options: {
   readonly home: string; readonly cwd: string; readonly profileName: string;
 }): Promise<void> {
@@ -224,9 +211,16 @@ export async function assertHermesProjectSkillsTrusted(options: {
     throw new Error("hermes packaged methods need a git project root under cwd so `.agents/skills` can load.");
   }
   const projectReal = await realpath(projectRoot).catch(() => resolve(projectRoot));
+  const readDirs = async (hermesHome: string) => {
+    try {
+      return parseHermesTrustedProjectDirs(await readFile(join(hermesHome, "config.yaml"), "utf8"));
+    } catch {
+      return [] as const;
+    }
+  };
   const dirs = [
-    ...await readHermesTrustedProjectDirs(join(options.home, ".hermes", "profiles", options.profileName)),
-    ...await readHermesTrustedProjectDirs(join(options.home, ".hermes")),
+    ...await readDirs(join(options.home, ".hermes", "profiles", options.profileName)),
+    ...await readDirs(join(options.home, ".hermes")),
   ];
   for (const entry of dirs) {
     const expanded = entry.startsWith("~")

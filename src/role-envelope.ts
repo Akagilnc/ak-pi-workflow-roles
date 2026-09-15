@@ -191,11 +191,8 @@ export async function prepareRoleEnvelope(options: {
       // #836 删 1/A4.5: do not arm closeRound retry with「终局交卷并非本轮唯一工具调用」.
     },
     capabilities: {
-      // Non-pi hosts expand methods via their native loaders (#922). Evidence is
-      // host-session observation, not package pre-read body paste (ADR 0032).
-      skillExpansion() {
-        return undefined;
-      },
+      // #922: native loaders own expansion; package does not pre-read bodies (ADR 0032).
+      skillExpansion() { return undefined; },
     },
     registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); },
     getFlag(name) { return flags.get(name); },
@@ -606,11 +603,7 @@ export async function prepareRoleEnvelope(options: {
         message: { role: "user", content: prompt },
       });
     }
-    // Soul / materials only — forced methods ride each host's native skill loader
-    // (#922), never package-read bodies on the systemPrompt channel.
-    // Preloading session materials duplicated soul under the role tag (#632).
-    // #879: case-dossier owner reads runDirectory from this turn's HostContext.
-
+    // Soul/materials only — forced methods use host-native loaders (#922/#632/#879).
     const promptResults = await emit("before_agent_start", {
       prompt,
       systemPrompt: "",
@@ -638,19 +631,14 @@ export async function prepareRoleEnvelope(options: {
     }
     const jsonSchema = terminatingToolJsonSchema(terminating.parameters);
 
-    // #922: codex/hermes catalog link — install only on successful prepare so
-    // failed activation never leaves a cwd symlink; dispose always releases it.
+    // #922: codex/hermes catalog — only after successful prepare; dispose releases.
     const packageRoot = options.dependencies.packageRoot;
     if (
       hostUsesWorkspaceAgentsSkills(request.host) &&
       hostMethodSkills(request.methods).length > 0 &&
-      typeof packageRoot === "string" &&
-      packageRoot !== ""
+      typeof packageRoot === "string" && packageRoot !== ""
     ) {
-      const link = await installWorkspaceAgentsSkillsLink({
-        cwd: request.cwd,
-        packageRoot,
-      });
+      const link = await installWorkspaceAgentsSkillsLink({ cwd: request.cwd, packageRoot });
       releaseWorkspaceAgentsSkills = () => link.release();
     }
 

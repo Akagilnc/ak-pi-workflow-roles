@@ -80,7 +80,7 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
           packageRoot,
           role: request.activation.role,
         });
-      // #922: grok → --plugin-dir; hermes → cwd `.agents/skills` (envelope) + operator trust.
+      // #922: grok --plugin-dir; hermes cwd catalog (envelope) + operator trust.
       const skills = hostMethodSkills(request.methods);
       if (hostName === "hermes" && skills.length > 0) {
         await assertHermesProjectSkillsTrusted({

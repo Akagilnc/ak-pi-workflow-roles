@@ -44,30 +44,23 @@ export function resolveAcpBinary(description: AcpHostDescription, operatorHome: 
   return join(operatorHome, ...description.binaryFromHome);
 }
 
-/** Stdio argv: optional profile flag, thinking flag (before the subcommand),
- * optional grok `--plugin-dir`, prefix, optional model flag pair, suffix. */
+/** Stdio argv: profile, thinking, prefix, model, optional grok `--plugin-dir`, suffix. */
 export function acpStdioArgs(
   description: AcpHostDescription,
   model?: { readonly model?: string; readonly thinking?: string },
   seat?: { readonly profileName?: string },
-  methods?: {
-    /** Grok: `--plugin-dir` before the `stdio` suffix. */
-    readonly pluginDir?: string;
-  },
+  methods?: { readonly pluginDir?: string },
 ): string[] {
   const { prefix, suffix, modelFlag, thinkingFlag } = description.argv;
   const pair = (flag: string | undefined, value: string | undefined): string[] =>
     flag === undefined || value === undefined ? [] : [flag, value];
-  const pluginDirArgs =
-    methods?.pluginDir === undefined || methods.pluginDir === ""
-      ? []
-      : ["--plugin-dir", methods.pluginDir];
+  const plugin = methods?.pluginDir ? ["--plugin-dir", methods.pluginDir] : [];
   return [
     ...pair(description.seatProfileSoul?.flag, seat?.profileName),
     ...pair(thinkingFlag, model?.thinking),
     ...prefix,
     ...pair(modelFlag, model?.model),
-    ...pluginDirArgs,
+    ...plugin,
     ...suffix,
   ];
 }

@@ -481,15 +481,15 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       let pluginDir: string | undefined;
       let applyMethodPrompt: (prompt: string) => string = (prompt) => prompt;
       if (codex) {
-        // Codex --output-schema needs a closed transport projection on disk.
         outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
-        const closed = closeJsonSchemaForCodex(prepared.jsonSchema);
-        await writeFile(outputSchemaPath, `${JSON.stringify(closed, null, 2)}\n`, "utf8");
-        // Catalog is cwd `.agents/skills` (envelope-owned symlink); mention selects it.
+        await writeFile(
+          outputSchemaPath,
+          `${JSON.stringify(closeJsonSchemaForCodex(prepared.jsonSchema), null, 2)}\n`,
+          "utf8",
+        );
+        // #922: cwd `.agents/skills` catalog (envelope); mention selects the skill.
         const skills = hostMethodSkills(request.methods);
-        if (skills.length > 0) {
-          applyMethodPrompt = (prompt) => applyCodexSkillInvocation(skills, prompt);
-        }
+        if (skills.length > 0) applyMethodPrompt = (p) => applyCodexSkillInvocation(skills, p);
       } else {
         mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
         await writeFile(
@@ -505,9 +505,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           }
           pluginDir = await ensurePackagedMethodPlugin(packageRoot);
           const slashToken = forcedPluginSlashToken(request.methods);
-          if (slashToken !== undefined) {
-            applyMethodPrompt = (prompt) => applyHostSlashSkillInvocation(slashToken, prompt);
-          }
+          if (slashToken) applyMethodPrompt = (p) => applyHostSlashSkillInvocation(slashToken, p);
         }
       }
 

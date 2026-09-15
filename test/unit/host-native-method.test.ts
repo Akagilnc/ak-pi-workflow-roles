@@ -1,6 +1,4 @@
-/**
- * #922 host-native method delivery.
- */
+/** #922 host-native method delivery (catalog ownership shape frozen pending design). */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
@@ -54,7 +52,7 @@ test("#922 workspace .agents/skills: create/release, overlap, idempotent, foreig
   }
 });
 
-test("#922 hermes trusted_project_dirs exact; comments fail", async () => {
+test("#922 hermes trust exact; plugin build-only", async () => {
   assert.deepEqual(
     [...parseHermesTrustedProjectDirs("skills:\n  trusted_project_dirs:\n    - /tmp/trusted\n")],
     ["/tmp/trusted"],
@@ -80,14 +78,17 @@ test("#922 hermes trusted_project_dirs exact; comments fail", async () => {
     await rm(home, { recursive: true, force: true });
     await rm(cwd, { recursive: true, force: true });
   }
-});
 
-test("#922 method-host-plugin runtime read-only", async () => {
   await execFileAsync(process.execPath, [join(packageRoot, "scripts/materialize-method-host-plugin.mjs")], {
     cwd: packageRoot,
   });
   assert.equal(await ensurePackagedMethodPlugin(packageRoot), packagedMethodPluginDir(packageRoot));
-  assert.equal((await lstat(join(packagedMethodPluginDir(packageRoot), "skills/tdd/SKILL.md"))).isFile(), true);
+  for (const method of ["tdd", "code-review", "diagnosing-bugs", "resolving-merge-conflicts"]) {
+    assert.equal(
+      (await lstat(join(packagedMethodPluginDir(packageRoot), "skills", method, "SKILL.md"))).isFile(),
+      true,
+    );
+  }
   const missingRoot = await mkdtemp(worktreeTempPrefix("ak-922-no-plugin-"));
   try {
     await assert.rejects(() => ensurePackagedMethodPlugin(missingRoot), /method-host-plugin missing|must materialize/);

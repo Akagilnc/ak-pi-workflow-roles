@@ -25,17 +25,11 @@ import { acpModelId, type AcpHostDescription } from "./description.ts";
 function applyAcpMethodPrompt(hostName: string, request: RoleTurnRequest, prompt: string): string {
   const skills = hostMethodSkills(request.methods);
   if (skills.length !== 1) return prompt;
-  // grok: plugin token; hermes: bare name once cwd `.agents/skills` + trust are in place (#922).
-  if (hostName === "grok-build") {
-    return applyHostSlashSkillInvocation(
-      pluginSkillToken(HOST_METHOD_PLUGIN_NAME, skills[0]!.name),
-      prompt,
-    );
-  }
-  if (hostName === "hermes") {
-    return applyHostSlashSkillInvocation(skills[0]!.name, prompt);
-  }
-  return prompt;
+  // grok: plugin token; hermes: bare name after cwd catalog + operator trust (#922).
+  const token = hostName === "grok-build"
+    ? pluginSkillToken(HOST_METHOD_PLUGIN_NAME, skills[0]!.name)
+    : hostName === "hermes" ? skills[0]!.name : "";
+  return token ? applyHostSlashSkillInvocation(token, prompt) : prompt;
 }
 
 /** ACP v1 surface used by the generic ACP adapter. Protocol details stay in this module. */
