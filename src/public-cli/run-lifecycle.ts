@@ -50,6 +50,7 @@ import type { PublicThinkingLevel } from "./registry.ts";
 import {
   recordEffectiveInvocationModel,
   requireAuthorityRef,
+  requireReviewerBaseRevision,
   type AdmittedCoderInvocation,
   type AdmittedCountersignInvocation,
   type AdmittedCollectorInvocation,
@@ -1877,12 +1878,10 @@ export async function loadResumableReviewerRun(
       `role run ${runId} belongs to ${loaded.run.role}, not reviewer`,
     );
   }
-  const baseRevision = loaded.admittedFields.baseRevision;
-  if (baseRevision === undefined || baseRevision.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted reviewer base revision is missing: ${runId}`,
-    );
-  }
+  // Same Skill-arg token gate as fresh admission (whitespace / leading `-`).
+  const baseRevision = requireReviewerBaseRevision(
+    loaded.admittedFields.baseRevision,
+  );
   const lens = loaded.admittedFields.lens;
   if (lens !== "completeness" && lens !== "correctness") {
     throw new CliUsageError(

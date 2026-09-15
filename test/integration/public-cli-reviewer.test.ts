@@ -32,8 +32,6 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitReviewerInvocation as admitReviewerInvocationRaw,
-  buildReviewerResumeTransportPrompt,
-  buildReviewerTransportPrompt,
   parseReviewerArgv,
 } from "../../src/public-cli/invocation.ts";
 
@@ -113,46 +111,6 @@ async function admitReviewerInvocation(
   return admitReviewerInvocationRaw(options);
 }
 
-
-test("buildReviewerTransportPrompt projects typed base/lens/authority into Skill args", async () => {
-  const { fixtureReviewerAdmitted } = await import("../helpers/admitted-principal-fixture.ts");
-  const admitted = fixtureReviewerAdmitted({
-    runId: "run-prompt-proj",
-    bookKey: "book",
-    projectRoot: "/tmp/p",
-    runDirectory: "/tmp/r",
-    instruction: "caller note",
-    instructionEmpty: false,
-    baseRevision: "origin/main",
-    lens: "correctness",
-    authorityRefs: Object.freeze([
-      "CLAUDE.md",
-      "docs/adr/0001-roles-grow-by-demand.md",
-    ]),
-  });
-  const prompt = buildReviewerTransportPrompt(admitted);
-  assert.equal(
-    prompt.startsWith(
-      "--base origin/main --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
-    ),
-    true,
-    prompt,
-  );
-  assert.match(prompt, /caller note/);
-  // Resume shares frozen Skill args; first-call prose must not replay.
-  const resumePrompt = buildReviewerResumeTransportPrompt(admitted, {
-    message: "owner note after quota",
-  });
-  assert.equal(
-    resumePrompt.startsWith(
-      "--base origin/main --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
-    ),
-    true,
-    resumePrompt,
-  );
-  assert.match(resumePrompt, /owner note after quota/);
-  assert.equal(resumePrompt.includes("caller note"), false);
-});
 
 test("parseReviewerArgv requires base, lens, authority-ref and accepts optional provenance instruction", () => {
   const isUsage = (error: unknown): boolean =>
@@ -286,6 +244,38 @@ test("parseReviewerArgv requires base, lens, authority-ref and accepts optional 
       isUsage(error) &&
       error instanceof Error &&
       error.message === "--base requires a single-token revision",
+  );
+  // Leading `-` is read as the next Skill option; shared token boundary with authority-ref.
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "--not-a-rev",
+        "--lens",
+        "completeness",
+        "--authority-ref",
+        "CLAUDE.md",
+      ]),
+    (error: unknown) =>
+      isUsage(error) &&
+      error instanceof Error &&
+      error.message === "--base requires a single-token revision",
+  );
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "main",
+        "--lens",
+        "completeness",
+        "--authority-ref",
+        "--smuggled",
+      ]),
+    (error: unknown) =>
+      isUsage(error) &&
+      error instanceof Error &&
+      error.message ===
+        "--authority-ref requires a durable reference, not inline Spec prose",
   );
   assert.throws(() => parseReviewerArgv(["--project", "", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--attach", "spec.md", "task"]), isUsage);
@@ -742,6 +732,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
+      let capturedStdin: string | undefined;
       const result = await runAkRole([
           "reviewer", "--model", "test/caller-seat:high",
           "--project",
@@ -762,8 +753,9 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
+            piRunner: async (args, options) => {
             captured = [...args];
+            capturedStdin = options.stdin;
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
             await mkdir(join(sessionFile, ".."), { recursive: true });
@@ -815,6 +807,15 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       assert.equal(captured!.includes("--skill"), true);
       assert.equal(captured!.includes("--ak-review-task"), false);
       assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "completeness");
+      // First stdin carries frozen Skill arg projection (base/lens/authority).
+      const blankDialogue = readUserDialogueStdin(capturedStdin ?? "");
+      assert.equal(
+        blankDialogue.startsWith(
+          "/skill:ak-cross-m-review --base HEAD~1 --lens completeness --authority CLAUDE.md",
+        ),
+        true,
+        blankDialogue,
+      );
       assert.equal(result.terminal?.roleOutcome.role, "reviewer");
       assert.deepEqual(
         result.terminal?.roleOutcome.kind === "accepted"
@@ -856,6 +857,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
+      let capturedStdin: string | undefined;
       const result = await runAkRole([
           "reviewer", "--model", "test/caller-seat:high",
           "--project",
@@ -879,8 +881,9 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
+            piRunner: async (args, options) => {
             captured = [...args];
+            capturedStdin = options.stdin;
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
             await mkdir(join(sessionFile, ".."), { recursive: true });
@@ -930,6 +933,16 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       assert.equal(captured!.includes("--ak-review-task"), false);
       // correctness path must project the admitted lens (catches constant-completeness).
       assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
+      // Repeatable authority + optional caller prose ride the same frozen Skill line.
+      const okDialogue = readUserDialogueStdin(capturedStdin ?? "");
+      assert.equal(
+        okDialogue.startsWith(
+          "/skill:ak-cross-m-review --base HEAD~1 --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
+        ),
+        true,
+        okDialogue,
+      );
+      assert.match(okDialogue, /Review the latest commit on both axes\./);
       const bookKey = resolveBookKeyFromGit(project);
       const evidence = JSON.parse(
         await readFile(

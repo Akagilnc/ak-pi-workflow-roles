@@ -24,16 +24,16 @@ export type ReviewerAdmittedInputs = Readonly<{
 const reviewerAmendmentsSchema = Type.Object({
   completeness: Type.Optional(Type.String({
     description:
-      "completeness lens 完整报告：candidates、逐条处置与 verdict；非仅 verdict 一行",
+      "completeness lens 完整报告：candidates、逐条处置与 verdict；非仅 verdict 一行。hard-stop／usage error 为 refused 时，若已产出报告仍照录于此",
   })),
   correctness: Type.Optional(Type.String({
     description:
-      "correctness lens 完整报告：candidates、逐条处置与 verdict；非仅 verdict 一行",
+      "correctness lens 完整报告：candidates、逐条处置与 verdict；非仅 verdict 一行。hard-stop／usage error 为 refused 时，若已产出报告仍照录于此",
   })),
 }, {
   additionalProperties: true,
   description:
-    "所选 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；未选 lens 可省略。形状指引，非 schema 闸。",
+    "所选 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；未选 lens 可省略。hard-stop／usage error 为 refused 时，已产出报告仍照录进所选 lens 字段。形状指引，非 schema 闸。",
 });
 // #836 r16 class 1: diagnostic is LLM/human-read narrative content — no code
 // branches on its length (src/reviewer-role.ts consumer: reviewer content is
@@ -41,9 +41,10 @@ const reviewerAmendmentsSchema = Type.Object({
 // #836 (ADR 0003 Amendment): status kept open like countersignStatus
 // (src/countersign-role.ts) — one shared description across both variants
 // so openToolObjectFromUnion's identical-declaration collapse drops none of it.
-// #917 §6: both normal lens verdicts → completed; hard-stop/usage error → refused.
+// #917 §6: both normal lens verdicts → completed; hard-stop/usage error → refused
+// (report already produced still lands in selected-lens amendments).
 const REVIEWER_STATUS_DESCRIPTION =
-  "completed | refused — 形状指引，非 schema 闸。两种正常 lens verdict（completeness / correctness）均 completed；hard-stop 与 usage error 为 refused。" as const;
+  "completed | refused — 形状指引，非 schema 闸。两种正常 lens verdict（completeness / correctness）均 completed；hard-stop 与 usage error 为 refused（已产出报告仍照录进所选 lens amendments）。" as const;
 const reviewerOutputVariants = Type.Union([
   Type.Object({
     status: Type.Unknown({ description: REVIEWER_STATUS_DESCRIPTION }),
@@ -51,7 +52,7 @@ const reviewerOutputVariants = Type.Union([
   }, { additionalProperties: false }),
   Type.Object({
     status: Type.Unknown({ description: REVIEWER_STATUS_DESCRIPTION }),
-    diagnostic: Type.String({ description: "拒绝诊断说明" }),
+    diagnostic: Type.String({ description: "拒绝诊断说明；hard-stop／usage error 原因进此字段，已产出报告另照录 amendments" }),
     amendments: Type.Optional(reviewerAmendmentsSchema),
   }, { additionalProperties: false }),
 ]);

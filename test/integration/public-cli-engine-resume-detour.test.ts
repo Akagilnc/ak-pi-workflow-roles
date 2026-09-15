@@ -72,11 +72,9 @@ const SEAT_TERMINAL: Record<
   },
   reviewer: {
     toolName: REVIEWER_OUTPUT_TOOL_NAME,
+    // Minimal production ReviewerIntent (lens axes only; engine-detour does not assert amendments).
     details: {
       status: "completed",
-      version: 2,
-      outcomes: { standards: { status: "pass", findings: [] }, spec: { status: "pass", findings: [] } },
-      reports: { standards: "ok", spec: "ok" },
     },
   },
   merger: {

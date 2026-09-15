@@ -403,7 +403,7 @@ test("every packaged role records original payload through the production ledger
     { role: "judge" as const, details: { judgeStatus: "converged" }, status: "converged" },
     { role: "coder" as const, details: { status: "completed", report: "done" }, status: "completed" },
     { role: "fixer" as const, details: { status: "completed", report: "done", classResults: [] }, status: "completed" },
-    { role: "reviewer" as const, details: { status: "completed", version: 2, outcomes: {}, reports: {} }, status: "completed" },
+    { role: "reviewer" as const, details: { status: "completed" }, status: "completed" },
     { role: "doctor" as const, details: { status: "refused", reason: "missing", missingEvidence: [] }, status: "refused" },
     { role: "merger" as const, details: { status: "escalate", attemptId: "a", diagnosis: "d", report: "r" }, status: "escalate" },
     { role: "notary" as const, details: { status: "pass", findings: [] }, status: "pass" },

@@ -961,18 +961,47 @@ function requireOptionPath(
 }
 
 /**
- * Reviewer --base admission: nonempty single token (same whitespace rule as
- * requireAuthorityRef). Skill args are space-joined; multi-token values smuggle
- * extra flags (e.g. `--lens all`). Not a general free-text gate.
+ * Shared Skill-arg token rule for caller-controlled values projected into the
+ * space-joined Skill invocation line. Rejects blank, whitespace (smuggles the
+ * next option), and a leading `-` (read as the next Skill option). Not a
+ * general free-text gate — only the projection admission seam.
  */
-export function requireReviewerBaseRevision(value: string | undefined): string {
+function requireSkillArgToken(
+  value: string | undefined,
+  messages: { empty: string; whitespace: string; optionLike: string },
+): string {
   if (value === undefined || value.trim() === "") {
-    throw new CliUsageError("--base requires a nonempty revision");
+    throw new CliUsageError(messages.empty);
   }
   if (/\s/.test(value)) {
-    throw new CliUsageError("--base requires a single-token revision");
+    throw new CliUsageError(messages.whitespace);
+  }
+  if (value.startsWith("-")) {
+    throw new CliUsageError(messages.optionLike);
   }
   return value;
+}
+
+/**
+ * Reviewer --base admission: nonempty single Skill-arg token (shared rule with
+ * requireAuthorityRef). Multi-token / option-like values smuggle extra flags
+ * (e.g. `--lens all`, `--authority x`).
+ */
+export function requireReviewerBaseRevision(value: string | undefined): string {
+  return requireSkillArgToken(value, {
+    empty: "--base requires a nonempty revision",
+    whitespace: "--base requires a single-token revision",
+    optionLike: "--base requires a single-token revision",
+  });
+}
+
+/** Public --lens enum; sole owner for parse + fresh admission. */
+export function requireReviewerLens(value: string | undefined): ReviewerLens {
+  const trimmed = (value ?? "").trim();
+  if (trimmed !== "completeness" && trimmed !== "correctness") {
+    throw new CliUsageError("--lens requires completeness or correctness");
+  }
+  return trimmed;
 }
 
 /** True when token is a retained rejected spelling for the owner (#342). */
@@ -994,20 +1023,16 @@ function roleOptions(owner: Exclude<OptionOwner, "global">): readonly PublicOpti
 /**
  * Public --authority-ref admission grammar (refs-only).
  * Unique owner for fresh argv and durable resume restore — no string-only parallel.
- * Accepts durable reference tokens as-is; rejects blank and inline Spec prose
- * (whitespace-bearing sentences). Does not fetch, normalize, or judge content.
+ * Accepts durable reference tokens as-is; rejects blank, inline Spec prose
+ * (whitespace-bearing sentences), and option-like leading `-` (Skill-arg boundary).
+ * Does not fetch, normalize, or judge content.
  */
 export function requireAuthorityRef(value: string | undefined): string {
-  if (value === undefined || value.trim() === "") {
-    throw new CliUsageError("--authority-ref requires a nonempty durable reference");
-  }
-  // Spec prose sentences contain whitespace; durable public refs are single tokens.
-  if (/\s/.test(value)) {
-    throw new CliUsageError(
-      "--authority-ref requires a durable reference, not inline Spec prose",
-    );
-  }
-  return value;
+  return requireSkillArgToken(value, {
+    empty: "--authority-ref requires a nonempty durable reference",
+    whitespace: "--authority-ref requires a durable reference, not inline Spec prose",
+    optionLike: "--authority-ref requires a durable reference, not inline Spec prose",
+  });
 }
 
 /**
@@ -2836,13 +2861,7 @@ export function parseReviewerArgv(
       }
       if (taken.def.id === "lens") {
         // Empty and other non-enum values share one message — do not borrow path helper.
-        const value = (taken.value ?? "").trim();
-        if (value !== "completeness" && value !== "correctness") {
-          throw new CliUsageError(
-            "--lens requires completeness or correctness",
-          );
-        }
-        lens = value;
+        lens = requireReviewerLens(taken.value);
         continue;
       }
       if (taken.def.id === "authority-ref") {
@@ -2900,9 +2919,7 @@ export async function admitReviewerInvocation(
     requireOptionPath("--project", options.project);
   }
   const baseRevision = requireReviewerBaseRevision(options.baseRevision);
-  if (options.lens !== "completeness" && options.lens !== "correctness") {
-    throw new CliUsageError("--lens requires completeness or correctness");
-  }
+  const lens = requireReviewerLens(options.lens);
   if (options.authorityRefs.length === 0) {
     throw new CliUsageError("reviewer requires --authority-ref <ref>");
   }
@@ -2943,7 +2960,7 @@ export async function admitReviewerInvocation(
     instruction,
     instructionEmpty,
     baseRevision,
-    lens: options.lens,
+    lens,
     authorityRefs: [...authorityRefs],
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -2972,7 +2989,7 @@ export async function admitReviewerInvocation(
     principal,
     admittedRequestPath,
     baseRevision,
-    lens: options.lens,
+    lens,
     authorityRefs,
   };
 }
