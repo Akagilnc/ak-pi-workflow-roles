@@ -32,7 +32,6 @@ import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../
 import type { RoleEnvelopeHost, RoleHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
   context,
-  contextWithCallerSeat,
   sessionHarness,
   attendance,
   settleAnsweringRebind } from "../helpers/navigator-attendance-kit.ts";
@@ -163,6 +162,11 @@ test("prepare provider schema admits object-root nested malformation through rea
 
   // Usable next survives nested malformation after real validate→execute→settle.
   await withTempRoot("navigator-schema-gate-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
@@ -232,6 +236,11 @@ test("prepare provider schema admits object-root nested malformation through rea
 
 test("direction-only prepare settles recommendation; missing next is honest unavailable", async () => {
   await withTempRoot("navigator-direction-only-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
@@ -335,6 +344,11 @@ test("direction-only prepare settles recommendation; missing next is honest unav
 
 test("advice command derives phase token from registry metadata for every packaged role", async () => {
   await withTempRoot("navigator-command-registry-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
@@ -406,6 +420,11 @@ test("advice command derives phase token from registry metadata for every packag
 
 test("completed Fixer/Coder settlement does not invent next without model/authority direction", async () => {
   await withTempRoot("navigator-no-invented-route-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
@@ -413,7 +432,7 @@ test("completed Fixer/Coder settlement does not invent next without model/author
       const harness = sessionHarness();
       const events: any[] = [];
       const nav = createNavigatorAttendance({
-        context: await contextWithCallerSeat(root), role, phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
+        context: context(root), role, phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
         subject: "work", authority: "owner decision",
         loadSoul: async () => "route judgment",
         loadRoleHelp: async (r) => `help ${r}`,
@@ -457,7 +476,7 @@ test("completed Fixer/Coder settlement does not invent next without model/author
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = createNavigatorAttendance({
-      context: await contextWithCallerSeat(root), role: "fixer", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
+      context: context(root), role: "fixer", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
       subject: "work", authority: "Controlling authority names coder apply next.",
       loadSoul: async () => "route judgment",
       loadRoleHelp: async (r) => `help ${r}`,

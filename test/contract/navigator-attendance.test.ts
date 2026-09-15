@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
   createNavigatorAttendance,
@@ -15,7 +15,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import {
-  contextWithCallerSeat,
+  context,
   candidate,
   sessionHarness,
   attendance,
@@ -24,6 +24,11 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 test("Navigator preparation overlaps settlement, waits for the same call, and presents one typed event", async () => {
   await withTempRoot("navigator-attendance-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -61,6 +66,11 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
 
 test("rejected Navigator prepare consumes budget and correction succeeds in the same session", async () => {
   await withTempRoot("navigator-rejected-prepare-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -79,6 +89,11 @@ test("rejected Navigator prepare consumes budget and correction succeeds in the 
 
 test("two rejected Navigator prepares settle typed no-advice with exact reasons and no third prompt", async () => {
   await withTempRoot("navigator-rejected-exhaustion-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -100,6 +115,11 @@ test("two rejected Navigator prepares settle typed no-advice with exact reasons 
 
 test("Navigator transport failure remains unavailable and does not enter rejected-prepare budget", async () => {
   await withTempRoot("navigator-prepare-transport-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -117,6 +137,11 @@ test("Navigator transport failure remains unavailable and does not enter rejecte
 
 test("live help changes the next hint without a static template or fabricated task arguments", async () => {
   await withTempRoot("navigator-help-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     let help = "Usage: pi --ak-role coder --ak-coder-phase <phase>";
@@ -194,6 +219,11 @@ test("unchanged routes are omitted after a native-session route entry, while cha
 
 test("typed owner-decision and role-infrastructure outcomes emit affirmative no-advice", async () => {
   await withTempRoot("navigator-no-advice-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -227,6 +257,11 @@ test("typed owner-decision and role-infrastructure outcomes emit affirmative no-
 
 test("a session that settled without a receipt is not re-summoned for delivery", async () => {
   await withTempRoot("navigator-nested-no-receipt-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -254,12 +289,17 @@ test("a session that settled without a receipt is not re-summoned for delivery",
 
 test("Navigator session creation failures become unavailable without rejecting settlement", async () => {
   await withTempRoot("navigator-unavailable-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     for (const diagnostic of ["provider auth down", "session open failed with different wording"]) {
       const events: any[] = [];
       const nav = createNavigatorAttendance({
-        context: await contextWithCallerSeat(root),
+        context: context(root),
         role: "coder",
         phase: "apply",
         subjectKey: "/repo/.ak/work/issues/28",

@@ -2,29 +2,8 @@
  * Shared fixtures for Navigator attendance coverage (#420 整改拆分).
  * Extracted verbatim from test/contract/navigator-attendance.test.ts — no behavior change.
  */
-import { access, mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorCandidate, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
 import { RECEIPT_DELIVERY_TURN_LIMIT, type NoReceiptLifecycleFacts } from "../../src/receipt-delivery-policy.ts";
-
-/** Caller seat under temp home when absent — no package default, no real HOME write (#178). */
-export async function ensureNavigatorCallerSeat(
-  home: string,
-  seat: { provider: string; model: string } = { provider: "provider", model: "model" },
-): Promise<string> {
-  const dir = join(home, ".ak-roles");
-  const path = join(dir, "public-cli.json");
-  await mkdir(dir, { recursive: true });
-  try {
-    await access(path);
-  } catch {
-    await writeFile(
-      path,
-      `${JSON.stringify({ seats: { navigator: seat } }, null, 2)}\n`,
-    );
-  }
-  return home;
-}
 
 export function context(home?: string) {
   return {
@@ -32,15 +11,9 @@ export function context(home?: string) {
       getSessionId: () => "invocation",
     },
     cwd: "/repo",
-    // Explicit home only — seat fixture via ensureNavigatorCallerSeat / attendance.
+    // Explicit home only — callers write seat fixture under their own withTempRoot.
     ...(typeof home === "string" ? { home } : {}),
   } as never;
-}
-
-/** context(home) after writing the caller navigator seat under that home. */
-export async function contextWithCallerSeat(home: string) {
-  await ensureNavigatorCallerSeat(home);
-  return context(home);
 }
 
 export function candidate(overrides: Partial<NavigatorCandidate> = {}) {
@@ -140,7 +113,6 @@ export async function attendance(
   loadRoleHelp: (role: string) => Promise<string> = async (role) => `pi --ak-role ${role} --help`,
   home?: string,
 ) {
-  if (typeof home === "string") await ensureNavigatorCallerSeat(home);
   return createNavigatorAttendance({
     context: context(home), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
     subject: "Fix issue 28", authority: "owner decision",
