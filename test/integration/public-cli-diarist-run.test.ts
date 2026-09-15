@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -188,10 +188,10 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   readonly humanOriginDirectText: string;
   readonly removeMachineEnqueueId: string;
   readonly removeMachineText: string;
-  readonly staleFirstHumanId: string;
-  readonly staleFirstHumanText: string;
-  readonly staleSecondHumanId: string;
-  readonly staleSecondHumanText: string;
+  readonly slashEnqueueId: string;
+  readonly slashEnqueueText: string;
+  readonly bareMachineEnqueueId: string;
+  readonly bareMachineText: string;
   readonly unparsableLine: number;
   readonly unparsableRaw: string;
   readonly lastLine: number;
@@ -236,16 +236,19 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     `别听它的：「${peerOriginBody}」这条我不同意，先别装。`;
   const humanOriginDirectId = "msg-human-origin-direct";
   const humanOriginDirectText = "非队列真人 user（origin.kind=human）";
-  // #918: remove path + incomplete-queue (no global FIFO; fixed-prefix classifies enqueue).
+  // #918: remove path + incomplete-queue (fixed-prefix classifies enqueue; no content join).
   const removeMachineEnqueueId = "queue-remove-machine-1";
   const removeMachineText =
     "<task-notification>\n<task-id>rm-1</task-id>\n<summary>removed machine</summary>\n</task-notification>";
-  // Stale-slot shape that global FIFO reverse-attributed machine origin onto first-human
-  // (corr-2 live loss). Old FIFO drops first-human; fixed-prefix + no content-join keeps both.
-  const staleFirstHumanId = "queue-stale-first-human";
-  const staleFirstHumanText = "first-human";
-  const staleSecondHumanId = "queue-stale-second-human";
-  const staleSecondHumanText = "second-human";
+  // Slash-command expansion: mat wrap ≠ enqueue, no origin — position pair skips mat, keeps typed input.
+  const slashEnqueueId = "queue-slash-ship";
+  const slashEnqueueText = "/ship";
+  const slashMatText =
+    "<command-message>ship</command-message>\n<command-name>/ship</command-name>";
+  // Fixed-prefix enqueue suppressed; same-text mat without origin must also stay out (not fall to fromMessageEvent).
+  const bareMachineEnqueueId = "queue-bare-machine-mat";
+  const bareMachineText =
+    "<task-notification>\n<task-id>bare-1</task-id>\n<summary>no-origin mat of suppressed enqueue</summary>\n</task-notification>";
   const unparsableRaw = "{this is not json at all";
   const rows = [
     // 1. ordinary owner message — must survive alongside later enqueue events
@@ -552,7 +555,9 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       content: peerOriginEnqueueContent + "\n<!--remove-path-->",
       reason: "absorbed_mid_turn",
     }),
-    // 28e–28f. owner interjection quoting peer body — must keep (no substring suppress)
+    // 28e–28g. owner interjection quoting peer body — must keep (no substring suppress).
+    // Live absorbed shape: enqueue+dequeue then runner continues (clears unpaired pending).
+    // Without the runner, the next owner row would be false-paired as a copy.
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -563,6 +568,14 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       type: "queue-operation",
       operation: "dequeue",
       uuid: "queue-deq-peer-quote",
+    }),
+    JSON.stringify({
+      type: "assistant",
+      uuid: "msg-after-peer-quote",
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: "知道了，先按你的意见。" }],
+      },
     }),
     // 31. non-queue user with origin.kind=human must still enter as owner
     JSON.stringify({
@@ -575,7 +588,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       },
     }),
     // 32–34. live CC remove path: machine enqueue + queued_command.commandMode + remove
-    // must NOT become owner (#918; FIFO/dequeue-only pairing left this hole).
+    // must NOT become owner (#918; fixed-prefix on enqueue, no content join).
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -598,37 +611,46 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       content: removeMachineText,
       reason: "absorbed_mid_turn",
     }),
-    // 35–38. stale-slot FIFO regression shape (live corr-2):
-    // enqueue first-human (never matched), enqueue second-human, one dequeue, then a
-    // machine mat whose text ≠ either human. Global FIFO reverse-attributed the machine
-    // origin onto first-human and deleted it; current logic must keep both humans and
-    // drop only the machine mat. Mutation restoring FIFO pending.shift() must red here
-    // independently of remove-path assertions.
+    // 35–37. slash-command expansion: enqueue text ≠ mat wrap, mat has no origin.
+    // Content-join would miss the mat (A2); position pair skips mat, keeps typed /ship.
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
-      uuid: staleFirstHumanId,
-      content: staleFirstHumanText,
-    }),
-    JSON.stringify({
-      type: "queue-operation",
-      operation: "enqueue",
-      uuid: staleSecondHumanId,
-      content: staleSecondHumanText,
+      uuid: slashEnqueueId,
+      content: slashEnqueueText,
     }),
     JSON.stringify({
       type: "queue-operation",
       operation: "dequeue",
-      uuid: "queue-deq-stale",
+      uuid: "queue-deq-slash",
     }),
     JSON.stringify({
       type: "user",
-      uuid: "msg-stale-machine-mat",
-      origin: { kind: "task-notification" },
+      uuid: "msg-slash-mat",
       message: {
         role: "user",
-        content:
-          "<task-notification>\n<task-id>stale-bg</task-id>\n<summary>unrelated machine</summary>\n</task-notification>",
+        content: [{ type: "text", text: slashMatText }],
+      },
+    }),
+    // 38–40. fixed-prefix enqueue suppressed; same-text mat without origin must not
+    // fall through to fromMessageEvent (B-B: matched.some(!suppress) hole).
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      uuid: bareMachineEnqueueId,
+      content: bareMachineText,
+    }),
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "dequeue",
+      uuid: "queue-deq-bare-machine",
+    }),
+    JSON.stringify({
+      type: "user",
+      uuid: "msg-bare-machine-mat",
+      message: {
+        role: "user",
+        content: bareMachineText,
       },
     }),
   ];
@@ -661,14 +683,14 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     humanOriginDirectText,
     removeMachineEnqueueId,
     removeMachineText,
-    staleFirstHumanId,
-    staleFirstHumanText,
-    staleSecondHumanId,
-    staleSecondHumanText,
+    slashEnqueueId,
+    slashEnqueueText,
+    bareMachineEnqueueId,
+    bareMachineText,
     unparsableLine: 21,
     unparsableRaw,
     // rows[] length is the physical line count of the written session file.
-    lastLine: 44,
+    lastLine: 47,
     rangeALine: 1,
     rangeBLine: 2,
   };
@@ -896,6 +918,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       1,
       "human-origin queue must keep enqueue once (mat skipped as copy)",
     );
+    // Non-queue human with origin.kind=human — real discrimination surface (no FIFO reverse-attr).
     assert.equal(byId.get(fixture.humanOriginDirectId)?.speaker, "owner");
     assert.equal(
       byId.get(fixture.humanOriginDirectId)?.text,
@@ -917,26 +940,28 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       false,
       "removed machine queue item must not be owner",
     );
-    // #918 stale-fifo mutation surface: both humans kept; machine mat dropped.
-    // Restoring global FIFO pending.shift() attribution must drop first-human (red).
-    assert.equal(
-      byId.get(fixture.staleFirstHumanId)?.text,
-      fixture.staleFirstHumanText,
-      "stale-slot first human must survive (FIFO regression)",
-    );
-    assert.equal(
-      byId.get(fixture.staleSecondHumanId)?.text,
-      fixture.staleSecondHumanText,
-      "stale-slot second human must survive",
-    );
+    // Slash expansion: keep typed enqueue once; skip wrap mat (no content join, no origin).
+    assert.equal(byId.get(fixture.slashEnqueueId)?.speaker, "owner");
+    assert.equal(byId.get(fixture.slashEnqueueId)?.text, fixture.slashEnqueueText);
     assert.equal(
       volume.lines.some(
         (line) =>
-          line.id === "msg-stale-machine-mat" ||
-          (typeof line.text === "string" && line.text.startsWith("<task-notification>")),
+          line.id === "msg-slash-mat" ||
+          (typeof line.text === "string" && line.text.includes("<command-message>")),
       ),
       false,
-      "stale-slot machine mat must not become owner or suppress humans by FIFO",
+      "slash-command expanded mat must not become owner",
+    );
+    // Fixed-prefix enqueue + same-text no-origin mat: both out (not mat fall-through).
+    assert.equal(
+      volume.lines.some(
+        (line) =>
+          line.id === fixture.bareMachineEnqueueId ||
+          line.id === "msg-bare-machine-mat" ||
+          line.text === fixture.bareMachineText,
+      ),
+      false,
+      "suppressed fixed-prefix enqueue must not leave same-text no-origin mat as owner",
     );
     assert.equal(byId.get(fixture.duplicateId)?.text, "首现正文");
     // Duplicate second occurrence must not produce a second line with that id.
@@ -1270,8 +1295,8 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.deepEqual(afterA2.header?.sessions[0]?.ranges[0], rangeA.ranges[0]);
     assert.deepEqual(afterA2.header?.sessions[0]?.ranges[1], rangeA2.ranges[0]);
 
-    // Round 4: equivalent path spelling (p/./) must merge with prior path identity
-    // (same resolve() as I/O seam); keep first-seen header path; no extra s.
+    // Round 4: equivalent path spelling (p/./) + symlink alias must merge via the same
+    // physicalPathIdentity as I/O seam; keep first-seen header path; no extra s.
     const rangeAEquiv = {
       path: `${fixtureA.path}/./`,
       ranges: [{ from: { line: fixtureA.rangeALine }, to: { line: fixtureA.rangeALine } }],
@@ -1297,6 +1322,34 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       1,
     );
     assert.equal(afterEquiv.lines.find((line) => line.id === sessionBOwnerId)?.s, 1);
+
+    // Symlink alias of the same physical volume must not mint a new s (canonical identity).
+    const aliasDir = join(home, ".claude", "projects", "probe-alias");
+    await mkdir(join(home, ".claude", "projects"), { recursive: true });
+    await symlink(join(home, ".claude", "projects", "probe"), aliasDir);
+    const rangeASymlink = {
+      path: join(aliasDir, "session-a.jsonl"),
+      ranges: [{ from: { line: fixtureA.rangeALine }, to: { line: fixtureA.rangeALine } }],
+    };
+    const afterSymlink = await runDiarist("01a0diar00-0000-7000-8000-000000000094b", [
+      rangeASymlink,
+    ]);
+    assert.equal(
+      afterSymlink.header?.sessions.length,
+      2,
+      "symlink alias must not mint a third session index",
+    );
+    assert.equal(
+      afterSymlink.header?.sessions[0]?.path,
+      fixtureA.path,
+      "first-seen path retained under symlink alias",
+    );
+    assert.equal(
+      afterSymlink.lines.filter((line) => line.id === fixtureA.plainOwnerId).length,
+      1,
+      "symlink alias must not double-project id-bearing owner lines",
+    );
+    assert.equal(afterSymlink.lines.length, 3);
 
     // Round 5: resubmit rangeB only — idempotent (验收 2).
     const afterIdem = await runDiarist("01a0diar00-0000-7000-8000-000000000095", [rangeB]);

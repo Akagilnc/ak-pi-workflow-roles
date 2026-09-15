@@ -11,6 +11,7 @@ import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   errnoCode,
   packageMachineHome,
+  physicalPathIdentity,
   physicallyContainedIn,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
@@ -242,9 +243,9 @@ function rangeDeclarationKey(range: TicketProvenanceRange): string {
 
 /**
  * #918 甲案：prior ranges ∪ 本轮 ranges。按 path 合并；先保 prior 序，再追加新 path。
- * path identity 与 I/O 接缝同用 lexical `resolve(path)`，故 `p` 与 `p/./` 合为一条；
- * 保留首见 path 字面与累计 ranges。遗漏不代表删除。
- * 交卷 sessions 仍是「本轮边界」输入；本函数是机械合并，不改角色交什么。
+ * path identity 与 I/O 接缝同用 `physicalPathIdentity`（symlink-stable），故
+ * `p` / `p/./` / 经 symlink 祖先的别名合为一条；保留首见 path 字面与累计 ranges。
+ * 遗漏不代表删除。交卷 sessions 仍是「本轮边界」输入；本函数是机械合并。
  */
 function mergeSessionBounds(
   prior: readonly TicketProvenanceSession[] | undefined,
@@ -264,11 +265,11 @@ function mergeSessionBounds(
   );
   const indexByIdentity = new Map<string, number>();
   for (let index = 0; index < merged.length; index += 1) {
-    indexByIdentity.set(resolve(merged[index]!.path), index);
+    indexByIdentity.set(physicalPathIdentity(merged[index]!.path), index);
   }
 
   for (const session of incoming) {
-    const identity = resolve(session.path);
+    const identity = physicalPathIdentity(session.path);
     const existingIndex = indexByIdentity.get(identity);
     if (existingIndex === undefined) {
       indexByIdentity.set(identity, merged.length);
