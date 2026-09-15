@@ -10,7 +10,6 @@ import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, type ReviewerIntent 
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerIntent };
-export const AGENT_TOOL_NAME = "Agent";
 
 /** Frozen admitted inputs the behavior layer may consume — no flag surface. */
 export type ReviewerAdmittedInputs = Readonly<{

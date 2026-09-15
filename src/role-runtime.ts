@@ -382,7 +382,6 @@ export {
 } from "./judge-role.ts";
 export { ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV } from "./engine-detour.ts";
 export {
-  AGENT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
   type ReviewerIntent,
 } from "./reviewer-role.ts";

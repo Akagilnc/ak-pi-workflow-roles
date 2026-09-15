@@ -190,8 +190,6 @@ test("packaged ak-cross-m-review loads verbatim upstream single-lens method", as
       "ak-cross-m-review",
     );
     assert.equal(material.name, "ak-cross-m-review");
-    assert.equal(material.body.includes("completeness"), true);
-    assert.equal(material.body.includes("correctness"), true);
     assert.equal(material.provenance.packageAdaptation, "verbatim-upstream");
     assert.equal(material.provenance.upstream.path, ".");
     assert.equal(
@@ -203,17 +201,16 @@ test("packaged ak-cross-m-review loads verbatim upstream single-lens method", as
       material.provenance.upstream.repository,
       "https://github.com/Akagilnc/ak-cross-m-review",
     );
-    assert.equal(
-      material.companionRelativePaths.includes("prompts/cmr-completeness.md"),
-      true,
+    assert.deepEqual(
+      [...material.companionRelativePaths].sort(),
+      [
+        "CONTEXT.md",
+        "LICENSE",
+        "prompts/cmr-completeness.md",
+        "prompts/cmr-reviewer.md",
+      ].sort(),
     );
-    assert.equal(
-      material.companionRelativePaths.includes("prompts/cmr-reviewer.md"),
-      true,
-    );
-    assert.equal(material.companionRelativePaths.includes("CONTEXT.md"), true);
-    assert.equal(material.companionRelativePaths.includes("LICENSE"), true);
-    assert.equal(material.body.includes("CMR-VERDICT"), true);
+    // Byte integrity is provenance digests (loader already verified); no body-token staring.
     assert.equal(material.skillPath.includes(packageRoot), true);
     assert.equal(material.skillPath.includes(".agents/skills"), false);
   });

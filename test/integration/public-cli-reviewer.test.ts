@@ -82,47 +82,26 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
+/** Production ReviewerIntent face (ADR 0003 / #917 lens axes). */
 function lawfulReviewerReceipt(
-  axes: readonly ("completeness" | "correctness")[] = ["completeness", "correctness"],
+  lens: "completeness" | "correctness",
   status: "completed" | "refused" = "completed",
+  options?: { readonly axisKey?: string; readonly report?: string },
 ) {
-  const skillText = "package ak-cross-m-review skill body\n";
-  const prompt = (axis: string) => ({ text: `${axis} prompt\n` });
-  const reports = Object.fromEntries(
-    axes.map((axis) => [axis, { text: `${axis} report` }]),
-  );
-  const outcomes = Object.fromEntries(
-    axes.map((axis) => [
-      axis,
-      {
-        status: "successful",
-        prompt: prompt(axis),
-        workspaceDisposition: "deleted",
-      },
-    ]),
-  );
+  // axisKey may deliberately mismatch the lens name — code must not shape-reject (仓级第 0 条).
+  const axisKey = options?.axisKey ?? lens;
+  const report = options?.report ?? `${lens}-axis-report`;
+  const amendments = { [axisKey]: report };
+  if (status === "refused") {
+    return {
+      status: "refused" as const,
+      diagnostic: "hard-stop: review cannot proceed",
+      amendments,
+    };
+  }
   return {
-    version: 2 as const,
-    status,
-    ...(status === "refused" ? { diagnostic: "review cannot proceed" } : {}),
-    acceptedBatch: {
-      identity: "dispatch",
-      legs: axes.map((axis) => ({ axis, prompt: prompt(axis) })),
-    },
-    reports,
-    outcomes,
-    identities: {
-      canonicalSkill: { text: skillText },
-      construction: { recipe: "reviewer-common-bundle-v1" },
-      target: {
-        repositoryRoot: "/repo",
-        objectFormat: "sha1",
-        targetHead: "a".repeat(40),
-        refs: {
-          tag: { objectId: "b".repeat(40), peeledCommitId: null },
-        },
-      },
-    },
+    status: "completed" as const,
+    amendments,
   };
 }
 
@@ -509,7 +488,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     );
     const skillPath = resolvePackagedMethodSkillPath(packageRoot, "ak-cross-m-review");
     const receipt = {
-      ...lawfulReviewerReceipt(["completeness", "correctness"]),
+      ...lawfulReviewerReceipt("completeness"),
       auditNoReceipt: {
         status: "no-receipt",
         terminalToolCalled: true,
@@ -606,18 +585,48 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     assert.equal(terminal.roleOutcome.role, "reviewer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
-    assert.equal(((objectPayloads(terminal.roleOutcome)[0] ?? {}).auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
+    const completedPayload = objectPayloads(terminal.roleOutcome)[0] ?? {};
+    assert.equal(
+      ((completedPayload.amendments as Record<string, string> | undefined)?.completeness),
+      "completeness-axis-report",
+    );
+    assert.equal((completedPayload.auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt, false);
     assert.match(formatTerminalResult(terminal), /auditNoReceipt/);
     assert.equal(terminal.runId, "run-reviewer-settle-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
-    const reviewerReportBody = await readFile(
-      terminal.artifacts.find((a) => a.kind === "report")!.path,
-      "utf8",
-    );
-    assert.ok(
-      reviewerReportBody.includes("completeness report"),
-      "reviewer completeness report text must live in artifact receipt",
+
+    // Same entry: hard-stop refused + mismatched axis key still lands (仓级第 0 条).
+    const refusedReceipt = lawfulReviewerReceipt("completeness", "refused", {
+      axisKey: "not-a-declared-axis",
+      report: "partial-report-before-stop",
+    });
+    await sealAcceptedSubmission({
+      runId: admitted.runId,
+      cwd: project,
+      home,
+      runDirectory: admitted.runDirectory,
+      role: "reviewer",
+      details: refusedReceipt,
+      toolCallId: "r-refused",
+    });
+    const refusedTerminal = await settleReviewerTerminalResult(admitted, piDurablePrincipalAuthority, {
+      methodProvenance: material.provenance,
+      methodSkillPath: material.skillPath,
+      methodSkillConfiguredPath: skillPath,
+    });
+    assert.equal(refusedTerminal.roleOutcome.kind, "accepted");
+    // Same entry lands both projections; sequence is chronological ledger order.
+    assert.deepEqual(payloadStatusSequence(refusedTerminal.roleOutcome), [
+      "completed",
+      "refused",
+    ]);
+    const refusedPayload =
+      objectPayloads(refusedTerminal.roleOutcome).find((p) => p.status === "refused") ?? {};
+    assert.equal(refusedPayload.diagnostic, "hard-stop: review cannot proceed");
+    assert.equal(
+      (refusedPayload.amendments as Record<string, string> | undefined)?.["not-a-declared-axis"],
+      "partial-report-before-stop",
     );
 
     const evidence = JSON.parse(
@@ -666,9 +675,6 @@ test("package ak-cross-m-review method is verbatim upstream single-lens CMR", as
   const material = await loadPackagedMethodSkillMaterial(packageRoot, "ak-cross-m-review");
   assert.equal(material.name, "ak-cross-m-review");
   assert.equal(material.provenance.packageAdaptation, "verbatim-upstream");
-  assert.match(material.body, /completeness/);
-  assert.match(material.body, /correctness/);
-  assert.equal(material.body.includes("CMR-VERDICT"), true);
   assert.equal(
     material.provenance.upstream.commit,
     "57b10e2cea9ff008e2b36b98b55610e58cdfd512",
@@ -722,7 +728,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             );
             // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
             const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
-            const receipt = lawfulReviewerReceipt(["completeness", "correctness"]);
+            const receipt = lawfulReviewerReceipt("completeness");
             await writeFile(
               sessionFile,
               `${JSON.stringify({
@@ -759,6 +765,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "reviewer");
       assert.equal(captured!.includes("--skill"), true);
       assert.equal(captured!.includes("--ak-review-task"), false);
+      assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "completeness");
       assert.equal(result.terminal?.roleOutcome.role, "reviewer");
       assert.deepEqual(
         result.terminal?.roleOutcome.kind === "accepted"
@@ -838,7 +845,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             );
             // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
             const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
-            const receipt = lawfulReviewerReceipt(["completeness", "correctness"]);
+            const receipt = lawfulReviewerReceipt("completeness");
             await writeFile(
               sessionFile,
               `${JSON.stringify({
@@ -1004,6 +1011,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     ) as Record<string, unknown> & { role: string; baseRevision?: string; ticketNumber?: number };
     assert.equal(admitted.role, "reviewer");
     assert.equal(admitted.baseRevision, "main");
+    assert.equal(admitted.lens, "completeness");
     assert.equal(admitted.ticketNumber, undefined);
     assert.equal("taskPath" in admitted, false);
     assert.equal("taskSha256" in admitted, false);
@@ -1026,6 +1034,8 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
         assert.equal(args.includes("--ak-review-task"), false);
         assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
+        assert.equal(args[args.indexOf("--ak-review-lens") + 1], "completeness");
+        assert.equal(args[args.indexOf("--ak-review-lens") + 1], admitted.lens);
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
         assert.equal(
@@ -1044,7 +1054,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         );
         // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
         const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
-        const details = lawfulReviewerReceipt(["completeness"]);
+        const details = lawfulReviewerReceipt("completeness");
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
           `${JSON.stringify({
