@@ -11,6 +11,12 @@
  * systemPrompt.materials fold（#879 / #858：对话 instruction、空请求、resume
  * message 保持调用者原文；起居录作独立附件面，不新造 RoleTurnRequest.materials，
  * 不拼进 user-dialogue continuation）。
+ *
+ * #858: deliver returns typed FrozenAttachment[]; load currently re-derives the
+ * freeze leaf under runDirectory because agent-start only has HostContext.runDirectory.
+ * Consuming the typed frozenPath across that process boundary needs a design
+ * revision of the existing envelope/persistence seam — not a local replica of
+ * freezeAttachments' `00-` naming, not a drift throw, not readdir guessing.
  */
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -34,21 +40,6 @@ const CASE_DOSSIER_ATTACH_KEY = "case-dossier" as const;
 
 /** Leaf name of the frozen pointer section (content = purpose + paths). */
 const CASE_DOSSIER_ATTACH_FILE = "case-dossier-pointer.md" as const;
-
-/**
- * Sole frozen-path authority for the case-dossier pointer (#858).
- * Matches freezeAttachmentsIntoRun index-0 naming: `00-${basename(staging file)}`
- * under attachments/`CASE_DOSSIER_ATTACH_KEY`/. deliver stages CASE_DOSSIER_ATTACH_FILE
- * so the leaf is determined here once — load never readdir-guesses, never joins ad hoc.
- */
-export function caseDossierPointerFrozenPath(runDirectory: string): string {
-  return join(
-    runDirectory,
-    "attachments",
-    CASE_DOSSIER_ATTACH_KEY,
-    `00-${CASE_DOSSIER_ATTACH_FILE}`,
-  );
-}
 
 /**
  * Neutral 起居录 path pointer for every public entry (ADR 0081 delivery seam).
@@ -108,20 +99,11 @@ export async function deliverCaseDossierAsAttachment(input: {
   try {
     const stagingPath = join(stagingDir, CASE_DOSSIER_ATTACH_FILE);
     await writeFile(stagingPath, `${section}\n`, "utf8");
-    const frozen = await freezeAttachmentsIntoRun(
+    return await freezeAttachmentsIntoRun(
       [stagingPath],
       input.runDirectory,
       CASE_DOSSIER_ATTACH_KEY,
     );
-    // Typed freeze path must equal the sole load authority — one path fact (#858).
-    const expected = caseDossierPointerFrozenPath(input.runDirectory);
-    const actual = frozen[0]?.frozenPath;
-    if (actual !== expected) {
-      throw new Error(
-        `case-dossier freeze path drift: expected ${expected}, got ${String(actual)}`,
-      );
-    }
-    return frozen;
   } finally {
     await rm(stagingDir, { recursive: true, force: true });
   }
@@ -138,12 +120,21 @@ export type CaseDossierReadingMaterial = {
  * Load a previously frozen case-dossier attachment as reading material
  * (existing agent-start / systemPrompt.materials fold — not dialogue prompt,
  * not RoleTurnRequest.materials). Undefined when the run has no such freeze.
- * Path = caseDossierPointerFrozenPath only (#858 single authority).
+ *
+ * #858: this join re-derives freezeAttachments' leaf naming because the
+ * agent-start handler only receives runDirectory. Replacing it requires
+ * threading deliver's typed frozenPath across the existing envelope seam
+ * (design revision) — do not copy freeze's `00-` algorithm here again.
  */
 export async function loadCaseDossierReadingMaterial(
   runDirectory: string,
 ): Promise<CaseDossierReadingMaterial | undefined> {
-  const frozenPath = caseDossierPointerFrozenPath(runDirectory);
+  const frozenPath = join(
+    runDirectory,
+    "attachments",
+    CASE_DOSSIER_ATTACH_KEY,
+    `00-${CASE_DOSSIER_ATTACH_FILE}`,
+  );
   let section: string;
   try {
     section = await readFile(frozenPath, "utf8");
