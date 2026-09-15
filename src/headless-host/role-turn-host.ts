@@ -24,6 +24,12 @@ import {
 
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
+  applyCodexSkillInvocation,
+  applyHostSlashSkillInvocation,
+  stageCodexSkillHome,
+  stageHostMethodPlugin,
+} from "../host-native-method.ts";
+import {
   closeJsonSchemaForCodex,
   codexTurnArgs,
   headlessMcpConfigDocument,
@@ -410,6 +416,7 @@ function buildTurnArgs(options: {
   readonly sessionKind: "new" | "resume";
   readonly cwd: string;
   readonly writableRoots?: readonly string[];
+  readonly pluginDir?: string;
 }): readonly string[] {
   if (isCodexExecDescription(options.description)) {
     if (options.sessionKind === "resume" && !options.sessionId) {
@@ -441,6 +448,7 @@ function buildTurnArgs(options: {
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.effort === undefined ? {} : { effort: options.effort }),
     session: { kind: options.sessionKind, id: options.sessionId },
+    ...(options.pluginDir === undefined ? {} : { pluginDir: options.pluginDir }),
   });
 }
 
@@ -469,11 +477,22 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       await writeFile(systemPromptPath, systemPrompt, "utf8");
       let mcpConfigPath: string | undefined;
       let outputSchemaPath: string | undefined;
+      let pluginDir: string | undefined;
+      let applyMethodPrompt: (prompt: string) => string = (prompt) => prompt;
       if (codex) {
         // Codex --output-schema needs a closed transport projection on disk.
         outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
         const closed = closeJsonSchemaForCodex(prepared.jsonSchema);
         await writeFile(outputSchemaPath, `${JSON.stringify(closed, null, 2)}\n`, "utf8");
+        const staged = await stageCodexSkillHome({
+          runDirectory: request.runDirectory,
+          operatorHome: request.home,
+          methods: request.methods,
+        });
+        if (staged !== undefined) {
+          env.HOME = staged.home;
+          applyMethodPrompt = (prompt) => applyCodexSkillInvocation(staged.skills, prompt);
+        }
       } else {
         mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
         await writeFile(
@@ -481,6 +500,13 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
           "utf8",
         );
+        const staged = await stageHostMethodPlugin(request.runDirectory, request.methods);
+        if (staged !== undefined) {
+          pluginDir = staged.pluginDir;
+          if (staged.slashToken !== undefined) {
+            applyMethodPrompt = (prompt) => applyHostSlashSkillInvocation(staged.slashToken!, prompt);
+          }
+        }
       }
 
       const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
@@ -505,6 +531,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               sessionKind,
               cwd: request.cwd,
               ...(gitCommonDir === undefined ? {} : { writableRoots: [gitCommonDir] }),
+              ...(pluginDir === undefined ? {} : { pluginDir }),
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -522,7 +549,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               args,
               cwd: request.cwd,
               env,
-              stdin: prompt,
+              stdin: applyMethodPrompt(prompt),
               ...(abortSignal === undefined ? {} : { signal: abortSignal }),
               ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
               onStdoutLine(line) {

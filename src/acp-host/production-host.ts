@@ -13,6 +13,11 @@ import { prepareRoleEnvelope } from "../role-envelope.ts";
 import type { RoleRuntimeDependencies } from "../role-runtime.ts";
 import { createRoleRuntimeDependencies } from "../role-runtime-dependencies.ts";
 import { createSessionIdentityAuthority } from "../session-identity.ts";
+import {
+  hermesSkillsArgs,
+  hostMethodSkills,
+  stageHostMethodPlugin,
+} from "../host-native-method.ts";
 import { acpStdioArgs, resolveAcpBinary, type AcpHostDescription } from "./description.ts";
 import {
   connectAcpStdio,
@@ -75,12 +80,24 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
           packageRoot,
           role: request.activation.role,
         });
+      // #922: host-native method loader — grok plugin-dir / hermes --skills.
+      const skills = hostMethodSkills(request.methods);
+      const staged = hostName === "grok-build" && skills.length > 0
+        ? await stageHostMethodPlugin(request.runDirectory, request.methods)
+        : undefined;
+      const skillsArgs = hostName === "hermes" && skills.length > 0
+        ? hermesSkillsArgs(skills)
+        : undefined;
       return connectAcpStdio({
         binary: resolveAcpBinary(description, request.home),
         args: acpStdioArgs(
           description,
           request.model,
           profileName === undefined ? undefined : { profileName },
+          {
+            ...(staged?.pluginDir === undefined ? {} : { pluginDir: staged.pluginDir }),
+            ...(skillsArgs === undefined ? {} : { skillsArgs }),
+          },
         ),
         cwd: request.cwd,
         env,
