@@ -6,7 +6,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -373,171 +373,283 @@ test("retained auditor failure is bound to the latest parent resume attempt", as
     assert.equal(await readBoundAuditorKnownFailure(sessionFile), undefined);
   });
 });
-// #858: call-local session boundary (not prompt bytes) owns auditor retention.
-// Same public call + ordinary one-shot resume builder keeps first-attempt failure;
-// next independent call re-captures boundary and stales it. No token/prose sniff.
+// #858: call-local session boundary via public entry (not prompt bytes).
+// Reuses the fast audited-seat public wiring tracer: runAkRole → auto-resume →
+// terminal. Same call keeps first-attempt auditor failure across ordinary
+// buildResumeContinuationPrompt resume users; next independent resume stales it.
 test("call-local boundary keeps ordinary auto-resume auditor retention; next call stales", async () => {
   await withTempHome(async (home) => {
-    const sessionDir = join(home, "session");
-    const sessionFile = join(sessionDir, "parent.jsonl");
-    const childDir = join(sessionDir, "auditor-roles");
-    await mkdir(childDir, { recursive: true });
-
-    // Production ordinary one-shot auto-resume bytes (runPostAdmissionOneShot builder).
+    const project = join(home, "proj-call-local-boundary");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-call-local-auditor-boundary";
     const ordinaryResumePrompt = buildResumeContinuationPrompt({ packageRoot });
     assert.notEqual(
       ordinaryResumePrompt.split("\n")[0],
       "[ak-role:resume-continue]",
-      "ordinary builder must not collapse to station-child transport token",
+      "ordinary one-shot builder must not collapse to station-child transport token",
     );
+    const auditorDiagnostic = "CALL_LOCAL_AUDITOR_RETENTION_WS";
+    const retryStderr = "retry-without-auditor-child\n";
+    let calls = 0;
+    let sessionFile = "";
 
-    const expected = {
-      cause: "provider" as const,
-      diagnostic: "WebSocket error",
-      identity: { name: "faux-1", code: "openai-codex" },
-      details: {
-        provider: "openai-codex",
-        model: "faux-1",
-        retentionFailure: {
-          name: "ComplianceResponseRetentionError",
-          cause: { code: "EISDIR" },
-        },
-      },
-    };
-
-    const callStartEntries = [
-      { type: "session", id: "parent-session" },
-    ];
-    const sameCallEntries = [
-      ...callStartEntries,
-      { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
-      {
-        type: "message",
-        id: "attempt-first",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "This operation was aborted",
-          provider: "openai-codex",
-          model: "faux-1",
-        },
-      },
-      {
-        type: "message",
-        id: "resume-ordinary",
-        message: { role: "user", content: ordinaryResumePrompt },
-      },
-      {
-        type: "message",
-        id: "attempt-retry",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "retry without retention",
-          provider: "openai-codex",
-          model: "faux-1",
-        },
-      },
-    ];
-    await writeFile(
-      sessionFile,
-      sameCallEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
-    );
-    await writeFile(join(childDir, "child.jsonl"), [
-      { type: "session", id: "child-session", parentSession: sessionFile },
-      {
-        type: "custom",
-        customType: "ak_auditor_parent_attempt_binding",
-        data: {
-          version: 1,
-          parent: {
-            sessionId: "parent-session",
-            sessionFile,
-            attemptEntryId: "attempt-first",
-          },
-        },
-      },
-      {
-        type: "message",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "WebSocket error",
-          provider: "openai-codex",
-          model: "faux-1",
-        },
-      },
-      {
-        type: "custom",
-        customType: "ak_auditor_compliance_failure",
-        data: {
-          parent: {
-            sessionId: "parent-session",
-            sessionFile,
-            attemptEntryId: "attempt-first",
-          },
-          failure: {
-            cause: "provider",
-            diagnostic: "WebSocket error",
-            identity: { name: "faux-1", code: "openai-codex" },
-            details: {
+    const writeFirstAttemptWithAuditor = async (sf: string) => {
+      sessionFile = sf;
+      const sessionDir = dirname(sf);
+      const childDir = join(sessionDir, "auditor-roles");
+      await mkdir(childDir, { recursive: true });
+      await writeFile(
+        sf,
+        [
+          { type: "session", id: "parent-session" },
+          { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
+          {
+            type: "message",
+            id: "attempt-first",
+            message: {
+              role: "assistant",
+              stopReason: "error",
+              errorMessage: "This operation was aborted",
               provider: "openai-codex",
               model: "faux-1",
-              retentionFailure: {
-                name: "ComplianceResponseRetentionError",
-                cause: { code: "EISDIR" },
+            },
+          },
+        ].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+      );
+      await writeFile(
+        join(childDir, "child.jsonl"),
+        [
+          { type: "session", id: "child-session", parentSession: sf },
+          {
+            type: "custom",
+            customType: "ak_auditor_parent_attempt_binding",
+            data: {
+              version: 1,
+              parent: {
+                sessionId: "parent-session",
+                sessionFile: sf,
+                attemptEntryId: "attempt-first",
               },
             },
           },
-        },
-      },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+          {
+            type: "message",
+            message: {
+              role: "assistant",
+              stopReason: "error",
+              errorMessage: auditorDiagnostic,
+              provider: "openai-codex",
+              model: "faux-1",
+            },
+          },
+          {
+            type: "custom",
+            customType: "ak_auditor_compliance_failure",
+            data: {
+              parent: {
+                sessionId: "parent-session",
+                sessionFile: sf,
+                attemptEntryId: "attempt-first",
+              },
+              failure: {
+                cause: "provider",
+                diagnostic: auditorDiagnostic,
+                identity: { name: "faux-1", code: "openai-codex" },
+                details: {
+                  provider: "openai-codex",
+                  model: "faux-1",
+                  retentionFailure: {
+                    name: "ComplianceResponseRetentionError",
+                    cause: { code: "EISDIR" },
+                  },
+                },
+              },
+            },
+          },
+        ].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+      );
+    };
 
-    // Same public call: boundary = entry count at call start (header only).
-    assert.deepEqual(
-      await readBoundAuditorKnownFailure(sessionFile, {
-        callLocalSessionBoundary: callStartEntries.length,
-      }),
-      expected,
-      "same-call ordinary auto-resume must retain first-attempt auditor failure",
-    );
+    const writeOrdinaryAutoResumeAttempt = async (sf: string) => {
+      // Simulate real host appending the production ordinary resume user turn.
+      await writeFile(
+        sf,
+        [
+          { type: "session", id: "parent-session" },
+          { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
+          {
+            type: "message",
+            id: "attempt-first",
+            message: {
+              role: "assistant",
+              stopReason: "error",
+              errorMessage: "This operation was aborted",
+              provider: "openai-codex",
+              model: "faux-1",
+            },
+          },
+          {
+            type: "message",
+            id: "resume-ordinary",
+            message: { role: "user", content: ordinaryResumePrompt },
+          },
+          {
+            type: "message",
+            id: "attempt-retry",
+            message: {
+              role: "assistant",
+              stopReason: "error",
+              errorMessage: "retry without retention",
+              provider: "openai-codex",
+              model: "faux-1",
+            },
+          },
+        ].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+      );
+    };
 
-    // Without call-local scope, latest user (resume handbook) would stale — proves
-    // retention is owned by the boundary, not by prompt wording.
-    assert.equal(
-      await readBoundAuditorKnownFailure(sessionFile),
-      undefined,
-      "absent call-local boundary must not invent resume identity from prompt bytes",
-    );
-
-    // Next independent public call: re-capture boundary at end of prior call.
-    const nextCallBoundary = sameCallEntries.length;
-    const nextCallEntries = [
-      ...sameCallEntries,
-      { type: "message", id: "user-next-call", message: { role: "user", content: "new court" } },
+    const { io, stdout, stderr } = captureIo();
+    const first = await runAkRole(
+      ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "call-local boundary"],
       {
-        type: "message",
-        id: "attempt-next",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "next call failure",
-          provider: "openai-codex",
-          model: "faux-1",
-        },
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            calls += 1;
+            const sd = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sd, { recursive: true });
+            const sf = args[args.indexOf("--session") + 1]!;
+            if (calls === 1) {
+              await writeFirstAttemptWithAuditor(sf);
+            } else {
+              await writeOrdinaryAutoResumeAttempt(sf);
+            }
+            return {
+              code: 1,
+              stderr: calls === 1 ? "first-attempt\n" : retryStderr,
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        }),
       },
-    ];
-    await writeFile(
-      sessionFile,
-      nextCallEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+    );
+
+    assert.ok(calls >= 2, "ordinary auto-resume must redispatch at least once");
+    const { terminal } = await assertPublicFailureSettlement({
+      result: first,
+      stdout,
+      stderr,
+      expectedCause: "provider",
+      diagnosticEquals: auditorDiagnostic,
+    });
+    assert.ok(
+      (terminal.autoResumeCount ?? 0) >= 1,
+      "terminal must observe in-call auto-resume",
     );
     assert.equal(
-      await readBoundAuditorKnownFailure(sessionFile, {
-        callLocalSessionBoundary: nextCallBoundary,
+      terminal.roleOutcome.kind === "failure" ? terminal.roleOutcome.diagnostic : undefined,
+      auditorDiagnostic,
+      "same public call must retain first-attempt auditor failure across ordinary resume users",
+    );
+
+    // Next independent public call on the same run: re-capture boundary after prior call.
+    let resumeCalls = 0;
+    const { io: io2, stdout: stdout2, stderr: stderr2 } = captureIo();
+    const resumed = await runAkRole(["resume", "--model", "openai-codex/faux-1:off", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: io2,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          resumeCalls += 1;
+          const sf = args[args.indexOf("--session") + 1]!;
+          // Keep prior auditor child; append a new independent-call user past the old attempt.
+          await writeFile(
+            sf,
+            [
+              { type: "session", id: "parent-session" },
+              { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
+              {
+                type: "message",
+                id: "attempt-first",
+                message: {
+                  role: "assistant",
+                  stopReason: "error",
+                  errorMessage: "This operation was aborted",
+                  provider: "openai-codex",
+                  model: "faux-1",
+                },
+              },
+              {
+                type: "message",
+                id: "resume-ordinary",
+                message: { role: "user", content: ordinaryResumePrompt },
+              },
+              {
+                type: "message",
+                id: "attempt-retry",
+                message: {
+                  role: "assistant",
+                  stopReason: "error",
+                  errorMessage: "retry without retention",
+                  provider: "openai-codex",
+                  model: "faux-1",
+                },
+              },
+              {
+                type: "message",
+                id: "user-next-call",
+                message: { role: "user", content: "independent resume court" },
+              },
+              {
+                type: "message",
+                id: "attempt-next",
+                message: {
+                  role: "assistant",
+                  stopReason: "error",
+                  errorMessage: "next-call-only-failure",
+                  provider: "openai-codex",
+                  model: "faux-1",
+                },
+              },
+            ].map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+          );
+          return {
+            code: 1,
+            stderr: "independent-call-stderr\n",
+            timedOut: false,
+            args: [...args],
+          };
+        },
       }),
-      undefined,
+    });
+    assert.equal(resumeCalls, 1, "manual resume is one-shot");
+    const { terminal: resumeTerminal } = await assertPublicFailureSettlement({
+      result: resumed,
+      stdout: stdout2,
+      stderr: stderr2,
+    });
+    assert.notEqual(
+      resumeTerminal.roleOutcome.kind === "failure"
+        ? resumeTerminal.roleOutcome.diagnostic
+        : undefined,
+      auditorDiagnostic,
       "next independent call must stale prior-call auditor retention",
     );
+    void sessionFile;
   });
 });
 test("bound auditor assistant supplies primary when secondary enrichment is absent", async () => {

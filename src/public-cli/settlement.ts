@@ -176,38 +176,6 @@ export type SettlementCourtScope = {
   readonly callLocalSessionBoundary?: number;
 };
 
-/**
- * Capture the call-local session boundary once at public-call entry (#858).
- * Reused across in-place auto-resume; the next independent call re-captures.
- */
-export async function captureCallLocalSessionBoundary(
-  authority: Pick<DurablePrincipalAuthority, "decode">,
-  principal: DurablePrincipal | undefined,
-): Promise<number> {
-  if (principal === undefined) return 0;
-  let sessionFile: string;
-  try {
-    sessionFile = authority.decode(principal).sessionFile;
-  } catch {
-    return 0;
-  }
-  try {
-    const text = await readFile(sessionFile, "utf8");
-    if (text.length === 0) return 0;
-    // Same line split as readBoundSessionEntries (trim + drop empty).
-    return text.trim().split("\n").filter(Boolean).length;
-  } catch (error) {
-    if (
-      error instanceof Error &&
-      "code" in error &&
-      (error as { code?: unknown }).code === "ENOENT"
-    ) {
-      return 0;
-    }
-    throw error;
-  }
-}
-
 function ledgerReadScope(
   admitted: Pick<AdmittedRoleInvocation, "runDirectory">,
   scope?: SettlementCourtScope,
@@ -932,6 +900,26 @@ async function readBoundSessionEntries(
     }
   }
   return entries;
+}
+
+/**
+ * Capture the call-local session boundary once at public-call entry (#858).
+ * Reuses readBoundSessionEntries — ENOENT (session not yet written) is absence 0;
+ * malformed JSONL and other read failures propagate (失败诚实).
+ * Reused across in-place auto-resume; the next independent call re-captures.
+ */
+export async function captureCallLocalSessionBoundary(
+  authority: Pick<DurablePrincipalAuthority, "decode">,
+  principal: DurablePrincipal | undefined,
+): Promise<number> {
+  if (principal === undefined) return 0;
+  const sessionFile = authority.decode(principal).sessionFile;
+  try {
+    return (await readBoundSessionEntries(sessionFile)).length;
+  } catch (error) {
+    if (isMissingPathError(error)) return 0;
+    throw error;
+  }
 }
 
 /**
