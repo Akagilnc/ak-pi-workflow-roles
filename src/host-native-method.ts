@@ -2,16 +2,23 @@
  * #922 host-native forced-method delivery.
  * claude/grok → --plugin-dir (dist/method-host-plugin, build-only);
  * codex/hermes → cwd `.agents/skills` → resources/methods (envelope-owned).
- * Workspace link: create-if-absent; never touch foreign catalogs; delete only
- * what this process created (in-process hold count). No lockfile/ref file.
+ *
+ * Catalog ownership: durable holder tokens on disk (pid:uuid) + mkdir lock
+ * (wait if live owner; dead lock fails loud — no pathname steal/ABA).
+ * Release is per-handle idempotent. Foreign catalogs are never modified.
  */
+import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, lstat, mkdir, readFile, readlink, realpath, readdir, rm, symlink, unlink } from "node:fs/promises";
+import {
+  access, lstat, mkdir, readFile, readlink, realpath, readdir, rename, rm, rmdir, symlink, unlink, writeFile,
+} from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { MethodBinding } from "./host-contracts.ts";
 
 export type HostMethodSkill = Readonly<{ name: string; dir: string; path: string }>;
 export const HOST_METHOD_PLUGIN_NAME = "ak-methods" as const;
+export const WORKSPACE_AGENTS_SKILLS_REF = ".ak-roles-method-skills-ref";
+const WORKSPACE_AGENTS_SKILLS_LOCK = ".ak-roles-method-skills-lock";
 
 export const packagedMethodsDir = (r: string) => join(r, "resources", "methods");
 export const packagedMethodPluginDir = (r: string) => join(r, "dist", "method-host-plugin");
@@ -62,8 +69,12 @@ const sameReal = async (a: string, b: string) => {
   try { return (await realpath(a)) === (await realpath(b)); }
   catch { return resolve(a) === resolve(b); }
 };
+const pidAlive = (pid: number) => {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return true; }
+  catch { return false; }
+};
 
-/** Runtime only reads build output; build/prepack is the sole materialize writer. */
 export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<string> {
   const outDir = packagedMethodPluginDir(packageRoot);
   const probe = join(outDir, "skills", "tdd", "SKILL.md");
@@ -77,7 +88,7 @@ export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<s
 
 export type WorkspaceAgentsSkillsLink = Readonly<{
   path: string;
-  created: boolean;
+  held: boolean;
   release(): Promise<void>;
 }>;
 
@@ -86,9 +97,112 @@ const conflict = (path: string, detail: string) => new Error(
   "ak-role only creates `.agents/skills` when absent; never overwrites an existing catalog (#922).",
 );
 
-/** linkPath → hold count for links this process created. */
-const createdHolds = new Map<string, number>();
-const createdAgentsDirs = new Set<string>();
+type SkillsRef = { readonly target: string; readonly holders: readonly string[] };
+
+async function readRef(refPath: string): Promise<SkillsRef | undefined> {
+  try {
+    const raw = JSON.parse(await readFile(refPath, "utf8")) as { target?: unknown; holders?: unknown };
+    if (typeof raw.target !== "string" || !Array.isArray(raw.holders)) return undefined;
+    const holders = raw.holders.filter((h): h is string => typeof h === "string" && h.includes(":"));
+    return { target: raw.target, holders };
+  } catch {
+    return undefined;
+  }
+}
+
+async function writeRef(refPath: string, value: SkillsRef): Promise<void> {
+  const tmp = `${refPath}.${process.pid}.${Date.now()}.tmp`;
+  await writeFile(tmp, `${JSON.stringify({ target: value.target, holders: value.holders })}\n`, "utf8");
+  await rename(tmp, refPath);
+}
+
+function holderPid(holder: string): number {
+  return Number(holder.slice(0, holder.indexOf(":")));
+}
+
+function pruneHolders(holders: readonly string[]): string[] {
+  return holders.filter((h) => pidAlive(holderPid(h)));
+}
+
+/** In-process serialization per lock path. */
+const processChains = new Map<string, Promise<unknown>>();
+
+async function withProcessChain<T>(key: string, body: () => Promise<T>): Promise<T> {
+  const prev = processChains.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>((r) => { release = r; });
+  processChains.set(key, prev.then(() => gate, () => gate));
+  await prev.catch(() => undefined);
+  try {
+    return await body();
+  } finally {
+    release();
+  }
+}
+
+/**
+ * mkdir exclusive lock. Live owner → wait. Dead owner → loud fail (no steal/ABA).
+ * Unlock removes owner file then rmdir only if still empty.
+ */
+async function withDirLock<T>(lockDir: string, body: () => Promise<T>): Promise<T> {
+  return withProcessChain(lockDir, async () => {
+    const ownerPath = join(lockDir, "owner");
+    const token = randomUUID();
+    const payload = `${process.pid}\n${token}\n`;
+    const deadline = Date.now() + 5_000;
+    for (;;) {
+      try {
+        await mkdir(lockDir);
+        await writeFile(ownerPath, payload, "utf8");
+        try {
+          return await body();
+        } finally {
+          try {
+            if ((await readFile(ownerPath, "utf8")) === payload) {
+              await unlink(ownerPath);
+              await rmdir(lockDir);
+            }
+          } catch { /* not ours */ }
+        }
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+        let ownerText = "";
+        try {
+          ownerText = await readFile(ownerPath, "utf8");
+        } catch {
+          // empty/partial lock dir — if no live owner file, try rmdir empty
+          try {
+            await rmdir(lockDir);
+            continue;
+          } catch {
+            // busy
+          }
+          if (Date.now() > deadline) throw new Error(`workspace agents skills lock busy: ${lockDir}`);
+          await new Promise((r) => setTimeout(r, 10));
+          continue;
+        }
+        const [pidLine] = ownerText.split(/\r?\n/);
+        const ownerPid = Number(pidLine);
+        if (Number.isInteger(ownerPid) && ownerPid > 0 && !pidAlive(ownerPid)) {
+          throw new Error(
+            `stale workspace agents skills lock at ${lockDir} (dead pid ${ownerPid}); ` +
+              "remove that directory and retry — ak-role does not auto-steal locks (#922).",
+          );
+        }
+        if (Date.now() > deadline) throw new Error(`workspace agents skills lock busy: ${lockDir}`);
+        await new Promise((r) => setTimeout(r, 10));
+      }
+    }
+  });
+}
+
+async function linkIsOurTarget(linkPath: string, target: string): Promise<boolean> {
+  try {
+    return (await lstat(linkPath)).isSymbolicLink() && (await sameReal(linkPath, target));
+  } catch {
+    return false;
+  }
+}
 
 export async function installWorkspaceAgentsSkillsLink(options: {
   readonly cwd: string; readonly packageRoot: string;
@@ -96,60 +210,82 @@ export async function installWorkspaceAgentsSkillsLink(options: {
   const target = await realpath(packagedMethodsDir(options.packageRoot));
   const linkPath = join(options.cwd, ".agents", "skills");
   const agentsDir = dirname(linkPath);
+  const refPath = join(agentsDir, WORKSPACE_AGENTS_SKILLS_REF);
+  const lockDir = join(agentsDir, WORKSPACE_AGENTS_SKILLS_LOCK);
+  const holderId = `${process.pid}:${randomUUID()}`;
+  let held = false;
+  let released = false;
 
   const release = async (): Promise<void> => {
-    const n = createdHolds.get(linkPath);
-    if (n === undefined) return;
-    if (n > 1) {
-      createdHolds.set(linkPath, n - 1);
-      return;
-    }
-    createdHolds.delete(linkPath);
-    try {
-      if ((await lstat(linkPath)).isSymbolicLink() && (await sameReal(linkPath, target))) await unlink(linkPath);
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-    }
-    if (!createdAgentsDirs.has(agentsDir)) return;
-    createdAgentsDirs.delete(agentsDir);
+    if (!held || released) return;
+    released = true;
+    held = false;
+    if (!(await exists(agentsDir))) return;
+    await withDirLock(lockDir, async () => {
+      const cur = await readRef(refPath);
+      if (cur === undefined || cur.target !== target) return;
+      const left = pruneHolders(cur.holders).filter((h) => h !== holderId);
+      if (left.length > 0) {
+        await writeRef(refPath, { target, holders: left });
+        return;
+      }
+      if (await linkIsOurTarget(linkPath, target)) await unlink(linkPath);
+      await unlink(refPath).catch(() => undefined);
+    });
     try {
       if ((await readdir(agentsDir)).length === 0) await rm(agentsDir, { force: true });
     } catch { /* best-effort */ }
   };
 
-  try {
-    const st = await lstat(linkPath);
-    if (!st.isSymbolicLink()) {
-      throw conflict(linkPath, st.isDirectory() ? "pre-existing directory" : "pre-existing non-symlink");
-    }
-    if (!(await sameReal(linkPath, target))) {
-      throw conflict(linkPath, `pre-existing symlink → ${await readlink(linkPath).catch(() => "?")}`);
-    }
-    if (!createdHolds.has(linkPath)) {
-      return Object.freeze({ path: linkPath, created: false, release: async () => undefined });
-    }
-    createdHolds.set(linkPath, (createdHolds.get(linkPath) ?? 0) + 1);
-    return Object.freeze({ path: linkPath, created: true, release });
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
-  }
+  if (!(await exists(agentsDir))) await mkdir(agentsDir, { recursive: true });
 
-  if (!(await exists(agentsDir))) {
-    await mkdir(agentsDir, { recursive: true });
-    createdAgentsDirs.add(agentsDir);
-  }
-  try {
-    await symlink(target, linkPath);
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") return installWorkspaceAgentsSkillsLink(options);
-    if (createdAgentsDirs.has(agentsDir)) {
-      createdAgentsDirs.delete(agentsDir);
-      await rm(agentsDir, { recursive: true, force: true }).catch(() => undefined);
+  await withDirLock(lockDir, async () => {
+    try {
+      const st = await lstat(linkPath);
+      if (!st.isSymbolicLink()) {
+        throw conflict(linkPath, st.isDirectory() ? "pre-existing directory" : "pre-existing non-symlink");
+      }
+      if (!(await sameReal(linkPath, target))) {
+        throw conflict(linkPath, `pre-existing symlink → ${await readlink(linkPath).catch(() => "?")}`);
+      }
+      const cur = await readRef(refPath);
+      const live = cur?.target === target ? pruneHolders(cur.holders) : [];
+      if (live.length === 0 && (cur === undefined || cur.target !== target)) {
+        // Foreign same-target — never own.
+        held = false;
+        return;
+      }
+      await writeRef(refPath, { target, holders: [...live, holderId] });
+      if (!(await linkIsOurTarget(linkPath, target))) {
+        await writeRef(refPath, { target, holders: live }).catch(() => undefined);
+        throw new Error(`workspace method catalog disappeared under lock at ${linkPath}`);
+      }
+      held = true;
+      return;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     }
-    throw e;
+
+    await symlink(target, linkPath);
+    try {
+      await writeRef(refPath, { target, holders: [holderId] });
+    } catch (e) {
+      await unlink(linkPath).catch(() => undefined);
+      throw e;
+    }
+    if (!(await linkIsOurTarget(linkPath, target))) {
+      await unlink(linkPath).catch(() => undefined);
+      await unlink(refPath).catch(() => undefined);
+      throw new Error(`workspace method catalog missing after create at ${linkPath}`);
+    }
+    held = true;
+  });
+
+  if (held) return Object.freeze({ path: linkPath, held: true, release });
+  if (!(await linkIsOurTarget(linkPath, target))) {
+    throw new Error(`workspace method catalog unavailable at ${linkPath}`);
   }
-  createdHolds.set(linkPath, 1);
-  return Object.freeze({ path: linkPath, created: true, release });
+  return Object.freeze({ path: linkPath, held: false, release: async () => undefined });
 }
 
 export async function findGitProjectRoot(start: string): Promise<string | undefined> {
@@ -162,7 +298,55 @@ export async function findGitProjectRoot(start: string): Promise<string | undefi
   return undefined;
 }
 
-/** Loud missing-trust gate: trusted_project_dirs must list the git root (substring match on config text). */
+/** Structured extract of skills.trusted_project_dirs (exact path compare after expand). */
+export function parseHermesTrustedProjectDirs(yaml: string): readonly string[] {
+  const out: string[] = [];
+  let inSkills = false, inTrusted = false, skillsIndent = -1, trustedIndent = -1;
+  for (const raw of yaml.split(/\r?\n/)) {
+    if (/^\s*#/.test(raw) || !raw.trim()) continue;
+    const indent = raw.match(/^ */)?.[0]?.length ?? 0;
+    const t = raw.trim();
+    if (!inSkills) {
+      if (/^skills:\s*$/.test(t)) { inSkills = true; skillsIndent = indent; }
+      continue;
+    }
+    if (indent <= skillsIndent) break;
+    if (!inTrusted) {
+      const m = t.match(/^trusted_project_dirs:\s*(.*)$/);
+      if (!m) continue;
+      inTrusted = true;
+      trustedIndent = indent;
+      const rest = m[1]!.trim();
+      if (rest.startsWith("[") && rest.endsWith("]")) {
+        for (const p of rest.slice(1, -1).split(",")) {
+          const v = p.trim().replace(/^["']|["']$/g, "");
+          if (v) out.push(v);
+        }
+        break;
+      }
+      continue;
+    }
+    if (indent <= trustedIndent) break;
+    const item = t.match(/^- \s*(.+)$/);
+    if (!item) continue;
+    let v = item[1]!.trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
+    // strip inline comments
+    const hash = v.search(/\s+#/);
+    if (hash >= 0) v = v.slice(0, hash).trim();
+    if (v) out.push(v);
+  }
+  return Object.freeze(out);
+}
+
+export async function readHermesTrustedProjectDirs(hermesHome: string): Promise<readonly string[]> {
+  try {
+    return parseHermesTrustedProjectDirs(await readFile(join(hermesHome, "config.yaml"), "utf8"));
+  } catch {
+    return Object.freeze([]);
+  }
+}
+
 export async function assertHermesProjectSkillsTrusted(options: {
   readonly home: string; readonly cwd: string; readonly profileName: string;
 }): Promise<void> {
@@ -171,15 +355,19 @@ export async function assertHermesProjectSkillsTrusted(options: {
     throw new Error("hermes packaged methods need a git project root under cwd so `.agents/skills` can load.");
   }
   const projectReal = await realpath(projectRoot).catch(() => resolve(projectRoot));
-  const homes = [
-    join(options.home, ".hermes", "profiles", options.profileName),
-    join(options.home, ".hermes"),
+  const dirs = [
+    ...await readHermesTrustedProjectDirs(join(options.home, ".hermes", "profiles", options.profileName)),
+    ...await readHermesTrustedProjectDirs(join(options.home, ".hermes")),
   ];
-  for (const hermesHome of homes) {
+  for (const entry of dirs) {
+    const expanded = entry.startsWith("~")
+      ? join(options.home, entry.slice(1).replace(/^\//, ""))
+      : entry;
     try {
-      const text = await readFile(join(hermesHome, "config.yaml"), "utf8");
-      if (text.includes(projectReal) || text.includes(projectRoot) || text.includes(resolve(projectRoot))) return;
-    } catch { /* try next */ }
+      if ((await realpath(expanded)) === projectReal) return;
+    } catch {
+      if (resolve(expanded) === projectReal) return;
+    }
   }
   throw new Error(
     `hermes project skills are not trusted for ${projectReal}. ` +
