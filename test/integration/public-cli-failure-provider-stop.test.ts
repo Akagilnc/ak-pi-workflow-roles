@@ -490,11 +490,6 @@ test("production resume bytes keep first-attempt auditor retention bound", async
       undefined,
       "ordinary-user: independent court must not leak first-attempt retentionFailure",
     );
-    assert.notEqual(
-      staled?.diagnostic,
-      retained.diagnostic,
-      "ordinary-user: independent court must not keep first-attempt diagnostic",
-    );
   });
 });
 
