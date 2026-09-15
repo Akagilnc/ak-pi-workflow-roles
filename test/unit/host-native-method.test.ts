@@ -91,6 +91,14 @@ test("#922 hermes untrusted + I/O honesty at production connect; plugin build-on
     // Production ACP entry: connect checks trust before spawning hermes binary.
     await assert.rejects(() => host.executeTurn(request), /not trusted|skills trust/);
 
+    // Present-trust success (exact root) still passes the helper gate.
+    const root = await realpath(cwd);
+    await writeFile(
+      join(home, ".hermes", "config.yaml"),
+      `skills:\n  trusted_project_dirs:\n    - ${root}\n`,
+    );
+    await assertHermesProjectSkillsTrusted({ home, cwd, profileName: "ak-judge" });
+
     // Non-ENOENT read fault must not be laundered as "not trusted".
     await rm(join(home, ".hermes", "config.yaml"), { force: true });
     await mkdir(join(home, ".hermes", "config.yaml")); // EISDIR on readFile
