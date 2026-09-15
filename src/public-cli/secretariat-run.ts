@@ -123,8 +123,9 @@ export async function runPublicSecretariat(
   await markRunAdmitted(admitted, env.principalAuthority);
 
   // #924 G3 / ADR 0075 / 0081: ticket identity is 起居郎 typed assertion — never
-  // prose regex. 中书省改线上正文，必须有本票；true-unbound / escalate / station
-  // failure 一律受控失败，不照搬给事中允许真无票继续的席位特例。
+  // prose regex. escalate / real station failure → controlled failure; lawful
+  // true-unbound continues unbound (ADR 0075 真无票→无录; 第 0 条不拒收);
+  // ticket → bind + relocate so post-admission can deliver 起居录.
   const outcome = await invokeCourtDiarist(
     {
       instruction: parsed.instruction,
@@ -167,39 +168,24 @@ export async function runPublicSecretariat(
     );
   }
 
-  if (outcome.identity.kind !== "ticket") {
-    return await presentControlledFailure(
-      admitted,
-      {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: new Error(
-          "secretariat requires a bound ticket identity; true-unbound cannot rewrite online body",
-        ),
-      },
-      secretariatAdapters(),
-      env.principalAuthority,
-      io,
-    );
-  }
-
-  try {
-    await bindAdmittedTicketNumber(admitted, outcome.identity.ticketNumber);
-    await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-  } catch (error) {
-    return await presentControlledFailure(
-      admitted,
-      {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error,
-      },
-      secretariatAdapters(),
-      env.principalAuthority,
-      io,
-    );
+  if (outcome.identity.kind === "ticket") {
+    try {
+      await bindAdmittedTicketNumber(admitted, outcome.identity.ticketNumber);
+      await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+    } catch (error) {
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: error,
+        },
+        secretariatAdapters(),
+        env.principalAuthority,
+        io,
+      );
+    }
   }
 
   const turnRequest = buildSecretariatTurnRequest(admitted, {
