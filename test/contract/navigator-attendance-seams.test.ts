@@ -1,4 +1,5 @@
 // #420 整改拆分：接缝与恢复家族
+// #178: package-default-dependent prepare loops culled; live no-home contracts retained.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
@@ -7,7 +8,7 @@ import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
-import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
+import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
@@ -27,16 +28,11 @@ import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
-import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
-import { createPiRoleHostAdapter, toPiContext } from "../../src/pi/adapter.ts";
 import type { RoleEnvelopeHost, RoleHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
   context,
-  candidate,
-  sessionHarness,
-  attendance,
-  settleAnsweringRebind } from "../helpers/navigator-attendance-kit.ts";
+  attendance } from "../helpers/navigator-attendance-kit.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot, seedGitRepository, withActivationHome } from "../helpers/pi-test-harness.ts";
 import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
@@ -137,6 +133,91 @@ test("prepare tool accepts direction-only and broken ancillary shape once withou
   assert.equal((second as { terminate?: boolean }).terminate, true);
   assert.equal((second as { details?: { error?: string } }).details?.error, undefined);
 });
+
+test("prepare provider schema admits object-root nested malformation through real Tool validation", async () => {
+  const accepted: unknown[] = [];
+  const tool = createNavigatorPrepareTool((value) => { accepted.push(value); });
+  // Production gate is pi-ai validateToolArguments against tool.parameters — not direct execute.
+  // Nested advisory shape must never reject before the unique execute/normalize path.
+  const payloads = [
+    { name: "route:string", args: { candidates: [{ next: { role: "judge" }, route: "coder→judge" }] } },
+    { name: "reason:number", args: { candidates: [{ next: { role: "judge" }, reason: 42 }] } },
+    { name: "matches:string", args: { candidates: [{ next: { role: "judge" }, matches: "fixer" }] } },
+    { name: "missing candidates", args: {} },
+    { name: "candidates:string", args: { candidates: "malformed" } },
+    { name: "candidates:[42]", args: { candidates: [42] } },
+    { name: "next:string", args: { candidates: [{ next: "malformed" }] } },
+  ] as const;
+  for (const payload of payloads) {
+    const validated = validateToolArguments(tool as never, {
+      id: payload.name,
+      name: tool.name,
+      arguments: structuredClone(payload.args) } as never);
+    const result = await tool.execute(payload.name, validated as never, undefined, undefined, {} as never);
+    assert.equal((result as { terminate?: boolean }).terminate, true, `${payload.name} must terminate once`);
+  }
+  assert.equal(accepted.length, payloads.length, "every object-root payload reaches the unique execute sink exactly once");
+});
+
+test("advice command registry targets match packaged role registry", () => {
+  // #178: keep the no-home registry contract; prepare/command loops that needed
+  // package navigator default were culled with the default.
+  assert.deepEqual(
+    NAVIGATOR_TARGETS.map(({ role }) => role),
+    PACKAGED_ROLE_REGISTRY.map(({ role }) => role),
+  );
+  assert.deepEqual(
+    PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => ({ role, outputTool })),
+    [
+      { role: "judge", outputTool: JUDGE_OUTPUT_TOOL_NAME },
+      { role: "fixer", outputTool: FIXER_OUTPUT_TOOL_NAME },
+      { role: "coder", outputTool: CODER_OUTPUT_TOOL_NAME },
+      { role: "reviewer", outputTool: REVIEWER_OUTPUT_TOOL_NAME },
+      { role: "collector", outputTool: COLLECTOR_OUTPUT_TOOL },
+      { role: "doctor", outputTool: DOCTOR_OUTPUT_TOOL_NAME },
+      { role: "merger", outputTool: MERGER_OUTPUT_TOOL_NAME },
+      { role: "notary", outputTool: NOTARY_OUTPUT_TOOL_NAME },
+      { role: "countersign", outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME },
+      { role: "gleaner-left", outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME },
+      { role: "inspector", outputTool: INSPECTOR_OUTPUT_TOOL_NAME },
+      { role: "gatekeeper", outputTool: "ak_gatekeeper_output" },
+      { role: "navigator", outputTool: "ak_navigator_output" },
+      { role: "auditor", outputTool: "ak_auditor_output" },
+      { role: "diarist", outputTool: "ak_diarist_output" },
+    ],
+  );
+});
+
+test("empty authority at prepare is honest context unavailable", async () => {
+  await withTempRoot("navigator-empty-authority-", async (root) => {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const events: any[] = [];
+    const nav = createNavigatorAttendance({
+      context: context(),
+      role: "judge",
+      phase: null,
+      subjectKey: "/repo/.ak/work",
+      subject: "work subject: /repo/.ak/work",
+      authority: "",
+      loadSoul: async () => "route law",
+      loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
+      modelSettingPath: setting,
+      createSession: async () => {
+        throw new Error("session must not open without authority");
+      },
+      onEvent: async (event) => { events.push(event); } });
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
+    assert.equal(events.length, 1);
+    assert.equal(events[0].disposition, "unavailable");
+    assert.equal(events[0].unavailableSource, "context");
+    assert.equal(events[0].unavailableCause, "context");
+    assert.equal(events[0].next, undefined);
+    assert.notEqual(events[0].unavailableReason, undefined);
+    });
+});
+
 
 test("public admitted-request projects typed subject/authority; missing/malformed stay source=context", async () => {
   await withTempRoot("navigator-admitted-request-", async (root) => {
