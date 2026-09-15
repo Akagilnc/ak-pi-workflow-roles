@@ -57,6 +57,7 @@ test("host priority and pi equivalence run through the public call entry", async
 }));
 
 test("host selection failures are canonical and stop before role turn", async () => homeTest(async (home) => {
+  await configureJudge(home);
   let turnCalls = 0;
   const countingHost: RoleTurnHost = {
     executeTurn: async () => {
@@ -149,6 +150,11 @@ test("resume accepts --host and selects that host adapter", async () => {
     seedGitProject(project);
     const runId = "run-resume-host-flag";
     await seedResumableJudge({ home, project, runId });
+    await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], {
+      packageRoot,
+      home,
+      io: captureIo().io,
+    });
 
     const selected: string[] = [];
     const { io } = captureIo();
@@ -291,8 +297,7 @@ test("host provider resolution prefers table, then unique directory, else fails 
 
   // Unregistered host fails as host-unregistered — never as a model/provider error.
   // Production adapter table on this build has no hermes; use pi-only adapters.
-  const unregistered = await runAkRole(
-    ["judge", "--host", "hermes", "host-first"],
+  const unregistered = await runAkRole(["judge", "--host", "hermes", "host-first"],
     base(home, [probe("pi")]),
   );
   assert.equal(unregistered.exitCode, 1);
@@ -391,8 +396,7 @@ process.exit(0);
 test("admission writes typed birth host onto invocation.json", async () => homeTest(async (home) => {
   const selected: string[] = [];
   await configureJudge(home, "grok-build");
-  await runAkRole(
-    ["judge", "record-birth-host"],
+  await runAkRole(["judge", "record-birth-host"],
     base(home, [adapter("pi", selected), adapter("grok-build", selected)]),
   );
   assert.deepEqual(selected, ["grok-build"]);
@@ -420,7 +424,7 @@ async function seedResumableJudge(input: {
 }): Promise<void> {
   const { io } = captureIo();
   const principalAuthority = input.principalAuthority ?? piDurablePrincipalAuthority;
-  await runAkRole(["judge", `seed-${input.runId}`], {
+  await runAkRole(["judge", "--model", "openai-codex/gpt-5.6-sol:high", `seed-${input.runId}`], {
     packageRoot,
     home: input.home,
     cwd: input.project,
@@ -652,8 +656,7 @@ rl.on("line", (line) => {
 
       await runAkRole(["config", "set", "coder", "xai/grok-4.5:high"], productionBase(home));
       await runAkRole(["config", "set-host", "coder", "grok-build"], productionBase(home));
-      const result = await runAkRole(
-        ["coder", "--project", project, assignment],
+      const result = await runAkRole(["coder", "--project", project, assignment],
         { ...productionBase(home), cwd: project, createRunId: () => "run-822-coder-grok" },
       );
 
@@ -701,8 +704,7 @@ process.exit(0);
 
       await runAkRole(["config", "set", "coder", "openai-codex/gpt-5.6-sol:high"], productionBase(home));
       await runAkRole(["config", "set-host", "coder", "claude"], productionBase(home));
-      const result = await runAkRole(
-        ["coder", "--project", project, assignment],
+      const result = await runAkRole(["coder", "--project", project, assignment],
         { ...productionBase(home), cwd: project, createRunId: () => "run-822-coder-claude" },
       );
 

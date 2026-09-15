@@ -41,7 +41,7 @@ test("malformed CLI structure and empty --project= reject structurally before ad
   const rows = [
     {
       label: "unknown flag",
-      args: (project: string) => ["judge", "--not-a-real-flag", "task", "--project", project],
+      args: (project: string) => ["judge", "--model", "test/caller-seat:high", "--not-a-real-flag", "task", "--project", project],
     },
     {
       // Empty project must not resolve("") → cwd and complete admission/dispatch.
@@ -94,8 +94,7 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     const domainProse =
       "Adjudicate missing issue #999999 and absent PR https://example.invalid/x/y/pull/404 with no local authority.";
 
-    const result = await runAkRole(
-      ["judge", "--project", project, domainProse],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, domainProse],
       {
         packageRoot,
         home,
@@ -365,8 +364,7 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
     // Counterexample 1: Error then real-shaped JSONL tool_execution_end.
     {
       const { io, stdout, stderr } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--project", project, "jsonl flood"],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "jsonl flood"],
         {
           packageRoot,
           home,
@@ -409,8 +407,7 @@ test("JSONL tool_execution event flood keeps real diagnostic; oversized line is 
     {
       const stderrText = oversizedDiagnosticStderr();
       const { io, stdout, stderr } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--project", project, "oversized diagnostic"],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "oversized diagnostic"],
         {
           packageRoot,
           home,
@@ -459,8 +456,7 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "needs owner decision"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "needs owner decision"],
       {
         packageRoot,
         home,
@@ -529,8 +525,7 @@ test("no lawful typed terminal result exits nonzero; unrecognized keeps identity
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
 
-    const result = await runAkRole(
-      ["judge", "--project", project, "will throw"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "will throw"],
       {
         packageRoot,
         home,
@@ -567,8 +562,7 @@ test("post-admission throw undefined stays unrecognized (not activation/null-exi
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
 
-    const result = await runAkRole(
-      ["judge", "--project", project, "runner throws undefined"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "runner throws undefined"],
       {
         packageRoot,
         home,
@@ -606,8 +600,7 @@ test("timeout controlled failure settles with typed timeout cause and Error Arti
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "slow"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "slow"],
       {
         packageRoot,
         home,
@@ -664,8 +657,7 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     const { io } = captureIo();
     let calls = 0;
     let sessionFile = "";
-    const result = await runAkRole(
-      ["judge", "--project", project, "failure then accepted across legs"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "failure then accepted across legs"],
       {
         packageRoot,
         home,
@@ -815,8 +807,7 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
     const bounceParams = { judgeStatus: "converged", report: "bounce-verdict" };
     const infraParams = { judgeStatus: "converged", report: "infra-verdict" };
 
-    const result = await runAkRole(
-      ["judge", "--project", project, "host aborts after non-sealed submissions"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "host aborts after non-sealed submissions"],
       {
         packageRoot,
         home,

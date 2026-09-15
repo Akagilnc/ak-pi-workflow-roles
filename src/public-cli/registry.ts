@@ -1,6 +1,6 @@
 /**
- * Typed public CLI registry — sole source for discoverable commands, seats,
- * and startup model candidates (ADR 0052 / #105).
+ * Typed public CLI registry — sole source for discoverable commands and seats
+ * (ADR 0052 / #105). Model is caller-specified only (#178) — no package candidates.
  */
 import {
   PACKAGED_ROLE_REGISTRY,
@@ -53,70 +53,6 @@ export function seatModelOnly(
   return seat.thinking === undefined
     ? { provider: seat.provider, model: seat.model }
     : { provider: seat.provider, model: seat.model, thinking: seat.thinking };
-}
-
-/**
- * Package startup candidates (#11): Codex family first, then Grok 4.5.
- * Selection among candidates is credential-driven at resolve time.
- */
-const STARTUP_CANDIDATES: Record<PublicConfigurableSeat, readonly ModelRef[]> = {
-  judge: [
-    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ],
-  countersign: [
-    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ],
-  "gleaner-left": [
-    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ],
-  reviewer: [
-    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ],
-  coder: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ],
-  fixer: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ],
-  collector: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ],
-  doctor: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ],
-  merger: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ],
-  // #620: subordinate officers inherit gatekeeper; no package startup model.
-  notary: [],
-  // #453/#620/#639: gatekeeper callable but no package startup model — caller
-  // configures it or inherits on the province path.
-  gatekeeper: [],
-  inspector: [],
-  navigator: [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ],
-  // #675: auditor public seat — no package startup; caller configures.
-  auditor: [],
-  // #708 `diarist-seat-default`: owner-set initial value; changed in the seat
-  // table like any other seat. No engine axis, package-default host.
-  diarist: [{ provider: "xai", model: "grok-4.5", thinking: "medium" }],
-};
-
-export function publicStartupCandidates(
-  seat: PublicConfigurableSeat,
-): readonly ModelRef[] {
-  return STARTUP_CANDIDATES[seat];
 }
 
 /** Deterministic public commands — discoverable, never LLM-configurable seats. */

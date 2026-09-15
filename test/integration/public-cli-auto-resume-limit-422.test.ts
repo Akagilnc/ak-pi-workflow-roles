@@ -95,7 +95,7 @@ test("#422 configured autoResumeLimit=N changes ceiling via real entry (judge, N
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="422-e2e-n1";const callsRef={n:0};
     const {io}=captureIo();
-    const result=await runAkRole(["judge","--project",project,"auto"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
+    const result=await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"auto"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
@@ -114,7 +114,7 @@ test("#422 configured autoResumeLimit=0 disables auto resume via real entry (jud
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="422-e2e-zero";const callsRef={n:0};
     const {io}=captureIo();
-    const result=await runAkRole(["judge","--project",project,"auto"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
+    const result=await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"auto"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,

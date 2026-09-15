@@ -367,7 +367,7 @@ test("typed groups travel from real output settlement into the report artifact",
     await mkdir(project);
     seedProject(project);
     const stdout: string[] = [];
-    const result = await runAkRole(["collector", "--pr", "1168", "--repo", "acme/widgets", "--project", project], {
+    const result = await runAkRole(["collector", "--model", "test/caller-seat:high", "--pr", "1168", "--repo", "acme/widgets", "--project", project], {
       packageRoot,
       home,
       cwd: project,
@@ -570,8 +570,7 @@ test("#676 J2 MERGED prState travels from sealed receipt into public Terminal", 
       prState: "MERGED",
       requestAttempts: [],
     });
-    const result = await runAkRole(
-      ["collector", "--pr", "9", "--repo", "acme/widgets", "--project", project, "Collect closed PR materials."],
+    const result = await runAkRole(["collector", "--model", "test/caller-seat:high", "--pr", "9", "--repo", "acme/widgets", "--project", project, "Collect closed PR materials."],
       {
         packageRoot,
         home,
@@ -615,8 +614,7 @@ test("#676 J2 CLOSED non-OPEN prState still returns materials without inventing 
     await mkdir(project);
     seedProject(project);
     const details = receipt({ prNumber: 11, prState: "CLOSED", requestAttempts: [] });
-    const result = await runAkRole(
-      ["collector", "--pr", "11", "--repo", "acme/widgets", "--project", project],
+    const result = await runAkRole(["collector", "--model", "test/caller-seat:high", "--pr", "11", "--repo", "acme/widgets", "--project", project],
       {
         packageRoot,
         home,

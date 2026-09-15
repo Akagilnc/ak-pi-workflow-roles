@@ -120,8 +120,7 @@ test("public gleaner-left settles empty 弹章 as typed Terminal", async () => {
     const runId = "01a0glean00-0000-7000-8000-000000000010";
     const receipt = { status: "completed" as const, findings: [] as const };
     const { io } = captureIo();
-    const result = await runAkRole(
-      ["gleaner-left", "--project", project, "--base", "HEAD"],
+    const result = await runAkRole(["gleaner-left", "--model", "test/caller-seat:high", "--project", project, "--base", "HEAD"],
       {
         home,
         packageRoot,
@@ -176,8 +175,7 @@ test("public gleaner-left settles nonempty 弹章 pointer/statement as typed Ter
       ],
     };
     const { io } = captureIo();
-    const result = await runAkRole(
-      ["gleaner-left", "--project", project, "--base", "HEAD"],
+    const result = await runAkRole(["gleaner-left", "--model", "test/caller-seat:high", "--project", project, "--base", "HEAD"],
       {
         home,
         packageRoot,
@@ -214,8 +212,7 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
     const runId = "01a0glean00-0000-7000-8000-0000000000aa";
     // Ticket acceptance surface: interrupt first (unsealed), then resume lands a
     // distinct sealed 弹章 — not a vacuous re-read of a first-run seal (#599).
-    const first = await runAkRole(
-      ["gleaner-left", "--project", project, "--base", "HEAD"],
+    const first = await runAkRole(["gleaner-left", "--model", "test/caller-seat:high", "--project", project, "--base", "HEAD"],
       {
         home,
         packageRoot,
@@ -256,7 +253,7 @@ test("ak-role resume continues gleaner-left on the exact session and base", asyn
     });
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
-    const resumed = await runAkRole(["resume", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       home,
       packageRoot,
       cwd: project,
@@ -305,8 +302,7 @@ test("gleaner-left resume timeout is not masked by a prior-attempt residual", as
     seedGitProject(project);
 
     const runId = "01a0glean00-0000-7000-8000-0000000000ac";
-    const first = await runAkRole(
-      ["gleaner-left", "--project", project, "--base", "HEAD"],
+    const first = await runAkRole(["gleaner-left", "--model", "test/caller-seat:high", "--project", project, "--base", "HEAD"],
       {
         home,
         packageRoot,
@@ -335,7 +331,7 @@ test("gleaner-left resume timeout is not masked by a prior-attempt residual", as
     );
 
     const { io, stdout } = captureIo();
-    const resumed = await runAkRole(["resume", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       home,
       packageRoot,
       cwd: project,

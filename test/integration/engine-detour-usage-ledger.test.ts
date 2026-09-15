@@ -272,7 +272,15 @@ async function runPublicJudge(input: {
   readonly headerOnlySession?: boolean;
 }): Promise<{ readonly result: Awaited<ReturnType<typeof runAkRole>> }> {
   const { io } = captureIo();
-  const args = ["judge", "--project", input.project, "engine usage ledger"];
+  // #178: fresh public judge under hermetic home needs per-call --model (no seat table).
+  const args = [
+    "judge",
+    "--model",
+    "test/caller-seat:high",
+    "--project",
+    input.project,
+    "engine usage ledger",
+  ];
   if (input.engine !== undefined) args.push("--engine", input.engine);
 
   const result = await runAkRole(args, {
@@ -565,7 +573,18 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
       const runId = "r-hostprov";
       const { io, stdout, stderr } = captureIo();
       const result = await runAkRole(
-        ["judge", "--project", project, "host provenance", "--engine", ENGINE, "--host", "codex"],
+        [
+          "judge",
+          "--model",
+          "test/caller-seat:high",
+          "--project",
+          project,
+          "host provenance",
+          "--engine",
+          ENGINE,
+          "--host",
+          "codex",
+        ],
         {
           packageRoot,
           home,
@@ -647,7 +666,16 @@ test("public entry: in-place auto-resume keeps one invocation scope across detou
 
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(
-      ["judge", "--project", project, "auto-resume scope", "--engine", ENGINE],
+      [
+        "judge",
+        "--model",
+        "test/caller-seat:high",
+        "--project",
+        project,
+        "auto-resume scope",
+        "--engine",
+        ENGINE,
+      ],
       {
         packageRoot,
         home,
@@ -748,7 +776,16 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
     {
       const { io } = captureIo();
       const first = await runAkRole(
-        ["judge", "--project", project, "seed detour", "--engine", ENGINE],
+        [
+          "judge",
+          "--model",
+          "test/caller-seat:high",
+          "--project",
+          project,
+          "seed detour",
+          "--engine",
+          ENGINE,
+        ],
         {
           packageRoot,
           home,

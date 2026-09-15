@@ -36,13 +36,15 @@ test("public CLI multi-turn audit escalate covers audited seats", async () => {
     judge: {
       output: JUDGE_OUTPUT_TOOL_NAME,
       audit: JUDGE_AUDIT_TOOL_NAME,
-      argv: (project: string) => ["judge", "--project", project, "multi-turn audit escalate"],
+      argv: (project: string) => ["judge", "--model", "test/caller-seat:high", "--project", project, "multi-turn audit escalate"],
     },
     doctor: {
       output: DOCTOR_OUTPUT_TOOL_NAME,
       audit: DOCTOR_AUDIT_TOOL_NAME,
       argv: (project: string) => [
         "doctor",
+        "--model",
+        "test/caller-seat:high",
         "--issue",
         "373",
         "--project",
@@ -269,8 +271,7 @@ test("public report publication failures retain typed errno identity", async () 
       await mkdir(project, { recursive: true });
       seedGitProject(project);
       const { io, stdout, stderr } = captureIo();
-      const result = await runAkRole(
-        ["judge", "--project", project, "lawful then publish fails"],
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then publish fails"],
         {
           packageRoot,
           home,
@@ -335,7 +336,7 @@ test("zero-exit post-admission runs with no accepted row settle honestly as no_r
   const rows = [
     {
       label: "missing session",
-      argv: (project: string) => ["judge", "--project", project, "no session bytes"],
+      argv: (project: string) => ["judge", "--model", "test/caller-seat:high", "--project", project, "no session bytes"],
       runId: "run-session-missing-001",
       seedSession: async (_sessionFile: string) => {
         // Admitted session directory exists but holds no transcript.
@@ -343,7 +344,7 @@ test("zero-exit post-admission runs with no accepted row settle honestly as no_r
     },
     {
       label: "unsealed coder toolResult with a status coder does not recognize",
-      argv: (project: string) => ["coder", "apply", "--project", project, "bogus details"],
+      argv: (project: string) => ["coder", "--model", "test/caller-seat:high", "apply", "--project", project, "bogus details"],
       runId: "run-coder-output-bogus-001",
       seedSession: async (sessionFile: string) => {
         await writeFile(
@@ -363,7 +364,7 @@ test("zero-exit post-admission runs with no accepted row settle honestly as no_r
     },
     {
       label: "unsealed judge toolResult with a status judge does not recognize",
-      argv: (project: string) => ["judge", "--project", project, "bogus details"],
+      argv: (project: string) => ["judge", "--model", "test/caller-seat:high", "--project", project, "bogus details"],
       runId: "run-output-bogus-001",
       seedSession: async (sessionFile: string) => {
         await writeFile(
@@ -420,8 +421,7 @@ test("production knownFailure channel reaches settlement as provider with typed 
     const { io, stdout, stderr } = captureIo();
     // Resolved runner result — production-owned channel on ExplicitInternalPiResult,
     // not an ad-hoc thrown Error property and not stderr-prose inference.
-    const result = await runAkRole(
-      ["judge", "--project", project, "provider down"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "provider down"],
       {
         packageRoot,
         home,
@@ -482,8 +482,7 @@ test("production ExplicitInternalActivationError throw keeps provider cause and 
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "provider throw"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "provider throw"],
       {
         packageRoot,
         home,
@@ -638,8 +637,7 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "already settled"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "already settled"],
       {
         packageRoot,
         home,

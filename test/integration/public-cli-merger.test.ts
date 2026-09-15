@@ -459,7 +459,7 @@ test("ak-role merger dispatches and settles escalate without active merge and co
     // Blank instruction → structural reject, no run.
     {
       const { io, stderr } = captureIo();
-      const result = await runAkRole(["merger", "   "], {
+      const result = await runAkRole(["merger", "--model", "test/caller-seat:high", "   "], {
         packageRoot,
         home,
         cwd: project,
@@ -485,8 +485,7 @@ test("ak-role merger dispatches and settles escalate without active merge and co
         packageRoot,
         "resolving-merge-conflicts",
       );
-      const result = await runAkRole(
-        ["merger", "Resolve whatever is open."],
+      const result = await runAkRole(["merger", "--model", "test/caller-seat:high", "Resolve whatever is open."],
         {
           packageRoot,
           home,
@@ -536,8 +535,7 @@ test("ak-role merger dispatches and settles escalate without active merge and co
         packageRoot,
         "resolving-merge-conflicts",
       );
-      const result = await runAkRole(
-        ["merger", "--project", conflicted, "Reconcile both intents."],
+      const result = await runAkRole(["merger", "--model", "test/caller-seat:high", "--project", conflicted, "Reconcile both intents."],
         {
           packageRoot,
           home,
@@ -606,8 +604,7 @@ test("ak-role resume continues merger with package method and exact session", as
 
     {
       const { io } = captureIo();
-      const first = await runAkRole(
-        ["merger", "--project", project, instruction],
+      const first = await runAkRole(["merger", "--model", "test/caller-seat:high", "--project", project, instruction],
         {
           packageRoot,
           home,
@@ -659,7 +656,7 @@ test("ak-role resume continues merger with package method and exact session", as
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
-    const resumed = await runAkRole(["resume", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,
@@ -742,7 +739,7 @@ test("public Merger retains malformed output candidate as typed incomplete", asy
     await mkdir(project, { recursive: true });
     await materializeConflictedRepo(project);
     const candidate = { status: "unknown-shape", attemptId: "run-merger-residual-182", report: 7 };
-    const result = await runAkRole(["merger", "--project", project, "merge"], {
+    const result = await runAkRole(["merger", "--model", "test/caller-seat:high", "--project", project, "merge"], {
       packageRoot, home, cwd: project,
       credentials: { "openai-codex": true, xai: true },
       createRunId: () => "run-merger-residual-182",

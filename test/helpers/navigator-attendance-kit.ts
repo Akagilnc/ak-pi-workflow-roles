@@ -5,12 +5,14 @@
 import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorCandidate, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
 import { RECEIPT_DELIVERY_TURN_LIMIT, type NoReceiptLifecycleFacts } from "../../src/receipt-delivery-policy.ts";
 
-export function context() {
+export function context(home?: string) {
   return {
     sessionManager: {
       getSessionId: () => "invocation",
     },
     cwd: "/repo",
+    // Explicit home only — callers write seat fixture under their own withTempRoot.
+    ...(typeof home === "string" ? { home } : {}),
   } as never;
 }
 
@@ -104,9 +106,15 @@ export function sessionHarness() {
   };
 }
 
-export async function attendance(path: string, harness: ReturnType<typeof sessionHarness>, events: any[], loadRoleHelp: (role: string) => Promise<string> = async (role) => `pi --ak-role ${role} --help`) {
+export async function attendance(
+  path: string,
+  harness: ReturnType<typeof sessionHarness>,
+  events: any[],
+  loadRoleHelp: (role: string) => Promise<string> = async (role) => `pi --ak-role ${role} --help`,
+  home?: string,
+) {
   return createNavigatorAttendance({
-    context: context(), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
+    context: context(home), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
     subject: "Fix issue 28", authority: "owner decision",
     loadSoul: async () => "route judgment",
     loadRoutePlaybook: async () => "arbitrary advisory prose",

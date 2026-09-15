@@ -6,7 +6,6 @@ import {
   PUBLIC_CLI_SUPPORT_COMMANDS,
   PUBLIC_CONFIGURABLE_SEATS,
   listHelpCapabilities,
-  publicStartupCandidates,
 } from "../../src/public-cli/registry.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 
@@ -198,42 +197,4 @@ test("help capabilities derive from typed public registry facts", () => {
     false,
     "analyst is deterministic, not an LLM-configurable seat",
   );
-});
-
-test("startup model candidates follow #11 package defaults per seat", () => {
-  assert.deepEqual(publicStartupCandidates("judge"), [
-    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ]);
-  // #572 给事中 — same sol/high court tier as judge (ticket-court review).
-  assert.deepEqual(publicStartupCandidates("countersign"), [
-    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "high" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ]);
-  assert.deepEqual(publicStartupCandidates("reviewer"), [
-    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ]);
-  assert.deepEqual(publicStartupCandidates("gleaner-left"), [
-    { provider: "openai-codex", model: "gpt-5.6-sol", thinking: "medium" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ]);
-  assert.deepEqual(publicStartupCandidates("navigator"), [
-    { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "medium" },
-    { provider: "xai", model: "grok-4.5", thinking: "high" },
-  ]);
-  // #708 `diarist-seat-default`: owner-set initial value, no special-casing.
-  assert.deepEqual(publicStartupCandidates("diarist"), [
-    { provider: "xai", model: "grok-4.5", thinking: "medium" },
-  ]);
-  // #620: subordinate province officers have no package startup — inherit gatekeeper instead.
-  assert.deepEqual(publicStartupCandidates("inspector"), []);
-  assert.deepEqual(publicStartupCandidates("notary"), []);
-  assert.deepEqual(publicStartupCandidates("gatekeeper"), []);
-  for (const seat of ["coder", "fixer", "collector", "doctor", "merger"] as const) {
-    assert.deepEqual(publicStartupCandidates(seat), [
-      { provider: "openai-codex", model: "gpt-5.6-luna", thinking: "high" },
-      { provider: "xai", model: "grok-4.5", thinking: "high" },
-    ]);
-  }
 });

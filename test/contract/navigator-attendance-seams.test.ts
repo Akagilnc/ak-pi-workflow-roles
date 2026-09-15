@@ -1,4 +1,5 @@
 // #420 整改拆分：接缝与恢复家族
+// #178: restore prepare consumers with per-case seat fixture + explicit context.home.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
@@ -27,13 +28,10 @@ import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
-import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { loadNavigatorWorkContext, resolveNavigatorAuthorityMaterial } from "../../extensions/role-runtime.ts";
-import { createPiRoleHostAdapter, toPiContext } from "../../src/pi/adapter.ts";
 import type { RoleEnvelopeHost, RoleHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import {
   context,
-  candidate,
   sessionHarness,
   attendance,
   settleAnsweringRebind } from "../helpers/navigator-attendance-kit.ts";
@@ -164,13 +162,18 @@ test("prepare provider schema admits object-root nested malformation through rea
 
   // Usable next survives nested malformation after real validate→execute→settle.
   await withTempRoot("navigator-schema-gate-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events);
+      const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
       while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
       const usableArgs = {
@@ -206,7 +209,7 @@ test("prepare provider schema admits object-root nested malformation through rea
     ] as const) {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events);
+      const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
       while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
       const validated = validateToolArguments(harness.tool() as never, {
@@ -233,6 +236,11 @@ test("prepare provider schema admits object-root nested malformation through rea
 
 test("direction-only prepare settles recommendation; missing next is honest unavailable", async () => {
   await withTempRoot("navigator-direction-only-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
@@ -241,7 +249,7 @@ test("direction-only prepare settles recommendation; missing next is honest unav
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events);
+      const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
       while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
       const directionOnly = { candidates: [{ next: { role: "fixer", phase: "apply" } }] };
@@ -273,7 +281,7 @@ test("direction-only prepare settles recommendation; missing next is honest unav
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events);
+      const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
       while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
       const brokenRoute = {
@@ -305,7 +313,7 @@ test("direction-only prepare settles recommendation; missing next is honest unav
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events);
+      const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
       while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
       const noNext = { candidates: [{ reason: "still thinking", route: [{ role: "not-a-role", phase: null }] }] };
@@ -336,6 +344,11 @@ test("direction-only prepare settles recommendation; missing next is honest unav
 
 test("advice command derives phase token from registry metadata for every packaged role", async () => {
   await withTempRoot("navigator-command-registry-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
@@ -374,7 +387,7 @@ test("advice command derives phase token from registry metadata for every packag
       for (const phase of entry.phases) {
         const harness = sessionHarness();
         const events: any[] = [];
-        const nav = await attendance(setting, harness, events);
+        const nav = await attendance(setting, harness, events, undefined, root);
         nav.prepare();
         while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
         const batch = { candidates: [{ next: { role: entry.role, phase } }] };
@@ -407,6 +420,11 @@ test("advice command derives phase token from registry metadata for every packag
 
 test("completed Fixer/Coder settlement does not invent next without model/authority direction", async () => {
   await withTempRoot("navigator-no-invented-route-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
@@ -414,7 +432,7 @@ test("completed Fixer/Coder settlement does not invent next without model/author
       const harness = sessionHarness();
       const events: any[] = [];
       const nav = createNavigatorAttendance({
-        context: context(), role, phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
+        context: context(root), role, phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
         subject: "work", authority: "owner decision",
         loadSoul: async () => "route judgment",
         loadRoleHelp: async (r) => `help ${r}`,
@@ -458,7 +476,7 @@ test("completed Fixer/Coder settlement does not invent next without model/author
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = createNavigatorAttendance({
-      context: context(), role: "fixer", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
+      context: context(root), role: "fixer", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
       subject: "work", authority: "Controlling authority names coder apply next.",
       loadSoul: async () => "route judgment",
       loadRoleHelp: async (r) => `help ${r}`,
@@ -488,7 +506,6 @@ test("completed Fixer/Coder settlement does not invent next without model/author
     assert.deepEqual(events[0]?.next, { role: "coder", phase: "apply" });
   });
 });
-
 test("empty authority at prepare is honest context unavailable", async () => {
   await withTempRoot("navigator-empty-authority-", async (root) => {
     const setting = join(root, "model.json");
@@ -518,6 +535,7 @@ test("empty authority at prepare is honest context unavailable", async () => {
     assert.notEqual(events[0].unavailableReason, undefined);
     });
 });
+
 
 test("public admitted-request projects typed subject/authority; missing/malformed stay source=context", async () => {
   await withTempRoot("navigator-admitted-request-", async (root) => {
@@ -621,6 +639,18 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   try {
     await withActivationHome({ prefix: "ak-nav-station-child-" }, async ({ home }) => {
+      // Nested diarist/countersign need caller-set models (#178).
+      const { runAkRole } = await import("../../src/public-cli/cli.ts");
+      await runAkRole(
+        ["config", "set",
+          "countersign", "test/caller-seat:high",
+          "diarist", "test/caller-seat:high",
+          "judge", "test/caller-seat:high",
+          "notary", "test/caller-seat:high",
+          "gatekeeper", "test/caller-seat:high",
+        ],
+        { packageRoot, home, io: { stdout() {}, stderr() {} } },
+      );
       async function attendanceCreatedFromTurn(request: RoleTurnRequest): Promise<boolean> {
         const runDir = request.runDirectory;
         await mkdir(join(runDir, "session"), { recursive: true });

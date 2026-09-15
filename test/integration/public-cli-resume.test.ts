@@ -338,8 +338,7 @@ test("quota-like prose without typed 429 is not resumable", async () => {
     const { io } = captureIo();
     const runId = "run-prose-not-resume-001";
 
-    const result = await runAkRole(
-      ["judge", "--project", project, "prose only"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "prose only"],
       {
         packageRoot,
         home,
@@ -389,8 +388,7 @@ test("lawful terminal result wins over typed 429 observation", async () => {
     const { io } = captureIo();
     const runId = "run-lawful-wins-001";
 
-    const result = await runAkRole(
-      ["judge", "--project", project, "already settled"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "already settled"],
       {
         packageRoot,
         home,
@@ -458,8 +456,7 @@ test("within-attempt earlier 429 does not qualify resume after a later non-429 r
     const { io, stdout } = captureIo();
     const runId = "run-within-attempt-stale-429-001";
 
-    const result = await runAkRole(
-      ["judge", "--project", project, "stale within-attempt 429"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "stale within-attempt 429"],
       {
         packageRoot,
         home,
@@ -537,8 +534,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
     // Attempt 1: typed 429 → resumable.
     {
       const { io } = captureIo();
-      const first = await runAkRole(
-        ["judge", "--project", project, "first attempt quota"],
+      const first = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "first attempt quota"],
         {
           packageRoot,
           home,
@@ -593,7 +589,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
     // Attempt 2 (resume): non-429 failure. Prior observation must not qualify resume.
     const { io, stdout } = captureIo();
     let resumeDispatches = 0;
-    const second = await runAkRole(["resume", runId], {
+    const second = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,
@@ -646,8 +642,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       "lawful despite later publication failure",
     );
 
-    const result = await runAkRole(
-      ["judge", "--project", project, "lawful then publish fails under 429"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then publish fails under 429"],
       {
         packageRoot,
         home,
@@ -702,7 +697,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       },
     });
     const { io: resumeIo } = captureIo();
-    await runAkRole(["resume", runId], {
+    await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,
@@ -722,7 +717,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     assert.equal((await stat(reportPath)).isDirectory(), true);
     await rm(reportPath, { recursive: true, force: true });
     const { io: rebuildIo } = captureIo();
-    const rebuilt = await runAkRole(["resume", runId], {
+    const rebuilt = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,
@@ -780,8 +775,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       "lawful then dispatch throws after seal",
     );
 
-    const result = await runAkRole(
-      ["judge", "--project", project, "lawful then throw after seal under 429"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then throw after seal under 429"],
       {
         packageRoot,
         home,
@@ -856,8 +850,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       "lawful then ledger authority fails",
     );
 
-    const result = await runAkRole(
-      ["judge", "--project", project, "lawful then ledger read fails under 429"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then ledger read fails under 429"],
       {
         packageRoot,
         home,
@@ -898,7 +891,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     // Settlement after the turn still fails closed on the ledger authority error.
     let resumeDispatches = 0;
     const { io: resumeIo } = captureIo();
-    const resumeResult = await runAkRole(["resume", runId], {
+    const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,
@@ -940,8 +933,7 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
     const runId = "run-diagnostic-disclosure-001";
     const { io, stdout, stderr } = captureIo();
 
-    const result = await runAkRole(
-      ["judge", "--project", project, "provider names the run"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "provider names the run"],
       {
         packageRoot,
         home,
@@ -1021,9 +1013,8 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     // First admission interrupted by typed 429.
     {
       const { io } = captureIo();
-      const first = await runAkRole(
-        [
-          "judge",
+      const first = await runAkRole([
+          "judge", "--model", "test/caller-seat:high",
           "--project",
           project,
           "--attach",
@@ -1197,7 +1188,7 @@ test("resume model override is temporary and does not rewrite persistent config"
     const runId = "run-temp-override-001";
     {
       const { io } = captureIo();
-      await runAkRole(["judge", "--project", project, "hit 429"], {
+      await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "hit 429"], {
         packageRoot,
         home,
         cwd: project,
@@ -1336,6 +1327,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
       }
       const { io } = captureIo();
       let modelLessArgs: string[] | undefined;
+      // Bare resume — no --model; live seat table (config set above) is the source.
       const resumed = await runAkRole(["resume", runId], {
         packageRoot,
         home,
@@ -1457,7 +1449,7 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
 
     {
       const { io, stdout, stderr } = captureIo();
-      const unknown = await runAkRole(["resume", "does-not-exist"], {
+      const unknown = await runAkRole(["resume", "--model", "test/caller-seat:high", "does-not-exist"], {
         packageRoot,
         home,
         cwd: project,
@@ -1478,7 +1470,7 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
     const terminalId = "run-terminal-reject-001";
     {
       const { io } = captureIo();
-      await runAkRole(["judge", "--project", project, "activation fail"], {
+      await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "activation fail"], {
         packageRoot,
         home,
         cwd: project,
@@ -1504,7 +1496,7 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
     dispatches = 0;
     {
       const { io, stdout } = captureIo();
-      const rejected = await runAkRole(["resume", terminalId], {
+      const rejected = await runAkRole(["resume", "--model", "test/caller-seat:high", terminalId], {
         packageRoot,
         home,
         cwd: project,
@@ -1535,7 +1527,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
     seedGitProject(project);
     const runId = "run-lease-001";
     const { io } = captureIo();
-    await runAkRole(["judge", "--project", project, "lease setup"], {
+    await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lease setup"], {
       packageRoot,
       home,
       cwd: project,
@@ -1581,7 +1573,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
     await withPrimaryAwareCleanup(
       async () => {
         const { io: io2, stdout, stderr } = captureIo();
-        const blocked = await runAkRole(["resume", runId], {
+        const blocked = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
           packageRoot,
           home,
           cwd: project,
@@ -1624,7 +1616,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
     for (const unparseable of ["", "123junk"]) {
       await writeFile(lockPath, unparseable, "utf8");
       const { io: ioUnparseable } = captureIo();
-      const blocked = await runAkRole(["resume", runId], {
+      const blocked = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
         packageRoot,
         home,
         cwd: project,
@@ -1671,7 +1663,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
           }
         },
       };
-      const blockedAfterReclaim = await runAkRole(["resume", runId], {
+      const blockedAfterReclaim = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
         packageRoot,
         home,
         cwd: project,
@@ -1717,7 +1709,7 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
           }
         },
       };
-      const resumed = await runAkRole(["resume", runId], {
+      const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
         packageRoot,
         home,
         cwd: project,
@@ -2030,8 +2022,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
 
     {
       const { io } = captureIo();
-      const first = await runAkRole(
-        ["judge", "--project", project, "bind exact session"],
+      const first = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "bind exact session"],
         {
           packageRoot,
           home,
@@ -2100,7 +2091,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     };
     {
       const { io } = captureIo();
-      const blocked = await runAkRole(["resume", runId], {
+      const blocked = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
         packageRoot,
         home,
         cwd: project,
@@ -2124,7 +2115,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
 
     // Successful resume with opaque frozen wire must reopen the same host-issued sessionFile.
     const { io } = captureIo();
-    const resumed = await runAkRole(["resume", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,
@@ -2223,7 +2214,7 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
 
     const { io, stdout, stderr } = captureIo();
     let dispatches = 0;
-    const blocked = await runAkRole(["resume", runId], {
+    const blocked = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,
@@ -2261,8 +2252,7 @@ test("typed 429 without a session principal is not offered as resumable", async 
     const runId = "run-429-no-session-file";
 
     const { io, stdout } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--project", project, "no session file"],
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "no session file"],
       {
         packageRoot,
         home,
@@ -2338,11 +2328,13 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
     }
 
     function admitArgs(role: Role, project: string): string[] {
-      if (role === "judge") return ["judge", "--project", project, "admit"];
-      if (role === "coder") return ["coder", "plan", "--project", project, "admit"];
-      if (role === "fixer") return ["fixer", "plan", "--project", project, "admit"];
-      if (role === "reviewer") return ["reviewer", "--project", project, "--base", "main", "admit"];
-      return ["merger", "--project", project, "admit"];
+      // Match typed-429 provider xai + credentials in this case.
+      const model = ["--model", "xai/grok-4.5:high"] as const;
+      if (role === "judge") return ["judge", ...model, "--project", project, "admit"];
+      if (role === "coder") return ["coder", ...model, "plan", "--project", project, "admit"];
+      if (role === "fixer") return ["fixer", ...model, "plan", "--project", project, "admit"];
+      if (role === "reviewer") return ["reviewer", ...model, "--project", project, "--base", "main", "admit"];
+      return ["merger", ...model, "--project", project, "admit"];
     }
 
     async function admit429(role: Role, runId: string, project: string): Promise<{
@@ -2410,8 +2402,11 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       if (c.conflict) await conflicted(project);
       else seedGitProject(project);
       const admitted = await admit429(c.role, c.runId, project);
+      // Resume needs a caller model (#178); message tests are orthogonal.
       const resumeArgv =
-        c.message === undefined ? ["resume", c.runId] : ["resume", c.runId, c.message];
+        c.message === undefined
+          ? ["resume", "--model", "xai/grok-4.5:high", c.runId]
+          : ["resume", "--model", "xai/grok-4.5:high", c.runId, c.message];
       const { io, stderr } = captureIo();
       let seen: string[] | undefined;
       let seenStdin: string | undefined;

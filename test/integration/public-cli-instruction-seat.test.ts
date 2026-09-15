@@ -160,7 +160,7 @@ for (const scenario of CASES) {
       const { io } = captureIo();
       let dispatchArgs: string[] | undefined;
       const result = await runAkRole(
-        [scenario.role, "--project", project, scenario.instruction],
+        [scenario.role, "--model", "test/caller-seat:high", "--project", project, scenario.instruction],
         {
           home,
           packageRoot,

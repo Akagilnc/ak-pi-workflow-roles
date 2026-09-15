@@ -553,9 +553,8 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
-      const result = await runAkRole(
-        [
-          "reviewer",
+      const result = await runAkRole([
+          "reviewer", "--model", "test/caller-seat:high",
           "--project",
           project,
           "--base",
@@ -663,9 +662,8 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
     {
       const { io, stdout } = captureIo();
       let captured: string[] | undefined;
-      const result = await runAkRole(
-        [
-          "reviewer",
+      const result = await runAkRole([
+          "reviewer", "--model", "test/caller-seat:high",
           "--project",
           project,
           "--base",
@@ -809,8 +807,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
 
     {
       const { io } = captureIo();
-      const first = await runAkRole(
-        ["reviewer", "--project", project, "--base", "main", instruction],
+      const first = await runAkRole(["reviewer", "--model", "test/caller-seat:high", "--project", project, "--base", "main", instruction],
         {
           packageRoot,
           home,
@@ -865,7 +862,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
-    const resumed = await runAkRole(["resume", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,

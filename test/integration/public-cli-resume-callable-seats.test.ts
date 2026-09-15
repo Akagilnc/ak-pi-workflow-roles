@@ -260,7 +260,7 @@ for (const spec of SEAT_SPECS) {
       let resumeSessionFile: string | undefined;
 
       const { io, stderr } = captureIo();
-      const resumed = await runAkRole(["resume", runId], {
+      const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
         packageRoot,
         home,
         cwd: project,

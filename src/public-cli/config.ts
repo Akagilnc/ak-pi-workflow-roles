@@ -21,7 +21,6 @@ import {
   type PublicCallableRole,
   type PublicConfigurableSeat,
   type PublicThinkingLevel,
-  publicStartupCandidates,
 } from "./registry.ts";
 
 /** Province officers that may carry a persistent model override (#453). */
@@ -81,7 +80,6 @@ export type PublicCliConfig = {
 
 export type EffectiveSource =
   | "persistent"
-  | "startup"
   | "invocation"
   | "inherit-gatekeeper"
   | "unconfigured";
@@ -625,16 +623,36 @@ export function missingPublicProviderCredential(
   return !providerConfigured(credentials, provider);
 }
 
-function pickStartupCandidate(
+/** Effective seat with model axis present (#178). */
+export type EffectiveSeatWithModel = EffectiveSeat & {
+  selection: NonNullable<EffectiveSeat["selection"]>;
+};
+
+/** #178: narrow seat with model, or undefined — callers own presentation. */
+export function resolvedSeatWithModel(
+  seat: EffectiveSeat,
+): EffectiveSeatWithModel | undefined {
+  if (seat.selection === undefined) return undefined;
+  return seat as EffectiveSeatWithModel;
+}
+
+/**
+ * #178 shared missing-model wording; throw site stays per entry.
+ * Recommend `--model` only when the entry actually has an invocation-model channel
+ * (direct public CLI). Nested summons / navigator seat reads do not — config set only.
+ */
+export function missingResolvedSeatModelMessage(
   seat: PublicConfigurableSeat,
-  credentials: CredentialProviders,
-): SeatModelConfig | undefined {
-  for (const candidate of publicStartupCandidates(seat)) {
-    if (providerConfigured(credentials, candidate.provider)) {
-      return { ...candidate };
-    }
+  remediation: "config" | "invocation-or-config" = "config",
+): string {
+  const configSet = `ak-role config set ${seat} <provider/model[:thinking]>`;
+  if (remediation === "invocation-or-config") {
+    return (
+      `seat ${seat} has no model configured; set with --model <provider/model[:thinking]>` +
+      ` or ${configSet}`
+    );
   }
-  return undefined;
+  return `seat ${seat} has no model configured; set with ${configSet}`;
 }
 
 type UnhostedEffectiveSeat = Omit<EffectiveSeat, "host" | "hostSource">;
@@ -695,7 +713,6 @@ function attachEngineAxis(
 function resolveBaseSeat(
   config: PublicCliConfig,
   seat: PublicConfigurableSeat,
-  credentials: CredentialProviders,
 ): UnhostedEffectiveSeat {
   // #620: subordinate officers consume institutional-resolution authority result.
   if (seat === "notary" || seat === "inspector") {
@@ -708,21 +725,13 @@ function resolveBaseSeat(
     };
   }
   // Engine-only residual is not a persistent model source (#453).
+  // #178: no package startup candidates — caller specifies via seat table or --model.
   const persistentModel = seatModelOnly(config.seats[seat]);
   if (persistentModel !== undefined) {
     return {
       seat,
       source: "persistent",
       selection: persistentModel,
-      engineSource: "unconfigured",
-    };
-  }
-  const startup = pickStartupCandidate(seat, credentials);
-  if (startup !== undefined) {
-    return {
-      seat,
-      source: "startup",
-      selection: startup,
       engineSource: "unconfigured",
     };
   }
@@ -739,9 +748,12 @@ export function resolveEffectiveSeat(
     invocation !== undefined &&
     (invocation.model !== undefined || invocation.thinking !== undefined);
 
+  // credentials retained on the public resolve surface for call-site stability;
+  // model axis no longer consults them (#178 deleted package startup fallback).
+  void credentials;
   let modelSeat: UnhostedEffectiveSeat;
   if (!hasModelInvocation || invocation === undefined) {
-    modelSeat = resolveBaseSeat(config, seat, credentials);
+    modelSeat = resolveBaseSeat(config, seat);
   } else if (invocation.model !== undefined) {
     const spec =
       invocation.model.includes(":") || invocation.thinking === undefined
@@ -754,7 +766,7 @@ export function resolveEffectiveSeat(
       engineSource: "unconfigured",
     };
   } else {
-    const base = resolveBaseSeat(config, seat, credentials);
+    const base = resolveBaseSeat(config, seat);
     if (base.selection === undefined || invocation.thinking === undefined) {
       modelSeat = {
         seat,
@@ -801,7 +813,7 @@ export function listRolesForDisplay(
 
 /**
  * Read configured credential presence from a Pi auth.json document.
- * Only presence of a provider key matters for startup selection (#11).
+ * Presence drives the selected-provider fail-closed seam (public-run-credentials).
  */
 export function credentialProvidersFromAuthData(
   data: unknown,

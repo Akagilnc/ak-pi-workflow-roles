@@ -23,8 +23,10 @@ import {
   isGateOfficerSeat,
   loadCredentialProviders,
   loadPublicCliConfig,
+  missingResolvedSeatModelMessage,
   parseModelSpec,
   resolveEffectiveSeat,
+  resolvedSeatWithModel,
   savePublicCliConfig,
   setAutoResumeLimit,
   setPersistentSeatConfig,
@@ -316,6 +318,8 @@ type RoleEnvironmentOptions = {
 function createRoleEnvironment(
   env: CliEnv,
   options: RoleEnvironmentOptions,
+  /** #178: after host selection, before missing-model — structural argv parse once. */
+  afterHost?: () => void,
 ) {
   const role = options.role;
   const extraPiArgs =
@@ -355,13 +359,7 @@ function createRoleEnvironment(
                     ? env.notaryTimeoutMs
                     : undefined;
 
-  // #617 DK-3: resume and new legs share one seat resolution — model/host/engine
-  // come from the live seat table (invocation flag → persistent → default).
-  // #788 expectation 2: select a registered host first; only then project the
-  // host-facing provider (table > unique directory > fail). Bad host never
-  // reaches model resolution.
-  // Nested summons reuse this table and select by the child seat — never the
-  // already-selected parent adapter (#840 / ADR 0082: --host 旗标>席位配置>缺省 pi).
+  // #617/#178/#788/#840: host first, then model; nested child seat selects own host.
   const hostAdapters = composeRoleTurnHostAdapters(
     {
       packageRoot: env.packageRoot,
@@ -376,15 +374,21 @@ function createRoleEnvironment(
     role,
     seat: options.seat,
   });
-  const hostFacingSelection =
-    options.seat.selection === undefined
-      ? undefined
-      : projectHostFacingProvider(
-          options.seat.selection,
-          options.seat.host,
-          loadHostProvidersTable(options.home),
-          options.home,
-        );
+  // #178: host → argv (afterHost) → missing-model → provider projection.
+  afterHost?.();
+  const seatWithModel = resolvedSeatWithModel(options.seat);
+  if (seatWithModel === undefined) {
+    // Direct CLI has --model; dual remediation is intentional here (#178 / #916).
+    throw new CliUsageError(
+      missingResolvedSeatModelMessage(options.seat.seat, "invocation-or-config"),
+    );
+  }
+  const hostFacingSelection = projectHostFacingProvider(
+    seatWithModel.selection,
+    seatWithModel.host,
+    loadHostProvidersTable(options.home),
+    options.home,
+  );
   return {
     home: options.home,
     principalAuthority: env.principalAuthority!,
@@ -405,6 +409,52 @@ function createRoleEnvironment(
       ? {}
       : { autoResumeLimit: options.config.autoResumeLimit }),
     ...(env.freshSummons === true ? { freshSummons: true as const } : {}),
+  };
+}
+
+/**
+ * #178 single spine: resolve seat → host select → argv parse once → missing-model → run.
+ * Keeps host-unregistered ahead of bad argv and missing-model.
+ */
+async function dispatchPublicRoleCommand<TParsed>(
+  env: CliEnv,
+  home: string,
+  io: CliIo,
+  parsed: ParsedGlobal,
+  role: PublicCallableRole,
+  parse: (args: readonly string[]) => TParsed,
+  run: (
+    args: readonly string[],
+    roleEnv: ReturnType<typeof createRoleEnvironment>,
+    parseOnce: () => TParsed,
+  ) => Promise<{ exitCode: number; terminal?: TerminalResult }>,
+): Promise<CliResult> {
+  const agentDir = resolveAgentDir(env, home);
+  const cwd = env.cwd ?? process.cwd();
+  const config = await loadAndValidateConfig(home, env.packageRoot);
+  const credentials =
+    env.credentials ?? (await loadCredentialProviders(agentDir));
+  const seat = resolveEffectiveSeat(
+    config,
+    role,
+    credentials,
+    invocationFromParsed(parsed),
+  );
+  let parsedRoleArgv!: TParsed;
+  const result = await run(
+    parsed.args,
+    createRoleEnvironment(
+      env,
+      { role, home, agentDir, cwd, credentials, seat, config },
+      () => {
+        parsedRoleArgv = parse(parsed.args);
+      },
+    ),
+    () => parsedRoleArgv,
+  );
+  return {
+    exitCode: result.exitCode,
+    ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
   };
 }
 
@@ -744,6 +794,7 @@ function renderHelp(): string {
     "Persistent engine (callable roles): ak-role config set-engine <seat> <name> [model] | unset-engine <seat> | set-engine-model <seat> <model> | unset-engine-model <seat>",
     "Persistent host (callable roles): ak-role config set-host <seat> <name> | unset-host <seat>",
     "Host providers: ~/.ak-roles/host-providers.json (owner-edited; table > unique host directory > fail)",
+    "Model resolution: --model → persistent seat → officer inherit (#620); still none → error (#178)",
     "Host resolution: --host → persistent seat host → pi (resume uses the same order; #617)",
     "Resume flag position: --model/--thinking/--host/--engine go before <runId> (before `resume` or between `resume` and <runId>); the one argv after <runId> is always the opaque message, never a flag (#471)",
     "Effective seats: ak-role roles",
@@ -788,7 +839,7 @@ function renderRoles(seats: readonly EffectiveSeat[]): string {
 
 /**
  * #620 typed config display row. Non-subordinate seats stay on the persistent
- * disk face; notary/inspector may surface inherit-gatekeeper without startup.
+ * disk face; notary/inspector may surface inherit-gatekeeper.
  * Presentation formats these fields; tests assert the projection, not TSV.
  * source reuses the institutional authority domain — no parallel union.
  */
@@ -814,8 +865,8 @@ function diskAxes(disk: PublicCliConfig["seats"][PublicConfigurableSeat]): {
 
 /**
  * Single-seat config projection (#620).
- * - notary/inspector: institutional authority result (own > gatekeeper), never startup
- * - all other seats: disk model only (persistent face; no startup fill-in)
+ * - notary/inspector: institutional authority result (own > gatekeeper)
+ * - all other seats: disk model only (persistent face; no package fill-in, #178)
  */
 export function projectConfigSeatDisplay(
   config: PublicCliConfig,
@@ -1240,9 +1291,10 @@ export async function runAkRole(
         resumeRole === undefined
           ? RESUME_SEAT_DISPATCH.judge
           : RESUME_SEAT_DISPATCH[resumeRole];
-      // #617 DK-4: resume resolves model/host/engine from the live seat table
-      // exactly as a new leg would (flag → persistent → default). Cross-host
-      // resume delivers prior native records as context to the target host.
+      // #617 DK-4 / #178: resume resolves model/host/engine from the live seat
+      // table exactly as a new leg would (flag → persistent → officer inherit;
+      // model still none → error). Cross-host resume delivers prior native
+      // records as context to the target host.
       const seat = resolveEffectiveSeat(
         config,
         dispatch.seat,
@@ -1272,333 +1324,89 @@ export async function runAkRole(
       throw new CliUsageError(`unhandled support command: ${parsed.command}`);
     }
 
-    // Judge is the first complete public Role run path (#106).
+    // Public LLM role commands share one #178 spine (host → argv once → missing-model → run).
     if (parsed.command === "judge") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "judge",
-        credentials,
-        invocationFromParsed(parsed),
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "judge", PUBLIC_ROLE_ARGV.judge.parse,
+        (args, roleEnv, once) => runPublicJudge(args, roleEnv, io, once),
       );
-      const result = await runPublicJudge(
-        parsed.args,
-        createRoleEnvironment(env, { role: "judge", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV.judge.parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
-
-    // Countersign ticket-court run path (#572 / ADR 0074); #599 resume allowed.
     if (parsed.command === "countersign") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "countersign",
-        credentials,
-        invocationFromParsed(parsed),
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "countersign", PUBLIC_ROLE_ARGV.countersign.parse,
+        (args, roleEnv, once) => runPublicCountersign(args, roleEnv, io, once),
       );
-      const result = await runPublicCountersign(
-        parsed.args,
-        createRoleEnvironment(env, { role: "countersign", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV.countersign.parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
-
-    // Gleaner-Left pre-merge memorial run path (#502 / ADR 0067); #599 resume allowed.
     if (parsed.command === "gleaner-left") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "gleaner-left",
-        credentials,
-        invocationFromParsed(parsed),
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "gleaner-left", PUBLIC_ROLE_ARGV["gleaner-left"].parse,
+        (args, roleEnv, once) => runPublicGleanerLeft(args, roleEnv, io, once),
       );
-      const result = await runPublicGleanerLeft(
-        parsed.args,
-        createRoleEnvironment(env, { role: "gleaner-left", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV["gleaner-left"].parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
-
-    // Diarist public run path (#708): 起居郎 is summoned like any other seat.
     if (parsed.command === "diarist") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "diarist",
-        credentials,
-        invocationFromParsed(parsed),
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "diarist", PUBLIC_ROLE_ARGV.diarist.parse,
+        (args, roleEnv, once) => runPublicDiarist(args, roleEnv, io, once),
       );
-      const result = await runPublicDiarist(
-        parsed.args,
-        createRoleEnvironment(env, { role: "diarist", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV.diarist.parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
-
-    // Coder public run path with package-owned TDD method (#109).
     if (parsed.command === "coder") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "coder",
-        credentials,
-        invocationFromParsed(parsed),
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "coder", PUBLIC_ROLE_ARGV.coder.parse,
+        (args, roleEnv, once) => runPublicCoder(args, roleEnv, io, once),
       );
-      const result = await runPublicCoder(
-        parsed.args,
-        createRoleEnvironment(env, { role: "coder", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV.coder.parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
-
-    // Fixer public run path with optional package-owned diagnosing-bugs (#110).
     if (parsed.command === "fixer") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "fixer",
-        credentials,
-        invocationFromParsed(parsed),
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "fixer", PUBLIC_ROLE_ARGV.fixer.parse,
+        (args, roleEnv, once) => runPublicFixer(args, roleEnv, io, once),
       );
-      const result = await runPublicFixer(
-        parsed.args,
-        createRoleEnvironment(env, { role: "fixer", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV.fixer.parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
-
-    // Collector public run path from explicit PR + leg declarations (#112).
     if (parsed.command === "collector") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "collector",
-        credentials,
-        invocationFromParsed(parsed),
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "collector", PUBLIC_ROLE_ARGV.collector.parse,
+        (args, roleEnv, once) => runPublicCollector(args, roleEnv, io, once),
       );
-      const result = await runPublicCollector(
-        parsed.args,
-        createRoleEnvironment(env, { role: "collector", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV.collector.parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
-
-    // Reviewer public run path with package-owned adapted code-review (#111).
     if (parsed.command === "reviewer") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "reviewer",
-        credentials,
-        invocationFromParsed(parsed),
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "reviewer", PUBLIC_ROLE_ARGV.reviewer.parse,
+        (args, roleEnv, once) => runPublicReviewer(args, roleEnv, io, once),
       );
-      const result = await runPublicReviewer(
-        parsed.args,
-        createRoleEnvironment(env, { role: "reviewer", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV.reviewer.parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
-
-    // Doctor public run path from Issue identity + optional confined runs root (#113).
     if (parsed.command === "doctor") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "doctor",
-        credentials,
-        invocationFromParsed(parsed),
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "doctor", PUBLIC_ROLE_ARGV.doctor.parse,
+        (args, roleEnv, once) => runPublicDoctor(args, roleEnv, io, once),
       );
-      const result = await runPublicDoctor(
-        parsed.args,
-        createRoleEnvironment(env, { role: "doctor", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV.doctor.parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
-
-    // Notary public run path: source-run locator only, direct officer seat (#448).
     if (parsed.command === "notary") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "notary",
-        credentials,
-        invocationFromParsed(parsed),
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "notary", PUBLIC_ROLE_ARGV.notary.parse,
+        (args, roleEnv, once) => runPublicNotary(args, roleEnv, io, once),
       );
-      const result = await runPublicNotary(
-        parsed.args,
-        createRoleEnvironment(env, { role: "notary", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV.notary.parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
-
     if (parsed.command === "inspector") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "inspector",
-        credentials,
-        invocationFromParsed(parsed),
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "inspector", PUBLIC_ROLE_ARGV.inspector.parse,
+        (args, roleEnv, once) => runPublicInspector(args, roleEnv, io, once),
       );
-      const result = await runPublicInspector(
-        parsed.args,
-        createRoleEnvironment(env, { role: "inspector", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV.inspector.parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
-
-    // Merger public run path: derive active-merge envelope + forced merge-only method (#114).
     if (parsed.command === "merger") {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        "merger",
-        credentials,
-        invocationFromParsed(parsed),
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "merger", PUBLIC_ROLE_ARGV.merger.parse,
+        (args, roleEnv, once) => runPublicMerger(args, roleEnv, io, once),
       );
-      const result = await runPublicMerger(
-        parsed.args,
-        createRoleEnvironment(env, { role: "merger", home, agentDir, cwd, credentials, seat, config }),
-        io,
-        PUBLIC_ROLE_ARGV.merger.parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
-
-    // Instruction seats (#639 / #675): gatekeeper / navigator / auditor.
     if (
       parsed.command === "gatekeeper"
       || parsed.command === "navigator"
       || parsed.command === "auditor"
     ) {
-      const agentDir = resolveAgentDir(env, home);
-      const cwd = env.cwd ?? process.cwd();
-      const config = await loadAndValidateConfig(home, env.packageRoot);
-      const credentials =
-        env.credentials ?? (await loadCredentialProviders(agentDir));
-      const seat = resolveEffectiveSeat(
-        config,
-        parsed.command,
-        credentials,
-        invocationFromParsed(parsed),
+      const seat = parsed.command;
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, seat, PUBLIC_ROLE_ARGV[seat].parse,
+        (args, roleEnv, once) => runPublicInstructionSeat(args, roleEnv, io, seat, once),
       );
-      const result = await runPublicInstructionSeat(
-        parsed.args,
-        createRoleEnvironment(env, { role: parsed.command, home, agentDir, cwd, credentials, seat, config }),
-        io,
-        parsed.command,
-        PUBLIC_ROLE_ARGV[parsed.command].parse,
-      );
-      return {
-        exitCode: result.exitCode,
-        ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-      };
     }
 
     // Analyst public run path: deterministic analysis seat (#336 issue / #337 sweep).

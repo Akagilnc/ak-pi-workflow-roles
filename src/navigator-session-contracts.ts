@@ -15,7 +15,6 @@ import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 
 
 export const NAVIGATOR_PREPARE_TOOL_NAME = "ak_navigator_prepare" as const;
-export const NAVIGATOR_DEFAULT_MODEL = "openai-codex/gpt-5.6-luna:max" as const;
 
 export type NavigatorUnavailableKey =
   | "context" | "session" | "model" | "thinking" | "auth" | "quota" | "transport" | "unknown";
@@ -229,8 +228,9 @@ export async function readNavigatorModelSetting(path = navigatorModelSettingPath
     }
     return raw.model;
   } catch (error) {
+    // #178: missing file is absence (no package default).
     if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
-      return NAVIGATOR_DEFAULT_MODEL;
+      throw new Error("Navigator model setting is missing");
     }
     throw error;
   }
@@ -294,19 +294,13 @@ export async function resolveNavigatorSeatSelection(
           : packageMachineHome();
     const config = await loadPublicCliConfig(home);
     const modelOnly = seatModelOnly(config.seats.navigator);
-    // Seat table is the only model authority — no legacy navigator-model.json.
-    // Bare missing seat uses the package default constant (not a file path).
+    // Seat table only — missing navigator seat → typed model-unavailable (#178).
     if (modelOnly === undefined) {
-      const parsed = parseNavigatorModelSetting(NAVIGATOR_DEFAULT_MODEL);
-      return {
-        selection: {
-          provider: parsed.provider,
-          model: parsed.model,
-          ...(parsed.thinkingLevel === undefined ? {} : { thinking: parsed.thinkingLevel }),
-        },
-        configuredLabel: NAVIGATOR_DEFAULT_MODEL,
-        ...(parsed.thinkingLevel === undefined ? {} : { thinkingLevel: parsed.thinkingLevel }),
-      };
+      const { missingResolvedSeatModelMessage } = await import("./public-cli/config.ts");
+      throw navigatorUnavailableError(
+        "model",
+        new Error(missingResolvedSeatModelMessage("navigator")),
+      );
     }
     // Host params passthrough only — no map/validate/default (#675 ⑥).
     const thinkingRaw = modelOnly.thinking;

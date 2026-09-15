@@ -249,8 +249,7 @@ test("doctor activation projects casePath/isolation flags through typed request 
 
     const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
 
-    await runAkRole(
-      ["doctor", "--issue", "12", "--project", project, "diagnose retries"],
+    await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "12", "--project", project, "diagnose retries"],
       {
         packageRoot,
         home,
@@ -282,8 +281,7 @@ test("runAkRole doctor rejects malformed grammar before admission", async () => 
 
     let dispatched = false;
     const captured = captureIo();
-    const result = await runAkRole(
-      ["doctor", "--issue", "0", "--project", project],
+    const result = await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "0", "--project", project],
       {
         packageRoot,
         home,
@@ -321,8 +319,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     let candidateCost: unknown;
     let candidateDetails: unknown;
     const completedIo = captureIo();
-    const completed = await runAkRole(
-      ["doctor", "--issue", "40", "--project", project, "inspect"],
+    const completed = await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "40", "--project", project, "inspect"],
       {
         packageRoot,
         home,
@@ -414,8 +411,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
 
     // Refused path reuses the same Terminal settlement owner.
     const refusedIo = captureIo();
-    const refused = await runAkRole(
-      ["doctor", "--issue", "40", "--project", project],
+    const refused = await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "40", "--project", project],
       {
         packageRoot,
         home,
@@ -602,8 +598,7 @@ test("terminal persistence failure through public entry propagates loudly with n
     // is broken. Captured here so the assertion below checks against the
     // real recorded bytes, not a hand-authored duplicate.
     let recordedDetails: unknown;
-    const result = await runAkRole(
-      ["doctor", "--issue", "41", "--project", project, "inspect"],
+    const result = await runAkRole(["doctor", "--model", "test/caller-seat:high", "--issue", "41", "--project", project, "inspect"],
       {
         packageRoot,
         home,

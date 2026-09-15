@@ -466,8 +466,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
 
     const runId = "01a0diar00-0000-7000-8000-000000000001";
     const { io, stdout } = captureIo();
-    const result = await runAkRole(
-      ["diarist", "--project", project, `整理 #${TICKET} 起居录`],
+    const result = await runAkRole(["diarist", "--model", "test/caller-seat:high", "--project", project, `整理 #${TICKET} 起居录`],
       {
         home,
         packageRoot,
@@ -667,8 +666,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
 
     // Amendments-only continuation through the same public entry (empty sessions).
     const runId2 = "01a0diar00-0000-7000-8000-000000000011";
-    const second = await runAkRole(
-      ["diarist", "--project", project, `续写 #${TICKET} 起居录`],
+    const second = await runAkRole(["diarist", "--model", "test/caller-seat:high", "--project", project, `续写 #${TICKET} 起居录`],
       {
         home,
         packageRoot,
@@ -834,8 +832,7 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
 
     const runId = "01a0diar00-0000-7000-8000-000000000002";
     const { io, stdout } = captureIo();
-    const result = await runAkRole(
-      ["diarist", "--project", project, "整理这份方案的依据"],
+    const result = await runAkRole(["diarist", "--model", "test/caller-seat:high", "--project", project, "整理这份方案的依据"],
       {
         home,
         packageRoot,
@@ -897,8 +894,7 @@ test("ak-role diarist host-turn failure still relocates board-bound run", async 
     const runId = "01a0diar00-0000-7000-8000-000000000003";
     const { io } = captureIo();
 
-    const result = await runAkRole(
-      ["diarist", "--project", project, `整理 #${TICKET} 起居录`],
+    const result = await runAkRole(["diarist", "--model", "test/caller-seat:high", "--project", project, `整理 #${TICKET} 起居录`],
       {
         home,
         packageRoot,

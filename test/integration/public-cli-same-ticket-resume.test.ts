@@ -136,6 +136,21 @@ async function openNotaryScratch(prefix: string): Promise<{
 }> {
   await mkdir(WORKTREE_SCRATCH, { recursive: true });
   const home = await mkdtemp(join(WORKTREE_SCRATCH, prefix));
+  {
+    const { runAkRole } = await import("../../src/public-cli/cli.ts");
+    const { packageRoot } = await import("../helpers/pi-test-harness.ts");
+    await runAkRole(
+      ["config", "set",
+        "notary", "test/caller-seat:high",
+        "inspector", "test/caller-seat:high",
+        "auditor", "test/caller-seat:high",
+        "diarist", "test/caller-seat:high",
+        "gatekeeper", "test/caller-seat:high",
+        "judge", "test/caller-seat:high",
+      ],
+      { packageRoot, home, io: { stdout() {}, stderr() {} } },
+    );
+  }
   const project = join(home, "project");
   await mkdir(project, { recursive: true });
   seedGitProject(project);
@@ -255,8 +270,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     const host = observingSealHost(inner, seen);
 
     // 1) First summons seals pass on a fresh run.
-    const first = await runAkRole(
-      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const first = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
@@ -299,8 +313,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     assert.equal(notaryRunsAfterFirst.length, 1, "first summons creates exactly one notary run");
 
     // 2) Same-ticket distinct parent ordinary summons must mint (#747) — old ticket key would resume.
-    const crossParent = await runAkRole(
-      ["notary", "--source-run", `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const crossParent = await runAkRole(["notary", "--source-run", `${SECOND_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
@@ -338,8 +351,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
     );
 
     // 4) Same parent (--source-run) court on the first leg: resume, no seal → not pass.
-    const second = await runAkRole(
-      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const second = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
@@ -480,6 +492,19 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
 test("#637 public inspector: freeze-once attachment identity survives a no-seal court and resume-with-message continues the open no-seal court", async () => {
   await mkdir(WORKTREE_SCRATCH, { recursive: true });
   const home = await mkdtemp(join(WORKTREE_SCRATCH, "home-materials-"));
+  {
+    const { runAkRole } = await import("../../src/public-cli/cli.ts");
+    const { packageRoot } = await import("../helpers/pi-test-harness.ts");
+    await runAkRole(
+      ["config", "set",
+        "inspector", "test/caller-seat:high",
+        "notary", "test/caller-seat:high",
+        "diarist", "test/caller-seat:high",
+        "gatekeeper", "test/caller-seat:high",
+      ],
+      { packageRoot, home, io: { stdout() {}, stderr() {} } },
+    );
+  }
   const priorPath = process.env.PATH;
   try {
     const project = join(home, "project");
@@ -551,8 +576,7 @@ test("#637 public inspector: freeze-once attachment identity survives a no-seal 
     const host = observingSealHost(inner, seen);
 
     // 1) First inspector summons seals (birth freeze under admitted attachments).
-    const first = await runAkRole(
-      ["inspector", instruction, "--attach", external],
+    const first = await runAkRole(["inspector", instruction, "--attach", external],
       {
         home,
         packageRoot,
@@ -570,8 +594,7 @@ test("#637 public inspector: freeze-once attachment identity survives a no-seal 
     const runId = seen[0]!.runId;
 
     // 2) Same-ticket distinct parent 卷宗指针 must mint (#747).
-    const crossParent = await runAkRole(
-      ["inspector", otherInstruction, "--attach", external],
+    const crossParent = await runAkRole(["inspector", otherInstruction, "--attach", external],
       {
         home,
         packageRoot,
@@ -595,8 +618,7 @@ test("#637 public inspector: freeze-once attachment identity survives a no-seal 
     );
 
     // 3) Same-parent (卷宗指针) re-summons opens a new court with attachment materials (no seal).
-    const second = await runAkRole(
-      ["inspector", instruction, "--attach", external],
+    const second = await runAkRole(["inspector", instruction, "--attach", external],
       {
         home,
         packageRoot,
@@ -762,8 +784,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
     });
     const host = observingSealHost(inner, seen);
 
-    const first = await runAkRole(
-      [
+    const first = await runAkRole([
         "auditor",
         "--subject",
         "judge",
@@ -808,8 +829,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
     const firstRunDirectory = seen[0]!.runDirectory;
 
     // Same parent --source-run → resume.
-    const second = await runAkRole(
-      [
+    const second = await runAkRole([
         "auditor",
         "--subject",
         "judge",
@@ -879,8 +899,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
     );
 
     // Same-ticket distinct parent ordinary summons must mint (#747) — old ticket key would resume.
-    const crossParent = await runAkRole(
-      [
+    const crossParent = await runAkRole([
         "auditor",
         "--subject",
         "judge",
@@ -934,8 +953,7 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
     const host = observingSealHost(inner, seen);
 
     // 1) Ordinary same-ticket summons mints the first run.
-    const first = await runAkRole(
-      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const first = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
@@ -989,8 +1007,7 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
 
     // 3) Ordinary same-parent summons auto-resumes the latest leg under that parent
     // (ADR 0079: 显式派新腿入口 + #747 parent key — not the birth leg).
-    const third = await runAkRole(
-      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const third = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
@@ -1030,8 +1047,7 @@ test("#637 held writer lease: re-summons must not record a new currentCourt", as
     });
     const host = observingSealHost(sealHost, seen);
 
-    const first = await runAkRole(
-      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const first = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
@@ -1055,8 +1071,7 @@ test("#637 held writer lease: re-summons must not record a new currentCourt", as
     heldLease = await acquireRunWriterLease(runDirectory);
 
     // Same parent path so lookup resumes into the leased run (#747).
-    const blocked = await runAkRole(
-      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const blocked = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
@@ -1172,8 +1187,7 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     });
     const host = observingSealHost(inner, seen);
 
-    const first = await runAkRole(
-      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const first = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
@@ -1190,8 +1204,7 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
     const runId = seen[0]!.runId;
     runStateFile = join(runDirectory, "run-state.json");
 
-    const opened = await runAkRole(
-      ["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const opened = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
