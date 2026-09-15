@@ -1088,34 +1088,33 @@ async function loadBoundAuditorVolumes(
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
   // Station-child / historical package resume token only (#840 / #836).
-  // Never empty prompt, empty first-line, engine-handbook prose, or a parallel
-  // packageTrigger custom entry — real same-ticket courts (including empty
-  // instruction) must advance latestParentUserIndex and stale prior auditors.
-  const isResumeEnvelopeBytes = (value: unknown): boolean => {
-    if (typeof value !== "string") return false;
-    if (value.length === 0) return false;
-    const nl = value.indexOf("\n");
-    const firstLine = nl === -1 ? value : value.slice(0, nl);
-    return firstLine === RESUME_TRANSPORT_ENVELOPE;
+  // Identity = first line of the whole user-message text equals the transport
+  // token. Never empty prompt, empty first-line, engine-handbook prose, per-part
+  // some() hits, or a parallel packageTrigger entry — real courts (including
+  // empty instruction, or normal text with a later token-shaped part) must
+  // advance latestParentUserIndex and stale prior auditors.
+  const userMessageText = (msg: unknown): string | undefined => {
+    if (!isRecord(msg) || msg.role !== "user") return undefined;
+    if (typeof msg.text === "string") return msg.text;
+    const content = (msg as { content?: unknown }).content;
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+      const parts: string[] = [];
+      for (const part of content) {
+        if (!isRecord(part)) continue;
+        if (typeof part.text === "string") parts.push(part.text);
+        else if (typeof part.content === "string") parts.push(part.content);
+      }
+      if (parts.length > 0) return parts.join("\n");
+    }
+    return undefined;
   };
   const isResumeEnvelope = (msg: unknown): boolean => {
-    if (!isRecord(msg) || msg.role !== "user") return false;
-    const text =
-      typeof msg.text === "string"
-        ? msg.text
-        : typeof (msg as { content?: unknown }).content === "string"
-          ? (msg as { content: string }).content
-          : undefined;
-    if (isResumeEnvelopeBytes(text)) return true;
-    const content = (msg as { content?: unknown }).content;
-    if (Array.isArray(content)) {
-      return content.some(
-        (p) =>
-          isRecord(p)
-          && (isResumeEnvelopeBytes(p.text) || isResumeEnvelopeBytes(p.content)),
-      );
-    }
-    return false;
+    const text = userMessageText(msg);
+    if (typeof text !== "string" || text.length === 0) return false;
+    const nl = text.indexOf("\n");
+    const firstLine = nl === -1 ? text : text.slice(0, nl);
+    return firstLine === RESUME_TRANSPORT_ENVELOPE;
   };
   let latestParentUserIndex = -1;
   for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
