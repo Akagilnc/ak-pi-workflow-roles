@@ -78,7 +78,8 @@ ak-role coder --model <provider/model[:thinking]> plan "Propose the first implem
 ak-role coder --model <provider/model[:thinking]> apply --attach ./plan.md "Implement the approved slice."
 
 # 御史台——固定目标双轴察举；completed ≠ 准行，findings 在 Terminal 里
-ak-role reviewer --model <provider/model[:thinking]> --base main "Review the branch."
+ak-role reviewer --model <provider/model[:thinking]> --base main --lens completeness --authority-ref docs/adr/0001-roles-grow-by-demand.md "Review the branch."
+ak-role reviewer --model <provider/model[:thinking]> --base main --lens correctness --authority-ref CLAUDE.md
 
 # 通进司——GitHub PR 收证（认票、读手册/现场活动、按需触发、等待窗、交回材料）
 ak-role collector --model <provider/model[:thinking]> --pr 42 --repo owner/repository "为所指 issue 收证。"
@@ -130,7 +131,7 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 | --- | --- | --- |
 | **将作监** | coder | **营造新作。** 承接新的谋划与需求，从一片空白开始设计、建造，直到形成可供使用的新成果。讲究先明其意，再定其形，不妄增枝节，只做当下所需之事。 |
 | **修内司** | fixer | **缮修旧物。** 面对已有问题，不急于表面修补，而是追寻问题根源，找到真正需要修整之处。既要修复眼前缺漏，也要防止同类问题再次出现。 |
-| **御史台** | reviewer | **察举百弊，风闻奏事。** 置身事外审视成果；Standards／Spec 两条取证腿由 runtime 代跑，本席收腿报告出薄回执与 amendment。弹章须指明所劾之处，言不为狱——不负坐实义务，坐实归大理寺。 |
+| **御史台** | reviewer | **察举百弊，风闻奏事。** 置身事外审视成果；调用者选定单 lens（completeness／correctness），本席自跑包内 `ak-cross-m-review`，交薄回执与 amendment。弹章须指明所劾之处，言不为狱——不负坐实义务，坐实归大理寺。 |
 | **大理寺** | judge | **审理定谳。** 承接各方意见与材料，依照既定规则逐项判断，辨明是非曲直。可以准行、退回或请示更高决定，但自身不参与建设与修改。 |
 | **审刑院** | judge-auditor／doctor-auditor（无 CLI，共享内部接缝；御史台侧闸已退役） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
 | **门下省** | gatekeeper（交卷闸不再自动出席；可 `ak-role gatekeeper` 独立直调） | **审署诏敕与质量保证的省。** 交卷闸按受审物直接传召台院/符宝郎，本省不介入选席；调用者仍可独立传召本省作 dispatch/pass；给事中票庭由调用者开工前传召；左拾遗由调用者合并前传召；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。 |

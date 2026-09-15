@@ -52,7 +52,7 @@ ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
 ```
 
-**Host axis (invocation-insensible after default):** `--host` is a global public option on every callable role and on `resume`. Resolution is invocation `--host` → persistent seat host (`config set-host`) → package default (`pi`). After `config set-host <seat> <name>`, the same command face used with Pi runs that seat on the named host with zero extra flags and zero caller-side changes; bare `resume` follows the same table. All public callable roles and their institutional sub-legs (soul audit, doctor audit, reviewer evidence children) are host-neutral on the shared in-process institutional session seam.
+**Host axis (invocation-insensible after default):** `--host` is a global public option on every callable role and on `resume`. Resolution is invocation `--host` → persistent seat host (`config set-host`) → package default (`pi`). After `config set-host <seat> <name>`, the same command face used with Pi runs that seat on the named host with zero extra flags and zero caller-side changes; bare `resume` follows the same table. All public callable roles and their institutional sub-legs (soul audit, doctor audit) are host-neutral on the shared in-process institutional session seam.
 
 **Host providers (#788):** seat rows keep one provider name. Owner edits `~/.ak-roles/host-providers.json` (`{ "hermes": { "xai": "xai-oauth" } }`); code only reads it. Missing table entries ask the host directory (hermes this ticket): unique match wins, zero or many fail loud. Priority is table > unique > fail — no package discretion. `config show` prints the table as written.
 
@@ -84,8 +84,9 @@ ak-role judge --model <provider/model[:thinking]> --attach ./findings.md --attac
 ak-role coder --model <provider/model[:thinking]> plan "Propose the first implementation plan."
 ak-role coder --model <provider/model[:thinking]> apply --attach ./plan.md "Implement the approved slice."
 
-# reviewer — fixed-target two-axis review; completed ≠ approved, read the findings
-ak-role reviewer --model <provider/model[:thinking]> --base main "Review the branch."
+# reviewer — fixed-target single-lens review (completeness|correctness); completed ≠ approved, read the findings
+ak-role reviewer --model <provider/model[:thinking]> --base main --lens completeness --authority-ref docs/adr/0001-roles-grow-by-demand.md "Review the branch."
+ak-role reviewer --model <provider/model[:thinking]> --base main --lens correctness --authority-ref CLAUDE.md
 
 # collector — GitHub PR review evidence (bind target, read handbook/field activity, trigger as needed, wait window, return materials)
 ak-role collector --model <provider/model[:thinking]> --pr 42 --repo owner/repository "Collect findings for the assigned issue."

@@ -1,6 +1,6 @@
 /**
- * Public Reviewer Role run: admit → post-admission coordinator → settle Terminal result (#111 / #517).
- * Package-owned adapted code-review method is forced; users never submit
+ * Public Reviewer Role run: admit → post-admission coordinator → settle Terminal result (#917 / #517).
+ * Package-owned ak-cross-m-review method is forced; users never submit
  * extra packets. Controlled-failure settlement reuses #107.
  * #526: execution via RoleTurnHost; argv is Pi adapter internal.
  */
@@ -55,7 +55,7 @@ export type ReviewerRunEnv = PostAdmissionEnv & {
 };
 
 function reviewerMethods(packageRoot: string): readonly MethodBinding[] {
-  return [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot, "code-review") }];
+  return [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot, "ak-cross-m-review") }];
 }
 
 /** Project admitted Reviewer invocation onto the host-neutral turn request. */
@@ -69,6 +69,7 @@ export function buildReviewerTurnRequest(
       activation: {
         role: "reviewer",
         baseRevision: admitted.baseRevision,
+        lens: admitted.lens,
         authorityRefs: admitted.authorityRefs,
         ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
       },
@@ -94,7 +95,7 @@ function reviewerAdapters(
               methodSkillPath: methodMaterial.skillPath,
               methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
                 packageRoot,
-                "code-review",
+                "ak-cross-m-review",
               ),
             },
             scope,
@@ -119,7 +120,7 @@ function reviewerAdapters(
 async function loadReviewerMethodMaterial(
   packageRoot: string,
 ): Promise<PackagedMethodSkillMaterial> {
-  return await loadPackagedMethodSkillMaterial(packageRoot, "code-review");
+  return await loadPackagedMethodSkillMaterial(packageRoot, "ak-cross-m-review");
 }
 
 export async function runPublicReviewer(
@@ -130,6 +131,7 @@ export async function runPublicReviewer(
     instruction: string;
     attachmentPaths: string[];
     baseRevision: string;
+    lens: "completeness" | "correctness";
     authorityRefs: string[];
     project?: string;
   },
@@ -148,6 +150,7 @@ export async function runPublicReviewer(
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       baseRevision: parsed.baseRevision,
+      lens: parsed.lens,
       authorityRefs: parsed.authorityRefs,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),

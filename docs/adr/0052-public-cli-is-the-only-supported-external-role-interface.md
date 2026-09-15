@@ -7,3 +7,5 @@ Status: accepted
 ## Considered Options
 
 继续把裸 Pi 与 session 文件包装成公开用法、分别提供人读与机器输出、把表格呈现机械化为 schema、为 shell CLI 再全局 npm 安装一份、运行时下载外部 Skill——均驳回。
+
+Decision key `reviewer-packaged-method=ak-cross-m-review`：御史台随包方法身份为 `ak-cross-m-review`（整份逐字携带上游，packageAdaptation=`verbatim-upstream`）；公开 CLI 仍是唯一外部接口本身不动。

@@ -15,6 +15,8 @@ export const AGENT_TOOL_NAME = "Agent";
 /** Frozen admitted inputs the behavior layer may consume — no flag surface. */
 export type ReviewerAdmittedInputs = Readonly<{
   baseRevision: string;
+  /** Caller-selected single lens; required, no default. */
+  lens: "completeness" | "correctness";
   reviewScopeKeys?: readonly string[];
   authorityRefs?: readonly string[];
   /** Typed #176 ticketNumber from admitted invocation (Spec self-fetch primary). */
@@ -22,9 +24,9 @@ export type ReviewerAdmittedInputs = Readonly<{
 }>;
 
 const reviewerAmendmentsSchema = Type.Object({
-  standards: Type.Optional(Type.String({ description: "标准轴弹章正文" })),
-  spec: Type.Optional(Type.String({ description: "规格轴弹章正文" })),
-}, { additionalProperties: true, description: "逐轴弹章正文；无弹章的轴可省略。" });
+  completeness: Type.Optional(Type.String({ description: "completeness lens 弹章正文" })),
+  correctness: Type.Optional(Type.String({ description: "correctness lens 弹章正文" })),
+}, { additionalProperties: true, description: "逐 lens 弹章正文；无弹章的 lens 可省略。" });
 // #836 r16 class 1: diagnostic is LLM/human-read narrative content — no code
 // branches on its length (src/reviewer-role.ts consumer: reviewer content is
 // returned as submitted, ADR 0057).
@@ -48,7 +50,7 @@ export const reviewerOutputSchema = withInfrastructureFailureDeclaration(
 );
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
-  loadCanonicalSkillBinding(name: "code-review"): Promise<AnyCanonicalSkillBinding>;
+  loadCanonicalSkillBinding(name: "ak-cross-m-review"): Promise<AnyCanonicalSkillBinding>;
   createPinnedGitReader(): Promise<ReviewerPinnedGitReader>;
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
@@ -57,8 +59,8 @@ export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: 
 export type ReviewerActivation = Readonly<{
   fixedBaseRevision: string;
   soul: string;
-  /** Frozen code-review binding — envelope owns expansion capture against this data. */
-  skillBinding: CanonicalSkillBinding<"code-review">;
+  /** Frozen ak-cross-m-review binding — envelope owns expansion capture against this data. */
+  skillBinding: CanonicalSkillBinding<"ak-cross-m-review">;
 }>;
 
 /**
@@ -74,7 +76,7 @@ export function createReviewerRoleRuntime(
   activate(ctx: HostContext | undefined, admitted: ReviewerAdmittedInputs): Promise<ReviewerActivation>;
 } {
   let soul: string | undefined;
-  let binding: CanonicalSkillBinding<"code-review"> | undefined;
+  let binding: CanonicalSkillBinding<"ak-cross-m-review"> | undefined;
   let registered = false;
   let fixedBaseRevision: string | undefined;
 
@@ -83,13 +85,13 @@ export function createReviewerRoleRuntime(
       soul = (await dependencies.loadSoul()).trim();
       if (!soul) throw new Error("Reviewer soul is empty");
       fixedBaseRevision = admitted.baseRevision;
-      const loaded = await dependencies.loadCanonicalSkillBinding("code-review");
-      if (loaded.name !== "code-review") throw new Error("Canonical Skill binding loader returned tdd for code-review");
+      const loaded = await dependencies.loadCanonicalSkillBinding("ak-cross-m-review");
+      if (loaded.name !== "ak-cross-m-review") throw new Error("Canonical Skill binding loader returned tdd for ak-cross-m-review");
       binding = loaded;
 
       if (!registered) {
         registered = true;
-        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台终局回执。本席自调 code-review skill。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
+        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台终局回执。本席自调 ak-cross-m-review skill。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
           async execute(_id: string, parameters: unknown): Promise<HostToolResult<unknown>> {
             if (!soul || !binding) throw new Error("御史台输入未装载");
             return {

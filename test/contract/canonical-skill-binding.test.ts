@@ -29,7 +29,7 @@ async function withHome<T>(run: (home: string) => Promise<T>): Promise<T> {
 
 async function writeConfiguredSkill(
   home: string,
-  name: "tdd" | "code-review",
+  name: "tdd" | "ak-cross-m-review",
   raw: string,
 ): Promise<string> {
   const path = resolve(home, `.agents/skills/${name}/SKILL.md`);
@@ -124,7 +124,7 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
 
     const rejected: HostSkillExpansionEvidence[] = [
       evidence("tdd", "/copy/SKILL.md", body, request),
-      evidence("code-review", canonicalPath, body, request),
+      evidence("ak-cross-m-review", canonicalPath, body, request),
       evidence("tdd", "/alternate/tdd/SKILL.md", body, request),
       evidence("tdd", canonicalPath, body, "Review a different point."),
     ];

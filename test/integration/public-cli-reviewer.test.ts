@@ -4,7 +4,7 @@ import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixtur
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
- * #111 / #236 public Reviewer path — fixed base + package code-review only.
+ * #917 / #236 public Reviewer path — fixed base + package ak-cross-m-review + --lens.
  * Caller instruction is optional provenance, never semantic control.
  */
 import assert from "node:assert/strict";
@@ -83,10 +83,10 @@ function seedGitProject(root: string): void {
 }
 
 function lawfulReviewerReceipt(
-  axes: readonly ("standards" | "spec")[] = ["standards", "spec"],
+  axes: readonly ("completeness" | "correctness")[] = ["completeness", "correctness"],
   status: "completed" | "refused" = "completed",
 ) {
-  const skillText = "package code-review skill body\n";
+  const skillText = "package ak-cross-m-review skill body\n";
   const prompt = (axis: string) => ({ text: `${axis} prompt\n` });
   const reports = Object.fromEntries(
     axes.map((axis) => [axis, { text: `${axis} report` }]),
@@ -134,7 +134,40 @@ async function admitReviewerInvocation(
 }
 
 
-test("parseReviewerArgv requires base and accepts optional provenance instruction", () => {
+test("buildReviewerTransportPrompt projects typed base/lens/authority into Skill args", () => {
+  const prompt = buildReviewerTransportPrompt({
+    role: "reviewer",
+    runId: "run-prompt-proj",
+    bookKey: "book",
+    projectRoot: "/tmp/p",
+    instruction: "caller note",
+    instructionEmpty: false,
+    attachments: [],
+    runDirectory: "/tmp/r",
+    principal: {
+      kind: "pi",
+      sessionDirectory: "/tmp/s",
+      sessionFile: "/tmp/s/session.jsonl",
+    },
+    admittedRequestPath: "/tmp/r/admitted-request.json",
+    baseRevision: "origin/main",
+    lens: "correctness",
+    authorityRefs: Object.freeze([
+      "CLAUDE.md",
+      "docs/adr/0001-roles-grow-by-demand.md",
+    ]),
+  });
+  assert.equal(
+    prompt.startsWith(
+      "--base origin/main --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
+    ),
+    true,
+    prompt,
+  );
+  assert.match(prompt, /caller note/);
+});
+
+test("parseReviewerArgv requires base, lens, authority-ref and accepts optional provenance instruction", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
@@ -142,10 +175,42 @@ test("parseReviewerArgv requires base and accepts optional provenance instructio
     () => parseReviewerArgv(["Review the branch since main."]),
     (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
   );
+  // Missing lens / authority-ref is usage error (no default; required).
+  assert.throws(() => parseReviewerArgv(["--base", "main"]), isUsage);
+  assert.throws(
+    () => parseReviewerArgv(["--base", "main", "--lens", "completeness"]),
+    isUsage,
+  );
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "main",
+        "--authority-ref",
+        "https://example.test/a",
+      ]),
+    isUsage,
+  );
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "main",
+        "--lens",
+        "all",
+        "--authority-ref",
+        "https://example.test/a",
+      ]),
+    isUsage,
+  );
   assert.deepEqual(
     parseReviewerArgv([
       "--base",
       "main",
+      "--lens",
+      "completeness",
+      "--authority-ref",
+      "https://example.test/a",
       "--project",
       "/tmp/p",
       "Review since the base.",
@@ -154,20 +219,34 @@ test("parseReviewerArgv requires base and accepts optional provenance instructio
       instruction: "Review since the base.",
       attachmentPaths: [],
       baseRevision: "main",
-      authorityRefs: [],
+      lens: "completeness",
+      authorityRefs: ["https://example.test/a"],
       project: "/tmp/p",
     },
   );
-  assert.deepEqual(parseReviewerArgv(["--base", "HEAD~1"]), {
-    instruction: "",
-    attachmentPaths: [],
-    baseRevision: "HEAD~1",
-    authorityRefs: [],
-  });
+  assert.deepEqual(
+    parseReviewerArgv([
+      "--base",
+      "HEAD~1",
+      "--lens",
+      "correctness",
+      "--authority-ref",
+      "CLAUDE.md",
+    ]),
+    {
+      instruction: "",
+      attachmentPaths: [],
+      baseRevision: "HEAD~1",
+      lens: "correctness",
+      authorityRefs: ["CLAUDE.md"],
+    },
+  );
   assert.deepEqual(
     parseReviewerArgv([
       "--base",
       "main",
+      "--lens",
+      "completeness",
       "--authority-ref",
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
       "--authority-ref=https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
@@ -177,6 +256,7 @@ test("parseReviewerArgv requires base and accepts optional provenance instructio
       instruction: "Scope the review to the owner decision.",
       attachmentPaths: [],
       baseRevision: "main",
+      lens: "completeness",
       authorityRefs: [
         "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
         "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
@@ -188,14 +268,37 @@ test("parseReviewerArgv requires base and accepts optional provenance instructio
   assert.throws(() => parseReviewerArgv(["--project", "", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--attach", "spec.md", "task"]), isUsage);
   assert.throws(() => parseReviewerArgv(["--attach=spec.md", "task"]), isUsage);
-  assert.throws(() => parseReviewerArgv(["--base", "main", "--authority-ref", ""]), isUsage);
-  assert.throws(() => parseReviewerArgv(["--base", "main", "--authority-ref="]), isUsage);
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "main",
+        "--lens",
+        "completeness",
+        "--authority-ref",
+        "",
+      ]),
+    isUsage,
+  );
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "main",
+        "--lens",
+        "completeness",
+        "--authority-ref=",
+      ]),
+    isUsage,
+  );
   // refs-only: representative inline Spec prose is rejected at the public admission seam.
   assert.throws(
     () =>
       parseReviewerArgv([
         "--base",
         "main",
+        "--lens",
+        "completeness",
         "--authority-ref",
         "The system SHALL launch two workers",
       ]),
@@ -209,36 +312,64 @@ test("parseReviewerArgv requires base and accepts optional provenance instructio
       parseReviewerArgv([
         "--base",
         "main",
+        "--lens",
+        "correctness",
         "--authority-ref",
         "Requirements:\n1. Launch two workers\n2. Report cardinality honestly",
       ]),
     isUsage,
   );
-  // Durable public reference forms remain accepted with bytes unchanged.
+  // Durable public reference forms remain accepted with bytes unchanged; extras pass (ADR 0025).
   assert.deepEqual(
     parseReviewerArgv([
       "--base",
       "main",
+      "--lens",
+      "correctness",
       "--authority-ref",
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
       "--authority-ref",
       "docs/adr/0063-received-prompt-is-audit-evidence-not-authority.md",
       "--authority-ref",
       "git@github.com:Akagilnc/ak-pi-workflow-roles.git",
-    ]).authorityRefs,
-    [
-      "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
-      "docs/adr/0063-received-prompt-is-audit-evidence-not-authority.md",
-      "git@github.com:Akagilnc/ak-pi-workflow-roles.git",
-    ],
+      "extra free text is fine",
+    ]),
+    {
+      instruction: "extra free text is fine",
+      attachmentPaths: [],
+      baseRevision: "main",
+      lens: "correctness",
+      authorityRefs: [
+        "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
+        "docs/adr/0063-received-prompt-is-audit-evidence-not-authority.md",
+        "git@github.com:Akagilnc/ak-pi-workflow-roles.git",
+      ],
+    },
   );
 });
 
-test("admitReviewerInvocation persists fixed base; caller text is provenance only", async () => {
+test("admitReviewerInvocation persists fixed base, lens, authority; caller text is provenance only", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+
+    await assert.rejects(
+      () =>
+        admitReviewerInvocation({
+          principalAuthority: piDurablePrincipalAuthority,
+          home,
+          cwd: project,
+          instruction: "   ",
+          attachmentPaths: [],
+          baseRevision: "origin/main",
+          lens: "completeness",
+          authorityRefs: [],
+          createRunId: () => "run-reviewer-blank-no-auth",
+        }),
+      (error: unknown) =>
+        error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
+    );
 
     const blank = await admitReviewerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
@@ -247,12 +378,15 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
       instruction: "   ",
       attachmentPaths: [],
       baseRevision: "origin/main",
+      lens: "completeness",
+      authorityRefs: ["CLAUDE.md"],
       createRunId: () => "run-reviewer-blank",
     });
     assert.deepEqual(
       blank.instructionEmpty, true);
     assert.equal(blank.baseRevision, "origin/main");
-    assert.deepEqual(blank.authorityRefs, []);
+    assert.equal(blank.lens, "completeness");
+    assert.deepEqual(blank.authorityRefs, ["CLAUDE.md"]);
     assert.equal("taskPath" in blank, false);
     await assert.rejects(
       () => access(join(blank.runDirectory, "task.md")),
@@ -266,13 +400,16 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
       instruction: "Review the work since the base revision.",
       attachmentPaths: [],
       baseRevision: "origin/main",
+      lens: "correctness",
+      authorityRefs: ["docs/adr/0001-roles-grow-by-demand.md"],
       createRunId: () => "run-reviewer-admit-001",
     });
     assert.equal(admitted.role, "reviewer");
     assert.equal(admitted.instruction, "Review the work since the base revision.");
     assert.equal(admitted.instructionEmpty, false);
     assert.equal(admitted.baseRevision, "origin/main");
-    assert.deepEqual(admitted.authorityRefs, []);
+    assert.equal(admitted.lens, "correctness");
+    assert.deepEqual(admitted.authorityRefs, ["docs/adr/0001-roles-grow-by-demand.md"]);
     assert.equal("taskPath" in admitted, false);
     await assert.rejects(
       () => access(join(admitted.runDirectory, "task.md")),
@@ -286,6 +423,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
       instruction: "Scope only; refs carry authority.",
       attachmentPaths: [],
       baseRevision: "origin/main",
+      lens: "completeness",
       authorityRefs: [
         "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
         "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
@@ -296,15 +434,17 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
     ]);
+    assert.equal(withRefs.lens, "completeness");
     await assert.rejects(
       () =>
         admitReviewerInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
+          principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
           instruction: "",
           attachmentPaths: [],
           baseRevision: "origin/main",
+          lens: "completeness",
           authorityRefs: ["The system SHALL launch two workers"],
           createRunId: () => "run-reviewer-admit-inline-rejected",
         }),
@@ -331,8 +471,9 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
     ) as Record<string, unknown>;
     assert.equal(persisted.role, "reviewer");
     assert.equal(persisted.baseRevision, "origin/main");
+    assert.equal(persisted.lens, "correctness");
     assert.equal(persisted.instruction, "Review the work since the base revision.");
-    assert.deepEqual(persisted.authorityRefs, []);
+    assert.deepEqual(persisted.authorityRefs, ["docs/adr/0001-roles-grow-by-demand.md"]);
     assert.equal("taskPath" in persisted, false);
     assert.equal("taskSha256" in persisted, false);
     const persistedRefs = JSON.parse(
@@ -342,6 +483,7 @@ test("admitReviewerInvocation persists fixed base; caller text is provenance onl
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
     ]);
+    assert.equal(persistedRefs.lens, "completeness");
   });
 });
 
@@ -354,9 +496,10 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
-      instruction: "Review standards and spec axes.",
+      instruction: "Review completeness and correctness lenses.",
       attachmentPaths: [],
       baseRevision: "main",
+      lens: "completeness",
       // 尺③：非空 authorityRefs 落 evidence artifact 的契约在此承接（原冷装
       // refs-only e2e 的独有断言，#420 类一收拢后由这条在进程内真 Terminal 承载）。
       authorityRefs: [
@@ -368,11 +511,11 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
-      "code-review",
+      "ak-cross-m-review",
     );
-    const skillPath = resolvePackagedMethodSkillPath(packageRoot, "code-review");
+    const skillPath = resolvePackagedMethodSkillPath(packageRoot, "ak-cross-m-review");
     const receipt = {
-      ...lawfulReviewerReceipt(["standards", "spec"]),
+      ...lawfulReviewerReceipt(["completeness", "correctness"]),
       auditNoReceipt: {
         status: "no-receipt",
         terminalToolCalled: true,
@@ -385,7 +528,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       },
     };
     // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
-    const expansion = `<skill name="code-review" location="${material.skillPath}">\n${material.body}\n</skill>`;
+    const expansion = `<skill name="ak-cross-m-review" location="${material.skillPath}">\n${material.body}\n</skill>`;
     const sessionLines = [
       JSON.stringify({
         type: "message",
@@ -439,7 +582,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       allowedLocations: [material.skillPath, skillPath],
     });
     assert.equal(invocations.length, 1);
-    assert.equal(invocations[0]?.name, "code-review");
+    assert.equal(invocations[0]?.name, "ak-cross-m-review");
     assert.equal(invocations[0]?.location, material.skillPath);
 
     const ambient = extractReviewerMethodInvocations(
@@ -451,7 +594,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
             content: [
               {
                 type: "text",
-                text: `<skill name="code-review" location="${join(home, ".agents/skills/code-review/SKILL.md")}">\nbody\n</skill>\n\nreq`,
+                text: `<skill name="ak-cross-m-review" location="${join(home, ".agents/skills/ak-cross-m-review/SKILL.md")}">\nbody\n</skill>\n\nreq`,
               },
             ],
           },
@@ -479,8 +622,8 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       "utf8",
     );
     assert.ok(
-      reviewerReportBody.includes("standards report"),
-      "reviewer standards report text must live in artifact receipt",
+      reviewerReportBody.includes("completeness report"),
+      "reviewer completeness report text must live in artifact receipt",
     );
 
     const evidence = JSON.parse(
@@ -512,11 +655,11 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185",
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
     ]);
-    assert.equal(evidence.callerProvenance, "Review standards and spec axes.");
-    assert.equal(evidence.methodProvenance.name, "code-review");
+    assert.equal(evidence.callerProvenance, "Review completeness and correctness lenses.");
+    assert.equal(evidence.methodProvenance.name, "ak-cross-m-review");
     assert.equal(
       evidence.methodProvenance.packageAdaptation,
-      "reviewer-no-setup-fixed-target-two-axis",
+      "verbatim-upstream",
     );
     assert.equal(evidence.methodInvocationObserved, true);
     assert.equal(evidence.methodInvocations.length, 1);
@@ -525,21 +668,18 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
   });
 });
 
-test("package code-review method stays usable without Matt setup and forbids governance setup", async () => {
-  const material = await loadPackagedMethodSkillMaterial(packageRoot, "code-review");
-  assert.equal(material.name, "code-review");
+test("package ak-cross-m-review method is verbatim upstream single-lens CMR", async () => {
+  const material = await loadPackagedMethodSkillMaterial(packageRoot, "ak-cross-m-review");
+  assert.equal(material.name, "ak-cross-m-review");
+  assert.equal(material.provenance.packageAdaptation, "verbatim-upstream");
+  assert.match(material.body, /completeness/);
+  assert.match(material.body, /correctness/);
+  assert.equal(material.body.includes("CMR-VERDICT"), true);
   assert.equal(
-    material.provenance.packageAdaptation,
-    "reviewer-no-setup-fixed-target-two-axis",
+    material.provenance.upstream.commit,
+    "57b10e2cea9ff008e2b36b98b55610e58cdfd512",
   );
-  assert.match(material.body, /Standards/);
-  assert.match(material.body, /Spec/);
-  assert.equal(material.body.includes("/setup-matt-pocock-skills"), true);
-  assert.equal(material.body.includes("Do **not** run `/setup-matt-pocock-skills`"), true);
-  assert.equal(material.body.includes("docs/agents/issue-tracker.md"), true);
-  assert.equal(material.body.includes("must **not** modify project governance"), true);
-  assert.equal(material.body.includes("scratch probes"), true);
-  assert.equal(material.body.includes("never turn the review into product repairs"), true);
+  assert.equal(material.provenance.upstream.version, "0.5.2.0");
   assert.equal(material.skillPath.includes(packageRoot), true);
   assert.equal(material.skillPath.includes(".agents/skills"), false);
 });
@@ -559,6 +699,10 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
           project,
           "--base",
           "HEAD~1",
+          "--lens",
+          "completeness",
+          "--authority-ref",
+          "CLAUDE.md",
         ],
         {
           packageRoot,
@@ -576,15 +720,15 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             await mkdir(join(sessionFile, ".."), { recursive: true });
             const material = await loadPackagedMethodSkillMaterial(
               packageRoot,
-              "code-review",
+              "ak-cross-m-review",
             );
             const skillPath = resolvePackagedMethodSkillPath(
               packageRoot,
-              "code-review",
+              "ak-cross-m-review",
             );
             // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
-            const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>`;
-            const receipt = lawfulReviewerReceipt(["standards", "spec"]);
+            const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
+            const receipt = lawfulReviewerReceipt(["completeness", "correctness"]);
             await writeFile(
               sessionFile,
               `${JSON.stringify({
@@ -654,7 +798,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         methodProvenance: { name: string };
         callerProvenance?: string;
       };
-      assert.equal(evidence.methodProvenance.name, "code-review");
+      assert.equal(evidence.methodProvenance.name, "ak-cross-m-review");
       assert.equal(evidence.methodInvocationObserved, true);
       assert.equal("callerProvenance" in evidence, false);
     }
@@ -668,6 +812,12 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
           project,
           "--base",
           "HEAD~1",
+          "--lens",
+          "correctness",
+          "--authority-ref",
+          "CLAUDE.md",
+          "--authority-ref",
+          "docs/adr/0001-roles-grow-by-demand.md",
           "Review the latest commit on both axes.",
         ],
         {
@@ -686,15 +836,15 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             await mkdir(join(sessionFile, ".."), { recursive: true });
             const material = await loadPackagedMethodSkillMaterial(
               packageRoot,
-              "code-review",
+              "ak-cross-m-review",
             );
             const skillPath = resolvePackagedMethodSkillPath(
               packageRoot,
-              "code-review",
+              "ak-cross-m-review",
             );
             // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
-            const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>`;
-            const receipt = lawfulReviewerReceipt(["standards", "spec"]);
+            const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
+            const receipt = lawfulReviewerReceipt(["completeness", "correctness"]);
             await writeFile(
               sessionFile,
               `${JSON.stringify({
@@ -764,6 +914,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       instruction: "Scope only",
       attachmentPaths: [],
       baseRevision: "main",
+      lens: "completeness",
       authorityRefs: ["https://example.com/durable-ref"],
       createRunId: () => "run-cli-reviewer-resume-bad-refs",
     });
@@ -807,7 +958,11 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
 
     {
       const { io } = captureIo();
-      const first = await runAkRole(["reviewer", "--model", "test/caller-seat:high", "--project", project, "--base", "main", instruction],
+      const first = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high", "--project", project,
+        "--base", "main", "--lens", "completeness", "--authority-ref", "CLAUDE.md",
+        instruction,
+      ],
         {
           packageRoot,
           home,
@@ -883,19 +1038,19 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
           args.some((a) => a.includes("[ak-role:resume-continue]")),
           false,
         );
-        assert.equal(readUserDialogueStdin(resumeStdin ?? "").startsWith("/skill:code-review"), true);
+        assert.equal(readUserDialogueStdin(resumeStdin ?? "").startsWith("/skill:ak-cross-m-review"), true);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         const material = await loadPackagedMethodSkillMaterial(
           packageRoot,
-          "code-review",
+          "ak-cross-m-review",
         );
         const skillPath = resolvePackagedMethodSkillPath(
           packageRoot,
-          "code-review",
+          "ak-cross-m-review",
         );
         // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
-        const expansion = `<skill name="code-review" location="${skillPath}">\n${material.body}\n</skill>`;
-        const details = lawfulReviewerReceipt(["standards"]);
+        const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
+        const details = lawfulReviewerReceipt(["completeness"]);
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
           `${JSON.stringify({

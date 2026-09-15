@@ -230,13 +230,18 @@ export type AdmittedNotaryInvocation = AdmittedRoleInvocationBase & {
   readonly sourceRun: NotarySourceRunLocator;
 };
 
+/** Public Reviewer single-lens token; no default and no `all` (caller-selected parent run). */
+export type ReviewerLens = "completeness" | "correctness";
+
 export type AdmittedReviewerInvocation = AdmittedRoleInvocationBase & {
   readonly role: "reviewer";
   /** Required fixed base revision for the pinned review target (ADR 0037). */
   readonly baseRevision: string;
+  /** Required single lens; frozen at admission and reused on resume. */
+  readonly lens: ReviewerLens;
   /**
-   * Optional durable authority references/URLs frozen at admission.
-   * Spec-axis material only — never Standards, never invocation prose promotion.
+   * Required durable authority references/URLs frozen at admission.
+   * Projected as Skill-internal `--authority` inputs; never free-text reverse-parse.
    */
   readonly authorityRefs: readonly string[];
 };
@@ -876,7 +881,9 @@ export type ParseReviewerArgvResult = {
   attachmentPaths: string[];
   /** Required fixed base revision for the pinned review target. */
   baseRevision: string;
-  /** Repeatable durable authority references/URLs (exact order preserved). */
+  /** Required single lens; no default. */
+  lens: ReviewerLens;
+  /** Repeatable durable authority references/URLs (exact order preserved; at least one). */
   authorityRefs: string[];
   project?: string;
 };
@@ -2631,12 +2638,6 @@ export function buildNotaryTransportPrompt(
 }
 
 /**
- * Parse Reviewer-specific argv after the `reviewer` token.
- * Public flags: --project, required --base, optional repeatable --authority-ref.
- * Reviewer gathers its own evidence; users submit neither attachments nor capability packets.
- * Caller instruction remains scope/procedure provenance — not Spec authority.
- */
-/**
  * Parse Gleaner-Left argv after the `gleaner-left` token.
  * Public flags: --project, required --base. No --attach / ticket face (unanchored self-fetch).
  * Instruction may be empty; callers must not pass directional instruction.
@@ -2796,6 +2797,7 @@ export function parseReviewerArgv(
   const authorityRefs: string[] = [];
   let project: string | undefined;
   let baseRevision: string | undefined;
+  let lens: ReviewerLens | undefined;
   const positional: string[] = [];
   const tokens = [...args];
   const definitions = roleOptions("reviewer");
@@ -2817,6 +2819,16 @@ export function parseReviewerArgv(
         baseRevision = requireOptionPath(taken.def.canonical, taken.value);
         continue;
       }
+      if (taken.def.id === "lens") {
+        const value = requireOptionPath(taken.def.canonical, taken.value);
+        if (value !== "completeness" && value !== "correctness") {
+          throw new CliUsageError(
+            "--lens requires completeness or correctness",
+          );
+        }
+        lens = value;
+        continue;
+      }
       if (taken.def.id === "authority-ref") {
         authorityRefs.push(requireAuthorityRef(taken.value));
         continue;
@@ -2830,12 +2842,13 @@ export function parseReviewerArgv(
     positional.push(token);
   }
 
-  // Unconditional required (e.g. --base) from typed table via shared consumer (#342).
+  // Unconditional required (--base/--lens/--authority-ref) from typed table (#342).
   options.assertRequired();
   return {
     instruction: positional.join(" "),
     attachmentPaths,
     baseRevision: baseRevision!,
+    lens: lens!,
     authorityRefs,
     ...(project === undefined ? {} : { project }),
   };
@@ -2849,8 +2862,10 @@ export type AdmitReviewerInvocationOptions = {
   instruction: string;
   attachmentPaths: readonly string[];
   baseRevision: string;
-  /** Optional durable authority references/URLs; frozen unchanged at admission. */
-  authorityRefs?: readonly string[];
+  /** Required single lens; frozen unchanged at admission. */
+  lens: ReviewerLens;
+  /** Required durable authority references/URLs; frozen unchanged at admission. */
+  authorityRefs: readonly string[];
   project?: string;
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
@@ -2858,9 +2873,9 @@ export type AdmitReviewerInvocationOptions = {
 };
 
 /**
- * Admit a Reviewer Role run on the fixed base only.
- * Caller instruction is optional provenance; Reviewer acquires issue/authority independently.
- * Optional authorityRefs are frozen as durable references only — not Spec prose.
+ * Admit a Reviewer Role run on the fixed base + lens + authority set.
+ * Caller instruction is optional provenance; typed fields project Skill inputs.
+ * authorityRefs are frozen as durable references only — not Spec prose.
  */
 export async function admitReviewerInvocation(
   options: AdmitReviewerInvocationOptions,
@@ -2871,8 +2886,14 @@ export async function admitReviewerInvocation(
   if (options.baseRevision.trim() === "") {
     throw new CliUsageError("--base requires a nonempty revision");
   }
+  if (options.lens !== "completeness" && options.lens !== "correctness") {
+    throw new CliUsageError("--lens requires completeness or correctness");
+  }
+  if (options.authorityRefs.length === 0) {
+    throw new CliUsageError("reviewer requires --authority-ref <ref>");
+  }
   const authorityRefs = Object.freeze(
-    (options.authorityRefs ?? []).map((ref) => requireAuthorityRef(ref)),
+    options.authorityRefs.map((ref) => requireAuthorityRef(ref)),
   );
 
   const projectRoot = resolve(options.project ?? options.cwd);
@@ -2908,6 +2929,7 @@ export async function admitReviewerInvocation(
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
+    lens: options.lens,
     authorityRefs: [...authorityRefs],
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
@@ -2936,22 +2958,26 @@ export async function admitReviewerInvocation(
     principal,
     admittedRequestPath,
     baseRevision: options.baseRevision,
+    lens: options.lens,
     authorityRefs,
   };
 }
 
 /**
  * Build the Pi prompt transport for an admitted Reviewer request.
- * #836: caller instruction is no longer dropped (A3.5).
- * Fixed base + optional caller words + engine material.
+ * Typed base/lens/authority project to Skill invocation args (never reverse-parsed from prose).
+ * Optional caller words + engine material follow.
  */
 export function buildReviewerTransportPrompt(
   admitted: AdmittedReviewerInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const lines = [
-    `本次审查的固定基点：${admitted.baseRevision}`,
-  ];
+  const skillArgs = [
+    `--base ${admitted.baseRevision}`,
+    `--lens ${admitted.lens}`,
+    ...admitted.authorityRefs.map((ref) => `--authority ${ref}`),
+  ].join(" ");
+  const lines = [skillArgs];
   if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
     lines.push("", admitted.instruction);
   }

@@ -158,13 +158,13 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
     async loadCanonicalSkillBinding(name) {
-      // Coder TDD (#109) and Reviewer code-review (#111) are package-owned.
+      // Coder TDD (#109) and Reviewer ak-cross-m-review (#917) are package-owned.
       // Optional Fixer diagnosing-bugs is available via --skill without this binding.
       if (name === "tdd") {
         return loadPackagedCanonicalSkillBinding(packageRoot, "tdd");
       }
-      if (name === "code-review") {
-        return loadPackagedCanonicalSkillBinding(packageRoot, "code-review");
+      if (name === "ak-cross-m-review") {
+        return loadPackagedCanonicalSkillBinding(packageRoot, "ak-cross-m-review");
       }
       return loadHomeCanonicalSkillBinding(name);
     },

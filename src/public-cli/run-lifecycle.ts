@@ -1192,6 +1192,7 @@ type LoadedAdmittedRequestFields = {
   readonly prerequisitesPath?: string;
   readonly prerequisites?: readonly FixerPrerequisite[];
   readonly baseRevision?: string;
+  readonly lens?: "completeness" | "correctness";
   readonly authorityRefs?: readonly string[];
   readonly mergerInputPath?: string;
   readonly derived?: DerivedMergerEnvelope;
@@ -1371,6 +1372,7 @@ async function loadResumableRunRecord(
   let prerequisitesPath: string | undefined;
   let prerequisites: readonly FixerPrerequisite[] | undefined;
   let baseRevision: string | undefined;
+  let lens: "completeness" | "correctness" | undefined;
   let authorityRefs: readonly string[] | undefined;
   let mergerInputPath: string | undefined;
   let derived: DerivedMergerEnvelope | undefined;
@@ -1429,6 +1431,9 @@ async function loadResumableRunRecord(
         record.baseRevision.trim() !== ""
       ) {
         baseRevision = record.baseRevision;
+      }
+      if (record.lens === "completeness" || record.lens === "correctness") {
+        lens = record.lens;
       }
       // Collector — admitted repository/PR identity (#633 resume).
       if (typeof record.prNumber === "number" && Number.isSafeInteger(record.prNumber) && record.prNumber >= 1) {
@@ -1624,6 +1629,7 @@ async function loadResumableRunRecord(
       ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
       ...(prerequisites === undefined ? {} : { prerequisites }),
       ...(baseRevision === undefined ? {} : { baseRevision }),
+      ...(lens === undefined ? {} : { lens }),
       ...(authorityRefs === undefined ? {} : { authorityRefs }),
       ...(mergerInputPath === undefined ? {} : { mergerInputPath }),
       ...(derived === undefined ? {} : { derived }),
@@ -1877,11 +1883,26 @@ export async function loadResumableReviewerRun(
       `role run admitted reviewer base revision is missing: ${runId}`,
     );
   }
+  const lens = loaded.admittedFields.lens;
+  if (lens !== "completeness" && lens !== "correctness") {
+    throw new CliUsageError(
+      `role run admitted reviewer lens is missing: ${runId}`,
+    );
+  }
+  const authorityRefs = Object.freeze([
+    ...(loaded.admittedFields.authorityRefs ?? []),
+  ]);
+  if (authorityRefs.length === 0) {
+    throw new CliUsageError(
+      `role run admitted reviewer authority refs are missing: ${runId}`,
+    );
+  }
   const admitted: AdmittedReviewerInvocation = {
     role: "reviewer",
     ...resumedBaseAdmitted(loaded),
     baseRevision,
-    authorityRefs: Object.freeze([...(loaded.admittedFields.authorityRefs ?? [])]),
+    lens,
+    authorityRefs,
   };
   return seatLoadedResult(loaded, admitted);
 }

@@ -183,59 +183,52 @@ test("packaged tdd binding captures expansion against package skill path only", 
   });
 });
 
-test("packaged code-review loads adapted two-axis method without Matt setup", async () => {
+test("packaged ak-cross-m-review loads verbatim upstream single-lens method", async () => {
   await withEmptyHome(async () => {
     const material = await loadPackagedMethodSkillMaterial(
       packageRoot,
-      "code-review",
+      "ak-cross-m-review",
     );
-    assert.equal(material.name, "code-review");
-    assert.equal(material.body.includes("Standards"), true);
-    assert.equal(material.body.includes("Spec"), true);
-    assert.equal(
-      material.provenance.packageAdaptation,
-      "reviewer-no-setup-fixed-target-two-axis",
-    );
-    assert.equal(
-      material.provenance.upstream.path,
-      "skills/engineering/code-review",
-    );
+    assert.equal(material.name, "ak-cross-m-review");
+    assert.equal(material.body.includes("completeness"), true);
+    assert.equal(material.body.includes("correctness"), true);
+    assert.equal(material.provenance.packageAdaptation, "verbatim-upstream");
+    assert.equal(material.provenance.upstream.path, ".");
     assert.equal(
       material.provenance.upstream.commit,
-      "8b36d4fb2635b3c21998dcd8144439c9e5ba7302",
+      "57b10e2cea9ff008e2b36b98b55610e58cdfd512",
     );
-    assert.equal(material.provenance.upstream.tag, "v1.2.2");
+    assert.equal(material.provenance.upstream.version, "0.5.2.0");
     assert.equal(
-      material.companionRelativePaths.includes("agents/openai.yaml"),
+      material.provenance.upstream.repository,
+      "https://github.com/Akagilnc/ak-cross-m-review",
+    );
+    assert.equal(
+      material.companionRelativePaths.includes("prompts/cmr-completeness.md"),
       true,
     );
-    // Adaptation forbids Matt setup / governance mutation and product repairs.
-    assert.equal(material.body.includes("/setup-matt-pocock-skills"), true);
     assert.equal(
-      material.body.includes("Do **not** run `/setup-matt-pocock-skills`"),
+      material.companionRelativePaths.includes("prompts/cmr-reviewer.md"),
       true,
     );
-    assert.equal(material.body.includes("must **not** modify project governance"), true);
-    assert.equal(material.body.includes("scratch probes"), true);
-    assert.equal(
-      material.body.includes("never turn the review into product repairs"),
-      true,
-    );
+    assert.equal(material.companionRelativePaths.includes("CONTEXT.md"), true);
+    assert.equal(material.companionRelativePaths.includes("LICENSE"), true);
+    assert.equal(material.body.includes("CMR-VERDICT"), true);
     assert.equal(material.skillPath.includes(packageRoot), true);
     assert.equal(material.skillPath.includes(".agents/skills"), false);
   });
 });
 
-test("packaged code-review binding captures expansion against package skill path only", async () => {
+test("packaged ak-cross-m-review binding captures expansion against package skill path only", async () => {
   await withEmptyHome(async () => {
-    const binding = await loadPackagedCanonicalSkillBinding(packageRoot, "code-review");
-    assert.equal(binding.name, "code-review");
+    const binding = await loadPackagedCanonicalSkillBinding(packageRoot, "ak-cross-m-review");
+    assert.equal(binding.name, "ak-cross-m-review");
     const request = "Review the branch since main.";
 
     const location = binding.snapshot.path;
     const expectedContent = binding.snapshot.body;
-    assert.deepEqual(binding.captureExpansion({ name: "code-review", location, content: expectedContent, userMessage: request }, request), {
-      name: "code-review",
+    assert.deepEqual(binding.captureExpansion({ name: "ak-cross-m-review", location, content: expectedContent, userMessage: request }, request), {
+      name: "ak-cross-m-review",
       location,
       content: expectedContent,
       userMessage: request,
@@ -243,16 +236,16 @@ test("packaged code-review binding captures expansion against package skill path
 
     const configuredPath = resolvePackagedMethodSkillPath(
       packageRoot,
-      "code-review",
+      "ak-cross-m-review",
     );
-    assert.deepEqual(binding.captureExpansion({ name: "code-review", location: configuredPath, content: expectedContent, userMessage: request }, request), {
-      name: "code-review",
+    assert.deepEqual(binding.captureExpansion({ name: "ak-cross-m-review", location: configuredPath, content: expectedContent, userMessage: request }, request), {
+      name: "ak-cross-m-review",
       location: configuredPath,
       content: expectedContent,
       userMessage: request,
     });
 
-    assert.equal(binding.captureExpansion({ name: "code-review", location: "/tmp/fake-home/.agents/skills/code-review/SKILL.md", content: expectedContent, userMessage: request }, request), undefined);
+    assert.equal(binding.captureExpansion({ name: "ak-cross-m-review", location: "/tmp/fake-home/.agents/skills/ak-cross-m-review/SKILL.md", content: expectedContent, userMessage: request }, request), undefined);
   });
 });
 

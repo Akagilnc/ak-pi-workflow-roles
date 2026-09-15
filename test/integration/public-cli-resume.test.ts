@@ -2333,7 +2333,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       if (role === "judge") return ["judge", ...model, "--project", project, "admit"];
       if (role === "coder") return ["coder", ...model, "plan", "--project", project, "admit"];
       if (role === "fixer") return ["fixer", ...model, "plan", "--project", project, "admit"];
-      if (role === "reviewer") return ["reviewer", ...model, "--project", project, "--base", "main", "admit"];
+      if (role === "reviewer") return ["reviewer", ...model, "--project", project, "--base", "main", "--lens", "completeness", "--authority-ref", "CLAUDE.md", "admit"];
       return ["merger", ...model, "--project", project, "admit"];
     }
 
@@ -2436,7 +2436,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       const rawPrompt = c.message === undefined ? "" : c.message;
       const expectedBody =
         c.role === "reviewer"
-          ? (rawPrompt.length === 0 ? "/skill:code-review" : `/skill:code-review ${rawPrompt}`)
+          ? (rawPrompt.length === 0 ? "/skill:ak-cross-m-review" : `/skill:ak-cross-m-review ${rawPrompt}`)
           : c.role === "merger"
             ? (rawPrompt.length === 0
               ? "/skill:resolving-merge-conflicts"

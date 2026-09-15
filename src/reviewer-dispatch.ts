@@ -1,6 +1,6 @@
 /**
  * #836 删 8: no code-compiled axis dispatch.
- * Parent seat invokes packaged code-review skill; this module does not construct or run children.
+ * Parent seat invokes packaged ak-cross-m-review skill; this module does not construct or run children.
  */
 export {
   branchNamesAtPinnedHead,

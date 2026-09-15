@@ -54,8 +54,8 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
       if (name === "tdd") {
         return loadPackagedCanonicalSkillBinding(packageRoot, "tdd");
       }
-      if (name === "code-review") {
-        return loadPackagedCanonicalSkillBinding(packageRoot, "code-review");
+      if (name === "ak-cross-m-review") {
+        return loadPackagedCanonicalSkillBinding(packageRoot, "ak-cross-m-review");
       }
       return loadHomeCanonicalSkillBinding(name);
     },

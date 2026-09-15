@@ -228,6 +228,8 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
     case "reviewer":
       return {
         "ak-review-base": "main~1",
+        "ak-review-lens": "completeness",
+        "ak-review-authority-refs": JSON.stringify(["CLAUDE.md"]),
       };
     case "collector":
       return {

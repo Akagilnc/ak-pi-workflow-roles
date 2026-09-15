@@ -143,6 +143,13 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
     }),
   }),
   Object.freeze({
+    name: "ak-review-lens",
+    definition: Object.freeze({
+      description: "Caller-selected single review lens: completeness or correctness",
+      type: "string" as const,
+    }),
+  }),
+  Object.freeze({
     name: "ak-review-scope-keys",
     definition: Object.freeze({
       description: "Optional comma-separated exact class keys limiting Reviewer scope",
@@ -152,7 +159,7 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
   Object.freeze({
     name: "ak-review-authority-refs",
     definition: Object.freeze({
-      description: "JSON array of durable authority references for Spec-axis material only",
+      description: "JSON array of durable authority references projected as Skill --authority inputs",
       type: "string" as const,
     }),
   }),
@@ -238,8 +245,13 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
   if (typeof baseRevision !== "string" || !baseRevision.trim()) {
     throw new Error("Reviewer role requires --ak-review-base");
   }
+  const rawLens = getFlag("ak-review-lens");
+  if (rawLens !== "completeness" && rawLens !== "correctness") {
+    throw new Error("Reviewer role requires --ak-review-lens completeness|correctness");
+  }
   return Object.freeze({
     baseRevision,
+    lens: rawLens,
     ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
     ...(authorityRefs === undefined ? {} : { authorityRefs }),
     ...(ticketNumber === undefined ? {} : { ticketNumber }),
@@ -607,7 +619,7 @@ export type RoleRuntimeDependencies = {
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
-    name: "tdd" | "code-review",
+    name: "tdd" | "ak-cross-m-review",
   ): Promise<AnyCanonicalSkillBinding>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;

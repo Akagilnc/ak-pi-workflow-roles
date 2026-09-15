@@ -1413,7 +1413,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
       diagnostic: failure.message || failure.name,
     });
   }
-  // Reviewer axis evidence-children are next: fixed two-axis dispatch fails
+  // Reviewer single-lens parent run is next: dispatch fails
   // during activation with only child stops durable. Parent stop remains the
   // fallback; credential is last.
   try {
@@ -3545,7 +3545,7 @@ export async function trySettleFixerTerminalResult(
 }
 
 /**
- * Observe forced Reviewer code-review Skill expansions from the session.
+ * Observe forced Reviewer ak-cross-m-review Skill expansions from the session.
  * Expansion evidence is package-path only; ambient home locations never count.
  */
 export function extractReviewerMethodInvocations(
@@ -3562,7 +3562,7 @@ export function extractReviewerMethodInvocations(
     const text = sessionMessageText(message);
     if (text.length === 0) continue;
     const hit = observePackagedMethodSkillInvocation(text, {
-      name: "code-review",
+      name: "ak-cross-m-review",
       allowedLocations: options.allowedLocations,
     });
     if (hit !== undefined) observed.push(hit);
@@ -3572,7 +3572,7 @@ export function extractReviewerMethodInvocations(
 
 /**
  * Publish lawful Reviewer success Artifacts on the shared #106 success interface.
- * Evidence records package code-review provenance and typed expansion
+ * Evidence records package ak-cross-m-review provenance and typed expansion
  * observation without ambient home Skill paths.
  */
 export async function publishReviewerArtifacts(
@@ -3611,6 +3611,7 @@ export async function publishReviewerArtifacts(
         sessionFile: coordinates.sessionFile,
         admittedRequestPath: admitted.admittedRequestPath,
         baseRevision: admitted.baseRevision,
+        lens: admitted.lens,
         authorityRefs: [...admitted.authorityRefs],
         ...(admitted.instructionEmpty
           ? {}
