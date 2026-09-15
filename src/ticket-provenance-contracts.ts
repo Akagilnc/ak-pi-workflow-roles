@@ -1,9 +1,11 @@
 /**
- * 起居录（ticket-provenance）typed 形状 —— ADR 0075「2026-09-14 修订」/ #901。
+ * 起居录（ticket-provenance）typed 形状 —— ADR 0075「2026-09-14 修订」/ #901 / #918。
  *
  * 一册＝一个文件：第一行册子头，其后每行一条对话。
- * 每轮按册子头当前各区间**重投影**这份唯一文件：册子头与各条定位可更新，
- * 正文原样不改（`single-volume` / `one-volume-per-issue`）。
+ * 每轮按册子头**累计**各区间重投影这份唯一文件（#918 甲案：prior ∪ 本轮，
+ * 遗漏不删除）：册子头与各条定位可更新，正文原样不改
+ * （`single-volume` / `one-volume-per-issue`）。
+ * 交卷 `sessions` 输入语义仍是「本轮对话边界」；累计并集是机械合并，不是角色交什么。
  */
 
 /** Sitian kind for per-ticket court diary volumes. */
@@ -27,13 +29,16 @@ export type TicketProvenanceRange = {
   readonly to: TicketProvenanceBound;
 };
 
-/** 册子头记的一卷：会话卷路径 + 本轮该卷的各区间。 */
+/**
+ * 一卷：会话卷路径 + 区间声明。
+ * 交卷时＝本轮边界；写入册子头后＝累计并集（#918），二者同型。
+ */
 export type TicketProvenanceSession = {
   readonly path: string;
   readonly ranges: readonly TicketProvenanceRange[];
 };
 
-/** 册子头（文件第一行）。reopen 与跨宿主为新增区间，不新建册。 */
+/** 册子头（文件第一行）。sessions 为累计区间；reopen 与跨宿主并入，不新建册。 */
 export type TicketProvenanceHeader = {
   readonly repo: string;
   readonly ticket: number;

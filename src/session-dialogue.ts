@@ -114,6 +114,8 @@ function isCodexOwnerResponseItemUser(message: Record<string, unknown>): boolean
  * 入队事件适配：人类这次输入经队列的来源。
  * 配对的出队事件不另取，也不做正文比对去重——被吸收的插话正是靠入队事件入录
  * （它没有独立的消息记录，#901 用户故事 11）。
+ * 机器入队（配对 materialized user 带 origin.kind）由整卷适配层按结构化来源排除，
+ * 本函数不读正文、不自判机器（#918）。
  */
 function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
   if (row.type !== "queue-operation" || row.operation !== "enqueue") return [];
@@ -121,6 +123,24 @@ function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
   if (typeof content !== "string" || content === "") return [];
   const id = nativeEventId(row);
   return [{ speaker: "owner", text: content, ...(id === undefined ? {} : { id }) }];
+}
+
+/**
+ * 物化 user 行上的结构化来源 kind（CC top-level `origin.kind`）。
+ * 有非空 kind＝具名机器/系统来源；真人键入通常无 origin。不读正文。
+ */
+function materializationOriginKind(
+  row: Record<string, unknown>,
+): string | undefined {
+  const origin = row.origin;
+  if (!isRecord(origin)) return undefined;
+  const kind = origin.kind;
+  return typeof kind === "string" && kind !== "" ? kind : undefined;
+}
+
+/** 带结构化机器 origin 的 user 行不得入 owner 对话。 */
+function isMachineOriginUser(row: Record<string, unknown>): boolean {
+  return materializationOriginKind(row) !== undefined;
 }
 
 /**
@@ -161,65 +181,90 @@ function isRunnerMessage(row: Record<string, unknown>): boolean {
   return message !== undefined && message.role === "assistant";
 }
 
+type QueuePairing = {
+  /** 物化 user 行下标：真人副本跳过，或机器 origin 行排除。 */
+  readonly skipMaterializations: ReadonlySet<number>;
+  /** 配对到机器 origin 物化的 enqueue 下标——不得署 owner（#918）。 */
+  readonly suppressEnqueues: ReadonlySet<number>;
+};
+
 /**
- * 逐次来源配对：仅当对应 enqueue 已由 fromQueueEvent 实际形成 retained owner
- * 对话时，才把随后的物化 user 当副本跳过。FIFO 对齐 enqueue→dequeue/remove。
- * 无正文 enqueue、旧宿主或其他不可投影形状：dequeue 不产生 skip，后续真人
- * user 原样保留。未物化的 retained dequeue（被吸收插话）遇 runner 解除。
+ * 逐次来源配对：FIFO 对齐 enqueue→dequeue/remove。
+ * - 有正文 enqueue 且配对物化为真人（无 origin.kind）：enqueue 留 owner，物化当副本跳过。
+ * - 有正文 enqueue 且配对物化带机器 origin.kind：enqueue 与物化均排除（#918）。
+ * - 无正文 enqueue：dequeue 不产生 skip，后续真人 user 原样保留。
+ * - 未物化的 retained dequeue（被吸收插话）遇 runner 解除——仍靠 enqueue 入录
+ *   （#901 用户故事 11）。
  * 不用「卷内曾出现 enqueue」整卷布尔，也不按正文过滤。
  */
 function ownerMessagesMaterializingQueue(
   rows: readonly (Record<string, unknown> | undefined)[],
-): ReadonlySet<number> {
-  const skip = new Set<number>();
-  /** 各 enqueue 是否已留下 owner 对话，按入队顺序等 dequeue/remove 消费。 */
-  const retainedByEnqueue: boolean[] = [];
-  let pendingSkips = 0;
+): QueuePairing {
+  const skipMaterializations = new Set<number>();
+  const suppressEnqueues = new Set<number>();
+  /** 各 enqueue：下标 + 是否有可投影正文，按入队顺序等 dequeue/remove 消费。 */
+  type EnqueueSlot = { readonly index: number; readonly hasContent: boolean };
+  const enqueueQueue: EnqueueSlot[] = [];
+  let pending: EnqueueSlot[] = [];
   for (let index = 0; index < rows.length; index += 1) {
     const row = rows[index];
     if (row === undefined) continue;
     if (row.type === "queue-operation") {
       if (row.operation === "enqueue") {
-        retainedByEnqueue.push(fromQueueEvent(row).length > 0);
+        enqueueQueue.push({
+          index,
+          hasContent: fromQueueEvent(row).length > 0,
+        });
         continue;
       }
       if (row.operation === "dequeue" || row.operation === "remove") {
-        const retained = retainedByEnqueue.shift();
-        // 只在 enqueue 真留下对话且本事件是 dequeue 物化时才跳过后续 user。
-        // remove 只消费队列槽，不制造 skip（无物化消息）。
-        if (row.operation === "dequeue" && retained === true) {
-          pendingSkips += 1;
+        const enqueued = enqueueQueue.shift();
+        // remove 只消费队列槽，不制造物化配对。
+        if (row.operation === "dequeue" && enqueued !== undefined) {
+          pending.push(enqueued);
         }
         continue;
       }
     }
     if (isRunnerMessage(row)) {
-      pendingSkips = 0;
+      pending = [];
       continue;
     }
-    if (pendingSkips > 0 && isOwnerDialogueMessage(row)) {
-      skip.add(index);
-      pendingSkips -= 1;
+    if (pending.length > 0 && isOwnerDialogueMessage(row)) {
+      const paired = pending.shift()!;
+      const machineKind = materializationOriginKind(row);
+      if (machineKind !== undefined) {
+        // 结构化机器来源：排除 enqueue 与物化，不咬正文。
+        suppressEnqueues.add(paired.index);
+        skipMaterializations.add(index);
+      } else if (paired.hasContent) {
+        // 真人物化副本：enqueue 已留 owner，跳过物化避免双计。
+        skipMaterializations.add(index);
+      }
+      // 无正文 enqueue 的真人物化：不 skip，sole materialization 保留。
     }
   }
-  return skip;
+  return { skipMaterializations, suppressEnqueues };
 }
 
 /**
  * 整卷适配：返回与入参行等长的对话事实数组（该行不是对话则为空数组）。
- * 需要整卷视野：enqueue/dequeue 配对跨行。
+ * 需要整卷视野：enqueue/dequeue 配对跨行；机器 origin 排除跨行。
  */
 export function adaptSessionDialogue(
   rows: readonly (Record<string, unknown> | undefined)[],
 ): DialogueEvent[][] {
-  const skipOwner = ownerMessagesMaterializingQueue(rows);
+  const pairing = ownerMessagesMaterializingQueue(rows);
   return rows.map((row, index) => {
     if (row === undefined) return [];
+    if (pairing.suppressEnqueues.has(index)) return [];
+    // 机器 origin 物化（含未走队列的同形）不得入 owner。
+    if (isMachineOriginUser(row)) return [];
     const queued = fromQueueEvent(row);
     if (queued.length > 0) return queued;
     // Codex event_msg.user_message 无 content_item_kinds 等 provenance，旧 exec
     // 卷中与 worker entrypoint 注入同形——无法证明为 owner 则不取（不猜、不咬正文）。
-    if (skipOwner.has(index)) return [];
+    if (pairing.skipMaterializations.has(index)) return [];
     return fromMessageEvent(row);
   });
 }

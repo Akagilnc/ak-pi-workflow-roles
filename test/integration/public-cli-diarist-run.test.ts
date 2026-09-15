@@ -176,9 +176,15 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   readonly codexInjectionText: string;
   readonly interjectionId: string;
   readonly duplicateId: string;
+  readonly taskNotificationEnqueueId: string;
+  readonly taskNotificationText: string;
   readonly unparsableLine: number;
   readonly unparsableRaw: string;
   readonly lastLine: number;
+  /** Physical line of plain owner (range A anchor). */
+  readonly rangeALine: number;
+  /** Physical line of queue owner enqueue (range B anchor). */
+  readonly rangeBLine: number;
 }> {
   const plainOwnerId = "msg-plain-owner";
   const plainOwnerText = "陛下的普通发言";
@@ -192,6 +198,9 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const codexInjectionText = "# AGENTS.md instructions for /workspace";
   const interjectionId = "queue-interject-1";
   const duplicateId = "msg-dup-1";
+  const taskNotificationEnqueueId = "queue-task-notif-1";
+  const taskNotificationText =
+    "<task-notification>\n<task-id>bg-1</task-id>\n<summary>machine event</summary>\n</task-notification>";
   const unparsableRaw = "{this is not json at all";
   const rows = [
     // 1. ordinary owner message — must survive alongside later enqueue events
@@ -400,6 +409,29 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: "副本正文（应被首现吞掉）" }],
       },
     }),
+    // 22. machine task-notification via queue — must NOT become owner (#918)
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      uuid: taskNotificationEnqueueId,
+      content: taskNotificationText,
+    }),
+    // 23. paired dequeue
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "dequeue",
+      uuid: "queue-deq-task-notif",
+    }),
+    // 24. materialized user with structured origin.kind (not body-matched)
+    JSON.stringify({
+      type: "user",
+      uuid: "msg-task-notif-mat",
+      origin: { kind: "task-notification" },
+      message: {
+        role: "user",
+        content: taskNotificationText,
+      },
+    }),
   ];
   await mkdir(join(path, ".."), { recursive: true });
   await writeFile(path, `${rows.join("\n")}\n`, "utf8");
@@ -418,9 +450,13 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     codexInjectionText,
     interjectionId,
     duplicateId,
+    taskNotificationEnqueueId,
+    taskNotificationText,
     unparsableLine: 21,
     unparsableRaw,
-    lastLine: 22,
+    lastLine: 24,
+    rangeALine: 1,
+    rangeBLine: 2,
   };
 }
 
@@ -612,6 +648,17 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     );
     assert.equal(byId.get(fixture.interjectionId)?.speaker, "owner");
     assert.equal(byId.get(fixture.interjectionId)?.text, "中途插一句：保留原话。");
+    // #918: machine enqueue (origin.kind=task-notification on paired user) must not be owner.
+    assert.equal(
+      volume.lines.some(
+        (line) =>
+          line.id === fixture.taskNotificationEnqueueId ||
+          line.id === "msg-task-notif-mat" ||
+          line.text === fixture.taskNotificationText,
+      ),
+      false,
+      "task-notification queue events must not produce owner diary lines",
+    );
     assert.equal(byId.get(fixture.duplicateId)?.text, "首现正文");
     // Duplicate second occurrence must not produce a second line with that id.
     assert.equal(
@@ -820,6 +867,172 @@ test("migrateBookTopology preserves legacy and prior bare under unbound when lat
       unboundBodies.includes('"updatedAt":"t0"'),
       true,
       "first bare header in unbound",
+    );
+  });
+});
+
+/**
+ * #918 甲案：ranges 累计单调——本轮 sessions 与 prior 取并集；遗漏不删除。
+ * 真实 ak-role diarist 入口；变异「仅本轮整卷覆写」时本案报红。
+ */
+test("ak-role diarist cumulative ranges keep history and ignore omissions", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const fixture = await writeDialogueSessionFixture(
+      join(home, ".claude", "projects", "probe", "session.jsonl"),
+    );
+    const paths = resolveTicketProvenanceVolume(TICKET, project, home);
+
+    const rangeA = {
+      path: fixture.path,
+      ranges: [{ from: { line: fixture.rangeALine }, to: { line: fixture.rangeALine } }],
+    };
+    const rangeB = {
+      path: fixture.path,
+      ranges: [{ from: { line: fixture.rangeBLine }, to: { line: fixture.rangeBLine } }],
+    };
+
+    async function runDiarist(runId: string, sessions: unknown) {
+      const { io, stdout } = captureIo();
+      const result = await runAkRole(
+        ["diarist", "--model", "test/caller-seat:high", "--project", project, `整理 #${TICKET} 起居录`],
+        {
+          home,
+          packageRoot,
+          cwd: project,
+          io,
+          createRunId: () => runId,
+          principalAuthority: immutablePrincipalAuthority,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: immutablePrincipalAuthority,
+            piRunner: diaristEnvelopeRunner({
+              status: "completed",
+              ticketNumber: TICKET,
+              sessions,
+            }),
+          }),
+        },
+      );
+      assert.equal(result.exitCode, 0, stdout.join("") || `diarist ${runId} failed`);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      return readTicketProvenance(TICKET, project, home);
+    }
+
+    // Round 1: record only A.
+    const afterA = await runDiarist("01a0diar00-0000-7000-8000-000000000091", [rangeA]);
+    assert.equal(afterA.lines.length, 1);
+    assert.equal(afterA.lines[0]?.id, fixture.plainOwnerId);
+    assert.equal(afterA.lines[0]?.text, fixture.plainOwnerText);
+    assert.equal(afterA.header?.sessions.length, 1);
+    assert.deepEqual(afterA.header?.sessions[0]?.ranges, rangeA.ranges);
+
+    // Round 2: submit only B — A must remain (验收 1 历史不减).
+    const afterB = await runDiarist("01a0diar00-0000-7000-8000-000000000092", [rangeB]);
+    const byIdB = new Map(
+      afterB.lines.filter((line) => line.id !== undefined).map((line) => [line.id!, line]),
+    );
+    assert.equal(byIdB.get(fixture.plainOwnerId)?.text, fixture.plainOwnerText, "A identity/text kept");
+    assert.equal(byIdB.get(fixture.ownerId)?.text, "立文件。送司天台记录。", "B added");
+    assert.equal(afterB.lines.length, 2);
+    // Header ranges are the union; same path, both range declarations present.
+    assert.equal(afterB.header?.sessions.length, 1);
+    assert.equal(afterB.header?.sessions[0]?.path, fixture.path);
+    assert.equal(afterB.header?.sessions[0]?.ranges.length, 2);
+    assert.deepEqual(afterB.header?.sessions[0]?.ranges[0], rangeA.ranges[0]);
+    assert.deepEqual(afterB.header?.sessions[0]?.ranges[1], rangeB.ranges[0]);
+    // s index stays coherent for both lines on the single merged session.
+    assert.equal(afterB.lines.every((line) => line.s === 0), true);
+
+    // Round 3: resubmit B only — idempotent (验收 2).
+    const afterIdem = await runDiarist("01a0diar00-0000-7000-8000-000000000093", [rangeB]);
+    assert.equal(afterIdem.lines.length, 2);
+    assert.equal(
+      afterIdem.lines.filter((line) => line.id === fixture.plainOwnerId).length,
+      1,
+    );
+    assert.equal(
+      afterIdem.lines.filter((line) => line.id === fixture.ownerId).length,
+      1,
+    );
+    assert.equal(afterIdem.header?.sessions[0]?.ranges.length, 2);
+
+    // Round 4: submit only A — B must remain (验收 3b 遗漏不删除).
+    const afterOmit = await runDiarist("01a0diar00-0000-7000-8000-000000000094", [rangeA]);
+    const byIdOmit = new Map(
+      afterOmit.lines.filter((line) => line.id !== undefined).map((line) => [line.id!, line]),
+    );
+    assert.equal(byIdOmit.get(fixture.plainOwnerId)?.text, fixture.plainOwnerText);
+    assert.equal(byIdOmit.get(fixture.ownerId)?.text, "立文件。送司天台记录。", "omitted B stays");
+    assert.equal(afterOmit.lines.length, 2);
+    assert.equal(afterOmit.header?.sessions[0]?.ranges.length, 2);
+
+    // Round 5: pure empty sessions still no-op (验收 3).
+    const beforeEmpty = await readFile(paths.recordFile, "utf8");
+    const afterEmpty = await runDiarist("01a0diar00-0000-7000-8000-000000000095", []);
+    assert.equal(await readFile(paths.recordFile, "utf8"), beforeEmpty);
+    assert.equal(afterEmpty.lines.length, 2);
+
+    // Failure honesty: unreadable session must not wash prior entries (验收 4).
+    const priorBytes = await readFile(paths.recordFile, "utf8");
+    const missingPath = join(home, ".claude", "projects", "probe", "missing-session.jsonl");
+    let sawUnreadableReask = false;
+    const { io, stdout } = captureIo();
+    const failed = await runAkRole(
+      ["diarist", "--model", "test/caller-seat:high", "--project", project, `整理 #${TICKET} 起居录`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => "01a0diar00-0000-7000-8000-000000000096",
+        principalAuthority: immutablePrincipalAuthority,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: immutablePrincipalAuthority,
+          piRunner: diaristEnvelopeRunner((round: number, lastReask?: string) => {
+            if (round === 1) {
+              return {
+                status: "completed",
+                ticketNumber: TICKET,
+                sessions: [
+                  {
+                    path: missingPath,
+                    ranges: [{ from: { line: 1 }, to: { line: 1 } }],
+                  },
+                ],
+              };
+            }
+            assert.ok(lastReask, "expected unreadable-session reask");
+            assert.match(lastReask, /边界无法使用|session unreadable/);
+            sawUnreadableReask = true;
+            assert.equal(
+              readFileSync(paths.recordFile, "utf8"),
+              priorBytes,
+              "unreadable source must not publish partial projection over prior diary",
+            );
+            // Recover with empty sessions no-op so the run can accept without rewriting.
+            return {
+              status: "completed",
+              ticketNumber: TICKET,
+              sessions: [],
+            };
+          }),
+        }),
+      },
+    );
+    assert.equal(failed.exitCode, 0, stdout.join("") || "recovery run failed");
+    assert.equal(sawUnreadableReask, true);
+    assert.equal(readFileSync(paths.recordFile, "utf8"), priorBytes);
+    const still = await readTicketProvenance(TICKET, project, home);
+    assert.equal(still.lines.length, 2, "prior A+B must survive failed partial projection");
+    assert.equal(
+      still.lines.some((line) => line.id === fixture.ownerId),
+      true,
+      "must not wash old entries by omitting them after source failure",
     );
   });
 });

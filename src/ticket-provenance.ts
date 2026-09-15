@@ -1,7 +1,8 @@
 /**
- * 起居录 volume helpers — ADR 0075「2026-09-14 修订」/ #901。
- * 一册＝一个文件：首行册子头，其后裸对话行。每轮按当前区间重投影是唯一机制；
- * 无 append 水位、无 SitianRecord 外壳。目的地解析与读写经司天台唯一入口
+ * 起居录 volume helpers — ADR 0075「2026-09-14 修订」/ #901 / #918。
+ * 一册＝一个文件：首行册子头，其后裸对话行。每轮按册子头累计区间重投影是唯一机制
+ * （#918 甲案：prior ∪ 本轮，遗漏不删除）；无 append 水位、无 SitianRecord 外壳。
+ * 目的地解析与读写经司天台唯一入口
  * （ADR 0065 records-owner / record-entry；ADR 0081 入录经司天台）。
  */
 import { basename, dirname, join, resolve } from "node:path";
@@ -231,6 +232,68 @@ function amendmentKey(s: number, line: number): string {
   return `${s}:${line}`;
 }
 
+/** Exact range identity for cumulative header dedupe (idempotent resubmit). */
+function rangeDeclarationKey(range: TicketProvenanceRange): string {
+  return JSON.stringify({
+    from: range.from,
+    to: range.to,
+  });
+}
+
+/**
+ * #918 甲案：prior ranges ∪ 本轮 ranges。按 path 合并；先保 prior 序，再追加新 path。
+ * 遗漏不代表删除——调用方不得以本轮未交的 path/range 收缩结果。
+ * 交卷 sessions 仍是「本轮边界」输入；本函数是机械合并，不改角色交什么。
+ */
+function mergeSessionBounds(
+  prior: readonly TicketProvenanceSession[] | undefined,
+  incoming: readonly TicketProvenanceSession[],
+): readonly TicketProvenanceSession[] {
+  if (prior === undefined || prior.length === 0) return incoming;
+  if (incoming.length === 0) return prior;
+
+  const merged: { path: string; ranges: TicketProvenanceRange[] }[] = prior.map(
+    (session) => ({
+      path: session.path,
+      ranges: session.ranges.map((range) => ({
+        from: { ...range.from },
+        to: { ...range.to },
+      })),
+    }),
+  );
+  const indexByPath = new Map<string, number>();
+  for (let index = 0; index < merged.length; index += 1) {
+    indexByPath.set(merged[index]!.path, index);
+  }
+
+  for (const session of incoming) {
+    const existingIndex = indexByPath.get(session.path);
+    if (existingIndex === undefined) {
+      indexByPath.set(session.path, merged.length);
+      merged.push({
+        path: session.path,
+        ranges: session.ranges.map((range) => ({
+          from: { ...range.from },
+          to: { ...range.to },
+        })),
+      });
+      continue;
+    }
+    const target = merged[existingIndex]!;
+    const seen = new Set(target.ranges.map(rangeDeclarationKey));
+    for (const range of session.ranges) {
+      const key = rangeDeclarationKey(range);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      target.ranges.push({
+        from: { ...range.from },
+        to: { ...range.to },
+      });
+    }
+  }
+  return merged;
+}
+
 /**
  * Resolve submitted ranges against the session, then sort by source position and
  * merge overlaps so each physical row is visited once (#901 source order).
@@ -354,9 +417,11 @@ async function projectSessionRanges(input: {
 }
 
 /**
- * Reproject the unique diary file from the submitted bounds + optional amendments.
+ * Reproject the unique diary file from cumulative bounds + optional amendments.
+ * #918 甲案：prior header ranges ∪ 本轮 sessions 取并集后整卷重投影；遗漏不删除。
  * Header + locating fields may change; dialogue text is taken from the source
- * (or from a typed amendment). Does not append; the whole file is the projection.
+ * (or from a typed amendment). The whole file is still the projection (not an
+ * append log) — the projection *source* is the cumulative union, not this round alone.
  * Persistence goes through the Sitian volume seam (rewriteSitianVolume).
  */
 export async function reprojectTicketProvenance(input: {
@@ -379,8 +444,8 @@ export async function reprojectTicketProvenance(input: {
   const amendments = input.amendments ?? [];
   // Empty sessions: pure empty selection preserves non-empty volume. Amendments-only
   // continuation reuses prior header sessions — never wash into accepted no-op.
-  let sessions = input.sessions;
-  if (sessions.length === 0) {
+  let sessions: readonly TicketProvenanceSession[];
+  if (input.sessions.length === 0) {
     if (amendments.length > 0) {
       const priorSessions = prior.header?.sessions;
       if (priorSessions === undefined || priorSessions.length === 0) {
@@ -406,7 +471,12 @@ export async function reprojectTicketProvenance(input: {
         lines: prior.lines,
         unparsable: [],
       };
+    } else {
+      sessions = input.sessions;
     }
+  } else {
+    // Non-empty 本轮边界 ∪ prior：遗漏永不删除（#918 甲案）。
+    sessions = mergeSessionBounds(prior.header?.sessions, input.sessions);
   }
 
   const amendmentsByKey = new Map<string, TicketProvenanceAmendment>();
