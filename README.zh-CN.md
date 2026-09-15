@@ -52,7 +52,7 @@ ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
 ```
 
-**宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动；裸 `resume` 同序取表。全部 public callable 角色及其机构子腿（审刑审计、太医审计、御史台证据子腿）在共享进程内机构子会话接缝上均为宿主中立。
+**宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动；裸 `resume` 同序取表。全部 public callable 角色及其机构子腿（审刑审计、太医审计）在共享进程内机构子会话接缝上均为宿主中立。
 
 **宿主 provider 表（#788）：** 席位行只写一份 provider 名。owner 手改 `~/.ak-roles/host-providers.json`（形如 `{ "hermes": { "xai": "xai-oauth" } }`）；代码只读。表里没有的问宿主目录（本票 hermes）：唯一即用，零个或多个响亮失败。优先级：表 > 唯一 > 失败，代码无裁量。`config show` 原样打印该表。
 
@@ -77,7 +77,7 @@ ak-role judge --model <provider/model[:thinking]> --attach ./findings.md --attac
 ak-role coder --model <provider/model[:thinking]> plan "Propose the first implementation plan."
 ak-role coder --model <provider/model[:thinking]> apply --attach ./plan.md "Implement the approved slice."
 
-# 御史台——固定目标双轴察举；completed ≠ 准行，findings 在 Terminal 里
+# 御史台——固定目标、调用者选定单 lens 察举；completed ≠ 准行，findings 在 Terminal 里
 ak-role reviewer --model <provider/model[:thinking]> --base main --lens completeness --authority-ref docs/adr/0001-roles-grow-by-demand.md "Review the branch."
 ak-role reviewer --model <provider/model[:thinking]> --base main --lens correctness --authority-ref CLAUDE.md
 

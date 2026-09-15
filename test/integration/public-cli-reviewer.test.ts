@@ -174,7 +174,26 @@ test("parseReviewerArgv requires base, lens, authority-ref and accepts optional 
         "--authority-ref",
         "https://example.test/a",
       ]),
-    isUsage,
+    (error: unknown) =>
+      isUsage(error) &&
+      error instanceof Error &&
+      error.message === "--lens requires completeness or correctness",
+  );
+  // Empty lens shares the enum message (not path-helper "requires a path").
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "main",
+        "--lens",
+        "",
+        "--authority-ref",
+        "https://example.test/a",
+      ]),
+    (error: unknown) =>
+      isUsage(error) &&
+      error instanceof Error &&
+      error.message === "--lens requires completeness or correctness",
   );
   assert.deepEqual(
     parseReviewerArgv([
@@ -879,6 +898,8 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
       assert.equal(captured!.includes("--ak-review-task"), false);
+      // correctness path must project the admitted lens (catches constant-completeness).
+      assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
       const bookKey = resolveBookKeyFromGit(project);
       const evidence = JSON.parse(
         await readFile(
@@ -915,7 +936,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       instruction: "Scope only",
       attachmentPaths: [],
       baseRevision: "main",
-      lens: "completeness",
+      lens: "correctness",
       authorityRefs: ["https://example.com/durable-ref"],
       createRunId: () => "run-cli-reviewer-resume-bad-refs",
     });
@@ -961,7 +982,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       const { io } = captureIo();
       const first = await runAkRole([
         "reviewer", "--model", "test/caller-seat:high", "--project", project,
-        "--base", "main", "--lens", "completeness", "--authority-ref", "CLAUDE.md",
+        "--base", "main", "--lens", "correctness", "--authority-ref", "CLAUDE.md",
         instruction,
       ],
         {
@@ -1011,7 +1032,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     ) as Record<string, unknown> & { role: string; baseRevision?: string; ticketNumber?: number };
     assert.equal(admitted.role, "reviewer");
     assert.equal(admitted.baseRevision, "main");
-    assert.equal(admitted.lens, "completeness");
+    assert.equal(admitted.lens, "correctness");
     assert.equal(admitted.ticketNumber, undefined);
     assert.equal("taskPath" in admitted, false);
     assert.equal("taskSha256" in admitted, false);
@@ -1034,7 +1055,8 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
         assert.equal(args.includes("--ak-review-task"), false);
         assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
-        assert.equal(args[args.indexOf("--ak-review-lens") + 1], "completeness");
+        // correctness resume path — constant-completeness projection must fail here.
+        assert.equal(args[args.indexOf("--ak-review-lens") + 1], "correctness");
         assert.equal(args[args.indexOf("--ak-review-lens") + 1], admitted.lens);
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
@@ -1054,7 +1076,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         );
         // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
         const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
-        const details = lawfulReviewerReceipt("completeness");
+        const details = lawfulReviewerReceipt("correctness");
         await writeFile(
           join(sessionDirectory, "session.jsonl"),
           `${JSON.stringify({

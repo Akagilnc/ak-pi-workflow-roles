@@ -561,6 +561,10 @@ test("public CLI --engine and config set-engine: cursor notes / free name; flag 
           project,
           "--base",
           "HEAD",
+          "--lens",
+          "completeness",
+          "--authority-ref",
+          "CLAUDE.md",
         ],
         {
           packageRoot,
@@ -950,7 +954,7 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
     case "merger":
       return [role, ...model, "--project", project, "engine axis probe"];
     case "reviewer":
-      return [role, ...model, "--project", project, "--base", "main", "engine axis probe"];
+      return [role, ...model, "--project", project, "--base", "main", "--lens", "completeness", "--authority-ref", "CLAUDE.md", "engine axis probe"];
     case "collector":
       return [role, ...model, "--pr", "1", "--repo", "acme/widgets", "--project", project];
     case "doctor":

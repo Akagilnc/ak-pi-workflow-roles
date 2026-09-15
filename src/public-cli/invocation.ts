@@ -2820,7 +2820,8 @@ export function parseReviewerArgv(
         continue;
       }
       if (taken.def.id === "lens") {
-        const value = requireOptionPath(taken.def.canonical, taken.value);
+        // Empty and other non-enum values share one message — do not borrow path helper.
+        const value = (taken.value ?? "").trim();
         if (value !== "completeness" && value !== "correctness") {
           throw new CliUsageError(
             "--lens requires completeness or correctness",

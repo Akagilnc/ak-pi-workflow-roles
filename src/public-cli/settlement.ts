@@ -26,7 +26,6 @@ import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import type { RoleTurnKnownFailure } from "../host-contracts.ts";
 import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
-import { readReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
   isV1ResumableProvider,
   readLatestTypedProviderHttpObservation,
@@ -974,7 +973,7 @@ export function extractSessionProviderStop(
     if (entry?.type !== "message") continue;
     const message = entry.message;
     if (message?.role !== "assistant") continue;
-    // Latest assistant in the current attempt only (reviewer-child-executor lastAssistant pattern).
+    // Latest assistant in the current attempt only.
     return sessionProviderStopFromAssistant(message);
   }
   return undefined;
@@ -1026,45 +1025,6 @@ export async function readSessionProviderStop(
   } catch {
     return undefined;
   }
-}
-
-/**
- * Recover a provider stop from Reviewer fixed-axis evidence children bound to this parent.
- * Dispatch runs during activation before the parent model turn; leg failures leave durable
- * stops under session/evidence-children/ and must not wash into generic activation.
- */
-export async function readBoundEvidenceChildKnownFailure(
-  sessionFile: string,
-): Promise<RoleTurnKnownFailure | undefined> {
-  const childDirectory = join(dirname(sessionFile), "evidence-children");
-  let names: string[];
-  try {
-    names = await readdir(childDirectory);
-  } catch (error) {
-    if (isMissingPathError(error)) return undefined;
-    throw sessionReadFailure(error, "failed to read bound evidence-child session directory");
-  }
-  for (const file of names.filter((name) => name.endsWith(".jsonl")).sort().reverse()) {
-    let entries: SessionEntry[];
-    try {
-      entries = await readBoundSessionEntries(join(childDirectory, file));
-    } catch (error) {
-      throw sessionReadFailure(error, "failed to read discovered evidence-child session");
-    }
-    const header = entries.find((entry) => entry.type === "session");
-    if (!isRecord(header) || header.parentSession !== sessionFile) continue;
-    const stop = extractSessionProviderStop(entries);
-    if (stop === undefined) continue;
-    const primary = knownFailureFromProviderStop(stop)!;
-    return {
-      ...primary,
-      details: {
-        ...(primary.details ?? {}),
-        secondaryEvidence: "evidence-child",
-      },
-    };
-  }
-  return undefined;
 }
 
 type BoundAuditorVolume = {
@@ -1359,19 +1319,6 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   runDirectory?: string;
 }): Promise<AuditedRunnerFailureResolution> {
   if (input.runner !== undefined) return resolutionOf(input.runner);
-  if (input.runDirectory !== undefined) {
-    try {
-      const rejection = await readReviewerDispatchRejection(input.runDirectory);
-      if (rejection !== undefined) return resolutionOf(rejection);
-    } catch (error) {
-      const failure = error instanceof Error ? error : new Error(String(error));
-      return resolutionOf({
-        cause: "activation",
-        identity: thrownIdentity(failure),
-        diagnostic: failure.message || failure.name,
-      });
-    }
-  }
   // Bound auditor compliance-failure retention outranks a parent failure that the
   // auditor path itself caused (retention EISDIR race). A typed terminating-tool
   // host failure is next — it outranks weaker auditor provider-stop fallback so
@@ -1413,20 +1360,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
       diagnostic: failure.message || failure.name,
     });
   }
-  // Reviewer single-lens parent run is next: dispatch fails
-  // during activation with only child stops durable. Parent stop remains the
-  // fallback; credential is last.
-  try {
-    const evidenceChildFailure = await readBoundEvidenceChildKnownFailure(input.sessionFile);
-    if (evidenceChildFailure !== undefined) return resolutionOf(evidenceChildFailure);
-  } catch (error) {
-    const failure = sessionReadFailure(error, "failed to recover bound evidence-child failure");
-    return resolutionOf({
-      cause: "session",
-      identity: thrownIdentity(failure),
-      diagnostic: failure.message || failure.name,
-    });
-  }
+  // Parent session provider-stop is next; credential is last.
   const parentStop = await readSessionProviderStop(input.sessionFile);
   // Typed HTTP observation: ENOENT=absence; other read/parse/shape failures keep real cause.
   // This is the single sidecar read for both knownFailure projection and v1 resume.

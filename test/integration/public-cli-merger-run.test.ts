@@ -414,7 +414,7 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
   {
     role: "reviewer",
     status: "completed",
-    args: (project) => ["reviewer", ...CALLER_MODEL, "--base", "HEAD", "--project", project],
+    args: (project) => ["reviewer", ...CALLER_MODEL, "--base", "HEAD", "--lens", "completeness", "--authority-ref", "CLAUDE.md", "--project", project],
     details: () => reviewerReceipt(),
   },
   {

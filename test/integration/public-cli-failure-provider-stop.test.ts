@@ -14,9 +14,8 @@ import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { ENGINE_DETOUR_TOOL_NAME } from "../../src/engine-detour.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
-import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dispatch-rejection.ts";
 
-import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
+import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import { buildResumeContinuationPrompt, readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
@@ -84,58 +83,6 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
   });
 });
-test("bound evidence-child provider stop outranks generic activation wash", async () => {
-  await withTempHome(async (home) => {
-    const sessionDir = join(home, "session");
-    const sessionFile = join(sessionDir, "session.jsonl");
-    const childDir = join(sessionDir, "evidence-children");
-    await mkdir(childDir, { recursive: true });
-    // Real #236 no-task dispatch shape: parent never took a model turn; only
-    // fixed-axis evidence children retain the provider stop (usage limit, etc.).
-    await writeFile(sessionFile, [
-      { type: "session", id: "parent-session" },
-      { type: "custom", customType: "ak-navigator-invocation", data: { role: "reviewer" } },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-    await writeFile(join(childDir, "2026-08-10T11-28-52-705Z_child.jsonl"), [
-      { type: "session", id: "child-session", parentSession: sessionFile },
-      {
-        type: "message",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "Codex error: The usage limit has been reached",
-          provider: "openai-codex",
-          model: "gpt-5.6-sol",
-        },
-      },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-
-    assert.deepEqual(await readBoundEvidenceChildKnownFailure(sessionFile), {
-      diagnostic: "Codex error: The usage limit has been reached",
-      details: {
-        errorMessage: "Codex error: The usage limit has been reached",
-        secondaryEvidence: "evidence-child",
-      },
-    });
-    assert.deepEqual(
-      await resolveAuditedRunnerKnownFailure({
-        runner: undefined,
-        sessionFile,
-        credential: {
-          cause: "provider",
-          identity: { name: "MissingProviderCredential", code: "openai-codex" },
-        },
-      }),
-      {
-        diagnostic: "Codex error: The usage limit has been reached",
-        details: {
-          errorMessage: "Codex error: The usage limit has been reached",
-          secondaryEvidence: "evidence-child",
-        },
-      },
-    );
-  });
-});
 test("#380: soft engine-detour failure is not infrastructure and does not outrank knownFailure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -153,6 +100,10 @@ test("#380: soft engine-detour failure is not infrastructure and does not outran
         project,
         "--base",
         "HEAD",
+        "--lens",
+        "completeness",
+        "--authority-ref",
+        "CLAUDE.md",
         "--engine",
         "kimi",
       ],
@@ -550,44 +501,6 @@ test("bound auditor reader propagates malformed discovered JSONL", async () => {
     await writeFile(join(childDir, "child.jsonl"), "{malformed\n");
     await assert.rejects(readBoundAuditorKnownFailure(sessionFile), (error: unknown) =>
       error instanceof SyntaxError && (error as Error & { knownCause?: string }).knownCause === "session");
-  });
-});
-test("Reviewer rejection sidecar rejects generic controlled failures", async () => {
-  await withTempHome(async (home) => {
-    const sidecar = join(home, "typed-known-failure.json");
-    await writeFile(sidecar, JSON.stringify({
-      cause: "provider",
-      diagnostic: "generic provider failure",
-      identity: { name: "ProviderError" },
-      details: { arbitrary: true },
-    }));
-    await assert.rejects(
-      readReviewerDispatchRejection(home),
-      (error: unknown) => error instanceof Error && error.name === "ReviewerDispatchRejectionContractError",
-    );
-
-    await writeFile(sidecar, JSON.stringify({
-      diagnostic: "Fixed Reviewer dispatch was not accepted",
-      violations: ["base-invalid"],
-      producerMetadata: { version: 2 },
-    }));
-    assert.deepEqual(await readReviewerDispatchRejection(home), {
-      cause: "activation",
-      diagnostic: "Fixed Reviewer dispatch was not accepted",
-      identity: { name: "ReviewerDispatchRejectionError" },
-      details: { violations: ["base-invalid"] },
-    });
-
-    await writeFile(sidecar, "{malformed\n");
-    const malformed = await resolveAuditedRunnerKnownFailure({
-      runner: undefined,
-      sessionFile: join(home, "missing-session.jsonl"),
-      credential: undefined,
-      runDirectory: home,
-    });
-    assert.equal(malformed?.cause, "activation");
-    assert.equal(malformed?.identity?.name, "SyntaxError");
-    assert.match(malformed?.diagnostic ?? "", /JSON/);
   });
 });
 test("typed output failure cannot bind a call from an earlier attempt", async () => {

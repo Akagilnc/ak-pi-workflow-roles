@@ -29,11 +29,3 @@ export type ReviewerIssueFetcher = (input: {
   ticketNumber: number;
   signal?: AbortSignal;
 }) => Promise<ReviewerIssueFetchResult | undefined>;
-
-export const REVIEWER_PREFLIGHT_VIOLATIONS = [
-  "base-invalid",
-  "range-invalid",
-  "prompt-identity-invalid",
-  "target-drift",
-] as const;
-export type ReviewerPreflightViolation = (typeof REVIEWER_PREFLIGHT_VIOLATIONS)[number];
