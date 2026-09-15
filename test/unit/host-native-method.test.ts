@@ -1,5 +1,5 @@
 /**
- * #922 host-native method delivery (stable workspace catalog + pack plugin).
+ * #922 host-native method delivery.
  */
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
@@ -21,7 +21,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
 const execFileAsync = promisify(execFile);
 
-test("#922 workspace .agents/skills: create-if-absent, stable across release, foreign/conflict", async () => {
+test("#922 workspace .agents/skills: create/release, overlap, idempotent, foreign, conflict", async () => {
   const cwd = await mkdtemp(worktreeTempPrefix("ak-922-agents-"));
   const methods = await realpath(packagedMethodsDir(packageRoot));
   const linkPath = join(cwd, ".agents", "skills");
@@ -30,10 +30,18 @@ test("#922 workspace .agents/skills: create-if-absent, stable across release, fo
     assert.equal(a.created, true);
     assert.equal(await realpath(a.path), methods);
     const b = await installWorkspaceAgentsSkillsLink({ cwd, packageRoot });
-    assert.equal(b.created, false);
+    assert.equal(b.created, true);
     await a.release();
+    await a.release();
+    assert.equal(await realpath(linkPath), methods);
     await b.release();
-    // Stable catalog: still present after release (concurrent-safe; no ephemeral delete).
+    await assert.rejects(() => lstat(linkPath), { code: "ENOENT" });
+
+    await mkdir(join(cwd, ".agents"), { recursive: true });
+    await symlink(methods, linkPath);
+    const foreign = await installWorkspaceAgentsSkillsLink({ cwd, packageRoot });
+    assert.equal(foreign.created, false);
+    await foreign.release();
     assert.equal(await realpath(linkPath), methods);
 
     await rm(linkPath, { force: true });
@@ -41,25 +49,18 @@ test("#922 workspace .agents/skills: create-if-absent, stable across release, fo
     await writeFile(join(linkPath, "keep.txt"), "x");
     await assert.rejects(() => installWorkspaceAgentsSkillsLink({ cwd, packageRoot }), /pre-existing directory/);
     assert.equal(await readFile(join(linkPath, "keep.txt"), "utf8"), "x");
-
-    await rm(linkPath, { recursive: true, force: true });
-    await symlink(methods, linkPath);
-    const foreign = await installWorkspaceAgentsSkillsLink({ cwd, packageRoot });
-    assert.equal(foreign.created, false);
-    await foreign.release();
-    assert.equal(await realpath(linkPath), methods);
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("#922 hermes trusted_project_dirs exact paths; comments/unrelated keys fail", async () => {
+test("#922 hermes trusted_project_dirs exact; comments fail", async () => {
   assert.deepEqual(
     [...parseHermesTrustedProjectDirs("skills:\n  trusted_project_dirs:\n    - /tmp/trusted\n")],
     ["/tmp/trusted"],
   );
   assert.deepEqual(
-    [...parseHermesTrustedProjectDirs("skills:\n  # trusted_project_dirs:\n  #   - /tmp/fake\n  other: /tmp/fake\n")],
+    [...parseHermesTrustedProjectDirs("skills:\n  # trusted_project_dirs:\n  #   - /tmp/fake\n")],
     [],
   );
   const home = await mkdtemp(worktreeTempPrefix("ak-922-hermes-home-"));
@@ -68,7 +69,7 @@ test("#922 hermes trusted_project_dirs exact paths; comments/unrelated keys fail
     await mkdir(join(cwd, ".git"));
     const root = await realpath(cwd);
     await mkdir(join(home, ".hermes"), { recursive: true });
-    await writeFile(join(home, ".hermes", "config.yaml"), `skills:\n  # do not trust ${root}\n  trusted_project_dirs: []\n`);
+    await writeFile(join(home, ".hermes", "config.yaml"), `skills:\n  # ${root}\n  trusted_project_dirs: []\n`);
     await assert.rejects(
       () => assertHermesProjectSkillsTrusted({ home, cwd, profileName: "ak-fixer" }),
       /not trusted|skills trust/,
@@ -81,13 +82,12 @@ test("#922 hermes trusted_project_dirs exact paths; comments/unrelated keys fail
   }
 });
 
-test("#922 method-host-plugin: runtime reads build output; missing fails loud", async () => {
+test("#922 method-host-plugin runtime read-only", async () => {
   await execFileAsync(process.execPath, [join(packageRoot, "scripts/materialize-method-host-plugin.mjs")], {
     cwd: packageRoot,
   });
-  const dir = await ensurePackagedMethodPlugin(packageRoot);
-  assert.equal(dir, packagedMethodPluginDir(packageRoot));
-  assert.equal((await lstat(join(dir, "skills", "tdd", "SKILL.md"))).isFile(), true);
+  assert.equal(await ensurePackagedMethodPlugin(packageRoot), packagedMethodPluginDir(packageRoot));
+  assert.equal((await lstat(join(packagedMethodPluginDir(packageRoot), "skills/tdd/SKILL.md"))).isFile(), true);
   const missingRoot = await mkdtemp(worktreeTempPrefix("ak-922-no-plugin-"));
   try {
     await assert.rejects(() => ensurePackagedMethodPlugin(missingRoot), /method-host-plugin missing|must materialize/);

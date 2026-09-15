@@ -3,14 +3,15 @@
  * claude/grok → --plugin-dir (dist/method-host-plugin, build-only);
  * codex/hermes → cwd `.agents/skills` → resources/methods (envelope-owned).
  *
- * Workspace catalog is **stable for the call lifetime and beyond**: create when
- * absent, never overwrite foreign catalogs, never delete on dispose. Ephemeral
- * lock/ref cleanup was abandoned after concurrent/ABA cost exceeded value
- * (bounce: prefer stable catalog over stacked locks). Operator may remove the
- * link; crash orphans pointing at packaged methods are left as-is.
+ * Catalog: create-if-absent; never overwrite foreign; delete only links this
+ * process created (in-process hold count). Cross-process concurrent same-cwd
+ * ownership needs a design ruling (stable non-delete catalog vs approved lock);
+ * not inventing either here after escalate.
  */
 import { constants } from "node:fs";
-import { access, lstat, mkdir, readFile, readlink, realpath, symlink } from "node:fs/promises";
+import {
+  access, lstat, mkdir, readFile, readlink, realpath, readdir, rm, symlink, unlink,
+} from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { MethodBinding } from "./host-contracts.ts";
 
@@ -67,7 +68,6 @@ const sameReal = async (a: string, b: string) => {
   catch { return resolve(a) === resolve(b); }
 };
 
-/** Runtime only reads build output; build/prepack is the sole materialize writer. */
 export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<string> {
   const outDir = packagedMethodPluginDir(packageRoot);
   const probe = join(outDir, "skills", "tdd", "SKILL.md");
@@ -81,7 +81,6 @@ export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<s
 
 export type WorkspaceAgentsSkillsLink = Readonly<{
   path: string;
-  /** True when this call created the symlink (stable catalog — release is still a no-op). */
   created: boolean;
   release(): Promise<void>;
 }>;
@@ -91,18 +90,39 @@ const conflict = (path: string, detail: string) => new Error(
   "ak-role only creates `.agents/skills` when absent; never overwrites an existing catalog (#922).",
 );
 
-/**
- * Ensure cwd `.agents/skills` → packaged methods.
- * Create-if-absent; foreign entries conflict; same-target left untouched.
- * release() is a no-op — catalog stays for concurrent processes and resume.
- */
+/** linkPath → hold count for links this process created. */
+const createdHolds = new Map<string, number>();
+const createdAgentsDirs = new Set<string>();
+
 export async function installWorkspaceAgentsSkillsLink(options: {
   readonly cwd: string; readonly packageRoot: string;
 }): Promise<WorkspaceAgentsSkillsLink> {
   const target = await realpath(packagedMethodsDir(options.packageRoot));
   const linkPath = join(options.cwd, ".agents", "skills");
   const agentsDir = dirname(linkPath);
-  const noopRelease = async () => undefined;
+  let released = false;
+
+  const release = async (): Promise<void> => {
+    if (released) return;
+    released = true;
+    const n = createdHolds.get(linkPath);
+    if (n === undefined) return;
+    if (n > 1) {
+      createdHolds.set(linkPath, n - 1);
+      return;
+    }
+    createdHolds.delete(linkPath);
+    try {
+      if ((await lstat(linkPath)).isSymbolicLink() && (await sameReal(linkPath, target))) await unlink(linkPath);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    if (!createdAgentsDirs.has(agentsDir)) return;
+    createdAgentsDirs.delete(agentsDir);
+    try {
+      if ((await readdir(agentsDir)).length === 0) await rm(agentsDir, { force: true });
+    } catch { /* best-effort */ }
+  };
 
   try {
     const st = await lstat(linkPath);
@@ -112,25 +132,31 @@ export async function installWorkspaceAgentsSkillsLink(options: {
     if (!(await sameReal(linkPath, target))) {
       throw conflict(linkPath, `pre-existing symlink → ${await readlink(linkPath).catch(() => "?")}`);
     }
-    return Object.freeze({ path: linkPath, created: false, release: noopRelease });
+    if (!createdHolds.has(linkPath)) {
+      return Object.freeze({ path: linkPath, created: false, release: async () => undefined });
+    }
+    createdHolds.set(linkPath, (createdHolds.get(linkPath) ?? 0) + 1);
+    return Object.freeze({ path: linkPath, created: true, release });
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
   }
 
-  if (!(await exists(agentsDir))) await mkdir(agentsDir, { recursive: true });
+  if (!(await exists(agentsDir))) {
+    await mkdir(agentsDir, { recursive: true });
+    createdAgentsDirs.add(agentsDir);
+  }
   try {
     await symlink(target, linkPath);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") {
-      // Lost create race — reclassify.
-      return installWorkspaceAgentsSkillsLink(options);
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") return installWorkspaceAgentsSkillsLink(options);
+    if (createdAgentsDirs.has(agentsDir)) {
+      createdAgentsDirs.delete(agentsDir);
+      await rm(agentsDir, { recursive: true, force: true }).catch(() => undefined);
     }
     throw e;
   }
-  if (!(await sameReal(linkPath, target))) {
-    throw new Error(`workspace method catalog missing after create at ${linkPath}`);
-  }
-  return Object.freeze({ path: linkPath, created: true, release: noopRelease });
+  createdHolds.set(linkPath, 1);
+  return Object.freeze({ path: linkPath, created: true, release });
 }
 
 export async function findGitProjectRoot(start: string): Promise<string | undefined> {
@@ -143,7 +169,6 @@ export async function findGitProjectRoot(start: string): Promise<string | undefi
   return undefined;
 }
 
-/** Structured extract of skills.trusted_project_dirs. */
 export function parseHermesTrustedProjectDirs(yaml: string): readonly string[] {
   const out: string[] = [];
   let inSkills = false, inTrusted = false, skillsIndent = -1, trustedIndent = -1;
