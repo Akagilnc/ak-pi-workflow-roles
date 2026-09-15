@@ -23,14 +23,15 @@ import {
 import { acpModelId, type AcpHostDescription } from "./description.ts";
 
 function applyAcpMethodPrompt(hostName: string, request: RoleTurnRequest, prompt: string): string {
+  // Only hosts with a real loader path get a slash token. Hermes ACP has no
+  // official skill preload (#922); do not slash-invoke bare names against home.
+  if (hostName !== "grok-build") return prompt;
   const skills = hostMethodSkills(request.methods);
   if (skills.length !== 1) return prompt;
-  const name = skills[0]!.name;
-  // Grok plugin-dir registers `<plugin>:<skill>`; hermes slash form is bare name.
-  const token = hostName === "grok-build"
-    ? pluginSkillToken(HOST_METHOD_PLUGIN_NAME, name)
-    : name;
-  return applyHostSlashSkillInvocation(token, prompt);
+  return applyHostSlashSkillInvocation(
+    pluginSkillToken(HOST_METHOD_PLUGIN_NAME, skills[0]!.name),
+    prompt,
+  );
 }
 
 /** ACP v1 surface used by the generic ACP adapter. Protocol details stay in this module. */
