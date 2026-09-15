@@ -23,6 +23,7 @@ import {
   type RoleTurnRequest,
 } from "../../src/host-contracts.ts";
 import { resolveEngineMaterialPath } from "../../src/package-resources/engine-material.ts";
+import { caseDossierPointerFrozenPath } from "../../src/public-cli/case-dossier-delivery.ts";
 import type { AdmittedInspectorInvocation } from "../../src/public-cli/invocation.ts";
 import { buildInspectorTurnRequest } from "../../src/public-cli/inspector-run.ts";
 import { projectActivationFlags } from "../../src/role-activation-flags.ts";
@@ -295,7 +296,9 @@ test("#879 concurrent envelopes keep case-dossier identity on HostContext, not p
       const freezeDir = join(runDirectory, "attachments", "case-dossier");
       await mkdir(freezeDir, { recursive: true });
       await mkdir(join(runDirectory, "session"), { recursive: true });
-      const frozenPath = join(freezeDir, "00-case-dossier-pointer.md");
+      // Sole path authority; a lexicographically-earlier decoy must not be loaded (#858).
+      const frozenPath = caseDossierPointerFrozenPath(runDirectory);
+      await writeFile(join(freezeDir, "00-aaa-decoy.md"), "DECOY-not-the-pointer\n", "utf8");
       await writeFile(frozenPath, `dossier-for-${label}\n`, "utf8");
       return {
         socketPath: join(home, `${label}.sock`),

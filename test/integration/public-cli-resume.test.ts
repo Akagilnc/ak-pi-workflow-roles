@@ -2432,11 +2432,8 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       assert.ok(seen);
       assert.equal(seen[seen.indexOf("--session") + 1], admitted.sessionFile);
       assert.equal(seen[seen.indexOf("--session-dir") + 1], admitted.sessionDirectory);
-      // Pi adapter prefixes single forced method onto resume dialogue (#822).
-      // Bare resume (no message) writes package transport token (#858 / #600);
-      // explicit empty message is a new-court caller body and stays "".
-      const rawPrompt =
-        c.message === undefined ? "[ak-role:resume-continue]" : c.message;
+      // Pi adapter prefixes single forced method onto resume dialogue (#822); judge/coder-plan/fixer plain.
+      const rawPrompt = c.message === undefined ? "" : c.message;
       const expectedBody =
         c.role === "reviewer"
           ? (rawPrompt.length === 0 ? "/skill:code-review" : `/skill:code-review ${rawPrompt}`)

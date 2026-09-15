@@ -18,7 +18,6 @@ import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dis
 
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import {
-  buildResumeContinuationPrompt,
   readLatestTypedProviderHttpObservation,
   RESUME_TRANSPORT_ENVELOPE,
 } from "../../src/public-cli/run-lifecycle.ts";
@@ -354,66 +353,18 @@ test("bound auditor provider failure outranks the parent abort it caused", async
   });
 });
 
-// #600 / 50940955 / ca9d402a / #858: production resume bytes must not stale
-// first-attempt auditor retention. Tracer drives the live producer through the
-// real pi single-skill adapter hop and persists Pi content-array shape — never
-// factory-only empty first line, never handbook prose sniff. Empty new-court
-// and independent ordinary user still stale.
+// #600 / 50940955 / ca9d402a / #858: settlement floor currently skips only the
+// package transport-token resume user (station-child / historical). Fixture is
+// the token constant in Pi content-array shape — not a Pi expand replica, not a
+// claim that ordinary bare/auto or single-skill post-adapter seats are covered
+// (those need a structured resume fact; free-text sentinels are non-injective).
+// Empty new-court and independent ordinary user must stale.
 test("production resume bytes keep first-attempt auditor retention bound", async () => {
   await withTempHome(async (home) => {
     const sessionDir = join(home, "session");
     const sessionFile = join(sessionDir, "parent.jsonl");
     const childDir = join(sessionDir, "auditor-roles");
     await mkdir(childDir, { recursive: true });
-
-    const { applyPiNativeSkillInvocation } = await import("../../src/pi/role-turn-host.ts");
-    const { resolvePackagedMethodSkillPath } = await import(
-      "../../src/package-resources/method-skill.ts"
-    );
-    // Exactly-one skill bindings: the hop that rewrites empty/token resume into
-    // `/skill:<name> …` before Pi expands to `<skill>…</skill>\n\n…`.
-    const singleSkillMethods = [
-      {
-        label: "code-review",
-        methods: [
-          {
-            kind: "skill" as const,
-            path: resolvePackagedMethodSkillPath(packageRoot, "code-review"),
-          },
-        ],
-      },
-      {
-        label: "tdd",
-        methods: [
-          {
-            kind: "skill" as const,
-            path: resolvePackagedMethodSkillPath(packageRoot, "tdd"),
-          },
-        ],
-      },
-    ] as const;
-
-    const bareResumePrompt = buildResumeContinuationPrompt({ packageRoot });
-    const engineResumePrompt = buildResumeContinuationPrompt({
-      packageRoot,
-      engine: "kimi",
-    });
-
-    /** Pi agent-session persistence: content-array, skill-expanded trailing args. */
-    const persistUserContent = (adaptedPrompt: string): Record<string, unknown> => {
-      // Mirror Pi `_expandSkillCommand`: `/skill:name args` → skill block + args.
-      const skillMatch = /^\/skill:(\S+)(?:\s+([\s\S]*))?$/.exec(adaptedPrompt);
-      if (skillMatch) {
-        const name = skillMatch[1]!;
-        const args = (skillMatch[2] ?? "").trim();
-        const skillBlock =
-          `<skill name="${name}" location="/packaged/${name}/SKILL.md">\n` +
-          `References are relative to /packaged/${name}.\n\n# ${name}\n</skill>`;
-        const text = args.length > 0 ? `${skillBlock}\n\n${args}` : skillBlock;
-        return { role: "user", content: [{ type: "text", text }] };
-      }
-      return { role: "user", content: [{ type: "text", text: adaptedPrompt }] };
-    };
 
     const retained = {
       cause: "provider" as const,
@@ -502,41 +453,22 @@ test("production resume bytes keep first-attempt auditor retention bound", async
       await writeFirstAttemptChild();
     };
 
-    // Positive: factory resume → applyPiNativeSkillInvocation → Pi content-array.
-    const resumeFactories: ReadonlyArray<{ label: string; prompt: string }> = [
-      { label: "bare-token", prompt: bareResumePrompt },
-      { label: "engine-axis", prompt: engineResumePrompt },
-      { label: "station-child-token", prompt: RESUME_TRANSPORT_ENVELOPE },
-    ];
-    for (const factory of resumeFactories) {
-      for (const seat of singleSkillMethods) {
-        const adapted = applyPiNativeSkillInvocation(seat.methods, factory.prompt);
-        await writeParentWithFollowUser(persistUserContent(adapted));
-        assert.deepEqual(
-          await resolveAuditedRunnerKnownFailure({
-            runner: undefined,
-            sessionFile,
-            credential: undefined,
-          }),
-          retained,
-          `${factory.label}+${seat.label}: post-adapter resume must not stale first-attempt retention`,
-        );
-      }
-      // Zero-skill seat (judge/fixer-like): adapter is a no-op; still content-array.
-      await writeParentWithFollowUser(persistUserContent(factory.prompt));
-      assert.deepEqual(
-        await resolveAuditedRunnerKnownFailure({
-          runner: undefined,
-          sessionFile,
-          credential: undefined,
-        }),
-        retained,
-        `${factory.label}+no-skill: production resume must not stale first-attempt retention`,
-      );
-    }
+    // Station-child / historical transport token in content-array persistence shape.
+    await writeParentWithFollowUser({
+      role: "user",
+      content: [{ type: "text", text: RESUME_TRANSPORT_ENVELOPE }],
+    });
+    assert.deepEqual(
+      await resolveAuditedRunnerKnownFailure({
+        runner: undefined,
+        sessionFile,
+        credential: undefined,
+      }),
+      retained,
+      "token-content-array: transport-token resume must not stale first-attempt retention",
+    );
 
-    // Empty new-court summons (officer empty instruction / same-ticket no-instruction)
-    // must advance the floor — not treated as resume.
+    // Empty new-court summons must advance the floor (not treated as resume).
     await writeParentWithFollowUser({
       role: "user",
       content: [{ type: "text", text: "" }],
