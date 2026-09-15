@@ -3254,14 +3254,12 @@ async function settleLawfulSeatAcceptedTerminalResult(
     }
   }
   const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
-  const ledgerClosed =
-    roleOutcome?.kind === "audit_escalation" || roleOutcome?.role === spec.role;
-  if (ledgerClosed && (thisAttemptHasSeatSuccess || residual === undefined)) {
+  if (roleOutcome !== undefined && (thisAttemptHasSeatSuccess || residual === undefined)) {
     const navigator = extractNavigatorFact(entries);
     return withSubmissions(
       await withOptionalGateProjection(
         {
-          roleOutcome: roleOutcome!,
+          roleOutcome,
           navigator,
           artifacts: [],
           runId: admitted.runId,
