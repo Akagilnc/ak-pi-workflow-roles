@@ -167,14 +167,18 @@ export type SameTicketSummonsMaterials = {
 
 /**
  * Unique continuation-prompt selector for manual/auto engine-axis resume
- * (#471 / #600 / #736). Message present → those bytes; absent → engine pointers only.
- * #836: no transport-token prompt, no line-by-line 重新读 rewrite.
+ * (#471 / #600 / #736 / #858). Message present → caller bytes (new court / manual
+ * message). Message absent → package transport token, then optional engine
+ * material. Token is the same RESUME_TRANSPORT_ENVELOPE station-child already
+ * writes so post-adapter skill expansion still leaves a whole line equal to it
+ * (`</skill>\n\n[ak-role:resume-continue]`). Empty prompt is not resume identity
+ * (empty new-court summons must stale prior auditors).
  */
 export function selectResumeContinuationPrompt(
   message?: string,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const lines = message !== undefined ? [message] : [];
+  const lines = message !== undefined ? [message] : [RESUME_TRANSPORT_ENVELOPE];
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 

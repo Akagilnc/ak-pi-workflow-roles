@@ -12,7 +12,7 @@
  * message 保持调用者原文；起居录作独立附件面，不新造 RoleTurnRequest.materials，
  * 不拼进 user-dialogue continuation）。
  */
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -114,16 +114,23 @@ export type CaseDossierReadingMaterial = {
  * Load a previously frozen case-dossier attachment as reading material
  * (existing agent-start / systemPrompt.materials fold — not dialogue prompt,
  * not RoleTurnRequest.materials). Undefined when the run has no such freeze.
+ * Path fact comes from what freezeAttachmentsIntoRun wrote under the attach
+ * key — discover the leaf, never re-derive freeze's `00-` naming (#858).
  */
 export async function loadCaseDossierReadingMaterial(
   runDirectory: string,
 ): Promise<CaseDossierReadingMaterial | undefined> {
-  const frozenPath = join(
-    runDirectory,
-    "attachments",
-    CASE_DOSSIER_ATTACH_KEY,
-    `00-${CASE_DOSSIER_ATTACH_FILE}`,
-  );
+  const attachDir = join(runDirectory, "attachments", CASE_DOSSIER_ATTACH_KEY);
+  let names: string[];
+  try {
+    names = await readdir(attachDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  const leaf = names.filter((name) => name.endsWith(".md")).sort()[0];
+  if (leaf === undefined) return undefined;
+  const frozenPath = join(attachDir, leaf);
   let section: string;
   try {
     section = await readFile(frozenPath, "utf8");
