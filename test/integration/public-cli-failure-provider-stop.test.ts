@@ -637,17 +637,22 @@ test("call-local boundary keeps ordinary auto-resume auditor retention; next cal
       }),
     });
     assert.equal(resumeCalls, 1, "manual resume is one-shot");
+    // Positive selection of *this* call's parent stop: diagnostic locked to the
+    // current attempt's errorMessage; cause absent is the lawful shape when the
+    // stop has no upstream HTTP/diagnostics testimony (#881). Helper also locks
+    // the error artifact to the same diagnostic — not merely "not the old auditor".
     const { terminal: resumeTerminal } = await assertPublicFailureSettlement({
       result: resumed,
       stdout: stdout2,
       stderr: stderr2,
+      diagnosticEquals: "next-call-only-failure",
     });
-    assert.notEqual(
+    assert.equal(
       resumeTerminal.roleOutcome.kind === "failure"
-        ? resumeTerminal.roleOutcome.diagnostic
-        : undefined,
-      auditorDiagnostic,
-      "next independent call must stale prior-call auditor retention",
+        ? resumeTerminal.roleOutcome.cause
+        : "not-failure",
+      undefined,
+      "independent-call parent stop without upstream testimony must not mint a cause class",
     );
     void sessionFile;
   });
