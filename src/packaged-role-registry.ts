@@ -166,10 +166,9 @@ export const PUBLIC_ROLE_RECORDS = [
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
-    // #924: 票面法 + 给事中/符宝郎行为指南（conduct guides, 零 Soul 改动）
+    // #924: 票面法 + 给事中/符宝郎行为指南；本票不改任何 Soul（无独立 secretariat Soul）
     sessionMaterials: [
       "CLAUDE.md",
-      "souls/secretariat.md",
       "souls/ticket-law.md",
       "souls/countersign.md",
       "souls/notary.md",

@@ -105,7 +105,7 @@ export function buildCountersignTurnRequest(
 }
 
 /** 起居郎 identity outcome — escalate stays distinct from missing terminal. */
-type CourtDiaristIdentity =
+export type CourtDiaristIdentity =
   | {
       readonly kind: "ticket";
       readonly ticketNumber: number;
@@ -119,10 +119,22 @@ type CourtDiaristIdentity =
   | { readonly kind: "unbound" }
   | { readonly kind: "escalate" };
 
-type CourtDiaristInvocationResult = {
+export type CourtDiaristInvocationResult = {
   readonly identity: CourtDiaristIdentity;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
+
+/** Env slice shared by court diarist identity summons (countersign / secretariat). */
+export type CourtDiaristSummonEnv = Pick<
+  CountersignRunEnv,
+  | "cwd"
+  | "home"
+  | "agentDir"
+  | "packageRoot"
+  | "credentials"
+  | "signal"
+  | "hostAdapters"
+>;
 
 /**
  * Read #871 set from preserved diarist payloads.
@@ -191,13 +203,13 @@ function courtDiaristEscalated(roleOutcome: TerminalRoleOutcome | undefined): bo
  * When `boundTicketNumber` is set (typed handoff from countersign), diarist
  * binds under that key before the turn — never mechanical recognition from prose.
  */
-async function invokeCourtDiarist(input: {
+export async function invokeCourtDiarist(input: {
   readonly instruction: string;
   readonly projectRoot: string;
   readonly failureLabel: string;
   /** Already-verified typed key from countersign (refresh / post-assert handoff). */
   readonly boundTicketNumber?: number;
-}, env: CountersignRunEnv, io: CliIo): Promise<CourtDiaristInvocationResult> {
+}, env: CourtDiaristSummonEnv, io: CliIo): Promise<CourtDiaristInvocationResult> {
   // Quiet face: the countersign caller must not see diarist CLI chatter.
   const quietIo: CliIo = {
     stdout() {},

@@ -1,17 +1,26 @@
 /**
- * Public Secretariat (中书省) Role run: admit → shared post-admission → settle
- * (#924). Instruction-seat face like Judge; nested countersign is role-tool driven.
+ * Public Secretariat (中书省) Role run: admit → 起居郎 typed identity → bind/relocate
+ * → shared post-admission (dossier delivery) → settle (#924).
+ * Instruction-seat face like Judge; nested countersign is role-tool driven.
+ * Ticket identity reuses the court diarist seam (no prose regex; no second lifecycle).
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitSecretariatInvocation,
+  bindAdmittedTicketNumber,
   buildSecretariatTransportPrompt,
+  relocateAdmittedRunToTicket,
   type AdmittedSecretariatInvocation,
   type ParseSecretariatArgvResult,
 } from "./invocation.ts";
 import {
+  invokeCourtDiarist,
+  type CourtDiaristSummonEnv,
+} from "./countersign-run.ts";
+import {
+  presentControlledFailure,
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
   runPostAdmissionSeatResume,
@@ -36,6 +45,13 @@ import {
 export type SecretariatRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
+  /**
+   * Test seam: replace the first-entry 起居郎 identity station.
+   * Production leaves unset and runs the public diarist seat.
+   */
+  runIdentityDiaristStation?: (
+    admitted: AdmittedSecretariatInvocation,
+  ) => Promise<void>;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -48,10 +64,25 @@ export function buildSecretariatTurnRequest(
     {
       activation: {
         role: "secretariat" as const,
+        ...(admitted.ticketNumber === undefined
+          ? {}
+          : { ticketNumber: admitted.ticketNumber }),
       },
     },
     options,
   );
+}
+
+function diaristEnv(env: SecretariatRunEnv): CourtDiaristSummonEnv {
+  return {
+    cwd: env.cwd,
+    home: env.home,
+    agentDir: env.agentDir,
+    packageRoot: env.packageRoot,
+    ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
+    ...(env.signal === undefined ? {} : { signal: env.signal }),
+    ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+  };
 }
 
 export async function runPublicSecretariat(
@@ -64,9 +95,19 @@ export async function runPublicSecretariat(
   admitted?: AdmittedSecretariatInvocation;
   terminal?: TerminalResult;
 }> {
+  let parsed: ParseSecretariatArgvResult;
+  try {
+    parsed = parseSecretariatArgv(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
+
   let admitted: AdmittedSecretariatInvocation;
   try {
-    const parsed = parseSecretariatArgv(argv);
     admitted = await admitSecretariatInvocation({
       home: env.home,
       principalAuthority: env.principalAuthority,
@@ -87,6 +128,75 @@ export async function runPublicSecretariat(
   }
 
   await markRunAdmitted(admitted, env.principalAuthority);
+
+  // #924 G3 / ADR 0075 / 0081: ticket identity is 起居郎 typed assertion — never
+  // prose regex. Bind + relocate so post-admission can deliver 起居录 and the run
+  // leaves unbound/. Test seam defers identity (caller binds itself if needed).
+  if (env.runIdentityDiaristStation === undefined) {
+    const outcome = await invokeCourtDiarist(
+      {
+        instruction: parsed.instruction,
+        projectRoot: admitted.projectRoot,
+        failureLabel: "secretariat unbound summons",
+      },
+      diaristEnv(env),
+      io,
+    );
+
+    if (outcome.identity.kind === "escalate") {
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: new Error(
+            "court diarist station escalated (cannot identify court target)",
+          ),
+        },
+        secretariatAdapters(),
+        env.principalAuthority,
+        io,
+      );
+    }
+
+    if (outcome.failedWithoutEscalate !== undefined) {
+      return await presentControlledFailure(
+        admitted,
+        {
+          timedOut: false,
+          code: null,
+          stderr: "",
+          thrown: new Error(outcome.failedWithoutEscalate.diagnostic),
+        },
+        secretariatAdapters(),
+        env.principalAuthority,
+        io,
+      );
+    }
+
+    if (outcome.identity.kind === "ticket") {
+      try {
+        await bindAdmittedTicketNumber(admitted, outcome.identity.ticketNumber);
+        await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+      } catch (error) {
+        return await presentControlledFailure(
+          admitted,
+          {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+          },
+          secretariatAdapters(),
+          env.principalAuthority,
+          io,
+        );
+      }
+    }
+  } else {
+    await env.runIdentityDiaristStation(admitted);
+  }
 
   const turnRequest = buildSecretariatTurnRequest(admitted, {
     packageRoot: env.packageRoot,

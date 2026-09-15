@@ -46,6 +46,7 @@ import {
 } from "./engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
+import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -692,7 +693,8 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   const status = typeof details.status === "string"
     ? details.status
     : typeof details.judgeStatus === "string" ? details.judgeStatus
-    : typeof details.countersignStatus === "string" ? details.countersignStatus : undefined;
+    : typeof details.countersignStatus === "string" ? details.countersignStatus
+    : typeof details.secretariatStatus === "string" ? details.secretariatStatus : undefined;
   if (status !== undefined && status === "escalate") {
     return { kind: "human_decision", role, phase, status };
   }
@@ -1130,10 +1132,7 @@ export function createSecretariatRoleRuntime(
           const correlationId = (() => {
             const runDirectory = runDirectoryFromHostContext(ctx);
             if (runDirectory === undefined) return undefined;
-            const leaf = runDirectory.split("/").filter(Boolean).at(-1);
-            if (leaf === undefined || leaf.trim() === "") return undefined;
-            const at = leaf.indexOf("@");
-            return at > 0 ? leaf.slice(0, at) : leaf;
+            return runIdFromRunDirectory(runDirectory);
           })();
           const summon =
             dependencies.summonCountersign ??
@@ -1183,14 +1182,31 @@ export function createSecretariatRoleRuntime(
           };
         },
       });
+      const packageRequired = [
+        SECRETARIAT_OUTPUT_TOOL_NAME,
+        SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
+      ] as const;
       const all = roleHost.getAllTools().map((tool) => tool.name);
-      if (
-        all.filter((name) => name === SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)
-          .length !== 1
-      ) {
-        throw new Error(
-          `secretariat required tool collision or missing: ${SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME}`,
-        );
+      for (const name of packageRequired) {
+        if (all.filter((item) => item === name).length !== 1) {
+          throw new Error(`secretariat required tool collision or missing: ${name}`);
+        }
+      }
+      // Host-neutral minimum package surface (#924 G6): declare package tools via
+      // setActiveTools without hardcoding host builtin names. Preserve any host
+      // surface already visible on getAllTools/getActiveTools so body rewrite
+      // (public gh path) stays reachable on hosts that expose it.
+      const priorActive = roleHost.getActiveTools();
+      const hostSurface = priorActive.length > 0 ? priorActive : all;
+      const nextActive = [
+        ...new Set([...hostSurface, ...packageRequired]),
+      ];
+      roleHost.setActiveTools(nextActive);
+      const active = roleHost.getActiveTools();
+      for (const name of packageRequired) {
+        if (!active.includes(name)) {
+          throw new Error(`secretariat failed to activate required tool ${name}`);
+        }
       }
     },
   };

@@ -1,23 +1,65 @@
 /**
- * #924 static scans: ticket-law load topology; role modules have no second
- * summon drive seam (ADR 0018); public face has no new flags/mode params.
+ * #924 static scans: ticket-law load topology (repo-wide structural sole owner);
+ * role modules have no second summon drive seam (ADR 0018); public face has no
+ * new flags/mode params. No free-text / prose regex on law content.
  */
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { readdir, readFile } from "node:fs/promises";
+import { basename, join, relative } from "node:path";
 import test from "node:test";
 
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
 import { optionsForOwner } from "../../src/public-cli/option-definitions.ts";
 
-test("ticket-law is the sole souls law file and three seats load it", async () => {
-  const souls = await readdir(join(packageRoot, "souls"));
-  const ticketLaws = souls.filter(
-    (name) => name === "ticket-law.md" || name.endsWith("-ticket-law.md"),
-  );
-  assert.deepEqual(ticketLaws, ["ticket-law.md"]);
+const SKIP_DIR_NAMES = new Set([
+  "node_modules",
+  "dist",
+  ".git",
+  ".ak-roles",
+  "coverage",
+]);
 
+/** Structural ticket-law path owners: basename ticket-law.md or *-ticket-law.md. */
+function isTicketLawPath(name: string): boolean {
+  return name === "ticket-law.md" || name.endsWith("-ticket-law.md");
+}
+
+async function collectTicketLawRelativePaths(root: string): Promise<string[]> {
+  const found: string[] = [];
+  async function walk(dir: string): Promise<void> {
+    let entries;
+    try {
+      entries = await readdir(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (entry.name.startsWith(".") && entry.name !== ".github") continue;
+      if (SKIP_DIR_NAMES.has(entry.name)) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(full);
+        continue;
+      }
+      if (entry.isFile() && isTicketLawPath(entry.name)) {
+        found.push(relative(root, full).split("\\").join("/"));
+      }
+    }
+  }
+  await walk(root);
+  return found.sort();
+}
+
+test("ticket-law is the sole structural law owner and three seats load it", async () => {
+  const paths = await collectTicketLawRelativePaths(packageRoot);
+  assert.deepEqual(
+    paths,
+    ["souls/ticket-law.md"],
+    `expected sole souls/ticket-law.md; found: ${paths.join(", ") || "(none)"}`,
+  );
+
+  // Registry is the session-material true source — structural load relation only.
   const byRole = Object.fromEntries(
     PUBLIC_ROLE_RECORDS.map((r) => [r.role, r.sessionMaterials]),
   );
@@ -32,6 +74,11 @@ test("ticket-law is the sole souls law file and three seats load it", async () =
   );
   assert.ok(
     (byRole.secretariat as readonly string[]).includes("souls/notary.md"),
+  );
+  // #924: no unauthorized independent secretariat Soul file in the load list.
+  assert.equal(
+    (byRole.secretariat as readonly string[]).includes("souls/secretariat.md"),
+    false,
   );
 });
 
@@ -109,3 +156,4 @@ test("public secretariat face has no new flags or mode params", () => {
     false,
   );
 });
+

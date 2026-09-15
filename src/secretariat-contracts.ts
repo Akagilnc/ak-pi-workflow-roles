@@ -23,24 +23,3 @@ export type SecretariatVerdict =
       note?: string;
       evidence?: unknown;
     };
-
-export function validateRecordedSecretariatOutput(
-  verdict: unknown,
-): SecretariatVerdict {
-  if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) {
-    throw new Error("Secretariat verdict has no execution discriminator");
-  }
-  let secretariatStatus: unknown;
-  try {
-    secretariatStatus = (verdict as Record<string, unknown>).secretariatStatus;
-  } catch {
-    throw new Error("Secretariat verdict has no execution discriminator");
-  }
-  if (typeof secretariatStatus !== "string") {
-    throw new Error("Secretariat verdict has no execution discriminator");
-  }
-  if (secretariatStatus === "sealed" || secretariatStatus === "escalate") {
-    return verdict as SecretariatVerdict;
-  }
-  throw new Error("Secretariat verdict has no execution discriminator");
-}

@@ -15,6 +15,7 @@ import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 
 type HostHarness = {
   readonly tools: Map<string, { name: string; execute: Function }>;
+  readonly activeTools: () => readonly string[];
 };
 
 async function activateSecretariat(options?: {
@@ -23,15 +24,28 @@ async function activateSecretariat(options?: {
     readonly cwd: string;
     readonly correlationId?: string;
   }) => Promise<PublicSummonResult>;
+  /** Optional pre-existing host-surface tool names (no Pi-name hardcode in role). */
+  readonly hostSurfaceTools?: readonly string[];
 }): Promise<HostHarness> {
   const tools = new Map<string, { name: string; execute: Function }>();
+  let active: string[] = [...(options?.hostSurfaceTools ?? [])];
   const roleHost = {
     registerTool(tool: { name: string; execute: Function }) {
       tools.set(tool.name, tool);
     },
     on() {},
     getAllTools() {
-      return [...tools.values()].map((t) => ({ name: t.name }));
+      const packageNames = [...tools.values()].map((t) => ({ name: t.name }));
+      const hostOnly = (options?.hostSurfaceTools ?? [])
+        .filter((name) => !tools.has(name))
+        .map((name) => ({ name }));
+      return [...hostOnly, ...packageNames];
+    },
+    setActiveTools(names: string[]) {
+      active = [...names];
+    },
+    getActiveTools() {
+      return [...active];
     },
     getFlag() {
       return undefined;
@@ -44,7 +58,7 @@ async function activateSecretariat(options?: {
       ? {}
       : { summonCountersign: options.summonCountersign as never }),
   }).activate();
-  return { tools };
+  return { tools, activeTools: () => active };
 }
 
 const ctx = {
@@ -55,6 +69,18 @@ const ctx = {
   runDirectory: "/home/books/x/runs/01parent@secretariat",
   abort() {},
 };
+
+test("secretariat activation declares package tools on active surface (G6)", async () => {
+  const { activeTools } = await activateSecretariat({
+    hostSurfaceTools: ["host_read", "host_shell"],
+  });
+  const active = activeTools();
+  assert.ok(active.includes(SECRETARIAT_OUTPUT_TOOL_NAME));
+  assert.ok(active.includes(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME));
+  // Host surface preserved without role hardcoding builtin names.
+  assert.ok(active.includes("host_read"));
+  assert.ok(active.includes("host_shell"));
+});
 
 test("secretariat output accepts sealed and escalate; other status reasks", async () => {
   const { tools } = await activateSecretariat();

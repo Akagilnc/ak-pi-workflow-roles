@@ -32,7 +32,7 @@ import { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecord
 import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_OUTPUT_TOOL_NAME, validateRecordedGleanerLeftOutput, type GleanerLeftOutput } from "../gleaner-left-contracts.ts";
 import { INSPECTOR_ACCEPTED_TEXT, INSPECTOR_OUTPUT_TOOL_NAME, validateRecordedInspectorOutput, type InspectorOutput } from "../inspector-contracts.ts";
 import { DIARIST_ACCEPTED_TEXT, DIARIST_OUTPUT_TOOL_NAME, validateRecordedDiaristOutput, type DiaristOutput } from "../diarist-contracts.ts";
-import { SECRETARIAT_ACCEPTED_TEXT, SECRETARIAT_OUTPUT_TOOL_NAME, validateRecordedSecretariatOutput, type SecretariatVerdict } from "../secretariat-contracts.ts";
+import { SECRETARIAT_ACCEPTED_TEXT, SECRETARIAT_OUTPUT_TOOL_NAME, type SecretariatVerdict } from "../secretariat-contracts.ts";
 import {
   CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
@@ -70,7 +70,6 @@ export {
   validateRecordedNavigatorOutput,
   validateRecordedAuditorOutput,
   validateRecordedDiaristOutput,
-  validateRecordedSecretariatOutput,
 };
 export type {
   CollectorReceipt,

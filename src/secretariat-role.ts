@@ -13,9 +13,9 @@ import {
   SECRETARIAT_ACCEPTED_TEXT,
   SECRETARIAT_OUTPUT_TOOL_NAME,
   SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
-  validateRecordedSecretariatOutput,
   type SecretariatVerdict,
 } from "./secretariat-contracts.ts";
+import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 
 export {
   SECRETARIAT_ACCEPTED_TEXT,
@@ -23,7 +23,6 @@ export {
   SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
 } from "./secretariat-contracts.ts";
 export type { SecretariatVerdict };
-export { validateRecordedSecretariatOutput };
 
 /** 中书省终局回执形状；形状指引，非 schema 闸。 */
 export const secretariatVerdictSchema = withInfrastructureFailureDeclaration(
@@ -114,13 +113,6 @@ export type SecretariatRuntimeDependencies = {
   hostAdapters?: readonly NamedRoleTurnHostAdapter[];
 };
 
-function runIdFromDirectory(runDirectory: string | undefined): string | undefined {
-  if (typeof runDirectory !== "string" || runDirectory.trim() === "") return undefined;
-  const leaf = runDirectory.split("/").filter(Boolean).at(-1) ?? "";
-  const at = leaf.indexOf("@");
-  return at > 0 ? leaf.slice(0, at) : leaf;
-}
-
 function latestObjectPayload(
   payloads: readonly unknown[] | undefined,
 ): Record<string, unknown> | undefined {
@@ -143,7 +135,10 @@ export function projectSecretariatSummonResult(
   const terminal = summoned.terminal;
   const roleOutcome = terminal?.roleOutcome;
   const runDirectory = summoned.runDirectory;
-  const runId = runIdFromDirectory(runDirectory);
+  const runId =
+    typeof runDirectory === "string" && runDirectory.trim() !== ""
+      ? runIdFromRunDirectory(runDirectory)
+      : undefined;
   const base: Record<string, unknown> = {
     exitCode: summoned.exitCode,
     ...(runId === undefined ? {} : { runId }),
