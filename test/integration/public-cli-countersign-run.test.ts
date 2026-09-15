@@ -52,6 +52,10 @@ import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
+  sessionRowTime,
+  sessionToolExchangeRows,
+  sessionUserMessageRow,
+  writeSessionJsonl,
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import {
@@ -608,96 +612,21 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
   });
 });
 
-/**
- * #843 local session-row constructors — multi-call / malformed shapes that
- * scriptedTerminatingToolSession (single sealed call) cannot express. File-local
- * only; not a parallel fixture system. Wall-clock values only need total order.
- */
-function csAt(n: number): { iso: string; ts: number } {
-  const s = n % 60;
-  const m = Math.floor(n / 60) % 60;
-  const h = Math.floor(n / 3600) % 24;
-  const p = (x: number) => String(x).padStart(2, "0");
-  return { iso: `2026-08-30T${p(h)}:${p(m)}:${p(s)}.000Z`, ts: n };
-}
-
-function csUser(id: string, content: string, n: number) {
-  const t = csAt(n);
-  return {
-    type: "message" as const,
-    id,
-    parentId: null,
-    timestamp: t.iso,
-    message: { role: "user" as const, content, timestamp: t.ts },
-  };
-}
-
-/** Bound call+result, or orphan result when `bound` is false. */
+/** Countersign-bound exchange over the shared session row writer (#843). */
 function csExchange(input: {
   readonly stem: string;
   readonly parentId: string;
   readonly callId: string;
   readonly details: unknown;
   readonly body: string;
-  /** `omit` leaves isError absent (malformed non-success decoy). */
   readonly isError: boolean | "omit";
   readonly n: number;
   readonly bound?: boolean;
 }) {
-  const bound = input.bound !== false;
-  const callT = csAt(input.n);
-  const resultT = csAt(input.n + 1);
-  const assistantId = `assistant-${input.stem}`;
-  const resultMessage: Record<string, unknown> = {
-    role: "toolResult",
-    toolCallId: input.callId,
+  return sessionToolExchangeRows({
+    ...input,
     toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-    content: [{ type: "text", text: input.body }],
-    details: input.details,
-    timestamp: resultT.ts,
-  };
-  if (input.isError !== "omit") resultMessage.isError = input.isError;
-  const result = {
-    type: "message" as const,
-    id: `result-${input.stem}`,
-    parentId: bound ? assistantId : input.parentId,
-    timestamp: resultT.iso,
-    message: resultMessage,
-  };
-  if (!bound) return [result] as const;
-  return [
-    {
-      type: "message" as const,
-      id: assistantId,
-      parentId: input.parentId,
-      timestamp: callT.iso,
-      message: {
-        role: "assistant" as const,
-        content: [{
-          type: "toolCall" as const,
-          id: input.callId,
-          name: COUNTERSIGN_OUTPUT_TOOL_NAME,
-          arguments: input.details,
-        }],
-        timestamp: callT.ts,
-      },
-    },
-    result,
-  ] as const;
-}
-
-async function writeSessionJsonl(
-  sessionFile: string,
-  rows: readonly unknown[],
-  mode: "replace" | "append" = "replace",
-): Promise<void> {
-  if (mode === "replace") await mkdir(join(sessionFile, ".."), { recursive: true });
-  const chunk = `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`;
-  if (mode === "append") {
-    await writeFile(sessionFile, `${await readFile(sessionFile, "utf8")}${chunk}`, "utf8");
-    return;
-  }
-  await writeFile(sessionFile, chunk, "utf8");
+  });
 }
 
 function countersignScriptedHost(piRunner: LegacyFauxPiRunner) {
@@ -750,7 +679,7 @@ async function appendResidualBounceTurn(input: {
   await writeSessionJsonl(
     input.sessionFile,
     [
-      csUser(input.userId, input.userContent, input.n),
+      sessionUserMessageRow(input.userId, input.userContent, input.n),
       ...(input.extraRows ?? []),
       ...csExchange({
         stem: `${input.userId}-bounce`,
@@ -774,9 +703,9 @@ async function appendResidualBounceTurn(input: {
 }
 
 /**
- * #843: shared seat settlement — same-attempt bounce then sealed accept stays
- * accepted; gate bounce→pass rounds keep status/findings; bare resume bounce
- * after a prior accept is not masked by run-scoped stale acceptance; reverse
+ * #843: shared seat settlement — court-scoped resume (message) bounce then sealed
+ * accept stays accepted; gate bounce→pass rounds keep status/findings; bare resume
+ * bounce after a prior accept is not masked by run-scoped stale acceptance; reverse
  * same-turn accept then bounce keeps rejection facts on payloads/gate.
  */
 test("#843 same-attempt correctable-rejection residual does not outrank later sealed accepted",
@@ -786,6 +715,10 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
+    const seedAccepted = {
+      countersignStatus: "converged" as const,
+      note: "PRIOR-COURT-SEED",
+    };
     const rejected = {
       countersignStatus: "continue" as const,
       fix: { summary: "REJECTED-FIRST-findings-visible" },
@@ -816,8 +749,8 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       findings: readonly string[],
     ): SeedGateRound => ({
       id,
-      startedAt: csAt(startN).iso,
-      endedAt: csAt(startN + 10).iso,
+      startedAt: sessionRowTime(startN).iso,
+      endedAt: sessionRowTime(startN + 10).iso,
       status,
       findings,
     });
@@ -870,32 +803,55 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       };
     };
 
-    // 1) Same attempt: bounce then sealed accept → accepted / exit 0.
-    const { cap, done } = runScripted(
+    // Seed a sealed prior court so resume-with-message mints courtAttemptId (#833).
+    const seed = runScripted(
       ["countersign", ...seatModel, "--project", project, "裁"],
+      scriptedCountersignSession(seedAccepted),
+      () => runId,
+    );
+    const seeded = await seed.done;
+    assert.equal(
+      seeded.exitCode,
+      0,
+      seed.cap.stdout.join("") || seed.cap.stderr.join("") || "seed court must accept",
+    );
+
+    // 1) Same court/attempt via resume+message: bounce then sealed accept → accepted / exit 0.
+    // closedLedgerOutcome reads attempt-scoped rows when courtAttemptId is present.
+    let sawCourtAttemptId = false;
+    const { cap, done } = runScripted(
+      ["resume", ...seatModel, runId, "再裁"],
       async (args, options) => {
+        const courtAttemptId = options.env.AK_ROLE_COURT_ATTEMPT;
+        if (typeof courtAttemptId === "string" && courtAttemptId.length > 0) {
+          sawCourtAttemptId = true;
+        }
         const sessionFile = args[args.indexOf("--session") + 1]!;
-        await writeSessionJsonl(sessionFile, [
-          csUser("user-1", "kickoff", 1),
-          ...csExchange({
-            stem: "reject",
-            parentId: "user-1",
-            callId: "call-reject",
-            details: rejected,
-            body: rejectionBody,
-            isError: true,
-            n: 2,
-          }),
-          ...csExchange({
-            stem: "accept",
-            parentId: "result-reject",
-            callId: "call-accept",
-            details: accepted,
-            body: "countersign output accepted",
-            isError: false,
-            n: 4,
-          }),
-        ]);
+        await writeSessionJsonl(
+          sessionFile,
+          [
+            sessionUserMessageRow("user-court", "再裁", 40),
+            ...csExchange({
+              stem: "reject",
+              parentId: "user-court",
+              callId: "call-reject",
+              details: rejected,
+              body: rejectionBody,
+              isError: true,
+              n: 41,
+            }),
+            ...csExchange({
+              stem: "accept",
+              parentId: "result-reject",
+              callId: "call-accept",
+              details: accepted,
+              body: "countersign output accepted",
+              isError: false,
+              n: 43,
+            }),
+          ],
+          "append",
+        );
         await recordCountersignBounce({
           cwd: options.cwd,
           env: options.env,
@@ -913,10 +869,14 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
         await seedGateRounds(sessionFile, bounceThenPassGates);
         return { code: 0, timedOut: false, stderr: "", args: [...args] };
       },
-      () => runId,
     );
     const result = await done;
 
+    assert.equal(
+      sawCourtAttemptId,
+      true,
+      "resume with message must mint courtAttemptId for attempt-scoped ledger",
+    );
     assert.equal(
       result.exitCode,
       0,
@@ -924,6 +884,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     );
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
+    // This-court payloads only when courtAttemptId is present (#879).
     assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
       "continue",
       "converged",
@@ -937,7 +898,8 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     );
     assert.equal(payloads[1]!.countersignStatus, "converged");
     assert.equal(payloads[1]!.note, "ACCEPTED-AFTER-CORRECTION");
-    assert.deepEqual(result.terminal.submissions, [rejected, accepted]);
+    // submissions stay run-scoped (#836): prior seed + this-court bounce/accept.
+    assert.deepEqual(result.terminal.submissions, [seedAccepted, rejected, accepted]);
     assert.ok(result.terminal.gate);
     assert.deepEqual(result.terminal.gate!.actualSeats, ["notary"]);
     assert.equal(result.terminal.gate!.rounds.length, 2);
@@ -1062,7 +1024,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       async (args, options) => {
         const sessionFile = args[args.indexOf("--session") + 1]!;
         await writeSessionJsonl(sessionFile, [
-          csUser("user-rev", "reverse", 120),
+          sessionUserMessageRow("user-rev", "reverse", 120),
           ...csExchange({
             stem: "rev-accept",
             parentId: "user-rev",
