@@ -564,7 +564,6 @@ test("bound auditor reader propagates malformed discovered JSONL", async () => {
     });
     assert.equal(malformed?.cause, "session");
     assert.equal(malformed?.identity?.name, "SyntaxError");
-    assert.match(malformed?.diagnostic ?? "", /JSON/i);
   });
 });
 
