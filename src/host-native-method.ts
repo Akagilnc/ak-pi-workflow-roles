@@ -139,38 +139,99 @@ function pruneHolders(holders: readonly string[]): string[] {
   return holders.filter((h) => pidAlive(holderPid(h)));
 }
 
-/**
- * Exclusive lock via O_EXCL; dead-owner and aged lock files are stolen (crash recovery).
- * Lock body owns all link+ref decisions — no lock-out TOCTOU.
- */
-async function withAgentsSkillsLock<T>(lockPath: string, body: () => Promise<T>): Promise<T> {
-  const deadline = Date.now() + 5_000;
-  const payload = `${process.pid}\n${Date.now()}\n`;
-  for (;;) {
-    try {
-      await writeFile(lockPath, payload, { flag: "wx" });
-      try {
-        return await body();
-      } finally {
-        await unlink(lockPath).catch(() => undefined);
-      }
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-      try {
-        const text = await readFile(lockPath, "utf8");
-        const [pidLine, tsLine] = text.split(/\r?\n/);
-        const ownerPid = Number(pidLine);
-        const ts = Number(tsLine);
-        const ownerDead = !pidAlive(ownerPid);
-        const aged = Number.isFinite(ts) && Date.now() - ts > 60_000;
-        if (ownerDead || aged) await unlink(lockPath);
-      } catch {
-        await unlink(lockPath).catch(() => undefined);
-      }
-      if (Date.now() > deadline) throw new Error(`workspace agents skills lock timeout: ${lockPath}`);
-      await new Promise((r) => setTimeout(r, 5 + Math.floor(Math.random() * 15)));
-    }
+/** Test-only hooks for deterministic mutual-exclusion / busy sequencing. */
+export type AgentsSkillsLockHooks = Readonly<{
+  onEnter?: () => void;
+  onLeave?: () => void;
+  /** After seeing a live foreign lock, before backoff sleep. */
+  afterBusy?: (content: string) => Promise<void>;
+}>;
+
+let agentsSkillsLockHooks: AgentsSkillsLockHooks | undefined;
+
+/** Test-only. Production never sets hooks. */
+export function setAgentsSkillsLockHooksForTest(hooks: AgentsSkillsLockHooks | undefined): void {
+  agentsSkillsLockHooks = hooks;
+}
+
+function parseLockPayload(text: string): { readonly pid: number; readonly token: string } | undefined {
+  const [pidLine, tokenLine] = text.split(/\r?\n/);
+  const pid = Number(pidLine);
+  if (!Number.isInteger(pid) || pid <= 0 || typeof tokenLine !== "string" || tokenLine === "") return undefined;
+  return { pid, token: tokenLine };
+}
+
+/** Per-path in-process chain — serializes overlapping installs/releases in one process. */
+const processLockChains = new Map<string, Promise<unknown>>();
+
+async function withProcessChain<T>(key: string, body: () => Promise<T>): Promise<T> {
+  const prev = processLockChains.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const hold = new Promise<void>((r) => {
+    release = r;
+  });
+  processLockChains.set(
+    key,
+    prev.then(
+      () => hold,
+      () => hold,
+    ),
+  );
+  await prev.catch(() => undefined);
+  try {
+    return await body();
+  } finally {
+    release();
   }
+}
+
+/**
+ * In-process mutex + cross-process advisory file (pid+token).
+ * Release deletes the file only when contents still equal this holder's payload (no ABA delete).
+ * Dead-owner lock is **not** auto-stolen (pathname steal is ABA-unsafe); fails loud with rm path.
+ */
+export async function withAgentsSkillsLock<T>(lockPath: string, body: () => Promise<T>): Promise<T> {
+  return withProcessChain(lockPath, async () => {
+    const deadline = Date.now() + 5_000;
+    const token = randomUUID();
+    const payload = `${process.pid}\n${token}\n`;
+    for (;;) {
+      try {
+        await writeFile(lockPath, payload, { flag: "wx" });
+        agentsSkillsLockHooks?.onEnter?.();
+        try {
+          return await body();
+        } finally {
+          agentsSkillsLockHooks?.onLeave?.();
+          try {
+            if ((await readFile(lockPath, "utf8")) === payload) await unlink(lockPath);
+          } catch {
+            // not ours or already gone
+          }
+        }
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+        let text = "";
+        try {
+          text = await readFile(lockPath, "utf8");
+        } catch {
+          continue; // disappeared — retry create
+        }
+        const parsed = parseLockPayload(text);
+        if (parsed !== undefined && !pidAlive(parsed.pid)) {
+          throw new Error(
+            `stale workspace agents skills lock at ${lockPath} (dead pid ${parsed.pid}); ` +
+              "remove that file and retry — ak-role does not auto-steal pathname locks (#922).",
+          );
+        }
+        await agentsSkillsLockHooks?.afterBusy?.(text);
+        if (Date.now() > deadline) {
+          throw new Error(`workspace agents skills lock busy: ${lockPath}`);
+        }
+        await new Promise((r) => setTimeout(r, 5 + Math.floor(Math.random() * 15)));
+      }
+    }
+  });
 }
 
 async function linkIsOurTarget(linkPath: string, target: string): Promise<boolean> {
