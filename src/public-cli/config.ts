@@ -636,14 +636,23 @@ export function resolvedSeatWithModel(
   return seat as EffectiveSeatWithModel;
 }
 
-/** #178 shared missing-model wording; throw site stays per entry. */
+/**
+ * #178 shared missing-model wording; throw site stays per entry.
+ * Recommend `--model` only when the entry actually has an invocation-model channel
+ * (direct public CLI). Nested summons / navigator seat reads do not — config set only.
+ */
 export function missingResolvedSeatModelMessage(
   seat: PublicConfigurableSeat,
+  remediation: "config" | "invocation-or-config" = "config",
 ): string {
-  return (
-    `seat ${seat} has no model configured; set with --model <provider/model[:thinking]>` +
-    ` or ak-role config set ${seat} <provider/model[:thinking]>`
-  );
+  const configSet = `ak-role config set ${seat} <provider/model[:thinking]>`;
+  if (remediation === "invocation-or-config") {
+    return (
+      `seat ${seat} has no model configured; set with --model <provider/model[:thinking]>` +
+      ` or ${configSet}`
+    );
+  }
+  return `seat ${seat} has no model configured; set with ${configSet}`;
 }
 
 type UnhostedEffectiveSeat = Omit<EffectiveSeat, "host" | "hostSource">;

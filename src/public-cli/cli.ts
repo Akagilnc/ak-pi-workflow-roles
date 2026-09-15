@@ -378,7 +378,10 @@ function createRoleEnvironment(
   afterHost?.();
   const seatWithModel = resolvedSeatWithModel(options.seat);
   if (seatWithModel === undefined) {
-    throw new CliUsageError(missingResolvedSeatModelMessage(options.seat.seat));
+    // Direct CLI has --model; dual remediation is intentional here (#178 / #916).
+    throw new CliUsageError(
+      missingResolvedSeatModelMessage(options.seat.seat, "invocation-or-config"),
+    );
   }
   const hostFacingSelection = projectHostFacingProvider(
     seatWithModel.selection,
