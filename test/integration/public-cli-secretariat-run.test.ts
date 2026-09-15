@@ -37,8 +37,10 @@ import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
+  TRUE_UNBOUND_DIARIST_DETAILS,
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
+import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import {
@@ -672,6 +674,78 @@ test("public secretariat escalate branch: countersign escalate → secretariat e
     assert.equal(summonDetails[0]?.outcomeKind, "accepted");
     // escalate skips 符宝郎内闸 (#753)
     assert.equal(gateCalls.length, 0);
+  });
+});
+
+test("public secretariat rejects true-unbound diarist — no body without ticket (G3)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "01a0sec924-unbd-7000-8000-000000000077";
+    const capture = captureIo();
+    let secretariatBodyTurns = 0;
+
+    const nested = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = argvFlagValue(args, "--ak-role");
+        if (role === "diarist") {
+          return scriptedTerminatingToolSession({
+            role: "diarist",
+            toolName: DIARIST_OUTPUT_TOOL_NAME,
+            details: TRUE_UNBOUND_DIARIST_DETAILS,
+          })(args, options);
+        }
+        throw new Error(`unexpected nested role under unbound test: ${role}`);
+      },
+    });
+
+    const host: RoleTurnHost = {
+      async executeTurn(request) {
+        if (request.activation.role === "secretariat") {
+          secretariatBodyTurns += 1;
+        }
+        return nested.executeTurn(request);
+      },
+    };
+
+    const result = await runAkRole(
+      [
+        "secretariat",
+        "--model",
+        "test/caller-seat:high",
+        "--project",
+        project,
+        "整理一张没有票号的草稿。",
+      ],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: capture.io,
+        createRunId: () => runId,
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+      },
+    );
+
+    assert.notEqual(result.exitCode, 0, "true-unbound must not settle as success");
+    assert.equal(
+      secretariatBodyTurns,
+      0,
+      "secretariat body must not run without bound ticket",
+    );
+    const parentRunDir = await findRunDirectoryById(home, runId);
+    assert.ok(parentRunDir, "failed run must still be on the ledger");
+    assert.ok(
+      parentRunDir.includes(`${join("unbound", "runs")}`),
+      `true-unbound failure stays unbound; got ${parentRunDir}`,
+    );
+    if (result.terminal !== undefined) {
+      assert.notEqual(result.terminal.roleOutcome.kind, "accepted");
+    }
   });
 });
 

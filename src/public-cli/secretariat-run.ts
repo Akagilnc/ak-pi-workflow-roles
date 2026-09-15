@@ -45,13 +45,6 @@ import {
 export type SecretariatRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
-  /**
-   * Test seam: replace the first-entry 起居郎 identity station.
-   * Production leaves unset and runs the public diarist seat.
-   */
-  runIdentityDiaristStation?: (
-    admitted: AdmittedSecretariatInvocation,
-  ) => Promise<void>;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -130,72 +123,83 @@ export async function runPublicSecretariat(
   await markRunAdmitted(admitted, env.principalAuthority);
 
   // #924 G3 / ADR 0075 / 0081: ticket identity is 起居郎 typed assertion — never
-  // prose regex. Bind + relocate so post-admission can deliver 起居录 and the run
-  // leaves unbound/. Test seam defers identity (caller binds itself if needed).
-  if (env.runIdentityDiaristStation === undefined) {
-    const outcome = await invokeCourtDiarist(
+  // prose regex. 中书省改线上正文，必须有本票；true-unbound / escalate / station
+  // failure 一律受控失败，不照搬给事中允许真无票继续的席位特例。
+  const outcome = await invokeCourtDiarist(
+    {
+      instruction: parsed.instruction,
+      projectRoot: admitted.projectRoot,
+      failureLabel: "secretariat unbound summons",
+    },
+    diaristEnv(env),
+    io,
+  );
+
+  if (outcome.identity.kind === "escalate") {
+    return await presentControlledFailure(
+      admitted,
       {
-        instruction: parsed.instruction,
-        projectRoot: admitted.projectRoot,
-        failureLabel: "secretariat unbound summons",
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: new Error(
+          "court diarist station escalated (cannot identify court target)",
+        ),
       },
-      diaristEnv(env),
+      secretariatAdapters(),
+      env.principalAuthority,
       io,
     );
+  }
 
-    if (outcome.identity.kind === "escalate") {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: new Error(
-            "court diarist station escalated (cannot identify court target)",
-          ),
-        },
-        secretariatAdapters(),
-        env.principalAuthority,
-        io,
-      );
-    }
+  if (outcome.failedWithoutEscalate !== undefined) {
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: new Error(outcome.failedWithoutEscalate.diagnostic),
+      },
+      secretariatAdapters(),
+      env.principalAuthority,
+      io,
+    );
+  }
 
-    if (outcome.failedWithoutEscalate !== undefined) {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: new Error(outcome.failedWithoutEscalate.diagnostic),
-        },
-        secretariatAdapters(),
-        env.principalAuthority,
-        io,
-      );
-    }
+  if (outcome.identity.kind !== "ticket") {
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: new Error(
+          "secretariat requires a bound ticket identity; true-unbound cannot rewrite online body",
+        ),
+      },
+      secretariatAdapters(),
+      env.principalAuthority,
+      io,
+    );
+  }
 
-    if (outcome.identity.kind === "ticket") {
-      try {
-        await bindAdmittedTicketNumber(admitted, outcome.identity.ticketNumber);
-        await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-      } catch (error) {
-        return await presentControlledFailure(
-          admitted,
-          {
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-          },
-          secretariatAdapters(),
-          env.principalAuthority,
-          io,
-        );
-      }
-    }
-  } else {
-    await env.runIdentityDiaristStation(admitted);
+  try {
+    await bindAdmittedTicketNumber(admitted, outcome.identity.ticketNumber);
+    await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+  } catch (error) {
+    return await presentControlledFailure(
+      admitted,
+      {
+        timedOut: false,
+        code: null,
+        stderr: "",
+        thrown: error,
+      },
+      secretariatAdapters(),
+      env.principalAuthority,
+      io,
+    );
   }
 
   const turnRequest = buildSecretariatTurnRequest(admitted, {
