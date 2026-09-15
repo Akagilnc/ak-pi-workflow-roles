@@ -633,34 +633,69 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     const laterBounceBody = "SECOND-TURN-BOUNCE-BODY";
     const reverseBounceBody = "REVERSE-ORDER-BOUNCE-BODY";
     const gateFindings = ["REJECTED-FIRST-findings-visible"] as const;
+    const reverseGateFindings = ["BOUNCED-AFTER-ACCEPT-VISIBLE"] as const;
     const runId = "01a0sign00-0000-7000-8000-000000000843";
 
-    const seedBounceThenPassGates = async (sessionFile: string): Promise<void> => {
+    type SeedGateRound = {
+      readonly id: string;
+      readonly startedAt: string;
+      readonly endedAt: string;
+      readonly status: "bounce" | "pass";
+      readonly findings: readonly string[];
+    };
+    const seedGateRounds = async (
+      sessionFile: string,
+      rounds: readonly SeedGateRound[],
+    ): Promise<void> => {
       const auditorDir = join(dirname(sessionFile), "auditor-roles");
       await mkdir(auditorDir, { recursive: true });
-      await writeFile(
-        join(auditorDir, "o01_notary.jsonl"),
-        gateToolSessionJsonl({
-          id: "direct-notary-bounce",
-          startedAt: "2026-09-04T00:00:00.000Z",
-          endedAt: "2026-09-04T00:00:10.000Z",
-          toolName: "ak_notary_output",
-          args: { status: "bounce", findings: [...gateFindings] },
-        }),
-        "utf8",
-      );
-      await writeFile(
-        join(auditorDir, "o02_notary.jsonl"),
-        gateToolSessionJsonl({
-          id: "direct-notary-pass",
-          startedAt: "2026-09-04T00:00:20.000Z",
-          endedAt: "2026-09-04T00:00:30.000Z",
-          toolName: "ak_notary_output",
-          args: { status: "pass", findings: [] },
-        }),
-        "utf8",
-      );
+      for (let i = 0; i < rounds.length; i += 1) {
+        const round = rounds[i]!;
+        await writeFile(
+          join(auditorDir, `o${String(i + 1).padStart(2, "0")}_notary.jsonl`),
+          gateToolSessionJsonl({
+            id: round.id,
+            startedAt: round.startedAt,
+            endedAt: round.endedAt,
+            toolName: "ak_notary_output",
+            args: { status: round.status, findings: [...round.findings] },
+          }),
+          "utf8",
+        );
+      }
     };
+    const bounceThenPassGates: readonly SeedGateRound[] = [
+      {
+        id: "direct-notary-bounce",
+        startedAt: "2026-09-04T00:00:00.000Z",
+        endedAt: "2026-09-04T00:00:10.000Z",
+        status: "bounce",
+        findings: gateFindings,
+      },
+      {
+        id: "direct-notary-pass",
+        startedAt: "2026-09-04T00:00:20.000Z",
+        endedAt: "2026-09-04T00:00:30.000Z",
+        status: "pass",
+        findings: [],
+      },
+    ];
+    const passThenBounceGates: readonly SeedGateRound[] = [
+      {
+        id: "direct-notary-pass-rev",
+        startedAt: "2026-09-04T00:02:00.000Z",
+        endedAt: "2026-09-04T00:02:10.000Z",
+        status: "pass",
+        findings: [],
+      },
+      {
+        id: "direct-notary-bounce-rev",
+        startedAt: "2026-09-04T00:02:20.000Z",
+        endedAt: "2026-09-04T00:02:30.000Z",
+        status: "bounce",
+        findings: reverseGateFindings,
+      },
+    ];
 
     // 1) Same attempt: bounce then sealed accept → accepted / exit 0.
     const { io, stdout, stderr } = captureIo();
@@ -773,7 +808,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
               details: accepted,
               toolCallId: "call-accept",
             });
-            await seedBounceThenPassGates(sessionFile);
+            await seedGateRounds(sessionFile, bounceThenPassGates);
             return {
               code: 0,
               timedOut: false,
@@ -909,6 +944,173 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       laterBounceBody,
     );
 
+    // 2b/2c) Bare resume: residual bounce plus a non-success signal must stay
+    // failure. Missing isError (bound) and unbound isError:false must not wash
+    // the current residual via run-scoped stale accepted.
+    const falseSuccessBodies = [
+      {
+        label: "bound-missing-isError",
+        userId: "user-resume-missing-isError",
+        bounceCallId: "call-resume-missing-isError-bounce",
+        decoyCallId: "call-resume-missing-isError-decoy",
+        bounceBody: "MISSING-ISERROR-STILL-BOUNCE-BODY",
+        decoy: (callId: string) => ({
+          type: "message",
+          id: "assistant-resume-missing-isError-decoy",
+          parentId: "user-resume-missing-isError",
+          timestamp: "2026-08-30T00:01:11.000Z",
+          message: {
+            role: "assistant",
+            content: [{
+              type: "toolCall",
+              id: callId,
+              name: COUNTERSIGN_OUTPUT_TOOL_NAME,
+              arguments: accepted,
+            }],
+            timestamp: 13,
+          },
+        }),
+        decoyResult: (callId: string) => ({
+          type: "message",
+          id: "result-resume-missing-isError-decoy",
+          parentId: "assistant-resume-missing-isError-decoy",
+          timestamp: "2026-08-30T00:01:12.000Z",
+          message: {
+            role: "toolResult",
+            toolCallId: callId,
+            toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+            content: [{ type: "text", text: "missing-isError decoy" }],
+            details: accepted,
+            // intentionally omit isError — must not establish success
+            timestamp: 14,
+          },
+        }),
+      },
+      {
+        label: "unbound-isError-false",
+        userId: "user-resume-unbound-false",
+        bounceCallId: "call-resume-unbound-false-bounce",
+        decoyCallId: "call-resume-unbound-false-orphan",
+        bounceBody: "UNBOUND-FALSE-STILL-BOUNCE-BODY",
+        decoy: (_callId: string) => undefined,
+        decoyResult: (callId: string) => ({
+          type: "message",
+          id: "result-resume-unbound-false-decoy",
+          parentId: "user-resume-unbound-false",
+          timestamp: "2026-08-30T00:01:22.000Z",
+          message: {
+            role: "toolResult",
+            toolCallId: callId,
+            toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+            content: [{ type: "text", text: "unbound isError:false decoy" }],
+            details: accepted,
+            isError: false,
+            timestamp: 16,
+          },
+        }),
+      },
+    ] as const;
+
+    for (const caseSpec of falseSuccessBodies) {
+      const caseBounce = {
+        countersignStatus: "continue" as const,
+        fix: { summary: caseSpec.label },
+      };
+      const { io: caseIo, stdout: caseOut, stderr: caseErr } = captureIo();
+      const caseResumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+        home,
+        packageRoot,
+        cwd: project,
+        io: caseIo,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: withTrueUnboundDiarist(async (args, options) => {
+            const sessionFile = args[args.indexOf("--session") + 1]!;
+            const prior = await readFile(sessionFile, "utf8");
+            const decoyAssistant = caseSpec.decoy(caseSpec.decoyCallId);
+            const rows = [
+              {
+                type: "message",
+                id: caseSpec.userId,
+                parentId: null,
+                timestamp: "2026-08-30T00:01:10.000Z",
+                message: { role: "user", content: caseSpec.label, timestamp: 12 },
+              },
+              ...(decoyAssistant === undefined ? [] : [decoyAssistant]),
+              caseSpec.decoyResult(caseSpec.decoyCallId),
+              {
+                type: "message",
+                id: `${caseSpec.userId}-assistant-bounce`,
+                parentId: caseSpec.userId,
+                timestamp: "2026-08-30T00:01:13.000Z",
+                message: {
+                  role: "assistant",
+                  content: [{
+                    type: "toolCall",
+                    id: caseSpec.bounceCallId,
+                    name: COUNTERSIGN_OUTPUT_TOOL_NAME,
+                    arguments: caseBounce,
+                  }],
+                  timestamp: 15,
+                },
+              },
+              {
+                type: "message",
+                id: `${caseSpec.userId}-result-bounce`,
+                parentId: `${caseSpec.userId}-assistant-bounce`,
+                timestamp: "2026-08-30T00:01:14.000Z",
+                message: {
+                  role: "toolResult",
+                  toolCallId: caseSpec.bounceCallId,
+                  toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+                  content: [{ type: "text", text: caseSpec.bounceBody }],
+                  details: caseBounce,
+                  isError: true,
+                  timestamp: 16,
+                },
+              },
+            ];
+            await writeFile(
+              sessionFile,
+              `${prior}${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+              "utf8",
+            );
+            await recordNonSealedSubmissionForSpawn({
+              cwd: options.cwd,
+              env: options.env,
+              role: "countersign",
+              details: caseBounce,
+              toolCallId: caseSpec.bounceCallId,
+              executeError: new GatekeeperDecisionError({
+                status: "bounce",
+                officer: "notary",
+                receipt: { status: "bounce", findings: [caseSpec.label] },
+              }),
+            });
+            return {
+              code: 0,
+              timedOut: false,
+              stderr: "",
+              args: [...args],
+            };
+          }),
+        }),
+      });
+      assert.equal(
+        caseResumed.exitCode,
+        1,
+        caseOut.join("") || caseErr.join("") || `${caseSpec.label} must stay failure`,
+      );
+      assert.equal(caseResumed.terminal?.roleOutcome.kind, "failure");
+      assert.equal(
+        caseResumed.terminal?.roleOutcome.kind === "failure"
+          ? caseResumed.terminal.roleOutcome.diagnostic
+          : undefined,
+        caseSpec.bounceBody,
+      );
+    }
+
     // 3) Reverse same-turn order (accepted first, bounce later): terminal may
     // stay accepted, but rejection facts must remain on payloads and gate.
     const reverseAccepted = {
@@ -1033,7 +1235,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
                 },
               }),
             });
-            await seedBounceThenPassGates(sessionFile);
+            await seedGateRounds(sessionFile, passThenBounceGates);
             return {
               code: 0,
               timedOut: false,
@@ -1062,12 +1264,13 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     );
     assert.ok(reversed.terminal!.gate);
     assert.equal(reversed.terminal!.gate!.rounds.length, 2);
-    assert.equal(reversed.terminal!.gate!.rounds[0]!.officer.status, "bounce");
+    assert.equal(reversed.terminal!.gate!.rounds[0]!.officer.status, "pass");
+    assert.deepEqual(reversed.terminal!.gate!.rounds[0]!.officer.findings, []);
+    assert.equal(reversed.terminal!.gate!.rounds[1]!.officer.status, "bounce");
     assert.deepEqual(
-      reversed.terminal!.gate!.rounds[0]!.officer.findings,
-      [...gateFindings],
+      reversed.terminal!.gate!.rounds[1]!.officer.findings,
+      [...reverseGateFindings],
     );
-    assert.equal(reversed.terminal!.gate!.rounds[1]!.officer.status, "pass");
   });
 });
 

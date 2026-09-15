@@ -3227,8 +3227,10 @@ async function settleLawfulSeatAcceptedTerminalResult(
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const submissions = await recordedSubmissionPayloads(admitted, scope);
   // #843: collector shape (ledger closed first) plus current user-turn freshness.
-  // A non-error seat toolResult in this attempt means this turn sealed — a prior
-  // bounce residual in the same turn must not outrank it. A current-attempt
+  // A lawful bound non-error seat toolResult (isError === false + one-to-one call
+  // bind, same grade as residual) means this turn sealed — a prior bounce residual
+  // in the same turn must not outrank it. Missing isError, unbound, or mis-bound
+  // results do not establish success and do not reject/abort. A current-attempt
   // residual without that success is this turn's own failure and must not be
   // masked by run-scoped stale acceptance (bare resume without courtAttemptId).
   // Same-turn accept-then-bounce keeps the success marker: terminal stays
@@ -3240,8 +3242,13 @@ async function settleLawfulSeatAcceptedTerminalResult(
     const message = entries[index]?.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== spec.toolName) continue;
-    if (message.isError !== true) {
-      thisAttemptHasSeatSuccess = true;
+    if (message.isError === false) {
+      if (
+        boundRoleToolCallForResult(entries, index, message, spec.toolName) !==
+          undefined
+      ) {
+        thisAttemptHasSeatSuccess = true;
+      }
       continue;
     }
     if (residual === undefined) {
