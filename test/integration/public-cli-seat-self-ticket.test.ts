@@ -389,8 +389,7 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
-    // Typed identity only — no prompt/freeze path substring lock (#858/#859).
-    assert.ok(volume.recordFile);
+    // Typed identity + volume readability only — no prompt/freeze path substring lock (#858/#859).
     await readFile(volume.recordFile, "utf8");
   });
 });

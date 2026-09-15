@@ -4,9 +4,9 @@
  * send boundary; structured materials are the authority, this string is the
  * provider wire form.
  *
- * Case-dossier freeze may arrive as a pre-assembled Chinese `section` string
- * body (attachment face). Prefer that when present; every other material keeps
- * the BASE JSON projection — never silently drop unknown producers (#858).
+ * Case-dossier pointer (`kind: "case-dossier-pointer"`) carries a pre-assembled
+ * `section` string from the attachment face. Every other material keeps the
+ * BASE JSON projection — never duck-type on `section` alone (#858).
  */
 
 function providerVisibleMaterial(material: unknown): string {
@@ -15,6 +15,7 @@ function providerVisibleMaterial(material: unknown): string {
     material !== null
     && typeof material === "object"
     && !Array.isArray(material)
+    && (material as { kind?: unknown }).kind === "case-dossier-pointer"
     && typeof (material as { section?: unknown }).section === "string"
     && (material as { section: string }).section.trim() !== ""
   ) {

@@ -167,15 +167,17 @@ export type SameTicketSummonsMaterials = {
 
 /**
  * Unique continuation-prompt selector for manual/auto engine-axis resume
- * (#471 / #600 / #736). Message present → those bytes; absent → engine pointers only.
- * #836: no transport-token prompt, no line-by-line 重新读 rewrite.
+ * (#471 / #600 / #736 / #836 / #858). Message present → those bytes + engine
+ * coordinates (real user turn). Message absent → empty user turn (typed resume
+ * marker for settlement retention); engine coordinates ride RoleTurnRequest.engine
+ * + readingMaterial face — never bare-resume user-turn prose for settlement to sniff.
  */
 export function selectResumeContinuationPrompt(
   message?: string,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const lines = message !== undefined ? [message] : [];
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  if (message === undefined) return "";
+  return appendEngineSessionMaterial([message], engineMaterial).join("\n");
 }
 
 /**

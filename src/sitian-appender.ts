@@ -11,7 +11,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
@@ -271,13 +271,12 @@ export function resolveSitianRecordPathInLedger(
 
 /**
  * Owner-visible ticket 起居录 path shape via the writer ticket joins
- * (ticketProvenanceUnderBookPaths). Ledger leaf comes from resolveActivationLedgerHome;
- * variable slots keep owner labels; no cwd/home path inference.
+ * (ticketProvenanceUnderBookPaths). Ledger leaf is the package-owned `.ak-roles`
+ * name (ADR 0048); variable slots keep owner labels; no fake-home path reverse.
  */
 export function projectTicketRecordsPathShape(): string {
-  const ledgerLeaf = basename(resolveActivationLedgerHome(resolve("/")));
   const { recordFile } = ticketProvenanceUnderBookPaths(
-    join("~", ledgerLeaf),
+    join("~", ".ak-roles"),
     "<簿>",
     "<票号>",
   );

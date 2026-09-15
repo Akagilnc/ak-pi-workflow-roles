@@ -17,7 +17,7 @@ import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
 import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dispatch-rejection.ts";
 
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
-import { buildResumeContinuationPrompt, readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
+import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
   packageRoot,
@@ -373,31 +373,27 @@ test("retained auditor failure is bound to the latest parent resume attempt", as
     assert.equal(await readBoundAuditorKnownFailure(sessionFile), undefined);
   });
 });
-// #600 / 8e767152: engine-axis resume appends handbook prose after the transport
-// token. Settlement must still ignore that envelope so first-attempt auditor
-// retentionFailure/compliance is not dropped as stale.
-test("engine-suffixed resume envelope keeps first-attempt auditor retention bound", async () => {
+// #600 / 8e767152 / #858: bare resume is an empty user turn (typed). Settlement
+// must ignore that envelope so first-attempt auditor retentionFailure/compliance
+// is not dropped as stale. No engine-handbook prose lock.
+test("bare resume empty turn keeps first-attempt auditor retention bound", async () => {
   await withTempHome(async (home) => {
     const sessionDir = join(home, "session");
     const sessionFile = join(sessionDir, "parent.jsonl");
     const childDir = join(sessionDir, "auditor-roles");
     await mkdir(childDir, { recursive: true });
-    const engineResumePrompt = buildResumeContinuationPrompt({
-      packageRoot,
-      engine: "kimi",
-    });
-    assert.equal(engineResumePrompt.includes("[ak-role:resume-continue]"), false);
-    assert.equal(engineResumePrompt.includes("kimi"), true);
+    // Production bare resume writes empty user-turn bytes (selectResumeContinuationPrompt).
+    const bareResumePrompt = "";
 
     const shapes: ReadonlyArray<{ label: string; message: Record<string, unknown> }> = [
       // text-string form (message.content string)
-      { label: "content-string", message: { role: "user", content: engineResumePrompt } },
+      { label: "content-string", message: { role: "user", content: bareResumePrompt } },
       // message.text string form
-      { label: "text-string", message: { role: "user", text: engineResumePrompt } },
+      { label: "text-string", message: { role: "user", text: bareResumePrompt } },
       // real pi content-array form
       {
         label: "content-array",
-        message: { role: "user", content: [{ type: "text", text: engineResumePrompt }] },
+        message: { role: "user", content: [{ type: "text", text: bareResumePrompt }] },
       },
     ];
 
@@ -495,7 +491,7 @@ test("engine-suffixed resume envelope keeps first-attempt auditor retention boun
             },
           },
         },
-        `${shape.label}: engine-suffixed resume envelope must not stale first-attempt auditor retention`,
+        `${shape.label}: bare resume empty turn must not stale first-attempt auditor retention`,
       );
     }
   });

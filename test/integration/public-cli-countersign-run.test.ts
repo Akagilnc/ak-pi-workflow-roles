@@ -998,7 +998,6 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     // Typed ticket identity + volume readability only — no prompt/freeze substring lock (#858/#859).
     await readTicketProvenance(582, project, home);
     const volume = resolveTicketProvenanceVolume(582, project, home);
-    assert.ok(volume.recordFile);
     await readFile(volume.recordFile, "utf8");
 
     assert.deepEqual(result.terminal?.gate?.actualSeats, ["notary"]);
@@ -1257,7 +1256,7 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
   });
 });
 
-test("public countersign path: true-unbound 起居郎 asserts null — no ticket bind; path shape via materials face", async () => {
+test("public countersign path: true-unbound 起居郎 asserts null — no ticket bind; stays unbound", async () => {
   await withCountersignProject(async ({ home, project }) => {
     const host = roleTurnHostFromLegacyPiRunner({
       packageRoot,
@@ -1293,9 +1292,6 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
       entries.some((entry) => entry.endsWith("@diarist")),
       true,
     );
-
-    // Unbound must not splice path shape into caller dialogue (#858).
-    // Path shape rides the existing attachments → readingMaterial face instead.
   });
 });
 

@@ -748,18 +748,20 @@ export async function dispatchPostAdmissionTurn<
     if (typeof liveHost === "string" && liveHost.trim() !== "") {
       turnRequest = { ...turnRequest, host: liveHost.trim() };
     }
-    if (isStationChildOfficerDialogue(admitted.role, env)) {
-      // 0081 non-body face: freeze pointer section under run/attachments/.
-      // Peer dialogue continuation.prompt stays parent payload only — the seat
-      // consumes the freeze via loadCaseDossierReadingMaterial → existing
-      // agent-start readingMaterial / systemPrompt.materials fold.
+    if (
+      isStationChildOfficerDialogue(admitted.role, env)
+      || admitted.ticketNumber === undefined
+    ) {
+      // 0081 non-body face (station-child + unbound ordinary): freeze pointer
+      // under run/attachments/. Peer/unbound dialogue stays free of path splice;
+      // seat loads freeze via loadCaseDossierReadingMaterial → materials fold.
       await deliverCaseDossierAsAttachment({
         ticketNumber: admitted.ticketNumber,
         projectRoot: admitted.projectRoot,
         home: env.home,
         runDirectory: admitted.runDirectory,
       });
-    } else if (admitted.ticketNumber !== undefined) {
+    } else {
       // BASE bound ordinary-entry face: append the concrete path pointer.
       const dossierSection = await projectCaseDossierPointerSection({
         ticketNumber: admitted.ticketNumber,
@@ -773,14 +775,6 @@ export async function dispatchPostAdmissionTurn<
           dossierSection,
         ),
       };
-    } else {
-      // #858 unbound ordinary: non-dialogue materials face only.
-      await deliverCaseDossierAsAttachment({
-        ticketNumber: admitted.ticketNumber,
-        projectRoot: admitted.projectRoot,
-        home: env.home,
-        runDirectory: admitted.runDirectory,
-      });
     }
 
     // Authoritative host write happens here, at the real dispatch boundary —

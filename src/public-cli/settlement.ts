@@ -31,6 +31,7 @@ import {
   isV1ResumableProvider,
   readLatestTypedProviderHttpObservation,
   readTypedHttp429Observation,
+  RESUME_TRANSPORT_ENVELOPE,
   type TypedHttp429Observation,
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
@@ -1086,13 +1087,15 @@ async function loadBoundAuditorVolumes(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
+  // Typed resume markers only (#600 / #836 / #858): empty bare-resume turn, or
+  // package transport token as first line (station-child / historical sessions).
+  // Never sniff engine handbook presentation bytes.
   const isResumeEnvelopeBytes = (value: unknown): boolean => {
     if (typeof value !== "string") return false;
     if (value.length === 0) return true;
     const nl = value.indexOf("\n");
     const firstLine = nl === -1 ? value : value.slice(0, nl);
-    const body = firstLine === "" && nl !== -1 ? value.slice(nl + 1) : value;
-    return body.startsWith("本次配置的劳务引擎及其手册：") || body.startsWith("- engine:");
+    return firstLine === RESUME_TRANSPORT_ENVELOPE;
   };
   const isResumeEnvelope = (msg: unknown): boolean => {
     if (!isRecord(msg) || msg.role !== "user") return false;

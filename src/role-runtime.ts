@@ -1330,14 +1330,20 @@ export function createRoleRuntimeExtension(
         };
       }
     });
-    // #879: engine coordinates ride readingMaterial only when station-child
-    // officer dialogue replaced the ordinary transport prompt (no double fold).
-    roleHost.on("before_agent_start", () => {
-      const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
-      if (typeof role !== "string" || !isOfficerReviewSeat(role)) return;
-      if (roleHost.getFlag(STATION_CHILD_FLAG.name) !== true) return;
+    // Engine coordinates ride readingMaterial when the transport prompt does not
+    // already carry them (#879 station-child officer; #858 bare resume empty turn).
+    // Ordinary initial / message-resume keep engine on the transport prompt only.
+    roleHost.on("before_agent_start", (event) => {
       const engine = resolveEngineName((name) => roleHost.getFlag(name));
       if (engine === undefined || dependencies.packageRoot === undefined) return;
+      const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
+      const stationChildOfficer =
+        typeof role === "string"
+        && isOfficerReviewSeat(role)
+        && roleHost.getFlag(STATION_CHILD_FLAG.name) === true;
+      const bareResumeEmptyTurn =
+        typeof event.prompt === "string" && event.prompt.trim() === "";
+      if (!stationChildOfficer && !bareResumeEmptyTurn) return;
       const engineModel = resolveEngineModel((name) => roleHost.getFlag(name));
       const material = engineSessionMaterialFromOptions({
         engine,
