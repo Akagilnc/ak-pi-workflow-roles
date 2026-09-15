@@ -5,7 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
-import { mkdir, readdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -707,8 +707,9 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       join(home, ".claude", "projects", "probe", "session.jsonl"),
     );
 
-    // Seed an already-accepted volume with full-range sessions so amendments-only
-    // continuation can reuse header bounds after unparsable reask.
+    // Seed an already-accepted archive line. Sessions stay empty so the fixture
+    // full-range is still undeclared delta (#918 carry-forward: only new ranges read source).
+    // After first successful project, header gains bounds; amendments-only then updates by s,line.
     const paths = resolveTicketProvenanceVolume(TICKET, project, home);
     await mkdir(paths.volumeDir, { recursive: true });
     const priorBody = `${JSON.stringify({
@@ -716,12 +717,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       ticket: TICKET,
       createdAt: "2026-01-01T00:00:00.000Z",
       updatedAt: "2026-01-01T00:00:00.000Z",
-      sessions: [
-        {
-          path: fixture.path,
-          ranges: [{ from: { line: 1 }, to: { line: fixture.lastLine } }],
-        },
-      ],
+      sessions: [],
     })}\n${JSON.stringify({
       speaker: "owner",
       s: 0,
@@ -1388,7 +1384,75 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(await readFile(paths.recordFile, "utf8"), beforeEmpty);
     assert.equal(afterEmpty.lines.length, 3);
 
-    // Failure honesty: unreadable session must not wash prior entries (验收 4).
+    // 验收 4：历史源 S1 不可达后，只交新范围 B（S2）仍成功；再交已声明 A 为 no-op。
+    // 变异面：改回「每轮重读全部历史源」→ 本段报红（S1 不可读会拖死 B）。
+    const unreachableDir = join(home, ".claude", "projects", "probe-gone");
+    await mkdir(unreachableDir, { recursive: true });
+    await rename(fixtureA.path, join(unreachableDir, "session-a.jsonl"));
+    // session-a path in header now points at a missing file.
+    const afterGoneB = await runDiarist("01a0diar00-0000-7000-8000-000000000098a", [
+      // Resubmit already-declared rangeB only — must not require S1.
+      rangeB,
+    ]);
+    assert.equal(afterGoneB.lines.length, 3, "resubmit declared bounds while S1 gone is no-op");
+    assert.equal(
+      afterGoneB.lines.some((line) => line.id === fixtureA.plainOwnerId),
+      true,
+      "carried A must survive unreachable S1",
+    );
+
+    const sessionCPath = join(home, ".claude", "projects", "probe", "session-c.jsonl");
+    const sessionCOwnerId = "msg-session-c-owner";
+    const sessionCOwnerText = "S1 已不可达后新源的陛下发言";
+    await writeFile(
+      sessionCPath,
+      `${JSON.stringify({
+        type: "user",
+        uuid: sessionCOwnerId,
+        message: {
+          role: "user",
+          content: [{ type: "text", text: sessionCOwnerText }],
+        },
+      })}\n`,
+      "utf8",
+    );
+    const rangeC = {
+      path: sessionCPath,
+      ranges: [{ from: { line: 1 }, to: { line: 1 } }],
+    };
+    const afterC = await runDiarist("01a0diar00-0000-7000-8000-000000000098b", [rangeC]);
+    assert.equal(
+      afterC.lines.some((line) => line.id === fixtureA.plainOwnerId),
+      true,
+      "A carried without re-reading gone S1",
+    );
+    assert.equal(
+      afterC.lines.some((line) => line.id === sessionBOwnerId),
+      true,
+      "B carried while adding C",
+    );
+    assert.equal(
+      afterC.lines.find((line) => line.id === sessionCOwnerId)?.text,
+      sessionCOwnerText,
+      "new range C from S2 must publish while S1 gone",
+    );
+    assert.equal(afterC.header?.sessions.length, 3, "C adds a third session index");
+
+    // Resubmit declared range A (S1 still gone) → exact no-op, no reask.
+    const afterResubmitA = await runDiarist("01a0diar00-0000-7000-8000-000000000098c", [
+      rangeA,
+    ]);
+    assert.equal(
+      afterResubmitA.lines.length,
+      afterC.lines.length,
+      "resubmit declared A while S1 gone must be no-op",
+    );
+    assert.equal(
+      afterResubmitA.lines.some((line) => line.id === fixtureA.plainOwnerId),
+      true,
+    );
+
+    // 验收 5：本轮需投影的新范围源不可读 → reask，不部分覆盖旧卷。
     const priorBytes = await readFile(paths.recordFile, "utf8");
     const missingPath = join(home, ".claude", "projects", "probe", "missing-session.jsonl");
     let sawUnreadableReask = false;
@@ -1440,7 +1504,6 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(sawUnreadableReask, true);
     assert.equal(readFileSync(paths.recordFile, "utf8"), priorBytes);
     const still = await readTicketProvenance(TICKET, project, home);
-    assert.equal(still.lines.length, 3, "prior lines must survive failed partial projection");
     assert.equal(
       still.lines.some((line) => line.id === fixtureA.ownerId),
       true,
@@ -1450,6 +1513,71 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       still.lines.some((line) => line.id === sessionBOwnerId && line.s === 1),
       true,
       "cross-session s=1 entry must survive",
+    );
+    assert.equal(
+      still.lines.some((line) => line.id === sessionCOwnerId),
+      true,
+      "C must survive failed new-range reask",
+    );
+
+    // 验收 8：存量转换——合法 owner 保留；`<task-notification` 前缀 owner 消失；
+    // 证不出的其它前缀原样不动。不新增字段。
+    const stockLegalId = "stock-legal-owner";
+    const stockLegalText = "存量合法陛下发言";
+    const stockTaskText =
+      "<task-notification>\n<task-id>stock-1</task-id>\n<summary>stock machine</summary>\n</task-notification>";
+    const stockOtherText = "<other-unknown-prefix>证不出的前缀原样留存</other-unknown-prefix>";
+    const headerNow = still.header!;
+    const stockBody = `${JSON.stringify({
+      ...headerNow,
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    })}\n${[
+      ...still.lines.map((line) => JSON.stringify(line)),
+      JSON.stringify({
+        speaker: "owner",
+        s: 0,
+        line: 9001,
+        id: stockLegalId,
+        text: stockLegalText,
+      }),
+      JSON.stringify({
+        speaker: "owner",
+        s: 0,
+        line: 9002,
+        id: "stock-task-notif",
+        text: stockTaskText,
+      }),
+      JSON.stringify({
+        speaker: "owner",
+        s: 0,
+        line: 9003,
+        id: "stock-other-prefix",
+        text: stockOtherText,
+      }),
+    ].join("\n")}\n`;
+    await writeFile(paths.recordFile, stockBody, "utf8");
+    const afterStock = await runDiarist("01a0diar00-0000-7000-8000-000000000099", []);
+    assert.equal(
+      afterStock.lines.some((line) => line.id === stockLegalId && line.text === stockLegalText),
+      true,
+      "stock legal owner must remain",
+    );
+    assert.equal(
+      afterStock.lines.some(
+        (line) =>
+          line.id === "stock-task-notif" ||
+          line.text === stockTaskText ||
+          (typeof line.text === "string" && line.text.startsWith("<task-notification")),
+      ),
+      false,
+      "stock <task-notification owner must be removed",
+    );
+    assert.equal(
+      afterStock.lines.some(
+        (line) => line.id === "stock-other-prefix" && line.text === stockOtherText,
+      ),
+      true,
+      "unprovable other prefix stock must stay untouched",
     );
   });
 });

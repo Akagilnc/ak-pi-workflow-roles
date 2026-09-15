@@ -136,17 +136,37 @@ const FIXED_NON_OWNER_ENQUEUE_TAGS = [
   "<cross-session-message",
 ] as const;
 
+/**
+ * 御批固定开标签前缀（decision key `queue-source-fixed-shape-prefix=lawful`）。
+ * 开标签后可直接 `>`、EOF 或空白再接属性；其它字符不成立。
+ */
+export function hasFixedOpenTagPrefix(content: string, tag: string): boolean {
+  if (!content.startsWith(tag)) return false;
+  const next = content.charAt(tag.length);
+  return (
+    next === "" ||
+    next === ">" ||
+    next === " " ||
+    next === "\t" ||
+    next === "\n" ||
+    next === "\r"
+  );
+}
+
 /** enqueue.content 是否以御批固定机器开标签起头。 */
 function isFixedNonOwnerEnqueueShape(content: string): boolean {
   for (const tag of FIXED_NON_OWNER_ENQUEUE_TAGS) {
-    if (!content.startsWith(tag)) continue;
-    const next = content.charAt(tag.length);
-    // 元素开标签终止符：`>` 或空白（其后为属性）；其他字符不是这两个形状。
-    if (next === "" || next === ">" || next === " " || next === "\t" || next === "\n" || next === "\r") {
-      return true;
-    }
+    if (hasFixedOpenTagPrefix(content, tag)) return true;
   }
   return false;
+}
+
+/**
+ * #918 存量清除：卷 body 无 origin.kind，仅 `<task-notification` 固定起始可就地移除。
+ * 其它前缀证不出则原样留存——不扩到 cross-session-message 或语义分类表。
+ */
+export function isStockTaskNotificationOwnerText(text: string): boolean {
+  return hasFixedOpenTagPrefix(text, "<task-notification");
 }
 
 /**

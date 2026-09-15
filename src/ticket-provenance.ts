@@ -1,8 +1,8 @@
 /**
  * 起居录 volume helpers — ADR 0075「2026-09-14 修订」/ #901 / #918。
- * 一册＝一个文件：首行册子头，其后裸对话行。每轮按册子头累计区间重投影是唯一机制
- * （#918 甲案：prior ∪ 本轮，遗漏不删除）；无 append 水位、无 SitianRecord 外壳。
- * 目的地解析与读写经司天台唯一入口
+ * 一册＝一个文件：首行册子头，其后裸对话行。册子头 sessions 累计并集（prior ∪ 本轮，
+ * 遗漏不删除）；已投影行按 s,line 结转，本轮只读未声明 range（#918 第一节）。
+ * 无 append 水位、无 SitianRecord 外壳。目的地解析与读写经司天台唯一入口
  * （ADR 0065 records-owner / record-entry；ADR 0081 入录经司天台）。
  */
 import { basename, dirname, join, resolve } from "node:path";
@@ -20,7 +20,11 @@ import {
   type LedgerSessionLine,
 } from "./ledger-session-read.ts";
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
-import { adaptSessionDialogue, nativeEventId } from "./session-dialogue.ts";
+import {
+  adaptSessionDialogue,
+  isStockTaskNotificationOwnerText,
+  nativeEventId,
+} from "./session-dialogue.ts";
 import {
   ensureSitianVolume,
   readSitianVolumeText,
@@ -298,6 +302,171 @@ function mergeSessionBounds(
 }
 
 /**
+ * #918 第一节：已投影行即卷宗。只对 prior 未声明的 range（按 path identity + 精确
+ * from/to）读源；已声明的按 s,line 结转，不重读历史源。
+ */
+function undeclaredSessionRanges(
+  prior: readonly TicketProvenanceSession[] | undefined,
+  merged: readonly TicketProvenanceSession[],
+): readonly { readonly s: number; readonly session: TicketProvenanceSession }[] {
+  const priorKeys = new Map<string, Set<string>>();
+  for (const session of prior ?? []) {
+    const identity = physicalPathIdentity(session.path);
+    let keys = priorKeys.get(identity);
+    if (keys === undefined) {
+      keys = new Set();
+      priorKeys.set(identity, keys);
+    }
+    for (const range of session.ranges) keys.add(rangeDeclarationKey(range));
+  }
+  const out: { s: number; session: TicketProvenanceSession }[] = [];
+  for (let s = 0; s < merged.length; s += 1) {
+    const session = merged[s]!;
+    const declared = priorKeys.get(physicalPathIdentity(session.path)) ?? new Set();
+    const fresh = session.ranges.filter(
+      (range) => !declared.has(rangeDeclarationKey(range)),
+    );
+    if (fresh.length === 0) continue;
+    out.push({
+      s,
+      session: {
+        path: session.path,
+        ranges: fresh.map((range) => ({
+          from: { ...range.from },
+          to: { ...range.to },
+        })),
+      },
+    });
+  }
+  return out;
+}
+
+/** Carry prior diary lines; drop stock `<task-notification` owner rows (#918 存量). */
+function carryForwardLines(
+  lines: readonly TicketProvenanceLine[],
+): TicketProvenanceLine[] {
+  return lines.filter(
+    (line) =>
+      !(line.speaker === "owner" && isStockTaskNotificationOwnerText(line.text)),
+  );
+}
+
+/** Sort archive rows by session index then source line (stable within equal keys). */
+function compareLinePosition(
+  left: TicketProvenanceLine,
+  right: TicketProvenanceLine,
+): number {
+  if (left.s !== right.s) return left.s - right.s;
+  const leftLine = left.line ?? Number.MAX_SAFE_INTEGER;
+  const rightLine = right.line ?? Number.MAX_SAFE_INTEGER;
+  return leftLine - rightLine;
+}
+
+/**
+ * Amendments-only / post-delta：按 s,line 就地更新或插入；不读源。
+ * 需要新增 range 的补写须与本轮 sessions 一齐交（由调用方保证 delta 投影）。
+ */
+function applyAmendmentsByPosition(
+  lines: readonly TicketProvenanceLine[],
+  amendments: readonly TicketProvenanceAmendment[],
+): TicketProvenanceLine[] {
+  if (amendments.length === 0) return [...lines];
+  const byKey = new Map<string, TicketProvenanceAmendment>();
+  for (const amendment of amendments) {
+    byKey.set(amendmentKey(amendment.s, amendment.line), amendment);
+  }
+  const out: TicketProvenanceLine[] = [];
+  const hit = new Set<string>();
+  for (const line of lines) {
+    if (line.line === undefined) {
+      out.push(line);
+      continue;
+    }
+    const key = amendmentKey(line.s, line.line);
+    const amendment = byKey.get(key);
+    if (amendment === undefined) {
+      out.push(line);
+      continue;
+    }
+    hit.add(key);
+    out.push({
+      speaker: amendment.speaker,
+      s: line.s,
+      line: line.line,
+      ...(line.id === undefined ? {} : { id: line.id }),
+      text: amendment.text,
+    });
+  }
+  for (const amendment of amendments) {
+    const key = amendmentKey(amendment.s, amendment.line);
+    if (hit.has(key)) continue;
+    out.push({
+      speaker: amendment.speaker,
+      s: amendment.s,
+      line: amendment.line,
+      text: amendment.text,
+    });
+  }
+  out.sort(compareLinePosition);
+  return out;
+}
+
+/** Merge newly projected rows into the carried archive (first-seen id wins). */
+function mergeFreshIntoCarried(
+  carried: readonly TicketProvenanceLine[],
+  fresh: readonly TicketProvenanceLine[],
+): TicketProvenanceLine[] {
+  const seenIds = new Set<string>();
+  const out: TicketProvenanceLine[] = [];
+  for (const line of carried) {
+    if (line.id !== undefined) seenIds.add(line.id);
+    out.push(line);
+  }
+  for (const line of fresh) {
+    if (line.id !== undefined) {
+      if (seenIds.has(line.id)) continue;
+      seenIds.add(line.id);
+    }
+    out.push(line);
+  }
+  out.sort(compareLinePosition);
+  return out;
+}
+
+/** True when cumulative bounds match by physical identity + exact range keys. */
+function sessionBoundsEqual(
+  left: readonly TicketProvenanceSession[],
+  right: readonly TicketProvenanceSession[],
+): boolean {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index]!;
+    const b = right[index]!;
+    if (physicalPathIdentity(a.path) !== physicalPathIdentity(b.path)) return false;
+    if (a.ranges.length !== b.ranges.length) return false;
+    for (let r = 0; r < a.ranges.length; r += 1) {
+      if (rangeDeclarationKey(a.ranges[r]!) !== rangeDeclarationKey(b.ranges[r]!)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+async function publishTicketProvenanceVolume(input: {
+  readonly recordInput: SitianRecordInput;
+  readonly header: TicketProvenanceHeader;
+  readonly lines: readonly TicketProvenanceLine[];
+}): Promise<string> {
+  const body = `${[
+    JSON.stringify(input.header),
+    ...input.lines.map((line) => JSON.stringify(line)),
+  ].join("\n")}\n`;
+  const volume = await rewriteSitianVolume({ ...input.recordInput, body });
+  return volume.recordFile;
+}
+
+/**
  * Resolve submitted ranges against the session, then sort by source position and
  * merge overlaps so each physical row is visited once (#901 source order).
  */
@@ -420,11 +589,11 @@ async function projectSessionRanges(input: {
 }
 
 /**
- * Reproject the unique diary file from cumulative bounds + optional amendments.
- * #918 甲案：prior header ranges ∪ 本轮 sessions 取并集后整卷重投影；遗漏不删除。
- * Header + locating fields may change; dialogue text is taken from the source
- * (or from a typed amendment). The whole file is still the projection (not an
- * append log) — the projection *source* is the cumulative union, not this round alone.
+ * Reproject the unique diary from cumulative bounds + optional amendments.
+ * #918：已投影行即卷宗——按 s,line 结转；本轮只读 prior 未声明的 range（或新
+ * session 区间）。精确重复提交＝幂等 no-op，不因历史源不可读而失败。
+ * amendments-only 只按 s,line 就地更新／插入，不重读源。
+ * 存量 `<task-notification` 固定起始 owner 就地移除；证不出的原样留存。
  * Persistence goes through the Sitian volume seam (rewriteSitianVolume).
  */
 export async function reprojectTicketProvenance(input: {
@@ -445,9 +614,11 @@ export async function reprojectTicketProvenance(input: {
     priorRaw.text !== undefined && priorRaw.text.trim() !== "";
 
   const amendments = input.amendments ?? [];
-  // Empty sessions: pure empty selection preserves non-empty volume. Amendments-only
-  // continuation reuses prior header sessions — never wash into accepted no-op.
-  let sessions: readonly TicketProvenanceSession[];
+  const now = new Date().toISOString();
+  const repo = resolveBookKeyFromGit(input.cwd);
+
+  // Empty sessions: amendments-only updates archive by s,line (no source re-read).
+  // Pure empty selection is idempotent no-op, except stock task-notification purge.
   if (input.sessions.length === 0) {
     if (amendments.length > 0) {
       const priorSessions = prior.header?.sessions;
@@ -456,30 +627,82 @@ export async function reprojectTicketProvenance(input: {
           "amendments require sessions bounds (none submitted and no prior header sessions)",
         );
       }
-      sessions = priorSessions;
-    } else if (priorNonEmpty) {
-      const now = new Date().toISOString();
+      const lines = applyAmendmentsByPosition(
+        carryForwardLines(prior.lines),
+        amendments,
+      );
+      const header: TicketProvenanceHeader = {
+        repo,
+        ticket: input.ticketNumber,
+        createdAt: prior.header?.createdAt ?? now,
+        updatedAt: now,
+        sessions: priorSessions,
+      };
+      const recordFile = await publishTicketProvenanceVolume({
+        recordInput,
+        header,
+        lines,
+      });
+      return { recordFile, header, lines, unparsable: [] };
+    }
+    if (priorNonEmpty) {
+      const lines = carryForwardLines(prior.lines);
       const header: TicketProvenanceHeader =
         prior.header ??
         ({
-          repo: resolveBookKeyFromGit(input.cwd),
+          repo,
           ticket: input.ticketNumber,
           createdAt: now,
           updatedAt: now,
           sessions: [],
         } satisfies TicketProvenanceHeader);
-      return {
-        recordFile: prior.recordFile,
-        header,
-        lines: prior.lines,
-        unparsable: [],
+      // Stock purge is the only rewrite on pure empty; otherwise exact no-op.
+      if (lines.length === prior.lines.length) {
+        return {
+          recordFile: prior.recordFile,
+          header,
+          lines: prior.lines,
+          unparsable: [],
+        };
+      }
+      const nextHeader: TicketProvenanceHeader = {
+        ...header,
+        repo,
+        ticket: input.ticketNumber,
+        updatedAt: now,
       };
-    } else {
-      sessions = input.sessions;
+      const recordFile = await publishTicketProvenanceVolume({
+        recordInput,
+        header: nextHeader,
+        lines,
+      });
+      return { recordFile, header: nextHeader, lines, unparsable: [] };
     }
-  } else {
-    // Non-empty 本轮边界 ∪ prior：遗漏永不删除（#918 甲案）。
-    sessions = mergeSessionBounds(prior.header?.sessions, input.sessions);
+    // First bind with empty selection: mint lawful empty volume.
+    const header: TicketProvenanceHeader = {
+      repo,
+      ticket: input.ticketNumber,
+      createdAt: now,
+      updatedAt: now,
+      sessions: [],
+    };
+    const recordFile = await publishTicketProvenanceVolume({
+      recordInput,
+      header,
+      lines: [],
+    });
+    return { recordFile, header, lines: [], unparsable: [] };
+  }
+
+  // Non-empty 本轮边界 ∪ prior：遗漏永不删除（#918 甲案）。
+  const sessions = mergeSessionBounds(prior.header?.sessions, input.sessions);
+  const deltas = undeclaredSessionRanges(prior.header?.sessions, sessions);
+
+  let lines = carryForwardLines(prior.lines);
+  const unparsable: UnparsableSessionLine[] = [];
+  const seenIds = new Set<string>();
+  for (const line of lines) {
+    if (line.id !== undefined) seenIds.add(line.id);
   }
 
   const amendmentsByKey = new Map<string, TicketProvenanceAmendment>();
@@ -487,32 +710,37 @@ export async function reprojectTicketProvenance(input: {
     amendmentsByKey.set(amendmentKey(amendment.s, amendment.line), amendment);
   }
 
-  const lines: TicketProvenanceLine[] = [];
-  const unparsable: UnparsableSessionLine[] = [];
-  // First-seen native id across the whole reproject (rewritten session copies).
-  const seenIds = new Set<string>();
-  for (let s = 0; s < sessions.length; s += 1) {
-    const projected = await projectSessionRanges({
-      s,
-      session: sessions[s]!,
-      amendmentsByKey,
-      seenIds,
-      ...(input.home === undefined ? {} : { home: input.home }),
-    });
-    lines.push(...projected.lines);
-    unparsable.push(...projected.unparsable);
+  // Only previously undeclared ranges read sources. Already-declared = carry only.
+  if (deltas.length > 0) {
+    const fresh: TicketProvenanceLine[] = [];
+    for (const delta of deltas) {
+      const projected = await projectSessionRanges({
+        s: delta.s,
+        session: delta.session,
+        amendmentsByKey,
+        seenIds,
+        ...(input.home === undefined ? {} : { home: input.home }),
+      });
+      fresh.push(...projected.lines);
+      unparsable.push(...projected.unparsable);
+    }
+    lines = mergeFreshIntoCarried(lines, fresh);
   }
 
-  const now = new Date().toISOString();
+  // Amendments also cover carried positions (and inserts) without re-reading sources.
+  if (amendments.length > 0) {
+    lines = applyAmendmentsByPosition(lines, amendments);
+  }
+
   const header: TicketProvenanceHeader = {
-    repo: resolveBookKeyFromGit(input.cwd),
+    repo,
     ticket: input.ticketNumber,
     createdAt: prior.header?.createdAt ?? now,
     updatedAt: now,
     sessions,
   };
 
-  // Still-open gaps → reask without publishing a partial/rejected projection.
+  // Still-open gaps on this-round delta → reask; never publish partial over the archive.
   if (unparsable.length > 0) {
     return {
       recordFile: prior.recordFile,
@@ -522,13 +750,27 @@ export async function reprojectTicketProvenance(input: {
     };
   }
 
-  const body = `${[JSON.stringify(header), ...lines.map((line) => JSON.stringify(line))].join("\n")}\n`;
-  const volume = await rewriteSitianVolume({ ...recordInput, body });
+  // Exact resubmit of already-declared bounds, no amendments, no stock change → no-op.
+  // Historical source readability is not a publish prerequisite.
+  if (
+    deltas.length === 0 &&
+    amendments.length === 0 &&
+    lines.length === prior.lines.length &&
+    prior.header !== undefined &&
+    sessionBoundsEqual(prior.header.sessions, sessions)
+  ) {
+    return {
+      recordFile: prior.recordFile,
+      header: prior.header,
+      lines: prior.lines,
+      unparsable: [],
+    };
+  }
 
-  return {
-    recordFile: volume.recordFile,
+  const recordFile = await publishTicketProvenanceVolume({
+    recordInput,
     header,
     lines,
-    unparsable,
-  };
+  });
+  return { recordFile, header, lines, unparsable: [] };
 }
