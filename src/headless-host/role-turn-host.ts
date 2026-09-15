@@ -26,8 +26,10 @@ import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
   applyCodexSkillInvocation,
   applyHostSlashSkillInvocation,
+  forcedPluginSlashToken,
+  hostMethodSkills,
+  packagedMethodPluginDir,
   stageCodexSkillHome,
-  stageHostMethodPlugin,
 } from "../host-native-method.ts";
 import {
   closeJsonSchemaForCodex,
@@ -500,11 +502,15 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
           "utf8",
         );
-        const staged = await stageHostMethodPlugin(request.runDirectory, request.methods);
-        if (staged !== undefined) {
-          pluginDir = staged.pluginDir;
-          if (staged.slashToken !== undefined) {
-            applyMethodPrompt = (prompt) => applyHostSlashSkillInvocation(staged.slashToken!, prompt);
+        const skills = hostMethodSkills(request.methods);
+        if (skills.length > 0) {
+          const packageRoot = env.AK_PACKAGE_ROOT ?? process.env.AK_PACKAGE_ROOT;
+          if (typeof packageRoot === "string" && packageRoot !== "") {
+            pluginDir = packagedMethodPluginDir(packageRoot);
+          }
+          const slashToken = forcedPluginSlashToken(request.methods);
+          if (slashToken !== undefined) {
+            applyMethodPrompt = (prompt) => applyHostSlashSkillInvocation(slashToken, prompt);
           }
         }
       }

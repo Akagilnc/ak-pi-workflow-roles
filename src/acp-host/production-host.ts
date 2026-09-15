@@ -16,7 +16,7 @@ import { createSessionIdentityAuthority } from "../session-identity.ts";
 import {
   hermesSkillsArgs,
   hostMethodSkills,
-  stageHostMethodPlugin,
+  packagedMethodPluginDir,
 } from "../host-native-method.ts";
 import { acpStdioArgs, resolveAcpBinary, type AcpHostDescription } from "./description.ts";
 import {
@@ -82,8 +82,8 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
         });
       // #922: host-native method loader — grok plugin-dir / hermes --skills.
       const skills = hostMethodSkills(request.methods);
-      const staged = hostName === "grok-build" && skills.length > 0
-        ? await stageHostMethodPlugin(request.runDirectory, request.methods)
+      const pluginDir = hostName === "grok-build" && skills.length > 0
+        ? packagedMethodPluginDir(packageRoot)
         : undefined;
       const skillsArgs = hostName === "hermes" && skills.length > 0
         ? hermesSkillsArgs(skills)
@@ -95,7 +95,7 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
           request.model,
           profileName === undefined ? undefined : { profileName },
           {
-            ...(staged?.pluginDir === undefined ? {} : { pluginDir: staged.pluginDir }),
+            ...(pluginDir === undefined ? {} : { pluginDir }),
             ...(skillsArgs === undefined ? {} : { skillsArgs }),
           },
         ),

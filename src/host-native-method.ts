@@ -2,13 +2,18 @@
  * #922 host-native forced-method delivery (method-skill-delivery=host-native-loader).
  * Adapters point each host loader at packaged method dirs; package never pastes bodies.
  */
-import { mkdir, readdir, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readdir, symlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import type { MethodBinding } from "./host-contracts.ts";
 
 export type HostMethodSkill = Readonly<{ name: string; dir: string; path: string }>;
 export const HOST_METHOD_PLUGIN_NAME = "ak-methods" as const;
+
+/** Packaged Claude/Grok plugin root (`resources/method-host-plugin`). */
+export function packagedMethodPluginDir(packageRoot: string): string {
+  return join(packageRoot, "resources", "method-host-plugin");
+}
 
 export function hostMethodSkills(methods: readonly MethodBinding[]): readonly HostMethodSkill[] {
   return Object.freeze(methods.flatMap((method) => {
@@ -44,34 +49,18 @@ export function applyCodexSkillInvocation(skills: readonly HostMethodSkill[], pr
   return prompt ? `${linked} ${prompt}` : linked;
 }
 
-async function linkSkills(root: string, skills: readonly HostMethodSkill[]): Promise<void> {
-  await mkdir(root, { recursive: true });
-  for (const skill of skills) {
-    try { await symlink(skill.dir, join(root, skill.name)); }
-    catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
-  }
-}
-
-/** Claude/Grok `--plugin-dir` root with skills/<name> → method dir. */
-export async function stageHostMethodPlugin(runDirectory: string, methods: readonly MethodBinding[]) {
+/** Single forced skill slash token for the packaged plugin, if any. */
+export function forcedPluginSlashToken(methods: readonly MethodBinding[]): string | undefined {
   const skills = hostMethodSkills(methods);
-  if (!skills.length) return undefined;
-  const pluginDir = join(runDirectory, "host-method-plugin");
-  await mkdir(join(pluginDir, ".claude-plugin"), { recursive: true });
-  await writeFile(join(pluginDir, ".claude-plugin", "plugin.json"), `${JSON.stringify({
-    name: HOST_METHOD_PLUGIN_NAME, version: "0.0.0", description: "ak-roles packaged role method skills",
-  })}\n`);
-  await linkSkills(join(pluginDir, "skills"), skills);
-  return Object.freeze({
-    pluginDir,
-    skills,
-    ...(skills.length === 1
-      ? { slashToken: pluginSkillToken(HOST_METHOD_PLUGIN_NAME, skills[0]!.name) }
-      : {}),
-  });
+  return skills.length === 1
+    ? pluginSkillToken(HOST_METHOD_PLUGIN_NAME, skills[0]!.name)
+    : undefined;
 }
 
-/** Codex run-scoped HOME/.agents/skills overlay; mirrors operator skills; CODEX_HOME stays real. */
+/**
+ * Codex run-scoped HOME/.agents/skills overlay so empty operator home still
+ * discovers packaged methods. Mirrors operator skills; CODEX_HOME stays real.
+ */
 export async function stageCodexSkillHome(options: {
   runDirectory: string; operatorHome: string; methods: readonly MethodBinding[];
 }) {
@@ -88,7 +77,10 @@ export async function stageCodexSkillHome(options: {
       catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
     }
   } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
-  await linkSkills(skillsRoot, skills);
+  for (const skill of skills) {
+    try { await symlink(skill.dir, join(skillsRoot, skill.name)); }
+    catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
+  }
   return Object.freeze({ home, skills });
 }
 
