@@ -178,6 +178,12 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   readonly duplicateId: string;
   readonly taskNotificationEnqueueId: string;
   readonly taskNotificationText: string;
+  readonly humanOriginEnqueueId: string;
+  readonly humanOriginText: string;
+  readonly peerOriginEnqueueId: string;
+  readonly peerOriginText: string;
+  readonly humanOriginDirectId: string;
+  readonly humanOriginDirectText: string;
   readonly unparsableLine: number;
   readonly unparsableRaw: string;
   readonly lastLine: number;
@@ -201,6 +207,12 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const taskNotificationEnqueueId = "queue-task-notif-1";
   const taskNotificationText =
     "<task-notification>\n<task-id>bg-1</task-id>\n<summary>machine event</summary>\n</task-notification>";
+  const humanOriginEnqueueId = "queue-human-origin-1";
+  const humanOriginText = "经队列的真人输入（origin.kind=human）";
+  const peerOriginEnqueueId = "queue-peer-origin-1";
+  const peerOriginText = "跨会话 peer 投递不得署 owner";
+  const humanOriginDirectId = "msg-human-origin-direct";
+  const humanOriginDirectText = "非队列真人 user（origin.kind=human）";
   const unparsableRaw = "{this is not json at all";
   const rows = [
     // 1. ordinary owner message — must survive alongside later enqueue events
@@ -422,7 +434,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       operation: "dequeue",
       uuid: "queue-deq-task-notif",
     }),
-    // 24. materialized user with structured origin.kind (not body-matched)
+    // 24. materialized user with structured origin.kind=task-notification (not body-matched)
     JSON.stringify({
       type: "user",
       uuid: "msg-task-notif-mat",
@@ -430,6 +442,58 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       message: {
         role: "user",
         content: taskNotificationText,
+      },
+    }),
+    // 25–27. live CC shape: queue human with origin.kind=human must stay owner (#918 bounce)
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      uuid: humanOriginEnqueueId,
+      content: humanOriginText,
+    }),
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "dequeue",
+      uuid: "queue-deq-human-origin",
+    }),
+    JSON.stringify({
+      type: "user",
+      uuid: "msg-human-origin-mat",
+      origin: { kind: "human" },
+      message: {
+        role: "user",
+        content: [{ type: "text", text: humanOriginText }],
+      },
+    }),
+    // 28–30. peer origin is cross-session delivery — not 陛下
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      uuid: peerOriginEnqueueId,
+      content: peerOriginText,
+    }),
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "dequeue",
+      uuid: "queue-deq-peer-origin",
+    }),
+    JSON.stringify({
+      type: "user",
+      uuid: "msg-peer-origin-mat",
+      origin: { kind: "peer" },
+      message: {
+        role: "user",
+        content: [{ type: "text", text: peerOriginText }],
+      },
+    }),
+    // 31. non-queue user with origin.kind=human must still enter as owner
+    JSON.stringify({
+      type: "user",
+      uuid: humanOriginDirectId,
+      origin: { kind: "human" },
+      message: {
+        role: "user",
+        content: [{ type: "text", text: humanOriginDirectText }],
       },
     }),
   ];
@@ -452,9 +516,15 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     duplicateId,
     taskNotificationEnqueueId,
     taskNotificationText,
+    humanOriginEnqueueId,
+    humanOriginText,
+    peerOriginEnqueueId,
+    peerOriginText,
+    humanOriginDirectId,
+    humanOriginDirectText,
     unparsableLine: 21,
     unparsableRaw,
-    lastLine: 24,
+    lastLine: 32,
     rangeALine: 1,
     rangeBLine: 2,
   };
@@ -648,7 +718,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     );
     assert.equal(byId.get(fixture.interjectionId)?.speaker, "owner");
     assert.equal(byId.get(fixture.interjectionId)?.text, "中途插一句：保留原话。");
-    // #918: machine enqueue (origin.kind=task-notification on paired user) must not be owner.
+    // #918: origin.kind 取值判别——task-notification/peer 不得署 owner；human 必须保留。
     assert.equal(
       volume.lines.some(
         (line) =>
@@ -658,6 +728,28 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       ),
       false,
       "task-notification queue events must not produce owner diary lines",
+    );
+    assert.equal(
+      volume.lines.some(
+        (line) =>
+          line.id === fixture.peerOriginEnqueueId ||
+          line.id === "msg-peer-origin-mat" ||
+          line.text === fixture.peerOriginText,
+      ),
+      false,
+      "peer origin queue events must not produce owner diary lines",
+    );
+    assert.equal(byId.get(fixture.humanOriginEnqueueId)?.speaker, "owner");
+    assert.equal(byId.get(fixture.humanOriginEnqueueId)?.text, fixture.humanOriginText);
+    assert.equal(
+      volume.lines.filter((line) => line.text === fixture.humanOriginText).length,
+      1,
+      "human-origin queue must keep enqueue once (mat skipped as copy)",
+    );
+    assert.equal(byId.get(fixture.humanOriginDirectId)?.speaker, "owner");
+    assert.equal(
+      byId.get(fixture.humanOriginDirectId)?.text,
+      fixture.humanOriginDirectText,
     );
     assert.equal(byId.get(fixture.duplicateId)?.text, "首现正文");
     // Duplicate second occurrence must not produce a second line with that id.

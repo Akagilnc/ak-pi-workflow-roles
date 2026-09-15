@@ -114,8 +114,8 @@ function isCodexOwnerResponseItemUser(message: Record<string, unknown>): boolean
  * 入队事件适配：人类这次输入经队列的来源。
  * 配对的出队事件不另取，也不做正文比对去重——被吸收的插话正是靠入队事件入录
  * （它没有独立的消息记录，#901 用户故事 11）。
- * 机器入队（配对 materialized user 带 origin.kind）由整卷适配层按结构化来源排除，
- * 本函数不读正文、不自判机器（#918）。
+ * 机器入队由整卷适配层按配对物化 user 的 origin.kind **取值**排除（#918）；
+ * 本函数不读正文、不自判机器。
  */
 function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
   if (row.type !== "queue-operation" || row.operation !== "enqueue") return [];
@@ -126,8 +126,8 @@ function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
 }
 
 /**
- * 物化 user 行上的结构化来源 kind（CC top-level `origin.kind`）。
- * 有非空 kind＝具名机器/系统来源；真人键入通常无 origin。不读正文。
+ * 物化 user 行上的结构化来源 kind（CC top-level `origin.kind`）。不读正文。
+ * 活体取值含 human / task-notification / peer；缺字段＝旧形无 provenance。
  */
 function materializationOriginKind(
   row: Record<string, unknown>,
@@ -138,9 +138,20 @@ function materializationOriginKind(
   return typeof kind === "string" && kind !== "" ? kind : undefined;
 }
 
-/** 带结构化机器 origin 的 user 行不得入 owner 对话。 */
-function isMachineOriginUser(row: Record<string, unknown>): boolean {
-  return materializationOriginKind(row) !== undefined;
+/**
+ * origin.kind 取值是否为非陛下来源（#918 第二类）。
+ * - 缺 origin 或 kind=human → 真人路（经队列的真人输入必须保留）
+ * - task-notification / peer / 其他具名非 human → 机器或跨会话投递，不得署 owner
+ * 判别落在 kind 取值上，不落在字段是否存在。
+ */
+function isNonOwnerOriginKind(kind: string | undefined): boolean {
+  if (kind === undefined) return false;
+  return kind !== "human";
+}
+
+/** 结构化来源标明非陛下的 user 行不得入 owner 对话。 */
+function isNonOwnerOriginUser(row: Record<string, unknown>): boolean {
+  return isNonOwnerOriginKind(materializationOriginKind(row));
 }
 
 /**
@@ -190,9 +201,10 @@ type QueuePairing = {
 
 /**
  * 逐次来源配对：FIFO 对齐 enqueue→dequeue/remove。
- * - 有正文 enqueue 且配对物化为真人（无 origin.kind）：enqueue 留 owner，物化当副本跳过。
- * - 有正文 enqueue 且配对物化带机器 origin.kind：enqueue 与物化均排除（#918）。
- * - 无正文 enqueue：dequeue 不产生 skip，后续真人 user 原样保留。
+ * - 有正文 enqueue 且配对物化为真人（缺 origin 或 kind=human）：enqueue 留 owner，物化当副本跳过。
+ * - 有正文 enqueue 且配对物化 origin.kind 为非 human（task-notification/peer/…）：
+ *   enqueue 与物化均排除（#918；判别取值，不判别字段有无）。
+ * - 无正文 enqueue：dequeue 不因 hasContent 跳过；后续真人物化原样保留。
  * - 未物化的 retained dequeue（被吸收插话）遇 runner 解除——仍靠 enqueue 入录
  *   （#901 用户故事 11）。
  * 不用「卷内曾出现 enqueue」整卷布尔，也不按正文过滤。
@@ -232,13 +244,13 @@ function ownerMessagesMaterializingQueue(
     }
     if (pending.length > 0 && isOwnerDialogueMessage(row)) {
       const paired = pending.shift()!;
-      const machineKind = materializationOriginKind(row);
-      if (machineKind !== undefined) {
-        // 结构化机器来源：排除 enqueue 与物化，不咬正文。
+      const originKind = materializationOriginKind(row);
+      if (isNonOwnerOriginKind(originKind)) {
+        // 非陛下结构化来源：排除 enqueue 与物化，不咬正文。
         suppressEnqueues.add(paired.index);
         skipMaterializations.add(index);
       } else if (paired.hasContent) {
-        // 真人物化副本：enqueue 已留 owner，跳过物化避免双计。
+        // 真人物化副本（缺 origin 或 kind=human）：enqueue 已留 owner，跳过物化避免双计。
         skipMaterializations.add(index);
       }
       // 无正文 enqueue 的真人物化：不 skip，sole materialization 保留。
@@ -249,7 +261,7 @@ function ownerMessagesMaterializingQueue(
 
 /**
  * 整卷适配：返回与入参行等长的对话事实数组（该行不是对话则为空数组）。
- * 需要整卷视野：enqueue/dequeue 配对跨行；机器 origin 排除跨行。
+ * 需要整卷视野：enqueue/dequeue 配对跨行；非陛下 origin.kind 排除跨行。
  */
 export function adaptSessionDialogue(
   rows: readonly (Record<string, unknown> | undefined)[],
@@ -258,8 +270,8 @@ export function adaptSessionDialogue(
   return rows.map((row, index) => {
     if (row === undefined) return [];
     if (pairing.suppressEnqueues.has(index)) return [];
-    // 机器 origin 物化（含未走队列的同形）不得入 owner。
-    if (isMachineOriginUser(row)) return [];
+    // 非陛下 origin 物化（含未走队列的同形）不得入 owner；kind=human 放行。
+    if (isNonOwnerOriginUser(row)) return [];
     const queued = fromQueueEvent(row);
     if (queued.length > 0) return queued;
     // Codex event_msg.user_message 无 content_item_kinds 等 provenance，旧 exec
