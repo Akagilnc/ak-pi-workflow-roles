@@ -1,8 +1,13 @@
 /**
  * #922 host-native forced-method delivery (method-skill-delivery=host-native-loader).
- * Adapters point each host loader at packaged method dirs; package never pastes bodies.
+ * Package never pastes method bodies into systemPrompt. Host adapters only point
+ * official loaders at packaged method material and invoke via host-native forms.
+ *
+ * Codex has no CLI/`-c` skill-root key (config schema: enable/disable only). Empty
+ * home discovery without rewriting HOME or writing operator/project skill dirs is
+ * an official surface gap — report upward; do not invent HOME overlays.
+ * Hermes `acp` drops top-level `--skills` (cmd_acp → _ACP_FLAGS only) — gap.
  */
-import { mkdir, readdir, symlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import type { MethodBinding } from "./host-contracts.ts";
@@ -36,7 +41,10 @@ export function applyHostSlashSkillInvocation(token: string, prompt: string): st
   return prompt ? `${slash} ${prompt}` : slash;
 }
 
-/** Codex linked mention `[$name](/abs/SKILL.md)` — path selects in host catalog. */
+/**
+ * Codex explicit skill mention: linked `[$name](/abs/SKILL.md)` selects by path
+ * when the skill is already in the host catalog (official mentions).
+ */
 export function applyCodexSkillInvocation(skills: readonly HostMethodSkill[], prompt: string): string {
   if (skills.length !== 1) return prompt;
   const s = skills[0]!;
@@ -55,35 +63,4 @@ export function forcedPluginSlashToken(methods: readonly MethodBinding[]): strin
   return skills.length === 1
     ? pluginSkillToken(HOST_METHOD_PLUGIN_NAME, skills[0]!.name)
     : undefined;
-}
-
-/**
- * Codex run-scoped HOME/.agents/skills overlay so empty operator home still
- * discovers packaged methods. Mirrors operator skills; CODEX_HOME stays real.
- */
-export async function stageCodexSkillHome(options: {
-  runDirectory: string; operatorHome: string; methods: readonly MethodBinding[];
-}) {
-  const skills = hostMethodSkills(options.methods);
-  if (!skills.length) return undefined;
-  const home = join(options.runDirectory, "codex-skill-home");
-  const skillsRoot = join(home, ".agents", "skills");
-  await mkdir(skillsRoot, { recursive: true });
-  try {
-    for (const entry of await readdir(join(options.operatorHome, ".agents", "skills"), { withFileTypes: true })) {
-      if ((!entry.isDirectory() && !entry.isSymbolicLink()) || entry.name.startsWith(".")) continue;
-      if (skills.some((s) => s.name === entry.name)) continue;
-      try { await symlink(join(options.operatorHome, ".agents", "skills", entry.name), join(skillsRoot, entry.name)); }
-      catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
-    }
-  } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
-  for (const skill of skills) {
-    try { await symlink(skill.dir, join(skillsRoot, skill.name)); }
-    catch (e) { if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e; }
-  }
-  return Object.freeze({ home, skills });
-}
-
-export function hermesSkillsArgs(skills: readonly HostMethodSkill[]): string[] {
-  return skills.flatMap((s) => ["--skills", s.name]);
 }

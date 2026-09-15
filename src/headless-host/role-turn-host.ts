@@ -29,7 +29,6 @@ import {
   forcedPluginSlashToken,
   hostMethodSkills,
   packagedMethodPluginDir,
-  stageCodexSkillHome,
 } from "../host-native-method.ts";
 import {
   closeJsonSchemaForCodex,
@@ -486,14 +485,11 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
         const closed = closeJsonSchemaForCodex(prepared.jsonSchema);
         await writeFile(outputSchemaPath, `${JSON.stringify(closed, null, 2)}\n`, "utf8");
-        const staged = await stageCodexSkillHome({
-          runDirectory: request.runDirectory,
-          operatorHome: request.home,
-          methods: request.methods,
-        });
-        if (staged !== undefined) {
-          env.HOME = staged.home;
-          applyMethodPrompt = (prompt) => applyCodexSkillInvocation(staged.skills, prompt);
+        // Official catalog mention only — no HOME rewrite (#922 bounce).
+        // Empty-home package discovery has no CLI/`-c` skill-root key (see host-native-method.ts).
+        const skills = hostMethodSkills(request.methods);
+        if (skills.length > 0) {
+          applyMethodPrompt = (prompt) => applyCodexSkillInvocation(skills, prompt);
         }
       } else {
         mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
@@ -505,9 +501,10 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         const skills = hostMethodSkills(request.methods);
         if (skills.length > 0) {
           const packageRoot = env.AK_PACKAGE_ROOT ?? process.env.AK_PACKAGE_ROOT;
-          if (typeof packageRoot === "string" && packageRoot !== "") {
-            pluginDir = packagedMethodPluginDir(packageRoot);
+          if (typeof packageRoot !== "string" || packageRoot === "") {
+            throw new Error("claude method plugin-dir requires AK_PACKAGE_ROOT");
           }
+          pluginDir = packagedMethodPluginDir(packageRoot);
           const slashToken = forcedPluginSlashToken(request.methods);
           if (slashToken !== undefined) {
             applyMethodPrompt = (prompt) => applyHostSlashSkillInvocation(slashToken, prompt);

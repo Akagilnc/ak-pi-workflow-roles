@@ -45,7 +45,7 @@ export function resolveAcpBinary(description: AcpHostDescription, operatorHome: 
 }
 
 /** Stdio argv: optional profile flag, thinking flag (before the subcommand),
- * host-native method loader flags, prefix, optional model flag pair, suffix. */
+ * optional grok `--plugin-dir`, prefix, optional model flag pair, suffix. */
 export function acpStdioArgs(
   description: AcpHostDescription,
   model?: { readonly model?: string; readonly thinking?: string },
@@ -53,8 +53,6 @@ export function acpStdioArgs(
   methods?: {
     /** Grok: `--plugin-dir` before the `stdio` suffix. */
     readonly pluginDir?: string;
-    /** Hermes: top-level `--skills <name>` pairs before the `acp` prefix. */
-    readonly skillsArgs?: readonly string[];
   },
 ): string[] {
   const { prefix, suffix, modelFlag, thinkingFlag } = description.argv;
@@ -67,7 +65,6 @@ export function acpStdioArgs(
   return [
     ...pair(description.seatProfileSoul?.flag, seat?.profileName),
     ...pair(thinkingFlag, model?.thinking),
-    ...(methods?.skillsArgs ?? []),
     ...prefix,
     ...pair(modelFlag, model?.model),
     ...pluginDirArgs,

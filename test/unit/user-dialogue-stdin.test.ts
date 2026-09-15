@@ -4,11 +4,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { acpStdioArgs } from "../../src/acp-host/description.ts";
 import {
   codexTurnArgs,
   headlessTurnArgs,
 } from "../../src/headless-host/description.ts";
-import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
+import {
+  HEADLESS_HOST_DESCRIPTIONS,
+  HOST_DESCRIPTIONS,
+  lookupHeadlessHostDescription,
+} from "../../src/host-descriptions.ts";
+import { packagedMethodPluginDir } from "../../src/host-native-method.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import {
@@ -83,4 +89,34 @@ test("#879 Codex exec argv selects stdin", () => {
     session: { kind: "new" },
   });
   assert.deepEqual(argv.slice(-2), ["--", "-"]);
+});
+
+test("#922 Claude/Grok argv: plugin-dir; no operator skill closers; Codex keeps user config", () => {
+  const claude = HEADLESS_HOST_DESCRIPTIONS.claude;
+  assert.ok(claude && claude.protocol === "claude-print");
+  assert.equal(claude.fixedArgs.includes("--setting-sources"), false);
+  const pluginDir = packagedMethodPluginDir(process.cwd());
+  const claudeArgv = headlessTurnArgs({
+    description: claude,
+    systemPromptPath: "/tmp/sys.txt",
+    jsonSchema: { type: "object" },
+    mcpConfigPath: "/tmp/mcp.json",
+    session: { kind: "new", id: "sid" },
+    pluginDir,
+  });
+  assert.equal(claudeArgv[claudeArgv.indexOf("--plugin-dir") + 1], pluginDir);
+
+  const grok = HOST_DESCRIPTIONS["grok-build"]!;
+  assert.equal(Object.keys(grok.childEnv).some((k) => k.includes("SKILLS_ENABLED")), false);
+  const grokArgv = acpStdioArgs(grok, { model: "m" }, undefined, { pluginDir });
+  assert.ok(grokArgv.indexOf("--plugin-dir") < grokArgv.indexOf("stdio"));
+
+  const codexArgv = codexTurnArgs({
+    systemPromptPath: "/tmp/sys.txt",
+    outputSchemaPath: "/tmp/out.json",
+    mcpServers: [],
+    session: { kind: "new" },
+  });
+  assert.equal(codexArgv.includes("--ignore-user-config"), false);
+  assert.equal(codexArgv.includes("--ignore-rules"), false);
 });

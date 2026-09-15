@@ -14,7 +14,6 @@ import type { RoleRuntimeDependencies } from "../role-runtime.ts";
 import { createRoleRuntimeDependencies } from "../role-runtime-dependencies.ts";
 import { createSessionIdentityAuthority } from "../session-identity.ts";
 import {
-  hermesSkillsArgs,
   hostMethodSkills,
   packagedMethodPluginDir,
 } from "../host-native-method.ts";
@@ -80,13 +79,12 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
           packageRoot,
           role: request.activation.role,
         });
-      // #922: host-native method loader — grok plugin-dir / hermes --skills.
+      // #922: grok loads packaged methods via --plugin-dir.
+      // Hermes ACP: top-level --skills is dropped by cmd_acp (_ACP_FLAGS only) —
+      // official gap; do not fake-wire argv (bounce #922).
       const skills = hostMethodSkills(request.methods);
       const pluginDir = hostName === "grok-build" && skills.length > 0
         ? packagedMethodPluginDir(packageRoot)
-        : undefined;
-      const skillsArgs = hostName === "hermes" && skills.length > 0
-        ? hermesSkillsArgs(skills)
         : undefined;
       return connectAcpStdio({
         binary: resolveAcpBinary(description, request.home),
@@ -94,10 +92,7 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
           description,
           request.model,
           profileName === undefined ? undefined : { profileName },
-          {
-            ...(pluginDir === undefined ? {} : { pluginDir }),
-            ...(skillsArgs === undefined ? {} : { skillsArgs }),
-          },
+          pluginDir === undefined ? undefined : { pluginDir },
         ),
         cwd: request.cwd,
         env,
