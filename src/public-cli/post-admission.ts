@@ -758,20 +758,19 @@ export async function dispatchPostAdmissionTurn<
         runDirectory: admitted.runDirectory,
       });
     } else {
+      // #858: always tell the 起居录 path shape (concrete file when ticket is typed).
       const dossierSection = await projectCaseDossierPointerSection({
         ticketNumber: admitted.ticketNumber,
         projectRoot: admitted.projectRoot,
         home: env.home,
       });
-      if (dossierSection !== undefined) {
-        turnRequest = {
-          ...turnRequest,
-          continuation: appendContinuationSection(
-            turnRequest.continuation,
-            dossierSection,
-          ),
-        };
-      }
+      turnRequest = {
+        ...turnRequest,
+        continuation: appendContinuationSection(
+          turnRequest.continuation,
+          dossierSection,
+        ),
+      };
     }
 
     // Authoritative host write happens here, at the real dispatch boundary —
