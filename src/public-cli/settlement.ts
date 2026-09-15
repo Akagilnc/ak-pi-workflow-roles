@@ -3226,36 +3226,42 @@ async function settleLawfulSeatAcceptedTerminalResult(
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const submissions = await recordedSubmissionPayloads(admitted, scope);
-  // Host isError residual wins over any recorded projection (#836 A.3 coexistence).
+  // #843: collector shape (ledger closed first) plus current user-turn freshness.
+  // A lawful bound non-error seat toolResult (isError === false + one-to-one call
+  // bind, same grade as residual) means this turn sealed — a prior bounce residual
+  // in the same turn must not outrank it. Missing isError, unbound, or mis-bound
+  // results do not establish success and do not reject/abort. A current-attempt
+  // residual without that success is this turn's own failure and must not be
+  // masked by run-scoped stale acceptance (bare resume without courtAttemptId).
+  // Same-turn accept-then-bounce keeps the success marker: terminal stays
+  // accepted; rejection facts remain on payloads/gate (not latest-wins flip).
   const scanStart = currentAttemptStartIndex(entries);
+  let thisAttemptHasSeatSuccess = false;
+  let residual: BoundErroredToolCandidate | undefined;
   for (let index = entries.length - 1; index >= scanStart; index -= 1) {
     const message = entries[index]?.message;
     if (message?.role !== "toolResult") continue;
-    const residual = boundErroredToolCandidate(
-      entries,
-      index,
-      message,
-      spec.toolName,
-    );
-    if (residual !== undefined) {
-      const details = isRecord(residual.candidate)
-        ? residual.candidate
-        : { candidate: residual.candidate };
-      const failed = await settleFailureTerminalResult(
-        admitted,
-        {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details,
-        },
-        authority,
-        scope ?? {},
+    if (message.toolName !== spec.toolName) continue;
+    if (message.isError === false) {
+      if (
+        boundRoleToolCallForResult(entries, index, message, spec.toolName) !==
+          undefined
+      ) {
+        thisAttemptHasSeatSuccess = true;
+      }
+      continue;
+    }
+    if (residual === undefined) {
+      residual = boundErroredToolCandidate(
+        entries,
+        index,
+        message,
+        spec.toolName,
       );
-      return withSubmissions(failed, submissions);
     }
   }
   const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
-  if (roleOutcome?.kind === "audit_escalation") {
+  if (roleOutcome !== undefined && (thisAttemptHasSeatSuccess || residual === undefined)) {
     const navigator = extractNavigatorFact(entries);
     return withSubmissions(
       await withOptionalGateProjection(
@@ -3271,21 +3277,21 @@ async function settleLawfulSeatAcceptedTerminalResult(
       submissions,
     );
   }
-  if (roleOutcome?.role === spec.role) {
-    const navigator = extractNavigatorFact(entries);
-    return withSubmissions(
-      await withOptionalGateProjection(
-        {
-          roleOutcome,
-          navigator,
-          artifacts: [],
-          runId: admitted.runId,
-        },
-        sessionDirectory,
-        detourGateContext(admitted, scope),
-      ),
-      submissions,
+  if (residual !== undefined) {
+    const details = isRecord(residual.candidate)
+      ? residual.candidate
+      : { candidate: residual.candidate };
+    const failed = await settleFailureTerminalResult(
+      admitted,
+      {
+        cause: "output",
+        diagnostic: residual.diagnostic,
+        details,
+      },
+      authority,
+      scope ?? {},
     );
+    return withSubmissions(failed, submissions);
   }
   return undefined;
 }
