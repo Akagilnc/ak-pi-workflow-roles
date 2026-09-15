@@ -1,12 +1,13 @@
 /**
  * #924 public Secretariat path — through-line + escalate branch.
  * Real public CLI entry; faux host activates real secretariat runtime and
- * executes production tools (summon + output), same seam as court diarist fixtures.
+ * executes production tools. Default summon path → summonPublicRole (no
+ * summonCountersign inject). Body rewrite + notary pass = dirty-ticket real run.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -15,7 +16,6 @@ import {
   SECRETARIAT_OUTPUT_TOOL_NAME,
   SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
 } from "../../src/secretariat-contracts.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import type {
   HostContext,
   RoleHost,
@@ -24,12 +24,14 @@ import type {
 } from "../../src/host-contracts.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
-import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import {
+  findRunDirectoryById,
+  readRoleRunState,
+} from "../../src/public-cli/run-lifecycle.ts";
 import {
   createDiaristRoleRuntime,
   createSecretariatRoleRuntime,
 } from "../../src/role-runtime.ts";
-import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -42,9 +44,13 @@ import {
   objectPayloads,
   payloadStatusSequence,
 } from "../helpers/terminal-payload.ts";
-import { summonPublicRole } from "../../src/public-role-summons.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { MAIN_ROLE_SESSION_MATERIALS } from "../../src/session-opening-materials.ts";
+import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
+import {
+  readSitianRecords,
+  resolveSitianRecordPathInLedger,
+} from "../../src/sitian-facade.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-secretariat-", async (home) => {
@@ -100,7 +106,9 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["config", "user.email", "secretariat@test.local"], {
     cwd: root,
   });
-  execFileSync("git", ["config", "user.name", "Secretariat Test"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Secretariat Test"], {
+    cwd: root,
+  });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
@@ -165,40 +173,9 @@ function courtDiaristFor924(): LegacyFauxPiRunner {
   };
 }
 
-function scriptedCountersign(
-  details: unknown,
-  options?: { seedNotary?: boolean },
-): LegacyFauxPiRunner {
-  return async (args, spawnOptions) => {
-    const outcome = await scriptedTerminatingToolSession({
-      role: "countersign",
-      toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-      details,
-    })(args, spawnOptions);
-    if (options?.seedNotary === true) {
-      const sessionFile = argvFlagValue(args, "--session");
-      assert.ok(sessionFile);
-      const auditorDir = join(dirname(sessionFile), "auditor-roles");
-      await mkdir(auditorDir, { recursive: true });
-      await writeFile(
-        join(auditorDir, "o01_notary.jsonl"),
-        gateToolSessionJsonl({
-          id: "direct-notary",
-          startedAt: "2026-09-15T00:00:00.000Z",
-          endedAt: "2026-09-15T00:00:10.000Z",
-          toolName: "ak_notary_output",
-          args: { status: "pass", findings: [] },
-        }),
-        "utf8",
-      );
-    }
-    return outcome;
-  };
-}
-
 function nestedCountersignHost(input: {
   packageRoot: string;
-  sequence: ReadonlyArray<{ details: unknown; seedNotary?: boolean }>;
+  sequence: ReadonlyArray<{ details: unknown }>;
 }): RoleTurnHost {
   let call = 0;
   const piRunner: LegacyFauxPiRunner = async (args, options) => {
@@ -207,8 +184,10 @@ function nestedCountersignHost(input: {
     if (role === "countersign") {
       const step = input.sequence[call] ?? input.sequence.at(-1)!;
       call += 1;
-      return scriptedCountersign(step.details, {
-        seedNotary: step.seedNotary === true,
+      return scriptedTerminatingToolSession({
+        role: "countersign",
+        toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+        details: step.details,
       })(args, options);
     }
     throw new Error(`unexpected nested role: ${role}`);
@@ -221,37 +200,36 @@ function nestedCountersignHost(input: {
 }
 
 /**
- * Activate real secretariat runtime and execute production tools in order.
- * Body rewrite uses the tracked issue-body file (offline stand-in for gh issue edit).
+ * Activate real secretariat runtime; default summon → summonPublicRole.
+ * hostAdapters only — never inject summonCountersign (G3).
  */
 function secretariatHostDrivingRealTools(input: {
   packageRoot: string;
   home: string;
-  bodyPath?: string;
-  cleanBody?: string;
-  firstCountersignRunId?: string;
   steps: ReadonlyArray<
-    | { kind: "rewrite" }
-    | { kind: "summon"; instruction: string; createRunId?: string }
-    | {
-        kind: "output";
-        details: Record<string, unknown>;
-      }
+    | { kind: "summon"; instruction: string }
+    | { kind: "output"; details: Record<string, unknown> }
   >;
-  countersignSequence: ReadonlyArray<{ details: unknown; seedNotary?: boolean }>;
+  countersignSequence: ReadonlyArray<{ details: unknown }>;
+  onSummonDetails?: (details: Record<string, unknown>) => void;
 }): RoleTurnHost {
   const nested = nestedCountersignHost({
     packageRoot: input.packageRoot,
     sequence: input.countersignSequence,
   });
+  const hostAdapters = [adapter("pi", nested)];
+
   return {
     async executeTurn(request: RoleTurnRequest) {
       if (request.activation.role !== "secretariat") {
         return nested.executeTurn(request);
       }
       const parentRunId =
-        request.runDirectory.split("/").filter(Boolean).at(-1)?.replace(/@.*$/, "") ??
-        "";
+        request.runDirectory
+          .split("/")
+          .filter(Boolean)
+          .at(-1)
+          ?.replace(/@.*$/, "") ?? "";
       const tools = new Map<
         string,
         {
@@ -279,30 +257,12 @@ function secretariatHostDrivingRealTools(input: {
         },
       } as unknown as RoleHost;
 
-      let summonCount = 0;
+      // Production default path: no summonCountersign inject.
       await createSecretariatRoleRuntime(roleHost, {
         loadSoul: async () => "中书省职分（测试装载）",
         packageRoot: input.packageRoot,
         home: input.home,
-        summonCountersign: async (summonInput) => {
-          const createRunId =
-            summonCount === 0 && input.firstCountersignRunId !== undefined
-              ? () => input.firstCountersignRunId!
-              : undefined;
-          summonCount += 1;
-          return summonPublicRole({
-            role: "countersign",
-            argv: [summonInput.instruction, "--project", summonInput.cwd],
-            cwd: summonInput.cwd,
-            home: input.home,
-            packageRoot: input.packageRoot,
-            ...(summonInput.correlationId === undefined
-              ? {}
-              : { correlationId: summonInput.correlationId }),
-            ...(createRunId === undefined ? {} : { createRunId }),
-            hostAdapters: [adapter("pi", nested)],
-          });
-        },
+        hostAdapters,
       }).activate();
 
       const ctx = {
@@ -314,7 +274,8 @@ function secretariatHostDrivingRealTools(input: {
           getSessionFile: () =>
             piDurablePrincipalAuthority.decode(request.principal).sessionFile,
           getSessionDir: () =>
-            piDurablePrincipalAuthority.decode(request.principal).sessionDirectory,
+            piDurablePrincipalAuthority.decode(request.principal)
+              .sessionDirectory,
           getEntries: () => [],
           getLeafEntry: () => undefined,
           getLeafId: () => null,
@@ -322,26 +283,25 @@ function secretariatHostDrivingRealTools(input: {
         abort() {},
       } as HostContext;
 
-      let lastSummon: { details?: unknown } | undefined;
+      let summonIndex = 0;
       for (const step of input.steps) {
-        if (step.kind === "rewrite") {
-          assert.ok(input.bodyPath && input.cleanBody);
-          await writeFile(input.bodyPath, input.cleanBody, "utf8");
-          continue;
-        }
         if (step.kind === "summon") {
           const tool = tools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME);
           assert.ok(tool, "summon tool missing after activate");
-          lastSummon = await tool.execute(
-            `summon-${summonCount}`,
+          const summoned = await tool.execute(
+            `summon-${summonIndex++}`,
             { instruction: step.instruction },
             undefined,
             undefined,
             ctx,
           );
+          if (input.onSummonDetails !== undefined) {
+            input.onSummonDetails(
+              (summoned.details ?? {}) as Record<string, unknown>,
+            );
+          }
           continue;
         }
-        // output
         const tool = tools.get(SECRETARIAT_OUTPUT_TOOL_NAME);
         assert.ok(tool, "output tool missing after activate");
         const result = await tool.execute(
@@ -382,38 +342,27 @@ function secretariatHostDrivingRealTools(input: {
         });
       }
 
-      // Expose last summon facts on the host for through-line assertions via closure return.
-      void lastSummon;
       return { code: 0, stderr: "", timedOut: false };
     },
   };
 }
 
-test("public secretariat through-line: rewrite → countersign continue → resume same run converged → sealed", async () => {
+test("public secretariat through-line: default summon → continue → same-run converged → sealed", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const bodyPath = join(project, "issue-924-body.md");
-    const dirtyBody =
-      "考古授权链三层追溯……签发方自认……旧票原话对比……\n要做：实现中书省。";
-    const cleanBody =
-      "## 当前应然\n票面按《票面法》整理。\n## 要做\n实现中书省。\n## 怎么验\n一条贯穿线。\n";
-    await writeFile(bodyPath, dirtyBody, "utf8");
 
     assert.ok(
       MAIN_ROLE_SESSION_MATERIALS.secretariat.includes("souls/ticket-law.md"),
     );
 
     const secretariatRunId = "01a0sec924-0000-7000-8000-000000000001";
-    const firstCountersignRunId = "01a0csn924-0000-7000-8000-000000000001";
     const capture = captureIo();
+    const summonDetails: Array<Record<string, unknown>> = [];
     const host = secretariatHostDrivingRealTools({
       packageRoot,
       home,
-      bodyPath,
-      cleanBody,
-      firstCountersignRunId,
       countersignSequence: [
         {
           details: {
@@ -423,19 +372,14 @@ test("public secretariat through-line: rewrite → countersign continue → resu
         },
         {
           details: { countersignStatus: "converged", note: "署" },
-          seedNotary: true,
         },
       ],
+      onSummonDetails: (details) => {
+        summonDetails.push(details);
+      },
       steps: [
-        {
-          kind: "summon",
-          instruction: "裁：#924 是否足以开工。",
-        },
-        { kind: "rewrite" },
-        {
-          kind: "summon",
-          instruction: "裁：#924 已按封驳重写，请复审。",
-        },
+        { kind: "summon", instruction: "裁：#924 是否足以开工。" },
+        { kind: "summon", instruction: "裁：#924 已按封驳重写，请复审。" },
         {
           kind: "output",
           details: { secretariatStatus: "sealed", ticketNumber: 924 },
@@ -443,7 +387,6 @@ test("public secretariat through-line: rewrite → countersign continue → resu
       ],
     });
 
-    // Capture child run facts via a side channel: after run, scan home for countersign runs.
     const result = await runAkRole(
       [
         "secretariat",
@@ -476,22 +419,34 @@ test("public secretariat through-line: rewrite → countersign continue → resu
     assert.equal(facts.secretariatStatus, "sealed");
     assert.equal(facts.ticketNumber, 924);
 
-    const finalBody = await readFile(bodyPath, "utf8");
-    assert.equal(finalBody, cleanBody);
-    assert.notEqual(finalBody, dirtyBody);
+    // Nested terminal fidelity on the summon tool projection (default path).
+    assert.equal(summonDetails.length, 2);
+    assert.equal(summonDetails[0]!.outcomeKind, "accepted");
+    assert.equal(summonDetails[0]!.countersignStatus, "continue");
+    assert.equal(summonDetails[1]!.outcomeKind, "accepted");
+    assert.equal(summonDetails[1]!.countersignStatus, "converged");
+    const firstRunId = summonDetails[0]!.runId;
+    assert.equal(typeof firstRunId, "string");
+    assert.equal(
+      summonDetails[1]!.runId,
+      firstRunId,
+      "second summon must resume the same countersign run",
+    );
 
-    // Same countersign run, ≥2 courts; child correlation names parent.
-    const rows = await readRecordedSubmissionRows(
-      project,
-      firstCountersignRunId,
-      home,
-    );
-    assert.ok(rows.length >= 2, `expected ≥2 courts, got ${rows.length}`);
-    const { findRunDirectoryById } = await import(
-      "../../src/public-cli/run-lifecycle.ts"
-    );
-    const childRunDir = await findRunDirectoryById(home, firstCountersignRunId);
+    // Court count via structured attemptId — not row count.
+    const childRunDir = await findRunDirectoryById(home, firstRunId as string);
     assert.ok(childRunDir, "countersign child run must exist");
+    const attemptIds = await distinctCourtAttemptIds({
+      cwd: project,
+      home,
+      runId: firstRunId as string,
+      runDirectory: childRunDir,
+    });
+    assert.ok(
+      attemptIds.size >= 2,
+      `expected ≥2 courtAttemptIds, got ${[...attemptIds].join(",") || "(none)"}`,
+    );
+
     const admittedRaw = await readFile(
       join(childRunDir, "invocation.json"),
       "utf8",
@@ -522,10 +477,10 @@ test("public secretariat escalate branch: countersign escalate → secretariat e
     seedGitProject(project);
     const runId = "01a0sec924-esc0-7000-8000-000000000099";
     const capture = captureIo();
+    const summonDetails: Array<Record<string, unknown>> = [];
     const host = secretariatHostDrivingRealTools({
       packageRoot,
       home,
-      firstCountersignRunId: "01a0csn924-esc0-7000-8000-000000000001",
       countersignSequence: [
         {
           details: {
@@ -537,11 +492,11 @@ test("public secretariat escalate branch: countersign escalate → secretariat e
           },
         },
       ],
+      onSummonDetails: (d) => {
+        summonDetails.push(d);
+      },
       steps: [
-        {
-          kind: "summon",
-          instruction: "裁：#924 上呈事项。",
-        },
+        { kind: "summon", instruction: "裁：#924 上呈事项。" },
         {
           kind: "output",
           details: {
@@ -586,5 +541,36 @@ test("public secretariat escalate branch: countersign escalate → secretariat e
     assert.equal(facts.secretariatStatus, "escalate");
     assert.equal(facts.decisionGate?.question, "中书省是否拆席？");
     assert.deepEqual(facts.decisionGate?.options, ["暂不", "拆"]);
+    assert.equal(summonDetails[0]?.countersignStatus, "escalate");
+    assert.equal(summonDetails[0]?.outcomeKind, "accepted");
   });
 });
+
+/** Distinct court attempt ids from ledger subject.attemptId (not row count). */
+async function distinctCourtAttemptIds(input: {
+  cwd: string;
+  home: string;
+  runId: string;
+  runDirectory: string;
+}): Promise<Set<string>> {
+  const sessionParent = join(input.runDirectory, "session", "session.jsonl");
+  const ptr = resolveSitianRecordPathInLedger(
+    {
+      level: "event",
+      kind: "candidate",
+      subject: { runId: input.runId },
+      cwd: input.cwd,
+      sessionParent,
+    },
+    resolveActivationLedgerHome(input.home),
+  );
+  const { records } = await readSitianRecords(ptr.recordFile);
+  const ids = new Set<string>();
+  for (const record of records) {
+    const subject = record.subject as { attemptId?: unknown } | undefined;
+    if (typeof subject?.attemptId === "string" && subject.attemptId.length > 0) {
+      ids.add(subject.attemptId);
+    }
+  }
+  return ids;
+}

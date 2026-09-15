@@ -1123,12 +1123,10 @@ export function createSecretariatRoleRuntime(
             typeof parameters?.instruction === "string"
               ? parameters.instruction.trim()
               : "";
+          // #924: instruction comes from tool args or parent prompt only — no
+          // unauthored default summons prose (票号写在传召里; no fabricated fallback).
           const instruction =
-            fromArgs !== ""
-              ? fromArgs
-              : parentInstruction.trim() !== ""
-                ? parentInstruction
-                : "裁：按《票面法》审本票是否足以开工。";
+            fromArgs !== "" ? fromArgs : parentInstruction.trim();
           const correlationId = (() => {
             const runDirectory = runDirectoryFromHostContext(ctx);
             if (runDirectory === undefined) return undefined;
@@ -1153,6 +1151,9 @@ export function createSecretariatRoleRuntime(
                 ...(input.packageRoot === undefined
                   ? {}
                   : { packageRoot: input.packageRoot }),
+                ...(dependencies.hostAdapters === undefined
+                  ? {}
+                  : { hostAdapters: dependencies.hostAdapters }),
               });
             });
           const summoned = await summon({
@@ -1165,14 +1166,20 @@ export function createSecretariatRoleRuntime(
               ? {}
               : { packageRoot: dependencies.packageRoot }),
           });
+          const details = projectSecretariatSummonResult(summoned);
+          const outcomeKind =
+            typeof details.outcomeKind === "string" ? details.outcomeKind : "unknown";
+          const contentText =
+            outcomeKind === "accepted" || outcomeKind === "audit_escalation"
+              ? "给事中回执已送达中书省"
+              : outcomeKind === "failure"
+                ? "给事中传召失败"
+                : outcomeKind === "no_receipt"
+                  ? "给事中无回执"
+                  : "给事中传召未得终局";
           return {
-            content: [
-              {
-                type: "text" as const,
-                text: "给事中回执已送达中书省",
-              },
-            ],
-            details: projectSecretariatSummonResult(summoned),
+            content: [{ type: "text" as const, text: contentText }],
+            details,
           };
         },
       });

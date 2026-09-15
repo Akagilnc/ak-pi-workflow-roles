@@ -7,7 +7,8 @@ import test from "node:test";
 import {
   SECRETARIAT_OUTPUT_TOOL_NAME,
   SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
-} from "../../src/secretariat-contracts.ts";
+  projectSecretariatSummonResult,
+} from "../../src/secretariat-role.ts";
 import { createSecretariatRoleRuntime } from "../../src/role-runtime.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
@@ -143,9 +144,119 @@ test("secretariat summon-countersign calls shared seam with parent correlation",
   assert.equal(calls[0]!.cwd, "/work");
   assert.equal(calls[0]!.correlationId, "01parent");
   const details = result.details as {
+    outcomeKind?: string;
     countersignStatus?: string;
     runId?: string;
   };
+  assert.equal(details.outcomeKind, "accepted");
   assert.equal(details.countersignStatus, "converged");
   assert.equal(details.runId, "01child");
+});
+
+test("projectSecretariatSummonResult keeps typed terminal kinds (gatekeeper precedent)", () => {
+  const accepted = projectSecretariatSummonResult({
+    exitCode: 0,
+    runDirectory: "/r/01a@countersign",
+    terminal: {
+      roleOutcome: {
+        kind: "accepted",
+        role: "countersign",
+        payloads: [{ countersignStatus: "continue", fix: { summary: "x" } }],
+      },
+    } as never,
+  });
+  assert.equal(accepted.outcomeKind, "accepted");
+  assert.equal(accepted.countersignStatus, "continue");
+  assert.deepEqual(accepted.receipt, {
+    countersignStatus: "continue",
+    fix: { summary: "x" },
+  });
+
+  const escalation = projectSecretariatSummonResult({
+    exitCode: 0,
+    runDirectory: "/r/01b@countersign",
+    terminal: {
+      roleOutcome: {
+        kind: "audit_escalation",
+        role: "countersign",
+        status: "audit_escalation",
+        payloads: [{ countersignStatus: "escalate", decisionGate: { question: "q" } }],
+      },
+    } as never,
+  });
+  assert.equal(escalation.outcomeKind, "audit_escalation");
+  assert.equal(escalation.countersignStatus, "escalate");
+  assert.ok(escalation.receipt);
+
+  const failure = projectSecretariatSummonResult({
+    exitCode: 1,
+    runDirectory: "/r/01c@countersign",
+    terminal: {
+      roleOutcome: {
+        kind: "failure",
+        role: "countersign",
+        diagnostic: "nested boom",
+        cause: "output",
+        decisiveFacts: { cause: "output" },
+        payloads: [{ partial: true }],
+      },
+    } as never,
+  });
+  assert.equal(failure.outcomeKind, "failure");
+  assert.equal(failure.diagnostic, "nested boom");
+  assert.equal(failure.cause, "output");
+  assert.deepEqual(failure.payloads, [{ partial: true }]);
+  assert.equal(failure.countersignStatus, undefined);
+
+  const noReceipt = projectSecretariatSummonResult({
+    exitCode: 0,
+    stderr: "quiet",
+    terminal: {
+      roleOutcome: {
+        kind: "no_receipt",
+        role: "countersign",
+        status: "no-accepted-receipt",
+        decisiveFacts: { acceptedReceipt: false },
+      },
+    } as never,
+  });
+  assert.equal(noReceipt.outcomeKind, "no_receipt");
+  assert.equal(noReceipt.status, "no-accepted-receipt");
+  assert.equal(noReceipt.stderr, "quiet");
+
+  const noTerminal = projectSecretariatSummonResult({
+    exitCode: 1,
+    stderr: "died",
+  });
+  assert.equal(noTerminal.outcomeKind, "no_terminal");
+  assert.equal(noTerminal.exitCode, 1);
+  assert.equal(noTerminal.stderr, "died");
+});
+
+test("summon tool content text tracks outcome kind (not always 已送达)", async () => {
+  const { tools } = await activateSecretariat({
+    summonCountersign: async () => ({
+      exitCode: 1,
+      terminal: {
+        roleOutcome: {
+          kind: "failure",
+          role: "countersign",
+          diagnostic: "x",
+          decisiveFacts: {},
+        },
+      } as never,
+    }),
+  });
+  const result = await tools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
+    "summon-fail",
+    { instruction: "裁：#924" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.equal(
+    (result.content as Array<{ text: string }>)[0]?.text,
+    "给事中传召失败",
+  );
+  assert.equal((result.details as { outcomeKind: string }).outcomeKind, "failure");
 });

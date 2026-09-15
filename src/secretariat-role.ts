@@ -7,6 +7,7 @@ import type { Static } from "typebox";
 import { Type } from "typebox";
 
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import type { NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import {
   SECRETARIAT_ACCEPTED_TEXT,
@@ -101,53 +102,105 @@ export type SecretariatRuntimeDependencies = {
   packageRoot?: string;
   /**
    * Nested countersign summon. Production uses shared summonPublicRole;
-   * tests may inject a tracer.
+   * tests may inject a tracer. Prefer hostAdapters on the default path.
    */
   summonCountersign?: SecretariatSummonCountersign;
   /** Optional home override for nested summons (tests). */
   home?: string;
+  /**
+   * Composition-root adapter table forwarded by the default summonPublicRole
+   * path (tests). Production leaves unset.
+   */
+  hostAdapters?: readonly NamedRoleTurnHostAdapter[];
 };
 
-/** Project nested countersign PublicSummonResult onto tool details (evidence assembly). */
+function runIdFromDirectory(runDirectory: string | undefined): string | undefined {
+  if (typeof runDirectory !== "string" || runDirectory.trim() === "") return undefined;
+  const leaf = runDirectory.split("/").filter(Boolean).at(-1) ?? "";
+  const at = leaf.indexOf("@");
+  return at > 0 ? leaf.slice(0, at) : leaf;
+}
+
+function latestObjectPayload(
+  payloads: readonly unknown[] | undefined,
+): Record<string, unknown> | undefined {
+  if (payloads === undefined || payloads.length === 0) return undefined;
+  const latest = payloads[payloads.length - 1];
+  if (latest === null || typeof latest !== "object" || Array.isArray(latest)) {
+    return undefined;
+  }
+  return latest as Record<string, unknown>;
+}
+
+/**
+ * Project nested countersign PublicSummonResult onto tool details.
+ * Authority: keep typed terminal kind + payloads/diagnostic intact (gatekeeper
+ * projectOfficerTerminal precedent / ADR 0052 / 失败诚实). No content gate.
+ */
 export function projectSecretariatSummonResult(
   summoned: PublicSummonResult,
 ): Record<string, unknown> {
   const terminal = summoned.terminal;
   const roleOutcome = terminal?.roleOutcome;
-  const payloads =
-    roleOutcome !== undefined &&
-    roleOutcome.kind === "accepted" &&
-    Array.isArray(roleOutcome.payloads)
-      ? roleOutcome.payloads
-      : undefined;
-  const latest =
-    payloads !== undefined && payloads.length > 0
-      ? payloads[payloads.length - 1]
-      : undefined;
-  const countersignStatus =
-    latest !== null &&
-    typeof latest === "object" &&
-    !Array.isArray(latest) &&
-    typeof (latest as Record<string, unknown>).countersignStatus === "string"
-      ? ((latest as Record<string, unknown>).countersignStatus as string)
-      : undefined;
   const runDirectory = summoned.runDirectory;
-  const runId =
-    typeof runDirectory === "string" && runDirectory.trim() !== ""
-      ? (() => {
-          const leaf = runDirectory.split("/").filter(Boolean).at(-1) ?? "";
-          const at = leaf.indexOf("@");
-          return at > 0 ? leaf.slice(0, at) : leaf;
-        })()
-      : undefined;
-  return {
+  const runId = runIdFromDirectory(runDirectory);
+  const base: Record<string, unknown> = {
     exitCode: summoned.exitCode,
     ...(runId === undefined ? {} : { runId }),
     ...(runDirectory === undefined ? {} : { runDirectory }),
-    ...(countersignStatus === undefined ? {} : { countersignStatus }),
-    ...(latest === undefined ? {} : { receipt: latest }),
     ...(summoned.stderr === undefined || summoned.stderr === ""
       ? {}
       : { stderr: summoned.stderr }),
+  };
+
+  if (roleOutcome === undefined) {
+    return { ...base, outcomeKind: "no_terminal" };
+  }
+
+  if (roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation") {
+    const payloads = Array.isArray(roleOutcome.payloads) ? roleOutcome.payloads : undefined;
+    const latest = latestObjectPayload(payloads);
+    const countersignStatus =
+      latest !== undefined && typeof latest.countersignStatus === "string"
+        ? latest.countersignStatus
+        : undefined;
+    return {
+      ...base,
+      outcomeKind: roleOutcome.kind,
+      ...(countersignStatus === undefined ? {} : { countersignStatus }),
+      ...(latest === undefined ? {} : { receipt: latest }),
+      ...(payloads === undefined ? {} : { payloads }),
+    };
+  }
+
+  if (roleOutcome.kind === "failure") {
+    const payloads = Array.isArray(roleOutcome.payloads) ? roleOutcome.payloads : undefined;
+    return {
+      ...base,
+      outcomeKind: "failure",
+      diagnostic: roleOutcome.diagnostic,
+      ...(roleOutcome.cause === undefined ? {} : { cause: roleOutcome.cause }),
+      ...(roleOutcome.decisiveFacts === undefined
+        ? {}
+        : { decisiveFacts: roleOutcome.decisiveFacts }),
+      ...(payloads === undefined ? {} : { payloads }),
+      ...(latestObjectPayload(payloads) === undefined
+        ? {}
+        : { receipt: latestObjectPayload(payloads) }),
+    };
+  }
+
+  // no_receipt (and any future kind still carries decisiveFacts when present)
+  return {
+    ...base,
+    outcomeKind: roleOutcome.kind,
+    ...("status" in roleOutcome &&
+    typeof roleOutcome.status === "string" &&
+    roleOutcome.status.length > 0
+      ? { status: roleOutcome.status }
+      : {}),
+    ...("decisiveFacts" in roleOutcome && roleOutcome.decisiveFacts !== undefined
+      ? { decisiveFacts: roleOutcome.decisiveFacts }
+      : {}),
   };
 }

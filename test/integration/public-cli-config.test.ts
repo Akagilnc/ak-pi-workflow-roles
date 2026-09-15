@@ -116,6 +116,7 @@ test("effective seat configurations enumerate the public configurable roster", (
     "merger",
     "notary",
     "countersign",
+    "secretariat",
     "gleaner-left",
     "inspector",
     "gatekeeper",
