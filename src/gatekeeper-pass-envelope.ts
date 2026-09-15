@@ -14,7 +14,6 @@
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { bookDirectOfficerRunPointer } from "./archivist-record-entry.ts";
-import { projectAuditorParentAttemptBinding } from "./compliance-transport.ts";
 import type { HostContext } from "./host-contracts.ts";
 import {
   GatekeeperDecisionError,
@@ -104,34 +103,6 @@ export async function requireGatekeeperPass(options: {
           gatekeeper,
           projected.summoned,
         );
-      } catch (error) {
-        options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
-      }
-    }
-    // Auditor pass/failure on the real summoned session via the sole projection
-    // helper (courtAttemptId Host identity; pass supersedes earlier failure).
-    if (
-      projected.officer === "auditor" &&
-      projected.summoned !== undefined &&
-      (gatekeeper.status === "transport_failure" || gatekeeper.status === "pass")
-    ) {
-      try {
-        projectAuditorParentAttemptBinding({
-          context: options.context as HostContext,
-          summoned: projected.summoned,
-          outcome: gatekeeper.status === "pass" ? "pass" : "failure",
-          ...(gatekeeper.status === "transport_failure"
-            ? {
-                failure: {
-                  cause: "provider",
-                  diagnostic: gatekeeper.reason,
-                  ...(gatekeeper.submission === undefined
-                    ? {}
-                    : { details: { submission: gatekeeper.submission } }),
-                },
-              }
-            : {}),
-        });
       } catch (error) {
         options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
       }

@@ -1,26 +1,10 @@
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AuditorSoulRole } from "./auditor-soul.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
-import {
-  AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
-  AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
-  type AuditorParentAttemptBinding,
-} from "./auditor-parent-attempt-contract.ts";
-import { recordAuditorParentAttemptOnSummon } from "./archivist-record-entry.ts";
-import {
-  courtAttemptIdFromHostContext,
-  type HostContext,
-} from "./host-contracts.ts";
+import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { OFFICER_CONCLUSION_REASK } from "./gatekeeper-role.ts";
-import { sessionFileFromPublicSummon } from "./session-assistant-usage.ts";
-
-export {
-  AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
-  AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
-  type AuditorParentAttemptBinding,
-} from "./auditor-parent-attempt-contract.ts";
 
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
 /**
@@ -53,6 +37,8 @@ export type ComplianceDecision =
 export const AUDITOR_DOSSIER_PROMPT = "卷宗指针：" as const;
 
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
+export const AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE = "ak_auditor_parent_attempt_binding" as const;
+export const AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE = "ak_auditor_compliance_failure" as const;
 
 export class ComplianceResponseRetentionError extends Error {
   constructor(message: string, options?: ErrorOptions) {
@@ -61,45 +47,14 @@ export class ComplianceResponseRetentionError extends Error {
   }
 }
 
-/** Sole projection: Host parent + summoned auditor session → archivist binding write. */
-export function projectAuditorParentAttemptBinding(options: {
-  readonly context: HostContext;
-  readonly summoned: PublicSummonResult;
-  readonly outcome: "pass" | "failure";
-  readonly failure?: {
-    readonly cause?: string;
-    readonly diagnostic?: string;
-    readonly identity?: { readonly name?: string; readonly code?: string | number };
-    readonly details?: Readonly<Record<string, unknown>>;
+export type AuditorParentAttemptBinding = {
+  readonly version: 1;
+  readonly parent: {
+    readonly sessionId?: string;
+    readonly sessionFile?: string;
+    readonly attemptEntryId?: string;
   };
-}): void {
-  const parentSessionFile = options.context.sessionManager?.getSessionFile?.();
-  if (typeof parentSessionFile !== "string" || parentSessionFile.trim() === "") return;
-  const auditorSessionFile = sessionFileFromPublicSummon(options.summoned);
-  if (auditorSessionFile === undefined) return;
-  const header = options.context.sessionManager?.getHeader?.();
-  const parentSessionId =
-    header !== null && header !== undefined && typeof header.id === "string" && header.id.length > 0
-      ? header.id
-      : undefined;
-  const leafId = options.context.sessionManager?.getLeafId?.();
-  const attemptEntryId =
-    typeof leafId === "string" && leafId.length > 0 ? leafId : undefined;
-  const courtAttemptId = courtAttemptIdFromHostContext(options.context);
-  recordAuditorParentAttemptOnSummon({
-    auditorSessionFile,
-    parentSessionFile,
-    ...(parentSessionId === undefined ? {} : { parentSessionId }),
-    ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
-    ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
-    outcome: options.outcome,
-    ...(options.failure === undefined ? {} : { failure: options.failure }),
-    ...(typeof options.summoned.runDirectory === "string" &&
-      options.summoned.runDirectory.trim() !== ""
-      ? { auditorRunDirectory: options.summoned.runDirectory }
-      : {}),
-  });
-}
+};
 
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 
@@ -270,63 +225,6 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
       reask = OFFICER_CONCLUSION_REASK;
       continue;
     }
-    // Bind on the real summoned auditor session (archivist appendCustomEntry).
-    // pass supersedes earlier same-court failure; transport_failure retains it
-    // when a later attempt produces no compliance result (#858).
-    if (decision.status === "pass") {
-      projectAuditorParentAttemptBinding({
-        context: options.context,
-        summoned,
-        outcome: "pass",
-      });
-    } else if (decision.status === "transport_failure") {
-      const outcome =
-        summoned.terminal?.roleOutcome !== undefined &&
-        typeof summoned.terminal.roleOutcome === "object" &&
-        summoned.terminal.roleOutcome !== null &&
-        (summoned.terminal.roleOutcome as { kind?: unknown }).kind === "failure"
-          ? (summoned.terminal.roleOutcome as {
-              readonly cause?: string;
-              readonly diagnostic: string;
-              readonly decisiveFacts?: Readonly<Record<string, unknown>>;
-            })
-          : undefined;
-      const facts = outcome?.decisiveFacts;
-      const identityRaw =
-        facts !== undefined && isRecord(facts.identity) ? facts.identity : undefined;
-      const identity =
-        identityRaw === undefined
-          ? undefined
-          : {
-              ...(typeof identityRaw.name === "string" ? { name: identityRaw.name } : {}),
-              ...(typeof identityRaw.code === "string" || typeof identityRaw.code === "number"
-                ? { code: identityRaw.code }
-                : {}),
-            };
-      const details =
-        facts !== undefined && isRecord(facts.details)
-          ? facts.details
-          : facts !== undefined
-            ? (Object.fromEntries(
-                Object.entries(facts).filter(([key]) => key !== "identity"),
-              ) as Readonly<Record<string, unknown>>)
-            : undefined;
-      projectAuditorParentAttemptBinding({
-        context: options.context,
-        summoned,
-        outcome: "failure",
-        failure: {
-          ...(typeof outcome?.cause === "string" ? { cause: outcome.cause } : { cause: "provider" }),
-          diagnostic: decision.diagnostic,
-          ...(identity === undefined || Object.keys(identity).length === 0 ? {} : { identity }),
-          ...(details === undefined ? {} : { details }),
-        },
-      });
-    }
     return decision;
   }
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

@@ -30,7 +30,7 @@ import { join } from "node:path";
 
 import {
   AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
-} from "./auditor-parent-attempt-contract.ts";
+} from "./compliance-transport.ts";
 import {
   extractSessionTimestampSpan,
   intervalRowsAroundAnchor,

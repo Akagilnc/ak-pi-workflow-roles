@@ -124,11 +124,7 @@ export type RoleRunRecord = {
   readonly resumable?: TypedHttp429Observation;
 };
 
-/**
- * Package-owned resume trigger still written by station-child auto-resume
- * (#840). Settlement skips user turns whose first line is this token so
- * first-attempt auditor retention is not dropped. Not caller instruction.
- */
+/** Package-owned turn trigger for resume. Not caller instruction and not semantic task content. */
 export const RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]" as const;
 
 /** Public manual resume request after the unique CLI parser owns runId + optional message. */

@@ -23,8 +23,11 @@ import {
   type FrozenAttachment,
 } from "./invocation.ts";
 
-/** Section heading of the system-delivered dossier pointer (presentation only; no 本票 claim). */
-const CASE_DOSSIER_SECTION_HEADING = "## 起居录路径（系统随案提供）" as const;
+/** Bound-ticket section heading (presentation only; BASE shape unchanged). */
+const CASE_DOSSIER_SECTION_HEADING = "## 本票起居录（系统随案提供）" as const;
+
+/** Unbound path-only heading — no 本票 claim when no typed ticket is on the run. */
+const UNBOUND_DOSSIER_PATH_HEADING = "## 起居录路径（系统随案提供）" as const;
 
 /** Stable freeze key under run/attachments/ for station-child 0081 delivery. */
 const CASE_DOSSIER_ATTACH_KEY = "case-dossier" as const;
@@ -47,7 +50,7 @@ export async function projectCaseDossierPointerSection(input: {
 }): Promise<string> {
   if (input.ticketNumber === undefined) {
     return [
-      CASE_DOSSIER_SECTION_HEADING,
+      UNBOUND_DOSSIER_PATH_HEADING,
       "",
       `记录卷宗：${projectTicketRecordsPathShape()}`,
     ].join("\n");

@@ -29,10 +29,6 @@ import {
   resolveActivationLedgerHomeForPath,
 } from "./activation-ledger-topology.ts";
 import {
-  AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
-  AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
-} from "./auditor-parent-attempt-contract.ts";
-import {
   NAVIGATOR_RECORD_KIND,
   resolveNavigatorWorkSubjectPlacement,
 } from "./archivist-record-topology.ts";
@@ -522,76 +518,4 @@ export function bookDirectOfficerRunPointer(options: {
     "utf8",
   );
   return pointer;
-}
-
-/**
- * Append parent-attempt binding (+ optional failure) onto the real summoned
- * auditor session via SessionManager.appendCustomEntry, and book the parent
- * pointer so settlement can discover it. courtAttemptId is Host court identity.
- * Does not mint a parallel synthetic auditor-roles transcript (#858).
- */
-export function recordAuditorParentAttemptOnSummon(options: {
-  readonly auditorSessionFile: string;
-  readonly parentSessionFile: string;
-  readonly parentSessionId?: string;
-  readonly attemptEntryId?: string;
-  readonly courtAttemptId?: string;
-  readonly auditorRunDirectory?: string;
-  readonly outcome: "pass" | "failure";
-  readonly failure?: {
-    readonly cause?: string;
-    readonly diagnostic?: string;
-    readonly identity?: { readonly name?: string; readonly code?: string | number };
-    readonly details?: Readonly<Record<string, unknown>>;
-  };
-}): void {
-  if (!existsSync(options.auditorSessionFile)) {
-    throw new Error(
-      `recordAuditorParentAttemptOnSummon requires an existing auditor session: ${options.auditorSessionFile}`,
-    );
-  }
-  const sessionDir = dirname(options.auditorSessionFile);
-  const session = SessionManager.open(options.auditorSessionFile, sessionDir);
-  const binding = {
-    version: 1 as const,
-    parent: {
-      sessionFile: options.parentSessionFile,
-      ...(options.parentSessionId === undefined ? {} : { sessionId: options.parentSessionId }),
-      ...(options.attemptEntryId === undefined ? {} : { attemptEntryId: options.attemptEntryId }),
-      ...(options.courtAttemptId === undefined ? {} : { courtAttemptId: options.courtAttemptId }),
-    },
-    outcome: options.outcome,
-  };
-  session.appendCustomEntry(AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE, binding);
-  if (options.outcome === "failure" && options.failure !== undefined) {
-    session.appendCustomEntry(AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE, {
-      version: 1,
-      parent: binding.parent,
-      failure: options.failure,
-    });
-  }
-  // Stable leaf for gate-cycle pairing (#753 upsert).
-  bookDirectOfficerRunPointer({
-    parentSessionFile: options.parentSessionFile,
-    officer: "auditor",
-    sessionFile: options.auditorSessionFile,
-    ...(options.auditorRunDirectory === undefined
-      ? {}
-      : { runDirectory: options.auditorRunDirectory }),
-  });
-  // Attempt-distinct pointer so same-court history remains discoverable after
-  // the stable leaf is upserted to a later summon (#858 retention).
-  const nest = join(dirname(options.parentSessionFile), "auditor-roles");
-  mkdirSync(nest, { recursive: true });
-  const retentionPointer: DirectOfficerRunPointer = {
-    version: 1,
-    kind: DIRECT_OFFICER_RUN_POINTER_KIND,
-    officer: "auditor",
-    sessionFile: options.auditorSessionFile,
-    ...(options.auditorRunDirectory === undefined
-      ? {}
-      : { runDirectory: options.auditorRunDirectory }),
-  };
-  const retentionLeaf = `auditor-attempt-${Date.now().toString(36)}-${process.hrtime.bigint().toString(36)}.pointer.json`;
-  writeFileSync(join(nest, retentionLeaf), `${JSON.stringify(retentionPointer)}\n`, "utf8");
 }
