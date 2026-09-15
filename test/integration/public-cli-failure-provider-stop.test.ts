@@ -349,31 +349,9 @@ test("bound auditor provider failure outranks the parent abort it caused", async
     );
   });
 });
-test("retained auditor failure is bound to the latest parent resume attempt", async () => {
-  await withTempHome(async (home) => {
-    const sessionDir = join(home, "session");
-    const sessionFile = join(sessionDir, "parent.jsonl");
-    const childDir = join(sessionDir, "auditor-roles");
-    await mkdir(childDir, { recursive: true });
-    const parentEntries = [
-      { type: "session", id: "parent-session" },
-      { type: "message", id: "user-old", message: { role: "user" } },
-      { type: "message", id: "attempt-old", message: { role: "assistant" } },
-      { type: "message", id: "user-new", message: { role: "user" } },
-      { type: "message", id: "attempt-new", message: { role: "assistant", stopReason: "error", errorMessage: "new failure" } },
-    ];
-    await writeFile(sessionFile, parentEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-    const childEntries = [
-      { type: "session", id: "child-session", parentSession: sessionFile },
-      { type: "custom", customType: "ak_auditor_parent_attempt_binding", data: { version: 1, parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-old" } } },
-      { type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "stale native failure", provider: "xai", model: "audit-model" } },
-      { type: "custom", customType: "ak_auditor_compliance_failure", data: { parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-old" }, failure: { cause: "provider", diagnostic: "stale auditor failure" } } },
-    ];
-    await writeFile(join(childDir, "child.jsonl"), childEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-    assert.equal(await readBoundAuditorKnownFailure(sessionFile), undefined);
-  });
-});
 // #858: call-local session boundary via public entry (not prompt bytes).
+// Independent-call stale of prior auditor retention is covered by the public
+// entry tracer below (next manual resume), not by a direct-API "latest user" floor.
 // Reuses the fast audited-seat public wiring tracer: runAkRole → auto-resume →
 // terminal. Same call keeps first-attempt auditor failure across ordinary
 // buildResumeContinuationPrompt resume users; next independent resume stales it.

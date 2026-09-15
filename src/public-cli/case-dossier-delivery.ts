@@ -6,11 +6,10 @@
  * 机器文本仅中立标识材料（ADR 0073），用途说明归角色材料所有。
  *
  * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口挂载。
- * 已绑定普通入口把本段追加进 continuation；未绑定普通入口与 station-child
+ * 普通入口（已绑定／未绑定）统一把本段追加进 continuation；station-child
  * 审核轮次走 attachments 冻结 + role-runtime `loadCaseDossierReadingMaterial` →
- * readingMaterial → systemPrompt.materials fold（#858：未绑定不拼进 caller dialogue；
- * #879：对话 instruction 保持父腿 payload 原文；起居录作独立附件面，不新造
- * RoleTurnRequest.materials）。
+ * readingMaterial → systemPrompt.materials fold（#879：对话 instruction 保持父腿
+ * payload 原文；起居录作独立附件面，不新造 RoleTurnRequest.materials）。
  */
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -23,7 +22,7 @@ import {
   type FrozenAttachment,
 } from "./invocation.ts";
 
-/** Bound-ticket section heading (presentation only; BASE shape unchanged). */
+/** Bound-ticket section heading (presentation only). */
 const CASE_DOSSIER_SECTION_HEADING = "## 本票起居录（系统随案提供）" as const;
 
 /** Unbound path-only heading — no 本票 claim when no typed ticket is on the run. */

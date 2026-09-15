@@ -275,6 +275,45 @@ async function withCallLocalSessionBoundary(
 }
 
 /**
+ * Capture call-local boundary at public-entry, or settle through the existing
+ * controlled-failure authority when the bound session is unreadable (ADR 0080).
+ * Malformed JSONL must not escape as a bare throw outside typed terminal/artifacts.
+ */
+async function bindCallLocalSessionBoundaryOrSettle<
+  A extends AdmittedRoleInvocation,
+  T extends TerminalResult = TerminalResult,
+>(input: {
+  env: PostAdmissionEnv;
+  admitted: A;
+  adapters: PostAdmissionAdapters<A, T>;
+  io: CliIo;
+}): Promise<
+  | { kind: "continue"; env: PostAdmissionEnv }
+  | {
+      kind: "terminal";
+      exitCode: number;
+      admitted: A;
+      terminal: TerminalResult;
+    }
+> {
+  try {
+    return {
+      kind: "continue",
+      env: await withCallLocalSessionBoundary(input.env, input.admitted),
+    };
+  } catch (error) {
+    const settled = await presentControlledFailure(
+      input.admitted,
+      { timedOut: false, code: null, stderr: "", thrown: error },
+      input.adapters,
+      input.env.principalAuthority,
+      input.io,
+    );
+    return { kind: "terminal", ...settled };
+  }
+}
+
+/**
  * Role-specific settlement hooks and failure resolvers.
  * Lifecycle coordination stays in this coordinator module.
  */
@@ -753,9 +792,7 @@ export async function dispatchPostAdmissionTurn<
     // writes (#742). Case dossier delivery (ADR 0081 / #709 / #858) rides here once
     // for every public entry:
     // - station-child officer: attachments freeze (peer body stays opaque, #879)
-    // - bound ordinary: BASE continuation.prompt section (concrete file)
-    // - unbound ordinary: same attachments freeze — path shape via readingMaterial
-    //   fold, never spliced into caller dialogue / opaque resume message (#858).
+    // - ordinary entry (bound or unbound): one continuation path-pointer section
     // No package-resume parallel face or typed resume identity.
     let turnRequest: RoleTurnRequest =
       env.signal === undefined ? request : { ...request, signal: env.signal };
@@ -781,8 +818,8 @@ export async function dispatchPostAdmissionTurn<
         home: env.home,
         runDirectory: admitted.runDirectory,
       });
-    } else if (admitted.ticketNumber !== undefined) {
-      // BASE bound ordinary-entry face: append the concrete path pointer.
+    } else {
+      // Ordinary public entry: one authoritative path-pointer face on continuation.
       const dossierSection = await projectCaseDossierPointerSection({
         ticketNumber: admitted.ticketNumber,
         projectRoot: admitted.projectRoot,
@@ -795,14 +832,6 @@ export async function dispatchPostAdmissionTurn<
           dossierSection,
         ),
       };
-    } else {
-      // #858 unbound ordinary: path shape on existing attachments → materials fold.
-      await deliverCaseDossierAsAttachment({
-        ticketNumber: admitted.ticketNumber,
-        projectRoot: admitted.projectRoot,
-        home: env.home,
-        runDirectory: admitted.runDirectory,
-      });
     }
 
     // Authoritative host write happens here, at the real dispatch boundary —
@@ -939,9 +968,8 @@ export async function dispatchPostAdmissionTurn<
         sessionFile,
         credential: credentialFailure,
         runDirectory: admitted.runDirectory,
-        ...(env.callLocalSessionBoundary === undefined
-          ? {}
-          : { callLocalSessionBoundary: env.callLocalSessionBoundary }),
+        // Bound once at public-call entry (0 when no principal / missing session).
+        callLocalSessionBoundary: env.callLocalSessionBoundary ?? 0,
       });
       // A direct, current signal from the host/runner itself (timeout / host
       // knownFailure / runner knownFailure / missing credential) is a real
@@ -1511,7 +1539,21 @@ export async function runPostAdmissionSeatResume<
   // Station-child same-ticket/same-parent resume is call-local auto-resume
   // (#840 / #416). Public `ak-role resume` stays one-shot (ADR 0080).
   // #858: one call-local session boundary for this public entry (station or manual).
-  const callEnv = await withCallLocalSessionBoundary(input.env, loaded.admitted);
+  // Unreadable bound session settles through presentControlledFailure (ADR 0080).
+  const bound = await bindCallLocalSessionBoundaryOrSettle({
+    env: input.env,
+    admitted: loaded.admitted,
+    adapters,
+    io: input.io,
+  });
+  if (bound.kind === "terminal") {
+    return {
+      exitCode: bound.exitCode,
+      admitted: bound.admitted,
+      terminal: bound.terminal as T,
+    };
+  }
+  const callEnv = bound.env;
   try {
     if (callEnv.stationChild === true) {
       let firstTurn: RoleTurnRequest | undefined;
@@ -1682,8 +1724,21 @@ export async function runPostAdmissionResumable<
   terminal?: T;
 }> {
   const { admitted, io, buildInitialRequest, buildResumeRequest, effectiveEngine } = input;
-  const env = await withCallLocalSessionBoundary(input.env, admitted);
   const adapters = withOnceSuccessfulBeforeDispatch(input.adapters);
+  const bound = await bindCallLocalSessionBoundaryOrSettle({
+    env: input.env,
+    admitted,
+    adapters,
+    io,
+  });
+  if (bound.kind === "terminal") {
+    return {
+      exitCode: bound.exitCode,
+      admitted: bound.admitted,
+      terminal: bound.terminal as T,
+    };
+  }
+  const env = bound.env;
 
   // One public call → one detour scope across in-place auto-resume dispatches.
   const invocationScopeId = mintEngineDetourInvocationScope({
@@ -1756,7 +1811,20 @@ export async function runPostAdmissionManualResume<
     effectiveEngine,
     buildRequestAfterLease,
   } = input;
-  const env = await withCallLocalSessionBoundary(input.env, admitted);
+  const bound = await bindCallLocalSessionBoundaryOrSettle({
+    env: input.env,
+    admitted,
+    adapters,
+    io,
+  });
+  if (bound.kind === "terminal") {
+    return {
+      exitCode: bound.exitCode,
+      admitted: bound.admitted,
+      terminal: bound.terminal as T,
+    };
+  }
+  const env = bound.env;
   let request = input.request;
   // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
   const effectiveModel = env.model;

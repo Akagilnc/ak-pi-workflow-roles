@@ -168,12 +168,6 @@ export type SettlementCourtScope = {
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
-  /**
-   * Parent session entry count at this public-call start (#858).
-   * Call-local only — carried by the shared auto-resume/settlement seam,
-   * never written into prompt, disk, or a standing state machine.
-   */
-  readonly callLocalSessionBoundary?: number;
 };
 
 function ledgerReadScope(
@@ -1102,33 +1096,25 @@ type BoundAuditorVolume = {
 
 /**
  * Parent-user court floor for auditor retention (#858).
- * With call-local boundary (public-call start entry count): first user at/after
- * that index is this call's court start — later in-call auto-resume users do
- * not advance it. Without boundary (direct read): latest user is the floor, so
- * a later independent call's user naturally stales priors. Never prompt bytes.
+ * callLocalSessionBoundary is the public-call start entry count: first user
+ * at/after that index is this call's court start — later in-call auto-resume
+ * users do not advance it. Next independent call re-captures. Never prompt bytes.
  */
 function parentUserCourtFloor(
   parentEntries: readonly SessionEntry[],
-  callLocalSessionBoundary: number | undefined,
+  callLocalSessionBoundary: number,
 ): number {
-  if (callLocalSessionBoundary !== undefined) {
-    const floor = Math.max(0, callLocalSessionBoundary);
-    for (let i = floor; i < parentEntries.length; i += 1) {
-      const entry = parentEntries[i];
-      if (entry?.type === "message" && entry.message?.role === "user") return i;
-    }
-    return floor;
-  }
-  for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
+  const floor = Math.max(0, callLocalSessionBoundary);
+  for (let i = floor; i < parentEntries.length; i += 1) {
     const entry = parentEntries[i];
     if (entry?.type === "message" && entry.message?.role === "user") return i;
   }
-  return -1;
+  return floor;
 }
 
 async function loadBoundAuditorVolumes(
   sessionFile: string,
-  scope?: Pick<SettlementCourtScope, "callLocalSessionBoundary">,
+  callLocalSessionBoundary: number,
 ): Promise<readonly BoundAuditorVolume[] | undefined> {
   let parentEntries: SessionEntry[];
   try {
@@ -1141,7 +1127,7 @@ async function loadBoundAuditorVolumes(
   if (parentId === undefined) return undefined;
   const latestParentUserIndex = parentUserCourtFloor(
     parentEntries,
-    scope?.callLocalSessionBoundary,
+    callLocalSessionBoundary,
   );
   const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
   // Auto-resume seam: call-local boundary keeps first-attempt retention across
@@ -1285,9 +1271,10 @@ function providerStopFallbackFromAuditorVolumes(
 /** Recover a provider stop from the auditor child bound to the current parent attempt. */
 export async function readBoundAuditorKnownFailure(
   sessionFile: string,
-  scope?: Pick<SettlementCourtScope, "callLocalSessionBoundary">,
+  /** Public-call start entry count; 0 = whole session from start. */
+  callLocalSessionBoundary = 0,
 ): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile, scope);
+  const volumes = await loadBoundAuditorVolumes(sessionFile, callLocalSessionBoundary);
   if (volumes === undefined) return undefined;
   return complianceFailureFromAuditorVolumes(volumes)
     ?? providerStopFallbackFromAuditorVolumes(volumes);
@@ -1296,9 +1283,9 @@ export async function readBoundAuditorKnownFailure(
 /** Strong auditor tier only — retained compliance-failure entries, no provider-stop fallback. */
 async function readBoundAuditorComplianceFailure(
   sessionFile: string,
-  scope?: Pick<SettlementCourtScope, "callLocalSessionBoundary">,
+  callLocalSessionBoundary: number,
 ): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile, scope);
+  const volumes = await loadBoundAuditorVolumes(sessionFile, callLocalSessionBoundary);
   if (volumes === undefined) return undefined;
   return complianceFailureFromAuditorVolumes(volumes);
 }
@@ -1306,9 +1293,9 @@ async function readBoundAuditorComplianceFailure(
 /** Weaker auditor tier: provider stop without a retained compliance-failure entry. */
 async function readBoundAuditorProviderStopFallback(
   sessionFile: string,
-  scope?: Pick<SettlementCourtScope, "callLocalSessionBoundary">,
+  callLocalSessionBoundary: number,
 ): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile, scope);
+  const volumes = await loadBoundAuditorVolumes(sessionFile, callLocalSessionBoundary);
   if (volumes === undefined) return undefined;
   return providerStopFallbackFromAuditorVolumes(volumes);
 }
@@ -1388,13 +1375,13 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   credential: RoleTurnKnownFailure | undefined;
   /** Reviewer only: recover child-written rejection page into knownFailure.details. */
   runDirectory?: string;
-  /** Call-local parent session floor from the shared public-call seam (#858). */
+  /**
+   * Call-local parent session floor from the shared public-call seam (#858).
+   * Production always passes the captured entry count; omit/0 = whole session.
+   */
   callLocalSessionBoundary?: number;
 }): Promise<AuditedRunnerFailureResolution> {
-  const auditorScope =
-    input.callLocalSessionBoundary === undefined
-      ? undefined
-      : { callLocalSessionBoundary: input.callLocalSessionBoundary };
+  const callLocalSessionBoundary = input.callLocalSessionBoundary ?? 0;
   if (input.runner !== undefined) return resolutionOf(input.runner);
   if (input.runDirectory !== undefined) {
     try {
@@ -1416,7 +1403,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   try {
     const auditorCompliance = await readBoundAuditorComplianceFailure(
       input.sessionFile,
-      auditorScope,
+      callLocalSessionBoundary,
     );
     if (auditorCompliance !== undefined) return resolutionOf(auditorCompliance);
   } catch (error) {
@@ -1445,7 +1432,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   try {
     const auditorStop = await readBoundAuditorProviderStopFallback(
       input.sessionFile,
-      auditorScope,
+      callLocalSessionBoundary,
     );
     if (auditorStop !== undefined) return resolutionOf(auditorStop);
   } catch (error) {
