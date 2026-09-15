@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
-import { createNavigatorAttendance, createNavigatorPrepareTool, formatNavigatorReport, NAVIGATOR_DEFAULT_MODEL, NAVIGATOR_PREPARE_TOOL_NAME, settlementNavigationFromEvent, writeNavigatorModelSetting, navigatorSubjectKey, navigatorSubjectKeyForInput, parseNavigatorModelSetting, readNavigatorModelSetting, selectNavigatorCandidate, subjectPath } from "../../src/navigator-attendance.ts";
+import { createNavigatorAttendance, createNavigatorPrepareTool, formatNavigatorReport, NAVIGATOR_PREPARE_TOOL_NAME, settlementNavigationFromEvent, writeNavigatorModelSetting, navigatorSubjectKey, navigatorSubjectKeyForInput, parseNavigatorModelSetting, readNavigatorModelSetting, selectNavigatorCandidate, subjectPath } from "../../src/navigator-attendance.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
@@ -24,7 +24,8 @@ import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 test("persistent model edits are immediate and have no fallback", async () => {
   await withTempRoot("navigator-model-setting-", async (root) => {
     const path = join(root, "navigator-model.json");
-    assert.equal(await readNavigatorModelSetting(path), NAVIGATOR_DEFAULT_MODEL);
+    // #178: missing setting file is a real absence — no package default fill-in.
+    await assert.rejects(() => readNavigatorModelSetting(path), /Navigator model setting is missing/);
     const started = Date.now();
     await writeNavigatorModelSetting("provider/one:max", path);
     assert.equal(await readNavigatorModelSetting(path), "provider/one:max");

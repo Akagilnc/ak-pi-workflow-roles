@@ -7,7 +7,6 @@ import {
   createNavigatorAttendance,
   createNavigatorPrepareTool,
   formatNavigatorReport,
-  NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NavigatorUnavailableError,
   settlementNavigationFromEvent,

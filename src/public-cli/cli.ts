@@ -413,6 +413,18 @@ function createRoleEnvironment(
   };
 }
 
+/**
+ * #178: parse role argv once before createRoleEnvironment's missing-model guard.
+ * Runner receives a thunk that returns the same structural result — no second parse.
+ */
+function parseRoleArgvBeforeEnv<T>(
+  parse: (args: readonly string[]) => T,
+  args: readonly string[],
+): (args: readonly string[]) => T {
+  const parsed = parse(args);
+  return () => parsed;
+}
+
 export type CliResult = {
   exitCode: number;
   /** Settled Terminal when an admitted Role run produced one (programmatic/tests). */
@@ -1292,11 +1304,12 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV.judge.parse, parsed.args);
       const result = await runPublicJudge(
         parsed.args,
         createRoleEnvironment(env, { role: "judge", home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV.judge.parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,
@@ -1317,11 +1330,12 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV.countersign.parse, parsed.args);
       const result = await runPublicCountersign(
         parsed.args,
         createRoleEnvironment(env, { role: "countersign", home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV.countersign.parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,
@@ -1342,11 +1356,12 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV["gleaner-left"].parse, parsed.args);
       const result = await runPublicGleanerLeft(
         parsed.args,
         createRoleEnvironment(env, { role: "gleaner-left", home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV["gleaner-left"].parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,
@@ -1367,11 +1382,12 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV.diarist.parse, parsed.args);
       const result = await runPublicDiarist(
         parsed.args,
         createRoleEnvironment(env, { role: "diarist", home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV.diarist.parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,
@@ -1392,11 +1408,12 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV.coder.parse, parsed.args);
       const result = await runPublicCoder(
         parsed.args,
         createRoleEnvironment(env, { role: "coder", home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV.coder.parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,
@@ -1417,11 +1434,12 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV.fixer.parse, parsed.args);
       const result = await runPublicFixer(
         parsed.args,
         createRoleEnvironment(env, { role: "fixer", home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV.fixer.parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,
@@ -1442,11 +1460,12 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV.collector.parse, parsed.args);
       const result = await runPublicCollector(
         parsed.args,
         createRoleEnvironment(env, { role: "collector", home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV.collector.parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,
@@ -1467,11 +1486,12 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV.reviewer.parse, parsed.args);
       const result = await runPublicReviewer(
         parsed.args,
         createRoleEnvironment(env, { role: "reviewer", home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV.reviewer.parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,
@@ -1492,11 +1512,12 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV.doctor.parse, parsed.args);
       const result = await runPublicDoctor(
         parsed.args,
         createRoleEnvironment(env, { role: "doctor", home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV.doctor.parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,
@@ -1517,11 +1538,12 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV.notary.parse, parsed.args);
       const result = await runPublicNotary(
         parsed.args,
         createRoleEnvironment(env, { role: "notary", home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV.notary.parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,
@@ -1541,11 +1563,12 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV.inspector.parse, parsed.args);
       const result = await runPublicInspector(
         parsed.args,
         createRoleEnvironment(env, { role: "inspector", home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV.inspector.parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,
@@ -1566,11 +1589,12 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV.merger.parse, parsed.args);
       const result = await runPublicMerger(
         parsed.args,
         createRoleEnvironment(env, { role: "merger", home, agentDir, cwd, credentials, seat, config }),
         io,
-        PUBLIC_ROLE_ARGV.merger.parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,
@@ -1595,12 +1619,13 @@ export async function runAkRole(
         credentials,
         invocationFromParsed(parsed),
       );
+      const parseOnce = parseRoleArgvBeforeEnv(PUBLIC_ROLE_ARGV[parsed.command].parse, parsed.args);
       const result = await runPublicInstructionSeat(
         parsed.args,
         createRoleEnvironment(env, { role: parsed.command, home, agentDir, cwd, credentials, seat, config }),
         io,
         parsed.command,
-        PUBLIC_ROLE_ARGV[parsed.command].parse,
+        parseOnce,
       );
       return {
         exitCode: result.exitCode,

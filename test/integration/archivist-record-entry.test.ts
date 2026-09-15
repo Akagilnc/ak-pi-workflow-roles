@@ -16,6 +16,7 @@ import {
 } from "../../src/activation-ledger-topology.ts";
 import { createRecordSession } from "../../src/archivist-record-entry.ts";
 import { createNativeNavigatorSessionFactory } from "../../src/navigator-public-session.ts";
+import { savePublicCliConfig } from "../../src/public-cli/config.ts";
 import {
   machineLedgerHome,
   seedGitRepository,
@@ -100,6 +101,11 @@ function sessionJsonl(id: string, cwd: string, route: string): string {
  */
 test("navigator factory durable nest: parent states, unicode cwd, wrong-cwd, no-match, io fail", async () => {
   await withHermeticHome({ prefix: "ak-archivist-navigator-subject-" }, async ({ home }) => {
+    // #178: caller seat model required — no package navigator default.
+    await savePublicCliConfig(
+      { seats: { navigator: { provider: "provider", model: "model" } } },
+      home,
+    );
     // Book key and calling cwd carry ordinary legal Unicode — external adopt contract,
     // not a chunk-boundary probe.
     const project = join(home, "proj-导航-α");

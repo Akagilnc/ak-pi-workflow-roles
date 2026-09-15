@@ -18,7 +18,6 @@ import {
 import type { HostContext } from "./host-contracts.ts";
 import { createNativeNavigatorSessionFactory } from "./navigator-public-session.ts";
 import {
-  NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NavigatorUnavailableError,
   navigatorModelSettingPath,
@@ -40,7 +39,6 @@ import {
 import { sitianReport } from "./sitian-facade.ts";
 
 export {
-  NAVIGATOR_DEFAULT_MODEL,
   NAVIGATOR_PREPARE_TOOL_NAME,
   NavigatorUnavailableError,
   navigatorModelSettingPath,
