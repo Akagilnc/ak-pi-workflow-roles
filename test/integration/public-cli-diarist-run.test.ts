@@ -184,6 +184,12 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   readonly peerOriginText: string;
   readonly humanOriginDirectId: string;
   readonly humanOriginDirectText: string;
+  readonly removeMachineEnqueueId: string;
+  readonly removeMachineText: string;
+  readonly staleFirstHumanId: string;
+  readonly staleFirstHumanText: string;
+  readonly staleSecondHumanId: string;
+  readonly staleSecondHumanText: string;
   readonly unparsableLine: number;
   readonly unparsableRaw: string;
   readonly lastLine: number;
@@ -213,6 +219,14 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const peerOriginText = "跨会话 peer 投递不得署 owner";
   const humanOriginDirectId = "msg-human-origin-direct";
   const humanOriginDirectText = "非队列真人 user（origin.kind=human）";
+  // #918 class-1 anti-examples: remove path + incomplete-queue (no global FIFO).
+  const removeMachineEnqueueId = "queue-remove-machine-1";
+  const removeMachineText =
+    "<task-notification>\n<task-id>rm-1</task-id>\n<summary>removed machine</summary>\n</task-notification>";
+  const staleFirstHumanId = "queue-stale-first-human";
+  const staleFirstHumanText = "first-human";
+  const staleSecondHumanId = "queue-stale-second-human";
+  const staleSecondHumanText = "second-human";
   const unparsableRaw = "{this is not json at all";
   const rows = [
     // 1. ordinary owner message — must survive alongside later enqueue events
@@ -496,6 +510,58 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: humanOriginDirectText }],
       },
     }),
+    // 32–34. live CC remove path: machine enqueue + queued_command.commandMode + remove
+    // must NOT become owner (#918; FIFO/dequeue-only pairing left this hole).
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      uuid: removeMachineEnqueueId,
+      content: removeMachineText,
+    }),
+    JSON.stringify({
+      type: "attachment",
+      uuid: "att-remove-machine-1",
+      attachment: {
+        type: "queued_command",
+        commandMode: "task-notification",
+        prompt: removeMachineText,
+        timestamp: "2026-09-04T04:25:29.167Z",
+      },
+    }),
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "remove",
+      content: removeMachineText,
+      reason: "absorbed_mid_turn",
+    }),
+    // 35–38. incomplete queue / stale slot must not let a machine mat suppress a human enqueue
+    // (#918 corr-2: global FIFO reverse-attributed origin.kind onto the wrong enqueue).
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      uuid: staleFirstHumanId,
+      content: staleFirstHumanText,
+    }),
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "enqueue",
+      uuid: staleSecondHumanId,
+      content: staleSecondHumanText,
+    }),
+    JSON.stringify({
+      type: "queue-operation",
+      operation: "dequeue",
+      uuid: "queue-deq-stale",
+    }),
+    JSON.stringify({
+      type: "user",
+      uuid: "msg-stale-machine-mat",
+      origin: { kind: "task-notification" },
+      message: {
+        role: "user",
+        content: "unrelated-machine-payload",
+      },
+    }),
   ];
   await mkdir(join(path, ".."), { recursive: true });
   await writeFile(path, `${rows.join("\n")}\n`, "utf8");
@@ -522,9 +588,16 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     peerOriginText,
     humanOriginDirectId,
     humanOriginDirectText,
+    removeMachineEnqueueId,
+    removeMachineText,
+    staleFirstHumanId,
+    staleFirstHumanText,
+    staleSecondHumanId,
+    staleSecondHumanText,
     unparsableLine: 21,
     unparsableRaw,
-    lastLine: 32,
+    // 31 prior rows + remove cluster (3) + stale cluster (4) = 38 physical lines.
+    lastLine: 38,
     rangeALine: 1,
     rangeBLine: 2,
   };
@@ -751,6 +824,28 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       byId.get(fixture.humanOriginDirectId)?.text,
       fixture.humanOriginDirectText,
     );
+    // #918 class-1: remove + commandMode=task-notification must not land as owner.
+    assert.equal(
+      volume.lines.some(
+        (line) =>
+          line.id === fixture.removeMachineEnqueueId ||
+          line.text === fixture.removeMachineText,
+      ),
+      false,
+      "removed machine queue item (commandMode=task-notification) must not be owner",
+    );
+    // #918 class-1: stale/incomplete queue must not erase an unconsumed human enqueue.
+    assert.equal(byId.get(fixture.staleFirstHumanId)?.text, fixture.staleFirstHumanText);
+    assert.equal(byId.get(fixture.staleSecondHumanId)?.text, fixture.staleSecondHumanText);
+    assert.equal(
+      volume.lines.some(
+        (line) =>
+          line.id === "msg-stale-machine-mat" ||
+          line.text === "unrelated-machine-payload",
+      ),
+      false,
+      "unrelated machine mat must not become owner or suppress humans by FIFO",
+    );
     assert.equal(byId.get(fixture.duplicateId)?.text, "首现正文");
     // Duplicate second occurrence must not produce a second line with that id.
     assert.equal(
@@ -966,6 +1061,7 @@ test("migrateBookTopology preserves legacy and prior bare under unbound when lat
 /**
  * #918 甲案：ranges 累计单调——本轮 sessions 与 prior 取并集；遗漏不删除。
  * 真实 ak-role diarist 入口；变异「仅本轮整卷覆写」时本案报红。
+ * 跨 session：第二轮换不同 path，header 序与 lines[].s 同时证明 s=0/s=1。
  */
 test("ak-role diarist cumulative ranges keep history and ignore omissions", async () => {
   await withTempHome(async (home) => {
@@ -973,18 +1069,42 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
-    const fixture = await writeDialogueSessionFixture(
-      join(home, ".claude", "projects", "probe", "session.jsonl"),
+    const fixtureA = await writeDialogueSessionFixture(
+      join(home, ".claude", "projects", "probe", "session-a.jsonl"),
+    );
+    // Second session path with distinct native ids (seenIds is cross-session).
+    // Written inline in this tracer — not a parallel fixture helper.
+    const sessionBPath = join(home, ".claude", "projects", "probe", "session-b.jsonl");
+    const sessionBOwnerId = "msg-session-b-owner";
+    const sessionBOwnerText = "第二会话的陛下发言";
+    await mkdir(join(sessionBPath, ".."), { recursive: true });
+    await writeFile(
+      sessionBPath,
+      `${JSON.stringify({
+        type: "user",
+        uuid: sessionBOwnerId,
+        message: {
+          role: "user",
+          content: [{ type: "text", text: sessionBOwnerText }],
+        },
+      })}\n`,
+      "utf8",
     );
     const paths = resolveTicketProvenanceVolume(TICKET, project, home);
 
     const rangeA = {
-      path: fixture.path,
-      ranges: [{ from: { line: fixture.rangeALine }, to: { line: fixture.rangeALine } }],
+      path: fixtureA.path,
+      ranges: [{ from: { line: fixtureA.rangeALine }, to: { line: fixtureA.rangeALine } }],
     };
+    // Same-path additive range (验收：同卷新增).
+    const rangeA2 = {
+      path: fixtureA.path,
+      ranges: [{ from: { line: fixtureA.rangeBLine }, to: { line: fixtureA.rangeBLine } }],
+    };
+    // Different path (验收：新 session 索引 s=1).
     const rangeB = {
-      path: fixture.path,
-      ranges: [{ from: { line: fixture.rangeBLine }, to: { line: fixture.rangeBLine } }],
+      path: sessionBPath,
+      ranges: [{ from: { line: 1 }, to: { line: 1 } }],
     };
 
     async function runDiarist(runId: string, sessions: unknown) {
@@ -1014,59 +1134,86 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       return readTicketProvenance(TICKET, project, home);
     }
 
-    // Round 1: record only A.
+    // Round 1: record only A on session-a.
     const afterA = await runDiarist("01a0diar00-0000-7000-8000-000000000091", [rangeA]);
     assert.equal(afterA.lines.length, 1);
-    assert.equal(afterA.lines[0]?.id, fixture.plainOwnerId);
-    assert.equal(afterA.lines[0]?.text, fixture.plainOwnerText);
+    assert.equal(afterA.lines[0]?.id, fixtureA.plainOwnerId);
+    assert.equal(afterA.lines[0]?.text, fixtureA.plainOwnerText);
+    assert.equal(afterA.lines[0]?.s, 0);
     assert.equal(afterA.header?.sessions.length, 1);
+    assert.equal(afterA.header?.sessions[0]?.path, fixtureA.path);
     assert.deepEqual(afterA.header?.sessions[0]?.ranges, rangeA.ranges);
 
-    // Round 2: submit only B — A must remain (验收 1 历史不减).
+    // Round 2: submit only a different session path — A remains; s=0/s=1 both coherent.
     const afterB = await runDiarist("01a0diar00-0000-7000-8000-000000000092", [rangeB]);
     const byIdB = new Map(
       afterB.lines.filter((line) => line.id !== undefined).map((line) => [line.id!, line]),
     );
-    assert.equal(byIdB.get(fixture.plainOwnerId)?.text, fixture.plainOwnerText, "A identity/text kept");
-    assert.equal(byIdB.get(fixture.ownerId)?.text, "立文件。送司天台记录。", "B added");
+    assert.equal(byIdB.get(fixtureA.plainOwnerId)?.text, fixtureA.plainOwnerText, "A identity/text kept");
+    assert.equal(byIdB.get(fixtureA.plainOwnerId)?.s, 0, "prior session keeps s=0");
+    assert.equal(byIdB.get(sessionBOwnerId)?.text, sessionBOwnerText, "B session line added");
+    assert.equal(byIdB.get(sessionBOwnerId)?.s, 1, "new session gets s=1");
     assert.equal(afterB.lines.length, 2);
-    // Header ranges are the union; same path, both range declarations present.
-    assert.equal(afterB.header?.sessions.length, 1);
-    assert.equal(afterB.header?.sessions[0]?.path, fixture.path);
-    assert.equal(afterB.header?.sessions[0]?.ranges.length, 2);
-    assert.deepEqual(afterB.header?.sessions[0]?.ranges[0], rangeA.ranges[0]);
-    assert.deepEqual(afterB.header?.sessions[0]?.ranges[1], rangeB.ranges[0]);
-    // s index stays coherent for both lines on the single merged session.
-    assert.equal(afterB.lines.every((line) => line.s === 0), true);
+    // Header: prior path first, new path second.
+    assert.equal(afterB.header?.sessions.length, 2);
+    assert.equal(afterB.header?.sessions[0]?.path, fixtureA.path);
+    assert.deepEqual(afterB.header?.sessions[0]?.ranges, rangeA.ranges);
+    assert.equal(afterB.header?.sessions[1]?.path, sessionBPath);
+    assert.deepEqual(afterB.header?.sessions[1]?.ranges, rangeB.ranges);
 
-    // Round 3: resubmit B only — idempotent (验收 2).
-    const afterIdem = await runDiarist("01a0diar00-0000-7000-8000-000000000093", [rangeB]);
-    assert.equal(afterIdem.lines.length, 2);
+    // Round 3: same-path additive range on session-a (同卷新增) — history kept, s stable.
+    const afterA2 = await runDiarist("01a0diar00-0000-7000-8000-000000000093", [rangeA2]);
+    const byIdA2 = new Map(
+      afterA2.lines.filter((line) => line.id !== undefined).map((line) => [line.id!, line]),
+    );
+    assert.equal(byIdA2.get(fixtureA.plainOwnerId)?.text, fixtureA.plainOwnerText);
+    assert.equal(byIdA2.get(fixtureA.plainOwnerId)?.s, 0);
+    assert.equal(byIdA2.get(fixtureA.ownerId)?.text, "立文件。送司天台记录。", "same-path B added");
+    assert.equal(byIdA2.get(fixtureA.ownerId)?.s, 0);
+    assert.equal(byIdA2.get(sessionBOwnerId)?.text, sessionBOwnerText);
+    assert.equal(byIdA2.get(sessionBOwnerId)?.s, 1);
+    assert.equal(afterA2.lines.length, 3);
+    assert.equal(afterA2.header?.sessions.length, 2);
+    assert.equal(afterA2.header?.sessions[0]?.ranges.length, 2);
+    assert.deepEqual(afterA2.header?.sessions[0]?.ranges[0], rangeA.ranges[0]);
+    assert.deepEqual(afterA2.header?.sessions[0]?.ranges[1], rangeA2.ranges[0]);
+
+    // Round 4: resubmit rangeB only — idempotent (验收 2).
+    const afterIdem = await runDiarist("01a0diar00-0000-7000-8000-000000000094", [rangeB]);
+    assert.equal(afterIdem.lines.length, 3);
     assert.equal(
-      afterIdem.lines.filter((line) => line.id === fixture.plainOwnerId).length,
+      afterIdem.lines.filter((line) => line.id === fixtureA.plainOwnerId).length,
       1,
     );
     assert.equal(
-      afterIdem.lines.filter((line) => line.id === fixture.ownerId).length,
+      afterIdem.lines.filter((line) => line.id === fixtureA.ownerId).length,
       1,
     );
+    assert.equal(
+      afterIdem.lines.filter((line) => line.id === sessionBOwnerId).length,
+      1,
+    );
+    assert.equal(afterIdem.header?.sessions.length, 2);
     assert.equal(afterIdem.header?.sessions[0]?.ranges.length, 2);
 
-    // Round 4: submit only A — B must remain (验收 3b 遗漏不删除).
-    const afterOmit = await runDiarist("01a0diar00-0000-7000-8000-000000000094", [rangeA]);
+    // Round 5: submit only rangeA — later ranges must remain (验收 3b 遗漏不删除).
+    const afterOmit = await runDiarist("01a0diar00-0000-7000-8000-000000000095", [rangeA]);
     const byIdOmit = new Map(
       afterOmit.lines.filter((line) => line.id !== undefined).map((line) => [line.id!, line]),
     );
-    assert.equal(byIdOmit.get(fixture.plainOwnerId)?.text, fixture.plainOwnerText);
-    assert.equal(byIdOmit.get(fixture.ownerId)?.text, "立文件。送司天台记录。", "omitted B stays");
-    assert.equal(afterOmit.lines.length, 2);
+    assert.equal(byIdOmit.get(fixtureA.plainOwnerId)?.text, fixtureA.plainOwnerText);
+    assert.equal(byIdOmit.get(fixtureA.ownerId)?.text, "立文件。送司天台记录。", "omitted same-path range stays");
+    assert.equal(byIdOmit.get(sessionBOwnerId)?.text, sessionBOwnerText, "omitted session stays");
+    assert.equal(byIdOmit.get(sessionBOwnerId)?.s, 1);
+    assert.equal(afterOmit.lines.length, 3);
+    assert.equal(afterOmit.header?.sessions.length, 2);
     assert.equal(afterOmit.header?.sessions[0]?.ranges.length, 2);
 
-    // Round 5: pure empty sessions still no-op (验收 3).
+    // Round 6: pure empty sessions still no-op (验收 3).
     const beforeEmpty = await readFile(paths.recordFile, "utf8");
-    const afterEmpty = await runDiarist("01a0diar00-0000-7000-8000-000000000095", []);
+    const afterEmpty = await runDiarist("01a0diar00-0000-7000-8000-000000000096", []);
     assert.equal(await readFile(paths.recordFile, "utf8"), beforeEmpty);
-    assert.equal(afterEmpty.lines.length, 2);
+    assert.equal(afterEmpty.lines.length, 3);
 
     // Failure honesty: unreadable session must not wash prior entries (验收 4).
     const priorBytes = await readFile(paths.recordFile, "utf8");
@@ -1080,7 +1227,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
         packageRoot,
         cwd: project,
         io,
-        createRunId: () => "01a0diar00-0000-7000-8000-000000000096",
+        createRunId: () => "01a0diar00-0000-7000-8000-000000000097",
         principalAuthority: immutablePrincipalAuthority,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
@@ -1120,11 +1267,16 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(sawUnreadableReask, true);
     assert.equal(readFileSync(paths.recordFile, "utf8"), priorBytes);
     const still = await readTicketProvenance(TICKET, project, home);
-    assert.equal(still.lines.length, 2, "prior A+B must survive failed partial projection");
+    assert.equal(still.lines.length, 3, "prior lines must survive failed partial projection");
     assert.equal(
-      still.lines.some((line) => line.id === fixture.ownerId),
+      still.lines.some((line) => line.id === fixtureA.ownerId),
       true,
       "must not wash old entries by omitting them after source failure",
+    );
+    assert.equal(
+      still.lines.some((line) => line.id === sessionBOwnerId && line.s === 1),
+      true,
+      "cross-session s=1 entry must survive",
     );
   });
 });
