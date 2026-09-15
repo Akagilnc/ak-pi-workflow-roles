@@ -103,6 +103,7 @@ import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import { clearReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
   attemptProducedFreshSubmission,
+  captureCallLocalSessionBoundary,
   classifyPostAdmissionFailure,
   controlledFailureInputFromResolution,
   exitCodeForTerminalOutcome,
@@ -250,7 +251,28 @@ export type PostAdmissionEnv = {
   freshSummons?: true;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
+  /**
+   * Parent session entry count at this public-call start (#858).
+   * Set once by the shared post-admission entry; reused across in-place
+   * auto-resume. Call-local only — never prompt, disk, or state machine.
+   */
+  callLocalSessionBoundary?: number;
 };
+
+/** Bind call-local session boundary once per public call when absent. */
+async function withCallLocalSessionBoundary(
+  env: PostAdmissionEnv,
+  admitted: { readonly principal?: DurablePrincipal },
+): Promise<PostAdmissionEnv> {
+  if (env.callLocalSessionBoundary !== undefined) return env;
+  return {
+    ...env,
+    callLocalSessionBoundary: await captureCallLocalSessionBoundary(
+      env.principalAuthority,
+      admitted.principal,
+    ),
+  };
+}
 
 /**
  * Role-specific settlement hooks and failure resolvers.
@@ -917,6 +939,9 @@ export async function dispatchPostAdmissionTurn<
         sessionFile,
         credential: credentialFailure,
         runDirectory: admitted.runDirectory,
+        ...(env.callLocalSessionBoundary === undefined
+          ? {}
+          : { callLocalSessionBoundary: env.callLocalSessionBoundary }),
       });
       // A direct, current signal from the host/runner itself (timeout / host
       // knownFailure / runner knownFailure / missing credential) is a real
@@ -1485,8 +1510,10 @@ export async function runPostAdmissionSeatResume<
   // Court recovery / open under lease, then dispatch.
   // Station-child same-ticket/same-parent resume is call-local auto-resume
   // (#840 / #416). Public `ak-role resume` stays one-shot (ADR 0080).
+  // #858: one call-local session boundary for this public entry (station or manual).
+  const callEnv = await withCallLocalSessionBoundary(input.env, loaded.admitted);
   try {
-    if (input.env.stationChild === true) {
+    if (callEnv.stationChild === true) {
       let firstTurn: RoleTurnRequest | undefined;
       const stationAdapters = withOnceSuccessfulBeforeDispatch(adapters);
       type StationChildAttempt = { readonly resumeTurn: boolean };
@@ -1498,14 +1525,14 @@ export async function runPostAdmissionSeatResume<
       });
       return await runWithAutoResumeLoop({
         admitted: loaded.admitted,
-        principalAuthority: input.env.principalAuthority,
+        principalAuthority: callEnv.principalAuthority,
         isPrincipalAvailable: resolveHostAwareSessionAvailability(
-          input.env.host,
-          input.env.principalAuthority,
+          callEnv.host,
+          callEnv.principalAuthority,
         ),
         io: input.io,
-        sessionAppender: input.env.sessionAppender,
-        autoResumeLimit: input.env.autoResumeLimit,
+        sessionAppender: callEnv.sessionAppender,
+        autoResumeLimit: callEnv.autoResumeLimit,
         buildInitialPayload: (): StationChildAttempt => ({ resumeTurn: false }),
         buildResumePayload: (): StationChildAttempt => ({ resumeTurn: true }),
         // Same as public manual resume: prior-court sealed acceptance is not a
@@ -1544,7 +1571,7 @@ export async function runPostAdmissionSeatResume<
               const result = await dispatchPostAdmissionTurn({
                 admitted: loaded.admitted,
                 env: {
-                  ...input.env,
+                  ...callEnv,
                   ...(loaded.admitted.correlationId === undefined
                     ? {}
                     : { correlationId: loaded.admitted.correlationId }),
@@ -1571,7 +1598,7 @@ export async function runPostAdmissionSeatResume<
     }
     return await runPostAdmissionManualResume({
       admitted: loaded.admitted,
-      env: input.env,
+      env: callEnv,
       io: input.io,
       adapters,
       ...(input.effectiveEngine === undefined
@@ -1654,7 +1681,8 @@ export async function runPostAdmissionResumable<
   admitted?: A;
   terminal?: T;
 }> {
-  const { admitted, env, io, buildInitialRequest, buildResumeRequest, effectiveEngine } = input;
+  const { admitted, io, buildInitialRequest, buildResumeRequest, effectiveEngine } = input;
+  const env = await withCallLocalSessionBoundary(input.env, admitted);
   const adapters = withOnceSuccessfulBeforeDispatch(input.adapters);
 
   // One public call → one detour scope across in-place auto-resume dispatches.
@@ -1723,12 +1751,12 @@ export async function runPostAdmissionManualResume<
 }> {
   const {
     admitted,
-    env,
     io,
     adapters,
     effectiveEngine,
     buildRequestAfterLease,
   } = input;
+  const env = await withCallLocalSessionBoundary(input.env, admitted);
   let request = input.request;
   // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
   const effectiveModel = env.model;

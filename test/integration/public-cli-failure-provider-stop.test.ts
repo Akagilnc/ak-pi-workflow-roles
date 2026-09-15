@@ -17,7 +17,7 @@ import { knownFailureFromProviderStop } from "../../src/pi/known-failure.ts";
 import { readReviewerDispatchRejection } from "../../src/public-cli/reviewer-dispatch-rejection.ts";
 
 import { classifyPostAdmissionFailure, extractSessionProviderStop, readBoundAuditorKnownFailure, readBoundEvidenceChildKnownFailure, readSessionProviderStop, resolveAuditedRunnerKnownFailure, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
-import { readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
+import { buildResumeContinuationPrompt, readLatestTypedProviderHttpObservation } from "../../src/public-cli/run-lifecycle.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import {
   packageRoot,
@@ -373,24 +373,23 @@ test("retained auditor failure is bound to the latest parent resume attempt", as
     assert.equal(await readBoundAuditorKnownFailure(sessionFile), undefined);
   });
 });
-// #600 / #840 / #858: settlement skips only the package transport token
-// (station-child auto-resume / historical). Empty prompt and engine-handbook
-// prose are real court turns — never resume identity via first-line or prose sniff.
-test("transport-token resume keeps first-attempt auditor retention bound", async () => {
+// #858: call-local session boundary (not prompt bytes) owns auditor retention.
+// Same public call + ordinary one-shot resume builder keeps first-attempt failure;
+// next independent call re-captures boundary and stales it. No token/prose sniff.
+test("call-local boundary keeps ordinary auto-resume auditor retention; next call stales", async () => {
   await withTempHome(async (home) => {
     const sessionDir = join(home, "session");
     const sessionFile = join(sessionDir, "parent.jsonl");
     const childDir = join(sessionDir, "auditor-roles");
     await mkdir(childDir, { recursive: true });
 
-    const shapes: ReadonlyArray<{ label: string; message: Record<string, unknown> }> = [
-      { label: "content-string", message: { role: "user", content: "[ak-role:resume-continue]" } },
-      { label: "text-string", message: { role: "user", text: "[ak-role:resume-continue]" } },
-      {
-        label: "content-array",
-        message: { role: "user", content: [{ type: "text", text: "[ak-role:resume-continue]" }] },
-      },
-    ];
+    // Production ordinary one-shot auto-resume bytes (runPostAdmissionOneShot builder).
+    const ordinaryResumePrompt = buildResumeContinuationPrompt({ packageRoot });
+    assert.notEqual(
+      ordinaryResumePrompt.split("\n")[0],
+      "[ak-role:resume-continue]",
+      "ordinary builder must not collapse to station-child transport token",
+    );
 
     const expected = {
       cause: "provider" as const,
@@ -406,170 +405,139 @@ test("transport-token resume keeps first-attempt auditor retention bound", async
       },
     };
 
-    for (const shape of shapes) {
-      await writeFile(sessionFile, [
-        { type: "session", id: "parent-session" },
-        { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
-        {
-          type: "message",
-          id: "attempt-first",
-          message: {
-            role: "assistant",
-            stopReason: "error",
-            errorMessage: "This operation was aborted",
-            provider: "openai-codex",
-            model: "faux-1",
+    const callStartEntries = [
+      { type: "session", id: "parent-session" },
+    ];
+    const sameCallEntries = [
+      ...callStartEntries,
+      { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
+      {
+        type: "message",
+        id: "attempt-first",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "This operation was aborted",
+          provider: "openai-codex",
+          model: "faux-1",
+        },
+      },
+      {
+        type: "message",
+        id: "resume-ordinary",
+        message: { role: "user", content: ordinaryResumePrompt },
+      },
+      {
+        type: "message",
+        id: "attempt-retry",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "retry without retention",
+          provider: "openai-codex",
+          model: "faux-1",
+        },
+      },
+    ];
+    await writeFile(
+      sessionFile,
+      sameCallEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+    );
+    await writeFile(join(childDir, "child.jsonl"), [
+      { type: "session", id: "child-session", parentSession: sessionFile },
+      {
+        type: "custom",
+        customType: "ak_auditor_parent_attempt_binding",
+        data: {
+          version: 1,
+          parent: {
+            sessionId: "parent-session",
+            sessionFile,
+            attemptEntryId: "attempt-first",
           },
         },
-        { type: "message", id: `resume-${shape.label}`, message: shape.message },
-        {
-          type: "message",
-          id: "attempt-retry",
-          message: {
-            role: "assistant",
-            stopReason: "error",
-            errorMessage: "retry without retention",
-            provider: "openai-codex",
-            model: "faux-1",
-          },
+      },
+      {
+        type: "message",
+        message: {
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "WebSocket error",
+          provider: "openai-codex",
+          model: "faux-1",
         },
-      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-      await writeFile(join(childDir, "child.jsonl"), [
-        { type: "session", id: "child-session", parentSession: sessionFile },
-        {
-          type: "custom",
-          customType: "ak_auditor_parent_attempt_binding",
-          data: {
-            version: 1,
-            parent: {
-              sessionId: "parent-session",
-              sessionFile,
-              attemptEntryId: "attempt-first",
-            },
+      },
+      {
+        type: "custom",
+        customType: "ak_auditor_compliance_failure",
+        data: {
+          parent: {
+            sessionId: "parent-session",
+            sessionFile,
+            attemptEntryId: "attempt-first",
           },
-        },
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            stopReason: "error",
-            errorMessage: "WebSocket error",
-            provider: "openai-codex",
-            model: "faux-1",
-          },
-        },
-        {
-          type: "custom",
-          customType: "ak_auditor_compliance_failure",
-          data: {
-            parent: {
-              sessionId: "parent-session",
-              sessionFile,
-              attemptEntryId: "attempt-first",
-            },
-            failure: {
-              cause: "provider",
-              diagnostic: "WebSocket error",
-              identity: { name: "faux-1", code: "openai-codex" },
-              details: {
-                provider: "openai-codex",
-                model: "faux-1",
-                retentionFailure: {
-                  name: "ComplianceResponseRetentionError",
-                  cause: { code: "EISDIR" },
-                },
+          failure: {
+            cause: "provider",
+            diagnostic: "WebSocket error",
+            identity: { name: "faux-1", code: "openai-codex" },
+            details: {
+              provider: "openai-codex",
+              model: "faux-1",
+              retentionFailure: {
+                name: "ComplianceResponseRetentionError",
+                cause: { code: "EISDIR" },
               },
             },
           },
         },
-      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+      },
+    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
 
-      const known = await readBoundAuditorKnownFailure(sessionFile);
-      assert.deepEqual(
-        known,
-        expected,
-        `${shape.label}: transport-token resume must not stale first-attempt auditor retention`,
-      );
-    }
+    // Same public call: boundary = entry count at call start (header only).
+    assert.deepEqual(
+      await readBoundAuditorKnownFailure(sessionFile, {
+        callLocalSessionBoundary: callStartEntries.length,
+      }),
+      expected,
+      "same-call ordinary auto-resume must retain first-attempt auditor failure",
+    );
 
-    // Real courts must advance latestParentUserIndex and stale prior auditors:
-    // empty prompt, and content-array with normal text first + token-shaped later part.
-    const realCourtShapes: ReadonlyArray<{ label: string; message: Record<string, unknown> }> = [
-      { label: "empty-prompt", message: { role: "user", content: "" } },
+    // Without call-local scope, latest user (resume handbook) would stale — proves
+    // retention is owned by the boundary, not by prompt wording.
+    assert.equal(
+      await readBoundAuditorKnownFailure(sessionFile),
+      undefined,
+      "absent call-local boundary must not invent resume identity from prompt bytes",
+    );
+
+    // Next independent public call: re-capture boundary at end of prior call.
+    const nextCallBoundary = sameCallEntries.length;
+    const nextCallEntries = [
+      ...sameCallEntries,
+      { type: "message", id: "user-next-call", message: { role: "user", content: "new court" } },
       {
-        label: "normal-then-token-part",
+        type: "message",
+        id: "attempt-next",
         message: {
-          role: "user",
-          content: [
-            { type: "text", text: "same-ticket reask" },
-            { type: "text", text: "[ak-role:resume-continue]" },
-          ],
+          role: "assistant",
+          stopReason: "error",
+          errorMessage: "next call failure",
+          provider: "openai-codex",
+          model: "faux-1",
         },
       },
     ];
-    for (const shape of realCourtShapes) {
-      await writeFile(sessionFile, [
-        { type: "session", id: "parent-session" },
-        { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
-        {
-          type: "message",
-          id: "attempt-first",
-          message: {
-            role: "assistant",
-            stopReason: "error",
-            errorMessage: "first failure",
-            provider: "openai-codex",
-            model: "faux-1",
-          },
-        },
-        { type: "message", id: `user-${shape.label}`, message: shape.message },
-        {
-          type: "message",
-          id: "attempt-second",
-          message: {
-            role: "assistant",
-            stopReason: "error",
-            errorMessage: "second failure",
-            provider: "openai-codex",
-            model: "faux-1",
-          },
-        },
-      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-      await writeFile(join(childDir, "child.jsonl"), [
-        { type: "session", id: "child-session", parentSession: sessionFile },
-        {
-          type: "custom",
-          customType: "ak_auditor_parent_attempt_binding",
-          data: {
-            version: 1,
-            parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-first" },
-          },
-        },
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            stopReason: "error",
-            errorMessage: "stale prior",
-            provider: "openai-codex",
-            model: "faux-1",
-          },
-        },
-        {
-          type: "custom",
-          customType: "ak_auditor_compliance_failure",
-          data: {
-            parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-first" },
-            failure: { cause: "provider", diagnostic: "stale prior court" },
-          },
-        },
-      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-      assert.equal(
-        await readBoundAuditorKnownFailure(sessionFile),
-        undefined,
-        `${shape.label}: real court must stale prior auditor retention`,
-      );
-    }
+    await writeFile(
+      sessionFile,
+      nextCallEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n",
+    );
+    assert.equal(
+      await readBoundAuditorKnownFailure(sessionFile, {
+        callLocalSessionBoundary: nextCallBoundary,
+      }),
+      undefined,
+      "next independent call must stale prior-call auditor retention",
+    );
   });
 });
 test("bound auditor assistant supplies primary when secondary enrichment is absent", async () => {
