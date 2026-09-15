@@ -2,19 +2,21 @@
  * #922 host-native forced-method delivery.
  * claude/grok → --plugin-dir (dist/method-host-plugin, build-only materialize);
  * codex/hermes → cwd `.agents/skills` → resources/methods (envelope-owned).
+ *
+ * Workspace catalog lifecycle is intentionally minimal: create only when absent,
+ * never touch foreign catalogs, delete only links this process created, and
+ * refcount overlapping holds inside this process. No lockfile/ref file (ABA and
+ * complexity cost exceeded value for this short-lived symlink).
  */
-import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import {
-  access, lstat, mkdir, readFile, readlink, realpath, readdir, rename, rm, symlink, unlink, writeFile,
+  access, lstat, mkdir, readFile, readlink, realpath, readdir, rm, symlink, unlink,
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { MethodBinding } from "./host-contracts.ts";
 
 export type HostMethodSkill = Readonly<{ name: string; dir: string; path: string }>;
 export const HOST_METHOD_PLUGIN_NAME = "ak-methods" as const;
-export const WORKSPACE_AGENTS_SKILLS_REF = ".ak-roles-method-skills-ref";
-const WORKSPACE_AGENTS_SKILLS_LOCK = ".ak-roles-method-skills-lock";
 
 export const packagedMethodsDir = (packageRoot: string) => join(packageRoot, "resources", "methods");
 export const packagedMethodPluginDir = (packageRoot: string) => join(packageRoot, "dist", "method-host-plugin");
@@ -66,16 +68,6 @@ const sameReal = async (a: string, b: string) => {
   catch { return resolve(a) === resolve(b); }
 };
 
-const pidAlive = (pid: number): boolean => {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
-
 /** Build/prepack is the sole writer of dist/method-host-plugin. */
 export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<string> {
   const outDir = packagedMethodPluginDir(packageRoot);
@@ -92,7 +84,8 @@ export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<s
 
 export type WorkspaceAgentsSkillsLink = Readonly<{
   path: string;
-  held: boolean;
+  /** True when this process created the link (may delete on last release). */
+  created: boolean;
   release(): Promise<void>;
 }>;
 
@@ -101,153 +94,17 @@ const conflict = (path: string, detail: string) => new Error(
   "ak-role only creates `.agents/skills` when absent; never overwrites an existing catalog (#922).",
 );
 
-/** holder id = `${pid}:${uuid}` so same-process overlapping installs stay distinct. */
-type SkillsRef = { readonly target: string; readonly holders: readonly string[] };
-
-async function readRef(refPath: string): Promise<SkillsRef | undefined> {
-  try {
-    const raw = JSON.parse(await readFile(refPath, "utf8")) as { target?: unknown; holders?: unknown; pids?: unknown };
-    if (typeof raw.target !== "string") return undefined;
-    // Accept legacy `{pids:number[]}` from earlier bounce shape and map to holder ids.
-    if (Array.isArray(raw.holders)) {
-      const holders = raw.holders.filter((h): h is string => typeof h === "string" && h.includes(":"));
-      return { target: raw.target, holders };
-    }
-    if (Array.isArray(raw.pids)) {
-      const holders = raw.pids
-        .filter((p): p is number => Number.isInteger(p) && (p as number) > 0)
-        .map((p) => `${p}:legacy`);
-      return { target: raw.target, holders };
-    }
-    return undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-async function writeRef(refPath: string, value: SkillsRef): Promise<void> {
-  const tmp = `${refPath}.${process.pid}.${Date.now()}.tmp`;
-  await writeFile(tmp, `${JSON.stringify({ target: value.target, holders: value.holders })}\n`, "utf8");
-  await rename(tmp, refPath);
-}
-
-function holderPid(holder: string): number {
-  return Number(holder.slice(0, holder.indexOf(":")));
-}
-
-function pruneHolders(holders: readonly string[]): string[] {
-  return holders.filter((h) => pidAlive(holderPid(h)));
-}
-
-/** Test-only hooks for deterministic mutual-exclusion / busy sequencing. */
-export type AgentsSkillsLockHooks = Readonly<{
-  onEnter?: () => void;
-  onLeave?: () => void;
-  /** After seeing a live foreign lock, before backoff sleep. */
-  afterBusy?: (content: string) => Promise<void>;
-}>;
-
-let agentsSkillsLockHooks: AgentsSkillsLockHooks | undefined;
-
-/** Test-only. Production never sets hooks. */
-export function setAgentsSkillsLockHooksForTest(hooks: AgentsSkillsLockHooks | undefined): void {
-  agentsSkillsLockHooks = hooks;
-}
-
-function parseLockPayload(text: string): { readonly pid: number; readonly token: string } | undefined {
-  const [pidLine, tokenLine] = text.split(/\r?\n/);
-  const pid = Number(pidLine);
-  if (!Number.isInteger(pid) || pid <= 0 || typeof tokenLine !== "string" || tokenLine === "") return undefined;
-  return { pid, token: tokenLine };
-}
-
-/** Per-path in-process chain — serializes overlapping installs/releases in one process. */
-const processLockChains = new Map<string, Promise<unknown>>();
-
-async function withProcessChain<T>(key: string, body: () => Promise<T>): Promise<T> {
-  const prev = processLockChains.get(key) ?? Promise.resolve();
-  let release!: () => void;
-  const hold = new Promise<void>((r) => {
-    release = r;
-  });
-  processLockChains.set(
-    key,
-    prev.then(
-      () => hold,
-      () => hold,
-    ),
-  );
-  await prev.catch(() => undefined);
-  try {
-    return await body();
-  } finally {
-    release();
-  }
-}
-
-/**
- * In-process mutex + cross-process advisory file (pid+token).
- * Release deletes the file only when contents still equal this holder's payload (no ABA delete).
- * Dead-owner lock is **not** auto-stolen (pathname steal is ABA-unsafe); fails loud with rm path.
- */
-export async function withAgentsSkillsLock<T>(lockPath: string, body: () => Promise<T>): Promise<T> {
-  return withProcessChain(lockPath, async () => {
-    const deadline = Date.now() + 5_000;
-    const token = randomUUID();
-    const payload = `${process.pid}\n${token}\n`;
-    for (;;) {
-      try {
-        await writeFile(lockPath, payload, { flag: "wx" });
-        agentsSkillsLockHooks?.onEnter?.();
-        try {
-          return await body();
-        } finally {
-          agentsSkillsLockHooks?.onLeave?.();
-          try {
-            if ((await readFile(lockPath, "utf8")) === payload) await unlink(lockPath);
-          } catch {
-            // not ours or already gone
-          }
-        }
-      } catch (e) {
-        if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-        let text = "";
-        try {
-          text = await readFile(lockPath, "utf8");
-        } catch {
-          continue; // disappeared — retry create
-        }
-        const parsed = parseLockPayload(text);
-        if (parsed !== undefined && !pidAlive(parsed.pid)) {
-          throw new Error(
-            `stale workspace agents skills lock at ${lockPath} (dead pid ${parsed.pid}); ` +
-              "remove that file and retry — ak-role does not auto-steal pathname locks (#922).",
-          );
-        }
-        await agentsSkillsLockHooks?.afterBusy?.(text);
-        if (Date.now() > deadline) {
-          throw new Error(`workspace agents skills lock busy: ${lockPath}`);
-        }
-        await new Promise((r) => setTimeout(r, 5 + Math.floor(Math.random() * 15)));
-      }
-    }
-  });
-}
-
-async function linkIsOurTarget(linkPath: string, target: string): Promise<boolean> {
-  try {
-    const st = await lstat(linkPath);
-    if (!st.isSymbolicLink()) return false;
-    return sameReal(linkPath, target);
-  } catch {
-    return false;
-  }
-}
+/** linkPath → hold count for links this process created. */
+const createdHolds = new Map<string, number>();
+/** linkPath → whether this process created the agents parent dir. */
+const createdAgentsDirs = new Set<string>();
 
 /**
  * Envelope-owned cwd `.agents/skills` → packaged methods.
- * All observe/create/refcount transitions run under one lock. Holders are live pids
- * (dead pids pruned). Foreign same-target links (no live our-ref) are never removed.
+ * - Missing → create symlink; this process owns cleanup.
+ * - Pre-existing same-target → use, never own/delete (operator or other process).
+ * - Pre-existing other → conflict.
+ * - Overlapping holds in this process share a refcount; last release deletes only if we created it.
  */
 export async function installWorkspaceAgentsSkillsLink(options: {
   readonly cwd: string; readonly packageRoot: string;
@@ -255,83 +112,65 @@ export async function installWorkspaceAgentsSkillsLink(options: {
   const target = await realpath(packagedMethodsDir(options.packageRoot));
   const linkPath = join(options.cwd, ".agents", "skills");
   const agentsDir = dirname(linkPath);
-  const refPath = join(agentsDir, WORKSPACE_AGENTS_SKILLS_REF);
-  const lockPath = join(agentsDir, WORKSPACE_AGENTS_SKILLS_LOCK);
-  const holderId = `${process.pid}:${randomUUID()}`;
-  let held = false;
 
   const release = async (): Promise<void> => {
-    if (!held) return;
-    held = false;
-    if (!(await exists(agentsDir))) return;
-    await withAgentsSkillsLock(lockPath, async () => {
-      const cur = await readRef(refPath);
-      if (cur === undefined || cur.target !== target) return;
-      const left = pruneHolders(cur.holders).filter((h) => h !== holderId);
-      if (left.length > 0) {
-        await writeRef(refPath, { target, holders: left });
-        return;
-      }
-      if (await linkIsOurTarget(linkPath, target)) await unlink(linkPath);
-      await unlink(refPath).catch(() => undefined);
-    });
+    const n = createdHolds.get(linkPath);
+    if (n === undefined) return;
+    if (n > 1) {
+      createdHolds.set(linkPath, n - 1);
+      return;
+    }
+    createdHolds.delete(linkPath);
+    try {
+      const st = await lstat(linkPath);
+      if (st.isSymbolicLink() && (await sameReal(linkPath, target))) await unlink(linkPath);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+    }
+    if (!createdAgentsDirs.has(agentsDir)) return;
+    createdAgentsDirs.delete(agentsDir);
     try {
       if ((await readdir(agentsDir)).length === 0) await rm(agentsDir, { force: true });
     } catch { /* best-effort */ }
   };
 
-  if (!(await exists(agentsDir))) await mkdir(agentsDir, { recursive: true });
-
-  await withAgentsSkillsLock(lockPath, async () => {
-    // Single critical section: classify → hold or create. Never return success without a live catalog.
-    try {
-      const st = await lstat(linkPath);
-      if (!st.isSymbolicLink()) {
-        throw conflict(linkPath, st.isDirectory() ? "pre-existing directory" : "pre-existing non-symlink");
-      }
-      if (!(await sameReal(linkPath, target))) {
-        throw conflict(linkPath, `pre-existing symlink → ${await readlink(linkPath).catch(() => "?")}`);
-      }
-      const cur = await readRef(refPath);
-      const live = cur?.target === target ? pruneHolders(cur.holders) : [];
-      if (live.length === 0 && (cur === undefined || cur.target !== target)) {
-        // Same-target link without a live package-owned ref → foreign; leave untouched.
-        held = false;
-        return;
-      }
-      await writeRef(refPath, { target, holders: [...live, holderId] });
-      if (!(await linkIsOurTarget(linkPath, target))) {
-        await writeRef(refPath, { target, holders: live }).catch(() => unlink(refPath).catch(() => undefined));
-        throw new Error(`workspace method catalog disappeared under lock at ${linkPath}`);
-      }
-      held = true;
-      return;
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
+  try {
+    const st = await lstat(linkPath);
+    if (!st.isSymbolicLink()) {
+      throw conflict(linkPath, st.isDirectory() ? "pre-existing directory" : "pre-existing non-symlink");
     }
-
-    // Missing link — create symlink then ref; roll back link if ref write fails.
-    await symlink(target, linkPath);
-    try {
-      await writeRef(refPath, { target, holders: [holderId] });
-    } catch (e) {
-      await unlink(linkPath).catch(() => undefined);
-      throw e;
+    if (!(await sameReal(linkPath, target))) {
+      throw conflict(linkPath, `pre-existing symlink → ${await readlink(linkPath).catch(() => "?")}`);
     }
-    if (!(await linkIsOurTarget(linkPath, target))) {
-      await unlink(linkPath).catch(() => undefined);
-      await unlink(refPath).catch(() => undefined);
-      throw new Error(`workspace method catalog missing after create at ${linkPath}`);
+    // Foreign or other-process same-target: observe only.
+    if (!createdHolds.has(linkPath)) {
+      return Object.freeze({ path: linkPath, created: false, release: async () => undefined });
     }
-    held = true;
-  });
-
-  if (held) return Object.freeze({ path: linkPath, held: true, release });
-  // Foreign path: verify catalog still there for the caller.
-  if (!(await linkIsOurTarget(linkPath, target))) {
-    throw new Error(`workspace method catalog unavailable at ${linkPath}`);
+    createdHolds.set(linkPath, (createdHolds.get(linkPath) ?? 0) + 1);
+    return Object.freeze({ path: linkPath, created: true, release });
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
   }
-  return Object.freeze({ path: linkPath, held: false, release: async () => undefined });
+
+  if (!(await exists(agentsDir))) {
+    await mkdir(agentsDir, { recursive: true });
+    createdAgentsDirs.add(agentsDir);
+  }
+  try {
+    await symlink(target, linkPath);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") {
+      // Lost create race: re-enter classify path once.
+      return installWorkspaceAgentsSkillsLink(options);
+    }
+    if (createdAgentsDirs.has(agentsDir)) {
+      createdAgentsDirs.delete(agentsDir);
+      await rm(agentsDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+    throw e;
+  }
+  createdHolds.set(linkPath, 1);
+  return Object.freeze({ path: linkPath, created: true, release });
 }
 
 export async function findGitProjectRoot(start: string): Promise<string | undefined> {
