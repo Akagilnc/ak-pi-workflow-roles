@@ -179,6 +179,10 @@ export type AdmittedDiaristInvocation = AdmittedRoleInvocationBase & {
   readonly role: "diarist";
 };
 
+export type AdmittedSecretariatInvocation = AdmittedRoleInvocationBase & {
+  readonly role: "secretariat";
+};
+
 export type CoderPhase = "plan" | "apply";
 
 export type AdmittedCoderInvocation = AdmittedRoleInvocationBase & {
@@ -266,6 +270,7 @@ export type AdmittedRoleInvocation =
   | AdmittedNavigatorInvocation
   | AdmittedAuditorInvocation
   | AdmittedDiaristInvocation
+  | AdmittedSecretariatInvocation
   | AdmittedCoderInvocation
   | AdmittedFixerInvocation
   | AdmittedCollectorInvocation
@@ -769,7 +774,7 @@ export function parsePositiveTicketNumber(
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
   args: readonly string[],
-  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist",
+  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat",
 ): ParseInstructionArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
@@ -1033,6 +1038,12 @@ export function parseDiaristArgv(args: readonly string[]): ParseDiaristArgvResul
   return parseInstructionArgv(args, "diarist");
 }
 
+export type ParseSecretariatArgvResult = ParseInstructionArgvResult;
+
+export function parseSecretariatArgv(args: readonly string[]): ParseSecretariatArgvResult {
+  return parseInstructionArgv(args, "secretariat");
+}
+
 /**
  * Parse Coder-specific argv after the `coder` token.
  * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.coder (#342).
@@ -1241,6 +1252,7 @@ export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
 export type AdmitGatekeeperInvocationOptions = AdmitInspectorInvocationOptions;
 export type AdmitNavigatorInvocationOptions = AdmitInspectorInvocationOptions;
 export type AdmitDiaristInvocationOptions = AdmitInspectorInvocationOptions;
+export type AdmitSecretariatInvocationOptions = AdmitInspectorInvocationOptions;
 
 /**
  * Shared instruction-seat admission for Judge and Inspector: project check,
@@ -1249,7 +1261,7 @@ export type AdmitDiaristInvocationOptions = AdmitInspectorInvocationOptions;
  * Ticket binding is post-admission via shared seat LLM path (#635).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat",
 >(
   role: R,
   options: AdmitInspectorInvocationOptions,
@@ -1393,6 +1405,13 @@ export async function admitDiaristInvocation(
   return admitStandardMaterialInvocation("diarist", options);
 }
 
+/** Admit a public Secretariat (中书省) run (#924). */
+export async function admitSecretariatInvocation(
+  options: AdmitSecretariatInvocationOptions,
+): Promise<AdmittedSecretariatInvocation> {
+  return admitStandardMaterialInvocation("secretariat", options);
+}
+
 /** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */
 export function buildInstructionTransportPrompt(
   admitted: { instruction: string; instructionEmpty: boolean; attachments: readonly { frozenPath: string }[] },
@@ -1412,6 +1431,13 @@ export function buildInstructionTransportPrompt(
 /** Build the Pi prompt transport for an admitted Judge request. */
 export function buildJudgeTransportPrompt(
   admitted: AdmittedJudgeInvocation,
+  engineMaterial?: EngineSessionMaterial,
+): string {
+  return buildInstructionTransportPrompt(admitted, engineMaterial);
+}
+
+export function buildSecretariatTransportPrompt(
+  admitted: AdmittedSecretariatInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
   return buildInstructionTransportPrompt(admitted, engineMaterial);

@@ -84,6 +84,7 @@ import {
   DIARIST_TOOL_SPEC,
   type DiaristRuntimeDependencies,
 } from "./diarist-role.ts";
+import { createSecretariatRoleRuntime } from "./secretariat-role.ts";
 import {
   DIARIST_ACCEPTED_TEXT,
   projectDiaristAmendments,
@@ -459,6 +460,7 @@ type ActivationRuntime = {
   navigator: { activate(): Promise<void> };
   auditor: { activate(): Promise<void> };
   diarist: { activate(): Promise<void> };
+  secretariat: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
 
@@ -488,6 +490,7 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "navigator": return { id: "load-and-install", run: async () => runtime.navigator.activate() };
     case "auditor": return { id: "load-and-install", run: async () => runtime.auditor.activate() };
     case "diarist": return { id: "load-and-install", run: async () => runtime.diarist.activate() };
+    case "secretariat": return { id: "load-and-install", run: async () => runtime.secretariat.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
 }
@@ -599,6 +602,7 @@ export type RoleRuntimeDependencies = {
   loadNavigatorSoul?(): Promise<string>;
   loadAuditorSoul?(): Promise<string>;
   loadDiaristSoul?(): Promise<string>;
+  loadSecretariatSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -1694,6 +1698,15 @@ export function createRoleRuntimeExtension(
         },
       },
     );
+    const secretariat = createSecretariatRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadSecretariatSoul) throw new Error("Secretariat runtime dependencies are not configured");
+        return dependencies.loadSecretariatSoul();
+      },
+      ...(dependencies.packageRoot === undefined
+        ? {}
+        : { packageRoot: dependencies.packageRoot }),
+    });
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
       async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
@@ -1985,6 +1998,7 @@ export function createRoleRuntimeExtension(
         navigator,
         auditor,
         diarist,
+        secretariat,
         merger: async () => {
           await merger.activate();
         },

@@ -370,6 +370,7 @@ test("advice command derives phase token from registry metadata for every packag
         { role: "merger", outputTool: MERGER_OUTPUT_TOOL_NAME },
         { role: "notary", outputTool: NOTARY_OUTPUT_TOOL_NAME },
         { role: "countersign", outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME },
+        { role: "secretariat", outputTool: "ak_secretariat_output" },
         { role: "gleaner-left", outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME },
         { role: "inspector", outputTool: INSPECTOR_OUTPUT_TOOL_NAME },
         { role: "gatekeeper", outputTool: "ak_gatekeeper_output" },

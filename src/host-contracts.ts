@@ -134,7 +134,8 @@ export type RoleTurnActivation =
   | { readonly role: "gatekeeper" }
   | { readonly role: "navigator" }
   | { readonly role: "auditor" }
-  | { readonly role: "diarist" };
+  | { readonly role: "diarist" }
+  | { readonly role: "secretariat" };
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }

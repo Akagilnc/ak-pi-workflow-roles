@@ -204,6 +204,8 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
       };
     case "countersign":
       return { ...base, loadCountersignSoul: law };
+    case "secretariat":
+      return { ...base, loadSecretariatSoul: law };
     case "gleaner-left":
       return { ...base, loadGleanerLeftSoul: law };
     case "inspector":

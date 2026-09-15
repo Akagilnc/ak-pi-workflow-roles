@@ -36,6 +36,7 @@ export type OptionOwner =
   | "navigator"
   | "auditor"
   | "diarist"
+  | "secretariat"
   | "analyst";
 
 /**
@@ -467,6 +468,11 @@ const DIARIST_OPTIONS = [
   bindOwner("diarist", SHARED_ATTACH_SEMANTICS),
 ] as const satisfies readonly PublicOptionDefinition[];
 
+const SECRETARIAT_OPTIONS = [
+  bindOwner("secretariat", SHARED_PROJECT_SEMANTICS),
+  bindOwner("secretariat", SHARED_ATTACH_SEMANTICS),
+] as const satisfies readonly PublicOptionDefinition[];
+
 const CODER_OPTIONS = [
   {
     id: "phase",
@@ -841,6 +847,7 @@ export const PUBLIC_OPTION_TABLE = {
   navigator: NAVIGATOR_OPTIONS,
   auditor: AUDITOR_OPTIONS,
   diarist: DIARIST_OPTIONS,
+  secretariat: SECRETARIAT_OPTIONS,
   analyst: ANALYST_OPTIONS,
 } as const satisfies Record<OptionOwner, readonly PublicOptionDefinition[]>;
 
@@ -863,6 +870,7 @@ export const PUBLIC_ROLE_OPTION_OWNERS = [
   "navigator",
   "auditor",
   "diarist",
+  "secretariat",
   "analyst",
 ] as const satisfies readonly PublicRoleOptionOwner[];
 
@@ -1278,6 +1286,15 @@ const ROLE_COMMAND_HELP = {
     examples: [
       'ak-role diarist "整理 #708 的本案依据。"',
       'ak-role diarist --attach ./design.md "补录本轮设计修订。"',
+    ],
+  },
+  secretariat: {
+    command: "secretariat",
+    summary:
+      "Secretariat (中书省): rewrite ticket per 票面法 and drive countersign to sealed or escalate.",
+    usage: ["ak-role secretariat [options] [instruction]"],
+    examples: [
+      'ak-role secretariat "整理 #924 票面并送庭。"',
     ],
   },
   notary: {
