@@ -84,7 +84,18 @@ import {
   DIARIST_TOOL_SPEC,
   type DiaristRuntimeDependencies,
 } from "./diarist-role.ts";
-import { createSecretariatRoleRuntime } from "./secretariat-role.ts";
+import {
+  SECRETARIAT_OUTPUT_TOOL_SPEC,
+  SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC,
+  projectSecretariatSummonResult,
+  type SecretariatRuntimeDependencies,
+  type SecretariatSummonCountersignParameters,
+} from "./secretariat-role.ts";
+import {
+  SECRETARIAT_ACCEPTED_TEXT,
+  SECRETARIAT_OUTPUT_TOOL_NAME,
+  SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
+} from "./secretariat-contracts.ts";
 import {
   DIARIST_ACCEPTED_TEXT,
   projectDiaristAmendments,
@@ -1041,6 +1052,142 @@ const COUNTERSIGN_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]
  */
 const COUNTERSIGN_STATUS_REASK =
   "countersignStatus 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
+
+const SECRETARIAT_QUEUE_STATUSES = new Set(["sealed", "escalate"]);
+const SECRETARIAT_STATUS_REASK =
+  "secretariatStatus 不是 sealed、escalate 两态之一。请重新交卷，status 写明其一。" as const;
+
+/**
+ * #924 Secretariat on the shared filed-officer envelope + non-terminating
+ * summon-countersign tool (auditor dossier extension pattern).
+ * Nested countersign lifecycle stays on summonPublicRole (ADR 0018).
+ */
+export function createSecretariatRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: SecretariatRuntimeDependencies,
+) {
+  let parentInstruction = "";
+  const base = createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "secretariat",
+      tool: SECRETARIAT_OUTPUT_TOOL_SPEC,
+      acceptedText: SECRETARIAT_ACCEPTED_TEXT,
+      soulTag: "secretariat",
+      beforeAccept: async ({ parameters }) => {
+        const rawStatus =
+          parameters !== null &&
+          typeof parameters === "object" &&
+          !Array.isArray(parameters) &&
+          typeof (parameters as Record<string, unknown>).secretariatStatus === "string"
+            ? ((parameters as Record<string, unknown>).secretariatStatus as string)
+            : undefined;
+        if (
+          rawStatus === undefined ||
+          !SECRETARIAT_QUEUE_STATUSES.has(rawStatus)
+        ) {
+          throw new ParentQueueReaskError(SECRETARIAT_STATUS_REASK);
+        }
+        return undefined;
+      },
+    },
+    dependencies,
+  );
+  let summonRegistered = false;
+  return {
+    async activate() {
+      await base.activate();
+      if (summonRegistered) return;
+      summonRegistered = true;
+      // Capture parent prompt for default summon instruction (envelope already
+      // owns soul inject; this handler only records the assignment text).
+      roleHost.on("before_agent_start", (event) => {
+        if (typeof event.prompt === "string" && event.prompt.trim() !== "") {
+          parentInstruction = event.prompt;
+        }
+      });
+      roleHost.registerTool({
+        name: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
+        label: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.label,
+        description: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.description,
+        promptSnippet: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.promptSnippet,
+        parameters: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.parameters as never,
+        async execute(
+          _toolCallId,
+          parameters: SecretariatSummonCountersignParameters,
+          signal,
+          _onUpdate,
+          ctx,
+        ): Promise<HostToolResult<unknown>> {
+          const fromArgs =
+            typeof parameters?.instruction === "string"
+              ? parameters.instruction.trim()
+              : "";
+          const instruction =
+            fromArgs !== ""
+              ? fromArgs
+              : parentInstruction.trim() !== ""
+                ? parentInstruction
+                : "裁：按《票面法》审本票是否足以开工。";
+          const correlationId = (() => {
+            const runDirectory = runDirectoryFromHostContext(ctx);
+            if (runDirectory === undefined) return undefined;
+            const leaf = runDirectory.split("/").filter(Boolean).at(-1);
+            if (leaf === undefined || leaf.trim() === "") return undefined;
+            const at = leaf.indexOf("@");
+            return at > 0 ? leaf.slice(0, at) : leaf;
+          })();
+          const summon =
+            dependencies.summonCountersign ??
+            (async (input) => {
+              const { summonPublicRole } = await import("./public-role-summons.ts");
+              return summonPublicRole({
+                role: "countersign",
+                argv: [input.instruction, "--project", input.cwd],
+                cwd: input.cwd,
+                ...(input.signal === undefined ? {} : { signal: input.signal }),
+                ...(input.correlationId === undefined
+                  ? {}
+                  : { correlationId: input.correlationId }),
+                ...(input.home === undefined ? {} : { home: input.home }),
+                ...(input.packageRoot === undefined
+                  ? {}
+                  : { packageRoot: input.packageRoot }),
+              });
+            });
+          const summoned = await summon({
+            instruction,
+            cwd: ctx.cwd,
+            ...(signal === undefined ? {} : { signal }),
+            ...(correlationId === undefined ? {} : { correlationId }),
+            ...(dependencies.home === undefined ? {} : { home: dependencies.home }),
+            ...(dependencies.packageRoot === undefined
+              ? {}
+              : { packageRoot: dependencies.packageRoot }),
+          });
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: "给事中回执已送达中书省",
+              },
+            ],
+            details: projectSecretariatSummonResult(summoned),
+          };
+        },
+      });
+      const all = roleHost.getAllTools().map((tool) => tool.name);
+      if (
+        all.filter((name) => name === SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)
+          .length !== 1
+      ) {
+        throw new Error(
+          `secretariat required tool collision or missing: ${SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME}`,
+        );
+      }
+    },
+  };
+}
 
 export function createCountersignRoleRuntime(
   roleHost: RoleHost,

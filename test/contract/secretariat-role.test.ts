@@ -1,5 +1,5 @@
 /**
- * #924 Secretariat (中书省) — role tools and nested countersign summon seam.
+ * #924 Secretariat (中书省) — envelope-assembled tools + nested countersign summon.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -8,7 +8,7 @@ import {
   SECRETARIAT_OUTPUT_TOOL_NAME,
   SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
 } from "../../src/secretariat-contracts.ts";
-import { createSecretariatRoleRuntime } from "../../src/secretariat-role.ts";
+import { createSecretariatRoleRuntime } from "../../src/role-runtime.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 
@@ -30,10 +30,7 @@ async function activateSecretariat(options?: {
     },
     on() {},
     getAllTools() {
-      return [
-        { name: SECRETARIAT_OUTPUT_TOOL_NAME },
-        { name: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME },
-      ];
+      return [...tools.values()].map((t) => ({ name: t.name }));
     },
     getFlag() {
       return undefined;

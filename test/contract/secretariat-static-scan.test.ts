@@ -11,30 +11,6 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
 import { optionsForOwner } from "../../src/public-cli/option-definitions.ts";
 
-async function collectFiles(dir: string, acc: string[] = []): Promise<string[]> {
-  const entries = await readdir(dir, { withFileTypes: true });
-  for (const entry of entries) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (
-        entry.name === "node_modules" ||
-        entry.name === "dist" ||
-        entry.name === ".git"
-      ) {
-        continue;
-      }
-      await collectFiles(full, acc);
-    } else if (
-      entry.name.endsWith(".ts") ||
-      entry.name.endsWith(".md") ||
-      entry.name.endsWith(".mjs")
-    ) {
-      acc.push(full);
-    }
-  }
-  return acc;
-}
-
 test("票面法 has one package true source at souls/ticket-law.md", async () => {
   const lawPath = join(packageRoot, "souls", "ticket-law.md");
   const body = await readFile(lawPath, "utf8");
@@ -72,18 +48,23 @@ test("secretariat / countersign / notary materials load ticket-law", () => {
   );
 });
 
-test("secretariat role module has no spawn/session/resume/cleanup lifecycle", async () => {
+test("secretariat role module has no lifecycle assembly (ADR 0018)", async () => {
   const rolePath = join(packageRoot, "src", "secretariat-role.ts");
   const source = await readFile(rolePath, "utf8");
-  // Shared-seam import is the only nested path; role must not own a second driver.
+  // Role module: label/soul/spec/projection only — no activate/register/envelope.
   assert.equal(source.includes("child_process"), false);
   assert.equal(source.includes("spawn("), false);
   assert.equal(source.includes("createRoleRuntimeExtension"), false);
   assert.equal(source.includes("runPostAdmission"), false);
   assert.equal(source.includes("markRunAdmitted"), false);
   assert.equal(source.includes("SessionManager"), false);
-  // May dynamically import shared summons — that is the shared seam, not a second driver.
-  assert.match(source, /summonPublicRole|summonCountersign/);
+  assert.equal(source.includes("registerTool"), false);
+  assert.equal(source.includes("before_agent_start"), false);
+  assert.equal(/async activate\(/.test(source), false);
+  assert.equal(source.includes("createFiledOfficerRuntime"), false);
+  // Spec + projection only; summon execute lives on the shared envelope.
+  assert.match(source, /SECRETARIAT_OUTPUT_TOOL_SPEC/);
+  assert.match(source, /projectSecretariatSummonResult/);
 });
 
 test("public secretariat face has no new flags or mode params", () => {

@@ -1,17 +1,11 @@
 /**
- * Secretariat (中书省) business tools, soul assembly, and result projection.
- * Nested countersign lifecycle stays on the shared public summons seam (ADR 0018 / #924).
- * Role module: label, soul, evidence assembly, decision tools, result projection only.
+ * Secretariat (中书省) label, soul shape, decision-tool specs, result projection.
+ * Lifecycle assembly (activate, register, prompt inject, inventory) lives on the
+ * shared envelope — src/role-runtime.ts (ADR 0018 / #924).
  */
 import type { Static } from "typebox";
 import { Type } from "typebox";
 
-import {
-  runDirectoryFromHostContext,
-  type HostContext,
-  type HostToolResult,
-  type RoleHost,
-} from "./host-contracts.ts";
 import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import {
@@ -29,10 +23,6 @@ export {
 } from "./secretariat-contracts.ts";
 export type { SecretariatVerdict };
 export { validateRecordedSecretariatOutput };
-
-const SECRETARIAT_QUEUE_STATUSES = new Set(["sealed", "escalate"]);
-const SECRETARIAT_STATUS_REASK =
-  "secretariatStatus 不是 sealed、escalate 两态之一。请重新交卷，status 写明其一。" as const;
 
 /** 中书省终局回执形状；形状指引，非 schema 闸。 */
 export const secretariatVerdictSchema = withInfrastructureFailureDeclaration(
@@ -118,16 +108,10 @@ export type SecretariatRuntimeDependencies = {
   home?: string;
 };
 
-function parentRunIdFromContext(ctx: HostContext): string | undefined {
-  const runDirectory = runDirectoryFromHostContext(ctx);
-  if (runDirectory === undefined) return undefined;
-  const leaf = runDirectory.split("/").filter(Boolean).at(-1);
-  if (leaf === undefined || leaf.trim() === "") return undefined;
-  const at = leaf.indexOf("@");
-  return at > 0 ? leaf.slice(0, at) : leaf;
-}
-
-function projectSummonResult(summoned: PublicSummonResult): Record<string, unknown> {
+/** Project nested countersign PublicSummonResult onto tool details (evidence assembly). */
+export function projectSecretariatSummonResult(
+  summoned: PublicSummonResult,
+): Record<string, unknown> {
   const terminal = summoned.terminal;
   const roleOutcome = terminal?.roleOutcome;
   const payloads =
@@ -165,151 +149,5 @@ function projectSummonResult(summoned: PublicSummonResult): Record<string, unkno
     ...(summoned.stderr === undefined || summoned.stderr === ""
       ? {}
       : { stderr: summoned.stderr }),
-  };
-}
-
-/**
- * Create secretariat runtime: output tool + summon-countersign tool.
- * Lifecycle of nested countersign is owned by the shared public summons seam.
- */
-export function createSecretariatRoleRuntime(
-  roleHost: RoleHost,
-  dependencies: SecretariatRuntimeDependencies,
-): { activate(): Promise<void> } {
-  let soul: string | undefined;
-  let registered = false;
-  let parentInstruction = "";
-
-  return {
-    async activate() {
-      const loaded = (await dependencies.loadSoul()).trim();
-      if (loaded.length === 0) throw new Error("secretariat soul is empty");
-      soul = loaded;
-      if (!registered) {
-        registered = true;
-
-        roleHost.registerTool({
-          name: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
-          label: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.label,
-          description: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.description,
-          promptSnippet: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.promptSnippet,
-          parameters: secretariatSummonCountersignSchema,
-          async execute(
-            _toolCallId: string,
-            parameters: SecretariatSummonCountersignParameters,
-            signal: AbortSignal | undefined,
-            _onUpdate: unknown,
-            ctx: HostContext,
-          ): Promise<HostToolResult<unknown>> {
-            const fromArgs =
-              typeof parameters?.instruction === "string"
-                ? parameters.instruction.trim()
-                : "";
-            const instruction =
-              fromArgs !== ""
-                ? fromArgs
-                : parentInstruction.trim() !== ""
-                  ? parentInstruction
-                  : "裁：按《票面法》审本票是否足以开工。";
-            const correlationId = parentRunIdFromContext(ctx);
-            const summon =
-              dependencies.summonCountersign ??
-              (async (input) => {
-                const { summonPublicRole } = await import("./public-role-summons.ts");
-                return summonPublicRole({
-                  role: "countersign",
-                  argv: [input.instruction, "--project", input.cwd],
-                  cwd: input.cwd,
-                  ...(input.signal === undefined ? {} : { signal: input.signal }),
-                  ...(input.correlationId === undefined
-                    ? {}
-                    : { correlationId: input.correlationId }),
-                  ...(input.home === undefined ? {} : { home: input.home }),
-                  ...(input.packageRoot === undefined
-                    ? {}
-                    : { packageRoot: input.packageRoot }),
-                });
-              });
-            const summoned = await summon({
-              instruction,
-              cwd: ctx.cwd,
-              ...(signal === undefined ? {} : { signal }),
-              ...(correlationId === undefined ? {} : { correlationId }),
-              ...(dependencies.home === undefined ? {} : { home: dependencies.home }),
-              ...(dependencies.packageRoot === undefined
-                ? {}
-                : { packageRoot: dependencies.packageRoot }),
-            });
-            return {
-              content: [
-                {
-                  type: "text" as const,
-                  text: "给事中回执已送达中书省",
-                },
-              ],
-              details: projectSummonResult(summoned),
-            };
-          },
-        });
-
-        roleHost.registerTool({
-          name: SECRETARIAT_OUTPUT_TOOL_NAME,
-          label: SECRETARIAT_OUTPUT_TOOL_SPEC.label,
-          description: SECRETARIAT_OUTPUT_TOOL_SPEC.description,
-          promptSnippet: SECRETARIAT_OUTPUT_TOOL_SPEC.promptSnippet,
-          parameters: secretariatVerdictSchema,
-          async execute(
-            _toolCallId: string,
-            parameters: SecretariatVerdictParameters,
-            _signal: AbortSignal | undefined,
-            _onUpdate: unknown,
-            _ctx: HostContext,
-          ): Promise<HostToolResult<unknown>> {
-            if (soul === undefined) throw new Error("中书省职分未装载");
-            const rawStatus =
-              parameters !== null &&
-              typeof parameters === "object" &&
-              !Array.isArray(parameters) &&
-              typeof (parameters as Record<string, unknown>).secretariatStatus ===
-                "string"
-                ? ((parameters as Record<string, unknown>).secretariatStatus as string)
-                : undefined;
-            if (
-              rawStatus === undefined ||
-              !SECRETARIAT_QUEUE_STATUSES.has(rawStatus)
-            ) {
-              const { ParentQueueReaskError } = await import(
-                "./submission-errors.ts"
-              );
-              throw new ParentQueueReaskError(SECRETARIAT_STATUS_REASK);
-            }
-            return {
-              content: [{ type: "text" as const, text: SECRETARIAT_ACCEPTED_TEXT }],
-              details: parameters,
-              terminate: true as const,
-            };
-          },
-        });
-
-        roleHost.on("before_agent_start", (event) => {
-          if (soul === undefined) throw new Error("中书省职分未装载");
-          if (typeof event.prompt === "string" && event.prompt.trim() !== "") {
-            parentInstruction = event.prompt;
-          }
-          return {
-            systemPrompt: `${event.systemPrompt}\n\n<secretariat_soul>\n${soul}\n</secretariat_soul>`,
-          };
-        });
-      }
-      const all = roleHost.getAllTools().map((tool) => tool.name);
-      for (const name of [
-        SECRETARIAT_OUTPUT_TOOL_NAME,
-        SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
-      ]) {
-        if (all.filter((n) => n === name).length !== 1) {
-          throw new Error(`secretariat required tool collision or missing: ${name}`);
-        }
-      }
-    },
   };
 }
