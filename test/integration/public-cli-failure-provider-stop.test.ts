@@ -349,94 +349,17 @@ test("bound auditor provider failure outranks the parent abort it caused", async
     );
   });
 });
-test("retained auditor failure is staled by a different courtAttemptId", async () => {
-  await withTempHome(async (home) => {
-    const sessionDir = join(home, "session");
-    const sessionFile = join(sessionDir, "parent.jsonl");
-    const childDir = join(sessionDir, "auditor-roles");
-    await mkdir(childDir, { recursive: true });
-    const parentEntries = [
-      { type: "session", id: "parent-session" },
-      { type: "message", id: "user-old", message: { role: "user" } },
-      { type: "message", id: "attempt-old", message: { role: "assistant" } },
-      { type: "message", id: "user-new", message: { role: "user" } },
-      { type: "message", id: "attempt-new", message: { role: "assistant", stopReason: "error", errorMessage: "new failure" } },
-    ];
-    await writeFile(sessionFile, parentEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-    const childEntries = [
-      { type: "session", id: "child-session", parentSession: sessionFile },
-      {
-        type: "custom",
-        customType: "ak_auditor_parent_attempt_binding",
-        data: {
-          version: 1,
-          parent: {
-            sessionId: "parent-session",
-            sessionFile,
-            attemptEntryId: "attempt-old",
-            courtAttemptId: "court-old",
-          },
-        },
-      },
-      { type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "stale native failure", provider: "xai", model: "audit-model" } },
-      {
-        type: "custom",
-        customType: "ak_auditor_compliance_failure",
-        data: {
-          parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-old" },
-          failure: { cause: "provider", diagnostic: "stale auditor failure" },
-        },
-      },
-    ];
-    await writeFile(join(childDir, "child.jsonl"), childEntries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-    assert.equal(
-      await readBoundAuditorKnownFailure(sessionFile, { courtAttemptId: "court-new" }),
-      undefined,
-    );
-  });
-});
 // #600 / #840 / #858: auditor retention court boundary is typed courtAttemptId
-// (SettlementCourtScope / open-court / binding) — never user-message bytes.
-test("same-court resume keeps first-attempt auditor retention bound", async () => {
+// written by the production compliance summon path — never user-message bytes.
+test("same-court resume keeps first-attempt auditor retention via production writer", async () => {
   await withTempHome(async (home) => {
+    const { runComplianceAudit } = await import("../../src/compliance-transport.ts");
     const sessionDir = join(home, "session");
     const sessionFile = join(sessionDir, "parent.jsonl");
-    const childDir = join(sessionDir, "auditor-roles");
-    await mkdir(childDir, { recursive: true });
-
-    // Production resume prompt shapes (station-child token / bare / engine-axis)
-    // ride the session as user turns but are not identity — courtAttemptId is.
-    const { buildResumeContinuationPrompt, RESUME_TRANSPORT_ENVELOPE } = await import(
-      "../../src/public-cli/run-lifecycle.ts"
-    );
-    const bareResumePrompt = buildResumeContinuationPrompt({ packageRoot });
-    const engineResumePrompt = buildResumeContinuationPrompt({
-      packageRoot,
-      engine: "pi",
-    });
-    const resumePrompts: ReadonlyArray<{ label: string; prompt: string }> = [
-      { label: "station-child-token", prompt: RESUME_TRANSPORT_ENVELOPE },
-      { label: "bare-resume", prompt: bareResumePrompt },
-      { label: "engine-axis-resume", prompt: engineResumePrompt },
-    ];
-
-    const courtAttemptId = "court-same";
-    const expected = {
-      cause: "provider" as const,
-      diagnostic: "WebSocket error",
-      identity: { name: "faux-1", code: "openai-codex" },
-      details: {
-        provider: "openai-codex",
-        model: "faux-1",
-        retentionFailure: {
-          name: "ComplianceResponseRetentionError",
-          cause: { code: "EISDIR" },
-        },
-      },
-    };
-
-    for (const shape of resumePrompts) {
-      await writeFile(sessionFile, [
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(
+      sessionFile,
+      [
         { type: "session", id: "parent-session" },
         { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
         {
@@ -450,56 +373,41 @@ test("same-court resume keeps first-attempt auditor retention bound", async () =
             model: "faux-1",
           },
         },
-        { type: "message", id: `resume-${shape.label}`, message: { role: "user", content: shape.prompt } },
-        {
-          type: "message",
-          id: "attempt-retry",
-          message: {
-            role: "assistant",
-            stopReason: "error",
-            errorMessage: "retry without retention",
-            provider: "openai-codex",
-            model: "faux-1",
-          },
-        },
-      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-      await writeFile(join(childDir, "child.jsonl"), [
-        { type: "session", id: "child-session", parentSession: sessionFile },
-        {
-          type: "custom",
-          customType: "ak_auditor_parent_attempt_binding",
-          data: {
-            version: 1,
-            parent: {
-              sessionId: "parent-session",
-              sessionFile,
-              attemptEntryId: "attempt-first",
-              courtAttemptId,
-            },
-          },
-        },
-        {
-          type: "message",
-          message: {
-            role: "assistant",
-            stopReason: "error",
-            errorMessage: "WebSocket error",
-            provider: "openai-codex",
-            model: "faux-1",
-          },
-        },
-        {
-          type: "custom",
-          customType: "ak_auditor_compliance_failure",
-          data: {
-            parent: {
-              sessionId: "parent-session",
-              sessionFile,
-              attemptEntryId: "attempt-first",
-            },
-            failure: {
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n",
+    );
+
+    const courtAttemptId = "court-same";
+    const context = {
+      cwd: home,
+      mode: "json",
+      model: undefined,
+      courtAttemptId,
+      sessionManager: {
+        getSessionFile: () => sessionFile,
+        getHeader: () => ({ type: "session", id: "parent-session" }),
+        getLeafId: () => "attempt-first",
+        getLeafEntry: () => undefined,
+        getEntries: () => [],
+        getSessionDir: () => sessionDir,
+      },
+    };
+
+    const decision = await runComplianceAudit({
+      subject: "judge",
+      context: context as never,
+      runDirectory: home,
+      summonAuditor: async () => ({
+        exitCode: 1,
+        terminal: {
+          roleOutcome: {
+            kind: "failure",
+            role: "auditor",
+            cause: "provider",
+            diagnostic: "WebSocket error",
+            decisiveFacts: {
               cause: "provider",
-              diagnostic: "WebSocket error",
               identity: { name: "faux-1", code: "openai-codex" },
               details: {
                 provider: "openai-codex",
@@ -511,83 +419,75 @@ test("same-court resume keeps first-attempt auditor retention bound", async () =
               },
             },
           },
+          navigator: { disposition: "no-advice" },
+          artifacts: [],
+          runId: "auditor-run",
         },
-      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+      }),
+    });
+    assert.equal(decision.status, "transport_failure");
 
-      const known = await readBoundAuditorKnownFailure(sessionFile, { courtAttemptId });
-      assert.deepEqual(
-        known,
-        expected,
-        `${shape.label}: same courtAttemptId must not stale first-attempt auditor retention`,
-      );
-    }
+    // Same court (open-court / in-place retry): keep first-attempt retention.
+    const known = await readBoundAuditorKnownFailure(sessionFile, { courtAttemptId });
+    assert.deepEqual(known, {
+      cause: "provider",
+      diagnostic: "WebSocket error",
+      identity: { name: "faux-1", code: "openai-codex" },
+      details: {
+        provider: "openai-codex",
+        model: "faux-1",
+        retentionFailure: {
+          name: "ComplianceResponseRetentionError",
+          cause: { code: "EISDIR" },
+        },
+      },
+    });
 
-    // Typed new court (different courtAttemptId) stales prior auditor retention.
-    await writeFile(sessionFile, [
-      { type: "session", id: "parent-session" },
-      { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
-      {
-        type: "message",
-        id: "attempt-first",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "first failure",
-          provider: "openai-codex",
-          model: "faux-1",
-        },
-      },
-      { type: "message", id: "user-new-court", message: { role: "user", content: bareResumePrompt } },
-      {
-        type: "message",
-        id: "attempt-second",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "second failure",
-          provider: "openai-codex",
-          model: "faux-1",
-        },
-      },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-    await writeFile(join(childDir, "child.jsonl"), [
-      { type: "session", id: "child-session", parentSession: sessionFile },
-      {
-        type: "custom",
-        customType: "ak_auditor_parent_attempt_binding",
-        data: {
-          version: 1,
-          parent: {
-            sessionId: "parent-session",
-            sessionFile,
-            attemptEntryId: "attempt-first",
-            courtAttemptId: "court-prior",
-          },
-        },
-      },
-      {
-        type: "message",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "stale prior",
-          provider: "openai-codex",
-          model: "faux-1",
-        },
-      },
-      {
-        type: "custom",
-        customType: "ak_auditor_compliance_failure",
-        data: {
-          parent: { sessionId: "parent-session", sessionFile, attemptEntryId: "attempt-first" },
-          failure: { cause: "provider", diagnostic: "stale prior court" },
-        },
-      },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    // Typed new court stales the prior binding.
     assert.equal(
       await readBoundAuditorKnownFailure(sessionFile, { courtAttemptId: "court-new" }),
       undefined,
       "typed new courtAttemptId must stale prior auditor retention",
+    );
+
+    // Legacy binding without courtAttemptId cannot claim a later typed court.
+    const childDir = join(sessionDir, "auditor-roles");
+    await writeFile(
+      join(childDir, "legacy.jsonl"),
+      [
+        { type: "session", id: "legacy-child", parentSession: sessionFile },
+        {
+          type: "custom",
+          customType: "ak_auditor_parent_attempt_binding",
+          data: {
+            version: 1,
+            parent: {
+              sessionId: "parent-session",
+              sessionFile,
+              attemptEntryId: "attempt-first",
+            },
+          },
+        },
+        {
+          type: "custom",
+          customType: "ak_auditor_compliance_failure",
+          data: {
+            parent: {
+              sessionId: "parent-session",
+              sessionFile,
+              attemptEntryId: "attempt-first",
+            },
+            failure: { cause: "provider", diagnostic: "legacy without court id" },
+          },
+        },
+      ]
+        .map((entry) => JSON.stringify(entry))
+        .join("\n") + "\n",
+    );
+    assert.equal(
+      await readBoundAuditorKnownFailure(sessionFile, { courtAttemptId: "court-later" }),
+      undefined,
+      "legacy binding without courtAttemptId must not stay valid for later typed courts",
     );
   });
 });

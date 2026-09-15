@@ -14,6 +14,7 @@
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { bookDirectOfficerRunPointer } from "./archivist-record-entry.ts";
+import { persistAuditorParentAttemptBinding } from "./compliance-transport.ts";
 import type { HostContext } from "./host-contracts.ts";
 import {
   GatekeeperDecisionError,
@@ -103,6 +104,27 @@ export async function requireGatekeeperPass(options: {
           gatekeeper,
           projected.summoned,
         );
+      } catch (error) {
+        options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
+      }
+    }
+    // Auditor transport failure: persist parent-attempt binding with existing
+    // courtAttemptId so same-court resume can recover retention (#858 / #840).
+    if (
+      projected.officer === "auditor" &&
+      gatekeeper.status === "transport_failure"
+    ) {
+      try {
+        persistAuditorParentAttemptBinding({
+          context: options.context as HostContext,
+          failure: {
+            cause: "provider",
+            diagnostic: gatekeeper.reason,
+            ...(gatekeeper.submission === undefined
+              ? {}
+              : { details: { submission: gatekeeper.submission } }),
+          },
+        });
       } catch (error) {
         options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
       }

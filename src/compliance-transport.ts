@@ -1,7 +1,13 @@
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import type { Usage } from "@earendil-works/pi-ai";
 import type { AuditorSoulRole } from "./auditor-soul.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
-import type { HostContext } from "./host-contracts.ts";
+import {
+  courtAttemptIdFromHostContext,
+  type HostContext,
+} from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { OFFICER_CONCLUSION_REASK } from "./gatekeeper-role.ts";
@@ -57,6 +63,105 @@ export type AuditorParentAttemptBinding = {
     readonly courtAttemptId?: string;
   };
 };
+
+export type AuditorComplianceFailureRecord = {
+  readonly version: 1;
+  readonly parent: AuditorParentAttemptBinding["parent"];
+  readonly failure: {
+    readonly cause?: string;
+    readonly diagnostic?: string;
+    readonly identity?: { readonly name?: string; readonly code?: string | number };
+    readonly details?: Readonly<Record<string, unknown>>;
+  };
+};
+
+/**
+ * Persist parent-attempt binding (+ optional compliance failure) under the parent
+ * session's auditor-roles nest — the volume `loadBoundAuditorVolumes` reads.
+ * courtAttemptId is the existing Host court identity (#637), not a resume flag.
+ * Missing parent session file is a no-op (offline mocks without a durable principal).
+ */
+export function persistAuditorParentAttemptBinding(options: {
+  readonly context: HostContext;
+  readonly failure?: AuditorComplianceFailureRecord["failure"];
+}): AuditorParentAttemptBinding | undefined {
+  const parentSessionFile = options.context.sessionManager?.getSessionFile?.();
+  if (typeof parentSessionFile !== "string" || parentSessionFile.trim() === "") {
+    return undefined;
+  }
+  const header = options.context.sessionManager?.getHeader?.();
+  const parentSessionId =
+    header !== null && header !== undefined && typeof header.id === "string" && header.id.length > 0
+      ? header.id
+      : undefined;
+  const leafId = options.context.sessionManager?.getLeafId?.();
+  const attemptEntryId =
+    typeof leafId === "string" && leafId.length > 0 ? leafId : undefined;
+  const courtAttemptId = courtAttemptIdFromHostContext(options.context);
+  const binding: AuditorParentAttemptBinding = {
+    version: 1,
+    parent: {
+      sessionFile: parentSessionFile,
+      ...(parentSessionId === undefined ? {} : { sessionId: parentSessionId }),
+      ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
+      ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
+    },
+  };
+  const nest = join(dirname(parentSessionFile), "auditor-roles");
+  mkdirSync(nest, { recursive: true });
+  // One leaf per court attempt when known; else a unique leaf so multi-summons
+  // under unscoped parents do not overwrite each other.
+  const leafName =
+    courtAttemptId !== undefined
+      ? `compliance-${courtAttemptId}.jsonl`
+      : `compliance-${randomUUID()}.jsonl`;
+  const rows: unknown[] = [
+    {
+      type: "session",
+      id: `auditor-binding-${courtAttemptId ?? randomUUID()}`,
+      parentSession: parentSessionFile,
+    },
+    {
+      type: "custom",
+      customType: AUDITOR_PARENT_ATTEMPT_BINDING_ENTRY_TYPE,
+      data: binding,
+    },
+  ];
+  if (options.failure !== undefined) {
+    const failureData: AuditorComplianceFailureRecord = {
+      version: 1,
+      parent: binding.parent,
+      failure: options.failure,
+    };
+    // Settlement compliance recovery requires a provider-stop assistant in the
+    // same volume interval before the retained failure entry.
+    const details = options.failure.details;
+    rows.push({
+      type: "message",
+      message: {
+        role: "assistant",
+        stopReason: "error",
+        errorMessage:
+          typeof options.failure.diagnostic === "string" && options.failure.diagnostic.length > 0
+            ? options.failure.diagnostic
+            : "auditor transport failure",
+        ...(typeof details?.provider === "string" ? { provider: details.provider } : {}),
+        ...(typeof details?.model === "string" ? { model: details.model } : {}),
+      },
+    });
+    rows.push({
+      type: "custom",
+      customType: AUDITOR_COMPLIANCE_FAILURE_ENTRY_TYPE,
+      data: failureData,
+    });
+  }
+  writeFileSync(
+    join(nest, leafName),
+    `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+    "utf8",
+  );
+  return binding;
+}
 
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 
@@ -221,12 +326,65 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     });
   let reask: string | undefined;
   for (;;) {
+    // Durable parent-attempt binding is a prerequisite for later retention
+    // recovery across same-court resume (#840 / #858). courtAttemptId rides the
+    // existing Host court identity — never a parallel resume marker.
+    persistAuditorParentAttemptBinding({ context: options.context });
     const summoned = await summon(subject, runDirectory, options.signal, reask);
     const decision = await projectAuditorTerminal(summoned);
     if (decision.status === "received") {
       reask = OFFICER_CONCLUSION_REASK;
       continue;
     }
+    if (decision.status === "transport_failure") {
+      const outcome =
+        summoned.terminal?.roleOutcome !== undefined &&
+        typeof summoned.terminal.roleOutcome === "object" &&
+        summoned.terminal.roleOutcome !== null &&
+        (summoned.terminal.roleOutcome as { kind?: unknown }).kind === "failure"
+          ? (summoned.terminal.roleOutcome as {
+              readonly cause?: string;
+              readonly diagnostic: string;
+              readonly decisiveFacts?: Readonly<Record<string, unknown>>;
+            })
+          : undefined;
+      const facts = outcome?.decisiveFacts;
+      const identity =
+        facts !== undefined && typeof facts === "object" && isRecord(facts.identity)
+          ? {
+              ...(typeof facts.identity.name === "string"
+                ? { name: facts.identity.name }
+                : {}),
+              ...(typeof facts.identity.code === "string" ||
+                typeof facts.identity.code === "number"
+                ? { code: facts.identity.code }
+                : {}),
+            }
+          : undefined;
+      const details =
+        facts !== undefined && isRecord(facts.details)
+          ? facts.details
+          : facts !== undefined
+            ? (Object.fromEntries(
+                Object.entries(facts).filter(([key]) => key !== "identity"),
+              ) as Readonly<Record<string, unknown>>)
+            : undefined;
+      persistAuditorParentAttemptBinding({
+        context: options.context,
+        failure: {
+          ...(typeof outcome?.cause === "string" ? { cause: outcome.cause } : { cause: "provider" }),
+          diagnostic: decision.diagnostic,
+          ...(identity === undefined || Object.keys(identity).length === 0
+            ? {}
+            : { identity }),
+          ...(details === undefined ? {} : { details }),
+        },
+      });
+    }
     return decision;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

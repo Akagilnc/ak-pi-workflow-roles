@@ -1160,11 +1160,11 @@ async function loadBoundAuditorVolumes(
               : undefined;
         if (boundSessionFile !== sessionFile) continue;
         if (bindingParent !== undefined && bindingParent.sessionId !== parentId) continue;
-        // Typed court mismatch only — absent court id on either side is not a
-        // free-text boundary and does not invent resume identity.
+        // Typed court settlement: only the same courtAttemptId qualifies.
+        // Legacy bindings without the field cannot claim a later typed court
+        // (must not silently stay valid for every future court).
         if (
           scopeCourtAttemptId !== undefined &&
-          boundCourtAttemptId !== undefined &&
           boundCourtAttemptId !== scopeCourtAttemptId
         ) {
           continue;
