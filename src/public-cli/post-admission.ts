@@ -917,6 +917,7 @@ export async function dispatchPostAdmissionTurn<
         sessionFile,
         credential: credentialFailure,
         runDirectory: admitted.runDirectory,
+        ...(courtScope === undefined ? {} : { scope: courtScope }),
       });
       // A direct, current signal from the host/runner itself (timeout / host
       // knownFailure / runner knownFailure / missing credential) is a real

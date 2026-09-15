@@ -53,6 +53,8 @@ export type AuditorParentAttemptBinding = {
     readonly sessionId?: string;
     readonly sessionFile?: string;
     readonly attemptEntryId?: string;
+    /** Existing court-turn identity (#637); same rule as SettlementCourtScope.courtAttemptId. */
+    readonly courtAttemptId?: string;
   };
 };
 

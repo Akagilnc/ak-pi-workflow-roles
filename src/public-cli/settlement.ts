@@ -31,7 +31,6 @@ import {
   isV1ResumableProvider,
   readLatestTypedProviderHttpObservation,
   readTypedHttp429Observation,
-  RESUME_TRANSPORT_ENVELOPE,
   type TypedHttp429Observation,
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
@@ -1077,6 +1076,7 @@ type BoundAuditorVolume = {
 
 async function loadBoundAuditorVolumes(
   sessionFile: string,
+  scope?: SettlementCourtScope,
 ): Promise<readonly BoundAuditorVolume[] | undefined> {
   let parentEntries: SessionEntry[];
   try {
@@ -1087,49 +1087,18 @@ async function loadBoundAuditorVolumes(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
-  // Station-child / historical package resume token only (#840 / #836).
-  // Identity = first line of the whole user-message text equals the transport
-  // token. Never empty prompt, empty first-line, engine-handbook prose, per-part
-  // some() hits, or a parallel packageTrigger entry — real courts (including
-  // empty instruction, or normal text with a later token-shaped part) must
-  // advance latestParentUserIndex and stale prior auditors.
-  const userMessageText = (msg: unknown): string | undefined => {
-    if (!isRecord(msg) || msg.role !== "user") return undefined;
-    if (typeof msg.text === "string") return msg.text;
-    const content = (msg as { content?: unknown }).content;
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      const parts: string[] = [];
-      for (const part of content) {
-        if (!isRecord(part)) continue;
-        if (typeof part.text === "string") parts.push(part.text);
-        else if (typeof part.content === "string") parts.push(part.content);
-      }
-      if (parts.length > 0) return parts.join("\n");
-    }
-    return undefined;
-  };
-  const isResumeEnvelope = (msg: unknown): boolean => {
-    const text = userMessageText(msg);
-    if (typeof text !== "string" || text.length === 0) return false;
-    const nl = text.indexOf("\n");
-    const firstLine = nl === -1 ? text : text.slice(0, nl);
-    return firstLine === RESUME_TRANSPORT_ENVELOPE;
-  };
-  let latestParentUserIndex = -1;
-  for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
-    const entry = parentEntries[i];
-    if (entry?.type !== "message" || entry.message?.role !== "user") continue;
-    if (isResumeEnvelope(entry.message)) continue;
-    latestParentUserIndex = i;
-    break;
-  }
+  // Court boundary = typed courtAttemptId on SettlementCourtScope vs auditor
+  // parent-attempt binding (#637 / #858). Same court (open-court resume / in-place
+  // retry) keeps first-attempt retention; a different courtAttemptId stales prior
+  // auditors. Never user-message bytes, empty prompt, first-line token, or prose.
+  const scopeCourtAttemptId =
+    scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0
+      ? scope.courtAttemptId
+      : undefined;
   const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
-  // Auto-resume seam (owner A): stale check must ignore resume envelope and
-  // prioritize retention. Previous `attemptEntryIndex < latest` discarded the
-  // first attempt's child after resume advanced latest, losing retentionFailure
-  // when retry had no compliance entry. Fix: ignore envelope for staleness and
-  // prefer any valid compliance failure before falling back to primary.
+  // Prefer any valid compliance failure before falling back to provider stop
+  // (owner A / #840): in-place retry without a new compliance entry must still
+  // surface the first attempt's retentionFailure.
   const valid: BoundAuditorVolume[] = [];
   let sawAnyDirectory = false;
   for (const childDirectory of childDirectories) {
@@ -1178,10 +1147,11 @@ async function loadBoundAuditorVolumes(
           typeof bindingParent?.attemptEntryId === "string"
             ? bindingParent.attemptEntryId
             : undefined;
-        const attemptEntryIndex =
-          attemptEntryId === undefined
-            ? -1
-            : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
+        const boundCourtAttemptId =
+          typeof bindingParent?.courtAttemptId === "string" &&
+          bindingParent.courtAttemptId.length > 0
+            ? bindingParent.courtAttemptId
+            : undefined;
         const boundSessionFile =
           typeof bindingParent?.sessionFile === "string"
             ? bindingParent.sessionFile
@@ -1189,9 +1159,13 @@ async function loadBoundAuditorVolumes(
               ? header.parentSession
               : undefined;
         if (boundSessionFile !== sessionFile) continue;
+        if (bindingParent !== undefined && bindingParent.sessionId !== parentId) continue;
+        // Typed court mismatch only — absent court id on either side is not a
+        // free-text boundary and does not invent resume identity.
         if (
-          bindingParent !== undefined &&
-          (bindingParent.sessionId !== parentId || attemptEntryIndex < latestParentUserIndex)
+          scopeCourtAttemptId !== undefined &&
+          boundCourtAttemptId !== undefined &&
+          boundCourtAttemptId !== scopeCourtAttemptId
         ) {
           continue;
         }
@@ -1202,7 +1176,7 @@ async function loadBoundAuditorVolumes(
           sessionFile,
           ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
         });
-        // Keep every qualifying interval in the current parent-user range.
+        // Keep every qualifying interval for this court/session.
         // A single first-match break drops later same-user summons failures (#636).
       }
     }
@@ -1269,8 +1243,9 @@ function providerStopFallbackFromAuditorVolumes(
 /** Recover a provider stop from the auditor child bound to the current parent attempt. */
 export async function readBoundAuditorKnownFailure(
   sessionFile: string,
+  scope?: SettlementCourtScope,
 ): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  const volumes = await loadBoundAuditorVolumes(sessionFile, scope);
   if (volumes === undefined) return undefined;
   return complianceFailureFromAuditorVolumes(volumes)
     ?? providerStopFallbackFromAuditorVolumes(volumes);
@@ -1279,8 +1254,9 @@ export async function readBoundAuditorKnownFailure(
 /** Strong auditor tier only — retained compliance-failure entries, no provider-stop fallback. */
 async function readBoundAuditorComplianceFailure(
   sessionFile: string,
+  scope?: SettlementCourtScope,
 ): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  const volumes = await loadBoundAuditorVolumes(sessionFile, scope);
   if (volumes === undefined) return undefined;
   return complianceFailureFromAuditorVolumes(volumes);
 }
@@ -1288,8 +1264,9 @@ async function readBoundAuditorComplianceFailure(
 /** Weaker auditor tier: provider stop without a retained compliance-failure entry. */
 async function readBoundAuditorProviderStopFallback(
   sessionFile: string,
+  scope?: SettlementCourtScope,
 ): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile);
+  const volumes = await loadBoundAuditorVolumes(sessionFile, scope);
   if (volumes === undefined) return undefined;
   return providerStopFallbackFromAuditorVolumes(volumes);
 }
@@ -1369,6 +1346,8 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   credential: RoleTurnKnownFailure | undefined;
   /** Reviewer only: recover child-written rejection page into knownFailure.details. */
   runDirectory?: string;
+  /** Existing court-turn scope (#637); stales auditor volumes from other courts. */
+  scope?: SettlementCourtScope;
 }): Promise<AuditedRunnerFailureResolution> {
   if (input.runner !== undefined) return resolutionOf(input.runner);
   if (input.runDirectory !== undefined) {
@@ -1389,7 +1368,10 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   // host failure is next — it outranks weaker auditor provider-stop fallback so
   // parent failInfrastructure abort pollution cannot wash a real diagnostic (#475).
   try {
-    const auditorCompliance = await readBoundAuditorComplianceFailure(input.sessionFile);
+    const auditorCompliance = await readBoundAuditorComplianceFailure(
+      input.sessionFile,
+      input.scope,
+    );
     if (auditorCompliance !== undefined) return resolutionOf(auditorCompliance);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
@@ -1415,7 +1397,10 @@ export async function resolveAuditedRunnerFailureResolution(input: {
     }
   }
   try {
-    const auditorStop = await readBoundAuditorProviderStopFallback(input.sessionFile);
+    const auditorStop = await readBoundAuditorProviderStopFallback(
+      input.sessionFile,
+      input.scope,
+    );
     if (auditorStop !== undefined) return resolutionOf(auditorStop);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor provider stop");
@@ -1497,6 +1482,8 @@ export async function resolveAuditedRunnerKnownFailure(input: {
   credential: RoleTurnKnownFailure | undefined;
   /** Reviewer only: recover child-written rejection page into knownFailure.details. */
   runDirectory?: string;
+  /** Existing court-turn scope (#637); stales auditor volumes from other courts. */
+  scope?: SettlementCourtScope;
 }): Promise<RoleTurnKnownFailure | undefined> {
   return (await resolveAuditedRunnerFailureResolution(input)).knownFailure;
 }
