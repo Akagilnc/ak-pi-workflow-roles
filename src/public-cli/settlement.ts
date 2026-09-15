@@ -3226,34 +3226,10 @@ async function settleLawfulSeatAcceptedTerminalResult(
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const submissions = await recordedSubmissionPayloads(admitted, scope);
-  // Host isError residual wins over any recorded projection (#836 A.3 coexistence).
-  const scanStart = currentAttemptStartIndex(entries);
-  for (let index = entries.length - 1; index >= scanStart; index -= 1) {
-    const message = entries[index]?.message;
-    if (message?.role !== "toolResult") continue;
-    const residual = boundErroredToolCandidate(
-      entries,
-      index,
-      message,
-      spec.toolName,
-    );
-    if (residual !== undefined) {
-      const details = isRecord(residual.candidate)
-        ? residual.candidate
-        : { candidate: residual.candidate };
-      const failed = await settleFailureTerminalResult(
-        admitted,
-        {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details,
-        },
-        authority,
-        scope ?? {},
-      );
-      return withSubmissions(failed, submissions);
-    }
-  }
+  // #843: ledger accepted/audit_escalation wins first (same shape as
+  // settleLawfulCollectorTerminalResult). Host isError residual is only a
+  // fallback when this attempt sealed nothing — a corrected bounce residual
+  // must not outrank a later sealed accept inside the same user turn.
   const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
   if (roleOutcome?.kind === "audit_escalation") {
     const navigator = extractNavigatorFact(entries);
@@ -3286,6 +3262,35 @@ async function settleLawfulSeatAcceptedTerminalResult(
       ),
       submissions,
     );
+  }
+  // Bounded to the current attempt so multi-attempt resume timeout/no-output
+  // is not masked by a prior residual (#633 / seat twin of collector).
+  const scanStart = currentAttemptStartIndex(entries);
+  for (let index = entries.length - 1; index >= scanStart; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult") continue;
+    const residual = boundErroredToolCandidate(
+      entries,
+      index,
+      message,
+      spec.toolName,
+    );
+    if (residual !== undefined) {
+      const details = isRecord(residual.candidate)
+        ? residual.candidate
+        : { candidate: residual.candidate };
+      const failed = await settleFailureTerminalResult(
+        admitted,
+        {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details,
+        },
+        authority,
+        scope ?? {},
+      );
+      return withSubmissions(failed, submissions);
+    }
   }
   return undefined;
 }

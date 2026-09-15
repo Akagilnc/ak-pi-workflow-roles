@@ -54,9 +54,14 @@ import {
   scriptedTerminatingToolSession,
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
+import {
+  recordNonSealedSubmissionForSpawn,
+  sealAcceptedSubmissionForSpawn,
+} from "../helpers/submission-ledger-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import {
   ensureTicketProvenanceVolume,
   readTicketProvenance,
@@ -600,6 +605,202 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
       "timeout",
       "prior-attempt residual must not mask current resume timeout",
     );
+  });
+});
+
+/**
+ * #843: same-attempt correctable-rejection residual must not outrank a later
+ * sealed accepted on the shared seat settlement disposition. Ledger accepted
+ * wins; residual isError is only consulted when no accepted exists.
+ */
+test("#843 same-attempt correctable-rejection residual does not outrank later sealed accepted",
+  async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const rejected = {
+      countersignStatus: "continue" as const,
+      fix: { summary: "REJECTED-FIRST-findings-visible" },
+    };
+    const accepted = {
+      countersignStatus: "converged" as const,
+      note: "ACCEPTED-AFTER-CORRECTION",
+    };
+    const rejectionBody = "CORRECTABLE-REJECTION-RESIDUAL-BODY";
+    const gateFindings = ["REJECTED-FIRST-findings-visible"] as const;
+
+    const { io, stdout, stderr } = captureIo();
+    const result = await runAkRole(
+      ["countersign", "--model", "test/caller-seat:high", "--project", project, "裁"],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000843",
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: withTrueUnboundDiarist(async (args, options) => {
+            const sessionFile = args[args.indexOf("--session") + 1]!;
+            await mkdir(join(sessionFile, ".."), { recursive: true });
+            // One user turn holds both the bounced call and the later accept
+            // (production correctable path stays inside the same attempt).
+            const rows = [
+              {
+                type: "message",
+                id: "user-1",
+                parentId: null,
+                timestamp: "2026-08-30T00:00:00.000Z",
+                message: { role: "user", content: "kickoff", timestamp: 1 },
+              },
+              {
+                type: "message",
+                id: "assistant-reject",
+                parentId: "user-1",
+                timestamp: "2026-08-30T00:00:01.000Z",
+                message: {
+                  role: "assistant",
+                  content: [{
+                    type: "toolCall",
+                    id: "call-reject",
+                    name: COUNTERSIGN_OUTPUT_TOOL_NAME,
+                    arguments: rejected,
+                  }],
+                  timestamp: 2,
+                },
+              },
+              {
+                type: "message",
+                id: "result-reject",
+                parentId: "assistant-reject",
+                timestamp: "2026-08-30T00:00:02.000Z",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "call-reject",
+                  toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+                  content: [{ type: "text", text: rejectionBody }],
+                  details: rejected,
+                  isError: true,
+                  timestamp: 3,
+                },
+              },
+              {
+                type: "message",
+                id: "assistant-accept",
+                parentId: "result-reject",
+                timestamp: "2026-08-30T00:00:03.000Z",
+                message: {
+                  role: "assistant",
+                  content: [{
+                    type: "toolCall",
+                    id: "call-accept",
+                    name: COUNTERSIGN_OUTPUT_TOOL_NAME,
+                    arguments: accepted,
+                  }],
+                  timestamp: 4,
+                },
+              },
+              {
+                type: "message",
+                id: "result-accept",
+                parentId: "assistant-accept",
+                timestamp: "2026-08-30T00:00:04.000Z",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "call-accept",
+                  toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+                  content: [{ type: "text", text: "countersign output accepted" }],
+                  details: accepted,
+                  isError: false,
+                  timestamp: 5,
+                },
+              },
+            ];
+            await writeFile(
+              sessionFile,
+              `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
+              "utf8",
+            );
+            await recordNonSealedSubmissionForSpawn({
+              cwd: options.cwd,
+              env: options.env,
+              role: "countersign",
+              details: rejected,
+              toolCallId: "call-reject",
+              executeError: new GatekeeperDecisionError({
+                status: "bounce",
+                officer: "notary",
+                receipt: { status: "bounce", findings: [...gateFindings] },
+              }),
+            });
+            await sealAcceptedSubmissionForSpawn({
+              cwd: options.cwd,
+              env: options.env,
+              role: "countersign",
+              details: accepted,
+              toolCallId: "call-accept",
+            });
+            // Seed the direct notary volume production gate would leave on 署.
+            const auditorDir = join(dirname(sessionFile), "auditor-roles");
+            await mkdir(auditorDir, { recursive: true });
+            await writeFile(
+              join(auditorDir, "o01_notary.jsonl"),
+              gateToolSessionJsonl({
+                id: "direct-notary",
+                startedAt: "2026-09-04T00:00:00.000Z",
+                endedAt: "2026-09-04T00:00:10.000Z",
+                toolName: "ak_notary_output",
+                args: { status: "pass", findings: [] },
+              }),
+              "utf8",
+            );
+            return {
+              code: 0,
+              timedOut: false,
+              stderr: "",
+              args: [...args],
+            };
+          }),
+        }),
+      },
+    );
+
+    assert.equal(result.exitCode, 0, stdout.join("") || stderr.join("") || "expected accepted exit 0");
+    assert.ok(result.terminal);
+    assert.equal(result.terminal.roleOutcome.kind, "accepted");
+    // Final diagnostic must not take the earlier correctable residual body.
+    assert.equal(
+      result.terminal.roleOutcome.kind === "failure"
+        ? result.terminal.roleOutcome.diagnostic
+        : undefined,
+      undefined,
+    );
+    assert.equal(stderr.join("").includes(rejectionBody), false);
+    // Both submissions stay visible in order — rejection is not washed away.
+    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
+      "continue",
+      "converged",
+    ]);
+    const payloads = objectPayloads(result.terminal.roleOutcome);
+    assert.equal(payloads.length, 2);
+    const first = payloads[0]!;
+    const second = payloads[1]!;
+    assert.equal(first.countersignStatus, "continue");
+    assert.equal(
+      (first.fix as { summary?: string } | undefined)?.summary,
+      "REJECTED-FIRST-findings-visible",
+    );
+    assert.equal(second.countersignStatus, "converged");
+    assert.equal(second.note, "ACCEPTED-AFTER-CORRECTION");
+    assert.deepEqual(result.terminal.submissions, [rejected, accepted]);
+    // Gate projection still surfaces structured round/status/findings.
+    assert.ok(result.terminal.gate);
+    assert.deepEqual(result.terminal.gate!.actualSeats, ["notary"]);
+    assert.equal(result.terminal.gate!.rounds[0]!.dispatch.kind, "direct");
+    assert.equal(result.terminal.gate!.rounds[0]!.dispatch.officer, "notary");
   });
 });
 
