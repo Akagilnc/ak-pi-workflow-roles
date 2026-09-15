@@ -12,7 +12,6 @@ import {
   assertHermesProjectSkillsTrusted,
   ensurePackagedMethodPlugin,
   installWorkspaceAgentsSkillsLink,
-  parseHermesTrustedProjectDirs,
   packagedMethodPluginDir,
   packagedMethodsDir,
 } from "../../src/host-native-method.ts";
@@ -29,7 +28,6 @@ test("#922 workspace .agents/skills: create/release, overlap, foreign kept, conf
     const a = await installWorkspaceAgentsSkillsLink({ cwd, packageRoot });
     assert.equal(a.created, true);
     assert.equal(await realpath(a.path), methods);
-
     const b = await installWorkspaceAgentsSkillsLink({ cwd, packageRoot });
     assert.equal(b.created, true);
     await a.release();
@@ -37,7 +35,6 @@ test("#922 workspace .agents/skills: create/release, overlap, foreign kept, conf
     await b.release();
     await assert.rejects(() => lstat(linkPath), { code: "ENOENT" });
 
-    // Foreign same-target (no create in this process) is never deleted.
     await mkdir(join(cwd, ".agents"), { recursive: true });
     await symlink(methods, linkPath);
     const foreign = await installWorkspaceAgentsSkillsLink({ cwd, packageRoot });
@@ -48,40 +45,29 @@ test("#922 workspace .agents/skills: create/release, overlap, foreign kept, conf
     await rm(linkPath, { force: true });
     await mkdir(linkPath, { recursive: true });
     await writeFile(join(linkPath, "keep.txt"), "x");
-    await assert.rejects(
-      () => installWorkspaceAgentsSkillsLink({ cwd, packageRoot }),
-      /pre-existing directory/,
-    );
+    await assert.rejects(() => installWorkspaceAgentsSkillsLink({ cwd, packageRoot }), /pre-existing directory/);
     assert.equal(await readFile(join(linkPath, "keep.txt"), "utf8"), "x");
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
 });
 
-test("#922 method-host-plugin: runtime reads build output only; missing fails loud", async () => {
+test("#922 method-host-plugin: runtime reads build output; missing fails loud", async () => {
   await execFileAsync(process.execPath, [join(packageRoot, "scripts/materialize-method-host-plugin.mjs")], {
     cwd: packageRoot,
   });
   const dir = await ensurePackagedMethodPlugin(packageRoot);
   assert.equal(dir, packagedMethodPluginDir(packageRoot));
   assert.equal((await lstat(join(dir, "skills", "tdd", "SKILL.md"))).isFile(), true);
-
   const missingRoot = await mkdtemp(worktreeTempPrefix("ak-922-no-plugin-"));
   try {
-    await assert.rejects(
-      () => ensurePackagedMethodPlugin(missingRoot),
-      /method-host-plugin missing|must materialize/,
-    );
+    await assert.rejects(() => ensurePackagedMethodPlugin(missingRoot), /method-host-plugin missing|must materialize/);
   } finally {
     await rm(missingRoot, { recursive: true, force: true });
   }
 });
 
-test("#922 hermes trusted_project_dirs parse + missing trust fails loud", async () => {
-  assert.deepEqual(
-    [...parseHermesTrustedProjectDirs("skills:\n  trusted_project_dirs:\n    - /tmp/a\n")],
-    ["/tmp/a"],
-  );
+test("#922 hermes missing trust fails loud", async () => {
   const home = await mkdtemp(worktreeTempPrefix("ak-922-hermes-home-"));
   const cwd = await mkdtemp(worktreeTempPrefix("ak-922-hermes-cwd-"));
   try {

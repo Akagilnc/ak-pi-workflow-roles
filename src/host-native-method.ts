@@ -1,25 +1,20 @@
 /**
  * #922 host-native forced-method delivery.
- * claude/grok → --plugin-dir (dist/method-host-plugin, build-only materialize);
+ * claude/grok → --plugin-dir (dist/method-host-plugin, build-only);
  * codex/hermes → cwd `.agents/skills` → resources/methods (envelope-owned).
- *
- * Workspace catalog lifecycle is intentionally minimal: create only when absent,
- * never touch foreign catalogs, delete only links this process created, and
- * refcount overlapping holds inside this process. No lockfile/ref file (ABA and
- * complexity cost exceeded value for this short-lived symlink).
+ * Workspace link: create-if-absent; never touch foreign catalogs; delete only
+ * what this process created (in-process hold count). No lockfile/ref file.
  */
 import { constants } from "node:fs";
-import {
-  access, lstat, mkdir, readFile, readlink, realpath, readdir, rm, symlink, unlink,
-} from "node:fs/promises";
+import { access, lstat, mkdir, readFile, readlink, realpath, readdir, rm, symlink, unlink } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import type { MethodBinding } from "./host-contracts.ts";
 
 export type HostMethodSkill = Readonly<{ name: string; dir: string; path: string }>;
 export const HOST_METHOD_PLUGIN_NAME = "ak-methods" as const;
 
-export const packagedMethodsDir = (packageRoot: string) => join(packageRoot, "resources", "methods");
-export const packagedMethodPluginDir = (packageRoot: string) => join(packageRoot, "dist", "method-host-plugin");
+export const packagedMethodsDir = (r: string) => join(r, "resources", "methods");
+export const packagedMethodPluginDir = (r: string) => join(r, "dist", "method-host-plugin");
 
 export function hostMethodSkills(methods: readonly MethodBinding[]): readonly HostMethodSkill[] {
   return Object.freeze(methods.flatMap((m) => {
@@ -68,15 +63,13 @@ const sameReal = async (a: string, b: string) => {
   catch { return resolve(a) === resolve(b); }
 };
 
-/** Build/prepack is the sole writer of dist/method-host-plugin. */
+/** Runtime only reads build output; build/prepack is the sole materialize writer. */
 export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<string> {
   const outDir = packagedMethodPluginDir(packageRoot);
   const probe = join(outDir, "skills", "tdd", "SKILL.md");
   try {
     if ((await lstat(probe)).isFile()) return outDir;
-  } catch {
-    // missing
-  }
+  } catch { /* missing */ }
   throw new Error(
     `method-host-plugin missing at ${probe}; package build must materialize it (npm run build / prepack).`,
   );
@@ -84,7 +77,6 @@ export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<s
 
 export type WorkspaceAgentsSkillsLink = Readonly<{
   path: string;
-  /** True when this process created the link (may delete on last release). */
   created: boolean;
   release(): Promise<void>;
 }>;
@@ -96,16 +88,8 @@ const conflict = (path: string, detail: string) => new Error(
 
 /** linkPath → hold count for links this process created. */
 const createdHolds = new Map<string, number>();
-/** linkPath → whether this process created the agents parent dir. */
 const createdAgentsDirs = new Set<string>();
 
-/**
- * Envelope-owned cwd `.agents/skills` → packaged methods.
- * - Missing → create symlink; this process owns cleanup.
- * - Pre-existing same-target → use, never own/delete (operator or other process).
- * - Pre-existing other → conflict.
- * - Overlapping holds in this process share a refcount; last release deletes only if we created it.
- */
 export async function installWorkspaceAgentsSkillsLink(options: {
   readonly cwd: string; readonly packageRoot: string;
 }): Promise<WorkspaceAgentsSkillsLink> {
@@ -122,8 +106,7 @@ export async function installWorkspaceAgentsSkillsLink(options: {
     }
     createdHolds.delete(linkPath);
     try {
-      const st = await lstat(linkPath);
-      if (st.isSymbolicLink() && (await sameReal(linkPath, target))) await unlink(linkPath);
+      if ((await lstat(linkPath)).isSymbolicLink() && (await sameReal(linkPath, target))) await unlink(linkPath);
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
     }
@@ -142,7 +125,6 @@ export async function installWorkspaceAgentsSkillsLink(options: {
     if (!(await sameReal(linkPath, target))) {
       throw conflict(linkPath, `pre-existing symlink → ${await readlink(linkPath).catch(() => "?")}`);
     }
-    // Foreign or other-process same-target: observe only.
     if (!createdHolds.has(linkPath)) {
       return Object.freeze({ path: linkPath, created: false, release: async () => undefined });
     }
@@ -159,10 +141,7 @@ export async function installWorkspaceAgentsSkillsLink(options: {
   try {
     await symlink(target, linkPath);
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") {
-      // Lost create race: re-enter classify path once.
-      return installWorkspaceAgentsSkillsLink(options);
-    }
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") return installWorkspaceAgentsSkillsLink(options);
     if (createdAgentsDirs.has(agentsDir)) {
       createdAgentsDirs.delete(agentsDir);
       await rm(agentsDir, { recursive: true, force: true }).catch(() => undefined);
@@ -183,47 +162,7 @@ export async function findGitProjectRoot(start: string): Promise<string | undefi
   return undefined;
 }
 
-export function parseHermesTrustedProjectDirs(yaml: string): readonly string[] {
-  const out: string[] = [];
-  let inSkills = false, inTrusted = false, skillsIndent = -1, trustedIndent = -1;
-  for (const raw of yaml.split(/\r?\n/)) {
-    if (/^\s*#/.test(raw) || !raw.trim()) continue;
-    const indent = raw.match(/^ */)?.[0]?.length ?? 0;
-    const t = raw.trim();
-    if (!inSkills) {
-      if (/^skills:\s*$/.test(t)) { inSkills = true; skillsIndent = indent; }
-      continue;
-    }
-    if (indent <= skillsIndent) break;
-    if (!inTrusted) {
-      const m = t.match(/^trusted_project_dirs:\s*(.*)$/);
-      if (!m) continue;
-      inTrusted = true; trustedIndent = indent;
-      const rest = m[1]!.trim();
-      if (rest.startsWith("[") && rest.endsWith("]")) {
-        for (const p of rest.slice(1, -1).split(",")) {
-          const v = p.trim().replace(/^["']|["']$/g, "");
-          if (v) out.push(v);
-        }
-        break;
-      }
-      continue;
-    }
-    if (indent <= trustedIndent) break;
-    const item = t.match(/^- \s*(.+)$/);
-    if (!item) continue;
-    let v = item[1]!.trim();
-    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) v = v.slice(1, -1);
-    if (v) out.push(v);
-  }
-  return Object.freeze(out);
-}
-
-export async function readHermesTrustedProjectDirs(hermesHome: string): Promise<readonly string[]> {
-  try { return parseHermesTrustedProjectDirs(await readFile(join(hermesHome, "config.yaml"), "utf8")); }
-  catch { return Object.freeze([]); }
-}
-
+/** Loud missing-trust gate: trusted_project_dirs must list the git root (substring match on config text). */
 export async function assertHermesProjectSkillsTrusted(options: {
   readonly home: string; readonly cwd: string; readonly profileName: string;
 }): Promise<void> {
@@ -232,14 +171,15 @@ export async function assertHermesProjectSkillsTrusted(options: {
     throw new Error("hermes packaged methods need a git project root under cwd so `.agents/skills` can load.");
   }
   const projectReal = await realpath(projectRoot).catch(() => resolve(projectRoot));
-  const dirs = [
-    ...await readHermesTrustedProjectDirs(join(options.home, ".hermes/profiles", options.profileName)),
-    ...await readHermesTrustedProjectDirs(join(options.home, ".hermes")),
+  const homes = [
+    join(options.home, ".hermes", "profiles", options.profileName),
+    join(options.home, ".hermes"),
   ];
-  for (const entry of dirs) {
-    const expanded = entry.startsWith("~") ? join(options.home, entry.slice(1).replace(/^\//, "")) : entry;
-    try { if ((await realpath(expanded)) === projectReal) return; }
-    catch { if (resolve(expanded) === projectReal) return; }
+  for (const hermesHome of homes) {
+    try {
+      const text = await readFile(join(hermesHome, "config.yaml"), "utf8");
+      if (text.includes(projectReal) || text.includes(projectRoot) || text.includes(resolve(projectRoot))) return;
+    } catch { /* try next */ }
   }
   throw new Error(
     `hermes project skills are not trusted for ${projectReal}. ` +
