@@ -45,10 +45,6 @@ import {
   resolveEngineName,
 } from "./engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
-import {
-  PACKAGE_RESUME_FLAG,
-  PACKAGE_RESUME_TURN_ENTRY,
-} from "./public-cli/run-lifecycle.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
@@ -1129,8 +1125,6 @@ export function createRoleRuntimeExtension(
     }
     // Station-child identity (#840): omit navigator attendance. One flag.
     roleHost.registerFlag(STATION_CHILD_FLAG.name, STATION_CHILD_FLAG.definition);
-    // Package bare/auto resume (#858): typed trigger for engine materials + session entry.
-    roleHost.registerFlag(PACKAGE_RESUME_FLAG.name, PACKAGE_RESUME_FLAG.definition);
     // Register model only. Pi never sets ak-engine — resolveEngineName must
     // fall through to child-process env. An empty default would block that.
     roleHost.registerFlag(ENGINE_MODEL_FLAG_NAME, {
@@ -1336,20 +1330,14 @@ export function createRoleRuntimeExtension(
         };
       }
     });
-    // Engine coordinates ride readingMaterial when the transport prompt does not
-    // already carry them (#879 station-child officer; #858 package bare/auto resume).
-    // Ordinary initial / caller-message resume keep engine on the transport prompt only.
-    // Machine judgment uses typed flags — never prompt emptiness (#858).
+    // #879: engine coordinates ride readingMaterial only when station-child
+    // officer dialogue replaced the ordinary transport prompt (no double fold).
     roleHost.on("before_agent_start", () => {
+      const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
+      if (typeof role !== "string" || !isOfficerReviewSeat(role)) return;
+      if (roleHost.getFlag(STATION_CHILD_FLAG.name) !== true) return;
       const engine = resolveEngineName((name) => roleHost.getFlag(name));
       if (engine === undefined || dependencies.packageRoot === undefined) return;
-      const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
-      const stationChildOfficer =
-        typeof role === "string"
-        && isOfficerReviewSeat(role)
-        && roleHost.getFlag(STATION_CHILD_FLAG.name) === true;
-      const packageResume = roleHost.getFlag(PACKAGE_RESUME_FLAG.name) === true;
-      if (!stationChildOfficer && !packageResume) return;
       const engineModel = resolveEngineModel((name) => roleHost.getFlag(name));
       const material = engineSessionMaterialFromOptions({
         engine,
@@ -1376,10 +1364,9 @@ export function createRoleRuntimeExtension(
         },
       };
     });
-    // #879/#858: 0081 case-dossier → readingMaterial fold.
-    // post-admission freezes under run/attachments/case-dossier/ for station-child
-    // officer dialogue and for unbound ordinary entries (path shape without splicing
-    // caller dialogue). Bound ordinary keeps the continuation.prompt section.
+    // #879: single shared owner of station-child 0081 case-dossier → readingMaterial fold.
+    // post-admission freezes under run/attachments/case-dossier/; this handler alone
+    // projects it onto the existing agent-start materials face (Pi + envelope collect).
     // Role modules must not re-read the freeze (ADR 0018 lifecycle; no duplicate fold).
     roleHost.on("before_agent_start", async (_event, ctx) => {
       const runDir = runDirectoryFromHostContext(ctx);
@@ -1915,16 +1902,6 @@ export function createRoleRuntimeExtension(
     });
 
     roleHost.on("session_start", async (event, ctx) => {
-      // Typed package-resume turn boundary for settlement retention (#600 / #858).
-      // Written before the host books the user turn so loadBoundAuditorVolumes can
-      // skip package triggers without sniffing prompt bytes.
-      if (roleHost.getFlag(PACKAGE_RESUME_FLAG.name) === true) {
-        ctx.sessionManager.appendCustomEntry?.(PACKAGE_RESUME_TURN_ENTRY, {
-          version: 1,
-          packageTrigger: true,
-          ...(event.reason === undefined ? {} : { reason: event.reason }),
-        });
-      }
       // Scope fetch observation to this public run (in-process-session statusAwareFetch face).
       if (!fetchWrapped && typeof globalThis.fetch === "function") {
         priorFetch = globalThis.fetch.bind(globalThis);

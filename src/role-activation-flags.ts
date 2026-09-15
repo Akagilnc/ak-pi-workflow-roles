@@ -5,7 +5,6 @@
  */
 import type { RoleTurnRequest } from "./host-contracts.ts";
 import { packagedRoleInputFlag, packagedRolePhaseFlag } from "./packaged-role-registry.ts";
-import { PACKAGE_RESUME_FLAG } from "./public-cli/run-lifecycle.ts";
 
 /** Project closed RoleTurnActivation onto the shared host flag map. */
 export function projectActivationFlags(request: RoleTurnRequest): Map<string, boolean | string> {
@@ -13,13 +12,6 @@ export function projectActivationFlags(request: RoleTurnRequest): Map<string, bo
   const flags = new Map<string, boolean | string>([["ak-role", activation.role]]);
   if (request.stationChild === true) {
     flags.set("ak-station-child", true);
-  }
-  // Typed package bare/auto resume → role-runtime engine materials + session entry.
-  if (
-    request.continuation.kind === "resume"
-    && request.continuation.packageTrigger === true
-  ) {
-    flags.set(PACKAGE_RESUME_FLAG.name, true);
   }
   const inputFlag = packagedRoleInputFlag(activation.role);
   const phaseFlag = packagedRolePhaseFlag(activation.role);

@@ -23,7 +23,6 @@ import {
 } from "./invocation.ts";
 import {
   buildResumeContinuationPrompt,
-  packageResumeContinuation,
   loadResumableCoderRun,
   markRunAdmitted,
   type PublicResumeRequest,
@@ -197,12 +196,13 @@ export async function runPublicCoder(
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
           : { correlationId: admitted.correlationId ?? env.correlationId }),
-        continuation: packageResumeContinuation(
-          buildResumeContinuationPrompt({
+        continuation: {
+          kind: "resume",
+          prompt: buildResumeContinuationPrompt({
             packageRoot: env.packageRoot,
             ...pickEngineAxis(env),
           }),
-        ),
+        },
       }),
     adapters: coderAdapters(methodProvenance),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

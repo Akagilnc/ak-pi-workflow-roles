@@ -27,7 +27,6 @@ import {
   loadResumableReviewerRun,
   markRunAdmitted,
   buildResumeContinuationPrompt,
-  packageResumeContinuation,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -219,12 +218,13 @@ export async function runPublicReviewer(
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
           : { correlationId: admitted.correlationId ?? env.correlationId }),
-        continuation: packageResumeContinuation(
-          buildResumeContinuationPrompt({
+        continuation: {
+          kind: "resume",
+          prompt: buildResumeContinuationPrompt({
             packageRoot: env.packageRoot,
             ...pickEngineAxis(env),
           }),
-        ),
+        },
       }),
     adapters: reviewerAdapters(env.packageRoot, methodMaterial),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

@@ -60,6 +60,7 @@ import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-
 import {
   ensureTicketProvenanceVolume,
   readTicketProvenance,
+  resolveTicketProvenanceVolume,
 } from "../../src/ticket-provenance.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -885,6 +886,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
 
     const parentRoles: string[] = [];
     const childRoles: string[] = [];
+    let turnPrompt = "";
     let countersignRunDirectory = "";
     const parentBase = roleTurnHostFromLegacyPiRunner({
       packageRoot,
@@ -895,6 +897,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       async executeTurn(request: RoleTurnRequest) {
         parentRoles.push(request.activation.role);
         if (request.activation.role === "countersign") {
+          turnPrompt = request.continuation.prompt;
           countersignRunDirectory = request.runDirectory;
         }
         const outcome = await parentBase.executeTurn(request);
@@ -994,8 +997,9 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       "the first ticket-identifying leg is relocated after its typed assertion",
     );
 
-    // Typed ticket identity via real provenance read — no raw re-read of the same file.
-    await readTicketProvenance(582, project, home);
+    // #858: production entry delivers the concrete 起居录 path on the turn prompt.
+    const volume = resolveTicketProvenanceVolume(582, project, home);
+    assert.ok(turnPrompt.includes(volume.recordFile));
 
     assert.deepEqual(result.terminal?.gate?.actualSeats, ["notary"]);
     await readFile(join(ticketRun, "session", "auditor-roles", "o01_notary.jsonl"), "utf8");

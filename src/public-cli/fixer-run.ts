@@ -26,7 +26,6 @@ import {
 } from "./invocation.ts";
 import {
   buildResumeContinuationPrompt,
-  packageResumeContinuation,
   loadResumableFixerRun,
   markRunAdmitted,
   type PublicResumeRequest,
@@ -212,12 +211,13 @@ export async function runPublicFixer(
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
           : { correlationId: admitted.correlationId ?? env.correlationId }),
-        continuation: packageResumeContinuation(
-          buildResumeContinuationPrompt({
+        continuation: {
+          kind: "resume",
+          prompt: buildResumeContinuationPrompt({
             packageRoot: env.packageRoot,
             ...pickEngineAxis(env),
           }),
-        ),
+        },
       }),
     adapters: fixerAdapters(env.packageRoot, methodMaterial),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
