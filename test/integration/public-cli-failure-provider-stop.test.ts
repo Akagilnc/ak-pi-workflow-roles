@@ -350,115 +350,149 @@ test("bound auditor provider failure outranks the parent abort it caused", async
   });
 });
 
-// #600 / 50940955: transport-token auto-resume must not stale first-attempt
-// auditor retention (ComplianceResponseRetentionError / EISDIR). Public face only.
+// #600 / 50940955: only transport-token auto-resume skips the court floor.
+// Positive keeps first-attempt retention; real new-court users must stale it.
 test("transport-token resume keeps first-attempt auditor retention bound", async () => {
   await withTempHome(async (home) => {
     const sessionDir = join(home, "session");
     const sessionFile = join(sessionDir, "parent.jsonl");
     const childDir = join(sessionDir, "auditor-roles");
     await mkdir(childDir, { recursive: true });
-    await writeFile(sessionFile, [
-      { type: "session", id: "parent-session" },
-      { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
-      {
-        type: "message",
-        id: "attempt-first",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "This operation was aborted",
-          provider: "openai-codex",
-          model: "faux-1",
+
+    const retained = {
+      cause: "provider" as const,
+      diagnostic: "WebSocket error",
+      identity: { name: "faux-1", code: "openai-codex" },
+      details: {
+        provider: "openai-codex",
+        model: "faux-1",
+        retentionFailure: {
+          name: "ComplianceResponseRetentionError",
+          cause: { code: "EISDIR" },
         },
       },
-      {
-        type: "message",
-        id: "resume-token",
-        message: { role: "user", content: RESUME_TRANSPORT_ENVELOPE },
-      },
-      {
-        type: "message",
-        id: "attempt-retry",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "retry without retention",
-          provider: "openai-codex",
-          model: "faux-1",
-        },
-      },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-    await writeFile(join(childDir, "child.jsonl"), [
-      { type: "session", id: "child-session", parentSession: sessionFile },
-      {
-        type: "custom",
-        customType: "ak_auditor_parent_attempt_binding",
-        data: {
-          version: 1,
-          parent: {
-            sessionId: "parent-session",
-            sessionFile,
-            attemptEntryId: "attempt-first",
-          },
-        },
-      },
-      {
-        type: "message",
-        message: {
-          role: "assistant",
-          stopReason: "error",
-          errorMessage: "WebSocket error",
-          provider: "openai-codex",
-          model: "faux-1",
-        },
-      },
-      {
-        type: "custom",
-        customType: "ak_auditor_compliance_failure",
-        data: {
-          parent: {
-            sessionId: "parent-session",
-            sessionFile,
-            attemptEntryId: "attempt-first",
-          },
-          failure: {
-            cause: "provider",
-            diagnostic: "WebSocket error",
-            identity: { name: "faux-1", code: "openai-codex" },
-            details: {
-              provider: "openai-codex",
-              model: "faux-1",
-              retentionFailure: {
-                name: "ComplianceResponseRetentionError",
-                cause: { code: "EISDIR" },
-              },
+    };
+    const writeFirstAttemptChild = async () => {
+      await writeFile(join(childDir, "child.jsonl"), [
+        { type: "session", id: "child-session", parentSession: sessionFile },
+        {
+          type: "custom",
+          customType: "ak_auditor_parent_attempt_binding",
+          data: {
+            version: 1,
+            parent: {
+              sessionId: "parent-session",
+              sessionFile,
+              attemptEntryId: "attempt-first",
             },
           },
         },
-      },
-    ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+        {
+          type: "message",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "WebSocket error",
+            provider: "openai-codex",
+            model: "faux-1",
+          },
+        },
+        {
+          type: "custom",
+          customType: "ak_auditor_compliance_failure",
+          data: {
+            parent: {
+              sessionId: "parent-session",
+              sessionFile,
+              attemptEntryId: "attempt-first",
+            },
+            failure: retained,
+          },
+        },
+      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+    };
+    const writeParentWithFollowUser = async (followUser: Record<string, unknown>) => {
+      await writeFile(sessionFile, [
+        { type: "session", id: "parent-session" },
+        { type: "message", id: "user-initial", message: { role: "user", content: "task" } },
+        {
+          type: "message",
+          id: "attempt-first",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "This operation was aborted",
+            provider: "openai-codex",
+            model: "faux-1",
+          },
+        },
+        { type: "message", id: "follow-user", message: followUser },
+        {
+          type: "message",
+          id: "attempt-retry",
+          message: {
+            role: "assistant",
+            stopReason: "error",
+            errorMessage: "retry without retention",
+            provider: "openai-codex",
+            model: "faux-1",
+          },
+        },
+      ].map((entry) => JSON.stringify(entry)).join("\n") + "\n");
+      await writeFirstAttemptChild();
+    };
 
+    // Positive: real Pi content-array persistence of the transport token keeps retention.
+    await writeParentWithFollowUser({
+      role: "user",
+      content: [{ type: "text", text: RESUME_TRANSPORT_ENVELOPE }],
+    });
     assert.deepEqual(
       await resolveAuditedRunnerKnownFailure({
         runner: undefined,
         sessionFile,
         credential: undefined,
       }),
+      retained,
+      "content-array transport token must not stale first-attempt auditor retention",
+    );
+
+    // Negative boundary: only the token is skipped. Real courts must advance the
+    // floor and drop prior retention (empty / ordinary / token-not-first-line).
+    const realCourts: ReadonlyArray<{ label: string; message: Record<string, unknown> }> = [
+      { label: "empty-prompt", message: { role: "user", content: "" } },
+      { label: "ordinary-user", message: { role: "user", content: "independent court" } },
       {
-        cause: "provider",
-        diagnostic: "WebSocket error",
-        identity: { name: "faux-1", code: "openai-codex" },
-        details: {
-          provider: "openai-codex",
-          model: "faux-1",
-          retentionFailure: {
-            name: "ComplianceResponseRetentionError",
-            cause: { code: "EISDIR" },
-          },
+        label: "normal-then-token-part",
+        message: {
+          role: "user",
+          content: [
+            { type: "text", text: "same-ticket reask" },
+            { type: "text", text: RESUME_TRANSPORT_ENVELOPE },
+          ],
         },
       },
-    );
+    ];
+    for (const shape of realCourts) {
+      await writeParentWithFollowUser(shape.message);
+      const known = await resolveAuditedRunnerKnownFailure({
+        runner: undefined,
+        sessionFile,
+        credential: undefined,
+      });
+      // Public resolver falls through to the current parent stop once the prior
+      // auditor volume is staled — never the first-attempt retentionFailure.
+      assert.equal(
+        known?.diagnostic,
+        "retry without retention",
+        `${shape.label}: real court must stale prior auditor retention`,
+      );
+      assert.equal(
+        (known?.details as { retentionFailure?: unknown } | undefined)?.retentionFailure,
+        undefined,
+        `${shape.label}: staled court must not leak first-attempt retentionFailure`,
+      );
+    }
   });
 });
 
