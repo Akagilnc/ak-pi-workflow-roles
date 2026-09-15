@@ -1,9 +1,9 @@
-// #178: prepare consumers that relied on package navigator default were culled.
 import assert from "node:assert/strict";
 import test from "node:test";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  createNavigatorAttendance,
   navigatorProviderFailureFromError,
   parseNavigatorModelSetting,
   navigatorProviderFailureFromPublicTerminal,
@@ -15,67 +15,308 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import {
+  context,
   candidate,
   sessionHarness,
   attendance,
 } from "../helpers/navigator-attendance-kit.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
+test("Navigator preparation overlaps settlement, waits for the same call, and presents one typed event", async () => {
+  await withTempRoot("navigator-attendance-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, undefined, root);
+    nav.prepare();
+    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(harness.prompts(), 1);
+    assert.deepEqual(harness.retainedContext().currentRole, { role: "coder", phase: "apply" });
+    assert.equal(harness.retainedContext().subject, "Fix issue 28");
+    assert.equal(harness.retainedContext().authority, "owner decision");
+    assert.equal(harness.retainedContext().subjectKey, "/repo/.ak/work/issues/28");
+    let settled = false;
+    const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" }).then(() => { settled = true; });
+    await Promise.resolve();
+    assert.equal(settled, false);
+    await harness.tool().execute("prepare", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await waiting;
+    assert.equal(events.length, 1);
+    assert.equal(events[0].disposition, "recommendation");
+    assert.deepEqual(events[0].route, candidate().candidates[0]!.route);
+    const invocation = harness.entries.find((entry: any) => entry.customType === "ak-navigator-invocation");
+    const settlement = harness.entries.find((entry: any) => entry.customType === "ak-navigator-settlement");
+    const route = harness.entries.find((entry: any) => entry.customType === "ak-navigator-route");
+    assert.equal((invocation as any).data.invocationId, events[0].invocationId);
+    assert.equal((settlement as any).data.invocationId, events[0].invocationId);
+    assert.equal((route as any).data.invocationId, events[0].invocationId);
+    assert.deepEqual(events[0].next, candidate().candidates[0]!.next);
+    assert.equal(events[0].reason, candidate().candidates[0]!.reason);
+    // Required --base cannot be inferred from role/phase, so no unusable bare command is emitted.
+    assert.equal(events[0].command, undefined);
+  });
+});
+
+test("rejected Navigator prepare consumes budget and correction succeeds in the same session", async () => {
+  await withTempRoot("navigator-rejected-prepare-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    harness.rejectPrepare("root parameters must be an object");
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, undefined, root);
+    nav.prepare();
+    while (harness.prompts() < 2 || harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    await harness.tool().execute("corrected-prepare", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 2);
+    assert.equal(events[0]?.disposition, "recommendation");
+  });
+});
+
+test("two rejected Navigator prepares settle typed no-advice with exact reasons and no third prompt", async () => {
+  await withTempRoot("navigator-rejected-exhaustion-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    harness.rejectPrepare("root rejection one", "root rejection two");
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, undefined, root);
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 2, "budget exhaustion must not start a third prompt");
+    assert.equal(events[0]?.disposition, "no-advice");
+    const lifecycle = harness.entries.find((entry: any) => entry.customType === "ak-no-receipt-lifecycle") as any;
+    assert.deepEqual(lifecycle?.data.rejectedReceipts, [
+      { reason: "root rejection one", diagnosticAvailable: true },
+      { reason: "root rejection two", diagnosticAvailable: true },
+    ]);
+    assert.equal(lifecycle?.data.terminalToolCalled, true);
+  });
+});
+
+test("Navigator transport failure remains unavailable and does not enter rejected-prepare budget", async () => {
+  await withTempRoot("navigator-prepare-transport-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    harness.failTransport("socket reset");
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, undefined, root);
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 1);
+    assert.equal(events[0]?.disposition, "unavailable");
+    assert.equal(events[0]?.unavailableSource, "transport");
+    assert.equal(harness.entries.some((entry: any) => entry.customType === "ak-no-receipt-lifecycle"), false);
+  });
+});
+
+test("live help changes the next hint without a static template or fabricated task arguments", async () => {
+  await withTempRoot("navigator-help-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    let help = "Usage: pi --ak-role coder --ak-coder-phase <phase>";
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, async (role) => `${help} (${role})`, root);
+    nav.prepare();
+    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(harness.retainedContext().liveRoleHelp.find((entry: any) => entry.role === "coder").help.includes("ak-coder-phase"), true);
+    await harness.tool().execute("prepare-1", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    help = "Usage: pi --ak-role coder --ak-coder-task <file>";
+    nav.prepare();
+    while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(harness.retainedContext().liveRoleHelp.find((entry: any) => entry.role === "coder").help.includes("ak-coder-task"), true);
+    assert.equal(harness.retainedContext().liveRoleHelp.some((entry: any) => entry.help.includes("/repo/task.md")), false);
+    await harness.tool().execute("prepare-2", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+  });
+});
+
 test("unchanged routes are omitted after a native-session route entry, while changed settings are reread", async () => {
   await withTempRoot("navigator-route-", async (root) => {
-    // Hermetic HOME seat table is the sole model authority (#675).
-    const priorHome = process.env.HOME;
-    process.env.HOME = root;
+    // Existing withTempRoot holds the caller navigator seat fixture; pass as explicit context.home.
     const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
-    try {
-      await savePublicCliConfig(
-        { seats: { navigator: { provider: "provider", model: "one" } } },
-        root,
-      );
-      const setting = join(root, "model.json");
-      await writeFile(setting, JSON.stringify({ model: "ignored/legacy" }));
-      const harness = sessionHarness();
+    await savePublicCliConfig(
+      { seats: { navigator: { provider: "provider", model: "one" } } },
+      root,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "ignored/legacy" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, undefined, root);
+    nav.prepare();
+    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    await harness.tool().execute("prepare-1", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.ok(events[0].route);
+    await savePublicCliConfig(
+      { seats: { navigator: { provider: "provider", model: "two" } } },
+      root,
+    );
+    nav.prepare();
+    while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    await harness.tool().execute("prepare-2", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(events[1].route, undefined);
+    assert.equal(harness.prompts(), 2);
+    await savePublicCliConfig(
+      { seats: { navigator: { provider: "provider", model: "three" } } },
+      root,
+    );
+    nav.prepare();
+    while (harness.prompts() < 3) await new Promise<void>((resolve) => setImmediate(resolve));
+    const original = candidate().candidates[0]!;
+    const revised = { candidates: [{ id: original.id, matches: original.matches, reason: original.reason, route: [{ role: "coder" as const, phase: "apply" as const }, { role: "fixer" as const, phase: "apply" as const }, { role: "judge" as const, phase: null }], next: { role: "fixer" as const, phase: "apply" as const } }] };
+    await harness.tool().execute("prepare-3", revised, undefined, undefined, {} as never);
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.deepEqual(events[2].route, revised.candidates[0]!.route);
+    // #675 ⑥: bare provider/model has no invented thinking default.
+    assert.deepEqual(harness.modelSettings, [
+      { model: "provider/one" },
+      { model: "provider/two" },
+      { model: "provider/three" },
+    ]);
+    assert.ok(harness.entries.some((entry: any) => entry.customType === "ak-navigator-route"));
+  });
+});
+
+test("typed owner-decision and role-infrastructure outcomes emit affirmative no-advice", async () => {
+  await withTempRoot("navigator-no-advice-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, undefined, root);
+    nav.prepare();
+    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    const owner = nav.settle({ kind: "human_decision", role: "coder", phase: "apply", status: "escalate" });
+    await harness.tool().execute("no-advice-owner", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await owner;
+    nav.prepare();
+    while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
+    const infra = nav.settle({ kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
+    await harness.tool().execute("no-advice-infra", candidate(), undefined, undefined, {} as never);
+    harness.release();
+    await infra;
+    assert.equal(events.length, 2);
+    assert.equal(events[0]?.disposition, "no-advice");
+    assert.equal(typeof events[0]?.invocationId, "string");
+    assert.ok(String(events[0]?.invocationId).length > 0);
+    assert.equal(events[0]?.role, "coder");
+    assert.equal(events[0]?.phase, "apply");
+    assert.equal(typeof events[0]?.subjectKey, "string");
+    assert.equal(events[1]?.disposition, "no-advice");
+    // One attendance instance keeps one exact principal across settles.
+    assert.equal(events[1]?.invocationId, events[0]?.invocationId);
+    assert.equal(harness.prompts(), 2);
+  });
+});
+
+test("a session that settled without a receipt is not re-summoned for delivery", async () => {
+  await withTempRoot("navigator-nested-no-receipt-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, undefined, root);
+    harness.settleWithoutReceipt("no typed candidate batch");
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    // Each prompt is an independent public summon: a delivery request after the
+    // session settled opens new sessions instead of pressing the one that owes
+    // the receipt.
+    assert.equal(harness.prompts(), 1);
+    assert.equal(events.length, 1);
+    assert.equal(events[0]?.disposition, "no-advice");
+    const lifecycle = harness.entries.filter((entry: any) => entry?.customType === "ak-no-receipt-lifecycle");
+    assert.equal(lifecycle.length, 1);
+    const facts = (lifecycle[0] as any).data;
+    assert.equal(facts.terminalToolCalled, true);
+    assert.deepEqual(facts.rejectedReceipts, [
+      { reason: "no typed candidate batch", diagnosticAvailable: true },
+    ]);
+    assert.equal(facts.runPointer, "/fixture/navigator-record");
+  });
+});
+
+test("Navigator session creation failures become unavailable without rejecting settlement", async () => {
+  await withTempRoot("navigator-unavailable-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    for (const diagnostic of ["provider auth down", "session open failed with different wording"]) {
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events);
+      const nav = createNavigatorAttendance({
+        context: context(root),
+        role: "coder",
+        phase: "apply",
+        subjectKey: "/repo/.ak/work/issues/28",
+        subject: "Fix issue 28",
+        authority: "owner decision",
+        loadSoul: async () => "route judgment",
+        loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
+        modelSettingPath: setting,
+        createSession: async () => { throw new Error(diagnostic); },
+        onEvent: async (event) => { events.push(event); } });
       nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-      await harness.tool().execute("prepare-1", candidate(), undefined, undefined, {} as never);
-      harness.release();
       await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-      assert.ok(events[0].route);
-      await savePublicCliConfig(
-        { seats: { navigator: { provider: "provider", model: "two" } } },
-        root,
-      );
-      nav.prepare();
-      while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
-      await harness.tool().execute("prepare-2", candidate(), undefined, undefined, {} as never);
-      harness.release();
-      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-      assert.equal(events[1].route, undefined);
-      assert.equal(harness.prompts(), 2);
-      await savePublicCliConfig(
-        { seats: { navigator: { provider: "provider", model: "three" } } },
-        root,
-      );
-      nav.prepare();
-      while (harness.prompts() < 3) await new Promise<void>((resolve) => setImmediate(resolve));
-      const original = candidate().candidates[0]!;
-      const revised = { candidates: [{ id: original.id, matches: original.matches, reason: original.reason, route: [{ role: "coder" as const, phase: "apply" as const }, { role: "fixer" as const, phase: "apply" as const }, { role: "judge" as const, phase: null }], next: { role: "fixer" as const, phase: "apply" as const } }] };
-      await harness.tool().execute("prepare-3", revised, undefined, undefined, {} as never);
-      harness.release();
-      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-      assert.deepEqual(events[2].route, revised.candidates[0]!.route);
-      // #675 ⑥: bare provider/model has no invented thinking default.
-      assert.deepEqual(harness.modelSettings, [
-        { model: "provider/one" },
-        { model: "provider/two" },
-        { model: "provider/three" },
-      ]);
-      assert.ok(harness.entries.some((entry: any) => entry.customType === "ak-navigator-route"));
-    } finally {
-      if (priorHome === undefined) delete process.env.HOME;
-      else process.env.HOME = priorHome;
+      assert.equal(events.length, 1);
+      assert.equal(events[0].disposition, "unavailable");
+      assert.equal(events[0].unavailableSource, "session");
+      assert.equal(events[0].unavailableCause, "session");
+      assert.notEqual(events[0].unavailableReason, undefined);
     }
   });
 });
