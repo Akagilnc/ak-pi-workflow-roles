@@ -1560,19 +1560,21 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       "C must survive failed new-range reask",
     );
 
-    // 验收 8：存量转换——合法 owner 保留；`<task-notification` 前缀 owner 消失；
-    // 证不出的其它前缀原样不动。不新增字段。
+    // 验收 8：存量一次性迁移——仅 header.sessions=[] 的纯存量卷。合法 owner 保留；
+    // `<task-notification` 前缀 owner 消失；证不出的其它前缀原样不动。不新增字段。
+    // 已有 sessions 边界的卷 empty＝内容 no-op（C4），不在此 recurring 清。
     const stockLegalId = "stock-legal-owner";
     const stockLegalText = "存量合法陛下发言";
     const stockTaskText =
       "<task-notification>\n<task-id>stock-1</task-id>\n<summary>stock machine</summary>\n</task-notification>";
     const stockOtherText = "<other-unknown-prefix>证不出的前缀原样留存</other-unknown-prefix>";
-    const headerNow = still.header!;
     const stockBody = `${JSON.stringify({
-      ...headerNow,
+      repo: resolveBookKeyFromGit(project),
+      ticket: TICKET,
+      createdAt: "2026-01-02T00:00:00.000Z",
       updatedAt: "2026-01-02T00:00:00.000Z",
+      sessions: [],
     })}\n${[
-      ...still.lines.map((line) => JSON.stringify(line)),
       JSON.stringify({
         speaker: "owner",
         s: 0,
@@ -1610,7 +1612,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
           (typeof line.text === "string" && line.text.startsWith("<task-notification")),
       ),
       false,
-      "stock <task-notification owner must be removed",
+      "stock <task-notification owner must be removed on one-shot sessions=[] volume",
     );
     assert.equal(
       afterStock.lines.some(
@@ -1676,6 +1678,15 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       afterKeep.lines.some((line) => line.id === keepId),
       true,
       "new range after paste must still land",
+    );
+    // C4 + 验收 3：header.sessions 已非空时 empty 必须内容 no-op，不得再杀合法同前缀。
+    const beforeEmptyPaste = await readFile(paths.recordFile, "utf8");
+    const afterEmptyPaste = await runDiarist("01a0diar00-0000-7000-8000-00000000009b2", []);
+    assert.equal(await readFile(paths.recordFile, "utf8"), beforeEmptyPaste);
+    assert.equal(
+      afterEmptyPaste.lines.some((line) => line.id === pasteId && line.text === pasteText),
+      true,
+      "projected human task-notification paste must survive later empty-sessions no-op",
     );
 
     // G5：dequeue 后不可解析行不得让 pending 槽吞掉下一条真实 owner。

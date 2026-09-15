@@ -694,8 +694,15 @@ export async function reprojectTicketProvenance(input: {
       return { recordFile, header, lines, unparsable: [] };
     }
     if (priorNonEmpty) {
-      // One-shot stock conversion only on pure empty-sessions path (验收 8 / C4).
-      const lines = purgeStockTaskNotificationOwnerLines(prior.lines);
+      // 存量一次性迁移：仅当册子头尚无任何 sessions 边界时（从未成功投影过 bounds 的
+      // 纯存量卷）。header.sessions 非空＝管线已接过正式边界，empty 必须是内容 no-op
+      // （验收 3），不得再按正文杀合法投影的同前缀真人行（C4）。
+      // 已有 sessions 的历史伪署存量：不得声称已扫净，不在此 recurring 清。
+      const canMigrateStock =
+        prior.header === undefined || prior.header.sessions.length === 0;
+      const lines = canMigrateStock
+        ? purgeStockTaskNotificationOwnerLines(prior.lines)
+        : [...prior.lines];
       const header: TicketProvenanceHeader =
         prior.header ??
         ({
@@ -705,7 +712,7 @@ export async function reprojectTicketProvenance(input: {
           updatedAt: now,
           sessions: [],
         } satisfies TicketProvenanceHeader);
-      // Stock purge is the only rewrite on pure empty; otherwise exact no-op.
+      // Stock migration rewrite only when something was actually removed; else exact no-op.
       if (lines.length === prior.lines.length) {
         return {
           recordFile: prior.recordFile,
