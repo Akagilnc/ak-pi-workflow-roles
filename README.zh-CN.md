@@ -60,7 +60,7 @@ ak-role config set-auto-resume-limit 3
 
 回执是 typed 的，调用者不必解析散文即可组合角色；顺序与停止归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
 
-门下省交卷闸：DONE 侧交卷（`completed`／`partially_completed`）时包按受审物直接传召官（将作监/修内司→`inspector`；大理寺判牒/给事中署章→`notary`），不再起门下省子 session 选席；封驳＝当场重写重交，不是角色失败；`planned`／`refused`／`unfinished` 不传召官、直接结算；`ak-role gatekeeper` 仍可独立 dispatch/pass；闸史读回执 typed gate 段，勿刮 session 散文。指针：[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。劳务引擎绕行失败沿既有基础设施故障路径停止、真因可见（[ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)）。
+门下省交卷闸：DONE 侧交卷（`completed`／`partially_completed`）时包按受审物直接传召官（将作监/修内司→`inspector`；大理寺判牒/给事中署章→`notary`），不再起门下省子 session 选席；封驳＝当场重写重交，不是角色失败；`planned`／`refused`／`unfinished` 不传召官、直接结算；`ak-role gatekeeper` 仍可独立 dispatch/pass；闸史读回执 typed gate 段，勿刮 session 散文。指针：[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。劳务引擎绕行失败沿既有基础设施故障路径停止、真因可见（[ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)）。运行时事实 `decisiveFacts.engineDetourToolUsage`（#537）只计 package 工具 `ak_engine_detour`；bash/CLI ordinary path 是永久观测盲区，不得读成「该腿没用引擎」。
 
 ## 调用百官
 

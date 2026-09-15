@@ -34,6 +34,8 @@ export type RoleTurnRequestProjectionOptions = {
   continuation: RoleTurnRequest["continuation"];
   /** #833 resume-with-message court attempt. */
   courtAttemptId?: string;
+  /** #537 public-invocation scope (one ak-role call). */
+  invocationScopeId?: string;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
 };
@@ -79,6 +81,9 @@ export function projectRoleTurnRequest(
     ...(options.courtAttemptId === undefined || options.courtAttemptId.length === 0
       ? {}
       : { courtAttemptId: options.courtAttemptId }),
+    ...(options.invocationScopeId === undefined || options.invocationScopeId.length === 0
+      ? {}
+      : { invocationScopeId: options.invocationScopeId }),
     ...(options.stationChild === undefined ? {} : { stationChild: options.stationChild }),
   };
 }
