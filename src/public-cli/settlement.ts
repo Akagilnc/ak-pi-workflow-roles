@@ -897,26 +897,6 @@ async function readBoundSessionEntries(
 }
 
 /**
- * Capture the call-local session boundary once at public-call entry (#858).
- * Reuses readBoundSessionEntries — ENOENT (session not yet written) is absence 0;
- * malformed JSONL and other read failures propagate (失败诚实).
- * Reused across in-place auto-resume; the next independent call re-captures.
- */
-export async function captureCallLocalSessionBoundary(
-  authority: Pick<DurablePrincipalAuthority, "decode">,
-  principal: DurablePrincipal | undefined,
-): Promise<number> {
-  if (principal === undefined) return 0;
-  const sessionFile = authority.decode(principal).sessionFile;
-  try {
-    return (await readBoundSessionEntries(sessionFile)).length;
-  } catch (error) {
-    if (isMissingPathError(error)) return 0;
-    throw error;
-  }
-}
-
-/**
  * Latest native assistant provider-stop in a session (stopReason error|aborted).
  * Only the final assistant turn decides terminality — an older error followed by a
  * later non-error stop is not a provider failure (would wash a no-lawful-output path).
@@ -1094,27 +1074,8 @@ type BoundAuditorVolume = {
   readonly sessionFile: string;
 };
 
-/**
- * Parent-user court floor for auditor retention (#858).
- * callLocalSessionBoundary is the public-call start entry count: first user
- * at/after that index is this call's court start — later in-call auto-resume
- * users do not advance it. Next independent call re-captures. Never prompt bytes.
- */
-function parentUserCourtFloor(
-  parentEntries: readonly SessionEntry[],
-  callLocalSessionBoundary: number,
-): number {
-  const floor = Math.max(0, callLocalSessionBoundary);
-  for (let i = floor; i < parentEntries.length; i += 1) {
-    const entry = parentEntries[i];
-    if (entry?.type === "message" && entry.message?.role === "user") return i;
-  }
-  return floor;
-}
-
 async function loadBoundAuditorVolumes(
   sessionFile: string,
-  callLocalSessionBoundary: number,
 ): Promise<readonly BoundAuditorVolume[] | undefined> {
   let parentEntries: SessionEntry[];
   try {
@@ -1125,13 +1086,17 @@ async function loadBoundAuditorVolumes(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
-  const latestParentUserIndex = parentUserCourtFloor(
-    parentEntries,
-    callLocalSessionBoundary,
-  );
+  // Latest parent user turn owns the court floor — no free-text resume sniff,
+  // no call-local entry-count mechanism (#858 r11: tell a path, not a mechanism).
+  let latestParentUserIndex = -1;
+  for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
+    const entry = parentEntries[i];
+    if (entry?.type === "message" && entry.message?.role === "user") {
+      latestParentUserIndex = i;
+      break;
+    }
+  }
   const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
-  // Auto-resume seam: call-local boundary keeps first-attempt retention across
-  // in-place resume users; next independent call re-captures and stales priors.
   const valid: BoundAuditorVolume[] = [];
   let sawAnyDirectory = false;
   for (const childDirectory of childDirectories) {
@@ -1268,24 +1233,11 @@ function providerStopFallbackFromAuditorVolumes(
   return undefined;
 }
 
-/** Recover a provider stop from the auditor child bound to the current parent attempt. */
-export async function readBoundAuditorKnownFailure(
-  sessionFile: string,
-  /** Public-call start entry count; 0 = whole session from start. */
-  callLocalSessionBoundary = 0,
-): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile, callLocalSessionBoundary);
-  if (volumes === undefined) return undefined;
-  return complianceFailureFromAuditorVolumes(volumes)
-    ?? providerStopFallbackFromAuditorVolumes(volumes);
-}
-
 /** Strong auditor tier only — retained compliance-failure entries, no provider-stop fallback. */
 async function readBoundAuditorComplianceFailure(
   sessionFile: string,
-  callLocalSessionBoundary: number,
 ): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile, callLocalSessionBoundary);
+  const volumes = await loadBoundAuditorVolumes(sessionFile);
   if (volumes === undefined) return undefined;
   return complianceFailureFromAuditorVolumes(volumes);
 }
@@ -1293,9 +1245,8 @@ async function readBoundAuditorComplianceFailure(
 /** Weaker auditor tier: provider stop without a retained compliance-failure entry. */
 async function readBoundAuditorProviderStopFallback(
   sessionFile: string,
-  callLocalSessionBoundary: number,
 ): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile, callLocalSessionBoundary);
+  const volumes = await loadBoundAuditorVolumes(sessionFile);
   if (volumes === undefined) return undefined;
   return providerStopFallbackFromAuditorVolumes(volumes);
 }
@@ -1375,13 +1326,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   credential: RoleTurnKnownFailure | undefined;
   /** Reviewer only: recover child-written rejection page into knownFailure.details. */
   runDirectory?: string;
-  /**
-   * Call-local parent session floor from the shared public-call seam (#858).
-   * Production always passes the captured entry count; omit/0 = whole session.
-   */
-  callLocalSessionBoundary?: number;
 }): Promise<AuditedRunnerFailureResolution> {
-  const callLocalSessionBoundary = input.callLocalSessionBoundary ?? 0;
   if (input.runner !== undefined) return resolutionOf(input.runner);
   if (input.runDirectory !== undefined) {
     try {
@@ -1401,10 +1346,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
   // host failure is next — it outranks weaker auditor provider-stop fallback so
   // parent failInfrastructure abort pollution cannot wash a real diagnostic (#475).
   try {
-    const auditorCompliance = await readBoundAuditorComplianceFailure(
-      input.sessionFile,
-      callLocalSessionBoundary,
-    );
+    const auditorCompliance = await readBoundAuditorComplianceFailure(input.sessionFile);
     if (auditorCompliance !== undefined) return resolutionOf(auditorCompliance);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor failure");
@@ -1430,10 +1372,7 @@ export async function resolveAuditedRunnerFailureResolution(input: {
     }
   }
   try {
-    const auditorStop = await readBoundAuditorProviderStopFallback(
-      input.sessionFile,
-      callLocalSessionBoundary,
-    );
+    const auditorStop = await readBoundAuditorProviderStopFallback(input.sessionFile);
     if (auditorStop !== undefined) return resolutionOf(auditorStop);
   } catch (error) {
     const failure = sessionReadFailure(error, "failed to recover bound auditor provider stop");
@@ -1515,8 +1454,6 @@ export async function resolveAuditedRunnerKnownFailure(input: {
   credential: RoleTurnKnownFailure | undefined;
   /** Reviewer only: recover child-written rejection page into knownFailure.details. */
   runDirectory?: string;
-  /** Call-local parent session floor from the shared public-call seam (#858). */
-  callLocalSessionBoundary?: number;
 }): Promise<RoleTurnKnownFailure | undefined> {
   return (await resolveAuditedRunnerFailureResolution(input)).knownFailure;
 }

@@ -29,7 +29,6 @@ import type {
   ControlledFailureCause,
   DurablePrincipal,
   DurablePrincipalAuthority,
-  RoleTurnContinuation,
   RoleTurnHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
@@ -37,10 +36,7 @@ import type {
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { isOfficerReviewSeat } from "../host-contracts.ts";
-import {
-  deliverCaseDossierAsAttachment,
-  projectCaseDossierPointerSection,
-} from "./case-dossier-delivery.ts";
+import { deliverCaseDossierAsAttachment } from "./case-dossier-delivery.ts";
 
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
 function describeCaughtError(error: unknown): { name?: string; message: string; code?: string | number } {
@@ -49,17 +45,6 @@ function describeCaughtError(error: unknown): { name?: string; message: string; 
     return { name: error.name, message: error.message, ...(code === undefined ? {} : { code }) };
   }
   return { message: String(error) };
-}
-
-/** Append one system section to a continuation prompt, keeping its kind. */
-function appendContinuationSection(
-  continuation: RoleTurnContinuation,
-  section: string,
-): RoleTurnContinuation {
-  const prompt = `${continuation.prompt}\n\n${section}`;
-  return continuation.kind === "initial"
-    ? { kind: "initial", prompt }
-    : { kind: "resume", prompt };
 }
 
 /**
@@ -103,7 +88,6 @@ import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import { clearReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
   attemptProducedFreshSubmission,
-  captureCallLocalSessionBoundary,
   classifyPostAdmissionFailure,
   controlledFailureInputFromResolution,
   exitCodeForTerminalOutcome,
@@ -251,67 +235,7 @@ export type PostAdmissionEnv = {
   freshSummons?: true;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
-  /**
-   * Parent session entry count at this public-call start (#858).
-   * Set once by the shared post-admission entry; reused across in-place
-   * auto-resume. Call-local only — never prompt, disk, or state machine.
-   */
-  callLocalSessionBoundary?: number;
 };
-
-/** Bind call-local session boundary once per public call when absent. */
-async function withCallLocalSessionBoundary(
-  env: PostAdmissionEnv,
-  admitted: { readonly principal?: DurablePrincipal },
-): Promise<PostAdmissionEnv> {
-  if (env.callLocalSessionBoundary !== undefined) return env;
-  return {
-    ...env,
-    callLocalSessionBoundary: await captureCallLocalSessionBoundary(
-      env.principalAuthority,
-      admitted.principal,
-    ),
-  };
-}
-
-/**
- * Capture call-local boundary at public-entry, or settle through the existing
- * controlled-failure authority when the bound session is unreadable (ADR 0080).
- * Malformed JSONL must not escape as a bare throw outside typed terminal/artifacts.
- */
-async function bindCallLocalSessionBoundaryOrSettle<
-  A extends AdmittedRoleInvocation,
-  T extends TerminalResult = TerminalResult,
->(input: {
-  env: PostAdmissionEnv;
-  admitted: A;
-  adapters: PostAdmissionAdapters<A, T>;
-  io: CliIo;
-}): Promise<
-  | { kind: "continue"; env: PostAdmissionEnv }
-  | {
-      kind: "terminal";
-      exitCode: number;
-      admitted: A;
-      terminal: TerminalResult;
-    }
-> {
-  try {
-    return {
-      kind: "continue",
-      env: await withCallLocalSessionBoundary(input.env, input.admitted),
-    };
-  } catch (error) {
-    const settled = await presentControlledFailure(
-      input.admitted,
-      { timedOut: false, code: null, stderr: "", thrown: error },
-      input.adapters,
-      input.env.principalAuthority,
-      input.io,
-    );
-    return { kind: "terminal", ...settled };
-  }
-}
 
 /**
  * Role-specific settlement hooks and failure resolvers.
@@ -790,9 +714,9 @@ export async function dispatchPostAdmissionTurn<
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
     // settled — the seat's ticket bind re-projection and any court diarist station
     // writes (#742). Case dossier delivery (ADR 0081 / #709 / #858) rides here once
-    // for every public entry:
-    // - station-child officer: attachments freeze (peer body stays opaque, #879)
-    // - ordinary entry (bound or unbound): one continuation path-pointer section
+    // for every public entry on the existing attachments → readingMaterial face
+    // (station-child and ordinary share one seam). Dialogue continuation stays
+    // caller/peer opaque — never splice system path sections into user dialogue.
     // No package-resume parallel face or typed resume identity.
     let turnRequest: RoleTurnRequest =
       env.signal === undefined ? request : { ...request, signal: env.signal };
@@ -807,32 +731,16 @@ export async function dispatchPostAdmissionTurn<
     if (typeof liveHost === "string" && liveHost.trim() !== "") {
       turnRequest = { ...turnRequest, host: liveHost.trim() };
     }
-    if (isStationChildOfficerDialogue(admitted.role, env)) {
-      // 0081 non-body face: freeze pointer section under run/attachments/.
-      // Peer dialogue continuation.prompt stays parent payload only — the seat
-      // consumes the freeze via loadCaseDossierReadingMaterial → existing
-      // agent-start readingMaterial / systemPrompt.materials fold.
-      await deliverCaseDossierAsAttachment({
-        ticketNumber: admitted.ticketNumber,
-        projectRoot: admitted.projectRoot,
-        home: env.home,
-        runDirectory: admitted.runDirectory,
-      });
-    } else {
-      // Ordinary public entry: one authoritative path-pointer face on continuation.
-      const dossierSection = await projectCaseDossierPointerSection({
-        ticketNumber: admitted.ticketNumber,
-        projectRoot: admitted.projectRoot,
-        home: env.home,
-      });
-      turnRequest = {
-        ...turnRequest,
-        continuation: appendContinuationSection(
-          turnRequest.continuation,
-          dossierSection,
-        ),
-      };
-    }
+    // 0081 non-dialogue face: freeze pointer section under run/attachments/.
+    // Seat consumes via loadCaseDossierReadingMaterial → existing agent-start
+    // readingMaterial / systemPrompt.materials fold. Caller instruction, empty
+    // request, and resume --message stay verbatim.
+    await deliverCaseDossierAsAttachment({
+      ticketNumber: admitted.ticketNumber,
+      projectRoot: admitted.projectRoot,
+      home: env.home,
+      runDirectory: admitted.runDirectory,
+    });
 
     // Authoritative host write happens here, at the real dispatch boundary —
     // immediately before the turn actually starts, after every retryable
@@ -968,8 +876,6 @@ export async function dispatchPostAdmissionTurn<
         sessionFile,
         credential: credentialFailure,
         runDirectory: admitted.runDirectory,
-        // Bound once at public-call entry (0 when no principal / missing session).
-        callLocalSessionBoundary: env.callLocalSessionBoundary ?? 0,
       });
       // A direct, current signal from the host/runner itself (timeout / host
       // knownFailure / runner knownFailure / missing credential) is a real
@@ -1538,24 +1444,8 @@ export async function runPostAdmissionSeatResume<
   // Court recovery / open under lease, then dispatch.
   // Station-child same-ticket/same-parent resume is call-local auto-resume
   // (#840 / #416). Public `ak-role resume` stays one-shot (ADR 0080).
-  // #858: one call-local session boundary for this public entry (station or manual).
-  // Unreadable bound session settles through presentControlledFailure (ADR 0080).
-  const bound = await bindCallLocalSessionBoundaryOrSettle({
-    env: input.env,
-    admitted: loaded.admitted,
-    adapters,
-    io: input.io,
-  });
-  if (bound.kind === "terminal") {
-    return {
-      exitCode: bound.exitCode,
-      admitted: bound.admitted,
-      terminal: bound.terminal as T,
-    };
-  }
-  const callEnv = bound.env;
   try {
-    if (callEnv.stationChild === true) {
+    if (input.env.stationChild === true) {
       let firstTurn: RoleTurnRequest | undefined;
       const stationAdapters = withOnceSuccessfulBeforeDispatch(adapters);
       type StationChildAttempt = { readonly resumeTurn: boolean };
@@ -1567,14 +1457,14 @@ export async function runPostAdmissionSeatResume<
       });
       return await runWithAutoResumeLoop({
         admitted: loaded.admitted,
-        principalAuthority: callEnv.principalAuthority,
+        principalAuthority: input.env.principalAuthority,
         isPrincipalAvailable: resolveHostAwareSessionAvailability(
-          callEnv.host,
-          callEnv.principalAuthority,
+          input.env.host,
+          input.env.principalAuthority,
         ),
         io: input.io,
-        sessionAppender: callEnv.sessionAppender,
-        autoResumeLimit: callEnv.autoResumeLimit,
+        sessionAppender: input.env.sessionAppender,
+        autoResumeLimit: input.env.autoResumeLimit,
         buildInitialPayload: (): StationChildAttempt => ({ resumeTurn: false }),
         buildResumePayload: (): StationChildAttempt => ({ resumeTurn: true }),
         // Same as public manual resume: prior-court sealed acceptance is not a
@@ -1613,7 +1503,7 @@ export async function runPostAdmissionSeatResume<
               const result = await dispatchPostAdmissionTurn({
                 admitted: loaded.admitted,
                 env: {
-                  ...callEnv,
+                  ...input.env,
                   ...(loaded.admitted.correlationId === undefined
                     ? {}
                     : { correlationId: loaded.admitted.correlationId }),
@@ -1640,7 +1530,7 @@ export async function runPostAdmissionSeatResume<
     }
     return await runPostAdmissionManualResume({
       admitted: loaded.admitted,
-      env: callEnv,
+      env: input.env,
       io: input.io,
       adapters,
       ...(input.effectiveEngine === undefined
@@ -1723,22 +1613,8 @@ export async function runPostAdmissionResumable<
   admitted?: A;
   terminal?: T;
 }> {
-  const { admitted, io, buildInitialRequest, buildResumeRequest, effectiveEngine } = input;
+  const { admitted, env, io, buildInitialRequest, buildResumeRequest, effectiveEngine } = input;
   const adapters = withOnceSuccessfulBeforeDispatch(input.adapters);
-  const bound = await bindCallLocalSessionBoundaryOrSettle({
-    env: input.env,
-    admitted,
-    adapters,
-    io,
-  });
-  if (bound.kind === "terminal") {
-    return {
-      exitCode: bound.exitCode,
-      admitted: bound.admitted,
-      terminal: bound.terminal as T,
-    };
-  }
-  const env = bound.env;
 
   // One public call → one detour scope across in-place auto-resume dispatches.
   const invocationScopeId = mintEngineDetourInvocationScope({
@@ -1806,25 +1682,12 @@ export async function runPostAdmissionManualResume<
 }> {
   const {
     admitted,
+    env,
     io,
     adapters,
     effectiveEngine,
     buildRequestAfterLease,
   } = input;
-  const bound = await bindCallLocalSessionBoundaryOrSettle({
-    env: input.env,
-    admitted,
-    adapters,
-    io,
-  });
-  if (bound.kind === "terminal") {
-    return {
-      exitCode: bound.exitCode,
-      admitted: bound.admitted,
-      terminal: bound.terminal as T,
-    };
-  }
-  const env = bound.env;
   let request = input.request;
   // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
   const effectiveModel = env.model;

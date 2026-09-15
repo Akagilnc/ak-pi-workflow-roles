@@ -6,10 +6,11 @@
  * 机器文本仅中立标识材料（ADR 0073），用途说明归角色材料所有。
  *
  * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口挂载。
- * 普通入口（已绑定／未绑定）统一把本段追加进 continuation；station-child
- * 审核轮次走 attachments 冻结 + role-runtime `loadCaseDossierReadingMaterial` →
- * readingMaterial → systemPrompt.materials fold（#879：对话 instruction 保持父腿
- * payload 原文；起居录作独立附件面，不新造 RoleTurnRequest.materials）。
+ * 全部公共入口（ordinary 已绑定／未绑定与 station-child）统一走 attachments 冻结 +
+ * role-runtime `loadCaseDossierReadingMaterial` → readingMaterial →
+ * systemPrompt.materials fold（#879 / #858：对话 instruction、空请求、resume
+ * message 保持调用者原文；起居录作独立附件面，不新造 RoleTurnRequest.materials，
+ * 不拼进 user-dialogue continuation）。
  */
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -68,12 +69,13 @@ export async function projectCaseDossierPointerSection(input: {
 }
 
 /**
- * ADR 0081 delivery for station-child officer turns (#879): freeze the pointer
+ * ADR 0081 delivery for every public entry (#879 / #858): freeze the pointer
  * section through the existing attachments seam. Role-runtime loads that freeze
  * via loadCaseDossierReadingMaterial onto readingMaterial; the envelope then
- * folds it into systemPrompt.materials. Peer dialogue instruction stays the
- * parent payload; never RoleTurnRequest.materials. Always freezes the path
- * pointer (canonical shape, or concrete file when a typed ticket is already bound).
+ * folds it into systemPrompt.materials. Caller / peer dialogue instruction stays
+ * opaque; never RoleTurnRequest.materials, never user-dialogue continuation.
+ * Always freezes the path pointer (canonical shape, or concrete file when a
+ * typed ticket is already bound).
  */
 export async function deliverCaseDossierAsAttachment(input: {
   readonly ticketNumber: number | undefined;
