@@ -141,8 +141,9 @@ async function withProcessChain<T>(key: string, body: () => Promise<T>): Promise
 }
 
 /**
- * mkdir exclusive lock. Live owner → wait. Dead owner → loud fail (no steal/ABA).
- * Unlock removes owner file then rmdir only if still empty.
+ * mkdir exclusive lock. The successful mkdir *is* ownership — competitors never
+ * rmdir a lock dir they did not create (avoids mkdir→owner write race).
+ * Live/unknown owner → wait. Dead owner file → loud fail (no steal/ABA).
  */
 async function withDirLock<T>(lockDir: string, body: () => Promise<T>): Promise<T> {
   return withProcessChain(lockDir, async () => {
@@ -153,44 +154,37 @@ async function withDirLock<T>(lockDir: string, body: () => Promise<T>): Promise<
     for (;;) {
       try {
         await mkdir(lockDir);
-        await writeFile(ownerPath, payload, "utf8");
-        try {
-          return await body();
-        } finally {
-          try {
-            if ((await readFile(ownerPath, "utf8")) === payload) {
-              await unlink(ownerPath);
-              await rmdir(lockDir);
-            }
-          } catch { /* not ours */ }
-        }
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-        let ownerText = "";
+        // Competitor holds or is initializing — wait; never rmdir their dir.
         try {
-          ownerText = await readFile(ownerPath, "utf8");
-        } catch {
-          // empty/partial lock dir — if no live owner file, try rmdir empty
-          try {
-            await rmdir(lockDir);
-            continue;
-          } catch {
-            // busy
+          const ownerText = await readFile(ownerPath, "utf8");
+          const ownerPid = Number(ownerText.split(/\r?\n/)[0]);
+          if (Number.isInteger(ownerPid) && ownerPid > 0 && !pidAlive(ownerPid)) {
+            throw new Error(
+              `stale workspace agents skills lock at ${lockDir} (dead pid ${ownerPid}); ` +
+                "remove that directory and retry — ak-role does not auto-steal locks (#922).",
+            );
           }
-          if (Date.now() > deadline) throw new Error(`workspace agents skills lock busy: ${lockDir}`);
-          await new Promise((r) => setTimeout(r, 10));
-          continue;
-        }
-        const [pidLine] = ownerText.split(/\r?\n/);
-        const ownerPid = Number(pidLine);
-        if (Number.isInteger(ownerPid) && ownerPid > 0 && !pidAlive(ownerPid)) {
-          throw new Error(
-            `stale workspace agents skills lock at ${lockDir} (dead pid ${ownerPid}); ` +
-              "remove that directory and retry — ak-role does not auto-steal locks (#922).",
-          );
+        } catch (inner) {
+          if (inner instanceof Error && /stale workspace agents skills lock/.test(inner.message)) throw inner;
+          // owner file not yet written (init window) or unreadable — wait
         }
         if (Date.now() > deadline) throw new Error(`workspace agents skills lock busy: ${lockDir}`);
         await new Promise((r) => setTimeout(r, 10));
+        continue;
+      }
+      // We alone created lockDir.
+      try {
+        await writeFile(ownerPath, payload, "utf8");
+        return await body();
+      } finally {
+        try {
+          if ((await readFile(ownerPath, "utf8")) === payload) await unlink(ownerPath);
+        } catch { /* owner missing */ }
+        try {
+          await rmdir(lockDir);
+        } catch { /* not empty or already gone */ }
       }
     }
   });
