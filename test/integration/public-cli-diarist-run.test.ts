@@ -1378,6 +1378,17 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(afterA2.header?.sessions[0]?.path, fixtureA.path);
     assert.deepEqual(afterA2.header?.sessions[0]?.ranges, rangeA2.ranges);
 
+    // Upgrade boundary: the carried later range predates sourcePosition.
+    const legacyRecords = (await readFile(paths.recordFile, "utf8"))
+      .trimEnd()
+      .split("\n")
+      .map((raw) => {
+        const record = JSON.parse(raw) as { payload?: { lines?: Record<string, unknown>[] } };
+        for (const line of record.payload?.lines ?? []) delete line.sourcePosition;
+        return JSON.stringify(record);
+      });
+    await writeFile(paths.recordFile, `${legacyRecords.join("\n")}\n`, "utf8");
+
     // Round 2: submit only a different session path — A remains; s=0/s=1 both coherent.
     const afterB = await runDiarist("01a0diar00-0000-7000-8000-000000000092", [
       rangeB,
@@ -1621,6 +1632,32 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(afterOverlap.unprojectedRaw.filter((raw) => raw === rawB).length, 1);
     assert.equal(afterOverlap.lines.filter((line) => line.id === sessionBSecondId).length, 1);
 
+    // Id-less entries obey the same reverse-submission source ordering.
+    const idlessOrderPath = join(home, ".claude", "projects", "probe", "idless-order.jsonl");
+    const earlyIdless = "无 id 前段";
+    const lateIdless = "无 id 后段";
+    await writeFile(idlessOrderPath, [
+      JSON.stringify({ type: "user", message: { role: "user", content: earlyIdless } }),
+      JSON.stringify({ type: "user", uuid: "idless-order-anchor", message: { role: "user", content: "锚" } }),
+      JSON.stringify({ type: "user", message: { role: "user", content: lateIdless } }),
+    ].join("\n") + "\n", "utf8");
+    await runDiarist("01a0diar00-0000-7000-8000-000000000097b1", [{
+      path: idlessOrderPath,
+      ranges: [{ from: { line: 3 }, to: { line: 3 } }],
+    }]);
+    const afterIdlessOrder = await runDiarist("01a0diar00-0000-7000-8000-000000000097b2", [{
+      path: idlessOrderPath,
+      ranges: [{ from: { line: 1 }, to: { line: 1 } }],
+    }]);
+    const idlessOrderSession = afterIdlessOrder.header?.sessions.findIndex(
+      (session) => session.path === idlessOrderPath,
+    );
+    assert.notEqual(idlessOrderSession, undefined);
+    assert.deepEqual(
+      afterIdlessOrder.lines.filter((line) => line.s === idlessOrderSession).map((line) => line.text),
+      [earlyIdless, lateIdless],
+    );
+
     // A partially stale historical range still contributes its surviving overlap.
     // Removing only the old end bound must not replay the id-less/raw prefix.
     const rotatingPath = join(home, ".claude", "projects", "probe", "rotating.jsonl");
@@ -1685,7 +1722,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     );
     assert.equal(
       afterGoneB.lines.length,
-      9,
+      afterRotation.lines.length,
       "resubmit declared bounds while S1 gone is no-op",
     );
     assert.equal(
@@ -1733,8 +1770,11 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       true,
       "B carried while adding C",
     );
+    const sessionCIndex = afterC.header?.sessions.findIndex(
+      (session) => session.path === sessionCPath,
+    );
     assert.equal(
-      afterC.lines.find((line) => line.s === 3 && line.id === sessionCOwnerId)?.text,
+      afterC.lines.find((line) => line.s === sessionCIndex && line.id === sessionCOwnerId)?.text,
       sessionCOwnerText,
       "same native id in a different session must publish under typed (s,id)",
     );
@@ -1742,11 +1782,11 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       afterC.lines
         .filter((line) => line.id === sessionCOwnerId)
         .map((line) => line.s),
-      [0, 3],
+      [0, sessionCIndex],
     );
     assert.equal(
       afterC.header?.sessions.length,
-      4,
+      5,
       "C adds the next session index",
     );
 

@@ -251,7 +251,10 @@ export async function readTicketProvenance(
     // Unknown stock / damaged rows remain readable and are never upgraded in place.
     unprojectedRaw.push(raw);
   }
-  return { header, lines, unprojectedRaw, recordFile };
+  const ordered = header === undefined
+    ? lines
+    : mergeFreshIntoCarried([], await recoverLegacySourcePositions(lines, header.sessions));
+  return { header, lines: ordered, unprojectedRaw, recordFile };
 }
 
 /**
@@ -477,6 +480,33 @@ function stableSourcePositions(
     positions.push(position);
   }
   return positions;
+}
+
+/** Recover stable positions for pre-#926 id-bearing entries when their source remains readable. */
+async function recoverLegacySourcePositions(
+  lines: readonly TicketProvenanceLine[],
+  sessions: readonly TicketProvenanceSession[],
+): Promise<TicketProvenanceLine[]> {
+  const positionBySessionAndId = new Map<string, number>();
+  for (let s = 0; s < sessions.length; s += 1) {
+    let source: LedgerSessionLine[];
+    try {
+      source = await readLedgerSessionJsonlLines(sessions[s]!.path);
+    } catch {
+      continue;
+    }
+    const positions = stableSourcePositions(source);
+    for (let index = 0; index < source.length; index += 1) {
+      const row = source[index]!.row;
+      const id = row === undefined ? undefined : nativeEventId(row);
+      if (id !== undefined) positionBySessionAndId.set(dialogueIdentity(s, id), positions[index]!);
+    }
+  }
+  return lines.map((line) => {
+    if (line.sourcePosition !== undefined || line.id === undefined) return line;
+    const sourcePosition = positionBySessionAndId.get(dialogueIdentity(line.s, line.id));
+    return sourcePosition === undefined ? line : { ...line, sourcePosition };
+  });
 }
 
 /**
