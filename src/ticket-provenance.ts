@@ -61,7 +61,9 @@ export class TicketProvenanceInputError extends Error {
  */
 export function dialogueSessionSourceRoots(home?: string): readonly string[] {
   const machineHome =
-    typeof home === "string" && home.trim() !== "" ? home : packageMachineHome();
+    typeof home === "string" && home.trim() !== ""
+      ? home
+      : packageMachineHome();
   return [
     join(machineHome, ".claude", "projects"),
     join(machineHome, ".codex", "sessions"),
@@ -75,10 +77,15 @@ export function dialogueSessionSourceRoots(home?: string): readonly string[] {
  */
 function isLedgerRoleSessionFile(absolute: string, home?: string): boolean {
   const machineHome =
-    typeof home === "string" && home.trim() !== "" ? home : packageMachineHome();
+    typeof home === "string" && home.trim() !== ""
+      ? home
+      : packageMachineHome();
   const ledgerHome = resolveActivationLedgerHome(machineHome);
   if (!physicallyContainedIn(ledgerHome, absolute)) return false;
-  return basename(absolute) === "session.jsonl" && basename(dirname(absolute)) === "session";
+  return (
+    basename(absolute) === "session.jsonl" &&
+    basename(dirname(absolute)) === "session"
+  );
 }
 
 /** Real I/O seam gate: only host session stores or sitian role-run session.jsonl. */
@@ -129,7 +136,9 @@ export function resolveTicketProvenanceVolume(
   cwd: string,
   home?: string,
 ): TicketProvenanceVolumePath {
-  return resolveSitianVolume(ticketProvenanceRecordInput(ticketNumber, cwd, home));
+  return resolveSitianVolume(
+    ticketProvenanceRecordInput(ticketNumber, cwd, home),
+  );
 }
 
 export type ReadTicketProvenanceResult = {
@@ -197,7 +206,9 @@ export function ensureTicketProvenanceVolume(
   cwd: string,
   home?: string,
 ): TicketProvenanceVolumePath {
-  return ensureSitianVolume(ticketProvenanceRecordInput(ticketNumber, cwd, home));
+  return ensureSitianVolume(
+    ticketProvenanceRecordInput(ticketNumber, cwd, home),
+  );
 }
 
 /** One session line the mechanical projector could not enter. */
@@ -308,7 +319,10 @@ function mergeSessionBounds(
 function undeclaredSessionRanges(
   prior: readonly TicketProvenanceSession[] | undefined,
   merged: readonly TicketProvenanceSession[],
-): readonly { readonly s: number; readonly session: TicketProvenanceSession }[] {
+): readonly {
+  readonly s: number;
+  readonly session: TicketProvenanceSession;
+}[] {
   const priorKeys = new Map<string, Set<string>>();
   for (const session of prior ?? []) {
     const identity = physicalPathIdentity(session.path);
@@ -322,7 +336,8 @@ function undeclaredSessionRanges(
   const out: { s: number; session: TicketProvenanceSession }[] = [];
   for (let s = 0; s < merged.length; s += 1) {
     const session = merged[s]!;
-    const declared = priorKeys.get(physicalPathIdentity(session.path)) ?? new Set();
+    const declared =
+      priorKeys.get(physicalPathIdentity(session.path)) ?? new Set();
     const fresh = session.ranges.filter(
       (range) => !declared.has(rangeDeclarationKey(range)),
     );
@@ -353,79 +368,6 @@ function compareLinePosition(
 }
 
 /**
- * Amendment s 必须落在 header.sessions 现存索引内（票面 / ADR 0075）。
- * 越出 → reask；既有索引内按 (s,line) 就地更新或插入仍合法，不收窄。
- */
-function assertAmendmentsWithinSessionIndex(
-  amendments: readonly TicketProvenanceAmendment[],
-  sessionCount: number,
-): void {
-  if (amendments.length === 0) return;
-  if (sessionCount <= 0) {
-    throw new TicketProvenanceInputError(
-      "amendments require sessions bounds (none submitted and no prior header sessions)",
-    );
-  }
-  for (const amendment of amendments) {
-    if (amendment.s < 0 || amendment.s >= sessionCount) {
-      throw new TicketProvenanceInputError(
-        `amendment s=${amendment.s} outside session index 0..${sessionCount - 1}`,
-      );
-    }
-  }
-}
-
-/**
- * Amendments-only / post-delta：按 s,line 就地更新或插入；不读源。
- * 需要新增 range 的补写须与本轮 sessions 一齐交（由调用方保证 delta 投影）。
- * 调用前须已通过 assertAmendmentsWithinSessionIndex。
- */
-function applyAmendmentsByPosition(
-  lines: readonly TicketProvenanceLine[],
-  amendments: readonly TicketProvenanceAmendment[],
-): TicketProvenanceLine[] {
-  if (amendments.length === 0) return [...lines];
-  const byKey = new Map<string, TicketProvenanceAmendment>();
-  for (const amendment of amendments) {
-    byKey.set(amendmentKey(amendment.s, amendment.line), amendment);
-  }
-  const out: TicketProvenanceLine[] = [];
-  const hit = new Set<string>();
-  for (const line of lines) {
-    if (line.line === undefined) {
-      out.push(line);
-      continue;
-    }
-    const key = amendmentKey(line.s, line.line);
-    const amendment = byKey.get(key);
-    if (amendment === undefined) {
-      out.push(line);
-      continue;
-    }
-    hit.add(key);
-    out.push({
-      speaker: amendment.speaker,
-      s: line.s,
-      line: line.line,
-      ...(line.id === undefined ? {} : { id: line.id }),
-      text: amendment.text,
-    });
-  }
-  for (const amendment of amendments) {
-    const key = amendmentKey(amendment.s, amendment.line);
-    if (hit.has(key)) continue;
-    out.push({
-      speaker: amendment.speaker,
-      s: amendment.s,
-      line: amendment.line,
-      text: amendment.text,
-    });
-  }
-  out.sort(compareLinePosition);
-  return out;
-}
-
-/**
  * Merge newly projected rows into the carried archive.
  * 既有卷宗按 (s,line) 优先；fresh 不得复制无 id 行（#918 C2/G1）。
  * id 去重仍保留（跨 path 同 id 首见胜）。
@@ -439,7 +381,8 @@ function mergeFreshIntoCarried(
   const out: TicketProvenanceLine[] = [];
   for (const line of carried) {
     if (line.id !== undefined) seenIds.add(line.id);
-    if (line.line !== undefined) seenPositions.add(amendmentKey(line.s, line.line));
+    if (line.line !== undefined)
+      seenPositions.add(amendmentKey(line.s, line.line));
     out.push(line);
   }
   for (const line of fresh) {
@@ -467,10 +410,13 @@ function sessionBoundsEqual(
   for (let index = 0; index < left.length; index += 1) {
     const a = left[index]!;
     const b = right[index]!;
-    if (physicalPathIdentity(a.path) !== physicalPathIdentity(b.path)) return false;
+    if (physicalPathIdentity(a.path) !== physicalPathIdentity(b.path))
+      return false;
     if (a.ranges.length !== b.ranges.length) return false;
     for (let r = 0; r < a.ranges.length; r += 1) {
-      if (rangeDeclarationKey(a.ranges[r]!) !== rangeDeclarationKey(b.ranges[r]!)) {
+      if (
+        rangeDeclarationKey(a.ranges[r]!) !== rangeDeclarationKey(b.ranges[r]!)
+      ) {
         return false;
       }
     }
@@ -620,8 +566,8 @@ async function projectSessionRanges(input: {
  * Reproject the unique diary from cumulative bounds + optional amendments.
  * #918：已投影行即卷宗——按 s,line 结转；本轮只读 prior 未声明的 range（或新
  * session 区间）。精确重复提交＝幂等 no-op，不因历史源不可读而失败。
- * amendments-only 只按 s,line 在既有 session 索引内就地更新／插入，不重读源。
- * 空 sessions 保持现役 no-op；证不出的 body 原字节经 unprojectedRaw 原样留存。
+ * amendments 只在本轮读取的新范围确有对应坏行时生效；空 sessions 保持 no-op。
+ * 证不出的 body 原字节经 unprojectedRaw 原样留存。
  * Persistence goes through the Sitian volume seam (rewriteSitianVolume).
  */
 export async function reprojectTicketProvenance(input: {
@@ -636,7 +582,11 @@ export async function reprojectTicketProvenance(input: {
     input.cwd,
     input.home,
   );
-  const prior = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
+  const prior = await readTicketProvenance(
+    input.ticketNumber,
+    input.cwd,
+    input.home,
+  );
   const priorRaw = await readSitianVolumeText(recordInput);
   const priorNonEmpty =
     priorRaw.text !== undefined && priorRaw.text.trim() !== "";
@@ -646,34 +596,9 @@ export async function reprojectTicketProvenance(input: {
   const now = new Date().toISOString();
   const repo = resolveBookKeyFromGit(input.cwd);
 
-  // Empty sessions: amendments-only updates archive by s,line (no source re-read).
-  // Pure empty selection is idempotent no-op.
+  // Empty selection is an idempotent no-op. Amendments without a newly read
+  // source range cannot establish that a physical bad line exists.
   if (input.sessions.length === 0) {
-    if (amendments.length > 0) {
-      const priorSessions = prior.header?.sessions;
-      if (priorSessions === undefined || priorSessions.length === 0) {
-        throw new TicketProvenanceInputError(
-          "amendments require sessions bounds (none submitted and no prior header sessions)",
-        );
-      }
-      assertAmendmentsWithinSessionIndex(amendments, priorSessions.length);
-      // 结转既有行，不按正文过滤（C4）；amendment 仅限既有 session 索引（C3）。
-      const lines = applyAmendmentsByPosition([...prior.lines], amendments);
-      const header: TicketProvenanceHeader = {
-        repo,
-        ticket: input.ticketNumber,
-        createdAt: prior.header?.createdAt ?? now,
-        updatedAt: now,
-        sessions: priorSessions,
-      };
-      const recordFile = await publishTicketProvenanceVolume({
-        recordInput,
-        header,
-        lines,
-        unprojectedRaw,
-      });
-      return { recordFile, header, lines, unparsable: [] };
-    }
     if (priorNonEmpty) {
       return {
         recordFile: prior.recordFile,
@@ -709,7 +634,6 @@ export async function reprojectTicketProvenance(input: {
 
   // Non-empty 本轮边界 ∪ prior：遗漏永不删除（#918 甲案）。incoming 自身亦按 identity 归并。
   const sessions = mergeSessionBounds(prior.header?.sessions, input.sessions);
-  assertAmendmentsWithinSessionIndex(amendments, sessions.length);
   const deltas = undeclaredSessionRanges(prior.header?.sessions, sessions);
 
   // 普通结转：原样保留已投影行，不按正文杀 task-notification（C4）。
@@ -740,11 +664,6 @@ export async function reprojectTicketProvenance(input: {
       unparsable.push(...projected.unparsable);
     }
     lines = mergeFreshIntoCarried(lines, fresh);
-  }
-
-  // Amendments also cover carried positions (and inserts) without re-reading sources.
-  if (amendments.length > 0) {
-    lines = applyAmendmentsByPosition(lines, amendments);
   }
 
   const header: TicketProvenanceHeader = {
