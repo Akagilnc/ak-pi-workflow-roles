@@ -222,8 +222,6 @@ export type PostAdmissionEnv = {
   sessionAppender: SessionCustomEntryAppender;
   autoResumeLimit?: number;
   createRunId?: () => string;
-  /** Typed ticket identity already asserted by 起居郎 or inherited from a bound run. */
-  boundTicketNumber?: number;
   /**
    * Parent cancellation for a nested public summon (#675). Every dispatched turn
    * carries it so an aborted parent terminates the nested activation; a CLI

@@ -47,6 +47,13 @@ import { readBoardTicketNumber } from "../run-ticket-number.ts";
 export type DiaristRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
   createRunId?: () => string;
+  /**
+   * Typed handoff from a caller that already holds a verified ticket key
+   * (countersign refresh / post-assert). Never derived from summons prose.
+   * When set: same-ticket resume under that key, else bind before the turn
+   * so identity is already on the run pages (ADR 0075 / 0081).
+   */
+  boundTicketNumber?: number;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */

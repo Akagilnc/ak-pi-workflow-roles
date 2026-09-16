@@ -362,9 +362,6 @@ export async function runPublicCountersign(
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
-      ...(env.boundTicketNumber === undefined
-        ? {}
-        : { assertedTicketNumber: env.boundTicketNumber }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
     });
   } catch (error) {
@@ -384,11 +381,11 @@ export async function runPublicCountersign(
   // seam `runCourtDiaristStation` defers identity to beforeDispatch; generic
   // hook failures stay on the parent call-local budget, exhausted nested
   // station children still skip parent auto-resume (#840 父子不层叠).
-  let typedTicket = env.boundTicketNumber;
+  let typedTicket: number | undefined;
   let typedCourtTicketNumbers: readonly number[] | undefined;
-  let identityDiaristRan = typedTicket !== undefined;
+  let identityDiaristRan = false;
 
-  if (!identityDiaristRan && env.runCourtDiaristStation === undefined) {
+  if (env.runCourtDiaristStation === undefined) {
     const outcome = await invokeCourtDiarist(
       {
         instruction: parsed.instruction,

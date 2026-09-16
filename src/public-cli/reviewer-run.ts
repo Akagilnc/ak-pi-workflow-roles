@@ -152,9 +152,6 @@ export async function runPublicReviewer(
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
-      ...(env.boundTicketNumber === undefined
-        ? {}
-        : { assertedTicketNumber: env.boundTicketNumber }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
