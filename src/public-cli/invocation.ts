@@ -1242,12 +1242,19 @@ export type PreparedAttachment = {
  * Snapshot deferred inputs sequentially before identity side effects. The staging
  * files keep aggregate attachment bytes off heap until their final run is known.
  */
-export async function prepareAttachmentPaths(
+async function removePreparedAttachmentDirectory(stagingDirectory: string): Promise<void> {
+  await rm(stagingDirectory, { recursive: true, force: true });
+}
+
+/** Own the complete deferred-snapshot lifetime without masking either failure. */
+export async function withPreparedAttachments<T>(
   attachmentPaths: readonly string[],
-): Promise<readonly PreparedAttachment[]> {
-  if (attachmentPaths.length === 0) return [];
+  use: (prepared: readonly PreparedAttachment[]) => Promise<T>,
+): Promise<T> {
+  if (attachmentPaths.length === 0) return await use([]);
   const stagingDirectory = await mkdtemp(join(tmpdir(), "ak-role-attachments-"));
   const prepared: PreparedAttachment[] = [];
+  let result: T;
   try {
     for (let index = 0; index < attachmentPaths.length; index += 1) {
       const { absolute, bytes } = await readRegularFileAttachment(attachmentPaths[index]!);
@@ -1255,40 +1262,38 @@ export async function prepareAttachmentPaths(
       await writeFile(snapshotPath, bytes);
       prepared.push({ absolute, snapshotPath });
     }
-    return prepared;
-  } catch (error) {
-    await rm(stagingDirectory, { recursive: true, force: true });
-    throw error;
+    result = await use(prepared);
+  } catch (primary) {
+    try {
+      await removePreparedAttachmentDirectory(stagingDirectory);
+    } catch (cleanup) {
+      throw new AggregateError(
+        [primary, cleanup],
+        "attachment snapshot operation failed and cleanup also failed",
+        { cause: primary },
+      );
+    }
+    throw primary;
   }
-}
-
-export async function discardPreparedAttachments(
-  prepared: readonly PreparedAttachment[],
-): Promise<void> {
-  const snapshotPath = prepared[0]?.snapshotPath;
-  if (snapshotPath !== undefined) {
-    await rm(dirname(snapshotPath), { recursive: true, force: true });
-  }
+  await removePreparedAttachmentDirectory(stagingDirectory);
+  return result;
 }
 
 async function freezePreparedAttachment(
   prepared: PreparedAttachment,
   destinationDir: string,
   index: number,
-): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
+): Promise<FrozenAttachment> {
   const bytes = await readFile(prepared.snapshotPath);
   const name = `${String(index).padStart(2, "0")}-${basename(prepared.absolute)}`;
   const frozenPath = join(destinationDir, name);
   await writeFile(frozenPath, bytes);
   return {
-    attachment: {
-      provenancePath: prepared.absolute,
-      frozenPath,
-      byteLength: bytes.byteLength,
-      sha256: sha256Hex(bytes),
-      mediaKind: "regular-file",
-    },
-    body: bytes,
+    provenancePath: prepared.absolute,
+    frozenPath,
+    byteLength: bytes.byteLength,
+    sha256: sha256Hex(bytes),
+    mediaKind: "regular-file",
   };
 }
 
@@ -1349,19 +1354,21 @@ export async function freezeAttachmentsIntoRun(
   return freezeAttachments(attachmentPaths, attachmentsDirectory);
 }
 
-/** Persist a pre-identity snapshot directly into the retained same-ticket run. */
+/** Freeze prepared bytes and metadata through one path for birth or retained runs. */
 export async function freezePreparedAttachmentsIntoRun(
   prepared: readonly PreparedAttachment[],
   runDirectory: string,
-  summonsKey: string = `s-${Date.now().toString(36)}`,
+  summonsKey?: string,
 ): Promise<readonly FrozenAttachment[]> {
   if (prepared.length === 0) return [];
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(runDirectory));
-  const attachmentsDirectory = join(runDirectory, "attachments", summonsKey);
+  const attachmentsDirectory = summonsKey === undefined
+    ? join(runDirectory, "attachments")
+    : join(runDirectory, "attachments", summonsKey);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   const attachments: FrozenAttachment[] = [];
   for (let index = 0; index < prepared.length; index += 1) {
-    attachments.push((await freezePreparedAttachment(prepared[index]!, attachmentsDirectory, index)).attachment);
+    attachments.push(await freezePreparedAttachment(prepared[index]!, attachmentsDirectory, index));
   }
   return attachments;
 }
@@ -1709,15 +1716,10 @@ export async function materializeCountersignInvocation(
     subject: { unbound: true },
     home: options.home,
   });
-  const attachments: FrozenAttachment[] = [];
-  for (let index = 0; index < options.preparedAttachments.length; index += 1) {
-    const frozen = await freezePreparedAttachment(
-      options.preparedAttachments[index]!,
-      placement.attachmentsDirectory,
-      index,
-    );
-    attachments.push(frozen.attachment);
-  }
+  const attachments = await freezePreparedAttachmentsIntoRun(
+    options.preparedAttachments,
+    admitted.runDirectory,
+  );
   (admitted as { attachments: readonly FrozenAttachment[] }).attachments = attachments;
   await writeAdmittedRequestPersistence(admitted.admittedRequestPath, admitted, {
     sessionDirectory: placement.sessionDirectory,

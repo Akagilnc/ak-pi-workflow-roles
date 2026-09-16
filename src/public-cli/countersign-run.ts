@@ -37,11 +37,10 @@ import {
   bindAdmittedTicketNumber,
   bindCourtTicketNumbersOnAdmitted,
   buildCountersignTransportPrompt,
-  discardPreparedAttachments,
   freezePreparedAttachmentsIntoRun,
   materializeCountersignInvocation,
   relocateAdmittedRunToTicket,
-  prepareAttachmentPaths,
+  withPreparedAttachments,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
@@ -434,11 +433,260 @@ export async function runPublicCountersign(
     throw error;
   }
 
-  // Deferred persistence must not defer public input rejection: read the
-  // attachment snapshot once before identity, then persist these same bytes.
-  let preparedAttachments;
+  // One owner spans prepare, lookup/load/resume or new-run materialization.
+  // It preserves both causes when its final cleanup also fails.
   try {
-    preparedAttachments = await prepareAttachmentPaths(parsed.attachmentPaths);
+    return await withPreparedAttachments(
+      parsed.attachmentPaths,
+      async (preparedAttachments) => {
+        const materializeAdmission = async (): Promise<void> => {
+          await materializeCountersignInvocation(admitted, {
+            home: env.home,
+            principalAuthority: env.principalAuthority,
+            preparedAttachments,
+            ...(env.model === undefined ? {} : { model: env.model }),
+          });
+        };
+
+        // #637 / #771 / ADR 0079: ticket identity is the 起居郎 LLM typed assertion
+        // (never mechanical matching of summons text). Resolve that typed key before
+        // materializing a run: same-ticket re-summons write only to the retained run.
+        // Controlled failures materialize below so they still have a durable page. The test
+        // seam `runCourtDiaristStation` defers identity to beforeDispatch; generic
+        // hook failures stay on the parent call-local budget, exhausted nested
+        // station children still skip parent auto-resume (#840 父子不层叠).
+        let typedTicket: number | undefined;
+        let typedCourtTicketNumbers: readonly number[] | undefined;
+        let identityDiaristRan = false;
+
+        if (env.runCourtDiaristStation === undefined) {
+          let outcome: CourtDiaristInvocationResult;
+          try {
+            // The identity child cannot name the newly minted countersign id as parent:
+            // same-ticket lookup may intentionally never materialize that run. A selected
+            // retained run receives its normally correlated refresh child during resume.
+            outcome = await invokeCourtDiarist(
+              {
+                instruction: parsed.instruction,
+                projectRoot: admitted.projectRoot,
+                failureLabel: "unbound summons",
+              },
+              env,
+              io,
+            );
+          } catch (error) {
+            await materializeAdmission();
+            await markRunAdmitted(admitted, env.principalAuthority);
+            return await presentControlledFailure(
+              admitted,
+              { timedOut: false, code: null, stderr: "", thrown: error },
+              countersignAdapters(),
+              env.principalAuthority,
+              io,
+            );
+          }
+          identityDiaristRan = true;
+
+          if (outcome.identity.kind === "escalate") {
+            // 御批: 识别不了就上抛 — materialize and settle this countersign run.
+            await materializeAdmission();
+            await markRunAdmitted(admitted, env.principalAuthority);
+            return await presentControlledFailure(
+              admitted,
+              {
+                timedOut: false,
+                code: null,
+                stderr: "",
+                thrown: new Error(
+                  "court diarist station escalated (cannot identify court target)",
+                ),
+              },
+              countersignAdapters(),
+              env.principalAuthority,
+              io,
+            );
+          }
+
+          // Typed failure terminal (verification / infra / non-zero without escalate)
+          // is not 真无票 — settle controlled failure on the admitted run (失败诚实).
+          // Only a true missing lawful typed terminal keeps the r5 unbound-continue.
+          if (outcome.failedWithoutEscalate !== undefined) {
+            await materializeAdmission();
+            await markRunAdmitted(admitted, env.principalAuthority);
+            return await presentControlledFailure(
+              admitted,
+              {
+                timedOut: false,
+                code: null,
+                stderr: "",
+                thrown: new Error(outcome.failedWithoutEscalate.diagnostic),
+              },
+              countersignAdapters(),
+              env.principalAuthority,
+              io,
+            );
+          }
+
+          // Missing lawful 起居郎 terminal is not countersign body failure: leave
+          // unbound and continue (true-unbound face). Escalate / typed failure above;
+          // bound refresh still fails honest via runCountersignCourtDiaristStation.
+          if (outcome.identity.kind === "ticket") {
+            const assertedTicket = outcome.identity.ticketNumber;
+            typedTicket = assertedTicket;
+            // #871: identity may hand a co-review set; absent field defaults to [main].
+            typedCourtTicketNumbers = outcome.identity.courtTicketNumbers;
+            const summons: SameTicketSummonsMaterials = {
+              instruction: parsed.instruction,
+              instructionEmpty: parsed.instruction.trim() === "",
+            };
+            const resumed = await tryResumeSameTicketSeatRun({
+              home: env.home,
+              projectRoot: admitted.projectRoot,
+              role: "countersign",
+              ticketNumber: typedTicket,
+              freshSummons: env.freshSummons,
+              summons,
+              resume: async (runId, materials) => {
+                // Consume the same pre-identity snapshot into the retained run; never
+                // reopen caller paths after identity has run.
+                const retained = await loadResumableCountersignRun(
+                  env.home,
+                  runId,
+                  env.principalAuthority,
+                );
+                if (retained.admitted === undefined) {
+                  throw new Error(
+                    `retained countersign run disappeared before resume: ${runId}`,
+                  );
+                }
+                const frozenPaths = (
+                  await freezePreparedAttachmentsIntoRun(
+                    preparedAttachments,
+                    retained.admitted.runDirectory,
+                    `s-${Date.now().toString(36)}`,
+                  )
+                ).map((attachment) => attachment.frozenPath);
+                const preparedMaterials: SameTicketSummonsMaterials = {
+                  ...(materials ?? {}),
+                  ...(frozenPaths.length === 0
+                    ? {}
+                    : { attachmentPaths: frozenPaths }),
+                };
+                // Identity 起居郎 asserted unbound (no issue face). Resume still runs
+                // the bound refresh station under the typed key (ADR 0075: 每次过庭都跑是调用者用法).
+                // #871: hand the identity set so resume can whole-replace the run fact
+                // when this summons produced a new typed set (never union).
+                return await runPublicCountersignResume(
+                  {
+                    runId,
+                    summons: preparedMaterials,
+                  },
+                  {
+                    ...env,
+                    ...(typedCourtTicketNumbers === undefined
+                      ? {}
+                      : { pendingCourtTicketNumbers: typedCourtTicketNumbers }),
+                  },
+                  io,
+                );
+              },
+            });
+            if (resumed !== undefined) {
+              return resumed;
+            }
+          }
+        }
+
+        // No prior run was selected. Materialize this invocation now; true-unbound,
+        // first-ticket and deferred test-seam paths all retain their own durable page.
+        await materializeAdmission();
+        await markRunAdmitted(admitted, env.principalAuthority);
+
+        if (identityDiaristRan && typedTicket !== undefined) {
+          try {
+            await bindAdmittedTicketNumber(admitted, typedTicket);
+            await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+            // First court: explicit set wins; omitted field → single-ticket face [main].
+            // Set persistence is outside beforeDispatch — route write failures into the
+            // same controlled-failure settlement as station children (#871 B7).
+            await bindCourtTicketNumbersOnAdmitted(
+              admitted,
+              typedCourtTicketNumbers ?? [typedTicket],
+            );
+          } catch (error) {
+            return await presentControlledFailure(
+              admitted,
+              {
+                timedOut: false,
+                code: null,
+                stderr: "",
+                thrown: error,
+              },
+              countersignAdapters(),
+              env.principalAuthority,
+              io,
+            );
+          }
+        }
+
+        const turnProjection: RoleTurnRequestProjectionOptions = {
+          packageRoot: env.packageRoot,
+          home: env.home,
+          agentDir: env.agentDir,
+          ...(env.model === undefined ? {} : { model: env.model }),
+          ...pickEngineAxis(env),
+          ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+          ...(env.correlationId === undefined || env.correlationId.trim() === ""
+            ? {}
+            : { correlationId: env.correlationId }),
+          continuation: {
+            kind: "initial",
+            prompt: buildCountersignTransportPrompt(
+              admitted,
+              engineSessionMaterialFromOptions({
+                ...pickEngineAxis(env),
+                packageRoot: env.packageRoot,
+              }),
+            ),
+          },
+        };
+        // Mutable shell: ticket bind re-projects activation before executeTurn.
+        const turnRequest = buildCountersignTurnRequest(
+          admitted,
+          turnProjection,
+        );
+
+        const result = await runPostAdmissionOneShot({
+          admitted,
+          env,
+          io,
+          request: turnRequest,
+          adapters: countersignAdapters({
+            beforeDispatch: async (admittedSeat, lease) => {
+              // Dossier pointer delivery rides post-admission after this hook (#709).
+              if (!identityDiaristRan) {
+                // Test seam (or any deferred identity): station owns assert + bind.
+                await runCountersignCourtDiaristStation(admittedSeat, env, io);
+              } else if (typedTicket !== undefined) {
+                await runCountersignCourtDiaristStation(admittedSeat, env, io);
+              }
+              await relocateAdmittedRunToTicket(
+                admittedSeat,
+                env.principalAuthority,
+                lease,
+              );
+              Object.assign(
+                turnRequest,
+                buildCountersignTurnRequest(admittedSeat, turnProjection),
+              );
+            },
+          }),
+          ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+        });
+        await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+        return result;
+      },
+    );
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -446,272 +694,6 @@ export async function runPublicCountersign(
     }
     throw error;
   }
-
-  let preparedAttachmentsConsumed = false;
-  const discardAttachmentSnapshot = async (): Promise<void> => {
-    if (preparedAttachmentsConsumed) return;
-    preparedAttachmentsConsumed = true;
-    await discardPreparedAttachments(preparedAttachments);
-  };
-  const materializeAdmission = async (): Promise<void> => {
-    try {
-      await materializeCountersignInvocation(admitted, {
-        home: env.home,
-        principalAuthority: env.principalAuthority,
-        preparedAttachments,
-        ...(env.model === undefined ? {} : { model: env.model }),
-      });
-    } finally {
-      await discardAttachmentSnapshot();
-    }
-  };
-
-  // #637 / #771 / ADR 0079: ticket identity is the 起居郎 LLM typed assertion
-  // (never mechanical matching of summons text). Resolve that typed key before
-  // materializing a run: same-ticket re-summons write only to the retained run.
-  // Controlled failures materialize below so they still have a durable page. The test
-  // seam `runCourtDiaristStation` defers identity to beforeDispatch; generic
-  // hook failures stay on the parent call-local budget, exhausted nested
-  // station children still skip parent auto-resume (#840 父子不层叠).
-  let typedTicket: number | undefined;
-  let typedCourtTicketNumbers: readonly number[] | undefined;
-  let identityDiaristRan = false;
-
-  if (env.runCourtDiaristStation === undefined) {
-    let outcome: CourtDiaristInvocationResult;
-    try {
-      // The identity child cannot name the newly minted countersign id as parent:
-      // same-ticket lookup may intentionally never materialize that run. A selected
-      // retained run receives its normally correlated refresh child during resume.
-      outcome = await invokeCourtDiarist(
-        {
-          instruction: parsed.instruction,
-          projectRoot: admitted.projectRoot,
-          failureLabel: "unbound summons",
-        },
-        env,
-        io,
-      );
-    } catch (error) {
-      await materializeAdmission();
-      await markRunAdmitted(admitted, env.principalAuthority);
-      return await presentControlledFailure(
-        admitted,
-        { timedOut: false, code: null, stderr: "", thrown: error },
-        countersignAdapters(),
-        env.principalAuthority,
-        io,
-      );
-    }
-    identityDiaristRan = true;
-
-    if (outcome.identity.kind === "escalate") {
-      // 御批: 识别不了就上抛 — materialize and settle this countersign run.
-      await materializeAdmission();
-      await markRunAdmitted(admitted, env.principalAuthority);
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: new Error(
-            "court diarist station escalated (cannot identify court target)",
-          ),
-        },
-        countersignAdapters(),
-        env.principalAuthority,
-        io,
-      );
-    }
-
-    // Typed failure terminal (verification / infra / non-zero without escalate)
-    // is not 真无票 — settle controlled failure on the admitted run (失败诚实).
-    // Only a true missing lawful typed terminal keeps the r5 unbound-continue.
-    if (outcome.failedWithoutEscalate !== undefined) {
-      await materializeAdmission();
-      await markRunAdmitted(admitted, env.principalAuthority);
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: new Error(outcome.failedWithoutEscalate.diagnostic),
-        },
-        countersignAdapters(),
-        env.principalAuthority,
-        io,
-      );
-    }
-
-    // Missing lawful 起居郎 terminal is not countersign body failure: leave
-    // unbound and continue (true-unbound face). Escalate / typed failure above;
-    // bound refresh still fails honest via runCountersignCourtDiaristStation.
-    if (outcome.identity.kind === "ticket") {
-      const assertedTicket = outcome.identity.ticketNumber;
-      typedTicket = assertedTicket;
-      // #871: identity may hand a co-review set; absent field defaults to [main].
-      typedCourtTicketNumbers = outcome.identity.courtTicketNumbers;
-      const summons: SameTicketSummonsMaterials = {
-        instruction: parsed.instruction,
-        instructionEmpty: parsed.instruction.trim() === "",
-      };
-      let resumed;
-      try {
-        resumed = await tryResumeSameTicketSeatRun({
-          home: env.home,
-          projectRoot: admitted.projectRoot,
-          role: "countersign",
-          ticketNumber: typedTicket,
-          freshSummons: env.freshSummons,
-          summons,
-          resume: async (runId, materials) => {
-            // Consume the same pre-identity snapshot into the retained run; never
-            // reopen caller paths after identity has run.
-            const retained = await loadResumableCountersignRun(
-              env.home,
-              runId,
-              env.principalAuthority,
-            );
-            if (retained.admitted === undefined) {
-              throw new Error(
-                `retained countersign run disappeared before resume: ${runId}`,
-              );
-            }
-            let frozenPaths: readonly string[];
-            try {
-              frozenPaths = (
-                await freezePreparedAttachmentsIntoRun(
-                  preparedAttachments,
-                  retained.admitted.runDirectory,
-                )
-              ).map((attachment) => attachment.frozenPath);
-            } finally {
-              await discardAttachmentSnapshot();
-            }
-            const preparedMaterials: SameTicketSummonsMaterials = {
-              ...(materials ?? {}),
-              ...(frozenPaths.length === 0
-                ? {}
-                : { attachmentPaths: frozenPaths }),
-            };
-            // Identity 起居郎 asserted unbound (no issue face). Resume still runs
-            // the bound refresh station under the typed key (ADR 0075: 每次过庭都跑是调用者用法).
-            // #871: hand the identity set so resume can whole-replace the run fact
-            // when this summons produced a new typed set (never union).
-            return await runPublicCountersignResume(
-              {
-                runId,
-                summons: preparedMaterials,
-              },
-              {
-                ...env,
-                ...(typedCourtTicketNumbers === undefined
-                  ? {}
-                  : { pendingCourtTicketNumbers: typedCourtTicketNumbers }),
-              },
-              io,
-            );
-          },
-        });
-      } catch (error) {
-        // Lookup and retained-run loading can fail before the resume callback
-        // consumes the snapshot. This boundary owns every such pre-consumer exit.
-        await discardAttachmentSnapshot();
-        throw error;
-      }
-      if (resumed !== undefined) {
-        return resumed;
-      }
-    }
-  }
-
-  // No prior run was selected. Materialize this invocation now; true-unbound,
-  // first-ticket and deferred test-seam paths all retain their own durable page.
-  await materializeAdmission();
-  await markRunAdmitted(admitted, env.principalAuthority);
-
-  if (identityDiaristRan && typedTicket !== undefined) {
-    try {
-      await bindAdmittedTicketNumber(admitted, typedTicket);
-      await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-      // First court: explicit set wins; omitted field → single-ticket face [main].
-      // Set persistence is outside beforeDispatch — route write failures into the
-      // same controlled-failure settlement as station children (#871 B7).
-      await bindCourtTicketNumbersOnAdmitted(
-        admitted,
-        typedCourtTicketNumbers ?? [typedTicket],
-      );
-    } catch (error) {
-      return await presentControlledFailure(
-        admitted,
-        {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: error,
-        },
-        countersignAdapters(),
-        env.principalAuthority,
-        io,
-      );
-    }
-  }
-
-  const turnProjection: RoleTurnRequestProjectionOptions = {
-    packageRoot: env.packageRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...pickEngineAxis(env),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(env.correlationId === undefined || env.correlationId.trim() === ""
-      ? {}
-      : { correlationId: env.correlationId }),
-    continuation: {
-      kind: "initial",
-      prompt: buildCountersignTransportPrompt(
-        admitted,
-        engineSessionMaterialFromOptions({
-          ...pickEngineAxis(env),
-          packageRoot: env.packageRoot,
-        }),
-      ),
-    },
-  };
-  // Mutable shell: ticket bind re-projects activation before executeTurn.
-  const turnRequest = buildCountersignTurnRequest(admitted, turnProjection);
-
-  const result = await runPostAdmissionOneShot({
-    admitted,
-    env,
-    io,
-    request: turnRequest,
-    adapters: countersignAdapters({
-      beforeDispatch: async (admittedSeat, lease) => {
-        // Dossier pointer delivery rides post-admission after this hook (#709).
-        if (!identityDiaristRan) {
-          // Test seam (or any deferred identity): station owns assert + bind.
-          await runCountersignCourtDiaristStation(admittedSeat, env, io);
-        } else if (typedTicket !== undefined) {
-          await runCountersignCourtDiaristStation(admittedSeat, env, io);
-        }
-        await relocateAdmittedRunToTicket(
-          admittedSeat,
-          env.principalAuthority,
-          lease,
-        );
-        Object.assign(
-          turnRequest,
-          buildCountersignTurnRequest(admittedSeat, turnProjection),
-        );
-      },
-    }),
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
-  });
-  await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-  return result;
 }
 
 function countersignAdapters(options?: {
