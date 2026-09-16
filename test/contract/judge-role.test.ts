@@ -2269,6 +2269,7 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
             return passingOfficerSummon(officer);
           };
         };
+        let reviewerSummonCalls = 0;
         let runtime: any;
         if (role === "judge") {
           runtime = judgeRole.createJudgeRoleRuntime(piHostAdapter.host, {
@@ -2293,6 +2294,10 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
               snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: Object.freeze({ text: skill }) },
               captureExpansion: () => ({ name: "ak-cross-m-review" as const, location: "/skill", content: skill, userMessage: "" }),
             }),
+            summonLenses: async () => {
+              reviewerSummonCalls += 1;
+              return { completeness: { exitCode: 0 }, correctness: { exitCode: 0 } };
+            },
           }, testHostActions());
         }
         return {
@@ -2301,6 +2306,7 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
           armJudgeGateDecision,
           setDecision(next: typeof pass | typeof bounce | typeof escalation) { selectedDecision = next; },
           get auditCalls() { return auditCalls; },
+          get reviewerSummonCalls() { return reviewerSummonCalls; },
         };
       };
 
@@ -2320,6 +2326,25 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
               ["read", "write", "grep", "find", "bash"],
               "Reviewer activation must preserve Pi's evidence tool surface",
             );
+            await plain.runtime.activate(undefined, {
+              baseRevision: "review-base",
+              lens: "all",
+              authorityRefs: ["CLAUDE.md"],
+            });
+            const summons = plain.harness.tools.get(reviewerRole.REVIEWER_SUMMON_LENSES_TOOL_NAME);
+            assert.ok(summons);
+            const summoned = await summons.execute(
+              "reviewer-summon",
+              {},
+              undefined,
+              undefined,
+              outputContext(summons.name, "reviewer-summon"),
+            );
+            assert.deepEqual(summoned.details, {
+              completeness: { exitCode: 0 },
+              correctness: { exitCode: 0 },
+            });
+            assert.equal(plain.reviewerSummonCalls, 1);
           } else {
             await plain.runtime.activate();
           }

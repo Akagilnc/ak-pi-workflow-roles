@@ -1756,6 +1756,36 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadCanonicalSkillBinding(name);
         },
+        async summonLenses({ admitted, context, signal }) {
+          if (admitted.lens !== "all") {
+            throw new Error("Reviewer dual-lens summons requires the admitted all shape");
+          }
+          const coordinates = readRoleRunCoordinates(context, "reviewer dual-lens summons");
+          const correlationId = runIdFromRunDirectory(coordinates.runDirectory);
+          const { summonPublicRole } = await import("./public-role-summons.ts");
+          const commonArgv = [
+            "--project", coordinates.projectRoot,
+            "--base", admitted.baseRevision,
+            ...admitted.authorityRefs?.flatMap((ref) => ["--authority-ref", ref]) ?? [],
+          ];
+          const summon = (lens: "completeness" | "correctness") =>
+            summonPublicRole({
+              role: "reviewer",
+              argv: [...commonArgv, "--lens", lens],
+              cwd: coordinates.projectRoot,
+              home: coordinates.home,
+              ...(signal === undefined ? {} : { signal }),
+              ...(correlationId === undefined ? {} : { correlationId }),
+              ...(dependencies.packageRoot === undefined
+                ? {}
+                : { packageRoot: dependencies.packageRoot }),
+            });
+          const [completeness, correctness] = await Promise.all([
+            summon("completeness"),
+            summon("correctness"),
+          ]);
+          return { completeness, correctness };
+        },
       },
       hostActions,
     );

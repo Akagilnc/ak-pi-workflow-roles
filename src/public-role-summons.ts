@@ -33,7 +33,8 @@ export type PublicSummonRole =
   | "judge"
   | "doctor"
   | "diarist"
-  | "countersign";
+  | "countersign"
+  | "reviewer";
 
 export type PublicSummonRequest = {
   readonly role: PublicSummonRole;
@@ -499,6 +500,17 @@ export async function summonPublicRole(
       ]);
       const stepped = await runPrepared(parseCountersignArgv, (env, once) =>
         runPublicCountersign(options.argv, env as never, io, once));
+      if ("fail" in stepped) return stepped.fail;
+      result = stepped.ok;
+      break;
+    }
+    case "reviewer": {
+      const [{ runPublicReviewer }, { parseReviewerArgv }] = await Promise.all([
+        import("./public-cli/reviewer-run.ts"),
+        import("./public-cli/invocation.ts"),
+      ]);
+      const stepped = await runPrepared(parseReviewerArgv, (env, once) =>
+        runPublicReviewer(options.argv, env as never, io, once));
       if ("fail" in stepped) return stepped.fail;
       result = stepped.ok;
       break;

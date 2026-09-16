@@ -3050,6 +3050,12 @@ export function buildReviewerTransportPrompt(
   engineMaterial?: EngineSessionMaterial,
 ): string {
   const lines = [buildReviewerSkillArgProjection(admitted)];
+  if (admitted.lens === "all") {
+    lines.push(
+      "",
+      "Package execution contract for the admitted all shape: call ak_reviewer_summon_lenses exactly once. It concurrently runs the existing completeness and correctness single-axis paths. Read both returned terminals, preserve each axis independently in amendments, then submit one Reviewer receipt. Do not run either lens yourself.",
+    );
+  }
   if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
     lines.push("", admitted.instruction);
   }

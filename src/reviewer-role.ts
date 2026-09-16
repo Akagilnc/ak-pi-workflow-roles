@@ -8,6 +8,7 @@ export type { CanonicalSkillBinding };
 import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
+export const REVIEWER_SUMMON_LENSES_TOOL_NAME = "ak_reviewer_summon_lenses" as const;
 export type { ReviewerIntent };
 
 /** Frozen admitted inputs the behavior layer may consume — no flag surface. */
@@ -61,6 +62,11 @@ export const reviewerOutputSchema = withTerminatingOutputDeclarations(
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadCanonicalSkillBinding(name: "ak-cross-m-review"): Promise<AnyCanonicalSkillBinding>;
+  summonLenses?(options: {
+    admitted: ReviewerAdmittedInputs;
+    context: HostContext;
+    signal?: AbortSignal;
+  }): Promise<unknown>;
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
 
@@ -88,18 +94,41 @@ export function createReviewerRoleRuntime(
   let binding: CanonicalSkillBinding<"ak-cross-m-review"> | undefined;
   let registered = false;
   let fixedBaseRevision: string | undefined;
+  let admittedInputs: ReviewerAdmittedInputs | undefined;
 
   return {
     async activate(_ctx, admitted) {
       soul = (await dependencies.loadSoul()).trim();
       if (!soul) throw new Error("Reviewer soul is empty");
       fixedBaseRevision = admitted.baseRevision;
+      admittedInputs = admitted;
       const loaded = await dependencies.loadCanonicalSkillBinding("ak-cross-m-review");
       if (loaded.name !== "ak-cross-m-review") throw new Error("Canonical Skill binding loader returned tdd for ak-cross-m-review");
       binding = loaded;
 
       if (!registered) {
         registered = true;
+        pi.registerTool({
+          name: REVIEWER_SUMMON_LENSES_TOOL_NAME,
+          label: "并行传召双轴",
+          description: "默认双轴调用专用：并行传召 completeness 与 correctness 两条 Reviewer 腿，并返回两份终局。显式单轴不得调用。",
+          promptSnippet: "并行传召 completeness 与 correctness",
+          parameters: Type.Object({}, { additionalProperties: false }),
+          async execute(_id, _parameters, signal, _update, context) {
+            if (admittedInputs === undefined || dependencies.summonLenses === undefined) {
+              throw new Error("Reviewer dual-lens summons is not configured");
+            }
+            const details = await dependencies.summonLenses({
+              admitted: admittedInputs,
+              context,
+              ...(signal === undefined ? {} : { signal }),
+            });
+            return {
+              content: [{ type: "text" as const, text: "双轴 Reviewer 终局已并行送达" }],
+              details,
+            };
+          },
+        });
         pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台终局回执。本席自调 ak-cross-m-review skill。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
           async execute(_id: string, parameters: unknown): Promise<HostToolResult<unknown>> {
             if (!soul || !binding) throw new Error("御史台输入未装载");
