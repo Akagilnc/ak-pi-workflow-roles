@@ -2938,6 +2938,7 @@ export type AdmitReviewerInvocationOptions = {
   authorityRefs: readonly string[];
   project?: string;
   createRunId?: () => string;
+  correlationId?: string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
 };
@@ -2997,6 +2998,9 @@ export async function admitReviewerInvocation(
     baseRevision,
     lens,
     authorityRefs: [...authorityRefs],
+    ...(options.correlationId === undefined
+      ? {}
+      : { correlationId: options.correlationId }),
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
       frozenPath: a.frozenPath,
@@ -3026,6 +3030,9 @@ export async function admitReviewerInvocation(
     baseRevision,
     lens,
     authorityRefs,
+    ...(options.correlationId === undefined
+      ? {}
+      : { correlationId: options.correlationId }),
   };
 }
 

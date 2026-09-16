@@ -442,11 +442,7 @@ type ActivationRuntime = {
   /** Envelope decodes Reviewer transport flags inside the activation stage. */
   decodeReviewerAdmitted(): ReviewerAdmittedInputs;
   /** Envelope stores live parent activation and owns default dual-leg execution. */
-  bindReviewerParent(
-    activation: ReviewerActivation,
-    admitted: ReviewerAdmittedInputs,
-    context: HostContext,
-  ): void;
+  bindReviewerParent(activation: ReviewerActivation): void;
   collector: {
     activate(context: HostContext, event: { reason: string }): Promise<void>;
   };
@@ -475,7 +471,7 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "reviewer": return { id: "load-and-install", run: async () => {
       const admitted = runtime.decodeReviewerAdmitted();
       const activation = await runtime.reviewer.activate(runtime.context, admitted);
-      runtime.bindReviewerParent(activation, admitted, runtime.context);
+      runtime.bindReviewerParent(activation);
     } };
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
@@ -1275,9 +1271,7 @@ export function createRoleRuntimeExtension(
     let selectedRole: PackagedRole | undefined;
     let roleReferenceMaterials = "";
     /** Live Reviewer parent activation for envelope agent_start prompt assembly. */
-    let activeReviewerParent: (ReviewerActivation & {
-      loadLensResults?: () => Promise<unknown>;
-    }) | undefined;
+    let activeReviewerParent: ReviewerActivation | undefined;
     /** Envelope-owned Reviewer Skill expansion state (ADR 0018 — not a role-module facade). */
     let reviewerOriginalRequest: string | undefined;
     let reviewerExpansionCaptured = false;

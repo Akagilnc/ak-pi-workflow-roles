@@ -224,6 +224,7 @@ export async function runPublicReviewer(
       authorityRefs: parsed.authorityRefs,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
       ...(env.model === undefined ? {} : { model: env.model }),
     });
   } catch (error) {

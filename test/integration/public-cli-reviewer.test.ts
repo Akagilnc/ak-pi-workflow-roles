@@ -29,7 +29,6 @@ import {
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { summonParallelReviewerLenses } from "../../src/public-role-summons.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitReviewerInvocation as admitReviewerInvocationRaw,
@@ -768,6 +767,21 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
       assert.equal(result.terminal?.reviewerChildren?.completeness?.roleOutcome.role, "reviewer");
       assert.equal(result.terminal?.reviewerChildren?.correctness?.roleOutcome.role, "reviewer");
+      for (const child of [
+        result.terminal?.reviewerChildren?.completeness,
+        result.terminal?.reviewerChildren?.correctness,
+      ]) {
+        const reportPath = child?.artifacts.find((artifact) => artifact.kind === "report")?.path;
+        assert.ok(reportPath);
+        const childInvocation = JSON.parse(
+          await readFile(join(reportPath, "..", "..", "invocation.json"), "utf8"),
+        ) as { correlationId?: string };
+        const childAdmitted = JSON.parse(
+          await readFile(join(reportPath, "..", "..", "admitted-request.json"), "utf8"),
+        ) as { correlationId?: string };
+        assert.equal(childInvocation.correlationId, "run-cli-reviewer-blank-ok");
+        assert.equal(childAdmitted.correlationId, "run-cli-reviewer-blank-ok");
+      }
 
       const bookKey = resolveBookKeyFromGit(project);
       const runDirectory = join(
