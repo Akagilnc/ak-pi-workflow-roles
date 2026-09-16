@@ -32,11 +32,13 @@ async function cleanupFailureCase(primary?: Error): Promise<unknown> {
 test("prepared attachment cleanup propagates alone and preserves both failure causes", async () => {
   const cleanupOnly = await cleanupFailureCase();
   assert(cleanupOnly instanceof Error);
+  assert.equal((cleanupOnly as NodeJS.ErrnoException).code, "EACCES");
 
   const primary = new Error("lookup failed");
   const combined = await cleanupFailureCase(primary);
   assert(combined instanceof AggregateError);
   assert.equal(combined.cause, primary);
   assert.equal(combined.errors[0], primary);
-  assert(combined.errors[1] instanceof Error);
+  assert.notEqual(combined.errors[1], primary);
+  assert.equal((combined.errors[1] as NodeJS.ErrnoException).code, "EACCES");
 });
