@@ -169,9 +169,6 @@ export type SameTicketSummonsMaterials = {
  * Unique continuation-prompt selector for manual/auto engine-axis resume
  * (#471 / #600 / #736). Message present → those bytes; absent → engine pointers only.
  * #836: no transport-token prompt, no line-by-line 重新读 rewrite.
- * #858: resume/new-court identity must not be recovered from these prompt bytes
- * (post-adapter skill rewrite and empty new-court summons make the mapping
- * non-injective); settlement needs a structured fact, not another text sentinel.
  */
 export function selectResumeContinuationPrompt(
   message?: string,

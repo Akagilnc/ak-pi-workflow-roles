@@ -31,7 +31,6 @@ import {
   isV1ResumableProvider,
   readLatestTypedProviderHttpObservation,
   readTypedHttp429Observation,
-  RESUME_TRANSPORT_ENVELOPE,
   type TypedHttp429Observation,
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
@@ -1087,45 +1086,6 @@ async function loadBoundAuditorVolumes(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
-  // #600 / #836 / #858: station-child / historical package transport token only.
-  // Identity = first line of whole user-message text equals RESUME_TRANSPORT_ENVELOPE.
-  // Never empty prompt, empty first-line, engine-handbook prose, per-part some(),
-  // any-line token scan, call-local, packageTrigger, or courtAttemptId.
-  // #858 diagnosis: ordinary bare/auto resume and single-skill post-adapter bytes
-  // are not injective with empty new-court summons under any free-text rule; a
-  // structured resume fact is required before this floor can cover those seats.
-  // Independent caller-word users still advance latestParentUserIndex.
-  const userMessageText = (msg: unknown): string | undefined => {
-    if (!isRecord(msg) || msg.role !== "user") return undefined;
-    if (typeof msg.text === "string") return msg.text;
-    const content = (msg as { content?: unknown }).content;
-    if (typeof content === "string") return content;
-    if (Array.isArray(content)) {
-      const parts: string[] = [];
-      for (const part of content) {
-        if (!isRecord(part)) continue;
-        if (typeof part.text === "string") parts.push(part.text);
-        else if (typeof part.content === "string") parts.push(part.content);
-      }
-      if (parts.length > 0) return parts.join("\n");
-    }
-    return undefined;
-  };
-  const isResumeEnvelope = (msg: unknown): boolean => {
-    const text = userMessageText(msg);
-    if (typeof text !== "string" || text.length === 0) return false;
-    const nl = text.indexOf("\n");
-    const firstLine = nl === -1 ? text : text.slice(0, nl);
-    return firstLine === RESUME_TRANSPORT_ENVELOPE;
-  };
-  let latestParentUserIndex = -1;
-  for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
-    const entry = parentEntries[i];
-    if (entry?.type !== "message" || entry.message?.role !== "user") continue;
-    if (isResumeEnvelope(entry.message)) continue;
-    latestParentUserIndex = i;
-    break;
-  }
   const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
   const valid: BoundAuditorVolume[] = [];
   let sawAnyDirectory = false;
@@ -1175,10 +1135,6 @@ async function loadBoundAuditorVolumes(
           typeof bindingParent?.attemptEntryId === "string"
             ? bindingParent.attemptEntryId
             : undefined;
-        const attemptEntryIndex =
-          attemptEntryId === undefined
-            ? -1
-            : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
         const boundSessionFile =
           typeof bindingParent?.sessionFile === "string"
             ? bindingParent.sessionFile
@@ -1186,12 +1142,7 @@ async function loadBoundAuditorVolumes(
               ? header.parentSession
               : undefined;
         if (boundSessionFile !== sessionFile) continue;
-        if (
-          bindingParent !== undefined &&
-          (bindingParent.sessionId !== parentId || attemptEntryIndex < latestParentUserIndex)
-        ) {
-          continue;
-        }
+        if (bindingParent !== undefined && bindingParent.sessionId !== parentId) continue;
         if (bindingParent === undefined && header.parentSession !== sessionFile) continue;
         valid.push({
           entries: entries.slice(start, end),
@@ -1199,8 +1150,8 @@ async function loadBoundAuditorVolumes(
           sessionFile,
           ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
         });
-        // Keep every qualifying interval in the current parent-user range.
-        // A single first-match break drops later same-user summons failures (#636).
+        // Keep every interval bound to this parent. Auditor payload is relayed as
+        // recorded; code does not expire it from later user-message shape (#858).
       }
     }
   }
