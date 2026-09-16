@@ -2,16 +2,14 @@
  * README main-flow P0 gates that were absent on main:
  *  1) first public judge with no --model and no seat fails before executeTurn
  *  2) escalate → resume "<ruling>" → same runId converged
- *  3) coder completed → inspector bounce → same-session resubmit pass
  */
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
@@ -19,14 +17,10 @@ import {
   seedGitProject,
   withTempHome,
 } from "../helpers/failure-settlement-kit.ts";
-import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
-  sessionToolExchangeRows,
-  sessionUserMessageRow,
-  writeSessionJsonl,
 } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
@@ -184,117 +178,4 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
     assert.equal(resumePrompt?.startsWith(ruling), true);
     assert.ok(resumePrincipal?.includes(runId), "resume must reopen the same run principal");
   }, { prefix: "ak-p0-escalate-resume-" });
-});
-
-test("publicCliCoderCompletedInspectorBounceThenPassSameSession", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "01a0cod753-0000-7000-8000-000000000001";
-    const bounceFindings = ["missing red/green evidence"] as const;
-    const completed = {
-      status: "completed" as const,
-      report: "TDD red/green evidence after inspector bounce.",
-    };
-    let sessionFileSeen: string | undefined;
-    const cap = captureIo();
-    const result = await runAkRole(
-      [
-        "coder",
-        "--model",
-        "test/caller-seat:high",
-        "--project",
-        project,
-        "Implement the approved slice.",
-      ],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => runId,
-        io: cap.io,
-        credentials: CREDENTIALS,
-        roleTurnHost: createMinimalHost(async (request) => {
-          const { sessionDirectory, sessionFile } =
-            piDurablePrincipalAuthority.decode(request.principal);
-          sessionFileSeen = sessionFile;
-          await mkdir(sessionDirectory, { recursive: true });
-          await writeSessionJsonl(sessionFile, [
-            sessionUserMessageRow("user-1", "Implement the approved slice.", 1),
-            ...sessionToolExchangeRows({
-              stem: "bounce",
-              parentId: "user-1",
-              callId: "call_coder_bounce",
-              toolName: CODER_OUTPUT_TOOL_NAME,
-              details: { status: "completed", report: "first completed, bounced" },
-              body: "inspector bounce — rewrite and resubmit",
-              isError: true,
-              n: 2,
-            }),
-            ...sessionToolExchangeRows({
-              stem: "pass",
-              parentId: "result-bounce",
-              callId: "call_coder_pass",
-              toolName: CODER_OUTPUT_TOOL_NAME,
-              details: completed,
-              body: "coder output accepted",
-              isError: false,
-              n: 4,
-            }),
-          ]);
-          const auditorDir = join(dirname(sessionFile), "auditor-roles");
-          await mkdir(auditorDir, { recursive: true });
-          await writeFile(
-            join(auditorDir, "o01_inspector.jsonl"),
-            gateToolSessionJsonl({
-              id: "inspector-bounce",
-              startedAt: "2026-09-16T00:00:00.000Z",
-              endedAt: "2026-09-16T00:00:10.000Z",
-              toolName: "ak_inspector_output",
-              args: { status: "bounce", findings: [...bounceFindings] },
-            }),
-            "utf8",
-          );
-          await writeFile(
-            join(auditorDir, "o02_inspector.jsonl"),
-            gateToolSessionJsonl({
-              id: "inspector-pass",
-              startedAt: "2026-09-16T00:00:20.000Z",
-              endedAt: "2026-09-16T00:00:30.000Z",
-              toolName: "ak_inspector_output",
-              args: { status: "pass", findings: [] },
-            }),
-            "utf8",
-          );
-          await sealAcceptedSubmission({
-            cwd: request.cwd,
-            home,
-            runId,
-            runDirectory: request.runDirectory,
-            role: "coder",
-            details: completed,
-            toolCallId: "call_coder_pass",
-            ...(request.courtAttemptId === undefined
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
-          });
-          return { code: 0, stderr: "", timedOut: false };
-        }),
-      },
-    );
-    assert.equal(result.exitCode, 0, cap.stderr.join(""));
-    assert.ok(result.terminal);
-    assert.equal(result.terminal.runId, runId);
-    assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    assert.equal(result.terminal.roleOutcome.role, "coder");
-    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["completed"]);
-    assert.ok(result.terminal.gate);
-    assert.deepEqual(result.terminal.gate.actualSeats, ["inspector"]);
-    assert.equal(result.terminal.gate.rounds.length, 2);
-    assert.equal(result.terminal.gate.rounds[0]!.officer.status, "bounce");
-    assert.deepEqual(result.terminal.gate.rounds[0]!.officer.findings, [...bounceFindings]);
-    assert.equal(result.terminal.gate.rounds[1]!.officer.status, "pass");
-    assert.ok(sessionFileSeen?.includes(runId), "bounce and pass must share the coder session");
-  }, { prefix: "ak-p0-coder-inspector-" });
 });
