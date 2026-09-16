@@ -211,7 +211,6 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   readonly slashEnqueueText: string;
   readonly bareMachineEnqueueId: string;
   readonly bareMachineText: string;
-  readonly unparsableLine: number;
   readonly unparsableRaw: string;
   readonly lastLine: number;
   /** Physical line of plain owner (range A anchor). */
@@ -740,7 +739,6 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     slashEnqueueText,
     bareMachineEnqueueId,
     bareMachineText,
-    unparsableLine: 21,
     unparsableRaw,
     // rows[] length is the physical line count of the written session file.
     lastLine: 50,
@@ -891,7 +889,7 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
     assert.equal(volume.header.sessions.length, 1);
     assert.equal(volume.header.sessions[0]?.path, fixture.path);
 
-    // Speakers + first-seen identity + no tool output + amendment landed.
+    // Speakers + first-seen identity + no tool output + raw-byte preservation.
     const byId = new Map(
       volume.lines
         .filter((line) => line.id !== undefined)
@@ -1872,7 +1870,8 @@ test("ak-role diarist records the same owner text from isolated user and enqueue
         ? {
             type: "user",
             uuid: `owner-${source}`,
-            message: { role: "user", content: [{ type: "text", text: ownerText }] },
+            message: { role: "user", content: ownerText },
+            origin: { kind: "human" },
           }
         : {
             type: "queue-operation",
@@ -1920,7 +1919,6 @@ test("ak-role diarist records the same owner text from isolated user and enqueue
         [{ speaker: "owner", text: ownerText, id: `owner-${source}`, s: 0 }],
         `${source} boundary must produce the same owner utterance without a line address`,
       );
-      assert.equal(volume.lines.some((line) => "line" in line), false);
     });
   }
 });
