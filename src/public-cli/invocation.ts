@@ -1219,6 +1219,13 @@ function ticketAdmissionFields(
   };
 }
 
+/** Sole admission projection from an existing typed identity to run placement. */
+function admissionSubject(ticketFields: { readonly ticketNumber?: number }): RoleRunSubject {
+  return ticketFields.ticketNumber === undefined
+    ? { unbound: true }
+    : { ticketNumber: ticketFields.ticketNumber };
+}
+
 export type AdmitJudgeInvocationOptions = {
   home: string;
   cwd: string;
@@ -1274,9 +1281,7 @@ async function admitStandardMaterialInvocation<
     cwd: projectRoot,
     runId,
     role,
-    subject: ticketFields.ticketNumber === undefined
-      ? { unbound: true }
-      : { ticketNumber: ticketFields.ticketNumber },
+    subject: admissionSubject(ticketFields),
     home: options.home,
   });
 
@@ -1436,6 +1441,8 @@ export type AdmitCountersignInvocationOptions = {
   principalAuthority: DurablePrincipalAuthority;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed identity already asserted by 起居郎 or inherited from a bound run. */
+  assertedTicketNumber?: number;
   correlationId?: string;
 };
 
@@ -1453,6 +1460,7 @@ export async function admitCountersignInvocation(
   }
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
+  const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const {
     principal,
     sessionDirectory,
@@ -1465,12 +1473,11 @@ export async function admitCountersignInvocation(
     cwd: projectRoot,
     runId,
     role: "countersign",
-    subject: { unbound: true },
+    subject: admissionSubject(ticketFields),
     home: options.home,
   });
 
   const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
-  // Ticket binding is LLM-only post-admission (#635); admission stays unbound.
 
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
@@ -1481,6 +1488,7 @@ export async function admitCountersignInvocation(
     projectRoot,
     runDirectory,
     principal,
+    ...ticketFields,
     ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
     instruction,
     instructionEmpty,
@@ -1504,6 +1512,7 @@ export async function admitCountersignInvocation(
     runId,
     bookKey,
     projectRoot,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     attachments,
@@ -1569,6 +1578,8 @@ export type AdmitCoderInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed identity already asserted by 起居郎 or inherited from a bound run. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -1594,6 +1605,7 @@ export async function admitCoderInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
+  const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const {
     principal,
     sessionDirectory,
@@ -1606,7 +1618,7 @@ export async function admitCoderInvocation(
     cwd: projectRoot,
     runId,
     role: "coder",
-    subject: { unbound: true },
+    subject: admissionSubject(ticketFields),
     home: options.home,
   });
 
@@ -1623,6 +1635,7 @@ export async function admitCoderInvocation(
     projectRoot,
     runDirectory,
     principal,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     taskPath,
@@ -1647,6 +1660,7 @@ export async function admitCoderInvocation(
     runId,
     bookKey,
     projectRoot,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     attachments,
@@ -1690,6 +1704,8 @@ export type AdmitFixerInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed identity already asserted by 起居郎 or inherited from a bound run. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -1740,6 +1756,7 @@ export async function admitFixerInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
+  const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const {
     principal,
     sessionDirectory,
@@ -1752,7 +1769,7 @@ export async function admitFixerInvocation(
     cwd: projectRoot,
     runId,
     role: "fixer",
-    subject: { unbound: true },
+    subject: admissionSubject(ticketFields),
     home: options.home,
   });
 
@@ -1779,6 +1796,7 @@ export async function admitFixerInvocation(
     projectRoot,
     runDirectory,
     principal,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     packetPath,
@@ -1808,6 +1826,7 @@ export async function admitFixerInvocation(
     runId,
     bookKey,
     projectRoot,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     attachments,
@@ -1996,6 +2015,8 @@ export type AdmitCollectorInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed identity already asserted by 起居郎 or inherited from a bound run. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -2046,6 +2067,7 @@ export async function admitCollectorInvocation(
   const manifestDigest = manifest.digest;
 
   const runId = (options.createRunId ?? uuidv7)();
+  const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const {
     principal,
     sessionDirectory,
@@ -2058,7 +2080,7 @@ export async function admitCollectorInvocation(
     cwd: projectRoot,
     runId,
     role: "collector",
-    subject: { unbound: true },
+    subject: admissionSubject(ticketFields),
     home: options.home,
   });
 
@@ -2088,6 +2110,7 @@ export async function admitCollectorInvocation(
     projectRoot,
     runDirectory,
     principal,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     ...(prNumber === undefined ? {} : { prNumber }),
@@ -2116,6 +2139,7 @@ export async function admitCollectorInvocation(
     runId,
     bookKey,
     projectRoot,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     attachments,
@@ -2249,6 +2273,8 @@ export type AdmitDoctorInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed identity already asserted by 起居郎 or inherited from a bound run. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -2345,6 +2371,7 @@ export async function admitDoctorInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
+  const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const {
     principal,
     sessionDirectory,
@@ -2357,7 +2384,7 @@ export async function admitDoctorInvocation(
     cwd: projectRoot,
     runId,
     role: "doctor",
-    subject: { unbound: true },
+    subject: admissionSubject(ticketFields),
     home: options.home,
   });
 
@@ -2413,6 +2440,7 @@ export async function admitDoctorInvocation(
     projectRoot,
     runDirectory,
     principal,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     issueNumber: options.issueNumber,
@@ -2438,6 +2466,7 @@ export async function admitDoctorInvocation(
     runId,
     bookKey,
     projectRoot,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     attachments,
@@ -2693,6 +2722,8 @@ export type AdmitGleanerLeftInvocationOptions = {
   project?: string;
   createRunId?: () => string;
   model?: InvocationEffectiveModel;
+  /** Typed identity already asserted by 起居郎 or inherited from a bound run. */
+  assertedTicketNumber?: number;
   correlationId?: string;
 };
 
@@ -2712,6 +2743,7 @@ export async function admitGleanerLeftInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
+  const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const {
     principal,
     sessionDirectory,
@@ -2724,7 +2756,7 @@ export async function admitGleanerLeftInvocation(
     cwd: projectRoot,
     runId,
     role: "gleaner-left",
-    subject: { unbound: true },
+    subject: admissionSubject(ticketFields),
     home: options.home,
   });
 
@@ -2737,6 +2769,7 @@ export async function admitGleanerLeftInvocation(
     projectRoot,
     runDirectory,
     principal,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
@@ -2761,6 +2794,7 @@ export async function admitGleanerLeftInvocation(
     runId,
     bookKey,
     projectRoot,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     attachments: [],
@@ -2855,6 +2889,8 @@ export type AdmitReviewerInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed identity already asserted by 起居郎 or inherited from a bound run. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -2877,6 +2913,7 @@ export async function admitReviewerInvocation(
 
   const projectRoot = resolve(options.project ?? options.cwd);
   const runId = (options.createRunId ?? uuidv7)();
+  const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const {
     principal,
     sessionDirectory,
@@ -2889,7 +2926,7 @@ export async function admitReviewerInvocation(
     cwd: projectRoot,
     runId,
     role: "reviewer",
-    subject: { unbound: true },
+    subject: admissionSubject(ticketFields),
     home: options.home,
   });
 
@@ -2905,6 +2942,7 @@ export async function admitReviewerInvocation(
     projectRoot,
     runDirectory,
     principal,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     baseRevision: options.baseRevision,
@@ -2929,6 +2967,7 @@ export async function admitReviewerInvocation(
     runId,
     bookKey,
     projectRoot,
+    ...ticketFields,
     instruction,
     instructionEmpty,
     attachments,
@@ -3059,6 +3098,8 @@ export type AdmitMergerInvocationOptions = {
   gitState?: MergerGitState;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed identity already asserted by 起居郎 or inherited from a bound run. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -3085,6 +3126,7 @@ export async function admitMergerInvocation(
   );
 
   const runId = (options.createRunId ?? uuidv7)();
+  const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const {
     principal,
     sessionDirectory,
@@ -3097,7 +3139,7 @@ export async function admitMergerInvocation(
     cwd: projectRoot,
     runId,
     role: "merger",
-    subject: { unbound: true },
+    subject: admissionSubject(ticketFields),
     home: options.home,
   });
 
@@ -3144,6 +3186,7 @@ export async function admitMergerInvocation(
     projectRoot,
     runDirectory,
     principal,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     mergerInputPath,
@@ -3173,6 +3216,7 @@ export async function admitMergerInvocation(
     runId,
     bookKey,
     projectRoot,
+    ...ticketFields,
     instruction,
     instructionEmpty: false,
     attachments,

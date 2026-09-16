@@ -78,6 +78,9 @@ export async function runPublicGleanerLeft(
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
+      ...(env.boundTicketNumber === undefined
+        ? {}
+        : { assertedTicketNumber: env.boundTicketNumber }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
     });
   } catch (error) {

@@ -87,6 +87,9 @@ export async function runPublicCollector(
       ...(parsed.waitWindowMs === undefined ? {} : { waitWindowMs: parsed.waitWindowMs }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
+      ...(env.boundTicketNumber === undefined
+        ? {}
+        : { assertedTicketNumber: env.boundTicketNumber }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
