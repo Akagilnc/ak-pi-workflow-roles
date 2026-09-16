@@ -7,7 +7,7 @@
  * stays append-only; this module does not restore append watermarks.
  */
 import { appendFileSync } from "node:fs";
-import { readFile, readlink, rm, unlink } from "node:fs/promises";
+import { readFile, readlink, unlink } from "node:fs/promises";
 import lockfile from "proper-lockfile";
 
 import {
@@ -73,13 +73,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function legacyHolderIsLive(path: string): Promise<boolean> {
+async function legacyClaimIsLive(path: string): Promise<boolean | undefined> {
   let claim: string;
   try {
     claim = await readlink(path);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "EINVAL") return false;
+    if (code === "ENOENT") return undefined;
+    if (code === "EINVAL") return false;
     throw error;
   }
   const holder = Number.parseInt(claim.split(":", 1)[0] ?? "", 10);
@@ -93,23 +94,11 @@ async function legacyHolderIsLive(path: string): Promise<boolean> {
   }
 }
 
-async function retireLegacyClaim(lockPath: string): Promise<boolean> {
-  let claim: string;
-  try {
-    claim = await readlink(lockPath);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "EINVAL") return false;
-    throw error;
-  }
-
-  if (await legacyHolderIsLive(lockPath)) return true;
-  // The successor protocol claims with a directory, so unlink can only remove
-  // this legacy symlink; it cannot erase a later claim that won the race.
-  await unlink(lockPath).catch((error: NodeJS.ErrnoException) => {
+async function unlinkLegacyResidue(path: string): Promise<void> {
+  await unlink(path).catch((error: NodeJS.ErrnoException) => {
+    // A concurrent new-protocol winner is a directory and must never be removed.
     if (error.code !== "ENOENT" && error.code !== "EISDIR" && error.code !== "EPERM") throw error;
   });
-  return false;
 }
 
 /**
@@ -125,18 +114,23 @@ export async function withSitianVolumeTransaction<T>(
   const lockPath = `${recordFile}.lock`;
   const legacyRecoveryPath = `${lockPath}.recover`;
 
+  // One-way startup migration: old executables are not a supported concurrent
+  // protocol. Retire only the crash residue they left before this process
+  // enters the sole lease protocol; later claims are directories, never links.
+  const legacyRecovery = await legacyClaimIsLive(legacyRecoveryPath);
+  if (legacyRecovery === true) {
+    throw new SitianInfrastructureError(
+      `legacy Sitian volume recovery is still active: ${legacyRecoveryPath}`,
+    );
+  }
+  if (legacyRecovery === false) await unlinkLegacyResidue(legacyRecoveryPath);
+  const legacyClaim = await legacyClaimIsLive(lockPath);
+  if (legacyClaim === true) {
+    throw new SitianInfrastructureError(`legacy Sitian volume transaction is still active: ${lockPath}`);
+  }
+  if (legacyClaim === false) await unlinkLegacyResidue(lockPath);
+
   while (true) {
-    // A still-running old-version reclaimer remains authoritative during a
-    // rolling upgrade. Dead recovery residue has no role in the new protocol.
-    if (await legacyHolderIsLive(legacyRecoveryPath)) {
-      await sleep(15);
-      continue;
-    }
-    await rm(legacyRecoveryPath, { force: true }).catch(() => undefined);
-    if (await retireLegacyClaim(lockPath)) {
-      await sleep(15);
-      continue;
-    }
     let release: (() => Promise<void>) | undefined;
     try {
       release = await lockfile.lock(recordFile, {
