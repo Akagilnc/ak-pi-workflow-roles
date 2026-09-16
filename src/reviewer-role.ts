@@ -13,8 +13,7 @@ export type { ReviewerIntent };
 /** Frozen admitted inputs the behavior layer may consume — no flag surface. */
 export type ReviewerAdmittedInputs = Readonly<{
   baseRevision: string;
-  /** Parallel two-axis default, or caller-selected single-axis override. */
-  lens: "all" | "completeness" | "correctness";
+  lens: "completeness" | "correctness";
   authorityRefs?: readonly string[];
   /** Typed #176 ticketNumber from admitted invocation (Spec self-fetch primary). */
   ticketNumber?: number;

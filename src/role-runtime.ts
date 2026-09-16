@@ -237,8 +237,8 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
     throw new Error("Reviewer role requires --ak-review-base");
   }
   const rawLens = getFlag("ak-review-lens");
-  if (rawLens !== "all" && rawLens !== "completeness" && rawLens !== "correctness") {
-    throw new Error("Reviewer role requires --ak-review-lens all|completeness|correctness");
+  if (rawLens !== "completeness" && rawLens !== "correctness") {
+    throw new Error("Reviewer role requires --ak-review-lens completeness|correctness");
   }
   return Object.freeze({
     baseRevision,

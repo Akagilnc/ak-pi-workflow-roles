@@ -72,13 +72,15 @@ export function buildReviewerTurnRequest(
   return projectRoleTurnRequest(
     admitted,
     {
-      activation: {
-        role: "reviewer",
-        baseRevision: admitted.baseRevision,
-        lens: admitted.lens,
-        authorityRefs: admitted.authorityRefs,
-        ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
-      },
+      activation: admitted.lens === "all"
+        ? { role: "reviewer-parent" }
+        : {
+            role: "reviewer",
+            baseRevision: admitted.baseRevision,
+            lens: admitted.lens,
+            authorityRefs: admitted.authorityRefs,
+            ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
+          },
       methods: admitted.lens === "all" ? [] : reviewerMethods(options.packageRoot),
     },
     options,

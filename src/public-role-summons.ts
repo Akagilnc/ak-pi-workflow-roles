@@ -52,7 +52,6 @@ export type PublicSummonRequest = {
   readonly credentials?: CredentialProviders;
   /** Parent turn's effective seat axes for same-seat child legs. */
   readonly model?: import("./host-contracts.ts").RoleTurnModelConfig;
-  readonly thinking?: import("./public-cli/registry.ts").PublicThinkingLevel;
   readonly host?: string;
   readonly engine?: string;
   readonly engineModel?: string;
@@ -329,9 +328,9 @@ export async function summonPublicRole(
     : {
         provider: options.model.provider,
         model: options.model.model,
-        ...(options.thinking ?? options.model.thinking) === undefined
+        ...(options.model.thinking === undefined
           ? {}
-          : { thinking: (options.thinking ?? options.model.thinking) as import("./public-cli/registry.ts").PublicThinkingLevel },
+          : { thinking: options.model.thinking as import("./public-cli/registry.ts").PublicThinkingLevel }),
       };
   const seat: EffectiveSeat = {
     ...resolvedSeat,
