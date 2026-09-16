@@ -60,10 +60,8 @@ const TICKET_MAIN_MATERIALS = {
     "CLAUDE.md",
     "souls/secretariat.md",
     "souls/ticket-law.md",
-    "souls/quality-law.md",
     "souls/countersign.md",
     "souls/notary.md",
-    "CONTEXT.md",
   ],
   "gleaner-left": ["CLAUDE.md", "souls/gleaner-left.md", "souls/quality-law.md"],
   inspector: [
