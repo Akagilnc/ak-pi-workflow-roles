@@ -2,7 +2,7 @@ import type { Static } from "typebox";
 import { Type } from "typebox";
 
 import { openToolObject } from "./open-tool-schema.ts";
-import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 import {
   GLEANER_LEFT_OUTPUT_TOOL_NAME,
   validateRecordedGleanerLeftOutput,
@@ -19,7 +19,7 @@ export { validateRecordedGleanerLeftOutput };
 // #836 r16 class 1: pointer/statement are LLM/human-read narrative content — no
 // code branches on their presence.
 /** 左拾遗弹章交卷形状；形状指引，非 schema 闸。 */
-export const gleanerLeftOutputSchema = withInfrastructureFailureDeclaration(
+export const gleanerLeftOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       status: Type.Unknown({

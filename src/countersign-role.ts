@@ -1,7 +1,7 @@
 import type { Static } from "typebox";
 import { Type } from "typebox";
 
-import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 import {
   COUNTERSIGN_OUTPUT_TOOL_NAME,
   validateRecordedCountersignOutput,
@@ -22,7 +22,7 @@ export type { CountersignVerdict };
 // classifies the recorded value and reasks the countersign itself when it
 // isn't one of the three states — code, not the transport, does that work.
 /** 给事中票庭审读五问的交卷形状（ADR 0074）；形状指引，非 schema 闸。 */
-export const countersignVerdictSchema = withInfrastructureFailureDeclaration(
+export const countersignVerdictSchema = withTerminatingOutputDeclarations(
   Type.Object(
     {
       countersignStatus: Type.Unknown({ description: "converged | continue | escalate。非三态时请重读后重交，勿改标。" }),

@@ -186,7 +186,7 @@ async function assertDurableUnbound(runDirectory: string): Promise<void> {
   assert.equal(invocation.ticketNumber, undefined);
 }
 
-test("public coder without --ticket: no mechanical bind from summons text", async () => {
+test("public coder binds its typed receipt assertion without parsing summons text", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicCoder(
       ["apply", "Implement the fix for ticket #582."],
@@ -196,18 +196,18 @@ test("public coder without --ticket: no mechanical bind from summons text", asyn
         runId: "01a063500-0000-7000-8000-00000000coder",
         role: "coder",
         toolName: CODER_OUTPUT_TOOL_NAME,
-        details: { status: "completed", report: "done" },
+        details: { status: "completed", report: "done", ticketNumber: 582 },
       }),
       captureIo().io,
       parseCoderArgv,
     );
     assert.equal(result.exitCode, 0);
-    assert.equal(result.admitted?.ticketNumber, undefined);
-    await assertDurableUnbound(result.admitted!.runDirectory);
+    assert.equal(result.admitted?.ticketNumber, 582);
+    await assertDurableTicket(result.admitted!.runDirectory, 582);
   });
 });
 
-test("public fixer without --ticket: no mechanical bind from summons text", async () => {
+test("public fixer ignores a malformed ticket assertion without rejecting its receipt", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicFixer(
       ["apply", "Repair the regression on ticket #582."],
@@ -217,7 +217,7 @@ test("public fixer without --ticket: no mechanical bind from summons text", asyn
         runId: "01a063500-0000-7000-8000-00000000fixer",
         role: "fixer",
         toolName: FIXER_OUTPUT_TOOL_NAME,
-        details: { status: "completed", report: "repaired", classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }] },
+        details: { status: "completed", report: "repaired", ticketNumber: "582", classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }] },
       }),
       captureIo().io,
       parseFixerArgv,

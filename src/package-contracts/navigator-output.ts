@@ -7,12 +7,12 @@
 import { Type } from "typebox";
 
 import { openToolObject } from "../open-tool-schema.ts";
-import { withInfrastructureFailureDeclaration } from "./terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
 
 export const NAVIGATOR_OUTPUT_TOOL_NAME = "ak_navigator_output";
 export const NAVIGATOR_ACCEPTED_TEXT = "游奕使建议已受理";
 
-export const navigatorOutputSchema = withInfrastructureFailureDeclaration(
+export const navigatorOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       status: Type.Unknown({

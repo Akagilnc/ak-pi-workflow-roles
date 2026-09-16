@@ -18,9 +18,11 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import type { RoleTurnRequestProjectionOptions } from "./turn-request.ts";
 import {
+  bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
   freezeAttachmentsIntoRun,
 } from "./invocation.ts";
+import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { resolveHostAwareSessionAvailability } from "../session-identity.ts";
@@ -577,10 +579,33 @@ export async function dispatchPostAdmissionTurn<
    */
   let afterDispatchApplied = false;
   const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
-    if (adapters.afterDispatch === undefined || afterDispatchApplied) return result;
+    if (afterDispatchApplied) return result;
     afterDispatchApplied = true;
     try {
-      await adapters.afterDispatch(admitted, lease);
+      // #858: an unbound seat may assert its ticket on the existing receipt.
+      // Read the original accepted payload; do not rewrite it, infer from prose,
+      // or reject missing/malformed declarations. An existing binding wins.
+      if (admitted.ticketNumber === undefined) {
+        const rows = await readRecordedSubmissionRows(
+          admitted.projectRoot,
+          admitted.runId,
+          { home: homeFromRunDirectory(admitted.runDirectory), sessionParent: join(admitted.runDirectory, "session", "session.jsonl") },
+        );
+        const asserted = [...rows]
+          .reverse()
+          .filter((row) => row.kind === "accepted" && row.role === admitted.role)
+          .map((row) => row.accepted)
+          .find((payload) => {
+            if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return false;
+            const value = (payload as { ticketNumber?: unknown }).ticketNumber;
+            return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+          });
+        const ticketNumber = asserted === undefined
+          ? undefined
+          : (asserted as { ticketNumber: number }).ticketNumber;
+        if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
+      }
+      if (adapters.afterDispatch !== undefined) await adapters.afterDispatch(admitted, lease);
       return result;
     } catch (error) {
       const primaryFailure =

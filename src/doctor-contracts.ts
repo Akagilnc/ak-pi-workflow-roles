@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import { canonicalJson } from "./canonical-json.ts";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
-import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
@@ -87,7 +87,7 @@ const doctorSubmissionVariants = Type.Union([
     missingEvidence: Type.Array(Type.Object({ need: nonblank, targetKeys: evidenceIds }, { additionalProperties: true }), { description: "如实证词所需而尚缺的证据" }),
   }, { additionalProperties: false, description: "证据不足以支撑如实案证词" }),
 ]);
-export const doctorSubmissionSchema = withInfrastructureFailureDeclaration(
+export const doctorSubmissionSchema = withTerminatingOutputDeclarations(
   openToolObjectFromUnion(doctorSubmissionVariants),
 );
 // #836 r16 class 3: action tool — code reads evidenceId to look up the Map entry
