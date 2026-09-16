@@ -2172,13 +2172,21 @@ export function createRoleRuntimeExtension(
               });
               for (const lens of ["completeness", "correctness"] as const) {
                 const leg = summoned[lens];
+                const payloads = leg.terminal?.roleOutcome.kind === "accepted"
+                  ? leg.terminal.roleOutcome.payloads ?? []
+                  : [];
+                const completed = payloads.some((payload) =>
+                  typeof payload === "object"
+                  && payload !== null
+                  && (payload as { status?: unknown }).status === "completed");
                 if (
                   leg.exitCode !== 0
                   || leg.terminal?.roleOutcome.kind !== "accepted"
+                  || !completed
                 ) {
                   throw new Error(
-                    `Reviewer ${lens} lens did not produce an accepted terminal`,
-                    { cause: leg },
+                    `Reviewer ${lens} lens did not produce a completed terminal`,
+                    { cause: summoned },
                   );
                 }
               }

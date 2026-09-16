@@ -610,9 +610,15 @@ export async function summonParallelReviewerLenses(options: {
           cwd: options.projectRoot,
         })),
     );
-    const rootCleanup = await Promise.allSettled([rm(root)]);
-    const cleanupFailures = [...cleanup, ...rootCleanup].flatMap((result) =>
+    const removeFailures = cleanup.flatMap((result) =>
       result.status === "rejected" ? [result.reason] : []);
+    const rootCleanup = await Promise.allSettled([
+      removeFailures.length === 0
+        ? rm(root, { recursive: true })
+        : rm(root),
+    ]);
+    const cleanupFailures = [...removeFailures, ...rootCleanup.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : [])];
     if (cleanupFailures.length > 0) {
       throw new AggregateError(
         primaryFailure === undefined
