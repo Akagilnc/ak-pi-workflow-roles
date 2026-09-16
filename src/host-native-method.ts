@@ -29,10 +29,9 @@ function prefixMethodInvocation(token: string, prompt: string): string {
 
 /** Claude's documented plugin Skill invocation syntax. */
 export function applyClaudeSkillInvocation(methods: readonly MethodBinding[], prompt: string): string {
-  return hostMethodSkills(methods).reduceRight(
-    (invocation, skill) => prefixMethodInvocation(`/${HOST_METHOD_PLUGIN_NAME}:${skill.name}`, invocation),
-    prompt,
-  );
+  const skills = hostMethodSkills(methods);
+  if (skills.length !== 1) return prompt;
+  return prefixMethodInvocation(`/${HOST_METHOD_PLUGIN_NAME}:${skills[0]!.name}`, prompt);
 }
 
 /** Codex's documented explicit Skill invocation syntax. */
