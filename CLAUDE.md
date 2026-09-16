@@ -78,6 +78,10 @@ A probe is temporary evidence. After its evidence purpose is disposed, either de
 
 **接住可以，洗白不行**：未识别异常不得冒用具体标签；真因必须落痕；catch 后照常继续视同缺陷，除非「此失败下继续」是文档化契约。
 
+## LLM 之间传话
+
+**原话过手，不得加工**：一个 LLM 的话转给另一个 LLM，照原样过，结构化内容序列化后照传，落在接收方读得到的那一面；不得改写、摘要、节选或以自撰短语替代。要加判断，另起一段标明谁说的。
+
 ## Role invocation evidence
 
 调用角色时使用 `pi --session-dir ~/.ak-roles/books/<主仓目录名>/issues/<issue>/runs/<invocation>@<源树>/session`（session 直落机器账本之家，ADR 0048——仓工作树内不再落卷宗；#11 launcher 落地后此路径由机器自算。不用 `--no-session`），stdin **须**以 `</dev/null` 封死（pi 启动会将非 TTY stdin 读到 EOF 才干活，未封死的后台管道=永久停车，README 点火第 2 步 / upstream pi#2078），stdout **须**丢到 `/dev/null`（stdout 流是无上限副本面，session 才是正本——2026-08-03 一条 med 腿 stdout 膨胀 137GB 实证；仪表挂 `stderr.log` 与 session 文件），`stderr.log` 和 `invocation.json` 留在家中同次 `runs/` 目录。
