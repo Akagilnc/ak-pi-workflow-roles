@@ -56,7 +56,7 @@ ak-role config set-auto-resume-limit 3
 
 **宿主 provider 表（#788）：** 席位行只写一份 provider 名。owner 手改 `~/.ak-roles/host-providers.json`（形如 `{ "hermes": { "xai": "xai-oauth" } }`）；代码只读。表里没有的问宿主目录（本票 hermes）：唯一即用，零个或多个响亮失败。优先级：表 > 唯一 > 失败，代码无裁量。`config show` 原样打印该表。
 
-**强制方法 Skill（#922）：** Pi 使用 `--skill`；Claude 使用 `--plugin-dir` 与原生 slash command。Codex 与 Hermes 在消费项目已提供官方 `.agents/skills` 目录时使用该发现路径；本包不创建或修改任意消费项目。使用项目自备的 Hermes Skill 前，操作员必须执行 `hermes skills trust`；据 Hermes help，此命令允许加载 `./.hermes/skills` 与 `./.agents/skills` 中的项目 Skill。Grok ACP 的调用面没有对应 loader，故如实报告 unsupported-method 缺口。包不改宿主 trust／配置。
+**强制方法 Skill（#922）：** Pi 使用 `--skill`。角色只绑定一个 Skill 时，Claude 使用 `--plugin-dir` 与原生 slash command；当前 print harness 无法在一轮发出多个 slash command，所以 Fixer 等多 Skill 角色在 Claude 上没有强制方法调用。Codex 通过官方项目 `.agents/skills` 目录发现随包方法：目录缺失时创建常设软链，既有项不覆盖；调用时显式传入每个官方 `$skill-name`。Hermes ACP 与 Grok ACP 当前 harness 无法强制 Skill 调用。这些缺口只在文档说明：本包不为其另造适配、能力探测、typed failure、catalog 或操作员前置，也不改宿主 trust／配置。
 
 门下省官席解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。配置用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。持久配置是全机共享单文件、多 CLI 版本同读：本构建不认识的席位键读时跳过（不报错）；已知席位上的未知字段沿用现行容忍。
 
