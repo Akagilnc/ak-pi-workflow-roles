@@ -83,17 +83,17 @@ test("secretariat activation declares package tools on active surface (G6)", asy
 
 test("secretariat output records any status without shape reject (第 0 条)", async () => {
   const { tools } = await activateSecretariat();
-  const sealed = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+  const converged = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
     "c1",
-    { secretariatStatus: "sealed", ticketNumber: 924 },
+    { secretariatStatus: "converged", ticketNumber: 924 },
     undefined,
     undefined,
     ctx,
   );
-  assert.equal(sealed.terminate, true);
+  assert.equal(converged.terminate, true);
   assert.equal(
-    (sealed.details as { secretariatStatus: string }).secretariatStatus,
-    "sealed",
+    (converged.details as { secretariatStatus: string }).secretariatStatus,
+    "converged",
   );
 
   const escalated = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
@@ -112,10 +112,23 @@ test("secretariat output records any status without shape reject (第 0 条)", a
     "escalate",
   );
 
-  // 第 0 条 / #924: tool only records; non-canonical status is not code-rejected.
-  const other = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+  const continued = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
     "c3",
     { secretariatStatus: "continue" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.equal(continued.terminate, true);
+  assert.equal(
+    (continued.details as { secretariatStatus: string }).secretariatStatus,
+    "continue",
+  );
+
+  // 第 0 条 / #924: tool only records; non-canonical status is not code-rejected.
+  const other = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+    "c4",
+    { secretariatStatus: "unexpected" },
     undefined,
     undefined,
     ctx,
@@ -123,7 +136,7 @@ test("secretariat output records any status without shape reject (第 0 条)", a
   assert.equal(other.terminate, true);
   assert.equal(
     (other.details as { secretariatStatus: string }).secretariatStatus,
-    "continue",
+    "unexpected",
   );
 });
 

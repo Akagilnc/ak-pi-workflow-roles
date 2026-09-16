@@ -29,7 +29,7 @@ export const secretariatVerdictSchema = withInfrastructureFailureDeclaration(
   Type.Object(
     {
       secretariatStatus: Type.Unknown({
-        description: "sealed | escalate（形状指引，非闸）",
+        description: "converged | continue | escalate（形状指引，非闸）",
       }),
       ticketNumber: Type.Optional(
         Type.Number({ description: "本票号；署时指向最终正文所在票" }),
@@ -73,7 +73,7 @@ export type SecretariatSummonCountersignParameters = Static<
 export const SECRETARIAT_OUTPUT_TOOL_SPEC = {
   name: SECRETARIAT_OUTPUT_TOOL_NAME,
   label: "中书省输出",
-  description: "中书省终局回执（署或上呈）。",
+  description: "中书省判词回执（署、封驳或上呈）。",
   promptSnippet: "中书省终局回执",
   parameters: secretariatVerdictSchema,
 } as const;

@@ -442,7 +442,7 @@ function secretariatHostDrivingRealTools(input: {
   };
 }
 
-test("public secretariat through-line: default summon → continue → same-run converged → sealed", async () => {
+test("public secretariat through-line: default summon → continue → same-run converged", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -484,7 +484,7 @@ test("public secretariat through-line: default summon → continue → same-run 
         { kind: "summon", instruction: "裁：#924 已按封驳重写，请复审。" },
         {
           kind: "output",
-          details: { secretariatStatus: "sealed", ticketNumber: 924 },
+          details: { secretariatStatus: "converged", ticketNumber: 924 },
         },
       ],
     });
@@ -512,13 +512,13 @@ test("public secretariat through-line: default summon → continue → same-run 
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
-      "sealed",
+      "converged",
     ]);
     const facts = objectPayloads(result.terminal.roleOutcome)[0] as {
       secretariatStatus: string;
       ticketNumber?: number;
     };
-    assert.equal(facts.secretariatStatus, "sealed");
+    assert.equal(facts.secretariatStatus, "converged");
     assert.equal(facts.ticketNumber, 924);
 
     // Nested terminal fidelity on the summon tool projection (default path).

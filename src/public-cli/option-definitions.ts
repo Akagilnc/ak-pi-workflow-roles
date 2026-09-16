@@ -1291,7 +1291,7 @@ const ROLE_COMMAND_HELP = {
   secretariat: {
     command: "secretariat",
     summary:
-      "Secretariat (中书省): rewrite ticket per 票面法 and drive countersign to sealed or escalate.",
+      "Secretariat (中书省): rewrite ticket per 票面法 and drive countersign to converged, continue, or escalate.",
     usage: ["ak-role secretariat [options] [instruction]"],
     examples: [
       'ak-role secretariat "整理 #924 票面并送庭。"',

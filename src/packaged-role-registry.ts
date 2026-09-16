@@ -166,8 +166,7 @@ export const PUBLIC_ROLE_RECORDS = [
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
-    // #924: Soul + 票面法 + 给事中/符宝郎行为指南
-    // (secretariat-soul=exists; secretariat-soul-content=restore-55f603c1-parent)
+    // #924: owner-finalized Soul + 票面法 + 给事中/符宝郎行为指南
     sessionMaterials: [
       "CLAUDE.md",
       "souls/secretariat.md",

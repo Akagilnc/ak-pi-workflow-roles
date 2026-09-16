@@ -1,6 +1,6 @@
 /**
  * Public Secretariat (中书省) terminating receipt contracts.
- * Lawful terminals: sealed (署) | escalate (上呈).
+ * Verdict domain: converged (署) | continue (封驳) | escalate (上呈).
  * (#924) — 原卷保真: the verdict is recognized read-only; no field
  * is defaulted, rewritten, or dropped (ADR 0055).
  */
@@ -12,8 +12,13 @@ export const SECRETARIAT_ACCEPTED_TEXT = "中书省回执已接受";
 
 export type SecretariatVerdict =
   | {
-      secretariatStatus: "sealed";
+      secretariatStatus: "converged";
       ticketNumber?: number;
+      note?: string;
+      evidence?: unknown;
+    }
+  | {
+      secretariatStatus: "continue";
       note?: string;
       evidence?: unknown;
     }
