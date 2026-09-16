@@ -111,18 +111,11 @@ export type RunGatekeeperOptions = {
    */
   readonly submission?: unknown;
   /**
-   * Test seam for public-role summons. Production calls the shared public
-   * activation path (#675); inject only in offline tracers.
+   * Officer summon seam. Production default lives on the shared envelope
+   * (`createDefaultGateOfficerSummon` / requireGatekeeperPass — ADR 0018).
+   * Role module only projects; callers must supply the summon.
    */
-  readonly summonOfficer?: GateOfficerSummon;
-  /**
-   * Offline test injects forwarded through the production default summonGateOfficer
-   * path (same faces as public CLI). Production leaves these unset.
-   */
-  readonly home?: string;
-  readonly packageRoot?: string;
-  readonly roleTurnHost?: import("./host-contracts.ts").RoleTurnHost;
-  readonly createRunId?: () => string;
+  readonly summonOfficer: GateOfficerSummon;
 };
 
 export type GatekeeperPassHostActions = {
@@ -323,8 +316,9 @@ export const OFFICER_CONCLUSION_REASK =
   "上次交卷的结论不是 pass、bounce、escalate 三态之一。请重新输出，结论字段写明其一；打回或上呈的话就是给对方看的原文。" as const;
 
 /**
- * Summon + project only. Lifecycle book and host abort face live on the shared
- * submit envelope (`gatekeeper-pass-envelope.ts`, ADR 0018 / #675).
+ * Summon (via injected seam) + project. Default summonGateOfficer drive lives
+ * on the shared envelope (`gatekeeper-pass-envelope.ts`, ADR 0018 / #675) —
+ * role module keeps projection only.
  */
 export async function projectGatekeeperRun(
   options: RunGatekeeperOptions,
@@ -345,24 +339,7 @@ export async function projectGatekeeperRun(
   // typed payload passed explicitly (never latest-toolCall recovery, A7.1–A7.3).
   let summoned: PublicSummonResult;
   try {
-    const summon =
-      options.summonOfficer
-      ?? (async (nextOfficer, sourceRunDirectory, officerSignal, reask, nextSubmission) => {
-        const { summonGateOfficer } = await import("./public-role-summons.ts");
-        return summonGateOfficer({
-          officer: nextOfficer,
-          sourceRunDirectory,
-          cwd: options.context.cwd ?? process.cwd(),
-          ...(officerSignal === undefined ? {} : { signal: officerSignal }),
-          ...(reask === undefined ? {} : { reask }),
-          ...(nextSubmission === undefined ? {} : { submission: nextSubmission }),
-          ...(options.home === undefined ? {} : { home: options.home }),
-          ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
-          ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
-          ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-        });
-      });
-    summoned = await summon(
+    summoned = await options.summonOfficer(
       officer,
       runDirectory,
       options.signal,

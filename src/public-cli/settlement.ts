@@ -95,6 +95,9 @@ import {
   DIARIST_OUTPUT_TOOL_NAME,
 } from "../diarist-contracts.ts";
 import {
+  SECRETARIAT_OUTPUT_TOOL_NAME,
+} from "../secretariat-contracts.ts";
+import {
   INSPECTOR_OUTPUT_TOOL_NAME,
 } from "../inspector-contracts.ts";
 import {
@@ -146,6 +149,7 @@ import {
   type AdmittedMergerInvocation,
   type AdmittedCountersignInvocation,
   type AdmittedDiaristInvocation,
+  type AdmittedSecretariatInvocation,
   type AdmittedGleanerLeftInvocation,
   type AdmittedInspectorInvocation,
   type AdmittedGatekeeperInvocation,
@@ -3143,7 +3147,8 @@ type SeatAcceptedSettlementSpec = {
     | "gatekeeper"
     | "navigator"
     | "auditor"
-    | "diarist";
+    | "diarist"
+    | "secretariat";
   readonly toolName: string;
 };
 
@@ -3167,7 +3172,8 @@ async function settleLawfulSeatAcceptedTerminalResult(
     | AdmittedGatekeeperInvocation
     | AdmittedNavigatorInvocation
     | import("./invocation.ts").AdmittedAuditorInvocation
-    | AdmittedDiaristInvocation,
+    | AdmittedDiaristInvocation
+    | AdmittedSecretariatInvocation,
   authority: DurablePrincipalAuthority,
   spec: SeatAcceptedSettlementSpec,
   scope?: SettlementCourtScope,
@@ -3382,6 +3388,26 @@ export async function trySettleDiaristTerminalResult(
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulDiaristTerminalResult(admitted, authority, scope);
+}
+
+async function settleLawfulSecretariatTerminalResult(
+  admitted: AdmittedSecretariatInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+    role: "secretariat",
+    toolName: SECRETARIAT_OUTPUT_TOOL_NAME,
+  }, scope);
+}
+
+/** Try to settle a lawful Secretariat Terminal; undefined only for genuine absence. */
+export async function trySettleSecretariatTerminalResult(
+  admitted: AdmittedSecretariatInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulSecretariatTerminalResult(admitted, authority, scope);
 }
 
 /** Lawful Inspector accepted outcome (pass/bounce/escalate). */

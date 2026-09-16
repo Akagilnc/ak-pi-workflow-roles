@@ -105,7 +105,7 @@ export function buildCountersignTurnRequest(
 }
 
 /** 起居郎 identity outcome — escalate stays distinct from missing terminal. */
-type CourtDiaristIdentity =
+export type CourtDiaristIdentity =
   | {
       readonly kind: "ticket";
       readonly ticketNumber: number;
@@ -119,10 +119,22 @@ type CourtDiaristIdentity =
   | { readonly kind: "unbound" }
   | { readonly kind: "escalate" };
 
-type CourtDiaristInvocationResult = {
+export type CourtDiaristInvocationResult = {
   readonly identity: CourtDiaristIdentity;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
+
+/** Env slice shared by court diarist identity summons (countersign / secretariat). */
+export type CourtDiaristSummonEnv = Pick<
+  CountersignRunEnv,
+  | "cwd"
+  | "home"
+  | "agentDir"
+  | "packageRoot"
+  | "credentials"
+  | "signal"
+  | "hostAdapters"
+>;
 
 /**
  * Read #871 set from preserved diarist payloads.
@@ -191,13 +203,16 @@ function courtDiaristEscalated(roleOutcome: TerminalRoleOutcome | undefined): bo
  * When `boundTicketNumber` is set (typed handoff from countersign), diarist
  * binds under that key before the turn — never mechanical recognition from prose.
  */
-async function invokeCourtDiarist(input: {
+export async function invokeCourtDiarist(input: {
   readonly instruction: string;
   readonly projectRoot: string;
   readonly failureLabel: string;
+  readonly attachmentPaths?: readonly string[];
+  /** Direct parent run id for durable child lineage (ADR 0010). */
+  readonly correlationId?: string;
   /** Already-verified typed key from countersign (refresh / post-assert handoff). */
   readonly boundTicketNumber?: number;
-}, env: CountersignRunEnv, io: CliIo): Promise<CourtDiaristInvocationResult> {
+}, env: CourtDiaristSummonEnv, io: CliIo): Promise<CourtDiaristInvocationResult> {
   // Quiet face: the countersign caller must not see diarist CLI chatter.
   const quietIo: CliIo = {
     stdout() {},
@@ -210,7 +225,13 @@ async function invokeCourtDiarist(input: {
   const { summonPublicRole } = await import("../public-role-summons.ts");
   const result = await summonPublicRole({
     role: "diarist",
-    argv: ["--project", input.projectRoot, input.instruction],
+    argv: [
+      "--project",
+      input.projectRoot,
+      ...(input.attachmentPaths ?? []).flatMap((path) => ["--attach", path]),
+      "--",
+      input.instruction,
+    ],
     cwd: env.cwd,
     home: env.home,
     agentDir: env.agentDir,
@@ -218,6 +239,7 @@ async function invokeCourtDiarist(input: {
     io: quietIo,
     ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
     ...(env.signal === undefined ? {} : { signal: env.signal }),
+    ...(input.correlationId === undefined ? {} : { correlationId: input.correlationId }),
     ...(input.boundTicketNumber === undefined
       ? {}
       : { boundTicketNumber: input.boundTicketNumber }),
@@ -312,6 +334,7 @@ export async function runCountersignCourtDiaristStation(
         instruction: `整理 #${ticketNumber} 的本案依据。`,
         projectRoot: admitted.projectRoot,
         failureLabel: `ticket #${ticketNumber}`,
+        correlationId: admitted.runId,
         // Refresh holds a typed key — hand it off so identity is bound before turn.
         boundTicketNumber: ticketNumber,
       },
@@ -391,6 +414,7 @@ export async function runPublicCountersign(
         instruction: parsed.instruction,
         projectRoot: admitted.projectRoot,
         failureLabel: "unbound summons",
+        correlationId: admitted.runId,
       },
       env,
       io,

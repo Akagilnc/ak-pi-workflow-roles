@@ -64,6 +64,7 @@ import {
   parseCollectorArgv,
   parseCountersignArgv,
   parseDiaristArgv,
+  parseSecretariatArgv,
   parseGleanerLeftArgv,
   parseDoctorArgv,
   parseFixerArgv,
@@ -91,6 +92,7 @@ import { runPublicInstructionSeat, runPublicInstructionSeatResume } from "./inst
 import { runPublicCollector, runPublicCollectorResume } from "./collector-run.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
 import { runPublicDiarist, runPublicDiaristResume } from "./diarist-run.ts";
+import { runPublicSecretariat, runPublicSecretariatResume } from "./secretariat-run.ts";
 import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
 import { runPublicDoctor, runPublicDoctorResume } from "./doctor-run.ts";
 import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
@@ -141,6 +143,7 @@ const RESUME_SEAT_DISPATCH: Record<
   navigator: { seat: "navigator", run: runPublicInstructionSeatResume },
   auditor: { seat: "auditor", run: runPublicInstructionSeatResume },
   diarist: { seat: "diarist", run: runPublicDiaristResume },
+  secretariat: { seat: "secretariat", run: runPublicSecretariatResume },
 };
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
@@ -186,6 +189,7 @@ export const PUBLIC_ROLE_ARGV = {
   navigator: { parse: parseNavigatorArgv, options: optionsForOwner("navigator") },
   auditor: { parse: parseAuditorArgv, options: optionsForOwner("auditor") },
   diarist: { parse: parseDiaristArgv, options: optionsForOwner("diarist") },
+  secretariat: { parse: parseSecretariatArgv, options: optionsForOwner("secretariat") },
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
   analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
 } as const;
@@ -1347,6 +1351,12 @@ export async function runAkRole(
       return await dispatchPublicRoleCommand(
         env, home, io, parsed, "diarist", PUBLIC_ROLE_ARGV.diarist.parse,
         (args, roleEnv, once) => runPublicDiarist(args, roleEnv, io, once),
+      );
+    }
+    if (parsed.command === "secretariat") {
+      return await dispatchPublicRoleCommand(
+        env, home, io, parsed, "secretariat", PUBLIC_ROLE_ARGV.secretariat.parse,
+        (args, roleEnv, once) => runPublicSecretariat(args, roleEnv, io, once),
       );
     }
     if (parsed.command === "coder") {
