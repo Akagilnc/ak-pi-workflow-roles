@@ -83,11 +83,11 @@ export async function withSitianVolumeTransaction<T>(
   const release = await lockVolume(recordFile, {
     lockfilePath: `${recordFile}.lock`,
     realpath: false,
-    // Do not reclaim a merely paused live writer. Crash residue fails visibly
-    // instead of risking a concurrent read-modify-write lost update.
+    // Do not reclaim a merely paused live writer. A contender waits briefly,
+    // then reports the lock instead of risking a lost update or parking forever.
     stale: 2_147_483_647,
     update: 1_073_741_823,
-    retries: { forever: true, minTimeout: 15, maxTimeout: 100 },
+    retries: { retries: 30, factor: 1, minTimeout: 100, maxTimeout: 100 },
   });
   try {
     return await transaction();
