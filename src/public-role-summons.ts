@@ -11,7 +11,7 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -19,9 +19,11 @@ import { promisify } from "node:util";
 import type { CliIo } from "./public-cli/cli-io.ts";
 import type { CredentialProviders, EffectiveSeat } from "./public-cli/config.ts";
 import type { PublicCallableRole } from "./public-cli/registry.ts";
-import type { RoleTurnHost } from "./host-contracts.ts";
-import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
+import type { RoleTurnHost, RoleTurnRequest } from "./host-contracts.ts";
+import type { AdmittedReviewerInvocation } from "./public-cli/invocation.ts";
+import type { PostAdmissionAdapters, PostAdmissionEnv } from "./public-cli/post-admission.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
+import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 import { pickEngineAxis } from "./package-resources/engine-material.ts";
 
 /** Env published by the parent activation so nested summons never re-derive root. */
@@ -760,6 +762,66 @@ export async function summonParallelReviewerLenses(options: {
     };
   }
   return results;
+}
+
+export function createParallelReviewerExecution(
+  admitted: () => AdmittedReviewerInvocation,
+  instruction: () => string,
+  env: PostAdmissionEnv,
+  fallback: PostAdmissionAdapters<AdmittedReviewerInvocation>,
+  defaultAutoResumeLimit: number,
+) {
+  let children: Awaited<ReturnType<typeof summonParallelReviewerLenses>> | undefined;
+  const adapters: PostAdmissionAdapters<AdmittedReviewerInvocation> = {
+    async trySettle(parent, authority, scope) {
+      if (parent.lens !== "all") return fallback.trySettle(parent, authority, scope);
+      if (children === undefined) return undefined;
+      const { settleParallelReviewerTerminalResult } = await import("./public-cli/settlement.ts");
+      return settleParallelReviewerTerminalResult(parent, children);
+    },
+    shouldPresentSettled: (terminal: TerminalResult) =>
+      admitted().lens === "all" || terminal.roleOutcome.kind === "accepted",
+    ...(fallback.resolveRunnerKnownFailure === undefined
+      ? {}
+      : { resolveRunnerKnownFailure: fallback.resolveRunnerKnownFailure }),
+  };
+  return {
+    env: {
+      ...env,
+      get autoResumeLimit() {
+        return admitted().lens === "all"
+          ? 0
+          : env.autoResumeLimit ?? defaultAutoResumeLimit;
+      },
+      roleTurnHost: {
+        async executeTurn(request: RoleTurnRequest) {
+          const parent = admitted();
+          if (parent.lens !== "all") return env.roleTurnHost.executeTurn(request);
+          const coordinates = env.principalAuthority.decode(parent.principal);
+          await mkdir(coordinates.sessionDirectory, { recursive: true });
+          await writeFile(coordinates.sessionFile, "", { encoding: "utf8", flag: "a" });
+          children = await summonParallelReviewerLenses({
+            projectRoot: parent.projectRoot,
+            baseRevision: parent.baseRevision,
+            authorityRefs: parent.authorityRefs,
+            instruction: instruction(),
+            home: env.home,
+            ...(env.model === undefined ? {} : { model: env.model }),
+            ...(env.host === undefined ? {} : { host: env.host }),
+            ...(env.engine === undefined ? {} : { engine: env.engine }),
+            ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+            packageRoot: env.packageRoot,
+            ...(env.signal === undefined ? {} : { signal: env.signal }),
+            correlationId: parent.runId,
+            roleTurnHost: env.roleTurnHost,
+            ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+          });
+          return { code: 0, stderr: "", timedOut: false };
+        },
+      },
+    },
+    adapters,
+  };
 }
 
 /** Gate officer summons: notary/auditor via --source-run; inspector via pointer instruction. */

@@ -4,8 +4,6 @@
  * extra packets. Controlled-failure settlement reuses #107.
  * #526: execution via RoleTurnHost; argv is Pi adapter internal.
  */
-import { mkdir, writeFile } from "node:fs/promises";
-
 import type {
   DurablePrincipalAuthority,
   MethodBinding,
@@ -40,7 +38,6 @@ import {
 import {
   presentStructuralRejection,
   readEngineDetourInfrastructureFailure,
-  settleParallelReviewerTerminalResult,
   trySettleReviewerTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -147,65 +144,6 @@ function reviewerResumePrompt(env: ReviewerRunEnv, message?: string): string {
   ).join("\n");
 }
 
-function createParallelReviewerExecution(
-  admitted: () => AdmittedReviewerInvocation,
-  instruction: () => string,
-  env: ReviewerRunEnv,
-) {
-  let children: Awaited<ReturnType<typeof import("../public-role-summons.ts").summonParallelReviewerLenses>> | undefined;
-  const fallback = reviewerAdapters(env.packageRoot);
-  const adapters: PostAdmissionAdapters<AdmittedReviewerInvocation> = {
-    async trySettle(parent, authority, scope) {
-      if (parent.lens !== "all") return fallback.trySettle(parent, authority, scope);
-      if (children === undefined) return undefined;
-      return settleParallelReviewerTerminalResult(parent, children);
-    },
-    shouldPresentSettled: (terminal) =>
-      admitted().lens === "all" || terminal.roleOutcome.kind === "accepted",
-    ...(fallback.resolveRunnerKnownFailure === undefined
-      ? {}
-      : { resolveRunnerKnownFailure: fallback.resolveRunnerKnownFailure }),
-  };
-  return {
-    env: {
-      ...env,
-      get autoResumeLimit() {
-        return admitted().lens === "all"
-          ? 0
-          : env.autoResumeLimit ?? AUTO_RESUME_LIMIT;
-      },
-      roleTurnHost: {
-        async executeTurn(request: RoleTurnRequest) {
-          const parent = admitted();
-          if (parent.lens !== "all") return env.roleTurnHost.executeTurn(request);
-          const coordinates = env.principalAuthority.decode(parent.principal);
-          await mkdir(coordinates.sessionDirectory, { recursive: true });
-          await writeFile(coordinates.sessionFile, "", { encoding: "utf8", flag: "a" });
-          const { summonParallelReviewerLenses } = await import("../public-role-summons.ts");
-          children = await summonParallelReviewerLenses({
-            projectRoot: parent.projectRoot,
-            baseRevision: parent.baseRevision,
-            authorityRefs: parent.authorityRefs,
-            instruction: instruction(),
-            home: env.home,
-            ...(env.model === undefined ? {} : { model: env.model }),
-            ...(env.host === undefined ? {} : { host: env.host }),
-            ...(env.engine === undefined ? {} : { engine: env.engine }),
-            ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
-            packageRoot: env.packageRoot,
-            ...(env.signal === undefined ? {} : { signal: env.signal }),
-            correlationId: parent.runId,
-            roleTurnHost: env.roleTurnHost,
-            ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
-          });
-          return { code: 0, stderr: "", timedOut: false };
-        },
-      },
-    },
-    adapters,
-  };
-}
-
 export async function runPublicReviewer(
   argv: readonly string[],
   env: ReviewerRunEnv,
@@ -251,10 +189,13 @@ export async function runPublicReviewer(
   await markRunAdmitted(admitted, env.principalAuthority);
 
   if (admitted.lens === "all") {
+    const { createParallelReviewerExecution } = await import("../public-role-summons.ts");
     const parallel = createParallelReviewerExecution(
       () => admitted,
       () => admitted.instruction,
       env,
+      reviewerAdapters(env.packageRoot),
+      AUTO_RESUME_LIMIT,
     );
     return await runPostAdmissionResumable({
       admitted,
@@ -360,6 +301,7 @@ export async function runPublicReviewerResume(
   terminal?: TerminalResult;
 }> {
   let activeAdmitted: AdmittedReviewerInvocation | undefined;
+  const { createParallelReviewerExecution } = await import("../public-role-summons.ts");
   const parallel = createParallelReviewerExecution(
     () => {
       if (activeAdmitted === undefined) throw new Error("reviewer resume admission is not loaded");
@@ -369,6 +311,8 @@ export async function runPublicReviewerResume(
       .filter((text): text is string => text !== undefined && text !== "")
       .join("\n\n"),
     env,
+    reviewerAdapters(env.packageRoot),
+    AUTO_RESUME_LIMIT,
   );
   return await runPostAdmissionSeatResume({
     request,

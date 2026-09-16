@@ -1170,10 +1170,8 @@ exec '${realGit}' "$@"
         assert.equal(sealed.terminal?.roleOutcome.kind, "failure");
         assert.equal(sealed.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
         assert.equal(sealed.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
-        assert.match(
-          sealed.terminal?.reviewerChildOutcomes?.completeness.stderr ?? "",
-          /HEAD after status/,
-        );
+        assert.equal(sealed.terminal?.reviewerChildOutcomes?.completeness.exitCode, 1);
+        assert.equal(sealed.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
       } finally {
         process.env.PATH = priorPath;
       }
@@ -1203,14 +1201,10 @@ exec '${realGit}' "$@"
       assert.equal(dirty.exitCode, 1, stdout.join(""));
       assert.equal(childTurns, 0);
       assert.equal(dirty.terminal?.roleOutcome.kind, "failure");
-      assert.match(
-        dirty.terminal?.reviewerChildOutcomes?.completeness.stderr ?? "",
-        /untracked-review-evidence\.txt/,
-      );
-      assert.match(
-        dirty.terminal?.reviewerChildOutcomes?.correctness.stderr ?? "",
-        /git status --porcelain=v1/,
-      );
+      assert.equal(dirty.terminal?.reviewerChildOutcomes?.completeness.exitCode, 1);
+      assert.equal(dirty.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
+      assert.equal(dirty.terminal?.reviewerChildren?.completeness, undefined);
+      assert.equal(dirty.terminal?.reviewerChildren?.correctness, undefined);
     }
   });
 });
