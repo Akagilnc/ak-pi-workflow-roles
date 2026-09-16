@@ -112,7 +112,7 @@ async function admitReviewerInvocation(
 }
 
 
-test("parseReviewerArgv requires base, lens, authority-ref and accepts optional provenance instruction", () => {
+test("parseReviewerArgv defaults to both lenses and accepts an optional single-lens override", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
@@ -120,36 +120,26 @@ test("parseReviewerArgv requires base, lens, authority-ref and accepts optional 
     () => parseReviewerArgv(["Review the branch since main."]),
     (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
   );
-  // Missing lens / authority-ref is usage error (no default; required).
+  // Authority remains required; omitted lens defaults to the parallel two-axis mode.
   assert.throws(() => parseReviewerArgv(["--base", "main"]), isUsage);
   assert.throws(
     () => parseReviewerArgv(["--base", "main", "--lens", "completeness"]),
     isUsage,
   );
-  assert.throws(
-    () =>
-      parseReviewerArgv([
-        "--base",
-        "main",
-        "--authority-ref",
-        "https://example.test/a",
-      ]),
-    isUsage,
-  );
-  assert.throws(
-    () =>
-      parseReviewerArgv([
-        "--base",
-        "main",
-        "--lens",
-        "all",
-        "--authority-ref",
-        "https://example.test/a",
-      ]),
-    (error: unknown) =>
-      isUsage(error) &&
-      error instanceof Error &&
-      error.message === "--lens requires completeness or correctness",
+  assert.deepEqual(
+    parseReviewerArgv([
+      "--base",
+      "main",
+      "--authority-ref",
+      "https://example.test/a",
+    ]),
+    {
+      instruction: "",
+      attachmentPaths: [],
+      baseRevision: "main",
+      lens: "all",
+      authorityRefs: ["https://example.test/a"],
+    },
   );
   // Empty lens shares the enum message (not path-helper "requires a path").
   assert.throws(
@@ -700,8 +690,6 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
           project,
           "--base",
           "HEAD~1",
-          "--lens",
-          "completeness",
           "--authority-ref",
           "CLAUDE.md",
         ],
@@ -767,12 +755,12 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "reviewer");
       assert.equal(captured!.includes("--skill"), true);
       assert.equal(captured!.includes("--ak-review-task"), false);
-      assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "completeness");
+      assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "all");
       // First stdin carries frozen Skill arg projection (base/lens/authority).
       const blankDialogue = readUserDialogueStdin(capturedStdin ?? "");
       assert.equal(
         blankDialogue.startsWith(
-          "/skill:ak-cross-m-review --base HEAD~1 --lens completeness --authority CLAUDE.md",
+          "/skill:ak-cross-m-review --base HEAD~1 --lens all --authority CLAUDE.md",
         ),
         true,
         blankDialogue,

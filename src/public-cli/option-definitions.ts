@@ -552,12 +552,12 @@ const REVIEWER_OPTIONS = [
     canonical: "--lens",
     aliases: [],
     valueMetavar: "completeness|correctness",
-    required: true,
+    required: false,
     repeatable: false,
     form: "option",
     description: {
-      en: "Required single review lens: completeness or correctness (no default).",
-      zh: "必填单 lens：completeness 或 correctness（无默认值）。",
+      en: "Optional single-lens override: completeness or correctness; omitted runs both in parallel.",
+      zh: "可选单 lens 覆盖：completeness 或 correctness；省略时并行运行两轴。",
     },
   },
   {
@@ -1227,9 +1227,9 @@ const ROLE_COMMAND_HELP = {
   },
   reviewer: {
     command: "reviewer",
-    summary: "Fixed-target single-lens review (completeness or correctness).",
+    summary: "Fixed-target parallel two-lens review, with an optional single-lens override.",
     usage: [
-      "ak-role reviewer --base <revision> --lens completeness|correctness --authority-ref <ref> [options] <instruction>",
+      "ak-role reviewer --base <revision> [--lens completeness|correctness] --authority-ref <ref> [options] <instruction>",
     ],
     examples: [
       'ak-role reviewer --base main --lens completeness --authority-ref docs/adr/0001.md "Review the branch."',

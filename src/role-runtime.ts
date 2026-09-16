@@ -156,7 +156,7 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
   Object.freeze({
     name: "ak-review-lens",
     definition: Object.freeze({
-      description: "Caller-selected single review lens: completeness or correctness",
+      description: "Review lens shape: all (parallel default), completeness, or correctness",
       type: "string" as const,
     }),
   }),
@@ -237,8 +237,8 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
     throw new Error("Reviewer role requires --ak-review-base");
   }
   const rawLens = getFlag("ak-review-lens");
-  if (rawLens !== "completeness" && rawLens !== "correctness") {
-    throw new Error("Reviewer role requires --ak-review-lens completeness|correctness");
+  if (rawLens !== "all" && rawLens !== "completeness" && rawLens !== "correctness") {
+    throw new Error("Reviewer role requires --ak-review-lens all|completeness|correctness");
   }
   return Object.freeze({
     baseRevision,

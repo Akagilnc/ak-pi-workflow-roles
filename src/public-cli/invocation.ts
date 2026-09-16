@@ -234,14 +234,14 @@ export type AdmittedNotaryInvocation = AdmittedRoleInvocationBase & {
   readonly sourceRun: NotarySourceRunLocator;
 };
 
-/** Public Reviewer single-lens token; no default and no `all` (caller-selected parent run). */
-export type ReviewerLens = "completeness" | "correctness";
+/** Reviewer lens shape: omitted public flag admits the parallel two-axis mode. */
+export type ReviewerLens = "all" | "completeness" | "correctness";
 
 export type AdmittedReviewerInvocation = AdmittedRoleInvocationBase & {
   readonly role: "reviewer";
   /** Required fixed base revision for the pinned review target (ADR 0037). */
   readonly baseRevision: string;
-  /** Required single lens; frozen at admission and reused on resume. */
+  /** Frozen default-two-axis or explicit single-axis shape, reused on resume. */
   readonly lens: ReviewerLens;
   /**
    * Required durable authority references/URLs frozen at admission.
@@ -886,7 +886,7 @@ export type ParseReviewerArgvResult = {
   attachmentPaths: string[];
   /** Required fixed base revision for the pinned review target. */
   baseRevision: string;
-  /** Required single lens; no default. */
+  /** Parallel two-axis default or explicit single-axis override. */
   lens: ReviewerLens;
   /** Repeatable durable authority references/URLs (exact order preserved; at least one). */
   authorityRefs: string[];
@@ -1002,10 +1002,10 @@ export function requireReviewerBaseRevision(value: string | undefined): string {
 
 /** Shared ReviewerLens predicate — sole interpretation owner for fresh + durable. */
 export function isReviewerLens(value: unknown): value is ReviewerLens {
-  return value === "completeness" || value === "correctness";
+  return value === "all" || value === "completeness" || value === "correctness";
 }
 
-/** Public --lens enum; sole owner for parse + fresh admission. */
+/** Admitted lens enum; `all` is the default but not a public flag spelling. */
 export function requireReviewerLens(value: string | undefined): ReviewerLens {
   const trimmed = (value ?? "").trim();
   if (!isReviewerLens(trimmed)) {
@@ -2891,8 +2891,12 @@ export function parseReviewerArgv(
         continue;
       }
       if (taken.def.id === "lens") {
-        // Empty and other non-enum values share one message — do not borrow path helper.
-        lens = requireReviewerLens(taken.value);
+        // `all` is the omission default, not a public override spelling.
+        const selected = requireReviewerLens(taken.value);
+        if (selected === "all") {
+          throw new CliUsageError("--lens requires completeness or correctness");
+        }
+        lens = selected;
         continue;
       }
       if (taken.def.id === "authority-ref") {
@@ -2908,13 +2912,13 @@ export function parseReviewerArgv(
     positional.push(token);
   }
 
-  // Unconditional required (--base/--lens/--authority-ref) from typed table (#342).
+  // Base and authority are required; omitted lens selects the parallel two-axis mode.
   options.assertRequired();
   return {
     instruction: positional.join(" "),
     attachmentPaths,
     baseRevision: baseRevision!,
-    lens: lens!,
+    lens: lens ?? "all",
     authorityRefs,
     ...(project === undefined ? {} : { project }),
   };
@@ -2928,7 +2932,7 @@ export type AdmitReviewerInvocationOptions = {
   instruction: string;
   attachmentPaths: readonly string[];
   baseRevision: string;
-  /** Required single lens; frozen unchanged at admission. */
+  /** Default two-axis or explicit single-axis shape, frozen unchanged at admission. */
   lens: ReviewerLens;
   /** Required durable authority references/URLs; frozen unchanged at admission. */
   authorityRefs: readonly string[];

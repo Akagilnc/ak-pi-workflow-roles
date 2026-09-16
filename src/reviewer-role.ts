@@ -13,8 +13,8 @@ export type { ReviewerIntent };
 /** Frozen admitted inputs the behavior layer may consume — no flag surface. */
 export type ReviewerAdmittedInputs = Readonly<{
   baseRevision: string;
-  /** Caller-selected single lens; required, no default. */
-  lens: "completeness" | "correctness";
+  /** Parallel two-axis default, or caller-selected single-axis override. */
+  lens: "all" | "completeness" | "correctness";
   authorityRefs?: readonly string[];
   /** Typed #176 ticketNumber from admitted invocation (Spec self-fetch primary). */
   ticketNumber?: number;
@@ -32,7 +32,7 @@ const reviewerAmendmentsSchema = Type.Object({
 }, {
   additionalProperties: true,
   description:
-    "所选 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；未选 lens 可省略。hard-stop／usage error 为 refused 时，已产出报告仍照录进所选 lens 字段。形状指引，非 schema 闸。",
+    "已运行 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；显式单轴时另一轴可省略。hard-stop／usage error 为 refused 时，已产出报告仍照录对应 lens 字段。形状指引，非 schema 闸。",
 });
 // #836 r16 class 1: diagnostic is LLM/human-read narrative content — no code
 // branches on its length (src/reviewer-role.ts consumer: reviewer content is
