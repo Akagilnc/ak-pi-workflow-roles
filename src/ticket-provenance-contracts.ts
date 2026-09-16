@@ -54,8 +54,10 @@ export type TicketProvenanceLine = {
   readonly speaker: TicketProvenanceSpeaker;
   /** 卷下标（册子头 `sessions` 的位置）。 */
   readonly s: number;
-  /** Stable logical source order; replayed copies of one source event share it. */
+  /** Logical source order for display. */
   readonly sourcePosition?: number;
+  /** Replay-invariant structural identity used for id-less cumulative coverage. */
+  readonly sourceIdentity?: string;
   readonly id?: string;
   readonly text: string;
 };
@@ -158,11 +160,15 @@ export function projectTicketProvenanceLine(
   if (speaker === undefined || s === undefined) return undefined;
   if (typeof value.text !== "string") return undefined;
   const sourcePosition = nonNegativeInteger(value.sourcePosition);
+  const sourceIdentity = typeof value.sourceIdentity === "string" && value.sourceIdentity !== ""
+    ? value.sourceIdentity
+    : undefined;
   const id = typeof value.id === "string" && value.id !== "" ? value.id : undefined;
   return {
     speaker,
     s,
     ...(sourcePosition === undefined ? {} : { sourcePosition }),
+    ...(sourceIdentity === undefined ? {} : { sourceIdentity }),
     ...(id === undefined ? {} : { id }),
     text: value.text,
   };

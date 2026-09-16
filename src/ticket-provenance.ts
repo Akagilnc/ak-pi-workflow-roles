@@ -147,6 +147,7 @@ type TicketProvenanceRaw = {
   readonly raw: string;
   readonly s: number;
   readonly sourcePosition: number;
+  readonly sourceIdentity?: string;
 };
 
 type TicketProvenanceCommit = {
@@ -158,10 +159,19 @@ type TicketProvenanceCommit = {
 function projectTicketProvenanceRaw(value: unknown): TicketProvenanceRaw | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
   const raw = value as Record<string, unknown>;
-  return typeof raw.raw === "string" && Number.isInteger(raw.s) && (raw.s as number) >= 0 &&
-      Number.isInteger(raw.sourcePosition) && (raw.sourcePosition as number) >= 0
-    ? { raw: raw.raw, s: raw.s as number, sourcePosition: raw.sourcePosition as number }
+  if (typeof raw.raw !== "string" || !Number.isInteger(raw.s) || (raw.s as number) < 0 ||
+      !Number.isInteger(raw.sourcePosition) || (raw.sourcePosition as number) < 0) {
+    return undefined;
+  }
+  const sourceIdentity = typeof raw.sourceIdentity === "string" && raw.sourceIdentity !== ""
+    ? raw.sourceIdentity
     : undefined;
+  return {
+    raw: raw.raw,
+    s: raw.s as number,
+    sourcePosition: raw.sourcePosition as number,
+    ...(sourceIdentity === undefined ? {} : { sourceIdentity }),
+  };
 }
 
 function projectTicketProvenanceCommit(value: unknown): TicketProvenanceCommit | undefined {
@@ -198,7 +208,9 @@ export type ReadTicketProvenanceResult = {
   readonly unprojectedRaw: readonly string[];
   readonly recordFile: string;
   /** Internal cumulative coverage truth, keyed by normalized session index. */
-  readonly sourcePositions: ReadonlyMap<number, ReadonlySet<number>>;
+  readonly sourceIdentities: ReadonlyMap<number, ReadonlySet<string>>;
+  /** Upgrade fallback for records written before sourceIdentity existed. */
+  readonly legacySourcePositions: ReadonlyMap<number, ReadonlySet<number>>;
 };
 
 /** Read the unique diary file (empty/absent → no header, no lines). */
@@ -218,7 +230,8 @@ export async function readTicketProvenance(
         lines: [],
         unprojectedRaw: [],
         recordFile,
-        sourcePositions: new Map(),
+        sourceIdentities: new Map(),
+        legacySourcePositions: new Map(),
       };
     }
     throw error;
@@ -227,13 +240,19 @@ export async function readTicketProvenance(
   let header: TicketProvenanceHeader | undefined;
   const lines: TicketProvenanceLine[] = [];
   const unprojectedRaw: string[] = [];
-  const sourcePositions = new Map<number, Set<number>>();
-  const rememberPosition = (s: number, position: number): boolean => {
-    const seen = sourcePositions.get(s) ?? new Set<number>();
-    const fresh = !seen.has(position);
-    seen.add(position);
-    sourcePositions.set(s, seen);
+  const sourceIdentities = new Map<number, Set<string>>();
+  const legacySourcePositions = new Map<number, Set<number>>();
+  const rememberIdentity = (s: number, identity: string): boolean => {
+    const seen = sourceIdentities.get(s) ?? new Set<string>();
+    const fresh = !seen.has(identity);
+    seen.add(identity);
+    sourceIdentities.set(s, seen);
     return fresh;
+  };
+  const rememberLegacyPosition = (s: number, position: number): void => {
+    const seen = legacySourcePositions.get(s) ?? new Set<number>();
+    seen.add(position);
+    legacySourcePositions.set(s, seen);
   };
   let sawFirst = false;
   for (let index = 0; index < physical.length; index += 1) {
@@ -266,12 +285,18 @@ export async function readTicketProvenance(
         if (typeof entry === "string") { unprojectedRaw.push(entry); continue; }
         const s = merged.incomingIndexes[entry.s] ?? entry.s;
         if ("raw" in entry) {
-          if (rememberPosition(s, entry.sourcePosition)) unprojectedRaw.push(entry.raw);
+          if (entry.sourceIdentity !== undefined) {
+            if (rememberIdentity(s, entry.sourceIdentity)) unprojectedRaw.push(entry.raw);
+          } else {
+            rememberLegacyPosition(s, entry.sourcePosition);
+            unprojectedRaw.push(entry.raw);
+          }
           continue;
         }
         remapped.push({ ...entry, s });
-        if (entry.id === undefined && entry.sourcePosition !== undefined) {
-          rememberPosition(s, entry.sourcePosition);
+        if (entry.id === undefined) {
+          if (entry.sourceIdentity !== undefined) rememberIdentity(s, entry.sourceIdentity);
+          else if (entry.sourcePosition !== undefined) rememberLegacyPosition(s, entry.sourcePosition);
         }
       }
       const now = commit.timestamp;
@@ -293,11 +318,18 @@ export async function readTicketProvenance(
     unprojectedRaw.push(raw);
   }
   for (const line of lines) {
-    if (line.id === undefined && line.sourcePosition !== undefined) {
-      rememberPosition(line.s, line.sourcePosition);
-    }
+    if (line.id !== undefined) continue;
+    if (line.sourceIdentity !== undefined) rememberIdentity(line.s, line.sourceIdentity);
+    else if (line.sourcePosition !== undefined) rememberLegacyPosition(line.s, line.sourcePosition);
   }
-  return { header, lines, unprojectedRaw, recordFile, sourcePositions };
+  return {
+    header,
+    lines,
+    unprojectedRaw,
+    recordFile,
+    sourceIdentities,
+    legacySourcePositions,
+  };
 }
 
 /**
@@ -497,11 +529,11 @@ function mergeFreshIntoCarried(
  * replayed rows directly; idless rows use their ordinal after the preceding
  * native id. Neither key inspects dialogue text or physical line numbers.
  */
-function stableSourcePositions(
+function stableSourceFacts(
   sessionLines: readonly LedgerSessionLine[],
-): readonly number[] {
+): readonly { readonly position: number; readonly identity: string }[] {
   const positionByIdentity = new Map<string, number>();
-  const positions: number[] = [];
+  const facts: { position: number; identity: string }[] = [];
   let precedingId = "<start>";
   let idlessOffset = 0;
   for (const entry of sessionLines) {
@@ -520,9 +552,9 @@ function stableSourcePositions(
       position = positionByIdentity.size;
       positionByIdentity.set(identity, position);
     }
-    positions.push(position);
+    facts.push({ position, identity });
   }
-  return positions;
+  return facts;
 }
 
 /**
@@ -574,7 +606,8 @@ async function projectSessionRanges(input: {
   readonly s: number;
   readonly session: TicketProvenanceSession;
   readonly seenIds: Set<string>;
-  readonly coveredSourcePositions: ReadonlySet<number>;
+  readonly coveredSourceIdentities: ReadonlySet<string>;
+  readonly legacyCoveredSourcePositions: ReadonlySet<number>;
   readonly home?: string;
 }): Promise<{
   readonly lines: TicketProvenanceLine[];
@@ -603,12 +636,12 @@ async function projectSessionRanges(input: {
 
   const rows = sessionLines.map((entry) => entry.row);
   const dialogue = adaptSessionDialogue(rows);
-  const sourcePositions = stableSourcePositions(sessionLines);
+  const sourceFacts = stableSourceFacts(sessionLines);
   const sourcePositionById = new Map<string, number>();
   for (let index = 0; index < sessionLines.length; index += 1) {
     const row = sessionLines[index]!.row;
     const id = row === undefined ? undefined : nativeEventId(row);
-    if (id !== undefined) sourcePositionById.set(id, sourcePositions[index]!);
+    if (id !== undefined) sourcePositionById.set(id, sourceFacts[index]!.position);
   }
   const seenIds = input.seenIds;
   const lines: TicketProvenanceLine[] = [];
@@ -620,11 +653,12 @@ async function projectSessionRanges(input: {
   );
   for (const range of ranges) {
     for (let index = range.fromIndex; index <= range.toIndex; index += 1) {
-      const sourcePosition = sourcePositions[index]!;
-      if (input.coveredSourcePositions.has(sourcePosition)) continue;
+      const { position: sourcePosition, identity: sourceIdentity } = sourceFacts[index]!;
+      if (input.coveredSourceIdentities.has(sourceIdentity) ||
+          input.legacyCoveredSourcePositions.has(sourcePosition)) continue;
       const entry = sessionLines[index]!;
       if (entry.row === undefined) {
-        raw.push({ raw: entry.raw, s: input.s, sourcePosition });
+        raw.push({ raw: entry.raw, s: input.s, sourcePosition, sourceIdentity });
         continue;
       }
       for (const event of dialogue[index] ?? []) {
@@ -637,7 +671,7 @@ async function projectSessionRanges(input: {
           speaker: event.speaker,
           s: input.s,
           sourcePosition,
-          ...(event.id === undefined ? {} : { id: event.id }),
+          ...(event.id === undefined ? { sourceIdentity } : { id: event.id }),
           text: event.text,
         });
       }
@@ -704,7 +738,8 @@ export async function reprojectTicketProvenance(input: {
       s: delta.s,
       session: delta.session,
       seenIds,
-      coveredSourcePositions: prior.sourcePositions.get(delta.s) ?? new Set(),
+      coveredSourceIdentities: prior.sourceIdentities.get(delta.s) ?? new Set(),
+      legacyCoveredSourcePositions: prior.legacySourcePositions.get(delta.s) ?? new Set(),
       ...(input.home === undefined ? {} : { home: input.home }),
     });
     fresh.push(...prior.lines.flatMap((line) => {

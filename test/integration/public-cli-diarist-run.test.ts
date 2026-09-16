@@ -1661,6 +1661,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     // A partially stale historical range still contributes its surviving overlap.
     // Removing only the old end bound must not replay the id-less/raw prefix.
     const rotatingPath = join(home, ".claude", "projects", "probe", "rotating.jsonl");
+    const rotatingPrefixId = "msg-rotating-prefix";
     const rotatingStartId = "msg-rotating-start";
     const rotatingEndId = "msg-rotating-end";
     const middleRotatingId = "msg-rotating-middle";
@@ -1690,6 +1691,11 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       path: rotatingPath,
       ranges: [{ from: { id: rotatingStartId }, to: { id: rotatingEndId } }],
     }]);
+    const rotatingPrefix = JSON.stringify({
+      type: "user",
+      uuid: rotatingPrefixId,
+      message: { role: "user", content: [{ type: "text", text: "后来插入锚点之前" }] },
+    });
     const rotatingMiddle = JSON.stringify({
       type: "user",
       uuid: middleRotatingId,
@@ -1702,7 +1708,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     });
     await writeFile(
       rotatingPath,
-      [rotatingStart, rotatingIdless, rotatingRaw, rotatingMiddle, rotatingNew].join("\n") + "\n",
+      [rotatingPrefix, rotatingStart, rotatingIdless, rotatingRaw, rotatingMiddle, rotatingNew].join("\n") + "\n",
       "utf8",
     );
     const afterRotation = await runDiarist(
@@ -2007,7 +2013,13 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
           { path: `${aliasHistoryPath}/./`, ranges: [{ from: { line: 2 }, to: { line: 2 } }] },
         ],
       }),
-      JSON.stringify({ speaker: "owner", s: 0, sourcePosition: 0, text: aliasIdlessText }),
+      JSON.stringify({
+        speaker: "owner",
+        s: 0,
+        sourcePosition: 0,
+        sourceIdentity: "after\u0000<start>\u00001",
+        text: aliasIdlessText,
+      }),
     ].join("\n") + "\n", "utf8");
     const afterAliasHistory = await runDiarist(
       "01a0diar00-0000-7000-8000-00000000009c",
