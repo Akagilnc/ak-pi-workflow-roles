@@ -13,6 +13,7 @@ import {
   bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
   relocateAdmittedRunToTicket,
+  recordAdmittedCorrelation,
   type AdmittedDiaristInvocation,
   type ParseDiaristArgvResult,
 } from "./invocation.ts";
@@ -94,6 +95,9 @@ function diaristAdapters(
     shouldPresentSettled: () => true,
     // Resume interrupted state: board ticket already on pages, run still under unbound/.
     beforeDispatch: async (admitted, lease) => {
+      if (env.correlationId !== undefined && env.correlationId.trim() !== "") {
+        await recordAdmittedCorrelation(admitted, env.correlationId);
+      }
       await bindAndRelocateDiaristIfBoardBound(admitted, env.principalAuthority, lease);
     },
     // First post-turn assert: accept hook wrote board pages; relocate before lease release.

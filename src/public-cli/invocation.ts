@@ -126,6 +126,8 @@ export type AdmittedRoleInvocationBase = {
    * (ADR 0049 host channel). Admission does not mint ticket-binding ids.
    */
   readonly correlationId?: string;
+  /** Direct callers retained across same-run resumes, in first-observed order. */
+  readonly correlationIds?: readonly string[];
   /**
    * Typed ticketNumber after known-identity reuse or notary source-run inheritance
    * (#635 / #709). Admission does not bind from CLI flag or attachment frontmatter.
@@ -533,6 +535,42 @@ export async function bindAdmittedTicketNumber(
   }
   await bindTicketNumberOnRunDirectory(admitted.runDirectory, ticketNumber);
   (admitted as { ticketNumber?: number }).ticketNumber = ticketNumber;
+}
+
+/** Persist each direct caller observed while a retained run is resumed. */
+export async function recordAdmittedCorrelation(
+  admitted: AdmittedRoleInvocation,
+  correlationId: string,
+): Promise<void> {
+  const current = JSON.parse(
+    await readFile(admitted.admittedRequestPath, "utf8"),
+  ) as Record<string, unknown>;
+  const prior = [
+    ...(Array.isArray(current.correlationIds)
+      ? current.correlationIds.filter((value): value is string =>
+          typeof value === "string" && value.trim() !== ""
+        )
+      : []),
+    ...(typeof current.correlationId === "string" && current.correlationId.trim() !== ""
+      ? [current.correlationId]
+      : []),
+  ];
+  const correlationIds = [...new Set([...prior, correlationId])];
+  await writeFile(
+    admitted.admittedRequestPath,
+    `${JSON.stringify({ ...current, correlationId, correlationIds }, null, 2)}\n`,
+    "utf8",
+  );
+  await mergeInvocationIdentityPage(admitted.runDirectory, {
+    correlationId,
+    correlationIds,
+  });
+  const mutable = admitted as {
+    correlationId?: string;
+    correlationIds?: readonly string[];
+  };
+  mutable.correlationId = correlationId;
+  mutable.correlationIds = correlationIds;
 }
 
 /**
