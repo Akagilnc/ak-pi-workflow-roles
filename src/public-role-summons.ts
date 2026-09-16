@@ -683,6 +683,40 @@ export async function summonParallelReviewerLenses(options: {
         : failedResult(settled[1].reason),
     };
   }
+  let sealDiagnostic: string | undefined;
+  try {
+    const [{ stdout: sealedHeadStdout }, { stdout: sealedStatusStdout }] = await Promise.all([
+      execFileAsync("git", ["rev-parse", "--verify", "HEAD^{commit}"], {
+        cwd: options.projectRoot,
+      }),
+      execFileAsync("git", statusArgs, { cwd: options.projectRoot }),
+    ]);
+    const sealedHead = sealedHeadStdout.trim();
+    if (sealedHead !== targetCommit || sealedStatusStdout !== "") {
+      sealDiagnostic = [
+        "Reviewer target final seal failed:",
+        `git rev-parse --verify 'HEAD^{commit}' => ${sealedHead}`,
+        `expected PRE_HEAD ${targetCommit}`,
+        "git status --porcelain=v1 --untracked-files=all -- :/ ':(top,exclude).claude/worktrees/**'",
+        sealedStatusStdout,
+      ].join("\n");
+    }
+  } catch (error) {
+    sealDiagnostic = `Reviewer target final seal failed:\n${describeFailure(error)}`;
+  }
+  if (sealDiagnostic !== undefined) {
+    const withSealFailure = (result: PublicSummonResult): PublicSummonResult => ({
+      ...result,
+      exitCode: 1,
+      stderr: [result.stderr, sealDiagnostic].filter(
+        (text): text is string => typeof text === "string" && text !== "",
+      ).join("\n"),
+    });
+    results = {
+      completeness: withSealFailure(results.completeness),
+      correctness: withSealFailure(results.correctness),
+    };
+  }
   const cleanup = await Promise.allSettled(
     [...created].map((path) =>
       execFileAsync("git", ["worktree", "remove", path], { cwd: options.projectRoot })),

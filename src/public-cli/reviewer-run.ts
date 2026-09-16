@@ -31,6 +31,7 @@ import {
   type ReviewerLens,
 } from "./invocation.ts";
 import {
+  AUTO_RESUME_LIMIT,
   loadResumableReviewerRun,
   markRunAdmitted,
   RESUME_TRANSPORT_ENVELOPE,
@@ -168,6 +169,11 @@ function createParallelReviewerExecution(
   return {
     env: {
       ...env,
+      get autoResumeLimit() {
+        return admitted().lens === "all"
+          ? 0
+          : env.autoResumeLimit ?? AUTO_RESUME_LIMIT;
+      },
       roleTurnHost: {
         async executeTurn(request: RoleTurnRequest) {
           const parent = admitted();

@@ -1110,6 +1110,55 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       );
     }
 
+    // Default parent must seal the original target after both child judgments.
+    {
+      let dirtied = false;
+      const { io, stdout } = captureIo();
+      const sealed = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high", "--project", project,
+        "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-cli-reviewer-final-seal",
+        io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            const lens = args[args.indexOf("--ak-review-lens") + 1] as "completeness" | "correctness";
+            if (!dirtied) {
+              dirtied = true;
+              await writeFile(join(project, "seal-residue.txt"), "changed during review\n", "utf8");
+            }
+            const sessionFile = args[args.indexOf("--session") + 1]!;
+            await mkdir(join(sessionFile, ".."), { recursive: true });
+            const details = lawfulReviewerReceipt(lens);
+            await writeFile(sessionFile, `${JSON.stringify({
+              type: "message",
+              message: { role: "toolResult", toolCallId: `seal-${lens}`, toolName: REVIEWER_OUTPUT_TOOL_NAME, isError: false, details },
+            })}\n`, "utf8");
+            return {
+              code: 0,
+              sealedAcceptance: { role: "reviewer" as const, details, toolCallId: `seal-${lens}` },
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        }),
+      });
+      assert.equal(sealed.exitCode, 1, stdout.join(""));
+      assert.equal(sealed.terminal?.roleOutcome.kind, "failure");
+      assert.equal(sealed.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
+      assert.equal(sealed.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
+      assert.match(
+        sealed.terminal?.reviewerChildOutcomes?.completeness.stderr ?? "",
+        /seal-residue\.txt/,
+      );
+    }
+
     // Default parent must apply canonical Step 1 before clean detached copies hide dirt.
     {
       await writeFile(join(project, "untracked-review-evidence.txt"), "dirty\n", "utf8");
