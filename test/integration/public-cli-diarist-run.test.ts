@@ -1621,6 +1621,32 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(afterOverlap.unprojectedRaw.filter((raw) => raw === rawB).length, 1);
     assert.equal(afterOverlap.lines.filter((line) => line.id === sessionBSecondId).length, 1);
 
+    // Historical id bounds are carried facts, not prerequisites: source rotation may
+    // remove an old endpoint while a new range in the same session remains valid.
+    const rotatingPath = join(home, ".claude", "projects", "probe", "rotating.jsonl");
+    const oldRotatingId = "msg-rotating-old";
+    const newRotatingId = "msg-rotating-new";
+    await writeFile(rotatingPath, `${JSON.stringify({
+      type: "user",
+      uuid: oldRotatingId,
+      message: { role: "user", content: [{ type: "text", text: "轮转前" }] },
+    })}\n`, "utf8");
+    await runDiarist("01a0diar00-0000-7000-8000-000000000097c", [{
+      path: rotatingPath,
+      ranges: [{ from: { id: oldRotatingId }, to: { id: oldRotatingId } }],
+    }]);
+    await writeFile(rotatingPath, `${JSON.stringify({
+      type: "user",
+      uuid: newRotatingId,
+      message: { role: "user", content: [{ type: "text", text: "轮转后" }] },
+    })}\n`, "utf8");
+    const afterRotation = await runDiarist(
+      "01a0diar00-0000-7000-8000-000000000097d",
+      [{ path: rotatingPath, ranges: [{ from: { id: newRotatingId }, to: { id: newRotatingId } }] }],
+    );
+    assert.equal(afterRotation.lines.filter((line) => line.id === oldRotatingId).length, 1);
+    assert.equal(afterRotation.lines.filter((line) => line.id === newRotatingId).length, 1);
+
     // 验收 4：历史源 S1 不可达后，只交新范围 B（S2）仍成功；再交已声明 A 为 no-op。
     // 变异面：改回「每轮重读全部历史源」→ 本段报红（S1 不可读会拖死 B）。
     const unreachableDir = join(home, ".claude", "projects", "probe-gone");
@@ -1636,7 +1662,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     );
     assert.equal(
       afterGoneB.lines.length,
-      5,
+      7,
       "resubmit declared bounds while S1 gone is no-op",
     );
     assert.equal(
@@ -1685,7 +1711,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       "B carried while adding C",
     );
     assert.equal(
-      afterC.lines.find((line) => line.s === 2 && line.id === sessionCOwnerId)?.text,
+      afterC.lines.find((line) => line.s === 3 && line.id === sessionCOwnerId)?.text,
       sessionCOwnerText,
       "same native id in a different session must publish under typed (s,id)",
     );
@@ -1693,12 +1719,12 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       afterC.lines
         .filter((line) => line.id === sessionCOwnerId)
         .map((line) => line.s),
-      [0, 2],
+      [0, 3],
     );
     assert.equal(
       afterC.header?.sessions.length,
-      3,
-      "C adds a third session index",
+      4,
+      "C adds the next session index",
     );
 
     // Resubmit declared range A (S1 still gone) → exact no-op, no reask.

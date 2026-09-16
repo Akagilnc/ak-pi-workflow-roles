@@ -451,12 +451,14 @@ function normalizeResolvedRanges(
   ranges: readonly TicketProvenanceRange[],
   sessionLines: readonly LedgerSessionLine[],
   sessionPath: string,
+  skipMissing = false,
 ): readonly { readonly fromIndex: number; readonly toIndex: number }[] {
   const resolved: { fromIndex: number; toIndex: number }[] = [];
   for (const range of ranges) {
     const fromIndex = resolveBoundIndex(range.from, sessionLines);
     const toIndex = resolveBoundIndex(range.to, sessionLines);
     if (fromIndex === undefined || toIndex === undefined) {
+      if (skipMissing) continue;
       throw new TicketProvenanceInputError(
         `bound endpoint not found in ${sessionPath} (from=${JSON.stringify(range.from)} to=${JSON.stringify(range.to)})`,
       );
@@ -532,6 +534,7 @@ async function projectSessionRanges(input: {
     input.priorRanges ?? [],
     sessionLines,
     input.session.path,
+    true,
   );
   const uncovered = ranges.flatMap((range) => {
     let fragments = [range];
