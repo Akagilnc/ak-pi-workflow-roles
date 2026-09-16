@@ -6,11 +6,14 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   lstat,
+  mkdtemp,
   readFile,
   realpath,
   rename,
+  rm,
   writeFile,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 import {
@@ -123,6 +126,8 @@ export type AdmittedRoleInvocationBase = {
    * (ADR 0049 host channel). Admission does not mint ticket-binding ids.
    */
   readonly correlationId?: string;
+  /** Direct callers retained across same-run resumes, in first-observed order. */
+  readonly correlationIds?: readonly string[];
   /**
    * Typed ticketNumber after known-identity reuse or notary source-run inheritance
    * (#635 / #709). Admission does not bind from CLI flag or attachment frontmatter.
@@ -315,6 +320,8 @@ export function issueAdmissionPlacement(
     /** Identity already asserted by 起居郎; never derive this from CLI parameters. */
     readonly subject: RoleRunSubject;
     readonly home?: string;
+    /** Placement may be computed before a same-ticket lookup without touching disk. */
+    readonly materialize?: boolean;
   },
 ): AdmissionPlacement {
   const ledgerHome = resolveActivationLedgerHome(request.home);
@@ -325,7 +332,7 @@ export function issueAdmissionPlacement(
     runId: request.runId,
     role: request.role,
   });
-  ensureRoleRunPlacement(ledgerHome, placement);
+  if (request.materialize !== false) ensureRoleRunPlacement(ledgerHome, placement);
   return {
     principal: authority.seal(placement),
     ...placement,
@@ -528,6 +535,42 @@ export async function bindAdmittedTicketNumber(
   }
   await bindTicketNumberOnRunDirectory(admitted.runDirectory, ticketNumber);
   (admitted as { ticketNumber?: number }).ticketNumber = ticketNumber;
+}
+
+/** Persist each direct caller observed while a retained run is resumed. */
+export async function recordAdmittedCorrelation(
+  admitted: AdmittedRoleInvocation,
+  correlationId: string,
+): Promise<void> {
+  const current = JSON.parse(
+    await readFile(admitted.admittedRequestPath, "utf8"),
+  ) as Record<string, unknown>;
+  const prior = [
+    ...(Array.isArray(current.correlationIds)
+      ? current.correlationIds.filter((value): value is string =>
+          typeof value === "string" && value.trim() !== ""
+        )
+      : []),
+    ...(typeof current.correlationId === "string" && current.correlationId.trim() !== ""
+      ? [current.correlationId]
+      : []),
+  ];
+  const correlationIds = [...new Set([...prior, correlationId])];
+  await writeFile(
+    admitted.admittedRequestPath,
+    `${JSON.stringify({ ...current, correlationId, correlationIds }, null, 2)}\n`,
+    "utf8",
+  );
+  await mergeInvocationIdentityPage(admitted.runDirectory, {
+    correlationId,
+    correlationIds,
+  });
+  const mutable = admitted as {
+    correlationId?: string;
+    correlationIds?: readonly string[];
+  };
+  mutable.correlationId = correlationId;
+  mutable.correlationIds = correlationIds;
 }
 
 /**
@@ -1200,11 +1243,9 @@ export function parseFixerArgv(args: readonly string[]): ParseFixerArgvResult {
   };
 }
 
-async function freezeRegularFileAttachment(
+async function readRegularFileAttachment(
   sourcePath: string,
-  destinationDir: string,
-  index: number,
-): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
+): Promise<{ absolute: string; bytes: Buffer }> {
   const absolute = isAbsolute(sourcePath) ? sourcePath : resolve(sourcePath);
   let st;
   try {
@@ -1220,18 +1261,103 @@ async function freezeRegularFileAttachment(
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`,
     );
   }
-  const bytes = await readFile(absolute);
-  const name = `${String(index).padStart(2, "0")}-${basename(absolute)}`;
-  const frozenPath = join(destinationDir, name);
+  try {
+    return { absolute, bytes: await readFile(absolute) };
+  } catch (error) {
+    throw new CliUsageError(
+      `attachment is not a readable regular file: ${sourcePath}`,
+      { cause: error },
+    );
+  }
+}
+
+export type PreparedAttachment = {
+  readonly absolute: string;
+  readonly snapshotPath: string;
+};
+
+/**
+ * Snapshot deferred inputs sequentially before identity side effects. The staging
+ * files keep aggregate attachment bytes off heap until their final run is known.
+ */
+async function removePreparedAttachmentDirectory(stagingDirectory: string): Promise<void> {
+  await rm(stagingDirectory, { recursive: true, force: true });
+}
+
+/** Own the complete deferred-snapshot lifetime without masking either failure. */
+export async function withPreparedAttachments<T>(
+  attachmentPaths: readonly string[],
+  use: (prepared: readonly PreparedAttachment[]) => Promise<T>,
+): Promise<T> {
+  if (attachmentPaths.length === 0) return await use([]);
+  const stagingDirectory = await mkdtemp(join(tmpdir(), "ak-role-attachments-"));
+  const prepared: PreparedAttachment[] = [];
+  let result: T;
+  try {
+    for (let index = 0; index < attachmentPaths.length; index += 1) {
+      const { absolute, bytes } = await readRegularFileAttachment(attachmentPaths[index]!);
+      const snapshotPath = join(stagingDirectory, String(index).padStart(6, "0"));
+      await writeFile(snapshotPath, bytes);
+      prepared.push({ absolute, snapshotPath });
+    }
+    result = await use(prepared);
+  } catch (primary) {
+    try {
+      await removePreparedAttachmentDirectory(stagingDirectory);
+    } catch (cleanup) {
+      throw new AggregateError(
+        [primary, cleanup],
+        "attachment snapshot operation failed and cleanup also failed",
+        { cause: primary },
+      );
+    }
+    throw primary;
+  }
+  await removePreparedAttachmentDirectory(stagingDirectory);
+  return result;
+}
+
+async function freezeAttachmentBytes(
+  provenancePath: string,
+  bytes: Buffer,
+  destinationDir: string,
+  index: number,
+): Promise<FrozenAttachment> {
+  const frozenPath = join(
+    destinationDir,
+    `${String(index).padStart(2, "0")}-${basename(provenancePath)}`,
+  );
   await writeFile(frozenPath, bytes);
   return {
-    attachment: {
-      provenancePath: absolute,
-      frozenPath,
-      byteLength: bytes.byteLength,
-      sha256: sha256Hex(bytes),
-      mediaKind: "regular-file",
-    },
+    provenancePath,
+    frozenPath,
+    byteLength: bytes.byteLength,
+    sha256: sha256Hex(bytes),
+    mediaKind: "regular-file",
+  };
+}
+
+async function freezePreparedAttachment(
+  prepared: PreparedAttachment,
+  destinationDir: string,
+  index: number,
+): Promise<FrozenAttachment> {
+  return freezeAttachmentBytes(
+    prepared.absolute,
+    await readFile(prepared.snapshotPath),
+    destinationDir,
+    index,
+  );
+}
+
+async function freezeRegularFileAttachment(
+  sourcePath: string,
+  destinationDir: string,
+  index: number,
+): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
+  const { absolute, bytes } = await readRegularFileAttachment(sourcePath);
+  return {
+    attachment: await freezeAttachmentBytes(absolute, bytes, destinationDir, index),
     body: bytes,
   };
 }
@@ -1268,6 +1394,25 @@ export async function freezeAttachmentsIntoRun(
   const attachmentsDirectory = join(runDirectory, "attachments", summonsKey);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   return freezeAttachments(attachmentPaths, attachmentsDirectory);
+}
+
+/** Freeze prepared bytes and metadata through one path for birth or retained runs. */
+export async function freezePreparedAttachmentsIntoRun(
+  prepared: readonly PreparedAttachment[],
+  runDirectory: string,
+  summonsKey?: string,
+): Promise<readonly FrozenAttachment[]> {
+  if (prepared.length === 0) return [];
+  const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(runDirectory));
+  const attachmentsDirectory = summonsKey === undefined
+    ? join(runDirectory, "attachments")
+    : join(runDirectory, "attachments", summonsKey);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  const attachments: FrozenAttachment[] = [];
+  for (let index = 0; index < prepared.length; index += 1) {
+    attachments.push(await freezePreparedAttachment(prepared[index]!, attachmentsDirectory, index));
+  }
+  return attachments;
 }
 
 function ticketAdmissionFields(
@@ -1515,11 +1660,13 @@ export type AdmitCountersignInvocationOptions = {
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
   correlationId?: string;
+  /** Same-ticket lookup may select an existing run before a new run is persisted. */
+  deferPersistence?: boolean;
 };
 
 /**
- * Atomically admit a Countersign Role run: freeze Attachments, persist the
- * request, write the invocation ledger (#572 / ADR 0074).
+ * Admit a Countersign run immediately, or reserve its coordinates for deferred
+ * materialization after identity lookup (#572 / ADR 0074 / #863).
  */
 export async function admitCountersignInvocation(
   options: AdmitCountersignInvocationOptions,
@@ -1545,9 +1692,12 @@ export async function admitCountersignInvocation(
     role: "countersign",
     subject: { unbound: true },
     home: options.home,
+    materialize: options.deferPersistence !== true,
   });
 
-  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
+  const attachments = options.deferPersistence === true
+    ? []
+    : await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
   // Ticket binding is LLM-only post-admission (#635); admission stays unbound.
 
   const instruction = options.instruction;
@@ -1571,11 +1721,13 @@ export async function admitCountersignInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-    sessionDirectory,
-    sessionFile,
-  });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
+  if (options.deferPersistence !== true) {
+    await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+      sessionDirectory,
+      sessionFile,
+    });
+    await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
+  }
 
   return {
     role: "countersign",
@@ -1590,6 +1742,36 @@ export async function admitCountersignInvocation(
     admittedRequestPath,
     ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
   };
+}
+
+/** Persist a deferred Countersign admission after same-ticket lookup found no retained run. */
+export async function materializeCountersignInvocation(
+  admitted: AdmittedCountersignInvocation,
+  options: Pick<AdmitCountersignInvocationOptions, "home" | "principalAuthority" | "model"> & {
+    preparedAttachments: readonly PreparedAttachment[];
+  },
+): Promise<void> {
+  const placement = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: admitted.projectRoot,
+    runId: admitted.runId,
+    role: "countersign",
+    subject: { unbound: true },
+    home: options.home,
+  });
+  const attachments = await freezePreparedAttachmentsIntoRun(
+    options.preparedAttachments,
+    admitted.runDirectory,
+  );
+  (admitted as { attachments: readonly FrozenAttachment[] }).attachments = attachments;
+  await writeAdmittedRequestPersistence(admitted.admittedRequestPath, admitted, {
+    sessionDirectory: placement.sessionDirectory,
+    sessionFile: placement.sessionFile,
+  });
+  await writeRoleInvocationLedger(
+    { ...admitted, sessionDirectory: placement.sessionDirectory, sessionFile: placement.sessionFile },
+    admitted.role,
+    options.model,
+  );
 }
 
 /** Build the Pi prompt transport for an admitted Countersign request. */

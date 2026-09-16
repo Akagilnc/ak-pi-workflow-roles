@@ -1178,6 +1178,38 @@ test("public countersign path: --ticket is unknown-option reject (exit 2)", asyn
   });
 });
 
+test("public countersign path: invalid attachment rejects before identity or run persistence", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    const runId = "01a0sign00-0000-7000-8000-000000000bad";
+    let identityCalls = 0;
+    const result = await runPublicCountersign(
+      ["--attach", join(project, "missing.md"), "裁：附件无效。"],
+      countersignPathEnv({
+        home,
+        project,
+        runId,
+        blockTurn: true,
+        runCourtDiaristStation: async () => {
+          identityCalls += 1;
+        },
+      }),
+      captureIo().io,
+      parseCountersignArgv,
+    );
+
+    assert.equal(result.exitCode, 2);
+    assert.equal(result.admitted, undefined);
+    assert.equal(identityCalls, 0);
+    const placement = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey: resolveBookKeyFromGit(project),
+      subject: { unbound: true },
+      runId,
+      role: "countersign",
+    });
+    await assert.rejects(readFile(join(placement.runDirectory, "invocation.json")));
+  });
+});
+
 test("public countersign path: 起居郎 typed handoff binds ticket; dossier volume stays readable", async () => {
   await withCountersignProject(async ({ home, project }) => {
     // Volume may pre-exist; binding still requires 起居郎 typed assertion (#771).
@@ -1550,6 +1582,52 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
   });
 });
 
+test("public countersign path: identity-time source mutation cannot change the admitted snapshot", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    ensureTicketProvenanceVolume(582, project, home);
+    const source = join(project, "ticket.md");
+    await writeFile(source, "before identity", "utf8");
+    let identityMutated = false;
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        if (argvFlagValue(args, "--ak-role") === "diarist" && !identityMutated) {
+          identityMutated = true;
+          await rm(source);
+        }
+        return courtPipelinePiRunner()(args, options);
+      },
+    });
+
+    const result = await runPublicCountersign(
+      ["--attach", source, "裁：继续审票 #582。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        credentials: { "openai-codex": true, xai: true },
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000snap",
+        host: "pi",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(identityMutated, true);
+    assert.equal(
+      await readFile(result.admitted!.attachments[0]!.frozenPath, "utf8"),
+      "before identity",
+    );
+  });
+});
+
 test("A2: exhausted court diarist station is not re-run by parent auto-resume", async () => {
   await withCountersignProject(async ({ home, project }) => {
     ensureTicketProvenanceVolume(582, project, home);
@@ -1654,6 +1732,7 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     ensureTicketProvenanceVolume(582, project, home);
 
     const seen: Array<{ runId: string; kind: string }> = [];
+    let sourceToDeleteDuringIdentity: string | undefined;
     const parentSeal = { countersignStatus: "converged" as const, note: "署" };
     const baseHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
@@ -1661,6 +1740,11 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
       piRunner: async (args, options) => {
         const role = argvFlagValue(args, "--ak-role");
         if (role === "diarist") {
+          if (sourceToDeleteDuringIdentity !== undefined) {
+            const source = sourceToDeleteDuringIdentity;
+            sourceToDeleteDuringIdentity = undefined;
+            await rm(source);
+          }
           return courtPipelinePiRunner(582)(args, options);
         }
         return courtPipelinePiRunner(582, parentSeal)(args, options);
@@ -1707,8 +1791,12 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.equal(seen[0]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
 
     // createRunId would mint s002 if auto-resume were skipped — must not fire.
+    // The accepted attachment snapshot must survive source deletion by identity.
+    const secondAttachment = join(project, "second-court.md");
+    await writeFile(secondAttachment, "second court snapshot", "utf8");
+    sourceToDeleteDuringIdentity = secondAttachment;
     const second = await runPublicCountersign(
-      ["裁：#582 二轮再审。"],
+      ["--attach", secondAttachment, "裁：#582 二轮再审。"],
       {
         ...envBase,
         createRunId: () => "01a0sign00-0000-7000-8000-00000000s002",
@@ -1727,13 +1815,36 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
       second.admitted?.runId,
       "01a0sign00-0000-7000-8000-00000000s002",
     );
+    const ticketRunsAfterSecondSummons = await readdir(
+      dirname(first.admitted!.runDirectory),
+    );
+    const unboundRunsAfterSecondSummons = await readdir(
+      join(dirname(dirname(dirname(first.admitted!.runDirectory))), "unbound", "runs"),
+    );
+    assert.deepEqual(
+      [...ticketRunsAfterSecondSummons, ...unboundRunsAfterSecondSummons]
+        .filter((entry) => entry.endsWith("@countersign")),
+      ["01a0sign00-0000-7000-8000-00000000s001@countersign"],
+      "same-ticket resume must not materialize a provisional run in any run partition",
+    );
     // A dispatched body turn on re-summons must be resume on the prior run.
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume");
     assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
+    const retainedAttachmentEntries = await readdir(
+      join(first.admitted!.runDirectory, "attachments"),
+      { recursive: true },
+    );
+    const secondSnapshot = retainedAttachmentEntries.find((entry) =>
+      entry.endsWith("00-second-court.md"),
+    );
+    assert.ok(secondSnapshot);
+    assert.equal(
+      await readFile(join(first.admitted!.runDirectory, "attachments", secondSnapshot), "utf8"),
+      "second court snapshot",
+    );
 
-    // Third summons: second call left a newer provisional under the ticket with
-    // no formed session principal. Lookup must still select s001, not s002/s003.
+    // Third summons must continue selecting s001 without materializing s002/s003.
     const third = await runPublicCountersign(
       ["裁：#582 三轮再审。"],
       {
