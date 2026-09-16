@@ -87,7 +87,6 @@ import {
   type WriterLeaseDiagnosticKind,
 } from "./run-lifecycle.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
-import { clearReviewerDispatchRejection } from "./reviewer-dispatch-rejection.ts";
 import {
   attemptProducedFreshSubmission,
   classifyPostAdmissionFailure,
@@ -698,9 +697,6 @@ export async function dispatchPostAdmissionTurn<
     }
 
     await clearTypedProviderHttpObservation(admitted.runDirectory);
-    // Per-attempt hygiene: stale Reviewer rejection pages must not ride into
-    // auto-resume. ENOENT-safe for every seat.
-    await clearReviewerDispatchRejection(admitted.runDirectory);
     // The authoritative host write (markRunRunning) is delayed to just before
     // executeTurn — not merely past beforeDispatch (#840 r9 判词 class 2). Any
     // pre-turn retry (beforeDispatch, dossier projection, continuation

@@ -21,12 +21,6 @@ commit/tag identity, per-file digests and git blob OIDs, and attribution under
   package adaptation `fixer-boundary-no-external-skill-chain` so the Fixer
   method cannot automatically launch architecture Grill or other role-external
   Skill chains (#110)
-- `code-review` — shipped under `resources/methods/code-review/` from
-  upstream `skills/engineering/code-review` at the same commit/tag, with
-  package adaptation `reviewer-no-setup-fixed-target-two-axis` so Reviewer
-  remains usable without Matt setup files, does not modify project governance
-  as setup, preserves Standards/Spec axes, and never turns scratch probes into
-  product repairs (#111)
 - `resolving-merge-conflicts` — shipped under `resources/methods/resolving-merge-conflicts/` from
   upstream `skills/engineering/resolving-merge-conflicts` at the same commit/tag, with
   package adaptation `merger-merge-only-escalate-new-intent` so Merger stays merge-only,
@@ -58,3 +52,11 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## First-party method (not third-party)
+
+- `ak-cross-m-review` — shipped verbatim under `resources/methods/ak-cross-m-review/`
+  from [Akagilnc/ak-cross-m-review](https://github.com/Akagilnc/ak-cross-m-review)
+  commit `57b10e2cea9ff008e2b36b98b55610e58cdfd512` (VERSION `0.5.2.0`, MIT,
+  Copyright (c) 2026 Akagi). `packageAdaptation` = `verbatim-upstream`. This is
+  first-party material owned by the same author line, not a third-party skill.

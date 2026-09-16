@@ -126,7 +126,9 @@ test("unconditional required: table required:true is the sole missing-option gat
     "doctor/issue",
     "gleaner-left/base",
     "notary/source-run",
+    "reviewer/authority-ref",
     "reviewer/base",
+    "reviewer/lens",
   ]);
   assert.throws(() => parseReviewerArgv(["task"]), isUsage);
   // #676 D1: collector --pr is optional at parse; ambiguity rejects at admission.
@@ -241,6 +243,8 @@ test("real parsers: phase from table; repeatable:false rejects; repeatable:true 
     parseReviewerArgv([
       "--base",
       "main",
+      "--lens",
+      "completeness",
       "--authority-ref",
       "https://example.test/a",
       "--authority-ref",

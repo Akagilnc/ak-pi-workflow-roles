@@ -106,32 +106,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
       return {
         ...base,
         loadReviewerSoul: law,
-        createReviewerPinnedGitReader: async () => {
-          const pin = {
-            repositoryRoot: fixtureRoot,
-            objectFormat: "sha1" as const,
-            targetHead: oid("9"),
-            refs: { "refs/heads/main": { objectId: oid("9"), peeledCommitId: oid("9") } },
-          };
-          // Pinned-target Spec path for unique production discovery (two-axis fixture).
-          return {
-            pin,
-            snapshot: async () => pin,
-            resolve: async () => oid("8"),
-            range: async () => ({
-              base: oid("8"),
-              target: oid("9"),
-              diffCommand: `git diff ${oid("8")}...${oid("9")}`,
-              diffSha256: "2".repeat(64),
-              commits: [oid("9")],
-            }),
-            featureTokens: async () => Object.freeze(["feature-login"]),
-            listSpecCandidatePaths: async () => Object.freeze(["docs/feature-login.md"]),
-            originRepository: async () => undefined,
-            commitMessagesNewestFirst: async () => Object.freeze([]),
-            readPinnedText: async () => undefined,
-          };
-        },
         loadCanonicalSkillBinding: async (name) => {
           const raw = "# skill\n";
           return {
@@ -230,6 +204,8 @@ function admissionFlagsForRole(role: string, fixtureRoot: string): Record<string
     case "reviewer":
       return {
         "ak-review-base": "main~1",
+        "ak-review-lens": "completeness",
+        "ak-review-authority-refs": JSON.stringify(["CLAUDE.md"]),
       };
     case "collector":
       return {

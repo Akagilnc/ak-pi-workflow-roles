@@ -64,8 +64,8 @@ export function fixtureDoctorAdmitted(
 }
 
 export function fixtureReviewerAdmitted(
-  input: Omit<AdmittedReviewerInvocation, "role" | "principal" | "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath" | "authorityRefs"> &
-    Partial<Pick<AdmittedReviewerInvocation, "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath" | "authorityRefs" | "principal">> & {
+  input: Omit<AdmittedReviewerInvocation, "role" | "principal" | "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath" | "authorityRefs" | "lens"> &
+    Partial<Pick<AdmittedReviewerInvocation, "attachments" | "instruction" | "instructionEmpty" | "admittedRequestPath" | "authorityRefs" | "lens" | "principal">> & {
       sessionDirectory?: string;
       sessionFile?: string;
     },
@@ -78,7 +78,8 @@ export function fixtureReviewerAdmitted(
     instructionEmpty: true,
     attachments: [],
     admittedRequestPath: join(input.runDirectory, "admitted-request.json"),
-    authorityRefs: [],
+    lens: "correctness",
+    authorityRefs: ["CLAUDE.md"],
     ...rest,
     principal: input.principal ?? fixturePrincipal(coords.sessionDirectory, coords.sessionFile),
   } satisfies AdmittedReviewerInvocation;

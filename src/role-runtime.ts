@@ -140,7 +140,6 @@ import {
   type ReviewerActivation,
   type ReviewerAdmittedInputs,
 } from "./reviewer-role.ts";
-import type { ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
 
 /**
@@ -156,16 +155,16 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
     }),
   }),
   Object.freeze({
-    name: "ak-review-scope-keys",
+    name: "ak-review-lens",
     definition: Object.freeze({
-      description: "Optional comma-separated exact class keys limiting Reviewer scope",
+      description: "Caller-selected single review lens: completeness or correctness",
       type: "string" as const,
     }),
   }),
   Object.freeze({
     name: "ak-review-authority-refs",
     definition: Object.freeze({
-      description: "JSON array of durable authority references for Spec-axis material only",
+      description: "JSON array of durable authority references projected as Skill --authority inputs",
       type: "string" as const,
     }),
   }),
@@ -207,19 +206,6 @@ export const STATION_CHILD_FLAG = Object.freeze({
  * Envelope-owned; necessary JSON decode only (public --authority-ref owns grammar).
  */
 function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): ReviewerAdmittedInputs {
-  let reviewScopeKeys: readonly string[] | undefined;
-  const rawScopeKeys = getFlag("ak-review-scope-keys");
-  if (rawScopeKeys !== undefined) {
-    if (typeof rawScopeKeys !== "string" || rawScopeKeys.length === 0) {
-      throw new Error("Reviewer scope keys must be a nonempty comma-separated string");
-    }
-    const parsed = rawScopeKeys.split(",");
-    if (parsed.some((key) => key.trim().length === 0) || new Set(parsed).size !== parsed.length) {
-      throw new Error("Reviewer scope keys contain a blank or exact duplicate key");
-    }
-    reviewScopeKeys = Object.freeze(parsed);
-  }
-
   let authorityRefs: readonly string[] | undefined;
   const rawAuthorityRefs = getFlag("ak-review-authority-refs");
   if (rawAuthorityRefs !== undefined) {
@@ -251,9 +237,13 @@ function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): Revie
   if (typeof baseRevision !== "string" || !baseRevision.trim()) {
     throw new Error("Reviewer role requires --ak-review-base");
   }
+  const rawLens = getFlag("ak-review-lens");
+  if (rawLens !== "completeness" && rawLens !== "correctness") {
+    throw new Error("Reviewer role requires --ak-review-lens completeness|correctness");
+  }
   return Object.freeze({
     baseRevision,
-    ...(reviewScopeKeys === undefined ? {} : { reviewScopeKeys }),
+    lens: rawLens,
     ...(authorityRefs === undefined ? {} : { authorityRefs }),
     ...(ticketNumber === undefined ? {} : { ticketNumber }),
   });
@@ -383,7 +373,6 @@ export {
 } from "./judge-role.ts";
 export { ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV } from "./engine-detour.ts";
 export {
-  AGENT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
   type ReviewerIntent,
 } from "./reviewer-role.ts";
@@ -423,7 +412,6 @@ export {
   COLLECTOR_REQUEST_TOOL,
   COLLECTOR_WAIT_TOOL,
 } from "./collector-role.ts";
-export type { ReviewerPinnedGitReader } from "./reviewer-dispatch.ts";
 export type { CollectorReceipt } from "./package-contracts/collector-output.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
@@ -599,7 +587,6 @@ export type RoleRuntimeDependencies = {
   loadCoderSoul?(): Promise<string>;
   loadCoderTask?(path: string): Promise<string>;
   loadReviewerSoul?(): Promise<string>;
-  createReviewerPinnedGitReader?(): Promise<ReviewerPinnedGitReader>;
   loadCollectorSoul?(): Promise<string>;
   /** #677: optional packaged seed for first-use general bot handbook. */
   loadCollectorHandbookSeed?(): Promise<string>;
@@ -623,7 +610,7 @@ export type RoleRuntimeDependencies = {
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
-    name: "tdd" | "code-review",
+    name: "tdd" | "ak-cross-m-review",
   ): Promise<AnyCanonicalSkillBinding>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
@@ -1781,10 +1768,6 @@ export function createRoleRuntimeExtension(
             throw new Error("reviewer soul loader is not configured");
           }
           return dependencies.loadReviewerSoul();
-        },
-        async createPinnedGitReader() {
-          if (dependencies.createReviewerPinnedGitReader === undefined) throw new Error("Reviewer runtime dependencies are not configured");
-          return dependencies.createReviewerPinnedGitReader();
         },
         async loadCanonicalSkillBinding(name) {
           if (dependencies.loadCanonicalSkillBinding === undefined) {
