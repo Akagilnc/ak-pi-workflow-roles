@@ -1229,19 +1229,9 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(args[args.indexOf("--ak-review-lens") + 1], admitted.lens);
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
-        assert.equal(
-          args.some((a) => a.includes("[ak-role:resume-continue]")),
-          false,
-        );
-        // Frozen Skill args must ride resume; bare `/skill:` is not green.
         const resumeDialogue = readUserDialogueStdin(resumeStdin ?? "");
-        assert.equal(
-          resumeDialogue.startsWith(
-            "/skill:ak-cross-m-review --base main --lens correctness --authority CLAUDE.md",
-          ),
-          true,
-          resumeDialogue,
-        );
+        assert.equal(resumeDialogue, "[ak-role:resume-continue]");
+        assert.equal(resumeDialogue.includes("/skill:"), false);
         assert.equal(resumeDialogue.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         const material = await loadPackagedMethodSkillMaterial(

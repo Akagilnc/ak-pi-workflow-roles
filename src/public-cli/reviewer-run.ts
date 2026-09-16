@@ -10,7 +10,11 @@ import type {
   RoleTurnKnownFailure,
   RoleTurnRequest,
 } from "../host-contracts.ts";
-import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
+import {
+  appendEngineSessionMaterial,
+  engineSessionMaterialFromOptions,
+  pickEngineAxis,
+} from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -20,7 +24,6 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitReviewerInvocation,
-  buildReviewerResumeTransportPrompt,
   buildReviewerTransportPrompt,
   type AdmittedReviewerInvocation,
   type ReviewerLens,
@@ -28,6 +31,7 @@ import {
 import {
   loadResumableReviewerRun,
   markRunAdmitted,
+  RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -124,20 +128,17 @@ async function loadReviewerMethodMaterial(
   return await loadPackagedMethodSkillMaterial(packageRoot, "ak-cross-m-review");
 }
 
-/** Resume prompt: frozen Skill args + optional message/engine (never first-call prose). */
-function reviewerResumePrompt(
-  admitted: AdmittedReviewerInvocation,
-  env: ReviewerRunEnv,
-  message?: string,
-): string {
-  const engineMaterial = engineSessionMaterialFromOptions({
-    ...pickEngineAxis(env),
-    packageRoot: env.packageRoot,
-  });
-  return buildReviewerResumeTransportPrompt(admitted, {
-    ...(engineMaterial === undefined ? {} : { engineMaterial }),
-    ...(message === undefined ? {} : { message }),
-  });
+/** Continue the existing method turn; frozen axes remain on typed activation fields. */
+function reviewerResumePrompt(env: ReviewerRunEnv, message?: string): string {
+  const lines: string[] = [RESUME_TRANSPORT_ENVELOPE];
+  if (message !== undefined) lines.push("", message);
+  return appendEngineSessionMaterial(
+    lines,
+    engineSessionMaterialFromOptions({
+      ...pickEngineAxis(env),
+      packageRoot: env.packageRoot,
+    }),
+  ).join("\n");
 }
 
 export async function runPublicReviewer(
@@ -240,7 +241,7 @@ export async function runPublicReviewer(
           : { correlationId: admitted.correlationId ?? env.correlationId }),
         continuation: {
           kind: "resume",
-          prompt: reviewerResumePrompt(admitted, env),
+          prompt: reviewerResumePrompt(env),
         },
       }),
     adapters: reviewerAdapters(env.packageRoot, methodMaterial),
@@ -273,7 +274,7 @@ export async function runPublicReviewerResume(
         ...base,
         continuation: {
           kind: "resume",
-          prompt: reviewerResumePrompt(admitted, env, effective.message),
+          prompt: reviewerResumePrompt(env, effective.message),
         },
       });
     },

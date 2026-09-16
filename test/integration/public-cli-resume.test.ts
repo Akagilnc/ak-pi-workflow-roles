@@ -2432,16 +2432,13 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       assert.ok(seen);
       assert.equal(seen[seen.indexOf("--session") + 1], admitted.sessionFile);
       assert.equal(seen[seen.indexOf("--session-dir") + 1], admitted.sessionDirectory);
-      // Pi adapter prefixes single forced method onto resume dialogue (#822); judge/coder-plan/fixer plain.
-      // Reviewer resume must carry frozen Skill args — bare `/skill:` is not green (#917 A2).
+      // Resume continues the existing method turn instead of invoking its Skill again.
       const rawPrompt = c.message === undefined ? "" : c.message;
-      const reviewerFrozen =
-        "--base main --lens completeness --authority CLAUDE.md";
       const expectedBody =
         c.role === "reviewer"
           ? (c.message === undefined
-            ? `/skill:ak-cross-m-review ${reviewerFrozen}`
-            : `/skill:ak-cross-m-review ${reviewerFrozen}\n\n${c.message}`)
+            ? "[ak-role:resume-continue]"
+            : `[ak-role:resume-continue]\n\n${c.message}`)
           : c.role === "merger"
             ? (rawPrompt.length === 0
               ? "/skill:resolving-merge-conflicts"

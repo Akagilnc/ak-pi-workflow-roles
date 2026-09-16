@@ -3052,23 +3052,6 @@ export function buildReviewerTransportPrompt(
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
-/**
- * Resume projection: same frozen Skill args as initial; message/engine may only
- * append. Does not replay first-call caller prose.
- */
-export function buildReviewerResumeTransportPrompt(
-  admitted: Pick<AdmittedReviewerInvocation, "baseRevision" | "lens" | "authorityRefs">,
-  options: {
-    engineMaterial?: EngineSessionMaterial;
-    message?: string;
-  } = {},
-): string {
-  const lines = [buildReviewerSkillArgProjection(admitted)];
-  if (options.message !== undefined) {
-    lines.push("", options.message);
-  }
-  return appendEngineSessionMaterial(lines, options.engineMaterial).join("\n");
-}
 
 /**
  * Parse Merger-specific argv after the `merger` token.
