@@ -184,8 +184,13 @@ export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   /** Default Reviewer parent: original child Terminals, keyed by frozen axis. */
   reviewerChildren?: Readonly<{
-    completeness: TerminalResult;
-    correctness: TerminalResult;
+    completeness?: TerminalResult;
+    correctness?: TerminalResult;
+  }>;
+  /** Per-axis summons facts retained even when no child Terminal exists. */
+  reviewerChildOutcomes?: Readonly<{
+    completeness: { exitCode: number; stderr?: string };
+    correctness: { exitCode: number; stderr?: string };
   }>;
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];

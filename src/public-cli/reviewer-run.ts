@@ -204,13 +204,7 @@ export async function runPublicReviewer(
         roleTurnHost: env.roleTurnHost,
         ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
       });
-      if (children.completeness.terminal === undefined || children.correctness.terminal === undefined) {
-        throw new Error("parallel reviewer child did not produce a Terminal result", { cause: children });
-      }
-      const terminal = await settleParallelReviewerTerminalResult(admitted, {
-        completeness: children.completeness.terminal,
-        correctness: children.correctness.terminal,
-      });
+      const terminal = await settleParallelReviewerTerminalResult(admitted, children);
       io.stdout((await import("./terminal.ts")).formatTerminalResult(terminal));
       return {
         exitCode: terminal.roleOutcome.kind === "failure" ? 1 : 0,

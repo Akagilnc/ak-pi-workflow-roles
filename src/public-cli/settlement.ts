@@ -3638,24 +3638,50 @@ export async function trySettleReviewerTerminalResult(
 export async function settleParallelReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
   children: Readonly<{
-    completeness: TerminalResult;
-    correctness: TerminalResult;
+    completeness: import("../public-role-summons.ts").PublicSummonResult;
+    correctness: import("../public-role-summons.ts").PublicSummonResult;
   }>,
 ): Promise<TerminalResult> {
-  const originalTerminals = [children.completeness, children.correctness] as const;
-  const failed = originalTerminals.filter((terminal) =>
-    terminal.roleOutcome.kind === "failure"
-    || terminal.roleOutcome.kind === "no_receipt"
+  const reviewerChildren = {
+    ...(children.completeness.terminal === undefined
+      ? {}
+      : { completeness: children.completeness.terminal }),
+    ...(children.correctness.terminal === undefined
+      ? {}
+      : { correctness: children.correctness.terminal }),
+  };
+  const originalTerminals = [
+    children.completeness.terminal,
+    children.correctness.terminal,
+  ].filter((terminal): terminal is TerminalResult => terminal !== undefined);
+  const failedChildren = [children.completeness, children.correctness].filter((child) =>
+    child.exitCode !== 0
+    || child.terminal === undefined
+    || child.terminal.roleOutcome.kind === "failure"
+    || child.terminal.roleOutcome.kind === "no_receipt"
   );
-  const roleOutcome: TerminalRoleOutcome = failed.length === 0
+  const roleOutcome: TerminalRoleOutcome = failedChildren.length === 0
     ? { kind: "accepted", role: "reviewer", payloads: originalTerminals }
     : {
         kind: "failure",
         role: "reviewer",
-        diagnostic: `${failed.length} reviewer child run(s) did not complete successfully`,
-        decisiveFacts: { failedChildren: failed.length },
+        diagnostic: `${failedChildren.length} reviewer child run(s) did not complete successfully`,
+        decisiveFacts: {
+          failedChildren: failedChildren.length,
+          missingTerminals: 2 - originalTerminals.length,
+        },
         payloads: originalTerminals,
       };
+  const reviewerChildOutcomes = {
+    completeness: {
+      exitCode: children.completeness.exitCode,
+      ...(children.completeness.stderr === undefined ? {} : { stderr: children.completeness.stderr }),
+    },
+    correctness: {
+      exitCode: children.correctness.exitCode,
+      ...(children.correctness.stderr === undefined ? {} : { stderr: children.correctness.stderr }),
+    },
+  };
   const artifactsDirectory = join(admitted.runDirectory, "artifacts");
   const reportPath = join(artifactsDirectory, "report.json");
   await mkdir(artifactsDirectory, { recursive: true });
@@ -3664,13 +3690,15 @@ export async function settleParallelReviewerTerminalResult(
     `${JSON.stringify({
       role: "reviewer",
       outcome: roleOutcome,
-      reviewerChildren: children,
+      reviewerChildren,
+      reviewerChildOutcomes,
     }, null, 2)}\n`,
     "utf8",
   );
   return {
     roleOutcome,
-    reviewerChildren: children,
+    reviewerChildren,
+    reviewerChildOutcomes,
     navigator: { disposition: "no-advice" },
     artifacts: [{ kind: "report", path: reportPath }],
     runId: admitted.runId,

@@ -594,21 +594,28 @@ export async function summonParallelReviewerLenses(options: {
   const correctnessRoot = join(root, "correctness");
   const worktrees = [completenessRoot, correctnessRoot] as const;
   const created = new Set<string>();
-  let primaryFailure: unknown;
-  try {
-    const creation = await Promise.allSettled(
-      worktrees.map(async (path) => {
-        await execFileAsync("git", ["worktree", "add", "--detach", path, "HEAD"], {
-          cwd: options.projectRoot,
-        });
-        created.add(path);
-      }),
-    );
-    const creationFailures = creation.flatMap((result) =>
-      result.status === "rejected" ? [result.reason] : []);
-    if (creationFailures.length > 0) {
-      throw new AggregateError(creationFailures, "parallel reviewer worktree creation failed");
-    }
+  const failedResult = (error: unknown): PublicSummonResult => ({
+    exitCode: 1,
+    stderr: error instanceof Error ? error.message : String(error),
+  });
+  let results: { completeness: PublicSummonResult; correctness: PublicSummonResult };
+  const creation = await Promise.allSettled(
+    worktrees.map(async (path) => {
+      await execFileAsync("git", ["worktree", "add", "--detach", path, "HEAD"], {
+        cwd: options.projectRoot,
+      });
+      created.add(path);
+    }),
+  );
+  const creationFailures = creation.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : []);
+  if (creationFailures.length > 0) {
+    const failure = failedResult(new AggregateError(
+      creationFailures,
+      "parallel reviewer worktree creation failed",
+    ));
+    results = { completeness: failure, correctness: failure };
+  } else {
     const summon = (lens: "completeness" | "correctness", cwd: string) =>
       summonPublicRole({
         role: "reviewer",
@@ -632,39 +639,39 @@ export async function summonParallelReviewerLenses(options: {
         ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
         ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
       });
-    const [completeness, correctness] = await Promise.all([
+    const settled = await Promise.allSettled([
       summon("completeness", completenessRoot),
       summon("correctness", correctnessRoot),
     ]);
-    return { completeness, correctness };
-  } catch (error) {
-    primaryFailure = error;
-    throw error;
-  } finally {
-    const cleanup = await Promise.allSettled(
-      [...created].map((path) =>
-        execFileAsync("git", ["worktree", "remove", path], {
-          cwd: options.projectRoot,
-        })),
-    );
-    const removeFailures = cleanup.flatMap((result) =>
-      result.status === "rejected" ? [result.reason] : []);
-    const rootCleanup = await Promise.allSettled([
-      removeFailures.length === 0
-        ? rm(root, { recursive: true })
-        : rm(root),
-    ]);
-    const cleanupFailures = [...removeFailures, ...rootCleanup.flatMap((result) =>
-      result.status === "rejected" ? [result.reason] : [])];
-    if (cleanupFailures.length > 0) {
-      throw new AggregateError(
-        primaryFailure === undefined
-          ? cleanupFailures
-          : [primaryFailure, ...cleanupFailures],
-        "parallel reviewer worktree cleanup failed",
-      );
-    }
+    results = {
+      completeness: settled[0].status === "fulfilled"
+        ? settled[0].value
+        : failedResult(settled[0].reason),
+      correctness: settled[1].status === "fulfilled"
+        ? settled[1].value
+        : failedResult(settled[1].reason),
+    };
   }
+  const cleanup = await Promise.allSettled(
+    [...created].map((path) =>
+      execFileAsync("git", ["worktree", "remove", path], { cwd: options.projectRoot })),
+  );
+  const cleanupFailures = cleanup.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : []);
+  const rootCleanup = await Promise.allSettled([rm(root, { recursive: true })]);
+  cleanupFailures.push(...rootCleanup.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : []));
+  if (cleanupFailures.length > 0) {
+    const diagnostic = new AggregateError(
+      cleanupFailures,
+      "parallel reviewer worktree cleanup failed",
+    ).message;
+    results = {
+      completeness: { ...results.completeness, exitCode: 1, stderr: diagnostic },
+      correctness: { ...results.correctness, exitCode: 1, stderr: diagnostic },
+    };
+  }
+  return results;
 }
 
 /** Gate officer summons: notary/auditor via --source-run; inspector via pointer instruction. */

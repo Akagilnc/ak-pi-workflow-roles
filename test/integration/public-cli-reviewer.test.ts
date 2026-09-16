@@ -765,8 +765,8 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       }
       assert.equal(result.terminal?.roleOutcome.role, "reviewer");
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      assert.equal(result.terminal?.reviewerChildren?.completeness.roleOutcome.role, "reviewer");
-      assert.equal(result.terminal?.reviewerChildren?.correctness.roleOutcome.role, "reviewer");
+      assert.equal(result.terminal?.reviewerChildren?.completeness?.roleOutcome.role, "reviewer");
+      assert.equal(result.terminal?.reviewerChildren?.correctness?.roleOutcome.role, "reviewer");
 
       const bookKey = resolveBookKeyFromGit(project);
       const runDirectory = join(
@@ -803,6 +803,57 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         result.terminal?.reviewerChildren?.completeness,
         result.terminal?.reviewerChildren?.correctness,
       ]);
+    }
+
+    // One summons exception must not discard the sibling's original Terminal.
+    {
+      const { io } = captureIo();
+      const partial = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high", "--project", project,
+        "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-cli-reviewer-partial-failure",
+        io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            const lens = args[args.indexOf("--ak-review-lens") + 1] as "completeness" | "correctness";
+            if (lens === "correctness") throw new Error("correctness summons exploded");
+            const sessionFile = args[args.indexOf("--session") + 1]!;
+            await mkdir(join(sessionFile, ".."), { recursive: true });
+            const details = lawfulReviewerReceipt(lens);
+            await writeFile(sessionFile, `${JSON.stringify({
+              type: "message",
+              message: {
+                role: "toolResult",
+                toolCallId: "partial-ok",
+                toolName: REVIEWER_OUTPUT_TOOL_NAME,
+                isError: false,
+                details,
+              },
+            })}\n`, "utf8");
+            return {
+              code: 0,
+              sealedAcceptance: { role: "reviewer" as const, details, toolCallId: "partial-ok" },
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        }),
+      });
+      assert.equal(partial.exitCode, 1);
+      assert.equal(partial.terminal?.roleOutcome.kind, "failure");
+      assert.equal(partial.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
+      assert.equal(partial.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "failure");
+      assert.equal(partial.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
+      assert.equal(partial.terminal?.roleOutcome.kind === "failure"
+        ? partial.terminal.roleOutcome.payloads?.length
+        : undefined, 2);
     }
 
     // Same public entry: hard-stop refused + mismatched axis key still lands (仓级第 0 条).
