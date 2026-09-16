@@ -75,10 +75,9 @@ test("ticket-law is the sole structural law owner and three seats load it", asyn
   assert.ok(
     (byRole.secretariat as readonly string[]).includes("souls/notary.md"),
   );
-  // #924: no unauthorized independent secretariat Soul file in the load list.
-  assert.equal(
+  // #924: secretariat-soul=exists — independent Soul is in the load list.
+  assert.ok(
     (byRole.secretariat as readonly string[]).includes("souls/secretariat.md"),
-    false,
   );
 });
 

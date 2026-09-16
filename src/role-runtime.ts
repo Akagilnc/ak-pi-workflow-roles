@@ -1055,14 +1055,12 @@ const COUNTERSIGN_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]
 const COUNTERSIGN_STATUS_REASK =
   "countersignStatus 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
 
-const SECRETARIAT_QUEUE_STATUSES = new Set(["sealed", "escalate"]);
-const SECRETARIAT_STATUS_REASK =
-  "secretariatStatus 不是 sealed、escalate 两态之一。请重新交卷，status 写明其一。" as const;
-
 /**
  * #924 Secretariat on the shared filed-officer envelope + non-terminating
  * summon-countersign tool (auditor dossier extension pattern).
  * Nested countersign lifecycle stays on summonPublicRole (ADR 0018).
+ * #924 / 第 0 条: output tool records the receipt as submitted — no status
+ * shape/value reject or reask; legality is content-layer / downstream.
  */
 export function createSecretariatRoleRuntime(
   roleHost: RoleHost,
@@ -1076,22 +1074,6 @@ export function createSecretariatRoleRuntime(
       tool: SECRETARIAT_OUTPUT_TOOL_SPEC,
       acceptedText: SECRETARIAT_ACCEPTED_TEXT,
       soulTag: "secretariat",
-      beforeAccept: async ({ parameters }) => {
-        const rawStatus =
-          parameters !== null &&
-          typeof parameters === "object" &&
-          !Array.isArray(parameters) &&
-          typeof (parameters as Record<string, unknown>).secretariatStatus === "string"
-            ? ((parameters as Record<string, unknown>).secretariatStatus as string)
-            : undefined;
-        if (
-          rawStatus === undefined ||
-          !SECRETARIAT_QUEUE_STATUSES.has(rawStatus)
-        ) {
-          throw new ParentQueueReaskError(SECRETARIAT_STATUS_REASK);
-        }
-        return undefined;
-      },
     },
     dependencies,
   );

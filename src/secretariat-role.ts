@@ -29,7 +29,7 @@ export const secretariatVerdictSchema = withInfrastructureFailureDeclaration(
   Type.Object(
     {
       secretariatStatus: Type.Unknown({
-        description: "sealed | escalate。非两态时请重读后重交，勿改标。",
+        description: "sealed | escalate（形状指引，非闸）",
       }),
       ticketNumber: Type.Optional(
         Type.Number({ description: "本票号；署时指向最终正文所在票" }),

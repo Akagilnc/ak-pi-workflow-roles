@@ -10,7 +10,6 @@ import {
   projectSecretariatSummonResult,
 } from "../../src/secretariat-role.ts";
 import { createSecretariatRoleRuntime } from "../../src/role-runtime.ts";
-import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 
 type HostHarness = {
@@ -82,7 +81,7 @@ test("secretariat activation declares package tools on active surface (G6)", asy
   assert.ok(active.includes("host_shell"));
 });
 
-test("secretariat output accepts sealed and escalate; other status reasks", async () => {
+test("secretariat output records any status without shape reject (第 0 条)", async () => {
   const { tools } = await activateSecretariat();
   const sealed = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
     "c1",
@@ -113,19 +112,18 @@ test("secretariat output accepts sealed and escalate; other status reasks", asyn
     "escalate",
   );
 
-  await assert.rejects(
-    () =>
-      tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
-        "c3",
-        { secretariatStatus: "continue" },
-        undefined,
-        undefined,
-        ctx,
-      ),
-    (error: unknown) => {
-      assert.ok(error instanceof ParentQueueReaskError);
-      return true;
-    },
+  // 第 0 条 / #924: tool only records; non-canonical status is not code-rejected.
+  const other = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+    "c3",
+    { secretariatStatus: "continue" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  assert.equal(other.terminate, true);
+  assert.equal(
+    (other.details as { secretariatStatus: string }).secretariatStatus,
+    "continue",
   );
 });
 

@@ -451,11 +451,10 @@ test("public secretariat through-line: default summon → continue → same-run 
     assert.ok(
       MAIN_ROLE_SESSION_MATERIALS.secretariat.includes("souls/ticket-law.md"),
     );
-    assert.equal(
+    assert.ok(
       (MAIN_ROLE_SESSION_MATERIALS.secretariat as readonly string[]).includes(
         "souls/secretariat.md",
       ),
-      false,
     );
 
     const secretariatRunId = "01a0sec924-0000-7000-8000-000000000001";
