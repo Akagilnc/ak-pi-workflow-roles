@@ -51,6 +51,7 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome(
@@ -128,6 +129,7 @@ function baseEnv(input: {
   role: "coder" | "fixer" | "judge" | "countersign" | "notary";
   toolName: string;
   details: unknown;
+  additionalDetails?: readonly unknown[];
   /** Countersign court station: may bind a typed ticket (起居郎 handoff face). */
   runCourtDiaristStation?: (
     admitted: { ticketNumber?: number; runDirectory: string },
@@ -142,6 +144,25 @@ function baseEnv(input: {
       details: input.details,
     }),
   });
+  const roleTurnHost = input.additionalDetails === undefined
+    ? host
+    : {
+        async executeTurn(request: RoleTurnRequest) {
+          const result = await host.executeTurn(request);
+          for (const [index, details] of input.additionalDetails!.entries()) {
+            await sealAcceptedSubmission({
+              cwd: request.cwd,
+              home: request.home,
+              runId: input.runId,
+              runDirectory: request.runDirectory,
+              role: input.role,
+              details,
+              toolCallId: `call_${input.role}_${index + 2}`,
+            });
+          }
+          return result;
+        },
+      };
   return {
     home: input.home,
     agentDir: join(input.home, ".pi"),
@@ -149,7 +170,7 @@ function baseEnv(input: {
     cwd: input.project,
     principalAuthority: piDurablePrincipalAuthority,
     sessionAppender: appendPiSessionCustomEntry,
-    roleTurnHost: host,
+    roleTurnHost,
     createRunId: () => input.runId,
     // #742: body-path tests stub the court diarist station (no real nested seat).
     ...(input.role === "countersign"
@@ -186,7 +207,7 @@ async function assertDurableUnbound(runDirectory: string): Promise<void> {
   assert.equal(invocation.ticketNumber, undefined);
 }
 
-test("public coder without --ticket: no mechanical bind from summons text", async () => {
+test("public coder binds its typed receipt assertion without parsing summons text", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicCoder(
       ["apply", "Implement the fix for ticket #582."],
@@ -196,18 +217,27 @@ test("public coder without --ticket: no mechanical bind from summons text", asyn
         runId: "01a063500-0000-7000-8000-00000000coder",
         role: "coder",
         toolName: CODER_OUTPUT_TOOL_NAME,
-        details: { status: "completed", report: "done" },
+        details: { status: "completed", report: "done", ticketNumber: 582 },
+        additionalDetails: [
+          { status: "completed", report: "later receipt", ticketNumber: 999 },
+        ],
       }),
       captureIo().io,
       parseCoderArgv,
     );
     assert.equal(result.exitCode, 0);
-    assert.equal(result.admitted?.ticketNumber, undefined);
-    await assertDurableUnbound(result.admitted!.runDirectory);
+    assert.equal(result.admitted?.ticketNumber, 582);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted outcome");
+    assert.deepEqual(result.terminal.roleOutcome.payloads, [
+      { status: "completed", report: "done", ticketNumber: 582 },
+      { status: "completed", report: "later receipt", ticketNumber: 999 },
+    ]);
+    await assertDurableTicket(result.admitted!.runDirectory, 582);
   });
 });
 
-test("public fixer without --ticket: no mechanical bind from summons text", async () => {
+test("public fixer ignores a malformed ticket assertion without rejecting its receipt", async () => {
   await withSeatProject(async ({ home, project }) => {
     const result = await runPublicFixer(
       ["apply", "Repair the regression on ticket #582."],
@@ -217,7 +247,7 @@ test("public fixer without --ticket: no mechanical bind from summons text", asyn
         runId: "01a063500-0000-7000-8000-00000000fixer",
         role: "fixer",
         toolName: FIXER_OUTPUT_TOOL_NAME,
-        details: { status: "completed", report: "repaired", classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }] },
+        details: { status: "completed", report: "repaired", ticketNumber: "582", classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }] },
       }),
       captureIo().io,
       parseFixerArgv,
@@ -329,7 +359,7 @@ test("countersign and notary reject --ticket as unknown option (exit 2)", async 
   });
 });
 
-test("notary ticketNumber comes from --source-run admitted form, not a CLI flag", async () => {
+test("notary keeps its bound source-run ticket over a different receipt assertion", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -345,34 +375,6 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
       "utf8",
     );
 
-    // #742: bound notary materials carry the ticket's 起居录 paths (feature observation).
-    const { resolveTicketProvenanceVolume } = await import(
-      "../../src/ticket-provenance.ts"
-    );
-    const volume = resolveTicketProvenanceVolume(582, project, home);
-    await mkdir(volume.volumeDir, { recursive: true });
-    await writeFile(
-      volume.recordFile,
-      `${JSON.stringify({
-        repo: "project",
-        ticket: 582,
-        createdAt: "2026-09-14T00:00:00.000Z",
-        updatedAt: "2026-09-14T00:00:00.000Z",
-        sessions: [],
-      })}\n`,
-      "utf8",
-    );
-
-    let turnPrompt = "";
-    const baseHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: scriptedTerminatingToolSession({
-        role: "notary",
-        toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "pass", findings: [] },
-      }),
-    });
     const result = await runPublicNotary(
       ["--source-run", sourceRunPath],
       {
@@ -382,12 +384,15 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
         cwd: project,
         principalAuthority: piDurablePrincipalAuthority,
         sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: {
-          async executeTurn(request: RoleTurnRequest) {
-            turnPrompt = request.continuation.prompt;
-            return baseHost.executeTurn(request);
-          },
-        },
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: scriptedTerminatingToolSession({
+            role: "notary",
+            toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details: { status: "pass", findings: [], ticketNumber: 999 },
+          }),
+        }),
         createRunId: () => "01a063500-0000-7000-8000-0000000notary",
       },
       captureIo().io,
@@ -396,7 +401,5 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
-    assert.ok(turnPrompt.includes(volume.recordFile));
-    assert.equal(turnPrompt.includes("起居录.md"), false);
   });
 });

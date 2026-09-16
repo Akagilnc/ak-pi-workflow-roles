@@ -1,7 +1,7 @@
 import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
-import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
 
 import type {
@@ -73,7 +73,7 @@ const coderOutputVariants = Type.Union([
     })),
   }, { additionalProperties: false }),
 ]);
-export const coderOutputSchema = withInfrastructureFailureDeclaration(
+export const coderOutputSchema = withTerminatingOutputDeclarations(
   openToolObjectFromUnion(coderOutputVariants),
 );
 export type { FixerOutput, CoderOutput };

@@ -6,7 +6,7 @@
 import { Type } from "typebox";
 
 import { openToolObject } from "./open-tool-schema.ts";
-import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
 export const NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
 export const NOTARY_ACCEPTED_TEXT = "符宝郎回执已接受";
@@ -31,7 +31,7 @@ export const NOTARY_TICKET_FLAG = {
 export const NOTARY_FIXED_KICKOFF =
   "符宝郎案卷已受理；来源 run 定位见会话材料。";
 
-export const notaryOutputSchema = withInfrastructureFailureDeclaration(
+export const notaryOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       status: Type.Unknown({

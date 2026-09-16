@@ -112,8 +112,8 @@ function isCodexOwnerResponseItemUser(message: Record<string, unknown>): boolean
 
 /**
  * 入队事件适配：人类这次输入经队列的来源。
- * 配对的出队事件不另取，也不做正文比对去重——被吸收的插话正是靠入队事件入录
- * （它没有独立的消息记录，#901 用户故事 11）。
+ * 被吸收的插话靠入队事件入录（无独立消息记录，#901 用户故事 11）。
+ * 机器入队由整卷适配层排除（#918）；本函数不读正文、不自判机器。
  */
 function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
   if (row.type !== "queue-operation" || row.operation !== "enqueue") return [];
@@ -121,6 +121,57 @@ function fromQueueEvent(row: Record<string, unknown>): DialogueEvent[] {
   if (typeof content !== "string" || content === "") return [];
   const id = nativeEventId(row);
   return [{ speaker: "owner", text: content, ...(id === undefined ? {} : { id }) }];
+}
+
+/**
+ * 票面 #918 准许的唯一固定起始形状：`<task-notification`。
+ * 其它标签不在御裁射程内——不得扩表，不得伪造 decision key / 「陛下拍定」。
+ * 开标签后可直接 `>`（无属性）、EOF 或空白再接属性；其它字符不成立。
+ *
+ * 机器 enqueue 的完整判据＝结构化来源（origin.kind）／本固定形状／真实因果与位置；
+ * 用可变载荷正文（全等或子串）做 identity join 仍为锚定宪法所禁。
+ */
+const TASK_NOTIFICATION_OPEN_TAG = "<task-notification";
+
+function hasFixedOpenTagPrefix(content: string, tag: string): boolean {
+  if (!content.startsWith(tag)) return false;
+  const next = content.charAt(tag.length);
+  return (
+    next === "" ||
+    next === ">" ||
+    next === " " ||
+    next === "\t" ||
+    next === "\n" ||
+    next === "\r"
+  );
+}
+
+/** enqueue.content 是否以票面准许的 `<task-notification` 固定开标签起头。 */
+function isFixedNonOwnerEnqueueShape(content: string): boolean {
+  return hasFixedOpenTagPrefix(content, TASK_NOTIFICATION_OPEN_TAG);
+}
+
+/**
+ * 物化 user 行上的结构化来源 kind（CC top-level `origin.kind`）。不读正文。
+ * 活体取值含 human / task-notification / peer；缺字段＝旧形无 provenance。
+ */
+function materializationOriginKind(
+  row: Record<string, unknown>,
+): string | undefined {
+  if (!isRecord(row.origin)) return undefined;
+  const kind = row.origin.kind;
+  return typeof kind === "string" && kind !== "" ? kind : undefined;
+}
+
+/**
+ * origin.kind 取值是否为非陛下来源（#918 第二类）。
+ * - 缺 origin 或 kind=human → 真人路（经队列的真人输入必须保留）
+ * - task-notification / peer / 其他具名非 human → 机器或跨会话投递，不得署 owner
+ * 判别落在 kind 取值上，不落在字段是否存在。
+ */
+function isNonOwnerOriginKind(kind: string | undefined): boolean {
+  if (kind === undefined) return false;
+  return kind !== "human";
 }
 
 /**
@@ -148,78 +199,30 @@ function fromMessageEvent(row: Record<string, unknown>): DialogueEvent[] {
   return [{ speaker, text, ...(id === undefined ? {} : { id }) }];
 }
 
-/** 该行是否为可产出 owner 对话正文的消息（工具结果块不算；旁路 text 算）。 */
-function isOwnerDialogueMessage(row: Record<string, unknown>): boolean {
-  // CC/Pi queue pairing only — Codex owner path is separate.
-  if (row.type === "response_item" || row.type === "event_msg") return false;
-  return fromMessageEvent(row).some((event) => event.speaker === "owner");
-}
-
-/** 该行是否为 runner 回话事件（用于解除未物化的 dequeue 配对）。 */
-function isRunnerMessage(row: Record<string, unknown>): boolean {
-  const message = messageBody(row);
-  return message !== undefined && message.role === "assistant";
-}
-
-/**
- * 逐次来源配对：仅当对应 enqueue 已由 fromQueueEvent 实际形成 retained owner
- * 对话时，才把随后的物化 user 当副本跳过。FIFO 对齐 enqueue→dequeue/remove。
- * 无正文 enqueue、旧宿主或其他不可投影形状：dequeue 不产生 skip，后续真人
- * user 原样保留。未物化的 retained dequeue（被吸收插话）遇 runner 解除。
- * 不用「卷内曾出现 enqueue」整卷布尔，也不按正文过滤。
- */
-function ownerMessagesMaterializingQueue(
-  rows: readonly (Record<string, unknown> | undefined)[],
-): ReadonlySet<number> {
-  const skip = new Set<number>();
-  /** 各 enqueue 是否已留下 owner 对话，按入队顺序等 dequeue/remove 消费。 */
-  const retainedByEnqueue: boolean[] = [];
-  let pendingSkips = 0;
-  for (let index = 0; index < rows.length; index += 1) {
-    const row = rows[index];
-    if (row === undefined) continue;
-    if (row.type === "queue-operation") {
-      if (row.operation === "enqueue") {
-        retainedByEnqueue.push(fromQueueEvent(row).length > 0);
-        continue;
-      }
-      if (row.operation === "dequeue" || row.operation === "remove") {
-        const retained = retainedByEnqueue.shift();
-        // 只在 enqueue 真留下对话且本事件是 dequeue 物化时才跳过后续 user。
-        // remove 只消费队列槽，不制造 skip（无物化消息）。
-        if (row.operation === "dequeue" && retained === true) {
-          pendingSkips += 1;
-        }
-        continue;
-      }
-    }
-    if (isRunnerMessage(row)) {
-      pendingSkips = 0;
-      continue;
-    }
-    if (pendingSkips > 0 && isOwnerDialogueMessage(row)) {
-      skip.add(index);
-      pendingSkips -= 1;
-    }
-  }
-  return skip;
-}
-
 /**
  * 整卷适配：返回与入参行等长的对话事实数组（该行不是对话则为空数组）。
- * 需要整卷视野：enqueue/dequeue 配对跨行。
+ *
+ * 物化 user 只消费自身的 typed `origin.kind`：human 保留，具名非 human 排除。
+ * enqueue 没有与物化 user 的 typed 关联，故不得以位置把某个 user 来源反扣给它；
+ * 仅票面准许的 `<task-notification` 固定形状可直接排除，其余维持既有投影。
  */
 export function adaptSessionDialogue(
   rows: readonly (Record<string, unknown> | undefined)[],
 ): DialogueEvent[][] {
-  const skipOwner = ownerMessagesMaterializingQueue(rows);
-  return rows.map((row, index) => {
+  return rows.map((row) => {
     if (row === undefined) return [];
+    const originKind = materializationOriginKind(row);
+    if (isNonOwnerOriginKind(originKind)) return [];
+    if (
+      row.type === "queue-operation" &&
+      row.operation === "enqueue" &&
+      typeof row.content === "string" &&
+      isFixedNonOwnerEnqueueShape(row.content)
+    ) {
+      return [];
+    }
     const queued = fromQueueEvent(row);
     if (queued.length > 0) return queued;
-    // Codex event_msg.user_message 无 content_item_kinds 等 provenance，旧 exec
-    // 卷中与 worker entrypoint 注入同形——无法证明为 owner 则不取（不猜、不咬正文）。
-    if (skipOwner.has(index)) return [];
     return fromMessageEvent(row);
   });
 }

@@ -13,12 +13,14 @@ import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "./gleaner-left-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "./package-contracts/auditor-output.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "./diarist-contracts.ts";
+import { SECRETARIAT_OUTPUT_TOOL_NAME } from "./secretariat-contracts.ts";
 
 /** Shared by public notary and gatekeeper-province notary. */
 export const NOTARY_SESSION_MATERIALS = [
   "CLAUDE.md",
   "souls/notary.md",
   "souls/audit-law.md",
+  "souls/ticket-law.md",
   "souls/gate-output-guide.md",
 ] as const;
 
@@ -154,7 +156,24 @@ export const PUBLIC_ROLE_RECORDS = [
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
-    sessionMaterials: ["CLAUDE.md", "souls/countersign.md"],
+    // #924: 公用《票面法》三席同装
+    sessionMaterials: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md"],
+  },
+  {
+    role: "secretariat",
+    phases: [null],
+    outputTool: SECRETARIAT_OUTPUT_TOOL_NAME,
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+    // #924: owner-finalized Soul + 票面法 + 给事中/符宝郎行为指南
+    sessionMaterials: [
+      "CLAUDE.md",
+      "souls/secretariat.md",
+      "souls/ticket-law.md",
+      "souls/countersign.md",
+      "souls/notary.md",
+    ],
   },
   {
     role: "gleaner-left",

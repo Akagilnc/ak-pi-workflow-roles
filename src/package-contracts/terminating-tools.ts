@@ -32,6 +32,7 @@ import { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecord
 import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_OUTPUT_TOOL_NAME, validateRecordedGleanerLeftOutput, type GleanerLeftOutput } from "../gleaner-left-contracts.ts";
 import { INSPECTOR_ACCEPTED_TEXT, INSPECTOR_OUTPUT_TOOL_NAME, validateRecordedInspectorOutput, type InspectorOutput } from "../inspector-contracts.ts";
 import { DIARIST_ACCEPTED_TEXT, DIARIST_OUTPUT_TOOL_NAME, validateRecordedDiaristOutput, type DiaristOutput } from "../diarist-contracts.ts";
+import { SECRETARIAT_ACCEPTED_TEXT, SECRETARIAT_OUTPUT_TOOL_NAME, type SecretariatVerdict } from "../secretariat-contracts.ts";
 import {
   CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
@@ -86,6 +87,7 @@ export type {
   NavigatorAdvice,
   AuditorOutput,
   DiaristOutput,
+  SecretariatVerdict,
 };
 
 export const TERMINATING_TOOL_NAMES = [
@@ -104,6 +106,7 @@ export const TERMINATING_TOOL_NAMES = [
   NAVIGATOR_OUTPUT_TOOL_NAME,
   AUDITOR_OUTPUT_TOOL_NAME,
   DIARIST_OUTPUT_TOOL_NAME,
+  SECRETARIAT_OUTPUT_TOOL_NAME,
 ] as const;
 
 export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
@@ -122,7 +125,8 @@ export type AcceptedDetails =
   | GatekeeperDirectOutput
   | NavigatorAdvice
   | AuditorOutput
-  | DiaristOutput;
+  | DiaristOutput
+  | SecretariatVerdict;
 
 export function isTerminatingToolName(
   name: string,
@@ -162,6 +166,8 @@ export function acceptedTextFor(toolName: TerminatingToolName): string {
       return AUDITOR_ACCEPTED_TEXT;
     case DIARIST_OUTPUT_TOOL_NAME:
       return DIARIST_ACCEPTED_TEXT;
+    case SECRETARIAT_OUTPUT_TOOL_NAME:
+      return SECRETARIAT_ACCEPTED_TEXT;
   }
 }
 
@@ -214,6 +220,8 @@ export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDe
       return typeof record.judgeStatus === "string" ? { status: record.judgeStatus } : {};
     case COUNTERSIGN_OUTPUT_TOOL_NAME:
       return typeof record.countersignStatus === "string" ? { status: record.countersignStatus } : {};
+    case SECRETARIAT_OUTPUT_TOOL_NAME:
+      return typeof record.secretariatStatus === "string" ? { status: record.secretariatStatus } : {};
     case MERGER_OUTPUT_TOOL_NAME: {
       const status = typeof record.status === "string" ? record.status : undefined;
       return {

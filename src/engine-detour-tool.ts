@@ -5,7 +5,6 @@
  * Engine process failures stop through the host infrastructure-failure seam.
  * Caller AbortSignal cancellation propagates unchanged.
  */
-import { basename } from "node:path";
 import { Type, type Static } from "typebox";
 import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "./host-contracts.ts";
 
@@ -21,14 +20,9 @@ import {
   engineDetourStdoutByteLength,
   reportEngineDetourCall,
 } from "./engine-detour-usage.ts";
+import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 
-/** runDirectory leaf is `<runId>@<role>`; subject is optional. */
-function basenameRunId(runDirectory: string): string | undefined {
-  const leaf = basename(runDirectory);
-  const at = leaf.indexOf("@");
-  if (at <= 0) return undefined;
-  return leaf.slice(0, at);
-}
+
 
 // #836 r16 class 3: argv required/minItems/element-minLength stay — execute()
 // must obtain the first item as the executable and spawn it (below; #82-98).
@@ -131,7 +125,7 @@ export function createEngineDetourToolDefinition(input: {
       const runDirectory = typeof ctx.runDirectory === "string" && ctx.runDirectory.length > 0
         ? ctx.runDirectory
         : undefined;
-      const runId = runDirectory === undefined ? undefined : basenameRunId(runDirectory);
+      const runId = runDirectory === undefined ? undefined : runIdFromRunDirectory(runDirectory);
       // Public-invocation scope + selected host from Host envelope only — never
       // courtAttemptId, never sidecar file, never pre-spawn invocation.json I/O.
       const invocationScopeId =

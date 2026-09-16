@@ -49,19 +49,29 @@ const infrastructureFailureDeclarationSchema = Type.Object(
 );
 
 /**
- * Compose the shared infrastructure-failure declaration into an open output
- * tool-object schema. Returns an open object (additionalProperties: true,
+ * Compose declarations shared by terminating output tools: infrastructure failure
+ * and the optional role-asserted ticket identity. Returns an open object (additionalProperties: true,
  * required: []) with the base schema's properties plus the shared declaration.
  * Static typing is preserved on the base (`as S`), so existing
  * `Static<typeof ...>` derived parameter types are unchanged.
  */
-export function withInfrastructureFailureDeclaration<
+export function withTerminatingOutputDeclarations<
   S extends TSchema & { properties?: Record<string, TSchema> },
 >(schema: S): S {
   const baseProperties = (schema as { properties?: Record<string, TSchema> })
     .properties;
   const properties: Record<string, TSchema> = {
     ...(baseProperties ?? {}),
+    ...(
+      baseProperties?.ticketNumber === undefined
+        ? {
+            ticketNumber: Type.Unknown({
+              description:
+                "可选本票号：尚未绑定时由角色在既有回执中申报；机械层只记录合法正整数，不从散文推导、不验真。缺失或错形不拒收。",
+            }),
+          }
+        : {}
+    ),
     [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]:
       infrastructureFailureDeclarationSchema.properties[
         INFRASTRUCTURE_FAILURE_DECLARATION_KEY

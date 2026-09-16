@@ -1,28 +1,39 @@
 /**
- * 系统随案递送本票起居录的中立指针段（ADR 0081：公共入口直接挂案卷，Soul 只说明用途不负责派送；
- * #709 公共入口通用递送与 #742 给事中受理链路同源；
- * 指针输入沿 ADR 0079（指针是绑定材料由代码精准递送），不把卷宗正文塞进提示词）。
- * 只读已有案卷：不刷新、不生成、不校验内容、不新增拒收或停工条件。
+ * 系统随案递送起居录路径的中立指针段（ADR 0081：公共入口直接挂案卷，Soul 只说明用途不负责派送；
+ * #709 公共入口通用递送与 #742 给事中受理链路同源；#858 告诉 LLM 路径，不另建取号/lookup）。
+ * 指针输入沿 ADR 0079（指针是绑定材料由代码精准递送），不把卷宗正文塞进提示词。
+ * 只告诉路径：不刷新、不生成、不校验内容、不新增拒收或停工条件、不从 instruction 抽票号。
  * 机器文本仅中立标识材料（ADR 0073），用途说明归角色材料所有。
  *
  * 递送挂载点唯一：`post-admission` 在 beforeDispatch 之后为每个公共入口挂载。
- * 普通入口把本段追加进 continuation；station-child 审核轮次走 attachments
- * 冻结 + role-runtime `loadCaseDossierReadingMaterial` → readingMaterial →
- * systemPrompt.materials fold（#879：对话 instruction 保持父腿 payload 原文；
- * 起居录作独立附件面，不新造 RoleTurnRequest.materials）。
+ * 全部公共入口（ordinary 已绑定／未绑定与 station-child）统一走 attachments 冻结 +
+ * role-runtime `loadCaseDossierReadingMaterial` → readingMaterial →
+ * systemPrompt.materials fold（#879 / #858：对话 instruction、空请求、resume
+ * message 保持调用者原文；起居录作独立附件面，不新造 RoleTurnRequest.materials，
+ * 不拼进 user-dialogue continuation）。
+ *
+ * #858: deliver returns typed FrozenAttachment[]; load currently re-derives the
+ * freeze leaf under runDirectory because agent-start only has HostContext.runDirectory.
+ * Consuming the typed frozenPath across that process boundary needs a design
+ * revision of the existing envelope/persistence seam — not a local replica of
+ * freezeAttachments' `00-` naming, not a drift throw, not readdir guessing.
  */
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
+import { projectTicketRecordsPathShape } from "../sitian-facade.ts";
 import { resolveTicketProvenanceVolume } from "../ticket-provenance.ts";
 import {
   freezeAttachmentsIntoRun,
   type FrozenAttachment,
 } from "./invocation.ts";
 
-/** Section heading of the system-delivered dossier pointer (presentation only). */
+/** Bound-ticket section heading (presentation only). */
 const CASE_DOSSIER_SECTION_HEADING = "## 本票起居录（系统随案提供）" as const;
+
+/** Unbound path-only heading — no 本票 claim when no typed ticket is on the run. */
+const UNBOUND_DOSSIER_PATH_HEADING = "## 起居录路径（系统随案提供）" as const;
 
 /** Stable freeze key under run/attachments/ for station-child 0081 delivery. */
 const CASE_DOSSIER_ATTACH_KEY = "case-dossier" as const;
@@ -30,23 +41,26 @@ const CASE_DOSSIER_ATTACH_KEY = "case-dossier" as const;
 /** Leaf name of the frozen pointer section (content = purpose + paths). */
 const CASE_DOSSIER_ATTACH_FILE = "case-dossier-pointer.md" as const;
 
-/** Pointer only — presence/absence is for the role to observe at the path. */
-function describeDossierFile(path: string): string {
-  return path;
-}
-
 /**
- * Pointer section for a bound ticket's existing 起居录, or undefined when the
- * run carries no ticket identity (unbound calls stay legal and get no dossier).
- * A bound ticket whose volume is missing or unreadable is stated as such —
- * the section never claims a dossier that is not there.
+ * Neutral 起居录 path pointer for every public entry (ADR 0081 delivery seam).
+ * Always tells the canonical path shape so the seat LLM can read the diary
+ * itself (陛下 2026-09-15: 只需要告诉llm这个路径). When a typed ticket identity is
+ * already on the run, also project the concrete resolved file. Never claims a
+ * volume or「本票」exists when unbound; never extracts a ticket from instruction.
+ * Under-book shape comes only from sitian writer joins — no local replica.
  */
 export async function projectCaseDossierPointerSection(input: {
   readonly ticketNumber: number | undefined;
   readonly projectRoot: string;
   readonly home: string;
-}): Promise<string | undefined> {
-  if (input.ticketNumber === undefined) return undefined;
+}): Promise<string> {
+  if (input.ticketNumber === undefined) {
+    return [
+      UNBOUND_DOSSIER_PATH_HEADING,
+      "",
+      `记录卷宗：${projectTicketRecordsPathShape()}`,
+    ].join("\n");
+  }
   const volume = resolveTicketProvenanceVolume(
     input.ticketNumber,
     input.projectRoot,
@@ -56,30 +70,30 @@ export async function projectCaseDossierPointerSection(input: {
     CASE_DOSSIER_SECTION_HEADING,
     "",
     `票号：#${input.ticketNumber}`,
-    `记录卷宗：${describeDossierFile(volume.recordFile)}`,
+    `记录卷宗：${volume.recordFile}`,
   ].join("\n");
 }
 
 /**
- * ADR 0081 delivery for station-child officer turns (#879): freeze the same
- * pointer section through the existing attachments seam. Role-runtime loads
- * that freeze via loadCaseDossierReadingMaterial onto readingMaterial; the
- * envelope then folds it into systemPrompt.materials. Peer dialogue instruction
- * stays the parent payload; never RoleTurnRequest.materials.
- * Returns frozen attachments, or undefined when unbound (no dossier).
+ * ADR 0081 delivery for every public entry (#879 / #858): freeze the pointer
+ * section through the existing attachments seam. Role-runtime loads that freeze
+ * via loadCaseDossierReadingMaterial onto readingMaterial; the envelope then
+ * folds it into systemPrompt.materials. Caller / peer dialogue instruction stays
+ * opaque; never RoleTurnRequest.materials, never user-dialogue continuation.
+ * Always freezes the path pointer (canonical shape, or concrete file when a
+ * typed ticket is already bound).
  */
 export async function deliverCaseDossierAsAttachment(input: {
   readonly ticketNumber: number | undefined;
   readonly projectRoot: string;
   readonly home: string;
   readonly runDirectory: string;
-}): Promise<readonly FrozenAttachment[] | undefined> {
+}): Promise<readonly FrozenAttachment[]> {
   const section = await projectCaseDossierPointerSection({
     ticketNumber: input.ticketNumber,
     projectRoot: input.projectRoot,
     home: input.home,
   });
-  if (section === undefined) return undefined;
   // Stage in OS temp only — never leave a run-local .case-dossier-stage copy.
   const stagingDir = await mkdtemp(join(tmpdir(), "ak-case-dossier-"));
   try {
@@ -106,6 +120,11 @@ export type CaseDossierReadingMaterial = {
  * Load a previously frozen case-dossier attachment as reading material
  * (existing agent-start / systemPrompt.materials fold — not dialogue prompt,
  * not RoleTurnRequest.materials). Undefined when the run has no such freeze.
+ *
+ * #858: this join re-derives freezeAttachments' leaf naming because the
+ * agent-start handler only receives runDirectory. Replacing it requires
+ * threading deliver's typed frozenPath across the existing envelope seam
+ * (design revision) — do not copy freeze's `00-` algorithm here again.
  */
 export async function loadCaseDossierReadingMaterial(
   runDirectory: string,

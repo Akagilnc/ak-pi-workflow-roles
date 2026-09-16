@@ -109,7 +109,8 @@ export type RoleRunRecord = {
     | "gatekeeper"
     | "navigator"
     | "auditor"
-    | "diarist";
+    | "diarist"
+    | "secretariat";
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -371,7 +372,8 @@ async function readRoleRunStateDisk(
     record.role !== "gatekeeper" &&
     record.role !== "navigator" &&
     record.role !== "auditor" &&
-    record.role !== "diarist"
+    record.role !== "diarist" &&
+    record.role !== "secretariat"
   ) {
     return undefined;
   }
@@ -1700,6 +1702,12 @@ export type LoadedResumableDiaristRun = {
   readonly observation?: TypedHttp429Observation;
 };
 
+export type LoadedResumableSecretariatRun = {
+  readonly admitted: import("./invocation.ts").AdmittedSecretariatInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
 export type LoadedResumableInstructionSeatRun = {
   readonly admitted:
     | AdmittedGatekeeperInvocation
@@ -2020,6 +2028,24 @@ export async function loadResumableDiaristRun(
   return seatLoadedResult(loaded, admitted);
 }
 
+export async function loadResumableSecretariatRun(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumableSecretariatRun> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  if (loaded.run.role !== "secretariat") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.run.role}, not secretariat`,
+    );
+  }
+  const admitted: import("./invocation.ts").AdmittedSecretariatInvocation = {
+    role: "secretariat",
+    ...resumedBaseAdmitted(loaded),
+  };
+  return seatLoadedResult(loaded, admitted);
+}
+
 export type LoadedResumableMergerRun = {
   readonly admitted: AdmittedMergerInvocation;
   readonly run: RoleRunRecord;
@@ -2253,6 +2279,7 @@ export async function peekRoleRunRole(
   | "navigator"
   | "auditor"
   | "diarist"
+  | "secretariat"
   | undefined
 > {
   const runDirectory = await findRunDirectoryById(home, runId);

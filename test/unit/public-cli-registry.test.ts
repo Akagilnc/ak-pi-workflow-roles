@@ -92,6 +92,14 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     activationStage: "load-and-install",
   },
   {
+    role: "secretariat",
+    phases: [null],
+    outputTool: "ak_secretariat_output",
+    inputFlag: undefined,
+    phaseFlag: undefined,
+    activationStage: "load-and-install",
+  },
+  {
     role: "gleaner-left",
     phases: [null],
     bareCommand: false,
@@ -156,6 +164,7 @@ test("public registry exposes callable roles with no automatic/classifiable dist
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("gleaner-left"), true);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("inspector"), true);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("diarist"), true);
+  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("secretariat"), true);
   assert.deepEqual(
     [...PUBLIC_CONFIGURABLE_SEATS],
     [...PUBLIC_CALLABLE_ROLES],

@@ -2,7 +2,7 @@ import type { Static } from "typebox";
 import { Type } from "typebox";
 
 import { openToolObject } from "./open-tool-schema.ts";
-import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 import {
   DIARIST_OUTPUT_TOOL_NAME,
   validateRecordedDiaristOutput,
@@ -20,7 +20,7 @@ export { validateRecordedDiaristOutput };
  * 起居郎交卷形状；形状指引，非 schema 闸。
  * #901：交边界（sessions）+ 可选坏行补写（amendments）；正文由机械投影。
  */
-export const diaristOutputSchema = withInfrastructureFailureDeclaration(
+export const diaristOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       status: Type.Unknown({

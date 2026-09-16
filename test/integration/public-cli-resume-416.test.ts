@@ -479,12 +479,15 @@ test("A2: station-child after-lease build failure releases the lock and retries 
         }),
       }),
       createRunId: () => "416-station-child-lease-001",
+      correlationId: "birth-caller",
       credentials: { "openai-codex": true, xai: true },
     });
     assert.equal(first.exitCode, 0);
     let turns = 0;
+    const dispatchedCorrelations: Array<string | undefined> = [];
     const env = {
       home,
+      correlationId: "current-caller",
       agentDir: join(home, ".pi"),
       packageRoot,
       cwd: project,
@@ -493,6 +496,7 @@ test("A2: station-child after-lease build failure releases the lock and retries 
       stationChild: true as const,
       roleTurnHost: createMinimalHost(async (request: RoleTurnRequest) => {
         turns += 1;
+        dispatchedCorrelations.push(request.correlationId);
         const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
           request.principal,
         );
@@ -543,6 +547,7 @@ test("A2: station-child after-lease build failure releases the lock and retries 
     });
     assert.equal(builds, 3, "after-lease throw must release the lock; pre-turn fail must retry the initial builder");
     assert.equal(turns, 1);
+    assert.deepEqual(dispatchedCorrelations, ["current-caller"]);
     assert.notEqual(result.exitCode, 2);
     assert.equal(result.terminal?.autoResumeCount, 2);
   });
