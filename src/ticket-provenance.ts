@@ -34,7 +34,6 @@ import {
   projectTicketProvenanceHeader,
   projectTicketProvenanceLine,
   projectTicketProvenanceSessions,
-  type TicketProvenanceAmendment,
   type TicketProvenanceBound,
   type TicketProvenanceHeader,
   type TicketProvenanceLine,
@@ -144,11 +143,36 @@ export function resolveTicketProvenanceVolume(
   return { recordFile: path.recordFile, volumeDir: path.sessionDir };
 }
 
+type TicketProvenanceRaw = {
+  readonly raw: string;
+  readonly s: number;
+  readonly sourcePosition: number;
+  readonly sourceIdentity?: string;
+};
+
 type TicketProvenanceCommit = {
   readonly timestamp: string;
   readonly sessions: readonly TicketProvenanceSession[];
-  readonly lines: readonly TicketProvenanceLine[];
+  readonly lines: readonly (TicketProvenanceLine | TicketProvenanceRaw | string)[];
 };
+
+function projectTicketProvenanceRaw(value: unknown): TicketProvenanceRaw | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.raw !== "string" || !Number.isInteger(raw.s) || (raw.s as number) < 0 ||
+      !Number.isInteger(raw.sourcePosition) || (raw.sourcePosition as number) < 0) {
+    return undefined;
+  }
+  const sourceIdentity = typeof raw.sourceIdentity === "string" && raw.sourceIdentity !== ""
+    ? raw.sourceIdentity
+    : undefined;
+  return {
+    raw: raw.raw,
+    s: raw.s as number,
+    sourcePosition: raw.sourcePosition as number,
+    ...(sourceIdentity === undefined ? {} : { sourceIdentity }),
+  };
+}
 
 function projectTicketProvenanceCommit(value: unknown): TicketProvenanceCommit | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
@@ -162,11 +186,14 @@ function projectTicketProvenanceCommit(value: unknown): TicketProvenanceCommit |
   if (body.type !== "ticket-provenance-append") return undefined;
   const sessions = projectTicketProvenanceSessions(body.sessions);
   if (sessions === undefined || !Array.isArray(body.lines)) return undefined;
-  const lines: TicketProvenanceLine[] = [];
+  const lines: (TicketProvenanceLine | TicketProvenanceRaw | string)[] = [];
   for (const raw of body.lines) {
+    if (typeof raw === "string") { lines.push(raw); continue; }
     const line = projectTicketProvenanceLine(raw);
-    if (line === undefined) return undefined;
-    lines.push(line);
+    if (line !== undefined) { lines.push(line); continue; }
+    const preserved = projectTicketProvenanceRaw(raw);
+    if (preserved === undefined) return undefined;
+    lines.push(preserved);
   }
   return { timestamp: record.timestamp, sessions, lines };
 }
@@ -180,6 +207,10 @@ export type ReadTicketProvenanceResult = {
    */
   readonly unprojectedRaw: readonly string[];
   readonly recordFile: string;
+  /** Internal cumulative coverage truth, keyed by normalized session index. */
+  readonly sourceIdentities: ReadonlyMap<number, ReadonlySet<string>>;
+  /** Upgrade fallback for records written before sourceIdentity existed. */
+  readonly legacySourcePositions: ReadonlyMap<number, ReadonlySet<number>>;
 };
 
 /** Read the unique diary file (empty/absent → no header, no lines). */
@@ -194,7 +225,14 @@ export async function readTicketProvenance(
     text = await readFile(recordFile, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { header: undefined, lines: [], unprojectedRaw: [], recordFile };
+      return {
+        header: undefined,
+        lines: [],
+        unprojectedRaw: [],
+        recordFile,
+        sourceIdentities: new Map(),
+        legacySourcePositions: new Map(),
+      };
     }
     throw error;
   }
@@ -202,6 +240,34 @@ export async function readTicketProvenance(
   let header: TicketProvenanceHeader | undefined;
   const lines: TicketProvenanceLine[] = [];
   const unprojectedRaw: string[] = [];
+  const sourceIdentities = new Map<number, Set<string>>();
+  const legacySourcePositions = new Map<number, Set<number>>();
+  const rememberIdentity = (s: number, identity: string): boolean => {
+    const seen = sourceIdentities.get(s) ?? new Set<string>();
+    const fresh = !seen.has(identity);
+    seen.add(identity);
+    sourceIdentities.set(s, seen);
+    return fresh;
+  };
+  const rememberLegacyPosition = (s: number, position: number): void => {
+    const seen = legacySourcePositions.get(s) ?? new Set<number>();
+    seen.add(position);
+    legacySourcePositions.set(s, seen);
+  };
+  const remapCoverage = <T>(
+    coverage: Map<number, Set<T>>,
+    priorIndexes: readonly number[],
+  ): void => {
+    const normalized = new Map<number, Set<T>>();
+    for (const [s, values] of coverage) {
+      const target = priorIndexes[s] ?? s;
+      const union = normalized.get(target) ?? new Set<T>();
+      for (const value of values) union.add(value);
+      normalized.set(target, union);
+    }
+    coverage.clear();
+    for (const [s, values] of normalized) coverage.set(s, values);
+  };
   let sawFirst = false;
   for (let index = 0; index < physical.length; index += 1) {
     const raw = physical[index]!;
@@ -228,10 +294,27 @@ export async function readTicketProvenance(
     const commit = projectTicketProvenanceCommit(parsed);
     if (commit !== undefined) {
       const merged = mergeSessionBounds(header?.sessions, commit.sessions);
-      const remapped = commit.lines.map((entry) => ({
-        ...entry,
-        s: merged.incomingIndexes[entry.s] ?? entry.s,
-      }));
+      remapCoverage(sourceIdentities, merged.priorIndexes);
+      remapCoverage(legacySourcePositions, merged.priorIndexes);
+      const remapped: TicketProvenanceLine[] = [];
+      for (const entry of commit.lines) {
+        if (typeof entry === "string") { unprojectedRaw.push(entry); continue; }
+        const s = merged.incomingIndexes[entry.s] ?? merged.priorIndexes[entry.s] ?? entry.s;
+        if ("raw" in entry) {
+          if (entry.sourceIdentity !== undefined) {
+            if (rememberIdentity(s, entry.sourceIdentity)) unprojectedRaw.push(entry.raw);
+          } else {
+            rememberLegacyPosition(s, entry.sourcePosition);
+            unprojectedRaw.push(entry.raw);
+          }
+          continue;
+        }
+        remapped.push({ ...entry, s });
+        if (entry.id === undefined) {
+          if (entry.sourceIdentity !== undefined) rememberIdentity(s, entry.sourceIdentity);
+          else if (entry.sourcePosition !== undefined) rememberLegacyPosition(s, entry.sourcePosition);
+        }
+      }
       const now = commit.timestamp;
       header = {
         repo: header?.repo ?? resolveBookKeyFromGit(cwd),
@@ -250,7 +333,19 @@ export async function readTicketProvenance(
     // Unknown stock / damaged rows remain readable and are never upgraded in place.
     unprojectedRaw.push(raw);
   }
-  return { header, lines, unprojectedRaw, recordFile };
+  for (const line of lines) {
+    if (line.id !== undefined) continue;
+    if (line.sourceIdentity !== undefined) rememberIdentity(line.s, line.sourceIdentity);
+    else if (line.sourcePosition !== undefined) rememberLegacyPosition(line.s, line.sourcePosition);
+  }
+  return {
+    header,
+    lines,
+    unprojectedRaw,
+    recordFile,
+    sourceIdentities,
+    legacySourcePositions,
+  };
 }
 
 /**
@@ -269,19 +364,10 @@ export function ensureTicketProvenanceVolume(
   return { recordFile: path.recordFile, volumeDir: path.sessionDir };
 }
 
-/** One session line the mechanical projector could not enter. */
-export type UnparsableSessionLine = {
-  readonly s: number;
-  readonly line: number;
-  readonly raw: string;
-};
-
 export type ReprojectTicketProvenanceResult = {
   readonly recordFile: string;
   readonly header: TicketProvenanceHeader;
   readonly lines: readonly TicketProvenanceLine[];
-  /** Still-open gaps after applying the submitted amendment set. */
-  readonly unparsable: readonly UnparsableSessionLine[];
 };
 
 /**
@@ -310,11 +396,11 @@ function resolveBoundIndex(
   return undefined;
 }
 
-function amendmentKey(s: number, line: number): string {
-  return `${s}:${line}`;
+/** Exact range identity for cumulative header dedupe (idempotent resubmit). */
+function dialogueIdentity(s: number, id: string): string {
+  return `${s}\u0000${id}`;
 }
 
-/** Exact range identity for cumulative header dedupe (idempotent resubmit). */
 function rangeDeclarationKey(range: TicketProvenanceRange): string {
   return JSON.stringify({
     from: range.from,
@@ -370,7 +456,7 @@ function mergeSessionBounds(
 
 /**
  * #918 第一节：已投影行即卷宗。只对 prior 未声明的 range（按 path identity + 精确
- * from/to）读源；已声明的按 s,line 结转，不重读历史源。
+ * from/to）读源；已声明的投影原样结转，不重读历史源。
  */
 function undeclaredSessionRanges(
   prior: readonly TicketProvenanceSession[] | undefined,
@@ -389,11 +475,14 @@ function undeclaredSessionRanges(
     }
     for (const range of session.ranges) keys.add(rangeDeclarationKey(range));
   }
-  const out: { s: number; session: TicketProvenanceSession }[] = [];
+  const out: {
+    s: number;
+    session: TicketProvenanceSession;
+  }[] = [];
   for (let s = 0; s < merged.length; s += 1) {
     const session = merged[s]!;
-    const declared =
-      priorKeys.get(physicalPathIdentity(session.path)) ?? new Set();
+    const identity = physicalPathIdentity(session.path);
+    const declared = priorKeys.get(identity) ?? new Set();
     const fresh = session.ranges.filter(
       (range) => !declared.has(rangeDeclarationKey(range)),
     );
@@ -412,49 +501,87 @@ function undeclaredSessionRanges(
   return out;
 }
 
-/** Sort archive rows by session index then source line (stable within equal keys). */
-function compareLinePosition(
-  left: TicketProvenanceLine,
-  right: TicketProvenanceLine,
-): number {
-  if (left.s !== right.s) return left.s - right.s;
-  const leftLine = left.line ?? Number.MAX_SAFE_INTEGER;
-  const rightLine = right.line ?? Number.MAX_SAFE_INTEGER;
-  return leftLine - rightLine;
-}
-
 /**
  * Merge newly projected rows into the carried archive.
- * 既有卷宗按 (s,line) 优先；fresh 不得复制无 id 行（#918 C2/G1）。
- * id 去重仍保留（跨 path 同 id 首见胜）。
+ * Native id remains the typed first-seen identity; exact range resubmission is a no-op.
  */
 function mergeFreshIntoCarried(
   carried: readonly TicketProvenanceLine[],
   fresh: readonly TicketProvenanceLine[],
 ): TicketProvenanceLine[] {
-  const seenIds = new Set<string>();
-  const seenPositions = new Set<string>();
-  const out: TicketProvenanceLine[] = [];
-  for (const line of carried) {
-    if (line.id !== undefined) seenIds.add(line.id);
-    if (line.line !== undefined)
-      seenPositions.add(amendmentKey(line.s, line.line));
-    out.push(line);
-  }
-  for (const line of fresh) {
-    if (line.id !== undefined) {
-      if (seenIds.has(line.id)) continue;
-      seenIds.add(line.id);
+  const seenSources = new Map<string, TicketProvenanceLine>();
+  const bySession = new Map<number, TicketProvenanceLine[]>();
+  const absorb = (lines: readonly TicketProvenanceLine[]): void => {
+    for (const line of lines) {
+      const sourceIdentity = line.id === undefined
+        ? line.sourceIdentity
+        : `id\u0000${line.id}`;
+      const identity = sourceIdentity === undefined
+        ? undefined
+        : `${line.s}\u0000${sourceIdentity}`;
+      const seen = identity === undefined ? undefined : seenSources.get(identity);
+      if (seen !== undefined) {
+        if (line.sourcePosition !== undefined) {
+          Object.assign(seen, { sourcePosition: line.sourcePosition });
+        }
+        continue;
+      }
+      const bucket = bySession.get(line.s) ?? [];
+      bucket.push({ ...line });
+      if (identity !== undefined) seenSources.set(identity, bucket.at(-1)!);
+      bySession.set(line.s, bucket);
     }
-    if (line.line !== undefined) {
-      const position = amendmentKey(line.s, line.line);
-      if (seenPositions.has(position)) continue;
-      seenPositions.add(position);
+  };
+  absorb(carried);
+  absorb(fresh);
+  return [...bySession.entries()]
+    .sort(([left], [right]) => left - right)
+    .flatMap(([, lines]) => lines
+      .map((line, archiveIndex) => ({ line, archiveIndex }))
+      .sort((left, right) => {
+        const leftPosition = left.line.sourcePosition;
+        const rightPosition = right.line.sourcePosition;
+        if (leftPosition === undefined && rightPosition === undefined) {
+          return left.archiveIndex - right.archiveIndex;
+        }
+        if (leftPosition === undefined) return 1;
+        if (rightPosition === undefined) return -1;
+        return leftPosition - rightPosition || left.archiveIndex - right.archiveIndex;
+      })
+      .map(({ line }) => line));
+}
+
+/**
+ * Give every logical source row a replay-invariant ordinal. Native ids identify
+ * replayed rows directly; idless rows use their ordinal after the preceding
+ * native id. Neither key inspects dialogue text or physical line numbers.
+ */
+function stableSourceFacts(
+  sessionLines: readonly LedgerSessionLine[],
+): readonly { readonly position: number; readonly identity: string }[] {
+  const positionByIdentity = new Map<string, number>();
+  const facts: { position: number; identity: string }[] = [];
+  let precedingId = "<start>";
+  let idlessOffset = 0;
+  for (const entry of sessionLines) {
+    const id = entry.row === undefined ? undefined : nativeEventId(entry.row);
+    if (id !== undefined) {
+      precedingId = id;
+      idlessOffset = 0;
+    } else {
+      idlessOffset += 1;
     }
-    out.push(line);
+    const identity = id === undefined
+      ? `after\u0000${precedingId}\u0000${idlessOffset}`
+      : `id\u0000${id}`;
+    let position = positionByIdentity.get(identity);
+    if (position === undefined) {
+      position = positionByIdentity.size;
+      positionByIdentity.set(identity, position);
+    }
+    facts.push({ position, identity });
   }
-  out.sort(compareLinePosition);
-  return out;
+  return facts;
 }
 
 /**
@@ -505,12 +632,14 @@ function normalizeResolvedRanges(
 async function projectSessionRanges(input: {
   readonly s: number;
   readonly session: TicketProvenanceSession;
-  readonly amendmentsByKey: ReadonlyMap<string, TicketProvenanceAmendment>;
   readonly seenIds: Set<string>;
+  readonly coveredSourceIdentities: ReadonlySet<string>;
+  readonly legacyCoveredSourcePositions: ReadonlySet<number>;
   readonly home?: string;
 }): Promise<{
   readonly lines: TicketProvenanceLine[];
-  readonly unparsable: UnparsableSessionLine[];
+  readonly raw: TicketProvenanceRaw[];
+  readonly sourcePositionByIdentity: ReadonlyMap<string, number>;
 }> {
   assertDialogueSessionSourcePath(input.session.path, input.home);
   let sessionLines: LedgerSessionLine[];
@@ -534,56 +663,52 @@ async function projectSessionRanges(input: {
 
   const rows = sessionLines.map((entry) => entry.row);
   const dialogue = adaptSessionDialogue(rows);
+  const sourceFacts = stableSourceFacts(sessionLines);
+  const sourcePositionByIdentity = new Map<string, number>();
+  for (const fact of sourceFacts) {
+    sourcePositionByIdentity.set(fact.identity, fact.position);
+  }
   const seenIds = input.seenIds;
   const lines: TicketProvenanceLine[] = [];
-  const unparsable: UnparsableSessionLine[] = [];
+  const raw: TicketProvenanceRaw[] = [];
   const ranges = normalizeResolvedRanges(
     input.session.ranges,
     sessionLines,
     input.session.path,
   );
-
   for (const range of ranges) {
     for (let index = range.fromIndex; index <= range.toIndex; index += 1) {
+      const { position: sourcePosition, identity: sourceIdentity } = sourceFacts[index]!;
+      if (input.coveredSourceIdentities.has(sourceIdentity) ||
+          input.legacyCoveredSourcePositions.has(sourcePosition)) continue;
       const entry = sessionLines[index]!;
       if (entry.row === undefined) {
-        const key = amendmentKey(input.s, entry.line);
-        const amendment = input.amendmentsByKey.get(key);
-        if (amendment !== undefined) {
-          lines.push({
-            speaker: amendment.speaker,
-            s: input.s,
-            line: entry.line,
-            text: amendment.text,
-          });
-        } else {
-          unparsable.push({ s: input.s, line: entry.line, raw: entry.raw });
-        }
+        raw.push({ raw: entry.raw, s: input.s, sourcePosition, sourceIdentity });
         continue;
       }
       for (const event of dialogue[index] ?? []) {
         if (event.id !== undefined) {
-          if (seenIds.has(event.id)) continue;
-          seenIds.add(event.id);
+          const identity = dialogueIdentity(input.s, event.id);
+          if (seenIds.has(identity)) continue;
+          seenIds.add(identity);
         }
         lines.push({
           speaker: event.speaker,
           s: input.s,
-          line: entry.line,
-          ...(event.id === undefined ? {} : { id: event.id }),
+          sourcePosition,
+          ...(event.id === undefined ? { sourceIdentity } : { id: event.id }),
           text: event.text,
         });
       }
     }
   }
-  return { lines, unparsable };
+  return { lines, raw, sourcePositionByIdentity };
 }
 
 /**
- * Reproject the unique diary from cumulative bounds + optional amendments.
- * #918：已投影行即卷宗——按 s,line 结转；本轮只读 prior 未声明的 range（或新
- * session 区间）。精确重复提交＝幂等 no-op，不因历史源不可读而失败。
- * amendments 只在本轮读取的新范围确有对应坏行时生效；空 sessions 保持 no-op。
+ * Reproject the unique diary from cumulative bounds.
+ * #918：已投影行即卷宗；本轮只读 prior 未声明的 range（或新 session 区间）。
+ * 精确重复提交＝幂等 no-op，不因历史源不可读而失败；空 sessions 保持 no-op。
  * 证不出的 body 原字节经 unprojectedRaw 原样留存。
  * Persistence appends one immutable commit through the Sitian appender seam.
  */
@@ -592,7 +717,6 @@ export async function reprojectTicketProvenance(input: {
   readonly cwd: string;
   readonly home?: string;
   readonly sessions: readonly TicketProvenanceSession[];
-  readonly amendments?: readonly TicketProvenanceAmendment[];
 }): Promise<ReprojectTicketProvenanceResult> {
   const prior = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
   if (input.sessions.length === 0) {
@@ -607,7 +731,6 @@ export async function reprojectTicketProvenance(input: {
         sessions: [],
       },
       lines: prior.lines,
-      unparsable: [],
     };
   }
 
@@ -625,35 +748,36 @@ export async function reprojectTicketProvenance(input: {
         sessions: merged.sessions,
       },
       lines: prior.lines,
-      unparsable: [],
     };
   }
 
-  const amendmentsByKey = new Map<string, TicketProvenanceAmendment>();
-  for (const amendment of input.amendments ?? []) {
-    const cumulativeIndex = merged.incomingIndexes[amendment.s];
-    if (cumulativeIndex === undefined) continue;
-    amendmentsByKey.set(amendmentKey(cumulativeIndex, amendment.line), {
-      ...amendment,
-      s: cumulativeIndex,
-    });
-  }
-
   const seenIds = new Set(
-    prior.lines.flatMap((line) => line.id === undefined ? [] : [line.id]),
+    prior.lines.flatMap((line) =>
+      line.id === undefined ? [] : [dialogueIdentity(line.s, line.id)]
+    ),
   );
   const fresh: TicketProvenanceLine[] = [];
-  const unparsable: UnparsableSessionLine[] = [];
+  const raw: TicketProvenanceRaw[] = [];
   for (const delta of deltas) {
     const projected = await projectSessionRanges({
       s: delta.s,
       session: delta.session,
-      amendmentsByKey,
       seenIds,
+      coveredSourceIdentities: prior.sourceIdentities.get(delta.s) ?? new Set(),
+      legacyCoveredSourcePositions: prior.legacySourcePositions.get(delta.s) ?? new Set(),
       ...(input.home === undefined ? {} : { home: input.home }),
     });
+    fresh.push(...prior.lines.flatMap((line) => {
+      if (line.s !== delta.s) return [];
+      const sourceIdentity = line.id === undefined
+        ? line.sourceIdentity
+        : `id\u0000${line.id}`;
+      if (sourceIdentity === undefined) return [];
+      const sourcePosition = projected.sourcePositionByIdentity.get(sourceIdentity);
+      return sourcePosition === undefined ? [] : [{ ...line, sourcePosition }];
+    }));
     fresh.push(...projected.lines);
-    unparsable.push(...projected.unparsable);
+    raw.push(...projected.raw);
   }
   const lines = mergeFreshIntoCarried(prior.lines, fresh);
   const now = new Date().toISOString();
@@ -664,10 +788,6 @@ export async function reprojectTicketProvenance(input: {
     updatedAt: now,
     sessions: merged.sessions,
   };
-  if (unparsable.length > 0) {
-    return { recordFile: prior.recordFile, header, lines, unparsable };
-  }
-
   // One immutable projection commit. Its deterministic identity makes retries of
   // the same logical increment converge, while unrelated concurrent increments
   // append independently and are folded by readTicketProvenance.
@@ -678,7 +798,7 @@ export async function reprojectTicketProvenance(input: {
       path: physicalPathIdentity(session.path),
       ranges: session.ranges,
     })),
-    lines: fresh,
+    lines: [...fresh, ...raw],
   });
   const identity = `ticket-provenance:${createHash("sha256").update(identityMaterial).digest("hex")}`;
   const pointer = appendSitianRecord({
@@ -687,7 +807,7 @@ export async function reprojectTicketProvenance(input: {
     payload: {
       type: "ticket-provenance-append",
       sessions: merged.sessions,
-      lines: fresh,
+      lines: [...fresh, ...raw],
     },
   });
   const folded = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
@@ -695,6 +815,5 @@ export async function reprojectTicketProvenance(input: {
     recordFile: pointer.recordFile,
     header: folded.header ?? header,
     lines: folded.lines,
-    unparsable: [],
   };
 }

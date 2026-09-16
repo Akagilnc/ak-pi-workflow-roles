@@ -18,7 +18,7 @@ export { validateRecordedDiaristOutput };
 
 /**
  * 起居郎交卷形状；形状指引，非 schema 闸。
- * #901：交边界（sessions）+ 可选坏行补写（amendments）；正文由机械投影。
+ * #901：交边界（sessions）；正文与不可解析原字节由机械投影。
  */
 export const diaristOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
@@ -93,34 +93,6 @@ export const diaristOutputSchema = withTerminatingOutputDeclarations(
           },
         ),
       ),
-      amendments: Type.Optional(
-        Type.Array(
-          Type.Object(
-            {
-              s: Type.Optional(
-                Type.Unknown({ description: "卷下标（sessions 位置）" }),
-              ),
-              line: Type.Optional(
-                Type.Unknown({ description: "源卷 1-based 行号" }),
-              ),
-              speaker: Type.Optional(
-                Type.String({ description: "owner | runner" }),
-              ),
-              text: Type.Optional(
-                Type.String({ description: "补写正文（原话）" }),
-              ),
-            },
-            {
-              additionalProperties: true,
-              description: "一条坏行补写；缺字段的成员机械跳过",
-            },
-          ),
-          {
-            description:
-              "可选；机械解析不了的行交此补写。缺本字段＝无补写，不拒收。",
-          },
-        ),
-      ),
     }),
   ),
 );
@@ -138,7 +110,7 @@ export const DIARIST_TOOL_SPEC = {
   name: DIARIST_OUTPUT_TOOL_NAME,
   label: "起居郎输出",
   description:
-    "起居郎交本票对话边界（sessions）与可选坏行补写（amendments）；认不出本庭对象则 escalate。",
-  promptSnippet: "起居郎交边界与可选补写",
+    "起居郎交本票对话边界（sessions）；认不出本庭对象则 escalate。",
+  promptSnippet: "起居郎交边界",
   parameters: diaristOutputSchema,
 } as const;
