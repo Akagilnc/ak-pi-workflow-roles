@@ -1,10 +1,9 @@
 /**
  * 起居录（ticket-provenance）typed 形状 —— ADR 0075「2026-09-14 修订」/ #901 / #918。
  *
- * 一册＝一个文件：第一行册子头，其后每行一条对话。
- * 册子头 sessions 为 prior ∪ 本轮累计并集（遗漏不删除）；已投影行按 s,line 结转，
- * 本轮只读未声明 range（#918 第一节）。册子头与定位可更新，已结转正文不因历史源
- * 重读而改（`single-volume` / `one-volume-per-issue`）。
+ * 一册＝一个追加式 records.jsonl；逻辑册子头与对话由读取时折叠不可变投影提交得到。
+ * 既有「首行册子头＋裸对话行」snapshot 向后可读，后续提交不回写旧行。
+ * sessions 为 prior ∪ 各轮累计并集（遗漏不删除），已结转正文不因历史源重读而改。
  * 交卷 `sessions` 输入语义仍是「本轮对话边界」；累计并集是机械合并，不是角色交什么。
  */
 
@@ -38,7 +37,7 @@ export type TicketProvenanceSession = {
   readonly ranges: readonly TicketProvenanceRange[];
 };
 
-/** 册子头（文件第一行）。sessions 为累计区间；reopen 与跨宿主并入，不新建册。 */
+/** 读取时折叠出的逻辑册子头。sessions 为累计区间；reopen 与跨宿主并入，不新建册。 */
 export type TicketProvenanceHeader = {
   readonly repo: string;
   readonly ticket: number;
@@ -48,7 +47,7 @@ export type TicketProvenanceHeader = {
 };
 
 /**
- * 一条对话（册子头之后每行一条）。
+ * 一条对话（存于不可变投影提交；旧 snapshot 中也可为裸行）。
  * `id` 与 `line` 按源事实存在则记、不存在不编；两者皆无的少数条目
  * 靠录中前后有定位的条目锚定。
  */

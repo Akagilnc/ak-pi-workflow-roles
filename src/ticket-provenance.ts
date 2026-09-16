@@ -1,10 +1,11 @@
 /**
  * 起居录 volume helpers — ADR 0075「2026-09-14 修订」/ #901 / #918。
- * 一册＝一个文件：首行册子头，其后裸对话行。册子头 sessions 累计并集（prior ∪ 本轮，
- * 遗漏不删除）；已投影行按 s,line 结转，本轮只读未声明 range（#918 第一节）。
- * 无 append 水位、无 SitianRecord 外壳。目的地解析与读写经司天台唯一入口
- * （ADR 0065 records-owner / record-entry；ADR 0081 入录经司天台）。
+ * 一册＝一个追加式 records.jsonl。每轮新投影经司天台 appender 追加为不可变提交；
+ * 读取时折叠全部提交得到累计 sessions 与对话视图。既有首行册子头＋裸对话行的
+ * snapshot 继续可读，但后续不为升级回写旧卷。
  */
+import { createHash } from "node:crypto";
+import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -22,17 +23,15 @@ import {
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 import { adaptSessionDialogue, nativeEventId } from "./session-dialogue.ts";
 import {
-  ensureSitianVolume,
-  readSitianVolumeText,
-  resolveSitianVolume,
-  rewriteSitianVolume,
-  withSitianVolumeTransaction,
+  appendSitianRecord,
+  resolveSitianRecordPath,
   type SitianRecordInput,
 } from "./sitian-facade.ts";
 import {
   TICKET_PROVENANCE_KIND,
   projectTicketProvenanceHeader,
   projectTicketProvenanceLine,
+  projectTicketProvenanceSessions,
   type TicketProvenanceAmendment,
   type TicketProvenanceBound,
   type TicketProvenanceHeader,
@@ -137,9 +136,37 @@ export function resolveTicketProvenanceVolume(
   cwd: string,
   home?: string,
 ): TicketProvenanceVolumePath {
-  return resolveSitianVolume(
+  const path = resolveSitianRecordPath(
     ticketProvenanceRecordInput(ticketNumber, cwd, home),
   );
+  return { recordFile: path.recordFile, volumeDir: path.sessionDir };
+}
+
+type TicketProvenanceCommit = {
+  readonly timestamp: string;
+  readonly sessions: readonly TicketProvenanceSession[];
+  readonly lines: readonly TicketProvenanceLine[];
+};
+
+function projectTicketProvenanceCommit(value: unknown): TicketProvenanceCommit | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (record.kind !== TICKET_PROVENANCE_KIND || typeof record.timestamp !== "string") {
+    return undefined;
+  }
+  const payload = record.payload;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return undefined;
+  const body = payload as Record<string, unknown>;
+  if (body.type !== "ticket-provenance-append") return undefined;
+  const sessions = projectTicketProvenanceSessions(body.sessions);
+  if (sessions === undefined || !Array.isArray(body.lines)) return undefined;
+  const lines: TicketProvenanceLine[] = [];
+  for (const raw of body.lines) {
+    const line = projectTicketProvenanceLine(raw);
+    if (line === undefined) return undefined;
+    lines.push(line);
+  }
+  return { timestamp: record.timestamp, sessions, lines };
 }
 
 export type ReadTicketProvenanceResult = {
@@ -159,11 +186,15 @@ export async function readTicketProvenance(
   cwd: string,
   home?: string,
 ): Promise<ReadTicketProvenanceResult> {
-  const { recordFile, text } = await readSitianVolumeText(
-    ticketProvenanceRecordInput(ticketNumber, cwd, home),
-  );
-  if (text === undefined) {
-    return { header: undefined, lines: [], unprojectedRaw: [], recordFile };
+  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
+  let text: string;
+  try {
+    text = await readFile(recordFile, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { header: undefined, lines: [], unprojectedRaw: [], recordFile };
+    }
+    throw error;
   }
   const physical = text.split("\n");
   let header: TicketProvenanceHeader | undefined;
@@ -184,16 +215,46 @@ export async function readTicketProvenance(
     if (!sawFirst) {
       sawFirst = true;
       header = projectTicketProvenanceHeader(parsed);
-      // First line that is not a header is treated as a body line (stock shapes).
+      // Legacy snapshot: first line header followed by bare dialogue rows.
       if (header !== undefined) continue;
     }
     const line = projectTicketProvenanceLine(parsed);
     if (line !== undefined) {
       lines.push(line);
-    } else {
-      // Projectable JSON but not a diary line — keep original bytes.
-      unprojectedRaw.push(raw);
+      continue;
     }
+    const commit = projectTicketProvenanceCommit(parsed);
+    if (commit !== undefined) {
+      const merged = mergeSessionBounds(header?.sessions, commit.sessions);
+      const remapped = commit.lines.map((entry) => ({
+        ...entry,
+        s: merged.incomingIndexes[entry.s] ?? entry.s,
+      }));
+      const now = commit.timestamp;
+      header = {
+        repo: header?.repo ?? resolveBookKeyFromGit(cwd),
+        ticket: ticketNumber,
+        createdAt: header?.createdAt ?? now,
+        updatedAt: now,
+        sessions: merged.sessions,
+      };
+      const carried = lines.map((entry) => ({
+        ...entry,
+        s: merged.priorIndexes[entry.s] ?? entry.s,
+      }));
+      lines.splice(0, lines.length, ...mergeFreshIntoCarried(carried, remapped));
+      continue;
+    }
+    if (
+      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) &&
+      (parsed as Record<string, unknown>).kind === TICKET_PROVENANCE_KIND &&
+      typeof (parsed as Record<string, unknown>).payload === "object" &&
+      (parsed as { payload?: { type?: unknown } }).payload?.type === "ticket-provenance-bind"
+    ) {
+      continue;
+    }
+    // Unknown stock / damaged rows remain readable and are never upgraded in place.
+    unprojectedRaw.push(raw);
   }
   return { header, lines, unprojectedRaw, recordFile };
 }
@@ -207,9 +268,14 @@ export function ensureTicketProvenanceVolume(
   cwd: string,
   home?: string,
 ): TicketProvenanceVolumePath {
-  return ensureSitianVolume(
-    ticketProvenanceRecordInput(ticketNumber, cwd, home),
-  );
+  const input = ticketProvenanceRecordInput(ticketNumber, cwd, home);
+  const path = resolveSitianRecordPath(input);
+  appendSitianRecord({
+    ...input,
+    identity: `ticket-provenance-bind:${ticketNumber}`,
+    payload: { type: "ticket-provenance-bind" },
+  });
+  return { recordFile: path.recordFile, volumeDir: path.sessionDir };
 }
 
 /** One session line the mechanical projector could not enter. */
@@ -400,45 +466,6 @@ function mergeFreshIntoCarried(
   return out;
 }
 
-/** True when cumulative bounds match by physical identity + exact range keys. */
-function sessionBoundsEqual(
-  left: readonly TicketProvenanceSession[],
-  right: readonly TicketProvenanceSession[],
-): boolean {
-  if (left.length !== right.length) return false;
-  for (let index = 0; index < left.length; index += 1) {
-    const a = left[index]!;
-    const b = right[index]!;
-    if (physicalPathIdentity(a.path) !== physicalPathIdentity(b.path))
-      return false;
-    if (a.ranges.length !== b.ranges.length) return false;
-    for (let r = 0; r < a.ranges.length; r += 1) {
-      if (
-        rangeDeclarationKey(a.ranges[r]!) !== rangeDeclarationKey(b.ranges[r]!)
-      ) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
-async function publishTicketProvenanceVolume(input: {
-  readonly recordInput: SitianRecordInput;
-  readonly header: TicketProvenanceHeader;
-  readonly lines: readonly TicketProvenanceLine[];
-  /** Unprojectable prior body rows — append after projected lines, byte-stable. */
-  readonly unprojectedRaw?: readonly string[];
-}): Promise<string> {
-  const body = `${[
-    JSON.stringify(input.header),
-    ...input.lines.map((line) => JSON.stringify(line)),
-    ...(input.unprojectedRaw ?? []),
-  ].join("\n")}\n`;
-  const volume = await rewriteSitianVolume({ ...input.recordInput, body });
-  return volume.recordFile;
-}
-
 /**
  * Resolve submitted ranges against the session, then sort by source position and
  * merge overlaps so each physical row is visited once (#901 source order).
@@ -567,7 +594,7 @@ async function projectSessionRanges(input: {
  * session 区间）。精确重复提交＝幂等 no-op，不因历史源不可读而失败。
  * amendments 只在本轮读取的新范围确有对应坏行时生效；空 sessions 保持 no-op。
  * 证不出的 body 原字节经 unprojectedRaw 原样留存。
- * Persistence goes through the Sitian volume seam (rewriteSitianVolume).
+ * Persistence appends one immutable commit through the Sitian appender seam.
  */
 export async function reprojectTicketProvenance(input: {
   readonly ticketNumber: number;
@@ -576,91 +603,43 @@ export async function reprojectTicketProvenance(input: {
   readonly sessions: readonly TicketProvenanceSession[];
   readonly amendments?: readonly TicketProvenanceAmendment[];
 }): Promise<ReprojectTicketProvenanceResult> {
-  const recordInput = ticketProvenanceRecordInput(input.ticketNumber, input.cwd, input.home);
-  return withSitianVolumeTransaction(recordInput, () =>
-    reprojectTicketProvenanceTransaction(input, recordInput),
-  );
-}
-
-async function reprojectTicketProvenanceTransaction(
-  input: {
-    readonly ticketNumber: number;
-    readonly cwd: string;
-    readonly home?: string;
-    readonly sessions: readonly TicketProvenanceSession[];
-    readonly amendments?: readonly TicketProvenanceAmendment[];
-  },
-  recordInput: SitianRecordInput,
-): Promise<ReprojectTicketProvenanceResult> {
-  const prior = await readTicketProvenance(
-    input.ticketNumber,
-    input.cwd,
-    input.home,
-  );
-  const priorRaw = await readSitianVolumeText(recordInput);
-  const priorNonEmpty =
-    priorRaw.text !== undefined && priorRaw.text.trim() !== "";
-  const unprojectedRaw = prior.unprojectedRaw;
-
-  const amendments = input.amendments ?? [];
-  const now = new Date().toISOString();
-  const repo = resolveBookKeyFromGit(input.cwd);
-
-  // Empty selection is an idempotent no-op. Amendments without a newly read
-  // source range cannot establish that a physical bad line exists.
+  const prior = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
   if (input.sessions.length === 0) {
-    if (priorNonEmpty) {
-      return {
-        recordFile: prior.recordFile,
-        header:
-          prior.header ??
-          ({
-            repo,
-            ticket: input.ticketNumber,
-            createdAt: now,
-            updatedAt: now,
-            sessions: [],
-          } satisfies TicketProvenanceHeader),
-        lines: prior.lines,
-        unparsable: [],
-      };
-    }
-    // First bind with empty selection: mint lawful empty volume.
-    const header: TicketProvenanceHeader = {
-      repo,
-      ticket: input.ticketNumber,
-      createdAt: now,
-      updatedAt: now,
-      sessions: [],
+    const now = new Date().toISOString();
+    return {
+      recordFile: prior.recordFile,
+      header: prior.header ?? {
+        repo: resolveBookKeyFromGit(input.cwd),
+        ticket: input.ticketNumber,
+        createdAt: now,
+        updatedAt: now,
+        sessions: [],
+      },
+      lines: prior.lines,
+      unparsable: [],
     };
-    const recordFile = await publishTicketProvenanceVolume({
-      recordInput,
-      header,
-      lines: [],
-      unprojectedRaw,
-    });
-    return { recordFile, header, lines: [], unparsable: [] };
   }
 
-  // Non-empty 本轮边界 ∪ prior：遗漏永不删除（#918 甲案）。incoming 自身亦按 identity 归并。
   const merged = mergeSessionBounds(prior.header?.sessions, input.sessions);
-  const sessions = merged.sessions;
-  const deltas = undeclaredSessionRanges(prior.header?.sessions, sessions);
-
-  // Normalizing duplicate historical physical sessions must also migrate every
-  // projected row's old header index into the normalized header domain.
-  let lines = prior.lines.map((line) => ({
-    ...line,
-    s: merged.priorIndexes[line.s] ?? line.s,
-  }));
-  const unparsable: UnparsableSessionLine[] = [];
-  const seenIds = new Set<string>();
-  for (const line of lines) {
-    if (line.id !== undefined) seenIds.add(line.id);
+  const deltas = undeclaredSessionRanges(prior.header?.sessions, merged.sessions);
+  if (deltas.length === 0) {
+    const now = new Date().toISOString();
+    return {
+      recordFile: prior.recordFile,
+      header: prior.header ?? {
+        repo: resolveBookKeyFromGit(input.cwd),
+        ticket: input.ticketNumber,
+        createdAt: now,
+        updatedAt: now,
+        sessions: merged.sessions,
+      },
+      lines: prior.lines,
+      unparsable: [],
+    };
   }
 
   const amendmentsByKey = new Map<string, TicketProvenanceAmendment>();
-  for (const amendment of amendments) {
+  for (const amendment of input.amendments ?? []) {
     const cumulativeIndex = merged.incomingIndexes[amendment.s];
     if (cumulativeIndex === undefined) continue;
     amendmentsByKey.set(amendmentKey(cumulativeIndex, amendment.line), {
@@ -669,62 +648,62 @@ async function reprojectTicketProvenanceTransaction(
     });
   }
 
-  // Only previously undeclared ranges read sources. Already-declared = carry only.
-  if (deltas.length > 0) {
-    const fresh: TicketProvenanceLine[] = [];
-    for (const delta of deltas) {
-      const projected = await projectSessionRanges({
-        s: delta.s,
-        session: delta.session,
-        amendmentsByKey,
-        seenIds,
-        ...(input.home === undefined ? {} : { home: input.home }),
-      });
-      fresh.push(...projected.lines);
-      unparsable.push(...projected.unparsable);
-    }
-    lines = mergeFreshIntoCarried(lines, fresh);
+  const seenIds = new Set(
+    prior.lines.flatMap((line) => line.id === undefined ? [] : [line.id]),
+  );
+  const fresh: TicketProvenanceLine[] = [];
+  const unparsable: UnparsableSessionLine[] = [];
+  for (const delta of deltas) {
+    const projected = await projectSessionRanges({
+      s: delta.s,
+      session: delta.session,
+      amendmentsByKey,
+      seenIds,
+      ...(input.home === undefined ? {} : { home: input.home }),
+    });
+    fresh.push(...projected.lines);
+    unparsable.push(...projected.unparsable);
   }
-
+  const lines = mergeFreshIntoCarried(prior.lines, fresh);
+  const now = new Date().toISOString();
   const header: TicketProvenanceHeader = {
-    repo,
+    repo: prior.header?.repo ?? resolveBookKeyFromGit(input.cwd),
     ticket: input.ticketNumber,
     createdAt: prior.header?.createdAt ?? now,
     updatedAt: now,
-    sessions,
+    sessions: merged.sessions,
   };
-
-  // Still-open gaps on this-round delta → reask; never publish partial over the archive.
   if (unparsable.length > 0) {
-    return {
-      recordFile: prior.recordFile,
-      header,
-      lines,
-      unparsable,
-    };
+    return { recordFile: prior.recordFile, header, lines, unparsable };
   }
 
-  // Exact resubmit of already-declared bounds, no amendments → no-op.
-  // Historical source readability is not a publish prerequisite.
-  if (
-    deltas.length === 0 &&
-    lines.length === prior.lines.length &&
-    prior.header !== undefined &&
-    sessionBoundsEqual(prior.header.sessions, sessions)
-  ) {
-    return {
-      recordFile: prior.recordFile,
-      header: prior.header,
-      lines: prior.lines,
-      unparsable: [],
-    };
-  }
-
-  const recordFile = await publishTicketProvenanceVolume({
-    recordInput,
-    header,
-    lines,
-    unprojectedRaw,
+  // One immutable projection commit. Its deterministic identity makes retries of
+  // the same logical increment converge, while unrelated concurrent increments
+  // append independently and are folded by readTicketProvenance.
+  const identityMaterial = JSON.stringify({
+    ticket: input.ticketNumber,
+    deltas: deltas.map(({ s, session }) => ({
+      s,
+      path: physicalPathIdentity(session.path),
+      ranges: session.ranges,
+    })),
+    lines: fresh,
   });
-  return { recordFile, header, lines, unparsable: [] };
+  const identity = `ticket-provenance:${createHash("sha256").update(identityMaterial).digest("hex")}`;
+  const pointer = appendSitianRecord({
+    ...ticketProvenanceRecordInput(input.ticketNumber, input.cwd, input.home),
+    identity,
+    payload: {
+      type: "ticket-provenance-append",
+      sessions: merged.sessions,
+      lines: fresh,
+    },
+  });
+  const folded = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
+  return {
+    recordFile: pointer.recordFile,
+    header: folded.header ?? header,
+    lines: folded.lines,
+    unparsable: [],
+  };
 }
