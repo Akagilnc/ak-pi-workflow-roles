@@ -1852,6 +1852,79 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
   });
 });
 
+test("ak-role diarist records the same owner text from isolated user and enqueue bounds", async () => {
+  const ownerText = "那就不要行号了嘛。反正全文拿去搜索匹配也很快？";
+
+  for (const source of ["user", "enqueue"] as const) {
+    await withTempHome(async (home) => {
+      const project = join(home, "project");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const sessionPath = join(
+        home,
+        ".claude",
+        "projects",
+        `probe-${source}`,
+        "session.jsonl",
+      );
+      await mkdir(join(sessionPath, ".."), { recursive: true });
+      const row = source === "user"
+        ? {
+            type: "user",
+            uuid: `owner-${source}`,
+            message: { role: "user", content: [{ type: "text", text: ownerText }] },
+          }
+        : {
+            type: "queue-operation",
+            operation: "enqueue",
+            id: `owner-${source}`,
+            content: ownerText,
+          };
+      await writeFile(sessionPath, `${JSON.stringify(row)}\n`, "utf8");
+
+      const { io, stdout } = captureIo();
+      const result = await runAkRole(
+        [
+          "diarist",
+          "--model",
+          "test/caller-seat:high",
+          "--project",
+          project,
+          `整理 #${TICKET} 起居录`,
+        ],
+        {
+          home,
+          packageRoot,
+          cwd: project,
+          io,
+          createRunId: () => `01a0diar00-0000-7000-8000-0000000000${source === "user" ? "a1" : "a2"}`,
+          principalAuthority: immutablePrincipalAuthority,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: immutablePrincipalAuthority,
+            piRunner: diaristEnvelopeRunner({
+              status: "completed",
+              ticketNumber: TICKET,
+              sessions: [
+                { path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] },
+              ],
+            }),
+          }),
+        },
+      );
+      assert.equal(result.exitCode, 0, stdout.join("") || `${source} boundary failed`);
+
+      const volume = await readTicketProvenance(TICKET, project, home);
+      assert.deepEqual(
+        volume.lines.map(({ speaker, text, id, s }) => ({ speaker, text, id, s })),
+        [{ speaker: "owner", text: ownerText, id: `owner-${source}`, s: 0 }],
+        `${source} boundary must produce the same owner utterance without a line address`,
+      );
+      assert.equal(volume.lines.some((line) => "line" in line), false);
+    });
+  }
+});
+
 test("ak-role diarist true-unbound leaves no 起居录", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
