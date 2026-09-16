@@ -198,7 +198,7 @@ test("publicCliCoderCompletedInspectorBounceThenPassSameSession", async () => {
       report: "TDD red/green evidence after inspector bounce.",
     };
     let sessionFileSeen: string | undefined;
-    const { io } = captureIo();
+    const cap = captureIo();
     const result = await runAkRole(
       [
         "coder",
@@ -213,7 +213,7 @@ test("publicCliCoderCompletedInspectorBounceThenPassSameSession", async () => {
         home,
         cwd: project,
         createRunId: () => runId,
-        io,
+        io: cap.io,
         credentials: CREDENTIALS,
         roleTurnHost: createMinimalHost(async (request) => {
           const { sessionDirectory, sessionFile } =
@@ -283,7 +283,7 @@ test("publicCliCoderCompletedInspectorBounceThenPassSameSession", async () => {
         }),
       },
     );
-    assert.equal(result.exitCode, 0, io.stderr.join(""));
+    assert.equal(result.exitCode, 0, cap.stderr.join(""));
     assert.ok(result.terminal);
     assert.equal(result.terminal.runId, runId);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
