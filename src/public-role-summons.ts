@@ -46,6 +46,8 @@ export type PublicSummonRequest = {
   readonly packageRoot?: string;
   readonly io?: CliIo;
   readonly credentials?: CredentialProviders;
+  /** Effective parent seat for same-seat child legs; avoids re-resolving live configuration. */
+  readonly effectiveSeat?: EffectiveSeat;
   readonly agentDir?: string;
   /**
    * Optional Pi argv forwarded to the role-turn host (same face as public CLI
@@ -311,7 +313,7 @@ export async function summonPublicRole(
     options.credentials ?? (await loadCredentialProviders(agentDir));
   const config = await loadPublicCliConfig(home);
   // Nested summons: officer seat only (flag>seat>default pi). #178 order below.
-  const seat = resolveEffectiveSeat(config, options.role, credentials);
+  const seat = options.effectiveSeat ?? resolveEffectiveSeat(config, options.role, credentials);
   const captured = options.io === undefined ? createCapturingIo() : undefined;
   const io = options.io ?? captured!.io;
 
