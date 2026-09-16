@@ -566,7 +566,7 @@ export async function summonParallelReviewerLenses(options: {
   const created = new Set<string>();
   let primaryFailure: unknown;
   try {
-    await Promise.all(
+    const creation = await Promise.allSettled(
       worktrees.map(async (path) => {
         await execFileAsync("git", ["worktree", "add", "--detach", path, "HEAD"], {
           cwd: options.projectRoot,
@@ -574,6 +574,11 @@ export async function summonParallelReviewerLenses(options: {
         created.add(path);
       }),
     );
+    const creationFailures = creation.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : []);
+    if (creationFailures.length > 0) {
+      throw new AggregateError(creationFailures, "parallel reviewer worktree creation failed");
+    }
     const summon = (lens: "completeness" | "correctness", cwd: string) =>
       summonPublicRole({
         role: "reviewer",
