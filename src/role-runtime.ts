@@ -593,6 +593,8 @@ type NavigatorAttendanceDependency = Omit<NavigatorAttendance, "knownRoutePlaybo
 export type RoleRuntimeDependencies = {
   /** Package root for packaged engine-note resolution (#879). */
   packageRoot?: string;
+  /** Non-identity opening materials delivered in the ordinary role brief. */
+  loadRoleReferenceMaterials?(role: PackagedRole): Promise<string>;
   loadJudgeSoul(): Promise<string>;
   loadFixerSoul?(): Promise<string>;
   loadFixPacket?(path: string): Promise<string>;
@@ -1301,7 +1303,8 @@ export function createRoleRuntimeExtension(
     });
 
     let admitted = false;
-    let selectedRole: string | undefined;
+    let selectedRole: PackagedRole | undefined;
+    let roleReferenceMaterials = "";
     /** Live Reviewer parent activation for envelope agent_start prompt assembly. */
     let activeReviewerParent: ReviewerActivation | undefined;
     /** Envelope-owned Reviewer Skill expansion state (ADR 0018 — not a role-module facade). */
@@ -1402,6 +1405,9 @@ export function createRoleRuntimeExtension(
       const text = event.text;
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
+      const brief = roleReferenceMaterials === ""
+        ? text
+        : `<role_reference_materials>\n${roleReferenceMaterials}\n</role_reference_materials>\n\n${text}`;
       // Reviewer: recover original request; Pi argv may already carry native form.
       if (
         role === "reviewer"
@@ -1414,13 +1420,13 @@ export function createRoleRuntimeExtension(
             activeReviewerParent.skillBinding.name,
             text,
           ) ?? text;
-        return text === event.text
+        return brief === event.text
           ? { action: "continue" as const }
-          : { action: "transform" as const, text };
+          : { action: "transform" as const, text: brief };
       }
-      return text === event.text
+      return brief === event.text
         ? { action: "continue" as const }
-        : { action: "transform" as const, text };
+        : { action: "transform" as const, text: brief };
     });
     roleHost.on("before_agent_start", async (event, ctx) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
@@ -2109,6 +2115,7 @@ export function createRoleRuntimeExtension(
       }
       admitted = false;
       selectedRole = undefined;
+      roleReferenceMaterials = "";
       activeReviewerParent = undefined;
       reviewerOriginalRequest = undefined;
       reviewerExpansionCaptured = false;
@@ -2269,6 +2276,7 @@ export function createRoleRuntimeExtension(
         }
 
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
+        roleReferenceMaterials = await dependencies.loadRoleReferenceMaterials?.(entry.role) ?? "";
         // #357 T2 / #378 / #380 / #391 / #818: any role+engine activation registers the package detour tool once.
         // Gate is resolveEngineName (RoleHost flag → env fallback) — no per-engine execute branch; no role-module spawn.
         if (!engineDetourRegistered) {

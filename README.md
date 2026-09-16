@@ -56,7 +56,7 @@ ak-role config set-auto-resume-limit 3
 
 **Host providers (#788):** seat rows keep one provider name. Owner edits `~/.ak-roles/host-providers.json` (`{ "hermes": { "xai": "xai-oauth" } }`); code only reads it. Missing table entries ask the host directory (hermes this ticket): unique match wins, zero or many fail loud. Priority is table > unique > fail — no package discretion. `config show` prints the table as written.
 
-**Forced method skills (#922):** claude/grok load packaged methods via `--plugin-dir`; codex/hermes via a cwd `.agents/skills` symlink to the package method tree (create-if-absent by the shared envelope; never overwrites an existing catalog; this process deletes only links it created). Hermes also requires a one-time operator `hermes skills trust` on that project (use the same `-p ak-<role>` profile the seat uses); the factory does not write host trust config and fails loud when trust is missing.
+**Forced method skills (#922):** claude/grok load packaged methods via `--plugin-dir`; codex/hermes receive the packaged Skill's absolute path in the role brief and read it directly. The package never creates a workspace skill catalog or changes host trust/configuration.
 
 For Gate officers (`gatekeeper` / `inspector` / `notary`) resolution is officer pin → province (`gatekeeper`) pin → inherit parent session; an explicit selection that fails is loud and does not fall back. Configuration usage and refusal text are owned by `ak-role config` / `ak-role help config`. The persistent file is machine-wide and shared across CLI builds: seat keys this build does not know are skipped on read (not an error); unknown field-level keys on known seats keep their existing tolerance.
 

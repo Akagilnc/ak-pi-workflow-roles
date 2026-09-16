@@ -24,8 +24,8 @@ import {
 
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
-  applyCodexSkillInvocation,
   applyHostSlashSkillInvocation,
+  applyMethodPathBrief,
   ensurePackagedMethodPlugin,
   forcedPluginSlashToken,
   hostMethodSkills,
@@ -487,9 +487,8 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           `${JSON.stringify(closeJsonSchemaForCodex(prepared.jsonSchema), null, 2)}\n`,
           "utf8",
         );
-        // #922: cwd `.agents/skills` catalog (envelope); mention selects the skill.
         const skills = hostMethodSkills(request.methods);
-        if (skills.length > 0) applyMethodPrompt = (p) => applyCodexSkillInvocation(skills, p);
+        if (skills.length > 0) applyMethodPrompt = (p) => applyMethodPathBrief(skills, p);
       } else {
         mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
         await writeFile(

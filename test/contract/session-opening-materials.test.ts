@@ -13,7 +13,10 @@ import {
 import {
   GATEKEEPER_SESSION_MATERIALS,
   joinPackageMaterials,
+  loadMainRoleReferenceMaterials,
+  loadMainRoleSessionMaterials,
   MAIN_ROLE_SESSION_MATERIALS,
+  readPackageMaterial,
   type GatekeeperSessionRole,
   type MainRoleSession,
 } from "../../src/session-opening-materials.ts";
@@ -137,6 +140,15 @@ test("auditor material roster matches ticket path list", () => {
       `${role} auditor must carry ticket material paths`,
     );
   }
+});
+
+test("#922 identity Soul and reference materials use separate opening channels", async () => {
+  const roster = MAIN_ROLE_SESSION_MATERIALS.judge;
+  assert.equal(await loadMainRoleSessionMaterials("judge"), await readPackageMaterial("souls/judge.md"));
+  assert.equal(
+    await loadMainRoleReferenceMaterials("judge"),
+    await joinPackageMaterials(roster.filter((path) => path !== "souls/judge.md")),
+  );
 });
 
 test("missing injected material fails as native ENOENT, not a soft empty", async () => {

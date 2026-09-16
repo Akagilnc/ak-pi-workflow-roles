@@ -11,6 +11,7 @@ import {
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
   applyHostSlashSkillInvocation,
+  applyMethodPathBrief,
   HOST_METHOD_PLUGIN_NAME,
   hostMethodSkills,
   pluginSkillToken,
@@ -25,10 +26,10 @@ import { acpModelId, type AcpHostDescription } from "./description.ts";
 function applyAcpMethodPrompt(hostName: string, request: RoleTurnRequest, prompt: string): string {
   const skills = hostMethodSkills(request.methods);
   if (skills.length !== 1) return prompt;
-  // grok: plugin token; hermes: bare name after cwd catalog + operator trust (#922).
+  if (hostName === "hermes") return applyMethodPathBrief(skills, prompt);
   const token = hostName === "grok-build"
     ? pluginSkillToken(HOST_METHOD_PLUGIN_NAME, skills[0]!.name)
-    : hostName === "hermes" ? skills[0]!.name : "";
+    : "";
   return token ? applyHostSlashSkillInvocation(token, prompt) : prompt;
 }
 

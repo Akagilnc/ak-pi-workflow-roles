@@ -6,7 +6,7 @@
 import type { Static } from "typebox";
 import { Type } from "typebox";
 
-import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 import type { NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import {
@@ -25,7 +25,7 @@ export {
 export type { SecretariatVerdict };
 
 /** 中书省终局回执形状；形状指引，非 schema 闸。 */
-export const secretariatVerdictSchema = withInfrastructureFailureDeclaration(
+export const secretariatVerdictSchema = withTerminatingOutputDeclarations(
   Type.Object(
     {
       secretariatStatus: Type.Unknown({

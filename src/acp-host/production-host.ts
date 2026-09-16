@@ -14,7 +14,6 @@ import type { RoleRuntimeDependencies } from "../role-runtime.ts";
 import { createRoleRuntimeDependencies } from "../role-runtime-dependencies.ts";
 import { createSessionIdentityAuthority } from "../session-identity.ts";
 import {
-  assertHermesProjectSkillsTrusted,
   ensurePackagedMethodPlugin,
   hostMethodSkills,
 } from "../host-native-method.ts";
@@ -80,15 +79,8 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
           packageRoot,
           role: request.activation.role,
         });
-      // #922: grok --plugin-dir; hermes cwd catalog (envelope) + operator trust.
+      // #922: grok uses its native plugin loader; hermes receives paths in the brief.
       const skills = hostMethodSkills(request.methods);
-      if (hostName === "hermes" && skills.length > 0) {
-        await assertHermesProjectSkillsTrusted({
-          home: request.home,
-          cwd: request.cwd,
-          profileName: profileName ?? `ak-${request.activation.role}`,
-        });
-      }
       const pluginDir = hostName === "grok-build" && skills.length > 0
         ? await ensurePackagedMethodPlugin(packageRoot)
         : undefined;
