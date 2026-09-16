@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -52,11 +52,21 @@ export async function cleanupReviewerWorktreeOwnership(
   const projectRoot = await realpath(ownership.projectRoot);
   const worktreeRoot = await realpath(ownership.worktreeRoot);
   const sourceProjectRoot = await realpath(ownership.sourceProjectRoot);
-  const commonDir = (await execFileAsync(
+  const childCommonDir = await realpath((await execFileAsync(
     "git",
     ["rev-parse", "--path-format=absolute", "--git-common-dir"],
     { cwd: projectRoot },
-  )).stdout.trim();
+  )).stdout.trim());
+  const sourceTopLevel = await realpath((await execFileAsync(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    { cwd: sourceProjectRoot },
+  )).stdout.trim());
+  const sourceCommonDir = await realpath((await execFileAsync(
+    "git",
+    ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    { cwd: sourceProjectRoot },
+  )).stdout.trim());
   const axis = basename(projectRoot);
   if (
     projectRoot !== await realpath(admittedProjectRoot)
@@ -64,7 +74,8 @@ export async function cleanupReviewerWorktreeOwnership(
     || (axis !== "completeness" && axis !== "correctness")
     || !basename(worktreeRoot).startsWith(ROOT_PREFIX)
     || dirname(worktreeRoot) !== await realpath(tmpdir())
-    || dirname(resolve(commonDir)) !== sourceProjectRoot
+    || sourceTopLevel !== sourceProjectRoot
+    || sourceCommonDir !== childCommonDir
   ) {
     throw new Error("Reviewer worktree ownership does not match the admitted run");
   }
