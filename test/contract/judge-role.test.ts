@@ -2202,11 +2202,7 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         } as any;
       };
 
-      const createRole = (
-        role: keyof typeof outputs,
-        decision: typeof pass | typeof bounce | typeof escalation,
-        failReviewerLens = false,
-      ) => {
+      const createRole = (role: keyof typeof outputs, decision: typeof pass | typeof bounce | typeof escalation) => {
         const harness = role === "fixer"
           ? makeHarness({ "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" })
           : role === "reviewer"
@@ -2273,7 +2269,6 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
             return passingOfficerSummon(officer);
           };
         };
-        let reviewerSummonCalls = 0;
         let runtime: any;
         if (role === "judge") {
           runtime = judgeRole.createJudgeRoleRuntime(piHostAdapter.host, {
@@ -2298,19 +2293,6 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
               snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: Object.freeze({ text: skill }) },
               captureExpansion: () => ({ name: "ak-cross-m-review" as const, location: "/skill", content: skill, userMessage: "" }),
             }),
-            summonLenses: async () => {
-              reviewerSummonCalls += 1;
-              const accepted = {
-                exitCode: 0,
-                terminal: { roleOutcome: { kind: "accepted" } },
-              };
-              return {
-                completeness: accepted,
-                correctness: failReviewerLens
-                  ? { exitCode: 1, terminal: { roleOutcome: { kind: "failure" } } }
-                  : accepted,
-              };
-            },
           }, testHostActions());
         }
         return {
@@ -2319,7 +2301,6 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
           armJudgeGateDecision,
           setDecision(next: typeof pass | typeof bounce | typeof escalation) { selectedDecision = next; },
           get auditCalls() { return auditCalls; },
-          get reviewerSummonCalls() { return reviewerSummonCalls; },
         };
       };
 
@@ -2339,39 +2320,7 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
               ["read", "write", "grep", "find", "bash"],
               "Reviewer activation must preserve Pi's evidence tool surface",
             );
-            const activated = await plain.runtime.activate(
-              outputContext(toolName, "reviewer-auto-summon"),
-              {
-                baseRevision: "review-base",
-                lens: "all",
-                authorityRefs: ["CLAUDE.md"],
-              },
-            );
-            assert.ok(activated.loadLensResults);
-            const lensResults = await activated.loadLensResults() as Record<string, {
-              exitCode: number;
-              terminal: { roleOutcome: { kind: string } };
-            }>;
-            assert.equal(lensResults.completeness?.exitCode, 0);
-            assert.equal(lensResults.correctness?.exitCode, 0);
-            assert.equal(lensResults.completeness?.terminal.roleOutcome.kind, "accepted");
-            assert.equal(lensResults.correctness?.terminal.roleOutcome.kind, "accepted");
-            await activated.loadLensResults();
-            assert.equal(plain.reviewerSummonCalls, 1);
 
-            const failed = createRole("reviewer", pass, true);
-            const failedActivation = await failed.runtime.activate(
-              outputContext(toolName, "reviewer-failed-lens"),
-              {
-                baseRevision: "review-base",
-                lens: "all",
-                authorityRefs: ["CLAUDE.md"],
-              },
-            );
-            await assert.rejects(
-              () => failedActivation.loadLensResults!(),
-              /correctness lens did not produce an accepted terminal/,
-            );
           } else {
             await plain.runtime.activate();
           }

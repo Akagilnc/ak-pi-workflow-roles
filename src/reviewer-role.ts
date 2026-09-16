@@ -61,11 +61,6 @@ export const reviewerOutputSchema = withTerminatingOutputDeclarations(
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadCanonicalSkillBinding(name: "ak-cross-m-review"): Promise<AnyCanonicalSkillBinding>;
-  summonLenses?(options: {
-    admitted: ReviewerAdmittedInputs;
-    context: HostContext;
-    signal?: AbortSignal;
-  }): Promise<unknown>;
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
 
@@ -73,8 +68,6 @@ export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: 
 export type ReviewerActivation = Readonly<{
   fixedBaseRevision: string;
   soul: string;
-  /** Present only for the default shape; envelope calls once before the parent turn. */
-  loadLensResults?: () => Promise<unknown>;
   /** Frozen ak-cross-m-review binding — envelope owns expansion capture against this data. */
   skillBinding: CanonicalSkillBinding<"ak-cross-m-review">;
 }>;
@@ -97,42 +90,10 @@ export function createReviewerRoleRuntime(
   let fixedBaseRevision: string | undefined;
 
   return {
-    async activate(ctx, admitted) {
+    async activate(_ctx, admitted) {
       soul = (await dependencies.loadSoul()).trim();
       if (!soul) throw new Error("Reviewer soul is empty");
       fixedBaseRevision = admitted.baseRevision;
-      const loadLensResults = admitted.lens === "all"
-        ? (() => {
-            if (ctx === undefined || dependencies.summonLenses === undefined) {
-              throw new Error("Reviewer dual-lens summons is not configured");
-            }
-            let result: Promise<unknown> | undefined;
-            return () => result ??= dependencies.summonLenses!({
-              admitted,
-              context: ctx,
-              ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
-            }).then((summoned) => {
-              if (typeof summoned !== "object" || summoned === null) {
-                throw new Error("Reviewer dual-lens summons returned no structured results");
-              }
-              for (const lens of ["completeness", "correctness"] as const) {
-                const leg = (summoned as Record<string, unknown>)[lens];
-                const result = typeof leg === "object" && leg !== null
-                  ? leg as { exitCode?: unknown; terminal?: { roleOutcome?: { kind?: unknown } } }
-                  : undefined;
-                if (
-                  result?.exitCode !== 0
-                  || result.terminal?.roleOutcome?.kind !== "accepted"
-                ) {
-                  throw new Error(`Reviewer ${lens} lens did not produce an accepted terminal`, {
-                    cause: leg,
-                  });
-                }
-              }
-              return summoned;
-            });
-          })()
-        : undefined;
       const loaded = await dependencies.loadCanonicalSkillBinding("ak-cross-m-review");
       if (loaded.name !== "ak-cross-m-review") throw new Error("Canonical Skill binding loader returned tdd for ak-cross-m-review");
       binding = loaded;
@@ -155,7 +116,6 @@ export function createReviewerRoleRuntime(
       return Object.freeze({
         fixedBaseRevision: activatedBase,
         soul: activatedSoul,
-        ...(loadLensResults === undefined ? {} : { loadLensResults }),
         skillBinding: activatedBinding,
       });
     },

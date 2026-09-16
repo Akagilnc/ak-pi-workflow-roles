@@ -441,8 +441,12 @@ type ActivationRuntime = {
   };
   /** Envelope decodes Reviewer transport flags inside the activation stage. */
   decodeReviewerAdmitted(): ReviewerAdmittedInputs;
-  /** Envelope stores live parent activation for agent_start prompt assembly. */
-  bindReviewerParent(activation: ReviewerActivation): void;
+  /** Envelope stores live parent activation and owns default dual-leg execution. */
+  bindReviewerParent(
+    activation: ReviewerActivation,
+    admitted: ReviewerAdmittedInputs,
+    context: HostContext,
+  ): void;
   collector: {
     activate(context: HostContext, event: { reason: string }): Promise<void>;
   };
@@ -471,7 +475,7 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "reviewer": return { id: "load-and-install", run: async () => {
       const admitted = runtime.decodeReviewerAdmitted();
       const activation = await runtime.reviewer.activate(runtime.context, admitted);
-      runtime.bindReviewerParent(activation);
+      runtime.bindReviewerParent(activation, admitted, runtime.context);
     } };
     case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
     case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
@@ -1271,7 +1275,9 @@ export function createRoleRuntimeExtension(
     let selectedRole: PackagedRole | undefined;
     let roleReferenceMaterials = "";
     /** Live Reviewer parent activation for envelope agent_start prompt assembly. */
-    let activeReviewerParent: ReviewerActivation | undefined;
+    let activeReviewerParent: (ReviewerActivation & {
+      loadLensResults?: () => Promise<unknown>;
+    }) | undefined;
     /** Envelope-owned Reviewer Skill expansion state (ADR 0018 — not a role-module facade). */
     let reviewerOriginalRequest: string | undefined;
     let reviewerExpansionCaptured = false;
@@ -1767,26 +1773,6 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadCanonicalSkillBinding(name);
         },
-        async summonLenses({ admitted, context, signal }) {
-          if (admitted.lens !== "all") {
-            throw new Error("Reviewer dual-lens summons requires the admitted all shape");
-          }
-          const coordinates = readRoleRunCoordinates(context, "reviewer dual-lens summons");
-          const correlationId = runIdFromRunDirectory(coordinates.runDirectory);
-          const { summonParallelReviewerLenses } = await import("./public-role-summons.ts");
-          return summonParallelReviewerLenses({
-            projectRoot: coordinates.projectRoot,
-            baseRevision: admitted.baseRevision,
-            authorityRefs: admitted.authorityRefs ?? [],
-            home: coordinates.home,
-            ...(context.host === undefined ? {} : { host: context.host }),
-            ...(signal === undefined ? {} : { signal }),
-            ...(correlationId === undefined ? {} : { correlationId }),
-            ...(dependencies.packageRoot === undefined
-              ? {}
-              : { packageRoot: dependencies.packageRoot }),
-          });
-        },
       },
       hostActions,
     );
@@ -2138,8 +2124,50 @@ export function createRoleRuntimeExtension(
         decodeReviewerAdmitted() {
           return decodeReviewerAdmittedInputs((name) => roleHost.getFlag(name));
         },
-        bindReviewerParent(activation) {
-          activeReviewerParent = activation;
+        bindReviewerParent(activation, admitted, context) {
+          if (admitted.lens !== "all") {
+            activeReviewerParent = activation;
+            return;
+          }
+          let result: Promise<unknown> | undefined;
+          activeReviewerParent = {
+            ...activation,
+            loadLensResults: () => result ??= (async () => {
+              const coordinates = readRoleRunCoordinates(
+                context,
+                "reviewer dual-lens summons",
+              );
+              const correlationId = runIdFromRunDirectory(coordinates.runDirectory);
+              const { summonParallelReviewerLenses } = await import(
+                "./public-role-summons.ts"
+              );
+              const summoned = await summonParallelReviewerLenses({
+                projectRoot: coordinates.projectRoot,
+                baseRevision: admitted.baseRevision,
+                authorityRefs: admitted.authorityRefs ?? [],
+                home: coordinates.home,
+                ...(context.host === undefined ? {} : { host: context.host }),
+                ...(context.signal === undefined ? {} : { signal: context.signal }),
+                ...(correlationId === undefined ? {} : { correlationId }),
+                ...(dependencies.packageRoot === undefined
+                  ? {}
+                  : { packageRoot: dependencies.packageRoot }),
+              });
+              for (const lens of ["completeness", "correctness"] as const) {
+                const leg = summoned[lens];
+                if (
+                  leg.exitCode !== 0
+                  || leg.terminal?.roleOutcome.kind !== "accepted"
+                ) {
+                  throw new Error(
+                    `Reviewer ${lens} lens did not produce an accepted terminal`,
+                    { cause: leg },
+                  );
+                }
+              }
+              return summoned;
+            })(),
+          };
         },
         decodeNotaryAdmitted() {
           const ticketNumber = readNotaryTicketFlag(
