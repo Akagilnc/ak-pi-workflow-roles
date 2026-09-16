@@ -175,7 +175,6 @@ test("malformed session JSONL settles as typed session failure retaining SyntaxE
     );
   });
 });
-
 test("unwritable run directory retains activation cause with durable Error Artifact and Terminal", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
