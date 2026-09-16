@@ -155,4 +155,3 @@ test("public secretariat face has no new flags or mode params", () => {
     false,
   );
 });
-

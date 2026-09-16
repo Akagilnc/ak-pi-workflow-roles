@@ -543,6 +543,15 @@ test("public secretariat through-line: default summon → continue → same-run 
       },
     );
     assert.equal(prior.exitCode, 0, capture.stderr.join(""));
+    const priorRunDir = await findRunDirectoryById(home, priorCountersignRunId);
+    assert.ok(priorRunDir, "seed countersign run must exist");
+    const priorAttemptIds = await distinctCourtAttemptIds({
+      cwd: project,
+      home,
+      runId: priorCountersignRunId,
+      runDirectory: priorRunDir,
+    });
+    const priorGateCount = gateCalls.length;
 
     const result = await runAkRole(
       [
@@ -596,17 +605,16 @@ test("public secretariat through-line: default summon → continue → same-run 
       "second summon must resume the same countersign run",
     );
 
-    // G2: 符宝郎内闸 via real countersign runtime — continue + converged both gate.
+    // G2: each resumed leg crosses 符宝郎内闸 and creates a new court.
+    const resumedGateCalls = gateCalls.slice(priorGateCount);
+    assert.equal(resumedGateCalls.length, 2);
     assert.ok(
-      gateCalls.length >= 2,
-      `expected ≥2 notary gate calls, got ${gateCalls.length}`,
-    );
-    assert.ok(
-      gateCalls.every((c) => c.kind === "countersign_verdict"),
-      `gate subjects must be countersign_verdict, got ${JSON.stringify(gateCalls)}`,
+      resumedGateCalls.every((c) => c.kind === "countersign_verdict"),
+      `resumed gate subjects must be countersign_verdict, got ${JSON.stringify(resumedGateCalls)}`,
     );
 
-    // Court count via structured attemptId — not row count.
+    // Court count via structured attemptId — distinguish both resumed courts
+    // from the court already created by the seed invocation.
     const childRunDir = await findRunDirectoryById(home, firstRunId as string);
     assert.ok(childRunDir, "countersign child run must exist");
     const attemptIds = await distinctCourtAttemptIds({
@@ -615,9 +623,10 @@ test("public secretariat through-line: default summon → continue → same-run 
       runId: firstRunId as string,
       runDirectory: childRunDir,
     });
-    assert.ok(
-      attemptIds.size >= 2,
-      `expected ≥2 courtAttemptIds, got ${[...attemptIds].join(",") || "(none)"}`,
+    assert.equal(
+      attemptIds.size - priorAttemptIds.size,
+      2,
+      `both resumed legs must create a new court; before=${[...priorAttemptIds].join(",") || "(none)"}, after=${[...attemptIds].join(",") || "(none)"}`,
     );
 
     const secretariatResumeRequests = countersignRequests.filter(
