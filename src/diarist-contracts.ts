@@ -4,13 +4,11 @@
  * Machine facts about the volume come from the mechanical reproject seam, never
  * from model self-report (锚定宪法); this module owns the receipt shape only.
  *
- * #901: LLM submits bounds (+ optional amendments); mechanical layer projects.
+ * #901: LLM submits bounds; the mechanical layer projects source bytes.
  */
 
 import {
-  projectTicketProvenanceAmendments,
   projectTicketProvenanceSessions,
-  type TicketProvenanceAmendment,
   type TicketProvenanceSession,
 } from "./ticket-provenance-contracts.ts";
 import {
@@ -45,11 +43,6 @@ export type DiaristOutput =
        * Malformed endpoints → accept hook reasks (`reask-not-explode`).
        */
       readonly sessions?: readonly TicketProvenanceSession[];
-      /**
-       * Optional amendments for unparsable source lines (s + line + speaker + text).
-       * Absent = no amendments this turn (not a shape rejection).
-       */
-      readonly amendments?: readonly TicketProvenanceAmendment[];
     }
   | {
       /** LLM cannot tell which ticket this summons is about — escalate, never wash into 无录. */
@@ -186,15 +179,4 @@ export function projectDiaristSessions(
   const raw = (value as { sessions?: unknown } | null)?.sessions;
   if (raw === undefined) return [];
   return projectTicketProvenanceSessions(raw);
-}
-
-/**
- * Project optional amendments. Absent / non-array → empty (not a rejection).
- */
-export function projectDiaristAmendments(
-  value: unknown,
-): readonly TicketProvenanceAmendment[] {
-  const raw = (value as { amendments?: unknown } | null)?.amendments;
-  if (raw === undefined) return [];
-  return projectTicketProvenanceAmendments(raw);
 }

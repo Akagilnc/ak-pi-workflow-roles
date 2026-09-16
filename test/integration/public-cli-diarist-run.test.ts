@@ -1,6 +1,6 @@
 /**
  * #708 / #779 / #901 public 起居郎 seat — `ak-role diarist` is a role like the other seats.
- * LLM submits bounds (+ optional amendments); mechanical layer reprojects records.jsonl.
+ * LLM submits bounds; mechanical layer reprojects records.jsonl.
  * Single seam: real entry, scripted host, on-disk session fixture, assert the unique diary file.
  */
 import assert from "node:assert/strict";
@@ -94,7 +94,7 @@ type DiaristSubmit = unknown | ((round: number, lastReask?: string) => unknown);
 
 /**
  * Faux pi process for this seat: drives the production diarist role envelope.
- * Supports the #901 reask loop (unusable bounds / unparsable-line amendments).
+ * Supports the #901 unusable-bounds reask loop.
  */
 function diaristEnvelopeRunner(
   submitted: DiaristSubmit,
@@ -749,7 +749,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   };
 }
 
-test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands amendment", async () => {
+test("ak-role diarist projects dialogue bounds and preserves unparsable source bytes", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -782,7 +782,6 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     await writeFile(paths.recordFile, priorBody, "utf8");
     const priorBytes = priorBody;
     let sawDirPathReask = false;
-    let sawUnparsableReask = false;
     // Authorized-root directory (not a session file) — EISDIR must reask, not fail the court.
     const sessionDirOnly = join(home, ".claude", "projects", "probe");
 
@@ -848,44 +847,7 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
                   ],
                 };
               }
-              // Third turn: payload-id bounds + amendment (nativeEventId coherence via public entry).
-              assert.ok(
-                lastReask,
-                "expected unparsable-line reask before amendment",
-              );
-              assert.match(lastReask, /amendments/);
-              assert.ok(lastReask.includes(fixture.unparsableRaw));
-              sawUnparsableReask = true;
-              assert.equal(
-                readFileSync(paths.recordFile, "utf8"),
-                priorBytes,
-                "unparsable reask must not publish over the prior diary",
-              );
-              return {
-                status: "completed",
-                ticketNumber: TICKET,
-                sessions: [
-                  {
-                    path: fixture.path,
-                    ranges: [
-                      // Codex payload.id must resolve as bound endpoints.
-                      {
-                        from: { id: "msg-codex-owner" },
-                        to: { id: "msg-codex-runner" },
-                      },
-                      { from: { line: 1 }, to: { line: fixture.lastLine } },
-                    ],
-                  },
-                ],
-                amendments: [
-                  {
-                    s: 0,
-                    line: fixture.unparsableLine,
-                    speaker: "owner",
-                    text: "补写：坏行原话由起居郎交回。",
-                  },
-                ],
-              };
+              throw new Error(`unexpected diarist round ${round}: ${lastReask ?? "none"}`);
             },
           ),
         }),
@@ -899,11 +861,6 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       sawDirPathReask,
       true,
       "expected directory session path reask",
-    );
-    assert.equal(
-      sawUnparsableReask,
-      true,
-      "expected an unparsable reask before accept",
     );
 
     const placement = roleRunPlacement(resolveActivationLedgerHome(home), {
@@ -1078,13 +1035,11 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       false,
       "Codex structured injections and unproven event_msg must not become owner",
     );
-    // Amendment at the unparsable line.
-    const amended = volume.lines.find(
-      (line) => line.line === fixture.unparsableLine,
+    assert.ok(
+      volume.unprojectedRaw.includes(fixture.unparsableRaw),
+      "unparsable source bytes must land verbatim without forged dialogue fields",
     );
-    assert.ok(amended, "amended unparsable line must land");
-    assert.equal(amended.speaker, "owner");
-    assert.equal(amended.text, "补写：坏行原话由起居郎交回。");
+    assert.equal(volume.lines.every((line) => !("line" in line)), true);
 
     // Codex payload.id landed via public entry (bound by id in turn-2 ranges).
     assert.equal(byId.get("msg-codex-owner")?.text, fixture.codexOwnerText);
@@ -1300,15 +1255,14 @@ test("ticket provenance normalizes historical and incoming session index domains
       sessions: [
         { path: incoming, ranges: [{ from: { line: 1 }, to: { line: 1 } }] },
       ],
-      amendments: [{ s: 0, line: 1, speaker: "owner", text: "amended" }],
     });
 
-    assert.equal(result.unparsable.length, 0);
+    const folded = await readTicketProvenance(TICKET, project, home);
+    assert.deepEqual(folded.unprojectedRaw, ["not-json"]);
     assert.equal(result.header.sessions.length, 2);
     assert.deepEqual(result.lines.map((line) => [line.s, line.text]), [
       [0, "first"],
       [0, "second"],
-      [1, "amended"],
     ]);
   });
 });
@@ -1378,11 +1332,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       ranges: [{ from: { line: 1 }, to: { line: 1 } }],
     };
 
-    async function runDiarist(
-      runId: string,
-      sessions: unknown,
-      amendments?: unknown,
-    ) {
+    async function runDiarist(runId: string, sessions: unknown) {
       const { io, stdout } = captureIo();
       const result = await runAkRole(
         [
@@ -1407,7 +1357,6 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
               status: "completed",
               ticketNumber: TICKET,
               sessions,
-              ...(amendments === undefined ? {} : { amendments }),
             }),
           }),
         },
@@ -1594,18 +1543,6 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     );
     assert.equal(afterIdem.header?.sessions.length, 2);
     assert.equal(afterIdem.header?.sessions[0]?.ranges.length, 2);
-
-    const beforeUnsourcedAmendment = await readFile(paths.recordFile, "utf8");
-    await runDiarist(
-      "01a0diar00-0000-7000-8000-000000000095a",
-      [rangeB],
-      [{ s: 1, line: 999, speaker: "owner", text: "无来源补写" }],
-    );
-    assert.equal(
-      await readFile(paths.recordFile, "utf8"),
-      beforeUnsourcedAmendment,
-      "amendment on an already-declared range must remain a byte-level no-op",
-    );
 
     // Round 6: submit only rangeA — later ranges must remain (验收 3b 遗漏不删除).
     const afterOmit = await runDiarist(

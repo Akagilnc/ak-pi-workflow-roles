@@ -34,7 +34,6 @@ import {
   projectTicketProvenanceHeader,
   projectTicketProvenanceLine,
   projectTicketProvenanceSessions,
-  type TicketProvenanceAmendment,
   type TicketProvenanceBound,
   type TicketProvenanceHeader,
   type TicketProvenanceLine,
@@ -147,7 +146,7 @@ export function resolveTicketProvenanceVolume(
 type TicketProvenanceCommit = {
   readonly timestamp: string;
   readonly sessions: readonly TicketProvenanceSession[];
-  readonly lines: readonly TicketProvenanceLine[];
+  readonly lines: readonly (TicketProvenanceLine | string)[];
 };
 
 function projectTicketProvenanceCommit(value: unknown): TicketProvenanceCommit | undefined {
@@ -162,8 +161,9 @@ function projectTicketProvenanceCommit(value: unknown): TicketProvenanceCommit |
   if (body.type !== "ticket-provenance-append") return undefined;
   const sessions = projectTicketProvenanceSessions(body.sessions);
   if (sessions === undefined || !Array.isArray(body.lines)) return undefined;
-  const lines: TicketProvenanceLine[] = [];
+  const lines: (TicketProvenanceLine | string)[] = [];
   for (const raw of body.lines) {
+    if (typeof raw === "string") { lines.push(raw); continue; }
     const line = projectTicketProvenanceLine(raw);
     if (line === undefined) return undefined;
     lines.push(line);
@@ -228,10 +228,11 @@ export async function readTicketProvenance(
     const commit = projectTicketProvenanceCommit(parsed);
     if (commit !== undefined) {
       const merged = mergeSessionBounds(header?.sessions, commit.sessions);
-      const remapped = commit.lines.map((entry) => ({
-        ...entry,
-        s: merged.incomingIndexes[entry.s] ?? entry.s,
-      }));
+      const remapped: TicketProvenanceLine[] = [];
+      for (const entry of commit.lines) {
+        if (typeof entry === "string") { unprojectedRaw.push(entry); continue; }
+        remapped.push({ ...entry, s: merged.incomingIndexes[entry.s] ?? entry.s });
+      }
       const now = commit.timestamp;
       header = {
         repo: header?.repo ?? resolveBookKeyFromGit(cwd),
@@ -269,19 +270,10 @@ export function ensureTicketProvenanceVolume(
   return { recordFile: path.recordFile, volumeDir: path.sessionDir };
 }
 
-/** One session line the mechanical projector could not enter. */
-export type UnparsableSessionLine = {
-  readonly s: number;
-  readonly line: number;
-  readonly raw: string;
-};
-
 export type ReprojectTicketProvenanceResult = {
   readonly recordFile: string;
   readonly header: TicketProvenanceHeader;
   readonly lines: readonly TicketProvenanceLine[];
-  /** Still-open gaps after applying the submitted amendment set. */
-  readonly unparsable: readonly UnparsableSessionLine[];
 };
 
 /**
@@ -308,10 +300,6 @@ function resolveBoundIndex(
     return undefined;
   }
   return undefined;
-}
-
-function amendmentKey(s: number, line: number): string {
-  return `${s}:${line}`;
 }
 
 /** Exact range identity for cumulative header dedupe (idempotent resubmit). */
@@ -370,7 +358,7 @@ function mergeSessionBounds(
 
 /**
  * #918 第一节：已投影行即卷宗。只对 prior 未声明的 range（按 path identity + 精确
- * from/to）读源；已声明的按 s,line 结转，不重读历史源。
+ * from/to）读源；已声明的投影原样结转，不重读历史源。
  */
 function undeclaredSessionRanges(
   prior: readonly TicketProvenanceSession[] | undefined,
@@ -412,33 +400,18 @@ function undeclaredSessionRanges(
   return out;
 }
 
-/** Sort archive rows by session index then source line (stable within equal keys). */
-function compareLinePosition(
-  left: TicketProvenanceLine,
-  right: TicketProvenanceLine,
-): number {
-  if (left.s !== right.s) return left.s - right.s;
-  const leftLine = left.line ?? Number.MAX_SAFE_INTEGER;
-  const rightLine = right.line ?? Number.MAX_SAFE_INTEGER;
-  return leftLine - rightLine;
-}
-
 /**
  * Merge newly projected rows into the carried archive.
- * 既有卷宗按 (s,line) 优先；fresh 不得复制无 id 行（#918 C2/G1）。
- * id 去重仍保留（跨 path 同 id 首见胜）。
+ * Native id remains the typed first-seen identity; exact range resubmission is a no-op.
  */
 function mergeFreshIntoCarried(
   carried: readonly TicketProvenanceLine[],
   fresh: readonly TicketProvenanceLine[],
 ): TicketProvenanceLine[] {
   const seenIds = new Set<string>();
-  const seenPositions = new Set<string>();
   const out: TicketProvenanceLine[] = [];
   for (const line of carried) {
     if (line.id !== undefined) seenIds.add(line.id);
-    if (line.line !== undefined)
-      seenPositions.add(amendmentKey(line.s, line.line));
     out.push(line);
   }
   for (const line of fresh) {
@@ -446,14 +419,8 @@ function mergeFreshIntoCarried(
       if (seenIds.has(line.id)) continue;
       seenIds.add(line.id);
     }
-    if (line.line !== undefined) {
-      const position = amendmentKey(line.s, line.line);
-      if (seenPositions.has(position)) continue;
-      seenPositions.add(position);
-    }
     out.push(line);
   }
-  out.sort(compareLinePosition);
   return out;
 }
 
@@ -505,12 +472,11 @@ function normalizeResolvedRanges(
 async function projectSessionRanges(input: {
   readonly s: number;
   readonly session: TicketProvenanceSession;
-  readonly amendmentsByKey: ReadonlyMap<string, TicketProvenanceAmendment>;
   readonly seenIds: Set<string>;
   readonly home?: string;
 }): Promise<{
   readonly lines: TicketProvenanceLine[];
-  readonly unparsable: UnparsableSessionLine[];
+  readonly raw: string[];
 }> {
   assertDialogueSessionSourcePath(input.session.path, input.home);
   let sessionLines: LedgerSessionLine[];
@@ -536,7 +502,7 @@ async function projectSessionRanges(input: {
   const dialogue = adaptSessionDialogue(rows);
   const seenIds = input.seenIds;
   const lines: TicketProvenanceLine[] = [];
-  const unparsable: UnparsableSessionLine[] = [];
+  const raw: string[] = [];
   const ranges = normalizeResolvedRanges(
     input.session.ranges,
     sessionLines,
@@ -547,18 +513,7 @@ async function projectSessionRanges(input: {
     for (let index = range.fromIndex; index <= range.toIndex; index += 1) {
       const entry = sessionLines[index]!;
       if (entry.row === undefined) {
-        const key = amendmentKey(input.s, entry.line);
-        const amendment = input.amendmentsByKey.get(key);
-        if (amendment !== undefined) {
-          lines.push({
-            speaker: amendment.speaker,
-            s: input.s,
-            line: entry.line,
-            text: amendment.text,
-          });
-        } else {
-          unparsable.push({ s: input.s, line: entry.line, raw: entry.raw });
-        }
+        raw.push(entry.raw);
         continue;
       }
       for (const event of dialogue[index] ?? []) {
@@ -569,21 +524,19 @@ async function projectSessionRanges(input: {
         lines.push({
           speaker: event.speaker,
           s: input.s,
-          line: entry.line,
           ...(event.id === undefined ? {} : { id: event.id }),
           text: event.text,
         });
       }
     }
   }
-  return { lines, unparsable };
+  return { lines, raw };
 }
 
 /**
- * Reproject the unique diary from cumulative bounds + optional amendments.
- * #918：已投影行即卷宗——按 s,line 结转；本轮只读 prior 未声明的 range（或新
- * session 区间）。精确重复提交＝幂等 no-op，不因历史源不可读而失败。
- * amendments 只在本轮读取的新范围确有对应坏行时生效；空 sessions 保持 no-op。
+ * Reproject the unique diary from cumulative bounds.
+ * #918：已投影行即卷宗；本轮只读 prior 未声明的 range（或新 session 区间）。
+ * 精确重复提交＝幂等 no-op，不因历史源不可读而失败；空 sessions 保持 no-op。
  * 证不出的 body 原字节经 unprojectedRaw 原样留存。
  * Persistence appends one immutable commit through the Sitian appender seam.
  */
@@ -592,7 +545,6 @@ export async function reprojectTicketProvenance(input: {
   readonly cwd: string;
   readonly home?: string;
   readonly sessions: readonly TicketProvenanceSession[];
-  readonly amendments?: readonly TicketProvenanceAmendment[];
 }): Promise<ReprojectTicketProvenanceResult> {
   const prior = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
   if (input.sessions.length === 0) {
@@ -607,7 +559,6 @@ export async function reprojectTicketProvenance(input: {
         sessions: [],
       },
       lines: prior.lines,
-      unparsable: [],
     };
   }
 
@@ -625,35 +576,23 @@ export async function reprojectTicketProvenance(input: {
         sessions: merged.sessions,
       },
       lines: prior.lines,
-      unparsable: [],
     };
-  }
-
-  const amendmentsByKey = new Map<string, TicketProvenanceAmendment>();
-  for (const amendment of input.amendments ?? []) {
-    const cumulativeIndex = merged.incomingIndexes[amendment.s];
-    if (cumulativeIndex === undefined) continue;
-    amendmentsByKey.set(amendmentKey(cumulativeIndex, amendment.line), {
-      ...amendment,
-      s: cumulativeIndex,
-    });
   }
 
   const seenIds = new Set(
     prior.lines.flatMap((line) => line.id === undefined ? [] : [line.id]),
   );
   const fresh: TicketProvenanceLine[] = [];
-  const unparsable: UnparsableSessionLine[] = [];
+  const raw: string[] = [];
   for (const delta of deltas) {
     const projected = await projectSessionRanges({
       s: delta.s,
       session: delta.session,
-      amendmentsByKey,
       seenIds,
       ...(input.home === undefined ? {} : { home: input.home }),
     });
     fresh.push(...projected.lines);
-    unparsable.push(...projected.unparsable);
+    raw.push(...projected.raw);
   }
   const lines = mergeFreshIntoCarried(prior.lines, fresh);
   const now = new Date().toISOString();
@@ -664,10 +603,6 @@ export async function reprojectTicketProvenance(input: {
     updatedAt: now,
     sessions: merged.sessions,
   };
-  if (unparsable.length > 0) {
-    return { recordFile: prior.recordFile, header, lines, unparsable };
-  }
-
   // One immutable projection commit. Its deterministic identity makes retries of
   // the same logical increment converge, while unrelated concurrent increments
   // append independently and are folded by readTicketProvenance.
@@ -678,7 +613,7 @@ export async function reprojectTicketProvenance(input: {
       path: physicalPathIdentity(session.path),
       ranges: session.ranges,
     })),
-    lines: fresh,
+    lines: [...fresh, ...raw],
   });
   const identity = `ticket-provenance:${createHash("sha256").update(identityMaterial).digest("hex")}`;
   const pointer = appendSitianRecord({
@@ -687,7 +622,7 @@ export async function reprojectTicketProvenance(input: {
     payload: {
       type: "ticket-provenance-append",
       sessions: merged.sessions,
-      lines: fresh,
+      lines: [...fresh, ...raw],
     },
   });
   const folded = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
@@ -695,6 +630,5 @@ export async function reprojectTicketProvenance(input: {
     recordFile: pointer.recordFile,
     header: folded.header ?? header,
     lines: folded.lines,
-    unparsable: [],
   };
 }

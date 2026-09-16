@@ -86,7 +86,6 @@ import {
 } from "./diarist-role.ts";
 import {
   DIARIST_ACCEPTED_TEXT,
-  projectDiaristAmendments,
   projectDiaristSessions,
 } from "./diarist-contracts.ts";
 import { commitDiaristProjection } from "./diarist.ts";
@@ -946,26 +945,10 @@ function readDiaristRunCoordinates(ctx: HostContext): {
 const DIARIST_BOUNDS_REASK =
   "边界无法使用。请重交 sessions：每卷 path + ranges，每端以原生 id 或本轮行号二选一指名。" as const;
 
-/** Build reask text that hands unparsable source lines back for amendment. */
-function diaristUnparsableReask(
-  rows: readonly { readonly s: number; readonly line: number; readonly raw: string }[],
-): string {
-  const payload = rows.map((row) => ({
-    s: row.s,
-    line: row.line,
-    raw: row.raw,
-  }));
-  return [
-    "下列源行未能录入，请经 amendments 补写（每条 s + line + speaker + text）；其余边界可保持不变。",
-    JSON.stringify(payload),
-  ].join("\n");
-}
-
 /**
  * #708 / #779 / #901: 起居郎 public seat on the shared filed-officer envelope.
- * LLM judges ticket + dialogue bounds (+ optional amendments); mechanical layer
- * reprojects the unique records.jsonl. Unusable bounds and still-open unparsable
- * lines reask via ParentQueueReaskError (same mechanism as countersign). Machine
+ * LLM judges ticket + dialogue bounds; mechanical layer reprojects the unique
+ * records.jsonl. Unusable bounds reask via ParentQueueReaskError. Machine
  * facts never come from model self-report (锚定宪法).
  */
 export function createDiaristRoleRuntime(
@@ -996,7 +979,6 @@ export function createDiaristRoleRuntime(
           if (sessions === undefined) {
             throw new ParentQueueReaskError(DIARIST_BOUNDS_REASK);
           }
-          const amendments = projectDiaristAmendments(parameters);
           let facts;
           try {
             facts = await commitDiaristProjection({
@@ -1004,7 +986,6 @@ export function createDiaristRoleRuntime(
               cwd: coords.projectRoot,
               home: coords.home,
               sessions,
-              amendments,
             });
           } catch (error) {
             // Bound/session input failures → reask via typed identity (not message prefix).
@@ -1016,9 +997,6 @@ export function createDiaristRoleRuntime(
               );
             }
             throw error;
-          }
-          if (facts.unparsable.length > 0) {
-            throw new ParentQueueReaskError(diaristUnparsableReask(facts.unparsable));
           }
         }
         return parameters;
