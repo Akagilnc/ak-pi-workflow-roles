@@ -3,7 +3,7 @@ import { lstat, mkdir, readlink, realpath, symlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { MethodBinding } from "./host-contracts.ts";
 
-type HostMethodSkill = Readonly<{ name: string; dir: string; path: string }>;
+type HostMethodSkill = Readonly<{ name: string }>;
 export const HOST_METHOD_PLUGIN_NAME = "ak-methods" as const;
 export const packagedMethodsDir = (root: string) => join(root, "resources", "methods");
 export const packagedMethodPluginDir = (root: string) => join(root, "dist", "method-host-plugin");
@@ -11,9 +11,8 @@ export const packagedMethodPluginDir = (root: string) => join(root, "dist", "met
 export function hostMethodSkills(methods: readonly MethodBinding[]): readonly HostMethodSkill[] {
   return Object.freeze(methods.flatMap((method) => {
     if (method.kind !== "skill") return [];
-    const dir = dirname(method.path);
-    const name = basename(dir);
-    return name ? [Object.freeze({ name, dir, path: method.path })] : [];
+    const name = basename(dirname(method.path));
+    return name ? [Object.freeze({ name })] : [];
   }));
 }
 

@@ -1,8 +1,7 @@
-import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, copyFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
-import { materializeMethodHostPlugin } from "./materialize-method-host-plugin.mjs";
 
 const entries = [
   "packaged-role-registry",
@@ -201,7 +200,11 @@ export async function buildPackageArtifacts() {
   await buildAcpProductionHost();
   await buildHeadlessProductionHost();
   await buildMigrateBookTopology();
-  await materializeMethodHostPlugin();
+  const pluginDir = join("dist", "method-host-plugin");
+  await rm(pluginDir, { recursive: true, force: true });
+  await mkdir(pluginDir, { recursive: true });
+  await cp("resources/method-host-plugin/.claude-plugin", join(pluginDir, ".claude-plugin"), { recursive: true });
+  await cp("resources/methods", join(pluginDir, "skills"), { recursive: true });
 }
 
 const isMain =

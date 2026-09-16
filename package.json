@@ -29,7 +29,6 @@
     "extensions",
     "scripts/generate-tool-execution-observation-schema.ts",
     "scripts/build-package.mjs",
-    "scripts/materialize-method-host-plugin.mjs",
     "src",
     "souls",
     "schemas",
