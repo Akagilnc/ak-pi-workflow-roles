@@ -681,6 +681,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
 
     {
       const { io, stdout } = captureIo();
@@ -768,6 +769,10 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes("--ak-review-task"), false);
+        assert.equal(
+          args[args.indexOf("--ak-review-base") + 1],
+          execFileSync("git", ["rev-parse", "HEAD~1"], { cwd: project, encoding: "utf8" }).trim(),
+        );
       }
       assert.equal(new Set(childHeads).size, 1);
       assert.equal(childHeads[0], execFileSync("git", ["rev-parse", "HEAD"], {

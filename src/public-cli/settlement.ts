@@ -3637,6 +3637,7 @@ export async function trySettleReviewerTerminalResult(
 /** Deterministic default-Reviewer parent settlement: no third model turn. */
 export async function settleParallelReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
+  authority: DurablePrincipalAuthority,
   children: Readonly<{
     completeness: import("../public-role-summons.ts").PublicSummonResult;
     correctness: import("../public-role-summons.ts").PublicSummonResult;
@@ -3682,9 +3683,13 @@ export async function settleParallelReviewerTerminalResult(
       ...(children.correctness.stderr === undefined ? {} : { stderr: children.correctness.stderr }),
     },
   };
-  const artifactsDirectory = join(admitted.runDirectory, "artifacts");
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  await appendRunAttemptHistory(
+    { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
+    roleOutcome,
+  );
+  const artifactsDirectory = await ensureRunArtifactsDir(admitted.runDirectory);
   const reportPath = join(artifactsDirectory, "report.json");
-  await mkdir(artifactsDirectory, { recursive: true });
   await writeFile(
     reportPath,
     `${JSON.stringify({

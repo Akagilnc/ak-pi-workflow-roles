@@ -576,6 +576,8 @@ export async function summonParallelReviewerLenses(options: {
   readonly authorityRefs: readonly string[];
   readonly instruction: string;
   readonly home: string;
+  readonly agentDir?: string;
+  readonly credentials?: CredentialProviders;
   readonly model?: import("./host-contracts.ts").RoleTurnModelConfig;
   readonly host?: string;
   readonly engine?: string;
@@ -616,6 +618,12 @@ export async function summonParallelReviewerLenses(options: {
     { cwd: options.projectRoot },
   );
   const targetCommit = targetStdout.trim();
+  const { stdout: baseStdout } = await execFileAsync(
+    "git",
+    ["rev-parse", "--verify", `${options.baseRevision}^{commit}`],
+    { cwd: options.projectRoot },
+  );
+  const baseCommit = baseStdout.trim();
   const root = await mkdtemp(join(tmpdir(), "ak-reviewer-lenses-"));
   const completenessRoot = join(root, "completeness");
   const correctnessRoot = join(root, "correctness");
@@ -654,13 +662,15 @@ export async function summonParallelReviewerLenses(options: {
         role: "reviewer",
         argv: [
           "--project", cwd,
-          "--base", options.baseRevision,
+          "--base", baseCommit,
           ...options.authorityRefs.flatMap((ref) => ["--authority-ref", ref]),
           "--lens", lens,
           ...(options.instruction === "" ? [] : ["--", options.instruction]),
         ],
         cwd,
         home: options.home,
+        ...(options.agentDir === undefined ? {} : { agentDir: options.agentDir }),
+        ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
         ...(options.model === undefined ? {} : { model: options.model }),
         ...(options.host === undefined ? {} : { host: options.host }),
         ...(options.engine === undefined ? {} : { engine: options.engine }),
@@ -732,13 +742,19 @@ export async function summonParallelReviewerLenses(options: {
       correctness: withSealFailure(results.correctness),
     };
   }
+  const resumableWorktrees = new Set([
+    ...(results.completeness.terminal?.resume === undefined ? [] : [completenessRoot]),
+    ...(results.correctness.terminal?.resume === undefined ? [] : [correctnessRoot]),
+  ]);
   const cleanup = await Promise.allSettled(
-    [...created].map((path) =>
-      execFileAsync("git", ["worktree", "remove", path], { cwd: options.projectRoot })),
+    [...created]
+      .filter((path) => !resumableWorktrees.has(path))
+      .map((path) =>
+        execFileAsync("git", ["worktree", "remove", path], { cwd: options.projectRoot })),
   );
   const cleanupFailures = cleanup.flatMap((result) =>
     result.status === "rejected" ? [result.reason] : []);
-  if (cleanupFailures.length === 0) {
+  if (cleanupFailures.length === 0 && resumableWorktrees.size === 0) {
     const rootCleanup = await Promise.allSettled([rm(root, { recursive: true })]);
     cleanupFailures.push(...rootCleanup.flatMap((result) =>
       result.status === "rejected" ? [result.reason] : []));
@@ -777,7 +793,7 @@ export function createParallelReviewerExecution(
       if (parent.lens !== "all") return fallback.trySettle(parent, authority, scope);
       if (children === undefined) return undefined;
       const { settleParallelReviewerTerminalResult } = await import("./public-cli/settlement.ts");
-      return settleParallelReviewerTerminalResult(parent, children);
+      return settleParallelReviewerTerminalResult(parent, authority, children);
     },
     shouldPresentSettled: (terminal: TerminalResult) =>
       admitted().lens === "all" || terminal.roleOutcome.kind === "accepted",
@@ -811,6 +827,8 @@ export function createParallelReviewerExecution(
             ...(env.engine === undefined ? {} : { engine: env.engine }),
             ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
             packageRoot: env.packageRoot,
+            agentDir: env.agentDir,
+            ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
             ...(env.signal === undefined ? {} : { signal: env.signal }),
             correlationId: parent.runId,
             roleTurnHost: env.roleTurnHost,
