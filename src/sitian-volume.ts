@@ -8,7 +8,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
-import { mkdir, readFile, rename, rmdir, unlink } from "node:fs/promises";
+import { mkdir, readFile, readlink, rename, rmdir, symlink, unlink } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -105,7 +105,45 @@ export async function withSitianVolumeTransaction<T>(
         claim = (await readFile(ownerFile, "utf8")).trim();
       } catch (readError) {
         if ((readError as NodeJS.ErrnoException).code === "ENOENT") {
-          await sleep(15); // winner is between mkdir and owner publication
+          const recoveryPath = `${lockPath}.recover`;
+          try {
+            await symlink(String(process.pid), recoveryPath);
+            try {
+              // Give a live winner time to finish its atomic owner publication.
+              await sleep(30);
+              try {
+                await readFile(ownerFile, "utf8");
+              } catch (retryError) {
+                if ((retryError as NodeJS.ErrnoException).code !== "ENOENT") throw retryError;
+                await rename(lockPath, `${lockPath}.stale-unowned-${randomUUID()}`)
+                  .catch((renameError) => {
+                    if ((renameError as NodeJS.ErrnoException).code !== "ENOENT") throw renameError;
+                  });
+              }
+            } finally {
+              await unlink(recoveryPath).catch(() => undefined);
+            }
+          } catch (recoveryError) {
+            if ((recoveryError as NodeJS.ErrnoException).code !== "EEXIST") throw recoveryError;
+            let recoveryHolder: number;
+            try {
+              recoveryHolder = Number.parseInt(await readlink(recoveryPath), 10);
+            } catch (readRecoveryError) {
+              if ((readRecoveryError as NodeJS.ErrnoException).code === "ENOENT") continue;
+              throw readRecoveryError;
+            }
+            try {
+              process.kill(recoveryHolder, 0);
+            } catch (signalError) {
+              if ((signalError as NodeJS.ErrnoException).code === "ESRCH") {
+                throw new SitianInfrastructureError(
+                  `Sitian ownerless-lock recovery holder died: ${recoveryPath}`,
+                );
+              }
+              throw signalError;
+            }
+            await sleep(15);
+          }
           continue;
         }
         throw readError;
