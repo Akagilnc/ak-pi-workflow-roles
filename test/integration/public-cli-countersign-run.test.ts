@@ -1480,6 +1480,23 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     assert.deepEqual(result.terminal?.gate?.actualSeats, ["notary"]);
     await readFile(join(ticketRun, "session", "auditor-roles", "o01_notary.jsonl"), "utf8");
 
+    const resumed = await runAkRole(
+      ["countersign", "--model", "test/caller-seat:high", "--project", project, "裁：继续复审 #582。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        roleTurnHost: parentHost,
+        hostAdapters: [adapter("pi", parentHost), adapter("grok-build", childHost)],
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000d46",
+        io: captureIo().io,
+      },
+    );
+    assert.equal(resumed.exitCode, 0);
+    assert.equal(resumed.terminal?.runId, result.terminal?.runId);
+
     const unboundId = "01a0sign00-0000-7000-8000-00000000free";
     let unboundRunDirectory = "";
     const unboundBase = roleTurnHostFromLegacyPiRunner({
@@ -1525,6 +1542,11 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     for (const entry of await readdir(bookRoot)) {
       assert.equal(allowedBookEntries.has(entry), true, entry);
     }
+    assert.deepEqual(
+      (await readdir(join(bookRoot, "582", "runs"))).filter((entry) => entry.endsWith("@countersign")),
+      [`${result.terminal!.runId}@countersign`],
+      "same-ticket resume must not materialize a provisional run",
+    );
   });
 });
 
