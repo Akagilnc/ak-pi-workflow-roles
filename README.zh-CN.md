@@ -52,7 +52,7 @@ ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
 ```
 
-**宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动；裸 `resume` 同序取表。全部 public callable 角色及其机构子腿（审刑审计、太医审计、御史台证据子腿）在共享进程内机构子会话接缝上均为宿主中立。
+**宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动；裸 `resume` 同序取表。可调用角色及其机构子腿（审刑审计、太医审计）共享进程内机构子会话接缝；御史台方法 Skill 现行仅 Pi 原生 `/skill:ak-cross-m-review` 交付——非 Pi 宿主原生装载仍 OPEN（[#922](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/922)）。
 
 **宿主 provider 表（#788）：** 席位行只写一份 provider 名。owner 手改 `~/.ak-roles/host-providers.json`（形如 `{ "hermes": { "xai": "xai-oauth" } }`）；代码只读。表里没有的问宿主目录（本票 hermes）：唯一即用，零个或多个响亮失败。优先级：表 > 唯一 > 失败，代码无裁量。`config show` 原样打印该表。
 
@@ -77,8 +77,9 @@ ak-role judge --model <provider/model[:thinking]> --attach ./findings.md --attac
 ak-role coder --model <provider/model[:thinking]> plan "Propose the first implementation plan."
 ak-role coder --model <provider/model[:thinking]> apply --attach ./plan.md "Implement the approved slice."
 
-# 御史台——固定目标双轴察举；completed ≠ 准行，findings 在 Terminal 里
-ak-role reviewer --model <provider/model[:thinking]> --base main "Review the branch."
+# 御史台——固定目标、调用者选定单 lens 察举；completed ≠ 准行，findings 在 Terminal 里
+ak-role reviewer --model <provider/model[:thinking]> --base main --lens completeness --authority-ref docs/adr/0001-roles-grow-by-demand.md "Review the branch."
+ak-role reviewer --model <provider/model[:thinking]> --base main --lens correctness --authority-ref CLAUDE.md
 
 # 通进司——GitHub PR 收证（认票、读手册/现场活动、按需触发、等待窗、交回材料）
 ak-role collector --model <provider/model[:thinking]> --pr 42 --repo owner/repository "为所指 issue 收证。"
@@ -133,7 +134,7 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 | --- | --- | --- |
 | **将作监** | coder | **营造新作。** 承接新的谋划与需求，从一片空白开始设计、建造，直到形成可供使用的新成果。讲究先明其意，再定其形，不妄增枝节，只做当下所需之事。 |
 | **修内司** | fixer | **缮修旧物。** 面对已有问题，不急于表面修补，而是追寻问题根源，找到真正需要修整之处。既要修复眼前缺漏，也要防止同类问题再次出现。 |
-| **御史台** | reviewer | **察举百弊，风闻奏事。** 置身事外审视成果；Standards／Spec 两条取证腿由 runtime 代跑，本席收腿报告出薄回执与 amendment。弹章须指明所劾之处，言不为狱——不负坐实义务，坐实归大理寺。 |
+| **御史台** | reviewer | **察举百弊，风闻奏事。** 置身事外审视成果；调用者选定单 lens（completeness／correctness），本席自跑包内 `ak-cross-m-review`，交薄回执与 amendment。弹章须指明所劾之处，言不为狱——不负坐实义务，坐实归大理寺。 |
 | **大理寺** | judge | **审理定谳。** 承接各方意见与材料，依照既定规则逐项判断，辨明是非曲直。可以准行、退回或请示更高决定，但自身不参与建设与修改。 |
 | **审刑院** | judge-auditor／doctor-auditor（无 CLI，共享内部接缝；御史台侧闸已退役） | **复核成案。** 不重新争论事情本身，而是检查整个办理过程是否合乎规矩。关注是否有人越过职责、是否遗漏必要步骤、是否以错误方式得出正确结果。直属陛下，不入门下省编制。 |
 | **门下省** | gatekeeper（交卷闸不再自动出席；可 `ak-role gatekeeper` 独立直调） | **审署诏敕与质量保证的省。** 交卷闸按受审物直接传召台院/符宝郎，本省不介入选席；调用者仍可独立传召本省作 dispatch/pass；给事中票庭由调用者开工前传召；左拾遗由调用者合并前传召；省内政，不是外层编排器。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。 |

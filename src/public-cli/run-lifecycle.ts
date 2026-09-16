@@ -50,6 +50,7 @@ import type { PublicThinkingLevel } from "./registry.ts";
 import {
   recordEffectiveInvocationModel,
   requireAuthorityRef,
+  isReviewerLens,
   type AdmittedCoderInvocation,
   type AdmittedCountersignInvocation,
   type AdmittedCollectorInvocation,
@@ -69,6 +70,7 @@ import {
   type DerivedMergerEnvelope,
   type FrozenAttachment,
   type InvocationEffectiveModel,
+  type ReviewerLens,
 } from "./invocation.ts";
 
 /** Providers eligible for v1 typed-429 resume (Codex / xAI only).
@@ -1194,6 +1196,7 @@ type LoadedAdmittedRequestFields = {
   readonly prerequisitesPath?: string;
   readonly prerequisites?: readonly FixerPrerequisite[];
   readonly baseRevision?: string;
+  readonly lens?: ReviewerLens;
   readonly authorityRefs?: readonly string[];
   readonly mergerInputPath?: string;
   readonly derived?: DerivedMergerEnvelope;
@@ -1373,6 +1376,7 @@ async function loadResumableRunRecord(
   let prerequisitesPath: string | undefined;
   let prerequisites: readonly FixerPrerequisite[] | undefined;
   let baseRevision: string | undefined;
+  let lens: ReviewerLens | undefined;
   let authorityRefs: readonly string[] | undefined;
   let mergerInputPath: string | undefined;
   let derived: DerivedMergerEnvelope | undefined;
@@ -1431,6 +1435,9 @@ async function loadResumableRunRecord(
         record.baseRevision.trim() !== ""
       ) {
         baseRevision = record.baseRevision;
+      }
+      if (isReviewerLens(record.lens)) {
+        lens = record.lens;
       }
       // Collector — admitted repository/PR identity (#633 resume).
       if (typeof record.prNumber === "number" && Number.isSafeInteger(record.prNumber) && record.prNumber >= 1) {
@@ -1626,6 +1633,7 @@ async function loadResumableRunRecord(
       ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
       ...(prerequisites === undefined ? {} : { prerequisites }),
       ...(baseRevision === undefined ? {} : { baseRevision }),
+      ...(lens === undefined ? {} : { lens }),
       ...(authorityRefs === undefined ? {} : { authorityRefs }),
       ...(mergerInputPath === undefined ? {} : { mergerInputPath }),
       ...(derived === undefined ? {} : { derived }),
@@ -1879,17 +1887,39 @@ export async function loadResumableReviewerRun(
       `role run ${runId} belongs to ${loaded.run.role}, not reviewer`,
     );
   }
-  const baseRevision = loaded.admittedFields.baseRevision;
-  if (baseRevision === undefined || baseRevision.trim() === "") {
+  // Durable restore keeps run identity — never rebrand record damage as fresh --base/--lens.
+  const rawBase = loaded.admittedFields.baseRevision;
+  if (rawBase === undefined || rawBase.trim() === "") {
     throw new CliUsageError(
       `role run admitted reviewer base revision is missing: ${runId}`,
+    );
+  }
+  if (/\s/.test(rawBase) || rawBase.startsWith("-")) {
+    throw new CliUsageError(
+      `role run admitted reviewer base revision is damaged: ${runId}`,
+    );
+  }
+  const baseRevision = rawBase;
+  const lens = loaded.admittedFields.lens;
+  if (!isReviewerLens(lens)) {
+    throw new CliUsageError(
+      `role run admitted reviewer lens is missing: ${runId}`,
+    );
+  }
+  const authorityRefs = Object.freeze([
+    ...(loaded.admittedFields.authorityRefs ?? []),
+  ]);
+  if (authorityRefs.length === 0) {
+    throw new CliUsageError(
+      `role run admitted reviewer authority refs are missing: ${runId}`,
     );
   }
   const admitted: AdmittedReviewerInvocation = {
     role: "reviewer",
     ...resumedBaseAdmitted(loaded),
     baseRevision,
-    authorityRefs: Object.freeze([...(loaded.admittedFields.authorityRefs ?? [])]),
+    lens,
+    authorityRefs,
   };
   return seatLoadedResult(loaded, admitted);
 }

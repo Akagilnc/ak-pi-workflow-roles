@@ -547,17 +547,31 @@ const REVIEWER_OPTIONS = [
     },
   },
   {
+    id: "lens",
+    owner: "reviewer",
+    canonical: "--lens",
+    aliases: [],
+    valueMetavar: "completeness|correctness",
+    required: true,
+    repeatable: false,
+    form: "option",
+    description: {
+      en: "Required single review lens: completeness or correctness (no default).",
+      zh: "必填单 lens：completeness 或 correctness（无默认值）。",
+    },
+  },
+  {
     id: "authority-ref",
     owner: "reviewer",
     canonical: "--authority-ref",
     aliases: [],
     valueMetavar: "ref",
-    required: false,
+    required: true,
     repeatable: true,
     form: "option",
     description: {
-      en: "Durable authority reference/URL (repeatable; refs only, not inline prose).",
-      zh: "持久 authority 引用/URL（可重复；仅 ref，非内联散文）。",
+      en: "Required durable authority reference/URL (repeatable; refs only, not inline prose).",
+      zh: "必填持久 authority 引用/URL（可重复；仅 ref，非内联散文）。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];
@@ -1213,10 +1227,13 @@ const ROLE_COMMAND_HELP = {
   },
   reviewer: {
     command: "reviewer",
-    summary: "Fixed-target two-axis review (Standards + Spec).",
-    usage: ["ak-role reviewer --base <revision> [options] <instruction>"],
+    summary: "Fixed-target single-lens review (completeness or correctness).",
+    usage: [
+      "ak-role reviewer --base <revision> --lens completeness|correctness --authority-ref <ref> [options] <instruction>",
+    ],
     examples: [
-      'ak-role reviewer --base main "Review the branch against the governing issue and repository authority."',
+      'ak-role reviewer --base main --lens completeness --authority-ref docs/adr/0001.md "Review the branch."',
+      'ak-role reviewer --base main --lens correctness --authority-ref CLAUDE.md --authority-ref docs/adr/0001.md',
     ],
   },
   collector: {

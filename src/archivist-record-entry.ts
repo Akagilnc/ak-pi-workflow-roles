@@ -369,7 +369,7 @@ export type RecordSessionOpen = {
  * via destination-free SessionManager.create — no derived postcondition.
  * Resume via the AK-owned current-session ledger is limited to navigator work-subject
  * nests and the authorized worker-submission-gate durable path (ADR 0066 / #852).
- * Other ordinary no-subject children (auditor-roles, evidence-children, …) always mint fresh.
+ * Other ordinary no-subject children (auditor-roles, …) always mint fresh.
  * New persisted principals materialize their deferred session header before return so
  * custom-entry-only writers do not need a parallel delayed-header helper.
  *

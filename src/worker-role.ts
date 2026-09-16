@@ -390,7 +390,7 @@ export function createCoderRoleRuntime(
           const loaded = await dependencies.loadCanonicalSkillBinding("tdd");
           if (loaded.name !== "tdd") {
             throw new Error(
-              "Canonical Skill binding loader returned code-review for tdd",
+              "Canonical Skill binding loader returned ak-cross-m-review for tdd",
             );
           }
           binding = loaded;

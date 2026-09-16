@@ -72,11 +72,9 @@ const SEAT_TERMINAL: Record<
   },
   reviewer: {
     toolName: REVIEWER_OUTPUT_TOOL_NAME,
+    // Minimal production ReviewerIntent (lens axes only; engine-detour does not assert amendments).
     details: {
       status: "completed",
-      version: 2,
-      outcomes: { standards: { status: "pass", findings: [] }, spec: { status: "pass", findings: [] } },
-      reports: { standards: "ok", spec: "ok" },
     },
   },
   merger: {
@@ -168,7 +166,7 @@ function baseArgs(seat: Seat, project: string): string[] {
     case "fixer":
       return ["fixer", ...model, "--project", project, "engine detour proof"];
     case "reviewer":
-      return ["reviewer", ...model, "--project", project, "--base", "HEAD", "engine detour proof"];
+      return ["reviewer", ...model, "--project", project, "--base", "HEAD", "--lens", "completeness", "--authority-ref", "CLAUDE.md", "engine detour proof"];
     case "merger":
       return ["merger", ...model, "--project", project, "engine detour proof"];
     case "countersign":
