@@ -56,7 +56,7 @@ ak-role config set-auto-resume-limit 3
 
 **宿主 provider 表（#788）：** 席位行只写一份 provider 名。owner 手改 `~/.ak-roles/host-providers.json`（形如 `{ "hermes": { "xai": "xai-oauth" } }`）；代码只读。表里没有的问宿主目录（本票 hermes）：唯一即用，零个或多个响亮失败。优先级：表 > 唯一 > 失败，代码无裁量。`config show` 原样打印该表。
 
-**强制方法 Skill（#922）：** claude／grok 经 `--plugin-dir` 装载随包方法；codex／hermes 在角色简报中取得随包 Skill 的绝对路径并直接读取。包不创建工作树 skill catalog，也不改宿主 trust／配置。
+**强制方法 Skill（#922）：** Pi 以 `--skill` 装载随包 Skill 路径；Claude 以 `--plugin-dir` 装载随包 plugin，再按原生 slash-command 约定调用 Skill。现支持的 Codex exec、Grok ACP、Hermes ACP 调用面没有逐次装载随包 Skill 的入口，因此这些 host×method 组合如实报告 unsupported-method 缺口，不由本包补适配层。包不创建工作树 skill catalog，也不改宿主 trust／配置。
 
 门下省官席解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。配置用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。持久配置是全机共享单文件、多 CLI 版本同读：本构建不认识的席位键读时跳过（不报错）；已知席位上的未知字段沿用现行容忍。
 

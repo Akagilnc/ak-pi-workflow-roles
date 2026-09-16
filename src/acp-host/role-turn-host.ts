@@ -10,28 +10,11 @@ import {
 
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
-  applyHostSlashSkillInvocation,
-  applyMethodPathBrief,
-  HOST_METHOD_PLUGIN_NAME,
-  hostMethodSkills,
-  pluginSkillToken,
-} from "../host-native-method.ts";
-import {
   renderSystemPromptOverride,
   type PreparedRoleTurn,
   type SessionIdentityAuthority,
 } from "../prepared-role-turn.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
-
-function applyAcpMethodPrompt(hostName: string, request: RoleTurnRequest, prompt: string): string {
-  const skills = hostMethodSkills(request.methods);
-  if (skills.length !== 1) return prompt;
-  if (hostName === "hermes") return applyMethodPathBrief(skills, prompt);
-  const token = hostName === "grok-build"
-    ? pluginSkillToken(HOST_METHOD_PLUGIN_NAME, skills[0]!.name)
-    : "";
-  return token ? applyHostSlashSkillInvocation(token, prompt) : prompt;
-}
 
 /** ACP v1 surface used by the generic ACP adapter. Protocol details stay in this module. */
 export interface AcpConnection {
@@ -194,6 +177,12 @@ export function connectAcpStdio(options: {
 /** ACP last hop (#820): session open/load/close, prompt, MCP mount, capability/model. */
 export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHost {
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
+    if (request.methods.some((method) => method.kind === "skill")) {
+      return failure("activation", "UnsupportedHostMethod", "unsupported-method", {
+        host: config.hostName,
+        methodKind: "skill",
+      });
+    }
     const prepared = await config.prepare(request);
     const systemPromptOverride = renderSystemPromptOverride(prepared.systemPrompt);
     let connection: AcpConnection | undefined;
@@ -321,7 +310,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               result = await raceAgainstHostAbort(
                 activeConnection.request("session/prompt", {
                   sessionId: activeSessionId,
-                  prompt: [{ type: "text", text: applyAcpMethodPrompt(config.hostName, request, prompt) }],
+                  prompt: [{ type: "text", text: prompt }],
                 }),
                 combinedAbort,
                 "ACP host aborted",

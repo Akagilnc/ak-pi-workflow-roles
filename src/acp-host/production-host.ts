@@ -13,10 +13,6 @@ import { prepareRoleEnvelope } from "../role-envelope.ts";
 import type { RoleRuntimeDependencies } from "../role-runtime.ts";
 import { createRoleRuntimeDependencies } from "../role-runtime-dependencies.ts";
 import { createSessionIdentityAuthority } from "../session-identity.ts";
-import {
-  ensurePackagedMethodPlugin,
-  hostMethodSkills,
-} from "../host-native-method.ts";
 import { acpStdioArgs, resolveAcpBinary, type AcpHostDescription } from "./description.ts";
 import {
   connectAcpStdio,
@@ -78,18 +74,12 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
           packageRoot,
           role: request.activation.role,
         });
-      // #922: grok uses its native plugin loader; hermes receives paths in the brief.
-      const skills = hostMethodSkills(request.methods);
-      const pluginDir = hostName === "grok-build" && skills.length > 0
-        ? await ensurePackagedMethodPlugin(packageRoot)
-        : undefined;
       return connectAcpStdio({
         binary: resolveAcpBinary(description, request.home),
         args: acpStdioArgs(
           description,
           request.model,
           profileName === undefined ? undefined : { profileName },
-          pluginDir === undefined ? undefined : { pluginDir },
         ),
         cwd: request.cwd,
         env,

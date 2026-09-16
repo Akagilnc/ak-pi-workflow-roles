@@ -4,14 +4,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { acpStdioArgs } from "../../src/acp-host/description.ts";
 import {
   codexTurnArgs,
   headlessTurnArgs,
 } from "../../src/headless-host/description.ts";
 import {
   HEADLESS_HOST_DESCRIPTIONS,
-  HOST_DESCRIPTIONS,
   lookupHeadlessHostDescription,
 } from "../../src/host-descriptions.ts";
 import { packagedMethodPluginDir } from "../../src/host-native-method.ts";
@@ -91,7 +89,7 @@ test("#879 Codex exec argv selects stdin", () => {
   assert.deepEqual(argv.slice(-2), ["--", "-"]);
 });
 
-test("#922 plugin-dir open; no skill closers; Codex keeps user config", () => {
+test("#922 Claude uses its native plugin-dir; Codex keeps user config", () => {
   const claude = HEADLESS_HOST_DESCRIPTIONS.claude;
   assert.ok(claude && claude.protocol === "claude-print");
   const pluginDir = packagedMethodPluginDir(process.cwd());
@@ -104,9 +102,6 @@ test("#922 plugin-dir open; no skill closers; Codex keeps user config", () => {
     pluginDir,
   });
   assert.equal(claudeArgv[claudeArgv.indexOf("--plugin-dir") + 1], pluginDir);
-  const grok = HOST_DESCRIPTIONS["grok-build"]!;
-  const grokArgv = acpStdioArgs(grok, { model: "m" }, undefined, { pluginDir });
-  assert.ok(grokArgv.indexOf("--plugin-dir") < grokArgv.indexOf("stdio"));
   const codexArgv = codexTurnArgs({
     systemPromptPath: "/tmp/sys.txt",
     outputSchemaPath: "/tmp/out.json",
