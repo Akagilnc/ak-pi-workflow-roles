@@ -1452,6 +1452,14 @@ export function createRoleRuntimeExtension(
             baseSystemPrompt: event.systemPrompt,
             soul: activeReviewerParent.soul,
           }),
+          ...(activeReviewerParent.lensResults === undefined
+            ? {}
+            : {
+                readingMaterial: {
+                  kind: "reviewer-lens-results",
+                  content: activeReviewerParent.lensResults,
+                },
+              }),
         };
       }
       // #676 E / J1: collector materials + drift gates share this envelope hook (no parallel register).

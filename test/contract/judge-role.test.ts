@@ -2326,21 +2326,15 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
               ["read", "write", "grep", "find", "bash"],
               "Reviewer activation must preserve Pi's evidence tool surface",
             );
-            await plain.runtime.activate(undefined, {
-              baseRevision: "review-base",
-              lens: "all",
-              authorityRefs: ["CLAUDE.md"],
-            });
-            const summons = plain.harness.tools.get(reviewerRole.REVIEWER_SUMMON_LENSES_TOOL_NAME);
-            assert.ok(summons);
-            const summoned = await summons.execute(
-              "reviewer-summon",
-              {},
-              undefined,
-              undefined,
-              outputContext(summons.name, "reviewer-summon"),
+            const activated = await plain.runtime.activate(
+              outputContext(toolName, "reviewer-auto-summon"),
+              {
+                baseRevision: "review-base",
+                lens: "all",
+                authorityRefs: ["CLAUDE.md"],
+              },
             );
-            assert.deepEqual(summoned.details, {
+            assert.deepEqual(activated.lensResults, {
               completeness: { exitCode: 0 },
               correctness: { exitCode: 0 },
             });
