@@ -303,6 +303,10 @@ function resolveBoundIndex(
 }
 
 /** Exact range identity for cumulative header dedupe (idempotent resubmit). */
+function dialogueIdentity(s: number, id: string): string {
+  return `${s}\u0000${id}`;
+}
+
 function rangeDeclarationKey(range: TicketProvenanceRange): string {
   return JSON.stringify({
     from: range.from,
@@ -411,13 +415,14 @@ function mergeFreshIntoCarried(
   const seenIds = new Set<string>();
   const out: TicketProvenanceLine[] = [];
   for (const line of carried) {
-    if (line.id !== undefined) seenIds.add(line.id);
+    if (line.id !== undefined) seenIds.add(dialogueIdentity(line.s, line.id));
     out.push(line);
   }
   for (const line of fresh) {
     if (line.id !== undefined) {
-      if (seenIds.has(line.id)) continue;
-      seenIds.add(line.id);
+      const identity = dialogueIdentity(line.s, line.id);
+      if (seenIds.has(identity)) continue;
+      seenIds.add(identity);
     }
     out.push(line);
   }
@@ -518,8 +523,9 @@ async function projectSessionRanges(input: {
       }
       for (const event of dialogue[index] ?? []) {
         if (event.id !== undefined) {
-          if (seenIds.has(event.id)) continue;
-          seenIds.add(event.id);
+          const identity = dialogueIdentity(input.s, event.id);
+          if (seenIds.has(identity)) continue;
+          seenIds.add(identity);
         }
         lines.push({
           speaker: event.speaker,
@@ -580,7 +586,9 @@ export async function reprojectTicketProvenance(input: {
   }
 
   const seenIds = new Set(
-    prior.lines.flatMap((line) => line.id === undefined ? [] : [line.id]),
+    prior.lines.flatMap((line) =>
+      line.id === undefined ? [] : [dialogueIdentity(line.s, line.id)]
+    ),
   );
   const fresh: TicketProvenanceLine[] = [];
   const raw: string[] = [];

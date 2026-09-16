@@ -1613,7 +1613,8 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       "probe",
       "session-c.jsonl",
     );
-    const sessionCOwnerId = "msg-session-c-owner";
+    // Same native id as session A: identity is typed (s,id), not global id.
+    const sessionCOwnerId = fixtureA.plainOwnerId;
     const sessionCOwnerText = "S1 已不可达后新源的陛下发言";
     await writeFile(
       sessionCPath,
@@ -1645,9 +1646,15 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       "B carried while adding C",
     );
     assert.equal(
-      afterC.lines.find((line) => line.id === sessionCOwnerId)?.text,
+      afterC.lines.find((line) => line.s === 2 && line.id === sessionCOwnerId)?.text,
       sessionCOwnerText,
-      "new range C from S2 must publish while S1 gone",
+      "same native id in a different session must publish under typed (s,id)",
+    );
+    assert.deepEqual(
+      afterC.lines
+        .filter((line) => line.id === sessionCOwnerId)
+        .map((line) => line.s),
+      [0, 2],
     );
     assert.equal(
       afterC.header?.sessions.length,
