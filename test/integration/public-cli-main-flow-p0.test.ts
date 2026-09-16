@@ -2,16 +2,14 @@
  * README main-flow P0 gates that were absent on main:
  *  1) first public judge with no --model and no seat fails before executeTurn
  *  2) escalate → resume "<ruling>" → same runId converged
- *  3) coder completed → inspector bounce → same-session resubmit pass
  */
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
@@ -19,14 +17,10 @@ import {
   seedGitProject,
   withTempHome,
 } from "../helpers/failure-settlement-kit.ts";
-import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
-  sessionToolExchangeRows,
-  sessionUserMessageRow,
-  writeSessionJsonl,
 } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
