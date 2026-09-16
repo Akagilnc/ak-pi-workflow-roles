@@ -370,6 +370,7 @@ function undeclaredSessionRanges(
 ): readonly {
   readonly s: number;
   readonly session: TicketProvenanceSession;
+  readonly priorRanges: readonly TicketProvenanceRange[];
 }[] {
   const priorKeys = new Map<string, Set<string>>();
   for (const session of prior ?? []) {
@@ -381,11 +382,19 @@ function undeclaredSessionRanges(
     }
     for (const range of session.ranges) keys.add(rangeDeclarationKey(range));
   }
-  const out: { s: number; session: TicketProvenanceSession }[] = [];
+  const priorRanges = new Map<string, readonly TicketProvenanceRange[]>();
+  for (const session of prior ?? []) {
+    priorRanges.set(physicalPathIdentity(session.path), session.ranges);
+  }
+  const out: {
+    s: number;
+    session: TicketProvenanceSession;
+    priorRanges: readonly TicketProvenanceRange[];
+  }[] = [];
   for (let s = 0; s < merged.length; s += 1) {
     const session = merged[s]!;
-    const declared =
-      priorKeys.get(physicalPathIdentity(session.path)) ?? new Set();
+    const identity = physicalPathIdentity(session.path);
+    const declared = priorKeys.get(identity) ?? new Set();
     const fresh = session.ranges.filter(
       (range) => !declared.has(rangeDeclarationKey(range)),
     );
@@ -399,6 +408,7 @@ function undeclaredSessionRanges(
           to: { ...range.to },
         })),
       },
+      priorRanges: priorRanges.get(identity) ?? [],
     });
   }
   return out;
@@ -413,20 +423,24 @@ function mergeFreshIntoCarried(
   fresh: readonly TicketProvenanceLine[],
 ): TicketProvenanceLine[] {
   const seenIds = new Set<string>();
-  const out: TicketProvenanceLine[] = [];
-  for (const line of carried) {
-    if (line.id !== undefined) seenIds.add(dialogueIdentity(line.s, line.id));
-    out.push(line);
-  }
-  for (const line of fresh) {
-    if (line.id !== undefined) {
-      const identity = dialogueIdentity(line.s, line.id);
-      if (seenIds.has(identity)) continue;
-      seenIds.add(identity);
+  const bySession = new Map<number, TicketProvenanceLine[]>();
+  const absorb = (lines: readonly TicketProvenanceLine[]): void => {
+    for (const line of lines) {
+      if (line.id !== undefined) {
+        const identity = dialogueIdentity(line.s, line.id);
+        if (seenIds.has(identity)) continue;
+        seenIds.add(identity);
+      }
+      const bucket = bySession.get(line.s) ?? [];
+      bucket.push(line);
+      bySession.set(line.s, bucket);
     }
-    out.push(line);
-  }
-  return out;
+  };
+  absorb(carried);
+  absorb(fresh);
+  return [...bySession.entries()]
+    .sort(([left], [right]) => left - right)
+    .flatMap(([, lines]) => lines);
 }
 
 /**
@@ -478,6 +492,7 @@ async function projectSessionRanges(input: {
   readonly s: number;
   readonly session: TicketProvenanceSession;
   readonly seenIds: Set<string>;
+  readonly priorRanges?: readonly TicketProvenanceRange[];
   readonly home?: string;
 }): Promise<{
   readonly lines: TicketProvenanceLine[];
@@ -513,8 +528,32 @@ async function projectSessionRanges(input: {
     sessionLines,
     input.session.path,
   );
+  const covered = normalizeResolvedRanges(
+    input.priorRanges ?? [],
+    sessionLines,
+    input.session.path,
+  );
+  const uncovered = ranges.flatMap((range) => {
+    let fragments = [range];
+    for (const prior of covered) {
+      fragments = fragments.flatMap((fragment) => {
+        if (prior.toIndex < fragment.fromIndex || prior.fromIndex > fragment.toIndex) {
+          return [fragment];
+        }
+        const remainder: { fromIndex: number; toIndex: number }[] = [];
+        if (fragment.fromIndex < prior.fromIndex) {
+          remainder.push({ fromIndex: fragment.fromIndex, toIndex: prior.fromIndex - 1 });
+        }
+        if (fragment.toIndex > prior.toIndex) {
+          remainder.push({ fromIndex: prior.toIndex + 1, toIndex: fragment.toIndex });
+        }
+        return remainder;
+      });
+    }
+    return fragments;
+  });
 
-  for (const range of ranges) {
+  for (const range of uncovered) {
     for (let index = range.fromIndex; index <= range.toIndex; index += 1) {
       const entry = sessionLines[index]!;
       if (entry.row === undefined) {
@@ -597,6 +636,7 @@ export async function reprojectTicketProvenance(input: {
       s: delta.s,
       session: delta.session,
       seenIds,
+      priorRanges: delta.priorRanges,
       ...(input.home === undefined ? {} : { home: input.home }),
     });
     fresh.push(...projected.lines);

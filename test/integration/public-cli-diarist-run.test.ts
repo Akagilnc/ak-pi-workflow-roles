@@ -1433,6 +1433,11 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(byIdA2.get(fixtureA.ownerId)?.s, 0);
     assert.equal(byIdA2.get(sessionBOwnerId)?.text, sessionBOwnerText);
     assert.equal(byIdA2.get(sessionBOwnerId)?.s, 1);
+    assert.deepEqual(
+      afterA2.lines.map((line) => line.s),
+      [0, 0, 1],
+      "cumulative projection stays grouped by session and source order",
+    );
     assert.equal(afterA2.lines.length, 3);
     assert.equal(afterA2.header?.sessions.length, 2);
     assert.equal(afterA2.header?.sessions[0]?.ranges.length, 2);
@@ -1578,6 +1583,44 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(await readFile(paths.recordFile, "utf8"), beforeEmpty);
     assert.equal(afterEmpty.lines.length, 3);
 
+    // Overlapping extensions read only their physical delta: id-less dialogue and
+    // unreadable source bytes already covered by an earlier range stay unique.
+    const idlessBText = "第二会话无原生 id 的陛下发言";
+    const rawB = "{second session unreadable";
+    const sessionBSecondId = "msg-session-b-second";
+    await writeFile(
+      sessionBPath,
+      [
+        JSON.stringify({
+          type: "user",
+          uuid: sessionBOwnerId,
+          message: { role: "user", content: [{ type: "text", text: sessionBOwnerText }] },
+        }),
+        JSON.stringify({
+          type: "user",
+          message: { role: "user", content: [{ type: "text", text: idlessBText }] },
+        }),
+        rawB,
+        JSON.stringify({
+          type: "user",
+          uuid: sessionBSecondId,
+          message: { role: "user", content: [{ type: "text", text: "第二会话扩展发言" }] },
+        }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    await runDiarist("01a0diar00-0000-7000-8000-000000000097a", [{
+      path: sessionBPath,
+      ranges: [{ from: { line: 1 }, to: { line: 3 } }],
+    }]);
+    const afterOverlap = await runDiarist(
+      "01a0diar00-0000-7000-8000-000000000097b",
+      [{ path: sessionBPath, ranges: [{ from: { line: 1 }, to: { line: 4 } }] }],
+    );
+    assert.equal(afterOverlap.lines.filter((line) => line.text === idlessBText).length, 1);
+    assert.equal(afterOverlap.unprojectedRaw.filter((raw) => raw === rawB).length, 1);
+    assert.equal(afterOverlap.lines.filter((line) => line.id === sessionBSecondId).length, 1);
+
     // 验收 4：历史源 S1 不可达后，只交新范围 B（S2）仍成功；再交已声明 A 为 no-op。
     // 变异面：改回「每轮重读全部历史源」→ 本段报红（S1 不可读会拖死 B）。
     const unreachableDir = join(home, ".claude", "projects", "probe-gone");
@@ -1593,7 +1636,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     );
     assert.equal(
       afterGoneB.lines.length,
-      3,
+      5,
       "resubmit declared bounds while S1 gone is no-op",
     );
     assert.equal(
