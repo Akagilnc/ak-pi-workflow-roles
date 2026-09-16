@@ -688,7 +688,6 @@ export async function reprojectTicketProvenance(input: {
   // Historical source readability is not a publish prerequisite.
   if (
     deltas.length === 0 &&
-    amendments.length === 0 &&
     lines.length === prior.lines.length &&
     prior.header !== undefined &&
     sessionBoundsEqual(prior.header.sessions, sessions)

@@ -1324,7 +1324,11 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       ranges: [{ from: { line: 1 }, to: { line: 1 } }],
     };
 
-    async function runDiarist(runId: string, sessions: unknown) {
+    async function runDiarist(
+      runId: string,
+      sessions: unknown,
+      amendments?: unknown,
+    ) {
       const { io, stdout } = captureIo();
       const result = await runAkRole(
         [
@@ -1349,6 +1353,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
               status: "completed",
               ticketNumber: TICKET,
               sessions,
+              ...(amendments === undefined ? {} : { amendments }),
             }),
           }),
         },
@@ -1535,6 +1540,18 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     );
     assert.equal(afterIdem.header?.sessions.length, 2);
     assert.equal(afterIdem.header?.sessions[0]?.ranges.length, 2);
+
+    const beforeUnsourcedAmendment = await readFile(paths.recordFile, "utf8");
+    await runDiarist(
+      "01a0diar00-0000-7000-8000-000000000095a",
+      [rangeB],
+      [{ s: 1, line: 999, speaker: "owner", text: "无来源补写" }],
+    );
+    assert.equal(
+      await readFile(paths.recordFile, "utf8"),
+      beforeUnsourcedAmendment,
+      "amendment on an already-declared range must remain a byte-level no-op",
+    );
 
     // Round 6: submit only rangeA — later ranges must remain (验收 3b 遗漏不删除).
     const afterOmit = await runDiarist(
