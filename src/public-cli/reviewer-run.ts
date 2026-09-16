@@ -78,7 +78,7 @@ export function buildReviewerTurnRequest(
         authorityRefs: admitted.authorityRefs,
         ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
       },
-      methods: reviewerMethods(options.packageRoot),
+      methods: admitted.lens === "all" ? [] : reviewerMethods(options.packageRoot),
     },
     options,
   );

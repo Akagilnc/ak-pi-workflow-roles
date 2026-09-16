@@ -753,18 +753,9 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "reviewer");
-      assert.equal(captured!.includes("--skill"), true);
+      assert.equal(captured!.includes("--skill"), false);
       assert.equal(captured!.includes("--ak-review-task"), false);
       assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "all");
-      // First stdin carries frozen Skill arg projection (base/lens/authority).
-      const blankDialogue = readUserDialogueStdin(capturedStdin ?? "");
-      assert.equal(
-        blankDialogue.startsWith(
-          "/skill:ak-cross-m-review --base HEAD~1 --lens all --authority CLAUDE.md",
-        ),
-        true,
-        blankDialogue,
-      );
       assert.equal(result.terminal?.roleOutcome.role, "reviewer");
       assert.deepEqual(
         result.terminal?.roleOutcome.kind === "accepted"

@@ -3049,13 +3049,11 @@ export function buildReviewerTransportPrompt(
   admitted: AdmittedReviewerInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const lines = [buildReviewerSkillArgProjection(admitted)];
-  if (admitted.lens === "all") {
-    lines.push(
-      "",
-      "Package execution contract for the admitted all shape: the runtime has already run completeness and correctness concurrently and supplies both terminals as reviewer-lens-results reading material. Preserve each axis independently in amendments, then submit one Reviewer receipt. Do not rerun either lens.",
-    );
-  }
+  const lines = admitted.lens === "all"
+    ? [
+        "The runtime has already run completeness and correctness concurrently and supplies both original terminals as reviewer-lens-results reading material. Return those two axis results together without rerunning, rejudging, or relabeling either lens.",
+      ]
+    : [buildReviewerSkillArgProjection(admitted)];
   if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
     lines.push("", admitted.instruction);
   }
