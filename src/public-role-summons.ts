@@ -588,9 +588,29 @@ export async function summonParallelReviewerLenses(options: {
   readonly completeness: PublicSummonResult;
   readonly correctness: PublicSummonResult;
 }> {
+  const statusArgs = [
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+    "--",
+    ":/",
+    ":(top,exclude).claude/worktrees/**",
+  ] as const;
+  const { stdout: statusStdout } = await execFileAsync("git", statusArgs, {
+    cwd: options.projectRoot,
+  });
+  if (statusStdout !== "") {
+    const diagnostic = [
+      "Reviewer target status gate failed:",
+      "git status --porcelain=v1 --untracked-files=all -- :/ ':(top,exclude).claude/worktrees/**'",
+      statusStdout,
+    ].join("\n");
+    const failure = { exitCode: 1, stderr: diagnostic } as const;
+    return { completeness: failure, correctness: failure };
+  }
   const { stdout: targetStdout } = await execFileAsync(
     "git",
-    ["rev-parse", "HEAD^{commit}"],
+    ["rev-parse", "--verify", "HEAD^{commit}"],
     { cwd: options.projectRoot },
   );
   const targetCommit = targetStdout.trim();

@@ -1109,6 +1109,40 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         "Review the latest commit on both axes.",
       );
     }
+
+    // Default parent must apply canonical Step 1 before clean detached copies hide dirt.
+    {
+      await writeFile(join(project, "untracked-review-evidence.txt"), "dirty\n", "utf8");
+      let childTurns = 0;
+      const { io, stdout } = captureIo();
+      const dirty = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high", "--project", project,
+        "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-cli-reviewer-dirty-parent",
+        io,
+        roleTurnHost: {
+          async executeTurn() {
+            childTurns += 1;
+            throw new Error("dirty parent must not dispatch a child turn");
+          },
+        },
+      });
+      assert.equal(dirty.exitCode, 1, stdout.join(""));
+      assert.equal(childTurns, 0);
+      assert.equal(dirty.terminal?.roleOutcome.kind, "failure");
+      assert.match(
+        dirty.terminal?.reviewerChildOutcomes?.completeness.stderr ?? "",
+        /untracked-review-evidence\.txt/,
+      );
+      assert.match(
+        dirty.terminal?.reviewerChildOutcomes?.correctness.stderr ?? "",
+        /git status --porcelain=v1/,
+      );
+    }
   });
 });
 
