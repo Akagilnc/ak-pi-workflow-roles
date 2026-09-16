@@ -313,6 +313,15 @@ export function formatTerminalResult(result: TerminalResult): string {
       );
     }
   }
+  if (result.reviewerChildOutcomes !== undefined) {
+    for (const axis of ["completeness", "correctness"] as const) {
+      const child = result.reviewerChildOutcomes[axis];
+      lines.push(`reviewer-child\t${axis}\t${child.exitCode}`);
+      if (child.stderr !== undefined && child.stderr !== "") {
+        lines.push(`reviewer-child-diagnostic\t${axis}\t${encodeTerminalField(child.stderr)}`);
+      }
+    }
+  }
   if (result.resume !== undefined) {
     // Resumable failure: run ID is revealed only inside the complete resume command.
     lines.push(`resume\t${encodeTerminalField(result.resume.command)}`);

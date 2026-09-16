@@ -594,9 +594,15 @@ export async function summonParallelReviewerLenses(options: {
   const correctnessRoot = join(root, "correctness");
   const worktrees = [completenessRoot, correctnessRoot] as const;
   const created = new Set<string>();
+  const describeFailure = (error: unknown): string => {
+    if (error instanceof AggregateError) {
+      return [error.message, ...error.errors.map(describeFailure)].join("\n");
+    }
+    return error instanceof Error ? error.message : String(error);
+  };
   const failedResult = (error: unknown): PublicSummonResult => ({
     exitCode: 1,
-    stderr: error instanceof Error ? error.message : String(error),
+    stderr: describeFailure(error),
   });
   let results: { completeness: PublicSummonResult; correctness: PublicSummonResult };
   const creation = await Promise.allSettled(
@@ -658,9 +664,11 @@ export async function summonParallelReviewerLenses(options: {
   );
   const cleanupFailures = cleanup.flatMap((result) =>
     result.status === "rejected" ? [result.reason] : []);
-  const rootCleanup = await Promise.allSettled([rm(root, { recursive: true })]);
-  cleanupFailures.push(...rootCleanup.flatMap((result) =>
-    result.status === "rejected" ? [result.reason] : []));
+  if (cleanupFailures.length === 0) {
+    const rootCleanup = await Promise.allSettled([rm(root, { recursive: true })]);
+    cleanupFailures.push(...rootCleanup.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : []));
+  }
   if (cleanupFailures.length > 0) {
     const diagnostic = [
       "parallel reviewer worktree cleanup failed",
