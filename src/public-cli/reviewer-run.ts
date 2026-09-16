@@ -352,7 +352,9 @@ export async function runPublicReviewerResume(
       if (activeAdmitted === undefined) throw new Error("reviewer resume admission is not loaded");
       return activeAdmitted;
     },
-    () => request.message ?? "",
+    () => [activeAdmitted?.instruction, request.message]
+      .filter((text): text is string => text !== undefined && text !== "")
+      .join("\n\n"),
     env,
   );
   return await runPostAdmissionSeatResume({

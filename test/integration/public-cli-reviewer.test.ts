@@ -685,6 +685,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       const { io, stdout } = captureIo();
       const captured: string[][] = [];
       const capturedStdin: string[] = [];
+      const childHeads: string[] = [];
       const result = await runAkRole([
           "reviewer", "--model", "test/caller-seat:high",
           "--project",
@@ -706,6 +707,10 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             piRunner: async (args, options) => {
             captured.push([...args]);
             capturedStdin.push(options.stdin ?? "");
+            childHeads.push(execFileSync("git", ["rev-parse", "HEAD"], {
+              cwd: options.cwd,
+              encoding: "utf8",
+            }).trim());
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
             await mkdir(join(sessionFile, ".."), { recursive: true });
@@ -763,6 +768,11 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes("--ak-review-task"), false);
       }
+      assert.equal(new Set(childHeads).size, 1);
+      assert.equal(childHeads[0], execFileSync("git", ["rev-parse", "HEAD"], {
+        cwd: project,
+        encoding: "utf8",
+      }).trim());
       assert.equal(result.terminal?.roleOutcome.role, "reviewer");
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
       assert.equal(result.terminal?.reviewerChildren?.completeness?.roleOutcome.role, "reviewer");
@@ -1388,7 +1398,7 @@ test("default reviewer resume preserves the frozen dual-axis shape", async () =>
     assert.equal(resumed.exitCode, 0, stdout.join(""));
     assert.deepEqual(lenses.sort(), ["completeness", "correctness"]);
     assert.equal(dialogues.every((dialogue) => dialogue.includes("--opaque-current-message")), true);
-    assert.equal(dialogues.every((dialogue) => !dialogue.includes("--opaque-resume-request")), true);
+    assert.equal(dialogues.every((dialogue) => dialogue.includes("--opaque-resume-request")), true);
     assert.equal(resumed.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
     assert.equal(resumed.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
     assert.equal(

@@ -589,6 +589,12 @@ export async function summonParallelReviewerLenses(options: {
   readonly completeness: PublicSummonResult;
   readonly correctness: PublicSummonResult;
 }> {
+  const { stdout: targetStdout } = await execFileAsync(
+    "git",
+    ["rev-parse", "HEAD^{commit}"],
+    { cwd: options.projectRoot },
+  );
+  const targetCommit = targetStdout.trim();
   const root = await mkdtemp(join(tmpdir(), "ak-reviewer-lenses-"));
   const completenessRoot = join(root, "completeness");
   const correctnessRoot = join(root, "correctness");
@@ -607,7 +613,7 @@ export async function summonParallelReviewerLenses(options: {
   let results: { completeness: PublicSummonResult; correctness: PublicSummonResult };
   const creation = await Promise.allSettled(
     worktrees.map(async (path) => {
-      await execFileAsync("git", ["worktree", "add", "--detach", path, "HEAD"], {
+      await execFileAsync("git", ["worktree", "add", "--detach", path, targetCommit], {
         cwd: options.projectRoot,
       });
       created.add(path);
