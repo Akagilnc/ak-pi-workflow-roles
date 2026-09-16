@@ -46,6 +46,7 @@ import {
 } from "./engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
+import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
@@ -84,6 +85,18 @@ import {
   DIARIST_TOOL_SPEC,
   type DiaristRuntimeDependencies,
 } from "./diarist-role.ts";
+import {
+  SECRETARIAT_OUTPUT_TOOL_SPEC,
+  SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC,
+  projectSecretariatSummonResult,
+  type SecretariatRuntimeDependencies,
+  type SecretariatSummonCountersignParameters,
+} from "./secretariat-role.ts";
+import {
+  SECRETARIAT_ACCEPTED_TEXT,
+  SECRETARIAT_OUTPUT_TOOL_NAME,
+  SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
+} from "./secretariat-contracts.ts";
 import {
   DIARIST_ACCEPTED_TEXT,
   projectDiaristSessions,
@@ -458,6 +471,7 @@ type ActivationRuntime = {
   navigator: { activate(): Promise<void> };
   auditor: { activate(): Promise<void> };
   diarist: { activate(): Promise<void> };
+  secretariat: { activate(): Promise<void> };
   merger(): Promise<void>;
 };
 
@@ -487,6 +501,7 @@ function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: 
     case "navigator": return { id: "load-and-install", run: async () => runtime.navigator.activate() };
     case "auditor": return { id: "load-and-install", run: async () => runtime.auditor.activate() };
     case "diarist": return { id: "load-and-install", run: async () => runtime.diarist.activate() };
+    case "secretariat": return { id: "load-and-install", run: async () => runtime.secretariat.activate() };
     case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
 }
@@ -598,6 +613,7 @@ export type RoleRuntimeDependencies = {
   loadNavigatorSoul?(): Promise<string>;
   loadAuditorSoul?(): Promise<string>;
   loadDiaristSoul?(): Promise<string>;
+  loadSecretariatSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
@@ -676,7 +692,8 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   const status = typeof details.status === "string"
     ? details.status
     : typeof details.judgeStatus === "string" ? details.judgeStatus
-    : typeof details.countersignStatus === "string" ? details.countersignStatus : undefined;
+    : typeof details.countersignStatus === "string" ? details.countersignStatus
+    : typeof details.secretariatStatus === "string" ? details.secretariatStatus : undefined;
   if (status !== undefined && status === "escalate") {
     return { kind: "human_decision", role, phase, status };
   }
@@ -908,6 +925,28 @@ function readDiaristTicketAssertion(
   return { kind: "invalid" };
 }
 
+/** Shared durable coordinates for role tools that summon another public role. */
+function readRoleRunCoordinates(ctx: HostContext, label: string): {
+  readonly runDirectory: string;
+  readonly projectRoot: string;
+  readonly home: string;
+  readonly admitted: Record<string, unknown>;
+} {
+  const runDirectory = runDirectoryFromHostContext(ctx);
+  if (runDirectory === undefined) throw new Error(`${label} requires AK_ROLE_RUN_DIR`);
+  const admittedPath = join(runDirectory, "admitted-request.json");
+  const admitted = JSON.parse(readFileSync(admittedPath, "utf8")) as Record<string, unknown>;
+  if (typeof admitted.projectRoot !== "string" || admitted.projectRoot.trim() === "") {
+    throw new Error(`${label} admitted-request missing projectRoot (${admittedPath})`);
+  }
+  return {
+    runDirectory,
+    projectRoot: admitted.projectRoot,
+    home: homeFromRunDirectory(runDirectory),
+    admitted,
+  };
+}
+
 /** Run coordinates + optional pre-bound ticket from durable pages (#779). */
 function readDiaristRunCoordinates(ctx: HostContext): {
   readonly runDirectory: string;
@@ -915,28 +954,17 @@ function readDiaristRunCoordinates(ctx: HostContext): {
   readonly home: string;
   readonly boundTicketNumber?: number;
 } {
-  const runDirectory = runDirectoryFromHostContext(ctx);
-  if (runDirectory === undefined) {
-    throw new Error("diarist accept requires AK_ROLE_RUN_DIR");
-  }
-  const admittedPath = join(runDirectory, "admitted-request.json");
-  const admitted = JSON.parse(readFileSync(admittedPath, "utf8")) as Record<
-    string,
-    unknown
-  >;
-  if (typeof admitted.projectRoot !== "string" || admitted.projectRoot.trim() === "") {
-    throw new Error(`diarist admitted-request missing projectRoot (${admittedPath})`);
-  }
+  const coordinates = readRoleRunCoordinates(ctx, "diarist accept");
   const bound =
-    typeof admitted.ticketNumber === "number" &&
-    Number.isSafeInteger(admitted.ticketNumber) &&
-    admitted.ticketNumber >= 1
-      ? admitted.ticketNumber
+    typeof coordinates.admitted.ticketNumber === "number" &&
+    Number.isSafeInteger(coordinates.admitted.ticketNumber) &&
+    coordinates.admitted.ticketNumber >= 1
+      ? coordinates.admitted.ticketNumber
       : undefined;
   return {
-    runDirectory,
-    projectRoot: admitted.projectRoot,
-    home: homeFromRunDirectory(runDirectory),
+    runDirectory: coordinates.runDirectory,
+    projectRoot: coordinates.projectRoot,
+    home: coordinates.home,
     ...(bound === undefined ? {} : { boundTicketNumber: bound }),
   };
 }
@@ -1015,6 +1043,145 @@ const COUNTERSIGN_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]
  */
 const COUNTERSIGN_STATUS_REASK =
   "countersignStatus 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
+
+/**
+ * #924 Secretariat on the shared filed-officer envelope + non-terminating
+ * summon-countersign tool (auditor dossier extension pattern).
+ * Nested countersign lifecycle stays on summonPublicRole (ADR 0018).
+ * #924 / 第 0 条: output tool records the receipt as submitted — no status
+ * shape/value reject or reask; legality is content-layer / downstream.
+ */
+export function createSecretariatRoleRuntime(
+  roleHost: RoleHost,
+  dependencies: SecretariatRuntimeDependencies,
+) {
+  let parentInstruction = "";
+  const base = createFiledOfficerRuntime(
+    roleHost,
+    {
+      role: "secretariat",
+      tool: SECRETARIAT_OUTPUT_TOOL_SPEC,
+      acceptedText: SECRETARIAT_ACCEPTED_TEXT,
+      soulTag: "secretariat",
+    },
+    dependencies,
+  );
+  let summonRegistered = false;
+  return {
+    async activate() {
+      await base.activate();
+      if (!summonRegistered) {
+        summonRegistered = true;
+        // Capture parent prompt for default summon instruction (envelope already
+      // owns soul inject; this handler only records the assignment text).
+      roleHost.on("before_agent_start", (event) => {
+        if (typeof event.prompt === "string" && event.prompt.trim() !== "") {
+          parentInstruction = event.prompt;
+        }
+      });
+      roleHost.registerTool({
+        name: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
+        label: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.label,
+        description: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.description,
+        promptSnippet: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.promptSnippet,
+        parameters: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.parameters as never,
+        async execute(
+          _toolCallId,
+          parameters: SecretariatSummonCountersignParameters,
+          signal,
+          _onUpdate,
+          ctx,
+        ): Promise<HostToolResult<unknown>> {
+          const fromArgs =
+            typeof parameters?.instruction === "string"
+              ? parameters.instruction.trim()
+              : "";
+          // #924: instruction comes from tool args or parent prompt only — no
+          // unauthored default summons prose (票号写在传召里; no fabricated fallback).
+          const instruction =
+            fromArgs !== "" ? fromArgs : parentInstruction.trim();
+          const correlationId = (() => {
+            const runDirectory = runDirectoryFromHostContext(ctx);
+            if (runDirectory === undefined) return undefined;
+            return runIdFromRunDirectory(runDirectory);
+          })();
+          const summon = dependencies.summonCountersign;
+          const summoned = summon === undefined
+            ? await (async () => {
+                const coordinates = readRoleRunCoordinates(ctx, "secretariat summons");
+                const { summonPublicRole } = await import("./public-role-summons.ts");
+                return summonPublicRole({
+                  role: "countersign",
+                  argv: ["--project", coordinates.projectRoot, "--", instruction],
+                  cwd: coordinates.projectRoot,
+                  home: coordinates.home,
+                  ...(signal === undefined ? {} : { signal }),
+                  ...(correlationId === undefined ? {} : { correlationId }),
+                  ...(dependencies.packageRoot === undefined
+                    ? {}
+                    : { packageRoot: dependencies.packageRoot }),
+                  ...(dependencies.hostAdapters === undefined
+                    ? {}
+                    : { hostAdapters: dependencies.hostAdapters }),
+                });
+              })()
+            : await summon({
+                instruction,
+                cwd: ctx.cwd,
+                ...(signal === undefined ? {} : { signal }),
+                ...(correlationId === undefined ? {} : { correlationId }),
+                ...(dependencies.home === undefined ? {} : { home: dependencies.home }),
+                ...(dependencies.packageRoot === undefined
+                  ? {}
+                  : { packageRoot: dependencies.packageRoot }),
+              });
+          const details = projectSecretariatSummonResult(summoned);
+          const outcomeKind =
+            typeof details.outcomeKind === "string" ? details.outcomeKind : "unknown";
+          const contentText =
+            outcomeKind === "accepted" || outcomeKind === "audit_escalation"
+              ? "给事中回执已送达中书省"
+              : outcomeKind === "failure"
+                ? "给事中传召失败"
+                : outcomeKind === "no_receipt"
+                  ? "给事中无回执"
+                  : "给事中传召未得终局";
+          return {
+            content: [{ type: "text" as const, text: contentText }],
+            details,
+          };
+        },
+        });
+      }
+      const packageRequired = [
+        SECRETARIAT_OUTPUT_TOOL_NAME,
+        SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
+      ] as const;
+      const all = roleHost.getAllTools().map((tool) => tool.name);
+      for (const name of packageRequired) {
+        if (all.filter((item) => item === name).length !== 1) {
+          throw new Error(`secretariat required tool collision or missing: ${name}`);
+        }
+      }
+      // Host-neutral minimum package surface (#924 G6): declare package tools via
+      // setActiveTools without hardcoding host builtin names. Preserve any host
+      // surface already visible on getAllTools/getActiveTools so body rewrite
+      // (public gh path) stays reachable on hosts that expose it.
+      const priorActive = roleHost.getActiveTools();
+      const hostSurface = priorActive.length > 0 ? priorActive : all;
+      const nextActive = [
+        ...new Set([...hostSurface, ...packageRequired]),
+      ];
+      roleHost.setActiveTools(nextActive);
+      const active = roleHost.getActiveTools();
+      for (const name of packageRequired) {
+        if (!active.includes(name)) {
+          throw new Error(`secretariat failed to activate required tool ${name}`);
+        }
+      }
+    },
+  };
+}
 
 export function createCountersignRoleRuntime(
   roleHost: RoleHost,
@@ -1672,6 +1839,15 @@ export function createRoleRuntimeExtension(
         },
       },
     );
+    const secretariat = createSecretariatRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadSecretariatSoul) throw new Error("Secretariat runtime dependencies are not configured");
+        return dependencies.loadSecretariatSoul();
+      },
+      ...(dependencies.packageRoot === undefined
+        ? {}
+        : { packageRoot: dependencies.packageRoot }),
+    });
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
       async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
@@ -1963,6 +2139,7 @@ export function createRoleRuntimeExtension(
         navigator,
         auditor,
         diarist,
+        secretariat,
         merger: async () => {
           await merger.activate();
         },
@@ -2074,6 +2251,14 @@ export function createRoleRuntimeExtension(
         // Gate is resolveEngineName (RoleHost flag → env fallback) — no per-engine execute branch; no role-module spawn.
         if (!engineDetourRegistered) {
           engineDetourRegistered = registerEngineDetourTool(roleHost, hostActions);
+        }
+        // Secretariat owns a declared active surface. The shared engine detour is
+        // registered after role activation, so include it here rather than leave
+        // a newly registered optional tool unreachable until a later reload.
+        if (entry.role === "secretariat" && engineDetourRegistered) {
+          roleHost.setActiveTools([
+            ...new Set([...roleHost.getActiveTools(), ENGINE_DETOUR_TOOL_NAME]),
+          ]);
         }
         // Worker gates ①②: arm records baseline and runs private one-shot hook uninstall (ADR 0070).
         // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.

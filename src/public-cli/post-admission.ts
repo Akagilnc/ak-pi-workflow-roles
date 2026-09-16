@@ -1238,9 +1238,9 @@ export function resumeTurnRequestProjectionOptions(
     ...(env.model === undefined ? {} : { model: env.model }),
     ...pickEngineAxis(env),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(admitted.correlationId === undefined && env.correlationId === undefined
+    ...(env.correlationId === undefined && admitted.correlationId === undefined
       ? {}
-      : { correlationId: admitted.correlationId ?? env.correlationId }),
+      : { correlationId: env.correlationId ?? admitted.correlationId }),
     continuation: {
       kind: "resume",
       prompt,
@@ -1526,12 +1526,7 @@ export async function runPostAdmissionSeatResume<
             dispatch: async (turnRequest) => {
               const result = await dispatchPostAdmissionTurn({
                 admitted: loaded.admitted,
-                env: {
-                  ...input.env,
-                  ...(loaded.admitted.correlationId === undefined
-                    ? {}
-                    : { correlationId: loaded.admitted.correlationId }),
-                },
+                env: input.env,
                 io: attemptIo,
                 request: turnRequest,
                 lease,

@@ -18,6 +18,7 @@ import test from "node:test";
 import { readAnalystGateCyclesFromAuditorRoles } from "../../src/analyst-gate-cycles-read.ts";
 import { bookDirectOfficerRunPointer } from "../../src/archivist-record-entry.ts";
 import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
+import { createDefaultGateOfficerSummon } from "../../src/gatekeeper-pass-envelope.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
@@ -214,10 +215,13 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
       } as never,
       subject: { kind: "countersign_verdict" },
       runDirectory: sourceRunPath,
-      home,
-      packageRoot,
-      roleTurnHost: host,
-      createRunId: () => "01a082100-0000-7000-8000-0000000n821",
+      summonOfficer: createDefaultGateOfficerSummon({
+        cwd: project,
+        home,
+        packageRoot,
+        roleTurnHost: host,
+        createRunId: () => "01a082100-0000-7000-8000-0000000n821",
+      }),
     });
     assert.equal(projected.result.status, "pass");
     assert.ok(projected.summoned?.runDirectory, "nested officer run must mint");
@@ -325,11 +329,14 @@ test("#879 Nth officer turn receives Nth parent submission — not history array
         subject: { kind: "countersign_verdict" },
         runDirectory: sourceRunPath,
         submission: body,
+      summonOfficer: createDefaultGateOfficerSummon({
+        cwd: project,
         home,
         packageRoot,
         roleTurnHost: host,
         createRunId: () => `01a087900-0000-7000-8000-0000000n00${i + 2}`,
-      });
+      }),
+    });
       assert.equal(projected.result.status, "bounce");
       assert.deepEqual(JSON.parse(prompts[i + 1]!), body);
       const terminal = projected.summoned?.terminal;
@@ -498,10 +505,13 @@ test("#879 station-child officer: case dossier once via shared envelope readingM
       subject: { kind: "countersign_verdict" },
       runDirectory: sourceRunPath,
       submission: body,
-      home,
-      packageRoot,
-      roleTurnHost: host,
-      createRunId: () => "01a087900-0000-7000-8000-0000000d001",
+      summonOfficer: createDefaultGateOfficerSummon({
+        cwd: project,
+        home,
+        packageRoot,
+        roleTurnHost: host,
+        createRunId: () => "01a087900-0000-7000-8000-0000000d001",
+      }),
     });
     assert.equal(projected.result.status, "pass");
     assert.ok(prompts.length >= 1);

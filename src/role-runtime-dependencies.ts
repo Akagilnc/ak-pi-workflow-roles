@@ -47,6 +47,7 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
     loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),
     loadDiaristSoul: () => loadMainRoleSessionMaterials("diarist"),
+    loadSecretariatSoul: () => loadMainRoleSessionMaterials("secretariat"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),

@@ -14,7 +14,7 @@
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { bookDirectOfficerRunPointer } from "./archivist-record-entry.ts";
-import type { HostContext } from "./host-contracts.ts";
+import type { HostContext, RoleTurnHost } from "./host-contracts.ts";
 import {
   GatekeeperDecisionError,
   OFFICER_CONCLUSION_REASK,
@@ -27,6 +27,34 @@ import {
 } from "./gatekeeper-role.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { sessionFileFromPublicSummon } from "./session-assistant-usage.ts";
+
+/**
+ * Shared-envelope default officer summon (ADR 0018).
+ * Role modules must not own this drive seam — only project results.
+ */
+export function createDefaultGateOfficerSummon(options: {
+  readonly cwd: string;
+  readonly home?: string;
+  readonly packageRoot?: string;
+  readonly roleTurnHost?: RoleTurnHost;
+  readonly createRunId?: () => string;
+}): GateOfficerSummon {
+  return async (officer, sourceRunDirectory, signal, reask, submission) => {
+    const { summonGateOfficer } = await import("./public-role-summons.ts");
+    return summonGateOfficer({
+      officer,
+      sourceRunDirectory,
+      cwd: options.cwd,
+      ...(signal === undefined ? {} : { signal }),
+      ...(reask === undefined ? {} : { reask }),
+      ...(submission === undefined ? {} : { submission }),
+      ...(options.home === undefined ? {} : { home: options.home }),
+      ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+      ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+      ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+    });
+  };
+}
 
 /**
  * Book a typed pointer under parent session/auditor-roles (archivist-owned write).
@@ -84,12 +112,17 @@ export async function requireGatekeeperPass(options: {
 }): Promise<void> {
   let reask: string | undefined;
   // No round cap — end only on pass, bounce/escalate-to-parent, or real failure.
+  const summonOfficer =
+    options.summonOfficer ??
+    createDefaultGateOfficerSummon({
+      cwd: options.context.cwd ?? process.cwd(),
+    });
   for (;;) {
     const projected = await projectGatekeeperRun({
       context: options.context,
       subject: options.subject,
+      summonOfficer,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
-      ...(options.summonOfficer === undefined ? {} : { summonOfficer: options.summonOfficer }),
       ...(options.submission === undefined ? {} : { submission: options.submission }),
       ...(reask === undefined ? {} : { reask }),
     });

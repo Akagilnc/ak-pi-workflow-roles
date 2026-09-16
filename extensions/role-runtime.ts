@@ -130,6 +130,7 @@ export default function roleRuntime(pi: ExtensionAPI): void {
     loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
     loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),
     loadDiaristSoul: () => loadMainRoleSessionMaterials("diarist"),
+    loadSecretariatSoul: () => loadMainRoleSessionMaterials("secretariat"),
     loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
     loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
     loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
