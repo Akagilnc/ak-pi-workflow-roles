@@ -1178,6 +1178,38 @@ test("public countersign path: --ticket is unknown-option reject (exit 2)", asyn
   });
 });
 
+test("public countersign path: invalid attachment rejects before identity or run persistence", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    const runId = "01a0sign00-0000-7000-8000-000000000bad";
+    let identityCalls = 0;
+    const result = await runPublicCountersign(
+      ["--attach", join(project, "missing.md"), "裁：附件无效。"],
+      countersignPathEnv({
+        home,
+        project,
+        runId,
+        blockTurn: true,
+        runCourtDiaristStation: async () => {
+          identityCalls += 1;
+        },
+      }),
+      captureIo().io,
+      parseCountersignArgv,
+    );
+
+    assert.equal(result.exitCode, 2);
+    assert.equal(result.admitted, undefined);
+    assert.equal(identityCalls, 0);
+    const placement = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey: resolveBookKeyFromGit(project),
+      subject: { unbound: true },
+      runId,
+      role: "countersign",
+    });
+    await assert.rejects(readFile(join(placement.runDirectory, "invocation.json")));
+  });
+});
+
 test("public countersign path: 起居郎 typed handoff binds ticket; dossier volume stays readable", async () => {
   await withCountersignProject(async ({ home, project }) => {
     // Volume may pre-exist; binding still requires 起居郎 typed assertion (#771).

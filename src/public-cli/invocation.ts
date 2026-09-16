@@ -1202,11 +1202,9 @@ export function parseFixerArgv(args: readonly string[]): ParseFixerArgvResult {
   };
 }
 
-async function freezeRegularFileAttachment(
+async function readRegularFileAttachment(
   sourcePath: string,
-  destinationDir: string,
-  index: number,
-): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
+): Promise<{ absolute: string; bytes: Buffer }> {
   const absolute = isAbsolute(sourcePath) ? sourcePath : resolve(sourcePath);
   let st;
   try {
@@ -1222,7 +1220,31 @@ async function freezeRegularFileAttachment(
       `attachment must be a regular file (not a directory or symlink): ${sourcePath}`,
     );
   }
-  const bytes = await readFile(absolute);
+  try {
+    return { absolute, bytes: await readFile(absolute) };
+  } catch (error) {
+    throw new CliUsageError(
+      `attachment is not a readable regular file: ${sourcePath}`,
+      { cause: error },
+    );
+  }
+}
+
+/** Validate deferred attachment inputs before any identity child or run persistence. */
+export async function validateAttachmentPaths(
+  attachmentPaths: readonly string[],
+): Promise<void> {
+  for (const sourcePath of attachmentPaths) {
+    await readRegularFileAttachment(sourcePath);
+  }
+}
+
+async function freezeRegularFileAttachment(
+  sourcePath: string,
+  destinationDir: string,
+  index: number,
+): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
+  const { absolute, bytes } = await readRegularFileAttachment(sourcePath);
   const name = `${String(index).padStart(2, "0")}-${basename(absolute)}`;
   const frozenPath = join(destinationDir, name);
   await writeFile(frozenPath, bytes);

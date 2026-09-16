@@ -35,6 +35,7 @@ import {
   buildCountersignTransportPrompt,
   materializeCountersignInvocation,
   relocateAdmittedRunToTicket,
+  validateAttachmentPaths,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
@@ -404,6 +405,18 @@ export async function runPublicCountersign(
       ...(env.model === undefined ? {} : { model: env.model }),
     });
   };
+
+  // Deferred persistence must not defer public input rejection: an invalid
+  // attachment neither summons the identity child nor leaves a partial run.
+  try {
+    await validateAttachmentPaths(parsed.attachmentPaths);
+  } catch (error) {
+    if (error instanceof CliUsageError) {
+      presentStructuralRejection(error, io);
+      return { exitCode: 2 };
+    }
+    throw error;
+  }
 
   // #637 / #771 / ADR 0079: ticket identity is the 起居郎 LLM typed assertion
   // (never mechanical matching of summons text). Resolve that typed key before
