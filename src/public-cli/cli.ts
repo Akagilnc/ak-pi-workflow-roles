@@ -263,6 +263,8 @@ export type CliEnv = {
   hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   /** Optional caller correlation id (#78 host channel). */
   correlationId?: string;
+  /** Existing 起居郎 typed identity supplied by an already-bound caller. */
+  boundTicketNumber?: number;
   /** Extra Pi args for Judge runs (tests: faux provider). */
   judgeExtraPiArgs?: readonly string[];
   /** Override Judge role-run timeout (tests). */
@@ -400,6 +402,9 @@ function createRoleEnvironment(
     cwd: options.cwd,
     ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
     ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+    ...(env.boundTicketNumber === undefined
+      ? {}
+      : { boundTicketNumber: env.boundTicketNumber }),
     ...(hostFacingSelection === undefined ? {} : { model: hostFacingSelection }),
     ...projectSeatEngine(options.seat),
     ...projectSeatHost(options.seat),
