@@ -772,8 +772,6 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
     })}\n${JSON.stringify({
       speaker: "owner",
       s: 0,
-      // High line — must not collide with fixture physical lines under (s,line) carry priority.
-      line: 9000,
       id: "prior-seed",
       text: "既有权威卷原文",
     })}\n`;
@@ -1240,8 +1238,8 @@ test("ticket provenance normalizes historical and incoming session index domains
             { path: `${historical}/./`, ranges: [{ from: { line: 2 }, to: { line: 2 } }] },
           ],
         }),
-        JSON.stringify({ speaker: "owner", s: 0, line: 1, text: "first" }),
-        JSON.stringify({ speaker: "runner", s: 1, line: 2, text: "second" }),
+        JSON.stringify({ speaker: "owner", s: 0, text: "first" }),
+        JSON.stringify({ speaker: "runner", s: 1, text: "second" }),
       ].join("\n") + "\n",
       "utf8",
     );
