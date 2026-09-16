@@ -73,8 +73,8 @@ export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: 
 export type ReviewerActivation = Readonly<{
   fixedBaseRevision: string;
   soul: string;
-  /** Present only for the default shape; produced deterministically before the parent turn. */
-  lensResults?: unknown;
+  /** Present only for the default shape; envelope calls once before the parent turn. */
+  loadLensResults?: () => Promise<unknown>;
   /** Frozen ak-cross-m-review binding — envelope owns expansion capture against this data. */
   skillBinding: CanonicalSkillBinding<"ak-cross-m-review">;
 }>;
@@ -101,12 +101,13 @@ export function createReviewerRoleRuntime(
       soul = (await dependencies.loadSoul()).trim();
       if (!soul) throw new Error("Reviewer soul is empty");
       fixedBaseRevision = admitted.baseRevision;
-      const lensResults = admitted.lens === "all"
-        ? await (() => {
+      const loadLensResults = admitted.lens === "all"
+        ? (() => {
             if (ctx === undefined || dependencies.summonLenses === undefined) {
               throw new Error("Reviewer dual-lens summons is not configured");
             }
-            return dependencies.summonLenses({
+            let result: Promise<unknown> | undefined;
+            return () => result ??= dependencies.summonLenses!({
               admitted,
               context: ctx,
               ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
@@ -135,7 +136,7 @@ export function createReviewerRoleRuntime(
       return Object.freeze({
         fixedBaseRevision: activatedBase,
         soul: activatedSoul,
-        ...(lensResults === undefined ? {} : { lensResults }),
+        ...(loadLensResults === undefined ? {} : { loadLensResults }),
         skillBinding: activatedBinding,
       });
     },

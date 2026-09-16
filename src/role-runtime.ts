@@ -1447,17 +1447,20 @@ export function createRoleRuntimeExtension(
           }
           reviewerExpansionCaptured = true;
         }
+        const lensResults = activeReviewerParent.loadLensResults === undefined
+          ? undefined
+          : await activeReviewerParent.loadLensResults();
         return {
           systemPrompt: assembleReviewerParentSystemPrompt({
             baseSystemPrompt: event.systemPrompt,
             soul: activeReviewerParent.soul,
           }),
-          ...(activeReviewerParent.lensResults === undefined
+          ...(lensResults === undefined
             ? {}
             : {
                 readingMaterial: {
                   kind: "reviewer-lens-results",
-                  content: activeReviewerParent.lensResults,
+                  content: lensResults,
                 },
               }),
         };

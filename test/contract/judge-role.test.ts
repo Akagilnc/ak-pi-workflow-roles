@@ -2334,10 +2334,12 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
                 authorityRefs: ["CLAUDE.md"],
               },
             );
-            assert.deepEqual(activated.lensResults, {
+            assert.ok(activated.loadLensResults);
+            assert.deepEqual(await activated.loadLensResults(), {
               completeness: { exitCode: 0 },
               correctness: { exitCode: 0 },
             });
+            await activated.loadLensResults();
             assert.equal(plain.reviewerSummonCalls, 1);
           } else {
             await plain.runtime.activate();
