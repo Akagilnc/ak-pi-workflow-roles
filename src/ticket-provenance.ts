@@ -26,6 +26,7 @@ import {
   readSitianVolumeText,
   resolveSitianVolume,
   rewriteSitianVolume,
+  withSitianVolumeTransaction,
   type SitianRecordInput,
 } from "./sitian-facade.ts";
 import {
@@ -274,42 +275,40 @@ function rangeDeclarationKey(range: TicketProvenanceRange): string {
 function mergeSessionBounds(
   prior: readonly TicketProvenanceSession[] | undefined,
   incoming: readonly TicketProvenanceSession[],
-): readonly TicketProvenanceSession[] {
+): {
+  readonly sessions: readonly TicketProvenanceSession[];
+  readonly priorIndexes: readonly number[];
+  readonly incomingIndexes: readonly number[];
+} {
   const merged: { path: string; ranges: TicketProvenanceRange[] }[] = [];
   const indexByIdentity = new Map<string, number>();
 
-  const absorb = (sessions: readonly TicketProvenanceSession[]): void => {
+  const absorb = (sessions: readonly TicketProvenanceSession[]): number[] => {
+    const indexes: number[] = [];
     for (const session of sessions) {
       const identity = physicalPathIdentity(session.path);
-      const existingIndex = indexByIdentity.get(identity);
-      if (existingIndex === undefined) {
-        indexByIdentity.set(identity, merged.length);
-        merged.push({
-          path: session.path,
-          ranges: session.ranges.map((range) => ({
-            from: { ...range.from },
-            to: { ...range.to },
-          })),
-        });
-        continue;
+      let targetIndex = indexByIdentity.get(identity);
+      if (targetIndex === undefined) {
+        targetIndex = merged.length;
+        indexByIdentity.set(identity, targetIndex);
+        merged.push({ path: session.path, ranges: [] });
       }
-      const target = merged[existingIndex]!;
+      indexes.push(targetIndex);
+      const target = merged[targetIndex]!;
       const seen = new Set(target.ranges.map(rangeDeclarationKey));
       for (const range of session.ranges) {
         const key = rangeDeclarationKey(range);
         if (seen.has(key)) continue;
         seen.add(key);
-        target.ranges.push({
-          from: { ...range.from },
-          to: { ...range.to },
-        });
+        target.ranges.push({ from: { ...range.from }, to: { ...range.to } });
       }
     }
+    return indexes;
   };
 
-  absorb(prior ?? []);
-  absorb(incoming);
-  return merged;
+  const priorIndexes = absorb(prior ?? []);
+  const incomingIndexes = absorb(incoming);
+  return { sessions: merged, priorIndexes, incomingIndexes };
 }
 
 /**
@@ -577,11 +576,22 @@ export async function reprojectTicketProvenance(input: {
   readonly sessions: readonly TicketProvenanceSession[];
   readonly amendments?: readonly TicketProvenanceAmendment[];
 }): Promise<ReprojectTicketProvenanceResult> {
-  const recordInput = ticketProvenanceRecordInput(
-    input.ticketNumber,
-    input.cwd,
-    input.home,
+  const recordInput = ticketProvenanceRecordInput(input.ticketNumber, input.cwd, input.home);
+  return withSitianVolumeTransaction(recordInput, () =>
+    reprojectTicketProvenanceTransaction(input, recordInput),
   );
+}
+
+async function reprojectTicketProvenanceTransaction(
+  input: {
+    readonly ticketNumber: number;
+    readonly cwd: string;
+    readonly home?: string;
+    readonly sessions: readonly TicketProvenanceSession[];
+    readonly amendments?: readonly TicketProvenanceAmendment[];
+  },
+  recordInput: SitianRecordInput,
+): Promise<ReprojectTicketProvenanceResult> {
   const prior = await readTicketProvenance(
     input.ticketNumber,
     input.cwd,
@@ -633,11 +643,16 @@ export async function reprojectTicketProvenance(input: {
   }
 
   // Non-empty 本轮边界 ∪ prior：遗漏永不删除（#918 甲案）。incoming 自身亦按 identity 归并。
-  const sessions = mergeSessionBounds(prior.header?.sessions, input.sessions);
+  const merged = mergeSessionBounds(prior.header?.sessions, input.sessions);
+  const sessions = merged.sessions;
   const deltas = undeclaredSessionRanges(prior.header?.sessions, sessions);
 
-  // 普通结转：原样保留已投影行，不按正文杀 task-notification（C4）。
-  let lines = [...prior.lines];
+  // Normalizing duplicate historical physical sessions must also migrate every
+  // projected row's old header index into the normalized header domain.
+  let lines = prior.lines.map((line) => ({
+    ...line,
+    s: merged.priorIndexes[line.s] ?? line.s,
+  }));
   const unparsable: UnparsableSessionLine[] = [];
   const seenIds = new Set<string>();
   for (const line of lines) {
@@ -646,7 +661,12 @@ export async function reprojectTicketProvenance(input: {
 
   const amendmentsByKey = new Map<string, TicketProvenanceAmendment>();
   for (const amendment of amendments) {
-    amendmentsByKey.set(amendmentKey(amendment.s, amendment.line), amendment);
+    const cumulativeIndex = merged.incomingIndexes[amendment.s];
+    if (cumulativeIndex === undefined) continue;
+    amendmentsByKey.set(amendmentKey(cumulativeIndex, amendment.line), {
+      ...amendment,
+      s: cumulativeIndex,
+    });
   }
 
   // Only previously undeclared ranges read sources. Already-declared = carry only.

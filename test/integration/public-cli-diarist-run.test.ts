@@ -33,6 +33,7 @@ import { migrateBookTopology } from "../../src/book-topology-migration.ts";
 import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
 import {
   readTicketProvenance,
+  reprojectTicketProvenance,
   resolveTicketProvenanceVolume,
 } from "../../src/ticket-provenance.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
@@ -1256,6 +1257,59 @@ test("migrateBookTopology preserves legacy and prior bare under unbound when lat
       true,
       "first bare header in unbound",
     );
+  });
+});
+
+test("ticket provenance normalizes historical and incoming session index domains", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const sourceDir = join(home, ".claude", "projects", "index-domains");
+    await mkdir(sourceDir, { recursive: true });
+    const historical = join(sourceDir, "historical.jsonl");
+    const incoming = join(sourceDir, "incoming.jsonl");
+    await writeFile(historical, "{}\n", "utf8");
+    await writeFile(incoming, "not-json\n", "utf8");
+
+    const paths = resolveTicketProvenanceVolume(TICKET, project, home);
+    await mkdir(paths.volumeDir, { recursive: true });
+    await writeFile(
+      paths.recordFile,
+      [
+        JSON.stringify({
+          repo: resolveBookKeyFromGit(project),
+          ticket: TICKET,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+          sessions: [
+            { path: historical, ranges: [{ from: { line: 1 }, to: { line: 1 } }] },
+            { path: `${historical}/./`, ranges: [{ from: { line: 2 }, to: { line: 2 } }] },
+          ],
+        }),
+        JSON.stringify({ speaker: "owner", s: 0, line: 1, text: "first" }),
+        JSON.stringify({ speaker: "runner", s: 1, line: 2, text: "second" }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+
+    const result = await reprojectTicketProvenance({
+      ticketNumber: TICKET,
+      cwd: project,
+      home,
+      sessions: [
+        { path: incoming, ranges: [{ from: { line: 1 }, to: { line: 1 } }] },
+      ],
+      amendments: [{ s: 0, line: 1, speaker: "owner", text: "amended" }],
+    });
+
+    assert.equal(result.unparsable.length, 0);
+    assert.equal(result.header.sessions.length, 2);
+    assert.deepEqual(result.lines.map((line) => [line.s, line.text]), [
+      [0, "first"],
+      [0, "second"],
+      [1, "amended"],
+    ]);
   });
 });
 

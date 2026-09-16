@@ -7,7 +7,7 @@
  * stays append-only; this module does not restore append watermarks.
  */
 import { appendFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, readlink, symlink, unlink } from "node:fs/promises";
 
 import {
   ensureRealDirectoryTree,
@@ -65,6 +65,59 @@ export async function readSitianVolumeText(
       `Sitian volume read failure: ${errorText(error)}`,
       { cause: error },
     );
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Serialize one volume's read→merge→publish transaction across processes.
+ * The lock is scoped to the resolved volume, and a dead holder is reclaimed.
+ */
+export async function withSitianVolumeTransaction<T>(
+  input: SitianRecordInput,
+  transaction: () => Promise<T>,
+): Promise<T> {
+  const volume = ensureSitianVolume(input);
+  const lockPath = `${volume.recordFile}.lock`;
+  while (true) {
+    try {
+      await symlink(String(process.pid), lockPath);
+      try {
+        return await transaction();
+      } finally {
+        await unlink(lockPath).catch(() => undefined);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      let holder: number | undefined;
+      try {
+        const parsed = Number.parseInt(await readlink(lockPath), 10);
+        if (Number.isSafeInteger(parsed) && parsed > 0) holder = parsed;
+      } catch (readError) {
+        if ((readError as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw readError;
+      }
+      if (holder === undefined) {
+        throw new SitianInfrastructureError(
+          `Sitian volume transaction lock has no verifiable holder: ${lockPath}`,
+        );
+      }
+      try {
+        process.kill(holder, 0);
+      } catch (signalError) {
+        if ((signalError as NodeJS.ErrnoException).code === "ESRCH") {
+          await unlink(lockPath).catch((unlinkError) => {
+            if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkError;
+          });
+          continue;
+        }
+        throw signalError;
+      }
+      await sleep(15);
+    }
   }
 }
 
