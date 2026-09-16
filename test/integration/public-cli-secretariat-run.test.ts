@@ -185,11 +185,15 @@ function nestedCountersignHost(input: {
   packageRoot: string;
   sequence: ReadonlyArray<{ details: unknown }>;
   gateCalls: Array<{ kind: string }>;
+  diaristRunDirectories?: string[];
 }): RoleTurnHost {
   let call = 0;
   const piRunner: LegacyFauxPiRunner = async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
-    if (role === "diarist") return courtDiaristFor924()(args, options);
+    if (role === "diarist") {
+      input.diaristRunDirectories?.push(options.env.AK_ROLE_RUN_DIR ?? "");
+      return courtDiaristFor924()(args, options);
+    }
     if (role === "countersign") {
       const step = input.sequence[call] ?? input.sequence.at(-1)!;
       call += 1;
@@ -297,12 +301,14 @@ function secretariatHostDrivingRealTools(input: {
   >;
   countersignSequence: ReadonlyArray<{ details: unknown }>;
   gateCalls: Array<{ kind: string }>;
+  diaristRunDirectories?: string[];
   onSummonDetails?: (details: Record<string, unknown>) => void;
 }): RoleTurnHost {
   const nested = nestedCountersignHost({
     packageRoot: input.packageRoot,
     sequence: input.countersignSequence,
     gateCalls: input.gateCalls,
+    ...(input.diaristRunDirectories === undefined ? {} : { diaristRunDirectories: input.diaristRunDirectories }),
   });
   const hostAdapters = [adapter("pi", nested)];
 
@@ -467,10 +473,12 @@ test("public secretariat through-line: default summon → continue → same-run 
     const capture = captureIo();
     const summonDetails: Array<Record<string, unknown>> = [];
     const gateCalls: Array<{ kind: string }> = [];
+    const diaristRunDirectories: string[] = [];
     const host = secretariatHostDrivingRealTools({
       packageRoot,
       home,
       gateCalls,
+      diaristRunDirectories,
       countersignSequence: [
         {
           details: {
@@ -593,6 +601,20 @@ test("public secretariat through-line: default summon → continue → same-run 
       await readFile(join(parentRunDir, "admitted-request.json"), "utf8"),
     ) as { ticketNumber?: number };
     assert.equal(parentAdmitted.ticketNumber, 924);
+    const diaristAdmissions = await Promise.all(
+      diaristRunDirectories.map(async (directory) => {
+        const runId = directory.split("/").at(-1)?.replace(/@.*$/, "") ?? "";
+        const currentDirectory = await findRunDirectoryById(home, runId);
+        assert.ok(currentDirectory);
+        return JSON.parse(
+          await readFile(join(currentDirectory, "admitted-request.json"), "utf8"),
+        ) as { attachments?: unknown[] };
+      }),
+    );
+    assert.ok(
+      diaristAdmissions.some((admission) => (admission.attachments?.length ?? 0) > 0),
+      "identity diarist must receive the secretariat run's frozen attachment",
+    );
 
     const state = await readRoleRunState(
       parentRunDir,
