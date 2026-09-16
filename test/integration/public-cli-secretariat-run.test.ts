@@ -672,7 +672,11 @@ test("public secretariat through-line: default summon → continue → same-run 
         assert.ok(currentDirectory);
         return JSON.parse(
           await readFile(join(currentDirectory, "admitted-request.json"), "utf8"),
-        ) as { attachments?: unknown[]; correlationId?: string };
+        ) as {
+          attachments?: unknown[];
+          correlationId?: string;
+          correlationIds?: string[];
+        };
       }),
     );
     assert.ok(
@@ -680,7 +684,10 @@ test("public secretariat through-line: default summon → continue → same-run 
       "identity diarist must receive the secretariat run's frozen attachment",
     );
     const diaristCallers = new Set(
-      diaristAdmissions.map((admission) => admission.correlationId),
+      diaristAdmissions.flatMap((admission) => [
+        admission.correlationId,
+        ...(admission.correlationIds ?? []),
+      ]),
     );
     assert.ok(
       diaristCallers.has(secretariatRunId),
