@@ -563,12 +563,16 @@ export async function summonParallelReviewerLenses(options: {
   const completenessRoot = join(root, "completeness");
   const correctnessRoot = join(root, "correctness");
   const worktrees = [completenessRoot, correctnessRoot] as const;
+  const created = new Set<string>();
+  let primaryFailure: unknown;
   try {
     await Promise.all(
-      worktrees.map((path) =>
-        execFileAsync("git", ["worktree", "add", "--detach", path, "HEAD"], {
+      worktrees.map(async (path) => {
+        await execFileAsync("git", ["worktree", "add", "--detach", path, "HEAD"], {
           cwd: options.projectRoot,
-        })),
+        });
+        created.add(path);
+      }),
     );
     const summon = (lens: "completeness" | "correctness", cwd: string) =>
       summonPublicRole({
@@ -591,13 +595,26 @@ export async function summonParallelReviewerLenses(options: {
       summon("correctness", correctnessRoot),
     ]);
     return { completeness, correctness };
+  } catch (error) {
+    primaryFailure = error;
+    throw error;
   } finally {
-    await Promise.all(
-      worktrees.map((path) =>
+    const cleanup = await Promise.allSettled(
+      [...created].map((path) =>
         execFileAsync("git", ["worktree", "remove", path], {
           cwd: options.projectRoot,
         })),
     );
+    const cleanupFailures = cleanup.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : []);
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(
+        primaryFailure === undefined
+          ? cleanupFailures
+          : [primaryFailure, ...cleanupFailures],
+        "parallel reviewer worktree cleanup failed",
+      );
+    }
     await rm(root, { recursive: true, force: true });
   }
 }
