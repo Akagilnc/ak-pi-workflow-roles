@@ -3,7 +3,7 @@ import { lstat, mkdir, readlink, realpath, symlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { MethodBinding } from "./host-contracts.ts";
 
-type HostMethodSkill = Readonly<{ name: string; dir: string; path: string }>;
+type HostMethodSkill = Readonly<{ name: string }>;
 export const HOST_METHOD_PLUGIN_NAME = "ak-methods" as const;
 export const packagedMethodsDir = (root: string) => join(root, "resources", "methods");
 export const packagedMethodPluginDir = (root: string) => join(root, "dist", "method-host-plugin");
@@ -12,22 +12,20 @@ export const pluginSkillToken = (plugin: string, skill: string) => `${plugin}:${
 export function hostMethodSkills(methods: readonly MethodBinding[]): readonly HostMethodSkill[] {
   return Object.freeze(methods.flatMap((method) => {
     if (method.kind !== "skill") return [];
-    const dir = dirname(method.path);
-    const name = basename(dir);
-    return name ? [Object.freeze({ name, dir, path: method.path })] : [];
+    const name = basename(dirname(method.path));
+    return name ? [Object.freeze({ name })] : [];
   }));
 }
 
-const alreadyPrefixed = (prompt: string, token: string) => {
+function prefixPrompt(token: string, prompt: string): string {
+  if (!token) return prompt;
   const text = prompt.trimStart();
-  return text === token || text.startsWith(`${token} `) || text.startsWith(`${token}\n`);
-};
+  if (text === token || text.startsWith(`${token} `) || text.startsWith(`${token}\n`)) return prompt;
+  return prompt ? `${token} ${prompt}` : token;
+}
 
 export function applyHostSlashSkillInvocation(token: string, prompt: string): string {
-  if (!token) return prompt;
-  const slash = token.startsWith("/") ? token : `/${token}`;
-  if (alreadyPrefixed(prompt, slash)) return prompt;
-  return prompt ? `${slash} ${prompt}` : slash;
+  return prefixPrompt(token.startsWith("/") ? token : `/${token}`, prompt);
 }
 
 export function forcedPluginSlashToken(methods: readonly MethodBinding[]): string | undefined {
@@ -39,9 +37,7 @@ export function forcedPluginSlashToken(methods: readonly MethodBinding[]): strin
 export function applyCodexSkillInvocation(methods: readonly MethodBinding[], prompt: string): string {
   const skills = hostMethodSkills(methods);
   if (skills.length !== 1) return prompt;
-  const token = `$${skills[0]!.name}`;
-  if (alreadyPrefixed(prompt, token)) return prompt;
-  return prompt ? `${token} ${prompt}` : token;
+  return prefixPrompt(`$${skills[0]!.name}`, prompt);
 }
 
 export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<string> {

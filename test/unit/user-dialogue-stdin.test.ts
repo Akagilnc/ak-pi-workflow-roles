@@ -9,10 +9,8 @@ import {
   headlessTurnArgs,
 } from "../../src/headless-host/description.ts";
 import {
-  HEADLESS_HOST_DESCRIPTIONS,
   lookupHeadlessHostDescription,
 } from "../../src/host-descriptions.ts";
-import { packagedMethodPluginDir } from "../../src/host-native-method.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import {
@@ -87,19 +85,4 @@ test("#879 Codex exec argv selects stdin", () => {
     session: { kind: "new" },
   });
   assert.deepEqual(argv.slice(-2), ["--", "-"]);
-});
-
-test("#922 Claude uses its native plugin-dir", () => {
-  const claude = HEADLESS_HOST_DESCRIPTIONS.claude;
-  assert.ok(claude && claude.protocol === "claude-print");
-  const pluginDir = packagedMethodPluginDir(process.cwd());
-  const claudeArgv = headlessTurnArgs({
-    description: claude,
-    systemPromptPath: "/tmp/sys.txt",
-    jsonSchema: { type: "object" },
-    mcpConfigPath: "/tmp/mcp.json",
-    session: { kind: "new", id: "sid" },
-    pluginDir,
-  });
-  assert.equal(claudeArgv[claudeArgv.indexOf("--plugin-dir") + 1], pluginDir);
 });

@@ -5,7 +5,6 @@ import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import {
   copyFile,
   cp,
-  lstat,
   mkdir,
   mkdtemp,
   readFile,
@@ -123,7 +122,7 @@ export async function materializePackageTree(
 
   for (const rel of paths) {
     const src = resolve(packageRoot, rel);
-    if (!existsSync(src) || !(await lstat(src)).isFile()) continue;
+    if (!existsSync(src) || rel === ".agents/skills") continue;
     const dst = resolve(dest, rel);
     await mkdir(dirname(dst), { recursive: true });
     await copyFile(src, dst);

@@ -207,7 +207,7 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
     await access(resolve(extracted.root, "package", path));
   }
 
-  // #922 C1: Claude/Grok plugin ships every method body (not empty symlink stubs).
+  // #922 C1: the Claude plugin ships every method body (not empty symlink stubs).
   assert.ok(
     extracted.paths.includes("dist/method-host-plugin/.claude-plugin/plugin.json"),
     "npm pack must include method-host-plugin manifest",
