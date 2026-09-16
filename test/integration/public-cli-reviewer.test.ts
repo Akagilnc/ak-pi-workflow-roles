@@ -10,6 +10,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import assert from "node:assert/strict";
 import {
   access,
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -1110,53 +1111,72 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       );
     }
 
-    // Default parent must seal the original target after both child judgments.
+    // Final seal brackets status with two HEAD reads; a clean commit between them fails.
     {
-      let dirtied = false;
-      const { io, stdout } = captureIo();
-      const sealed = await runAkRole([
-        "reviewer", "--model", "test/caller-seat:high", "--project", project,
-        "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
-      ], {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-cli-reviewer-final-seal",
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+      const wrapperRoot = await mkdtemp(join(home, "git-seal-wrapper-"));
+      const wrapper = join(wrapperRoot, "git");
+      const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+      await writeFile(wrapper, `#!/bin/sh
+count_file='${join(wrapperRoot, "count")}'
+marker='${join(wrapperRoot, "committed")}'
+count=0
+[ -f "$count_file" ] && count=$(cat "$count_file")
+if [ "$1 $2 $3" = "rev-parse --verify HEAD^{commit}" ]; then
+  count=$((count + 1)); printf '%s' "$count" > "$count_file"
+fi
+if [ "$1" = "status" ] && [ "$count" = "2" ] && [ "$PWD" = "${project}" ] && [ ! -f "$marker" ]; then
+  : > "$marker"
+  '${realGit}' commit --allow-empty -m 'seal-race' >/dev/null
+fi
+exec '${realGit}' "$@"
+`, "utf8");
+      await chmod(wrapper, 0o755);
+      const priorPath = process.env.PATH;
+      process.env.PATH = `${wrapperRoot}:${priorPath ?? ""}`;
+      try {
+        const { io, stdout } = captureIo();
+        const sealed = await runAkRole([
+          "reviewer", "--model", "test/caller-seat:high", "--project", project,
+          "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
+        ], {
           packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-            const lens = args[args.indexOf("--ak-review-lens") + 1] as "completeness" | "correctness";
-            if (!dirtied) {
-              dirtied = true;
-              await writeFile(join(project, "seal-residue.txt"), "changed during review\n", "utf8");
-            }
-            const sessionFile = args[args.indexOf("--session") + 1]!;
-            await mkdir(join(sessionFile, ".."), { recursive: true });
-            const details = lawfulReviewerReceipt(lens);
-            await writeFile(sessionFile, `${JSON.stringify({
-              type: "message",
-              message: { role: "toolResult", toolCallId: `seal-${lens}`, toolName: REVIEWER_OUTPUT_TOOL_NAME, isError: false, details },
-            })}\n`, "utf8");
-            return {
-              code: 0,
-              sealedAcceptance: { role: "reviewer" as const, details, toolCallId: `seal-${lens}` },
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-            };
-          },
-        }),
-      });
-      assert.equal(sealed.exitCode, 1, stdout.join(""));
-      assert.equal(sealed.terminal?.roleOutcome.kind, "failure");
-      assert.equal(sealed.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
-      assert.equal(sealed.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
-      assert.match(
-        sealed.terminal?.reviewerChildOutcomes?.completeness.stderr ?? "",
-        /seal-residue\.txt/,
-      );
+          home,
+          cwd: project,
+          createRunId: () => "run-cli-reviewer-final-seal",
+          io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+              const lens = args[args.indexOf("--ak-review-lens") + 1] as "completeness" | "correctness";
+              const sessionFile = args[args.indexOf("--session") + 1]!;
+              await mkdir(join(sessionFile, ".."), { recursive: true });
+              const details = lawfulReviewerReceipt(lens);
+              await writeFile(sessionFile, `${JSON.stringify({
+                type: "message",
+                message: { role: "toolResult", toolCallId: `seal-${lens}`, toolName: REVIEWER_OUTPUT_TOOL_NAME, isError: false, details },
+              })}\n`, "utf8");
+              return {
+                code: 0,
+                sealedAcceptance: { role: "reviewer" as const, details, toolCallId: `seal-${lens}` },
+                stderr: "",
+                timedOut: false,
+                args: [...args],
+              };
+            },
+          }),
+        });
+        assert.equal(sealed.exitCode, 1, stdout.join(""));
+        assert.equal(sealed.terminal?.roleOutcome.kind, "failure");
+        assert.equal(sealed.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
+        assert.equal(sealed.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
+        assert.match(
+          sealed.terminal?.reviewerChildOutcomes?.completeness.stderr ?? "",
+          /HEAD after status/,
+        );
+      } finally {
+        process.env.PATH = priorPath;
+      }
     }
 
     // Default parent must apply canonical Step 1 before clean detached copies hide dirt.

@@ -685,17 +685,30 @@ export async function summonParallelReviewerLenses(options: {
   }
   let sealDiagnostic: string | undefined;
   try {
-    const [{ stdout: sealedHeadStdout }, { stdout: sealedStatusStdout }] = await Promise.all([
-      execFileAsync("git", ["rev-parse", "--verify", "HEAD^{commit}"], {
-        cwd: options.projectRoot,
-      }),
-      execFileAsync("git", statusArgs, { cwd: options.projectRoot }),
-    ]);
-    const sealedHead = sealedHeadStdout.trim();
-    if (sealedHead !== targetCommit || sealedStatusStdout !== "") {
+    const { stdout: headBeforeStdout } = await execFileAsync(
+      "git",
+      ["rev-parse", "--verify", "HEAD^{commit}"],
+      { cwd: options.projectRoot },
+    );
+    const { stdout: sealedStatusStdout } = await execFileAsync("git", statusArgs, {
+      cwd: options.projectRoot,
+    });
+    const { stdout: headAfterStdout } = await execFileAsync(
+      "git",
+      ["rev-parse", "--verify", "HEAD^{commit}"],
+      { cwd: options.projectRoot },
+    );
+    const headBefore = headBeforeStdout.trim();
+    const headAfter = headAfterStdout.trim();
+    if (
+      headBefore !== targetCommit
+      || headAfter !== targetCommit
+      || sealedStatusStdout !== ""
+    ) {
       sealDiagnostic = [
         "Reviewer target final seal failed:",
-        `git rev-parse --verify 'HEAD^{commit}' => ${sealedHead}`,
+        `HEAD before status => ${headBefore}`,
+        `HEAD after status => ${headAfter}`,
         `expected PRE_HEAD ${targetCommit}`,
         "git status --porcelain=v1 --untracked-files=all -- :/ ':(top,exclude).claude/worktrees/**'",
         sealedStatusStdout,
