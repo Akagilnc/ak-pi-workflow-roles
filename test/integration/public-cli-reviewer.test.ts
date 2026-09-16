@@ -18,6 +18,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
@@ -1447,11 +1448,14 @@ test("default reviewer resume preserves the frozen dual-axis shape", async () =>
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const retainedRoot = await mkdtemp(join(tmpdir(), "ak-reviewer-lenses-"));
+    const retainedProject = join(retainedRoot, "completeness");
+    execFileSync("git", ["worktree", "add", "--detach", retainedProject, "HEAD"], { cwd: project });
     const runId = "run-cli-reviewer-default-resume";
     const admitted = await admitReviewerInvocationRaw({
       principalAuthority: piDurablePrincipalAuthority,
       home,
-      cwd: project,
+      cwd: retainedProject,
       instruction: "--opaque-resume-request",
       attachmentPaths: [],
       baseRevision: "main",
@@ -1463,10 +1467,6 @@ test("default reviewer resume preserves the frozen dual-axis shape", async () =>
     await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, "", "utf8");
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
     await markRunResumable(admitted.runDirectory, { httpStatus: 429, provider: "xai" });
-    const retainedRoot = join(home, "retained-reviewer-worktrees");
-    const retainedProject = join(retainedRoot, "completeness");
-    await mkdir(retainedRoot, { recursive: true });
-    execFileSync("git", ["worktree", "add", "--detach", retainedProject, "HEAD"], { cwd: project });
     await recordReviewerWorktreeOwnership(admitted.runDirectory, {
       sourceProjectRoot: project,
       worktreeRoot: retainedRoot,

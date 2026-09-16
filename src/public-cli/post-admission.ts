@@ -1014,7 +1014,7 @@ export async function dispatchPostAdmissionTurn<
       if (persistRunState) {
         try {
           await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
-          await cleanupReviewerWorktreeOwnership(admitted.runDirectory);
+          await cleanupReviewerWorktreeOwnership(admitted.runDirectory, admitted.projectRoot);
         } catch (error) {
           // #836: `settledOutcome.terminal` already carries recorded
           // submissions (attachRecordedSubmissions above). A real run-state
