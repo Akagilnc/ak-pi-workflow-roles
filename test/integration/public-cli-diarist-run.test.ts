@@ -1649,6 +1649,45 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       [earlyIdless, lateIdless],
     );
 
+    // A host replay repeats one continuous structural block byte-for-byte. The
+    // repeated anchor and its id-less slots converge, while two identical rows in
+    // distinct slots of the original block remain two logical events.
+    const replayBlockPath = join(home, ".claude", "projects", "probe", "replay-block.jsonl");
+    const replayAnchor = JSON.stringify({
+      type: "assistant",
+      uuid: "replay-block-anchor",
+      timestamp: "2026-09-16T00:00:00.000Z",
+      message: { role: "assistant", content: "anchor" },
+    });
+    const identicalIdless = JSON.stringify({
+      type: "user",
+      message: { role: "user", content: "同块内两个真实同字节事件" },
+    });
+    await writeFile(
+      replayBlockPath,
+      [replayAnchor, identicalIdless, identicalIdless, replayAnchor, identicalIdless, identicalIdless].join("\n") + "\n",
+      "utf8",
+    );
+    const afterReplayBlock = await runDiarist(
+      "01a0diar00-0000-7000-8000-000000000097b3",
+      [{ path: replayBlockPath, ranges: [{ from: { line: 1 }, to: { line: 6 } }] }],
+    );
+    const replayBlockSession = afterReplayBlock.header?.sessions.findIndex(
+      (session) => session.path === replayBlockPath,
+    );
+    assert.notEqual(replayBlockSession, undefined);
+    const replayedIdless = afterReplayBlock.lines.filter(
+      (line) => line.s === replayBlockSession && line.text === "同块内两个真实同字节事件",
+    );
+    assert.equal(replayedIdless.length, 2);
+    assert.deepEqual(
+      replayedIdless.map((line) => line.sourceIdentity),
+      [
+        "after\u0000replay-block-anchor\u00001",
+        "after\u0000replay-block-anchor\u00002",
+      ],
+    );
+
     // A partially stale historical range still contributes its surviving overlap.
     // Removing only the old end bound must not replay the id-less/raw prefix.
     const rotatingPath = join(home, ".claude", "projects", "probe", "rotating.jsonl");
@@ -1790,7 +1829,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     );
     assert.equal(
       afterC.header?.sessions.length,
-      5,
+      6,
       "C adds the next session index",
     );
 
