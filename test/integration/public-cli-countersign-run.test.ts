@@ -52,15 +52,23 @@ import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
+  sessionRowTime,
+  sessionToolExchangeRows,
+  sessionUserMessageRow,
+  writeSessionJsonl,
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
+import {
+  recordNonSealedSubmissionForSpawn,
+  sealAcceptedSubmissionForSpawn,
+} from "../helpers/submission-ledger-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import {
   ensureTicketProvenanceVolume,
   readTicketProvenance,
-  resolveTicketProvenanceVolume,
 } from "../../src/ticket-provenance.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -569,18 +577,10 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
           const sessionFile = args[args.indexOf("--session") + 1]!;
           // Append a resumed user turn; keep the prior residual so the scan
           // boundary is exercised (production resume appends, does not wipe).
-          const prior = await readFile(sessionFile, "utf8");
-          const resumeUser = {
-            type: "message",
-            id: "user-resume",
-            parentId: null,
-            timestamp: "2026-08-30T00:01:00.000Z",
-            message: { role: "user", content: "再试", timestamp: 10 },
-          };
-          await writeFile(
+          await writeSessionJsonl(
             sessionFile,
-            `${prior}${JSON.stringify(resumeUser)}\n`,
-            "utf8",
+            [sessionUserMessageRow("user-resume", "再试", 60)],
+            "append",
           );
           return {
             code: 1,
@@ -599,6 +599,488 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
         : undefined,
       "timeout",
       "prior-attempt residual must not mask current resume timeout",
+    );
+  });
+});
+
+/** Countersign-bound exchange over the shared session row writer (#843). */
+function csExchange(input: {
+  readonly stem: string;
+  readonly parentId: string;
+  readonly callId: string;
+  readonly details: unknown;
+  readonly body: string;
+  readonly isError: boolean | "omit";
+  readonly n: number;
+  readonly bound?: boolean;
+}) {
+  return sessionToolExchangeRows({
+    ...input,
+    toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+  });
+}
+
+function countersignScriptedHost(piRunner: LegacyFauxPiRunner) {
+  return roleTurnHostFromLegacyPiRunner({
+    packageRoot,
+    principalAuthority: piDurablePrincipalAuthority,
+    piRunner: withTrueUnboundDiarist(piRunner),
+  });
+}
+
+function notaryBounceError(findings: readonly string[]) {
+  return new GatekeeperDecisionError({
+    status: "bounce",
+    officer: "notary",
+    receipt: { status: "bounce", findings: [...findings] },
+  });
+}
+
+async function recordCountersignBounce(input: {
+  readonly cwd: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly details: unknown;
+  readonly toolCallId: string;
+  readonly findings: readonly string[];
+}): Promise<void> {
+  await recordNonSealedSubmissionForSpawn({
+    cwd: input.cwd,
+    env: input.env,
+    role: "countersign",
+    details: input.details,
+    toolCallId: input.toolCallId,
+    executeError: notaryBounceError(input.findings),
+  });
+}
+
+/** Append one user turn with optional decoy rows + bound residual bounce. */
+async function appendResidualBounceTurn(input: {
+  readonly sessionFile: string;
+  readonly cwd: string;
+  readonly env: NodeJS.ProcessEnv;
+  readonly userId: string;
+  readonly userContent: string;
+  readonly callId: string;
+  readonly details: unknown;
+  readonly body: string;
+  readonly findings: readonly string[];
+  readonly n: number;
+  readonly extraRows?: readonly unknown[];
+}): Promise<void> {
+  await writeSessionJsonl(
+    input.sessionFile,
+    [
+      sessionUserMessageRow(input.userId, input.userContent, input.n),
+      ...(input.extraRows ?? []),
+      ...csExchange({
+        stem: `${input.userId}-bounce`,
+        parentId: input.userId,
+        callId: input.callId,
+        details: input.details,
+        body: input.body,
+        isError: true,
+        n: input.n + 3,
+      }),
+    ],
+    "append",
+  );
+  await recordCountersignBounce({
+    cwd: input.cwd,
+    env: input.env,
+    details: input.details,
+    toolCallId: input.callId,
+    findings: input.findings,
+  });
+}
+
+/**
+ * #843: shared seat settlement — court-scoped resume (message) bounce then sealed
+ * accept stays accepted; gate bounce→pass rounds keep status/findings; bare resume
+ * bounce after a prior accept is not masked by run-scoped stale acceptance; reverse
+ * same-turn accept then bounce keeps rejection facts on payloads/gate.
+ */
+test("#843 same-attempt correctable-rejection residual does not outrank later sealed accepted",
+  async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const seedAccepted = {
+      countersignStatus: "converged" as const,
+      note: "PRIOR-COURT-SEED",
+    };
+    const rejected = {
+      countersignStatus: "continue" as const,
+      fix: { summary: "REJECTED-FIRST-findings-visible" },
+    };
+    const accepted = {
+      countersignStatus: "converged" as const,
+      note: "ACCEPTED-AFTER-CORRECTION",
+    };
+    const rejectionBody = "CORRECTABLE-REJECTION-RESIDUAL-BODY";
+    const laterBounceBody = "SECOND-TURN-BOUNCE-BODY";
+    const reverseBounceBody = "REVERSE-ORDER-BOUNCE-BODY";
+    const gateFindings = ["REJECTED-FIRST-findings-visible"] as const;
+    const reverseGateFindings = ["BOUNCED-AFTER-ACCEPT-VISIBLE"] as const;
+    const runId = "01a0sign00-0000-7000-8000-000000000843";
+    const seatModel = ["--model", "test/caller-seat:high"] as const;
+
+    type SeedGateRound = {
+      readonly id: string;
+      readonly startedAt: string;
+      readonly endedAt: string;
+      readonly status: "bounce" | "pass";
+      readonly findings: readonly string[];
+    };
+    const gateRound = (
+      id: string,
+      startN: number,
+      status: "bounce" | "pass",
+      findings: readonly string[],
+    ): SeedGateRound => ({
+      id,
+      startedAt: sessionRowTime(startN).iso,
+      endedAt: sessionRowTime(startN + 10).iso,
+      status,
+      findings,
+    });
+    const seedGateRounds = async (
+      sessionFile: string,
+      rounds: readonly SeedGateRound[],
+    ): Promise<void> => {
+      const auditorDir = join(dirname(sessionFile), "auditor-roles");
+      await mkdir(auditorDir, { recursive: true });
+      for (let i = 0; i < rounds.length; i += 1) {
+        const round = rounds[i]!;
+        await writeFile(
+          join(auditorDir, `o${String(i + 1).padStart(2, "0")}_notary.jsonl`),
+          gateToolSessionJsonl({
+            id: round.id,
+            startedAt: round.startedAt,
+            endedAt: round.endedAt,
+            toolName: "ak_notary_output",
+            args: { status: round.status, findings: [...round.findings] },
+          }),
+          "utf8",
+        );
+      }
+    };
+    const bounceThenPassGates = [
+      gateRound("direct-notary-bounce", 1000, "bounce", gateFindings),
+      gateRound("direct-notary-pass", 1020, "pass", []),
+    ] as const;
+    const passThenBounceGates = [
+      gateRound("direct-notary-pass-rev", 2000, "pass", []),
+      gateRound("direct-notary-bounce-rev", 2020, "bounce", reverseGateFindings),
+    ] as const;
+
+    const runScripted = (
+      argv: string[],
+      piRunner: LegacyFauxPiRunner,
+      createRunId?: () => string,
+    ) => {
+      const cap = captureIo();
+      return {
+        cap,
+        done: runAkRole(argv, {
+          home,
+          packageRoot,
+          cwd: project,
+          io: cap.io,
+          ...(createRunId === undefined ? {} : { createRunId }),
+          roleTurnHost: countersignScriptedHost(piRunner),
+        }),
+      };
+    };
+
+    // Seed a sealed prior court so resume-with-message mints courtAttemptId (#833).
+    const seed = runScripted(
+      ["countersign", ...seatModel, "--project", project, "裁"],
+      scriptedCountersignSession(seedAccepted),
+      () => runId,
+    );
+    const seeded = await seed.done;
+    assert.equal(
+      seeded.exitCode,
+      0,
+      seed.cap.stdout.join("") || seed.cap.stderr.join("") || "seed court must accept",
+    );
+
+    // 1) Same court/attempt via resume+message: bounce then sealed accept → accepted / exit 0.
+    // closedLedgerOutcome reads attempt-scoped rows when courtAttemptId is present.
+    let sawCourtAttemptId = false;
+    const { cap, done } = runScripted(
+      ["resume", ...seatModel, runId, "再裁"],
+      async (args, options) => {
+        const courtAttemptId = options.env.AK_ROLE_COURT_ATTEMPT;
+        if (typeof courtAttemptId === "string" && courtAttemptId.length > 0) {
+          sawCourtAttemptId = true;
+        }
+        const sessionFile = args[args.indexOf("--session") + 1]!;
+        await writeSessionJsonl(
+          sessionFile,
+          [
+            sessionUserMessageRow("user-court", "再裁", 40),
+            ...csExchange({
+              stem: "reject",
+              parentId: "user-court",
+              callId: "call-reject",
+              details: rejected,
+              body: rejectionBody,
+              isError: true,
+              n: 41,
+            }),
+            ...csExchange({
+              stem: "accept",
+              parentId: "result-reject",
+              callId: "call-accept",
+              details: accepted,
+              body: "countersign output accepted",
+              isError: false,
+              n: 43,
+            }),
+          ],
+          "append",
+        );
+        await recordCountersignBounce({
+          cwd: options.cwd,
+          env: options.env,
+          details: rejected,
+          toolCallId: "call-reject",
+          findings: gateFindings,
+        });
+        await sealAcceptedSubmissionForSpawn({
+          cwd: options.cwd,
+          env: options.env,
+          role: "countersign",
+          details: accepted,
+          toolCallId: "call-accept",
+        });
+        await seedGateRounds(sessionFile, bounceThenPassGates);
+        return { code: 0, timedOut: false, stderr: "", args: [...args] };
+      },
+    );
+    const result = await done;
+
+    assert.equal(
+      sawCourtAttemptId,
+      true,
+      "resume with message must mint courtAttemptId for attempt-scoped ledger",
+    );
+    assert.equal(
+      result.exitCode,
+      0,
+      cap.stdout.join("") || cap.stderr.join("") || "expected accepted exit 0",
+    );
+    assert.ok(result.terminal);
+    assert.equal(result.terminal.roleOutcome.kind, "accepted");
+    // This-court payloads only when courtAttemptId is present (#879).
+    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
+      "continue",
+      "converged",
+    ]);
+    const payloads = objectPayloads(result.terminal.roleOutcome);
+    assert.equal(payloads.length, 2);
+    assert.equal(payloads[0]!.countersignStatus, "continue");
+    assert.equal(
+      (payloads[0]!.fix as { summary?: string } | undefined)?.summary,
+      "REJECTED-FIRST-findings-visible",
+    );
+    assert.equal(payloads[1]!.countersignStatus, "converged");
+    assert.equal(payloads[1]!.note, "ACCEPTED-AFTER-CORRECTION");
+    // submissions stay run-scoped (#836): prior seed + this-court bounce/accept.
+    assert.deepEqual(result.terminal.submissions, [seedAccepted, rejected, accepted]);
+    assert.ok(result.terminal.gate);
+    assert.deepEqual(result.terminal.gate!.actualSeats, ["notary"]);
+    assert.equal(result.terminal.gate!.rounds.length, 2);
+    assert.equal(result.terminal.gate!.rounds[0]!.dispatch.kind, "direct");
+    assert.equal(result.terminal.gate!.rounds[0]!.dispatch.officer, "notary");
+    assert.equal(result.terminal.gate!.rounds[0]!.officer.status, "bounce");
+    assert.deepEqual(result.terminal.gate!.rounds[0]!.officer.findings, [...gateFindings]);
+    assert.equal(result.terminal.gate!.rounds[1]!.officer.status, "pass");
+    assert.deepEqual(result.terminal.gate!.rounds[1]!.officer.findings, []);
+
+    // 2 / 2b / 2c) Bare resume residual bounces must stay failure — plain bounce,
+    // bound missing-isError decoy, and unbound isError:false decoy must not wash
+    // the current residual via run-scoped stale accepted.
+    const residualBounceCases = [
+      {
+        label: "bare-resume",
+        userId: "user-resume",
+        callId: "call-resume-bounce",
+        body: laterBounceBody,
+        findings: ["SECOND-TURN-ONLY-BOUNCE"] as const,
+        summary: "SECOND-TURN-ONLY-BOUNCE",
+        n: 60,
+        extraRows: undefined as readonly unknown[] | undefined,
+      },
+      {
+        label: "bound-missing-isError",
+        userId: "user-resume-missing-isError",
+        callId: "call-resume-missing-isError-bounce",
+        body: "MISSING-ISERROR-STILL-BOUNCE-BODY",
+        findings: ["bound-missing-isError"] as const,
+        summary: "bound-missing-isError",
+        n: 70,
+        // bound decoy omits isError — must not establish success
+        extraRows: csExchange({
+          stem: "resume-missing-isError-decoy",
+          parentId: "user-resume-missing-isError",
+          callId: "call-resume-missing-isError-decoy",
+          details: accepted,
+          body: "missing-isError decoy",
+          isError: "omit",
+          n: 71,
+        }),
+      },
+      {
+        label: "unbound-isError-false",
+        userId: "user-resume-unbound-false",
+        callId: "call-resume-unbound-false-bounce",
+        body: "UNBOUND-FALSE-STILL-BOUNCE-BODY",
+        findings: ["unbound-isError-false"] as const,
+        summary: "unbound-isError-false",
+        n: 80,
+        // orphan toolResult only — no matching assistant toolCall
+        extraRows: csExchange({
+          stem: "resume-unbound-false-decoy",
+          parentId: "user-resume-unbound-false",
+          callId: "call-resume-unbound-false-orphan",
+          details: accepted,
+          body: "unbound isError:false decoy",
+          isError: false,
+          n: 81,
+          bound: false,
+        }),
+      },
+    ] as const;
+
+    for (const caseSpec of residualBounceCases) {
+      const caseBounce = {
+        countersignStatus: "continue" as const,
+        fix: { summary: caseSpec.summary },
+      };
+      const caseRun = runScripted(
+        ["resume", ...seatModel, runId],
+        async (args, options) => {
+          await appendResidualBounceTurn({
+            sessionFile: args[args.indexOf("--session") + 1]!,
+            cwd: options.cwd,
+            env: options.env,
+            userId: caseSpec.userId,
+            userContent: caseSpec.label,
+            callId: caseSpec.callId,
+            details: caseBounce,
+            body: caseSpec.body,
+            findings: caseSpec.findings,
+            n: caseSpec.n,
+            ...(caseSpec.extraRows === undefined
+              ? {}
+              : { extraRows: caseSpec.extraRows }),
+          });
+          return { code: 0, timedOut: false, stderr: "", args: [...args] };
+        },
+      );
+      const caseResumed = await caseRun.done;
+      assert.equal(
+        caseResumed.exitCode,
+        1,
+        caseRun.cap.stdout.join("") ||
+          caseRun.cap.stderr.join("") ||
+          `${caseSpec.label} must stay failure`,
+      );
+      assert.equal(caseResumed.terminal?.roleOutcome.kind, "failure");
+      assert.equal(
+        caseResumed.terminal?.roleOutcome.kind === "failure"
+          ? caseResumed.terminal.roleOutcome.diagnostic
+          : undefined,
+        caseSpec.body,
+      );
+    }
+
+    // 3) Reverse same-turn order (accepted first, bounce later): terminal may
+    // stay accepted, but rejection facts must remain on payloads and gate.
+    const reverseAccepted = {
+      countersignStatus: "converged" as const,
+      note: "ACCEPTED-FIRST-REVERSE",
+    };
+    const reverseBounced = {
+      countersignStatus: "continue" as const,
+      fix: { summary: "BOUNCED-AFTER-ACCEPT-VISIBLE" },
+    };
+    const reverseRunId = "01a0sign00-0000-7000-8000-000000000844";
+    const reverseRun = runScripted(
+      ["countersign", ...seatModel, "--project", project, "再裁"],
+      async (args, options) => {
+        const sessionFile = args[args.indexOf("--session") + 1]!;
+        await writeSessionJsonl(sessionFile, [
+          sessionUserMessageRow("user-rev", "reverse", 120),
+          ...csExchange({
+            stem: "rev-accept",
+            parentId: "user-rev",
+            callId: "call-rev-accept",
+            details: reverseAccepted,
+            body: "countersign output accepted",
+            isError: false,
+            n: 121,
+          }),
+          ...csExchange({
+            stem: "rev-bounce",
+            parentId: "result-rev-accept",
+            callId: "call-rev-bounce",
+            details: reverseBounced,
+            body: reverseBounceBody,
+            isError: true,
+            n: 123,
+          }),
+        ]);
+        await sealAcceptedSubmissionForSpawn({
+          cwd: options.cwd,
+          env: options.env,
+          role: "countersign",
+          details: reverseAccepted,
+          toolCallId: "call-rev-accept",
+        });
+        await recordCountersignBounce({
+          cwd: options.cwd,
+          env: options.env,
+          details: reverseBounced,
+          toolCallId: "call-rev-bounce",
+          findings: ["BOUNCED-AFTER-ACCEPT-VISIBLE"],
+        });
+        await seedGateRounds(sessionFile, passThenBounceGates);
+        return { code: 0, timedOut: false, stderr: "", args: [...args] };
+      },
+      () => reverseRunId,
+    );
+    const reversed = await reverseRun.done;
+    assert.equal(
+      reversed.exitCode,
+      0,
+      reverseRun.cap.stdout.join("") ||
+        reverseRun.cap.stderr.join("") ||
+        "reverse order keeps accepted exit 0",
+    );
+    assert.equal(reversed.terminal?.roleOutcome.kind, "accepted");
+    assert.deepEqual(payloadStatusSequence(reversed.terminal!.roleOutcome), [
+      "converged",
+      "continue",
+    ]);
+    const reversePayloads = objectPayloads(reversed.terminal!.roleOutcome);
+    assert.equal(reversePayloads[0]!.note, "ACCEPTED-FIRST-REVERSE");
+    assert.equal(
+      (reversePayloads[1]!.fix as { summary?: string } | undefined)?.summary,
+      "BOUNCED-AFTER-ACCEPT-VISIBLE",
+    );
+    assert.ok(reversed.terminal!.gate);
+    assert.equal(reversed.terminal!.gate!.rounds.length, 2);
+    assert.equal(reversed.terminal!.gate!.rounds[0]!.officer.status, "pass");
+    assert.deepEqual(reversed.terminal!.gate!.rounds[0]!.officer.findings, []);
+    assert.equal(reversed.terminal!.gate!.rounds[1]!.officer.status, "bounce");
+    assert.deepEqual(
+      reversed.terminal!.gate!.rounds[1]!.officer.findings,
+      [...reverseGateFindings],
     );
   });
 });
@@ -886,7 +1368,6 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
 
     const parentRoles: string[] = [];
     const childRoles: string[] = [];
-    let turnPrompt = "";
     let countersignRunDirectory = "";
     const parentBase = roleTurnHostFromLegacyPiRunner({
       packageRoot,
@@ -897,7 +1378,6 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       async executeTurn(request: RoleTurnRequest) {
         parentRoles.push(request.activation.role);
         if (request.activation.role === "countersign") {
-          turnPrompt = request.continuation.prompt;
           countersignRunDirectory = request.runDirectory;
         }
         const outcome = await parentBase.executeTurn(request);
@@ -996,11 +1476,6 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       true,
       "the first ticket-identifying leg is relocated after its typed assertion",
     );
-
-    const volume = resolveTicketProvenanceVolume(582, project, home);
-    assert.ok(turnPrompt.includes(volume.recordFile));
-    assert.equal(turnPrompt.includes("起居录.md"), false);
-    await readTicketProvenance(582, project, home);
 
     assert.deepEqual(result.terminal?.gate?.actualSeats, ["notary"]);
     await readFile(join(ticketRun, "session", "auditor-roles", "o01_notary.jsonl"), "utf8");
@@ -1258,9 +1733,8 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
   });
 });
 
-test("public countersign path: true-unbound 起居郎 asserts null — no ticket bind, no 起居录 paths", async () => {
+test("public countersign path: true-unbound 起居郎 asserts null — no ticket bind; stays unbound", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    let turnPrompt = "";
     const host = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
@@ -1276,14 +1750,7 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
         cwd: project,
         principalAuthority: piDurablePrincipalAuthority,
         sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: {
-          async executeTurn(request: RoleTurnRequest) {
-            if (request.activation.role === "countersign") {
-              turnPrompt = request.continuation.prompt;
-            }
-            return host.executeTurn(request);
-          },
-        },
+        roleTurnHost: host,
         hostAdapters: [adapter("pi", host)],
         createRunId: () => "01a0sign00-0000-7000-8000-000000000d46",
       },
@@ -1302,11 +1769,6 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
       entries.some((entry) => entry.endsWith("@diarist")),
       true,
     );
-
-    // Unbound delivers no volume path; a known partition path must not appear.
-    const volume = resolveTicketProvenanceVolume(582, project, home);
-    assert.equal(turnPrompt.includes(volume.recordFile), false);
-    assert.equal(turnPrompt.includes("起居录.md"), false);
   });
 });
 

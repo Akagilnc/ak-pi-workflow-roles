@@ -95,6 +95,9 @@ import {
   DIARIST_OUTPUT_TOOL_NAME,
 } from "../diarist-contracts.ts";
 import {
+  SECRETARIAT_OUTPUT_TOOL_NAME,
+} from "../secretariat-contracts.ts";
+import {
   INSPECTOR_OUTPUT_TOOL_NAME,
 } from "../inspector-contracts.ts";
 import {
@@ -146,6 +149,7 @@ import {
   type AdmittedMergerInvocation,
   type AdmittedCountersignInvocation,
   type AdmittedDiaristInvocation,
+  type AdmittedSecretariatInvocation,
   type AdmittedGleanerLeftInvocation,
   type AdmittedInspectorInvocation,
   type AdmittedGatekeeperInvocation,
@@ -1086,38 +1090,7 @@ async function loadBoundAuditorVolumes(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
-  const isResumeEnvelopeBytes = (value: unknown): boolean => {
-    if (typeof value !== "string") return false;
-    if (value.length === 0) return true;
-    const nl = value.indexOf("\n");
-    const firstLine = nl === -1 ? value : value.slice(0, nl);
-    const body = firstLine === "" && nl !== -1 ? value.slice(nl + 1) : value;
-    return body.startsWith("本次配置的劳务引擎及其手册：") || body.startsWith("- engine:");
-  };
-  const isResumeEnvelope = (msg: unknown): boolean => {
-    if (!isRecord(msg) || msg.role !== "user") return false;
-    const text = typeof msg.text === "string" ? msg.text : typeof (msg as { content?: unknown }).content === "string" ? (msg as { content: string }).content : undefined;
-    if (isResumeEnvelopeBytes(text)) return true;
-    const content = (msg as { content?: unknown }).content;
-    if (Array.isArray(content)) {
-      return content.some((p) => isRecord(p) && (isResumeEnvelopeBytes(p.text) || isResumeEnvelopeBytes(p.content)));
-    }
-    return false;
-  };
-  let latestParentUserIndex = -1;
-  for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
-    const entry = parentEntries[i];
-    if (entry?.type !== "message" || entry.message?.role !== "user") continue;
-    if (isResumeEnvelope(entry.message)) continue;
-    latestParentUserIndex = i;
-    break;
-  }
   const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
-  // Auto-resume seam (owner A): stale check must ignore resume envelope and
-  // prioritize retention. Previous `attemptEntryIndex < latest` discarded the
-  // first attempt's child after resume advanced latest, losing retentionFailure
-  // when retry had no compliance entry. Fix: ignore envelope for staleness and
-  // prefer any valid compliance failure before falling back to primary.
   const valid: BoundAuditorVolume[] = [];
   let sawAnyDirectory = false;
   for (const childDirectory of childDirectories) {
@@ -1166,10 +1139,6 @@ async function loadBoundAuditorVolumes(
           typeof bindingParent?.attemptEntryId === "string"
             ? bindingParent.attemptEntryId
             : undefined;
-        const attemptEntryIndex =
-          attemptEntryId === undefined
-            ? -1
-            : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
         const boundSessionFile =
           typeof bindingParent?.sessionFile === "string"
             ? bindingParent.sessionFile
@@ -1177,12 +1146,7 @@ async function loadBoundAuditorVolumes(
               ? header.parentSession
               : undefined;
         if (boundSessionFile !== sessionFile) continue;
-        if (
-          bindingParent !== undefined &&
-          (bindingParent.sessionId !== parentId || attemptEntryIndex < latestParentUserIndex)
-        ) {
-          continue;
-        }
+        if (bindingParent !== undefined && bindingParent.sessionId !== parentId) continue;
         if (bindingParent === undefined && header.parentSession !== sessionFile) continue;
         valid.push({
           entries: entries.slice(start, end),
@@ -1190,8 +1154,8 @@ async function loadBoundAuditorVolumes(
           sessionFile,
           ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
         });
-        // Keep every qualifying interval in the current parent-user range.
-        // A single first-match break drops later same-user summons failures (#636).
+        // Keep every interval bound to this parent. Auditor payload is relayed as
+        // recorded; code does not expire it from later user-message shape (#858).
       }
     }
   }
@@ -1252,16 +1216,6 @@ function providerStopFallbackFromAuditorVolumes(
     };
   }
   return undefined;
-}
-
-/** Recover a provider stop from the auditor child bound to the current parent attempt. */
-export async function readBoundAuditorKnownFailure(
-  sessionFile: string,
-): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile);
-  if (volumes === undefined) return undefined;
-  return complianceFailureFromAuditorVolumes(volumes)
-    ?? providerStopFallbackFromAuditorVolumes(volumes);
 }
 
 /** Strong auditor tier only — retained compliance-failure entries, no provider-stop fallback. */
@@ -3193,7 +3147,8 @@ type SeatAcceptedSettlementSpec = {
     | "gatekeeper"
     | "navigator"
     | "auditor"
-    | "diarist";
+    | "diarist"
+    | "secretariat";
   readonly toolName: string;
 };
 
@@ -3217,7 +3172,8 @@ async function settleLawfulSeatAcceptedTerminalResult(
     | AdmittedGatekeeperInvocation
     | AdmittedNavigatorInvocation
     | import("./invocation.ts").AdmittedAuditorInvocation
-    | AdmittedDiaristInvocation,
+    | AdmittedDiaristInvocation
+    | AdmittedSecretariatInvocation,
   authority: DurablePrincipalAuthority,
   spec: SeatAcceptedSettlementSpec,
   scope?: SettlementCourtScope,
@@ -3226,36 +3182,42 @@ async function settleLawfulSeatAcceptedTerminalResult(
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const submissions = await recordedSubmissionPayloads(admitted, scope);
-  // Host isError residual wins over any recorded projection (#836 A.3 coexistence).
+  // #843: collector shape (ledger closed first) plus current user-turn freshness.
+  // A lawful bound non-error seat toolResult (isError === false + one-to-one call
+  // bind, same grade as residual) means this turn sealed — a prior bounce residual
+  // in the same turn must not outrank it. Missing isError, unbound, or mis-bound
+  // results do not establish success and do not reject/abort. A current-attempt
+  // residual without that success is this turn's own failure and must not be
+  // masked by run-scoped stale acceptance (bare resume without courtAttemptId).
+  // Same-turn accept-then-bounce keeps the success marker: terminal stays
+  // accepted; rejection facts remain on payloads/gate (not latest-wins flip).
   const scanStart = currentAttemptStartIndex(entries);
+  let thisAttemptHasSeatSuccess = false;
+  let residual: BoundErroredToolCandidate | undefined;
   for (let index = entries.length - 1; index >= scanStart; index -= 1) {
     const message = entries[index]?.message;
     if (message?.role !== "toolResult") continue;
-    const residual = boundErroredToolCandidate(
-      entries,
-      index,
-      message,
-      spec.toolName,
-    );
-    if (residual !== undefined) {
-      const details = isRecord(residual.candidate)
-        ? residual.candidate
-        : { candidate: residual.candidate };
-      const failed = await settleFailureTerminalResult(
-        admitted,
-        {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details,
-        },
-        authority,
-        scope ?? {},
+    if (message.toolName !== spec.toolName) continue;
+    if (message.isError === false) {
+      if (
+        boundRoleToolCallForResult(entries, index, message, spec.toolName) !==
+          undefined
+      ) {
+        thisAttemptHasSeatSuccess = true;
+      }
+      continue;
+    }
+    if (residual === undefined) {
+      residual = boundErroredToolCandidate(
+        entries,
+        index,
+        message,
+        spec.toolName,
       );
-      return withSubmissions(failed, submissions);
     }
   }
   const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
-  if (roleOutcome?.kind === "audit_escalation") {
+  if (roleOutcome !== undefined && (thisAttemptHasSeatSuccess || residual === undefined)) {
     const navigator = extractNavigatorFact(entries);
     return withSubmissions(
       await withOptionalGateProjection(
@@ -3271,21 +3233,21 @@ async function settleLawfulSeatAcceptedTerminalResult(
       submissions,
     );
   }
-  if (roleOutcome?.role === spec.role) {
-    const navigator = extractNavigatorFact(entries);
-    return withSubmissions(
-      await withOptionalGateProjection(
-        {
-          roleOutcome,
-          navigator,
-          artifacts: [],
-          runId: admitted.runId,
-        },
-        sessionDirectory,
-        detourGateContext(admitted, scope),
-      ),
-      submissions,
+  if (residual !== undefined) {
+    const details = isRecord(residual.candidate)
+      ? residual.candidate
+      : { candidate: residual.candidate };
+    const failed = await settleFailureTerminalResult(
+      admitted,
+      {
+        cause: "output",
+        diagnostic: residual.diagnostic,
+        details,
+      },
+      authority,
+      scope ?? {},
     );
+    return withSubmissions(failed, submissions);
   }
   return undefined;
 }
@@ -3426,6 +3388,26 @@ export async function trySettleDiaristTerminalResult(
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulDiaristTerminalResult(admitted, authority, scope);
+}
+
+async function settleLawfulSecretariatTerminalResult(
+  admitted: AdmittedSecretariatInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+    role: "secretariat",
+    toolName: SECRETARIAT_OUTPUT_TOOL_NAME,
+  }, scope);
+}
+
+/** Try to settle a lawful Secretariat Terminal; undefined only for genuine absence. */
+export async function trySettleSecretariatTerminalResult(
+  admitted: AdmittedSecretariatInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleLawfulSecretariatTerminalResult(admitted, authority, scope);
 }
 
 /** Lawful Inspector accepted outcome (pass/bounce/escalate). */

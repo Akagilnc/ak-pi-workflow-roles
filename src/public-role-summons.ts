@@ -32,7 +32,8 @@ export type PublicSummonRole =
   | "gatekeeper"
   | "judge"
   | "doctor"
-  | "diarist";
+  | "diarist"
+  | "countersign";
 
 export type PublicSummonRequest = {
   readonly role: PublicSummonRole;
@@ -82,6 +83,8 @@ export type PublicSummonRequest = {
   readonly createRunId?: () => string;
   /** Typed ticket number handoff for diarist child run (#840). */
   readonly boundTicketNumber?: number;
+  /** Caller correlation id for nested leg ledger (ADR 0010 / #924). */
+  readonly correlationId?: string;
 };
 
 export type PublicSummonResult = {
@@ -339,6 +342,11 @@ export async function summonPublicRole(
         env: {
           ...built.env,
           stationChild: true,
+          // Forward composition-root adapters so nested court stations (e.g.
+          // countersign → diarist) select the same faux/production table (#924).
+          ...(options.hostAdapters === undefined
+            ? {}
+            : { hostAdapters: options.hostAdapters }),
           ...(config.autoResumeLimit === undefined
             ? {}
             : { autoResumeLimit: config.autoResumeLimit }),
@@ -350,6 +358,9 @@ export async function summonPublicRole(
           ...(options.boundTicketNumber === undefined
             ? {}
             : { boundTicketNumber: options.boundTicketNumber }),
+          ...(options.correlationId === undefined || options.correlationId.trim() === ""
+            ? {}
+            : { correlationId: options.correlationId }),
           ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
         },
       };
@@ -477,6 +488,17 @@ export async function summonPublicRole(
       ]);
       const stepped = await runPrepared(parseDiaristArgv, (env, once) =>
         runPublicDiarist(options.argv, env as never, io, once));
+      if ("fail" in stepped) return stepped.fail;
+      result = stepped.ok;
+      break;
+    }
+    case "countersign": {
+      const [{ runPublicCountersign }, { parseCountersignArgv }] = await Promise.all([
+        import("./public-cli/countersign-run.ts"),
+        import("./public-cli/invocation.ts"),
+      ]);
+      const stepped = await runPrepared(parseCountersignArgv, (env, once) =>
+        runPublicCountersign(options.argv, env as never, io, once));
       if ("fail" in stepped) return stepped.fail;
       result = stepped.ok;
       break;

@@ -19,6 +19,7 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
+import { createDefaultGateOfficerSummon } from "../../src/gatekeeper-pass-envelope.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { parseCountersignArgv } from "../../src/public-cli/invocation.ts";
@@ -370,6 +371,7 @@ test("advice command derives phase token from registry metadata for every packag
         { role: "merger", outputTool: MERGER_OUTPUT_TOOL_NAME },
         { role: "notary", outputTool: NOTARY_OUTPUT_TOOL_NAME },
         { role: "countersign", outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME },
+        { role: "secretariat", outputTool: "ak_secretariat_output" },
         { role: "gleaner-left", outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME },
         { role: "inspector", outputTool: INSPECTOR_OUTPUT_TOOL_NAME },
         { role: "gatekeeper", outputTool: "ak_gatekeeper_output" },
@@ -828,11 +830,14 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
         } as never,
         subject: { kind: "countersign_verdict" },
         runDirectory: sourceRunPath,
+      summonOfficer: createDefaultGateOfficerSummon({
+        cwd: project,
         home,
         packageRoot,
         roleTurnHost: notaryHost,
         createRunId: () => "01a082100-0000-7000-8000-0000000na1b",
-      });
+      }),
+    });
       assert.equal(projected.result.status, "pass");
       const notaryChild = captured.find((request) => request.activation.role === "notary");
       assert.ok(notaryChild, "inner-gate summons must dispatch a notary child turn");

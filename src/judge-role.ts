@@ -1,7 +1,7 @@
 import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
 import { Type, type Static } from "typebox";
 
-import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 import { ParentQueueReaskError } from "./submission-errors.ts";
 
 import {
@@ -25,7 +25,7 @@ export type { JudgeVerdict };
 // #836 (ADR 0003 Amendment): judgeStatus kept open like countersignStatus
 // (src/countersign-role.ts) — a closed domain here would reject an unknown
 // value before the rawStatus/ParentQueueReaskError check below ever runs.
-export const judgeVerdictSchema = withInfrastructureFailureDeclaration(
+export const judgeVerdictSchema = withTerminatingOutputDeclarations(
   Type.Object(
     {
       judgeStatus: Type.Unknown({ description: "converged | continue | escalate — 形状指引，非 schema 闸" }),

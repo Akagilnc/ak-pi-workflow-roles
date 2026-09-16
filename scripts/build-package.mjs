@@ -34,6 +34,7 @@ const entries = [
   "canonical-json",
   "compliance-transport",
   "countersign-contracts",
+  "secretariat-contracts",
   "doctor-contracts",
   "engine-detour",
   "engine-detour-tool",

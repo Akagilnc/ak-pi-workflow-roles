@@ -5,12 +5,12 @@
 import { Type } from "typebox";
 
 import { openToolObject } from "../open-tool-schema.ts";
-import { withInfrastructureFailureDeclaration } from "./terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
 
 export const AUDITOR_OUTPUT_TOOL_NAME = "ak_auditor_output" as const;
 export const AUDITOR_ACCEPTED_TEXT = "审刑院回执已接受";
 
-export const auditorOutputSchema = withInfrastructureFailureDeclaration(
+export const auditorOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       status: Type.Unknown({

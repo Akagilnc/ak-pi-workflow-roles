@@ -18,9 +18,11 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import type { RoleTurnRequestProjectionOptions } from "./turn-request.ts";
 import {
+  bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
   freezeAttachmentsIntoRun,
 } from "./invocation.ts";
+import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { resolveHostAwareSessionAvailability } from "../session-identity.ts";
@@ -29,7 +31,6 @@ import type {
   ControlledFailureCause,
   DurablePrincipal,
   DurablePrincipalAuthority,
-  RoleTurnContinuation,
   RoleTurnHost,
   RoleTurnKnownFailure,
   RoleTurnRequest,
@@ -37,10 +38,7 @@ import type {
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { isOfficerReviewSeat } from "../host-contracts.ts";
-import {
-  deliverCaseDossierAsAttachment,
-  projectCaseDossierPointerSection,
-} from "./case-dossier-delivery.ts";
+import { deliverCaseDossierAsAttachment } from "./case-dossier-delivery.ts";
 
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
 function describeCaughtError(error: unknown): { name?: string; message: string; code?: string | number } {
@@ -49,17 +47,6 @@ function describeCaughtError(error: unknown): { name?: string; message: string; 
     return { name: error.name, message: error.message, ...(code === undefined ? {} : { code }) };
   }
   return { message: String(error) };
-}
-
-/** Append one system section to a continuation prompt, keeping its kind. */
-function appendContinuationSection(
-  continuation: RoleTurnContinuation,
-  section: string,
-): RoleTurnContinuation {
-  const prompt = `${continuation.prompt}\n\n${section}`;
-  return continuation.kind === "initial"
-    ? { kind: "initial", prompt }
-    : { kind: "resume", prompt };
 }
 
 /**
@@ -592,10 +579,32 @@ export async function dispatchPostAdmissionTurn<
    */
   let afterDispatchApplied = false;
   const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
-    if (adapters.afterDispatch === undefined || afterDispatchApplied) return result;
+    if (afterDispatchApplied) return result;
     afterDispatchApplied = true;
     try {
-      await adapters.afterDispatch(admitted, lease);
+      // #858: an unbound seat may assert its ticket on the existing receipt.
+      // Read the original accepted payload; do not rewrite it, infer from prose,
+      // or reject missing/malformed declarations. An existing binding wins.
+      if (admitted.ticketNumber === undefined) {
+        const rows = await readRecordedSubmissionRows(
+          admitted.projectRoot,
+          admitted.runId,
+          { home: homeFromRunDirectory(admitted.runDirectory), sessionParent: join(admitted.runDirectory, "session", "session.jsonl") },
+        );
+        const asserted = rows
+          .filter((row) => row.kind === "accepted" && row.role === admitted.role)
+          .map((row) => row.accepted)
+          .find((payload) => {
+            if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return false;
+            const value = (payload as { ticketNumber?: unknown }).ticketNumber;
+            return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+          });
+        const ticketNumber = asserted === undefined
+          ? undefined
+          : (asserted as { ticketNumber: number }).ticketNumber;
+        if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
+      }
+      if (adapters.afterDispatch !== undefined) await adapters.afterDispatch(admitted, lease);
       return result;
     } catch (error) {
       const primaryFailure =
@@ -728,10 +737,11 @@ export async function dispatchPostAdmissionTurn<
 
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
     // settled — the seat's ticket bind re-projection and any court diarist station
-    // writes (#742). Case dossier delivery (ADR 0081 / #709) rides here once for
-    // every public entry. #879: station-child officer dialogue keeps peer body
-    // intact — 起居录 hangs via existing attachments freeze (not prompt wrap,
-    // not RoleTurnRequest.materials). Other entries keep the neutral prompt section.
+    // writes (#742). Case dossier delivery (ADR 0081 / #709 / #858) rides here once
+    // for every public entry on the existing attachments → readingMaterial face
+    // (station-child and ordinary share one seam). Dialogue continuation stays
+    // caller/peer opaque — never splice system path sections into user dialogue.
+    // No package-resume parallel face or typed resume identity.
     let turnRequest: RoleTurnRequest =
       env.signal === undefined ? request : { ...request, signal: env.signal };
     if (env.stationChild !== undefined) {
@@ -745,34 +755,16 @@ export async function dispatchPostAdmissionTurn<
     if (typeof liveHost === "string" && liveHost.trim() !== "") {
       turnRequest = { ...turnRequest, host: liveHost.trim() };
     }
-    if (isStationChildOfficerDialogue(admitted.role, env)) {
-      // 0081 non-body face: freeze pointer section under run/attachments/.
-      // Peer dialogue continuation.prompt stays parent payload only — the seat
-      // consumes the freeze via loadCaseDossierReadingMaterial → existing
-      // agent-start readingMaterial / systemPrompt.materials fold (not prompt splice,
-      // not RoleTurnRequest.materials).
-      await deliverCaseDossierAsAttachment({
-        ticketNumber: admitted.ticketNumber,
-        projectRoot: admitted.projectRoot,
-        home: env.home,
-        runDirectory: admitted.runDirectory,
-      });
-    } else {
-      const dossierSection = await projectCaseDossierPointerSection({
-        ticketNumber: admitted.ticketNumber,
-        projectRoot: admitted.projectRoot,
-        home: env.home,
-      });
-      if (dossierSection !== undefined) {
-        turnRequest = {
-          ...turnRequest,
-          continuation: appendContinuationSection(
-            turnRequest.continuation,
-            dossierSection,
-          ),
-        };
-      }
-    }
+    // 0081 non-dialogue face: freeze pointer section under run/attachments/.
+    // Seat consumes via loadCaseDossierReadingMaterial → existing agent-start
+    // readingMaterial / systemPrompt.materials fold. Caller instruction, empty
+    // request, and resume --message stay verbatim.
+    await deliverCaseDossierAsAttachment({
+      ticketNumber: admitted.ticketNumber,
+      projectRoot: admitted.projectRoot,
+      home: env.home,
+      runDirectory: admitted.runDirectory,
+    });
 
     // Authoritative host write happens here, at the real dispatch boundary —
     // immediately before the turn actually starts, after every retryable
@@ -1246,9 +1238,9 @@ export function resumeTurnRequestProjectionOptions(
     ...(env.model === undefined ? {} : { model: env.model }),
     ...pickEngineAxis(env),
     ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(admitted.correlationId === undefined && env.correlationId === undefined
+    ...(env.correlationId === undefined && admitted.correlationId === undefined
       ? {}
-      : { correlationId: admitted.correlationId ?? env.correlationId }),
+      : { correlationId: env.correlationId ?? admitted.correlationId }),
     continuation: {
       kind: "resume",
       prompt,
@@ -1534,12 +1526,7 @@ export async function runPostAdmissionSeatResume<
             dispatch: async (turnRequest) => {
               const result = await dispatchPostAdmissionTurn({
                 admitted: loaded.admitted,
-                env: {
-                  ...input.env,
-                  ...(loaded.admitted.correlationId === undefined
-                    ? {}
-                    : { correlationId: loaded.admitted.correlationId }),
-                },
+                env: input.env,
                 io: attemptIo,
                 request: turnRequest,
                 lease,

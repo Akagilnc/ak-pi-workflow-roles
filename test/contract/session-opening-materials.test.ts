@@ -52,9 +52,17 @@ const TICKET_MAIN_MATERIALS = {
     "CLAUDE.md",
     "souls/notary.md",
     "souls/audit-law.md",
+    "souls/ticket-law.md",
     "souls/gate-output-guide.md",
   ],
-  countersign: ["CLAUDE.md", "souls/countersign.md"],
+  countersign: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md"],
+  secretariat: [
+    "CLAUDE.md",
+    "souls/secretariat.md",
+    "souls/ticket-law.md",
+    "souls/countersign.md",
+    "souls/notary.md",
+  ],
   "gleaner-left": ["CLAUDE.md", "souls/gleaner-left.md", "souls/quality-law.md"],
   inspector: [
     "CLAUDE.md",
@@ -84,6 +92,7 @@ const TICKET_GATEKEEPER_MATERIALS = {
     "CLAUDE.md",
     "souls/notary.md",
     "souls/audit-law.md",
+    "souls/ticket-law.md",
     "souls/gate-output-guide.md",
   ],
 } as const;

@@ -42,7 +42,8 @@ export type TerminalRoleName =
   | "gatekeeper"
   | "navigator"
   | "auditor"
-  | "diarist";
+  | "diarist"
+  | "secretariat";
 
 export type NoReceiptTerminalOutcome = NoReceiptLifecycleFacts & {
   kind: "no_receipt";
