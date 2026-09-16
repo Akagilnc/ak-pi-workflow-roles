@@ -6,9 +6,9 @@
  * (ticket-provenance header + bare dialogue lines, #901). Appender kernel
  * stays append-only; this module does not restore append watermarks.
  */
-import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
-import { readFile, readlink, rename, symlink, unlink } from "node:fs/promises";
+import { readFile, readlink, rm, unlink } from "node:fs/promises";
+import lockfile from "proper-lockfile";
 
 import {
   ensureRealDirectoryTree,
@@ -73,85 +73,85 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function legacyHolderIsLive(path: string): Promise<boolean> {
+  let claim: string;
+  try {
+    claim = await readlink(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "EINVAL") return false;
+    throw error;
+  }
+  const holder = Number.parseInt(claim.split(":", 1)[0] ?? "", 10);
+  if (!Number.isSafeInteger(holder) || holder <= 0) return false;
+  try {
+    process.kill(holder, 0);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+async function retireLegacyClaim(lockPath: string): Promise<boolean> {
+  let claim: string;
+  try {
+    claim = await readlink(lockPath);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "EINVAL") return false;
+    throw error;
+  }
+
+  if (await legacyHolderIsLive(lockPath)) return true;
+  // The successor protocol claims with a directory, so unlink can only remove
+  // this legacy symlink; it cannot erase a later claim that won the race.
+  await unlink(lockPath).catch((error: NodeJS.ErrnoException) => {
+    if (error.code !== "ENOENT" && error.code !== "EISDIR" && error.code !== "EPERM") throw error;
+  });
+  return false;
+}
+
 /**
  * Serialize one volume's read→merge→publish transaction across processes.
- * The lock is scoped to the resolved volume, and a dead holder is reclaimed.
+ * proper-lockfile owns one mkdir lease with heartbeat and stale takeover; OS
+ * death at any point therefore needs no second recovery lock or owner publish.
  */
 export async function withSitianVolumeTransaction<T>(
   input: SitianRecordInput,
   transaction: () => Promise<T>,
 ): Promise<T> {
-  const volume = ensureSitianVolume(input);
-  const lockPath = `${volume.recordFile}.lock`;
-  const recoveryPath = `${lockPath}.recover`;
+  const { recordFile } = ensureSitianVolume(input);
+  const lockPath = `${recordFile}.lock`;
+  const legacyRecoveryPath = `${lockPath}.recover`;
+
   while (true) {
-    // A stale-claim mover blocks new contenders before touching lockPath.
-    try {
-      const recoveryHolder = Number.parseInt(await readlink(recoveryPath), 10);
-      try {
-        process.kill(recoveryHolder, 0);
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ESRCH") {
-          throw new SitianInfrastructureError(
-            `Sitian volume recovery holder died: ${recoveryPath}`,
-          );
-        }
-        throw error;
-      }
+    // A still-running old-version reclaimer remains authoritative during a
+    // rolling upgrade. Dead recovery residue has no role in the new protocol.
+    if (await legacyHolderIsLive(legacyRecoveryPath)) {
       await sleep(15);
       continue;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
-
-    const nonce = randomUUID();
-    const ownClaim = `${process.pid}:${nonce}`;
-    let acquired = false;
+    await rm(legacyRecoveryPath, { force: true }).catch(() => undefined);
+    if (await retireLegacyClaim(lockPath)) {
+      await sleep(15);
+      continue;
+    }
+    let release: (() => Promise<void>) | undefined;
     try {
-      // Owner identity and exclusion appear in one atomic filesystem operation.
-      await symlink(ownClaim, lockPath);
-      acquired = true;
-      try {
-        return await transaction();
-      } finally {
-        await unlink(lockPath).catch(() => undefined);
-      }
+      release = await lockfile.lock(recordFile, {
+        lockfilePath: lockPath,
+        realpath: false,
+        stale: 2_000,
+        update: 1_000,
+        retries: 0,
+      });
+      return await transaction();
     } catch (error) {
-      if (acquired || (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      let staleClaim: string;
-      try {
-        staleClaim = await readlink(lockPath);
-      } catch (readError) {
-        if ((readError as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw readError;
-      }
-      const [pidText, staleNonce] = staleClaim.split(":");
-      const holder = Number.parseInt(pidText ?? "", 10);
-      if (!Number.isSafeInteger(holder) || holder <= 0 || !staleNonce) {
-        throw new SitianInfrastructureError(
-          `Sitian volume transaction lock has no verifiable holder: ${lockPath}`,
-        );
-      }
-      try {
-        process.kill(holder, 0);
-        await sleep(15);
-      } catch (signalError) {
-        if ((signalError as NodeJS.ErrnoException).code !== "ESRCH") throw signalError;
-        try {
-          await symlink(String(process.pid), recoveryPath);
-          try {
-            // Revalidate under the recovery claim. A slipped successor is never moved.
-            if ((await readlink(lockPath).catch(() => undefined)) === staleClaim) {
-              await rename(lockPath, `${lockPath}.stale-${staleNonce}`);
-            }
-          } finally {
-            await unlink(recoveryPath).catch(() => undefined);
-          }
-        } catch (recoveryError) {
-          if ((recoveryError as NodeJS.ErrnoException).code !== "EEXIST") throw recoveryError;
-          await sleep(15);
-        }
-      }
+      if ((error as NodeJS.ErrnoException).code !== "ELOCKED") throw error;
+      await sleep(15);
+    } finally {
+      await release?.();
     }
   }
 }
