@@ -5,11 +5,13 @@
  * snapshot 继续可读，但后续不为升级回写旧卷。
  */
 import { createHash } from "node:crypto";
+import { appendFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
+  ensureRealDirectoryTree,
   errnoCode,
   packageMachineHome,
   physicalPathIdentity,
@@ -245,14 +247,6 @@ export async function readTicketProvenance(
       lines.splice(0, lines.length, ...mergeFreshIntoCarried(carried, remapped));
       continue;
     }
-    if (
-      typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) &&
-      (parsed as Record<string, unknown>).kind === TICKET_PROVENANCE_KIND &&
-      typeof (parsed as Record<string, unknown>).payload === "object" &&
-      (parsed as { payload?: { type?: unknown } }).payload?.type === "ticket-provenance-bind"
-    ) {
-      continue;
-    }
     // Unknown stock / damaged rows remain readable and are never upgraded in place.
     unprojectedRaw.push(raw);
   }
@@ -270,11 +264,8 @@ export function ensureTicketProvenanceVolume(
 ): TicketProvenanceVolumePath {
   const input = ticketProvenanceRecordInput(ticketNumber, cwd, home);
   const path = resolveSitianRecordPath(input);
-  appendSitianRecord({
-    ...input,
-    identity: `ticket-provenance-bind:${ticketNumber}`,
-    payload: { type: "ticket-provenance-bind" },
-  });
+  ensureRealDirectoryTree(path.ledgerHome, path.sessionDir);
+  appendFileSync(path.recordFile, "", "utf8");
   return { recordFile: path.recordFile, volumeDir: path.sessionDir };
 }
 
