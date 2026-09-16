@@ -1116,37 +1116,44 @@ export function createSecretariatRoleRuntime(
             if (runDirectory === undefined) return undefined;
             return runIdFromRunDirectory(runDirectory);
           })();
-          const summon =
-            dependencies.summonCountersign ??
-            (async (input) => {
-              const { summonPublicRole } = await import("./public-role-summons.ts");
-              return summonPublicRole({
-                role: "countersign",
-                argv: [input.instruction, "--project", input.cwd],
-                cwd: input.cwd,
-                ...(input.signal === undefined ? {} : { signal: input.signal }),
-                ...(input.correlationId === undefined
+          const summon = dependencies.summonCountersign;
+          const summoned = summon === undefined
+            ? await (async () => {
+                const runDirectory = runDirectoryFromHostContext(ctx);
+                if (runDirectory === undefined) {
+                  throw new Error("secretariat summons requires AK_ROLE_RUN_DIR");
+                }
+                const admittedPath = join(runDirectory, "admitted-request.json");
+                const durable = JSON.parse(readFileSync(admittedPath, "utf8")) as Record<string, unknown>;
+                if (typeof durable.projectRoot !== "string" || durable.projectRoot.trim() === "") {
+                  throw new Error(`secretariat admitted-request missing projectRoot (${admittedPath})`);
+                }
+                const { summonPublicRole } = await import("./public-role-summons.ts");
+                return summonPublicRole({
+                  role: "countersign",
+                  argv: ["--project", durable.projectRoot, "--", instruction],
+                  cwd: durable.projectRoot,
+                  home: homeFromRunDirectory(runDirectory),
+                  ...(signal === undefined ? {} : { signal }),
+                  ...(correlationId === undefined ? {} : { correlationId }),
+                  ...(dependencies.packageRoot === undefined
+                    ? {}
+                    : { packageRoot: dependencies.packageRoot }),
+                  ...(dependencies.hostAdapters === undefined
+                    ? {}
+                    : { hostAdapters: dependencies.hostAdapters }),
+                });
+              })()
+            : await summon({
+                instruction,
+                cwd: ctx.cwd,
+                ...(signal === undefined ? {} : { signal }),
+                ...(correlationId === undefined ? {} : { correlationId }),
+                ...(dependencies.home === undefined ? {} : { home: dependencies.home }),
+                ...(dependencies.packageRoot === undefined
                   ? {}
-                  : { correlationId: input.correlationId }),
-                ...(input.home === undefined ? {} : { home: input.home }),
-                ...(input.packageRoot === undefined
-                  ? {}
-                  : { packageRoot: input.packageRoot }),
-                ...(dependencies.hostAdapters === undefined
-                  ? {}
-                  : { hostAdapters: dependencies.hostAdapters }),
+                  : { packageRoot: dependencies.packageRoot }),
               });
-            });
-          const summoned = await summon({
-            instruction,
-            cwd: ctx.cwd,
-            ...(signal === undefined ? {} : { signal }),
-            ...(correlationId === undefined ? {} : { correlationId }),
-            ...(dependencies.home === undefined ? {} : { home: dependencies.home }),
-            ...(dependencies.packageRoot === undefined
-              ? {}
-              : { packageRoot: dependencies.packageRoot }),
-          });
           const details = projectSecretariatSummonResult(summoned);
           const outcomeKind =
             typeof details.outcomeKind === "string" ? details.outcomeKind : "unknown";

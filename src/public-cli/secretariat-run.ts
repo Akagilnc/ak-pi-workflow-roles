@@ -131,6 +131,7 @@ export async function runPublicSecretariat(
       instruction: parsed.instruction,
       projectRoot: admitted.projectRoot,
       failureLabel: "secretariat unbound summons",
+      attachmentPaths: admitted.attachments.map((attachment) => attachment.frozenPath),
     },
     diaristEnv(env),
     io,

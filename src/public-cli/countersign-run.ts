@@ -207,6 +207,7 @@ export async function invokeCourtDiarist(input: {
   readonly instruction: string;
   readonly projectRoot: string;
   readonly failureLabel: string;
+  readonly attachmentPaths?: readonly string[];
   /** Already-verified typed key from countersign (refresh / post-assert handoff). */
   readonly boundTicketNumber?: number;
 }, env: CourtDiaristSummonEnv, io: CliIo): Promise<CourtDiaristInvocationResult> {
@@ -222,7 +223,13 @@ export async function invokeCourtDiarist(input: {
   const { summonPublicRole } = await import("../public-role-summons.ts");
   const result = await summonPublicRole({
     role: "diarist",
-    argv: ["--project", input.projectRoot, input.instruction],
+    argv: [
+      "--project",
+      input.projectRoot,
+      ...(input.attachmentPaths ?? []).flatMap((path) => ["--attach", path]),
+      "--",
+      input.instruction,
+    ],
     cwd: env.cwd,
     home: env.home,
     agentDir: env.agentDir,
