@@ -7,8 +7,7 @@
  * stays append-only; this module does not restore append watermarks.
  */
 import { appendFileSync } from "node:fs";
-import { lstat, readFile, readlink, unlink } from "node:fs/promises";
-import lockfile from "proper-lockfile";
+import { readFile } from "node:fs/promises";
 
 import {
   ensureRealDirectoryTree,
@@ -66,100 +65,6 @@ export async function readSitianVolumeText(
       `Sitian volume read failure: ${errorText(error)}`,
       { cause: error },
     );
-  }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function legacyClaimIsLive(path: string): Promise<boolean | undefined> {
-  let claim: string;
-  try {
-    claim = await readlink(path);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return undefined;
-    if (code === "EINVAL") return false;
-    throw error;
-  }
-  const holder = Number.parseInt(claim.split(":", 1)[0] ?? "", 10);
-  if (!Number.isSafeInteger(holder) || holder <= 0) return false;
-  try {
-    process.kill(holder, 0);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
-    throw error;
-  }
-}
-
-async function unlinkLegacyResidue(
-  path: string,
-  allowLeaseDirectory: boolean,
-): Promise<void> {
-  try {
-    await unlink(path);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT") return;
-    if (allowLeaseDirectory && (code === "EISDIR" || code === "EPERM")) {
-      const current = await lstat(path).catch((statError: NodeJS.ErrnoException) => {
-        if (statError.code === "ENOENT") return undefined;
-        throw statError;
-      });
-      if (current === undefined || current.isDirectory()) return;
-    }
-    throw error;
-  }
-}
-
-/**
- * Serialize one volume's read→merge→publish transaction across processes.
- * proper-lockfile owns one mkdir lease with heartbeat and stale takeover; OS
- * death at any point therefore needs no second recovery lock or owner publish.
- */
-export async function withSitianVolumeTransaction<T>(
-  input: SitianRecordInput,
-  transaction: () => Promise<T>,
-): Promise<T> {
-  const { recordFile } = ensureSitianVolume(input);
-  const lockPath = `${recordFile}.lock`;
-  const legacyRecoveryPath = `${lockPath}.recover`;
-
-  // One-way startup migration: old executables are not a supported concurrent
-  // protocol. Retire only the crash residue they left before this process
-  // enters the sole lease protocol; later claims are directories, never links.
-  const legacyRecovery = await legacyClaimIsLive(legacyRecoveryPath);
-  if (legacyRecovery === true) {
-    throw new SitianInfrastructureError(
-      `legacy Sitian volume recovery is still active: ${legacyRecoveryPath}`,
-    );
-  }
-  if (legacyRecovery === false) await unlinkLegacyResidue(legacyRecoveryPath, false);
-  const legacyClaim = await legacyClaimIsLive(lockPath);
-  if (legacyClaim === true) {
-    throw new SitianInfrastructureError(`legacy Sitian volume transaction is still active: ${lockPath}`);
-  }
-  if (legacyClaim === false) await unlinkLegacyResidue(lockPath, true);
-
-  while (true) {
-    let release: (() => Promise<void>) | undefined;
-    try {
-      release = await lockfile.lock(recordFile, {
-        lockfilePath: lockPath,
-        realpath: false,
-        stale: 2_000,
-        update: 1_000,
-        retries: 0,
-      });
-      return await transaction();
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ELOCKED") throw error;
-      await sleep(15);
-    } finally {
-      await release?.();
-    }
   }
 }
 
