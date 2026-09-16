@@ -182,6 +182,11 @@ export function roleResultPayloads(outcome: TerminalRoleOutcome): readonly unkno
 
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
+  /** Default Reviewer parent: original child Terminals, keyed by frozen axis. */
+  reviewerChildren?: Readonly<{
+    completeness: TerminalResult;
+    correctness: TerminalResult;
+  }>;
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
   /**

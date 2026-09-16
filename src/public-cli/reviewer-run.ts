@@ -37,6 +37,7 @@ import {
 import {
   presentStructuralRejection,
   readEngineDetourInfrastructureFailure,
+  settleParallelReviewerTerminalResult,
   trySettleReviewerTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -183,6 +184,49 @@ export async function runPublicReviewer(
   }
 
   await markRunAdmitted(admitted, env.principalAuthority);
+
+  if (admitted.lens === "all") {
+    try {
+      const { summonParallelReviewerLenses } = await import("../public-role-summons.ts");
+      const children = await summonParallelReviewerLenses({
+        projectRoot: admitted.projectRoot,
+        baseRevision: admitted.baseRevision,
+        authorityRefs: admitted.authorityRefs,
+        instruction: admitted.instruction,
+        home: env.home,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...(env.host === undefined ? {} : { host: env.host }),
+        ...(env.engine === undefined ? {} : { engine: env.engine }),
+        ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+        packageRoot: env.packageRoot,
+        ...(env.signal === undefined ? {} : { signal: env.signal }),
+        correlationId: admitted.runId,
+        roleTurnHost: env.roleTurnHost,
+        ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+      });
+      if (children.completeness.terminal === undefined || children.correctness.terminal === undefined) {
+        throw new Error("parallel reviewer child did not produce a Terminal result", { cause: children });
+      }
+      const terminal = await settleParallelReviewerTerminalResult(admitted, {
+        completeness: children.completeness.terminal,
+        correctness: children.correctness.terminal,
+      });
+      io.stdout((await import("./terminal.ts")).formatTerminalResult(terminal));
+      return {
+        exitCode: terminal.roleOutcome.kind === "failure" ? 1 : 0,
+        admitted,
+        terminal,
+      };
+    } catch (error) {
+      return (await presentControlledFailure(
+        admitted,
+        { timedOut: false, code: null, stderr: "", thrown: error },
+        reviewerAdapters(env.packageRoot),
+        env.principalAuthority,
+        io,
+      )) as { exitCode: number; admitted: AdmittedReviewerInvocation; terminal: TerminalResult };
+    }
+  }
 
   let methodMaterial: PackagedMethodSkillMaterial;
   try {

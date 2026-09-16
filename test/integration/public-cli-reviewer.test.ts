@@ -683,8 +683,8 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
 
     {
       const { io, stdout } = captureIo();
-      let captured: string[] | undefined;
-      let capturedStdin: string | undefined;
+      const captured: string[][] = [];
+      const capturedStdin: string[] = [];
       const result = await runAkRole([
           "reviewer", "--model", "test/caller-seat:high",
           "--project",
@@ -704,8 +704,8 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args, options) => {
-            captured = [...args];
-            capturedStdin = options.stdin;
+            captured.push([...args]);
+            capturedStdin.push(options.stdin ?? "");
             const sessionIdx = args.indexOf("--session");
             const sessionFile = args[sessionIdx + 1]!;
             await mkdir(join(sessionFile, ".."), { recursive: true });
@@ -719,7 +719,8 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
             );
             // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
             const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
-            const receipt = lawfulReviewerReceipt("completeness");
+            const childLens = args[args.indexOf("--ak-review-lens") + 1] as "completeness" | "correctness";
+            const receipt = lawfulReviewerReceipt(childLens);
             await writeFile(
               sessionFile,
               `${JSON.stringify({
@@ -752,18 +753,20 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         },
       );
       assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
-      assert.equal(Array.isArray(captured), true);
-      assert.equal(captured![captured!.indexOf("--ak-role") + 1], "reviewer");
-      assert.equal(captured!.includes("--skill"), false);
-      assert.equal(captured!.includes("--ak-review-task"), false);
-      assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "all");
-      assert.equal(result.terminal?.roleOutcome.role, "reviewer");
+      assert.equal(captured.length, 2);
       assert.deepEqual(
-        result.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatusSequence(result.terminal.roleOutcome)
-        : [],
-      ["completed"],
-    );
+        captured.map((args) => args[args.indexOf("--ak-review-lens") + 1]).sort(),
+        ["completeness", "correctness"],
+      );
+      for (const args of captured) {
+        assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
+        assert.equal(args.includes("--skill"), true);
+        assert.equal(args.includes("--ak-review-task"), false);
+      }
+      assert.equal(result.terminal?.roleOutcome.role, "reviewer");
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(result.terminal?.reviewerChildren?.completeness.roleOutcome.role, "reviewer");
+      assert.equal(result.terminal?.reviewerChildren?.correctness.roleOutcome.role, "reviewer");
 
       const bookKey = resolveBookKeyFromGit(project);
       const runDirectory = join(
@@ -783,18 +786,7 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       assert.deepEqual(
       projectEntries.includes("docs"), false);
       assert.equal(projectEntries.includes(".agents"), false);
-      const evidence = JSON.parse(
-        await readFile(join(runDirectory, "artifacts", "evidence.json"), "utf8"),
-      ) as {
-        methodInvocationObserved: boolean;
-        methodProvenance: { name: string };
-        callerProvenance?: string;
-      };
-      assert.equal(evidence.methodProvenance.name, "ak-cross-m-review");
-      assert.equal(evidence.methodInvocationObserved, true);
-      assert.equal("callerProvenance" in evidence, false);
-
-      // Durable complete report lives in report.json structured outcome/amendments.
+      // Durable parent report directly embeds both original child Terminals.
       const completedReport = JSON.parse(
         await readFile(join(runDirectory, "artifacts", "report.json"), "utf8"),
       ) as {
@@ -806,12 +798,11 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       };
       assert.equal(completedReport.role, "reviewer");
       assert.equal(completedReport.outcome?.kind, "accepted");
-      const completedDurable =
-        completedReport.outcome?.payloads?.find((p) => p.status === "completed") ?? {};
-      assert.equal(
-        (completedDurable.amendments as Record<string, string> | undefined)?.completeness,
-        "completeness-axis-report",
-      );
+      assert.equal(completedReport.outcome?.payloads?.length, 2);
+      assert.deepEqual(completedReport.outcome?.payloads, [
+        result.terminal?.reviewerChildren?.completeness,
+        result.terminal?.reviewerChildren?.correctness,
+      ]);
     }
 
     // Same public entry: hard-stop refused + mismatched axis key still lands (仓级第 0 条).

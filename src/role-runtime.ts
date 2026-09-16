@@ -1453,23 +1453,11 @@ export function createRoleRuntimeExtension(
           }
           reviewerExpansionCaptured = true;
         }
-        const lensResults = activeReviewerParent.loadLensResults === undefined
-          ? undefined
-          : await activeReviewerParent.loadLensResults();
-        reviewerAggregatedResults = lensResults;
         return {
           systemPrompt: assembleReviewerParentSystemPrompt({
             baseSystemPrompt: event.systemPrompt,
             soul: activeReviewerParent.soul,
           }),
-          ...(lensResults === undefined
-            ? {}
-            : {
-                readingMaterial: {
-                  kind: "reviewer-lens-results",
-                  content: lensResults,
-                },
-              }),
         };
       }
       // #676 E / J1: collector materials + drift gates share this envelope hook (no parallel register).
@@ -1759,7 +1747,6 @@ export function createRoleRuntimeExtension(
       },
       hostActions,
     );
-    let reviewerAggregatedResults: unknown;
     const reviewer = createReviewerRoleRuntime(
       roleHost,
       {
@@ -1774,17 +1761,6 @@ export function createRoleRuntimeExtension(
             throw new Error("Reviewer runtime dependencies are not configured");
           }
           return dependencies.loadCanonicalSkillBinding(name);
-        },
-        projectSubmission(parameters) {
-          if (reviewerAggregatedResults === undefined) return parameters;
-          const results = reviewerAggregatedResults as Record<
-            "completeness" | "correctness",
-            { terminal?: unknown }
-          >;
-          return {
-            completeness: results.completeness.terminal,
-            correctness: results.correctness.terminal,
-          };
         },
       },
       hostActions,
@@ -2137,71 +2113,8 @@ export function createRoleRuntimeExtension(
         decodeReviewerAdmitted() {
           return decodeReviewerAdmittedInputs((name) => roleHost.getFlag(name));
         },
-        bindReviewerParent(activation, admitted, context) {
-          reviewerAggregatedResults = undefined;
-          if (admitted.lens !== "all") {
-            activeReviewerParent = activation;
-            return;
-          }
-          let result: Promise<unknown> | undefined;
-          activeReviewerParent = {
-            ...activation,
-            loadLensResults: () => result ??= (async () => {
-              const coordinates = readRoleRunCoordinates(
-                context,
-                "reviewer dual-lens summons",
-              );
-              const correlationId = runIdFromRunDirectory(coordinates.runDirectory);
-              const { summonParallelReviewerLenses } = await import(
-                "./public-role-summons.ts"
-              );
-              const summoned = await summonParallelReviewerLenses({
-                projectRoot: coordinates.projectRoot,
-                baseRevision: admitted.baseRevision,
-                authorityRefs: admitted.authorityRefs ?? [],
-                instruction: reviewerOriginalRequest ?? "",
-                home: coordinates.home,
-                ...(context.model?.model === undefined
-                  ? {}
-                  : {
-                      model: {
-                        provider: context.model.provider,
-                        model: context.model.model,
-                        ...(context.model.thinking === undefined
-                          ? {}
-                          : { thinking: context.model.thinking }),
-                      },
-                    }),
-                ...(context.host === undefined ? {} : { host: context.host }),
-                ...(() => {
-                  const engine = resolveEngineName((name) => roleHost.getFlag(name));
-                  const engineModel = resolveEngineModel((name) => roleHost.getFlag(name));
-                  return {
-                    ...(engine === undefined ? {} : { engine }),
-                    ...(engineModel === undefined ? {} : { engineModel }),
-                  };
-                })(),
-                ...(context.signal === undefined ? {} : { signal: context.signal }),
-                ...(correlationId === undefined ? {} : { correlationId }),
-                ...(dependencies.packageRoot === undefined
-                  ? {}
-                  : { packageRoot: dependencies.packageRoot }),
-              });
-              for (const lens of ["completeness", "correctness"] as const) {
-                const leg = summoned[lens];
-                if (
-                  leg.exitCode !== 0
-                  || leg.terminal?.roleOutcome.kind !== "accepted"
-                ) {
-                  throw new Error(
-                    `Reviewer ${lens} lens did not produce an accepted terminal`,
-                    { cause: summoned },
-                  );
-                }
-              }
-              return summoned;
-            })(),
-          };
+        bindReviewerParent(activation) {
+          activeReviewerParent = activation;
         },
         decodeNotaryAdmitted() {
           const ticketNumber = readNotaryTicketFlag(

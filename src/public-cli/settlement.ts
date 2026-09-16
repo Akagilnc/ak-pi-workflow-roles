@@ -3634,6 +3634,49 @@ export async function trySettleReviewerTerminalResult(
   return settleLawfulReviewerTerminalResult(admitted, authority, options, scope);
 }
 
+/** Deterministic default-Reviewer parent settlement: no third model turn. */
+export async function settleParallelReviewerTerminalResult(
+  admitted: AdmittedReviewerInvocation,
+  children: Readonly<{
+    completeness: TerminalResult;
+    correctness: TerminalResult;
+  }>,
+): Promise<TerminalResult> {
+  const originalTerminals = [children.completeness, children.correctness] as const;
+  const failed = originalTerminals.filter((terminal) =>
+    terminal.roleOutcome.kind === "failure"
+    || terminal.roleOutcome.kind === "no_receipt"
+  );
+  const roleOutcome: TerminalRoleOutcome = failed.length === 0
+    ? { kind: "accepted", role: "reviewer", payloads: originalTerminals }
+    : {
+        kind: "failure",
+        role: "reviewer",
+        diagnostic: `${failed.length} reviewer child run(s) did not complete successfully`,
+        decisiveFacts: { failedChildren: failed.length },
+        payloads: originalTerminals,
+      };
+  const artifactsDirectory = join(admitted.runDirectory, "artifacts");
+  const reportPath = join(artifactsDirectory, "report.json");
+  await mkdir(artifactsDirectory, { recursive: true });
+  await writeFile(
+    reportPath,
+    `${JSON.stringify({
+      role: "reviewer",
+      outcome: roleOutcome,
+      reviewerChildren: children,
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  return {
+    roleOutcome,
+    reviewerChildren: children,
+    navigator: { disposition: "no-advice" },
+    artifacts: [{ kind: "report", path: reportPath }],
+    runId: admitted.runId,
+  };
+}
+
 
 /**
  * Observe forced Merger resolving-merge-conflicts Skill expansions from the session.
