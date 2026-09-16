@@ -1708,18 +1708,21 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     const ticketRunsAfterSecondSummons = await readdir(
       dirname(first.admitted!.runDirectory),
     );
+    const unboundRunsAfterSecondSummons = await readdir(
+      join(dirname(dirname(dirname(first.admitted!.runDirectory))), "unbound", "runs"),
+    );
     assert.deepEqual(
-      ticketRunsAfterSecondSummons.filter((entry) => entry.endsWith("@countersign")),
+      [...ticketRunsAfterSecondSummons, ...unboundRunsAfterSecondSummons]
+        .filter((entry) => entry.endsWith("@countersign")),
       ["01a0sign00-0000-7000-8000-00000000s001@countersign"],
-      "same-ticket resume must not materialize a provisional run directory",
+      "same-ticket resume must not materialize a provisional run in any run partition",
     );
     // A dispatched body turn on re-summons must be resume on the prior run.
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume");
     assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
 
-    // Third summons: second call left a newer provisional under the ticket with
-    // no formed session principal. Lookup must still select s001, not s002/s003.
+    // Third summons must continue selecting s001 without materializing s002/s003.
     const third = await runPublicCountersign(
       ["裁：#582 三轮再审。"],
       {

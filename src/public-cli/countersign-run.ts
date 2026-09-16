@@ -33,6 +33,7 @@ import {
   bindAdmittedTicketNumber,
   bindCourtTicketNumbersOnAdmitted,
   buildCountersignTransportPrompt,
+  materializeCountersignInvocation,
   relocateAdmittedRunToTicket,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
@@ -385,6 +386,7 @@ export async function runPublicCountersign(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+      deferPersistence: true,
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -393,6 +395,15 @@ export async function runPublicCountersign(
     }
     throw error;
   }
+
+  const materializeAdmission = async (): Promise<void> => {
+    await materializeCountersignInvocation(admitted, {
+      home: env.home,
+      principalAuthority: env.principalAuthority,
+      attachmentPaths: parsed.attachmentPaths,
+      ...(env.model === undefined ? {} : { model: env.model }),
+    });
+  };
 
   // #637 / #771 / ADR 0079: ticket identity is the 起居郎 LLM typed assertion
   // (never mechanical matching of summons text). Resolve that typed key before
@@ -420,6 +431,7 @@ export async function runPublicCountersign(
 
     if (outcome.identity.kind === "escalate") {
       // 御批: 识别不了就上抛 — materialize and settle this countersign run.
+      await materializeAdmission();
       await markRunAdmitted(admitted, env.principalAuthority);
       return await presentControlledFailure(
         admitted,
@@ -441,6 +453,7 @@ export async function runPublicCountersign(
     // is not 真无票 — settle controlled failure on the admitted run (失败诚实).
     // Only a true missing lawful typed terminal keeps the r5 unbound-continue.
     if (outcome.failedWithoutEscalate !== undefined) {
+      await materializeAdmission();
       await markRunAdmitted(admitted, env.principalAuthority);
       return await presentControlledFailure(
         admitted,
@@ -504,6 +517,7 @@ export async function runPublicCountersign(
 
   // No prior run was selected. Materialize this invocation now; true-unbound,
   // first-ticket and deferred test-seam paths all retain their own durable page.
+  await materializeAdmission();
   await markRunAdmitted(admitted, env.principalAuthority);
 
   if (identityDiaristRan && typedTicket !== undefined) {

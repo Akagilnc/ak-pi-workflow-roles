@@ -310,6 +310,8 @@ export function issueAdmissionPlacement(
     /** Identity already asserted by 起居郎; never derive this from CLI parameters. */
     readonly subject: RoleRunSubject;
     readonly home?: string;
+    /** Placement may be computed before a same-ticket lookup without touching disk. */
+    readonly materialize?: boolean;
   },
 ): AdmissionPlacement {
   const ledgerHome = resolveActivationLedgerHome(request.home);
@@ -320,7 +322,7 @@ export function issueAdmissionPlacement(
     runId: request.runId,
     role: request.role,
   });
-  ensureRoleRunPlacement(ledgerHome, placement);
+  if (request.materialize !== false) ensureRoleRunPlacement(ledgerHome, placement);
   return {
     principal: authority.seal(placement),
     ...placement,
@@ -1463,6 +1465,8 @@ export type AdmitCountersignInvocationOptions = {
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
   correlationId?: string;
+  /** Same-ticket lookup may select an existing run before a new run is persisted. */
+  deferPersistence?: boolean;
 };
 
 /**
@@ -1493,9 +1497,12 @@ export async function admitCountersignInvocation(
     role: "countersign",
     subject: { unbound: true },
     home: options.home,
+    materialize: options.deferPersistence !== true,
   });
 
-  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
+  const attachments = options.deferPersistence === true
+    ? []
+    : await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
   // Ticket binding is LLM-only post-admission (#635); admission stays unbound.
 
   const instruction = options.instruction;
@@ -1519,11 +1526,13 @@ export async function admitCountersignInvocation(
     })),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-    sessionDirectory,
-    sessionFile,
-  });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
+  if (options.deferPersistence !== true) {
+    await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+      sessionDirectory,
+      sessionFile,
+    });
+    await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
+  }
 
   return {
     role: "countersign",
@@ -1538,6 +1547,34 @@ export async function admitCountersignInvocation(
     admittedRequestPath,
     ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
   };
+}
+
+/** Persist a deferred Countersign admission after same-ticket lookup found no retained run. */
+export async function materializeCountersignInvocation(
+  admitted: AdmittedCountersignInvocation,
+  options: Pick<AdmitCountersignInvocationOptions, "home" | "principalAuthority" | "attachmentPaths" | "model">,
+): Promise<void> {
+  const placement = issueAdmissionPlacement(options.principalAuthority, {
+    cwd: admitted.projectRoot,
+    runId: admitted.runId,
+    role: "countersign",
+    subject: { unbound: true },
+    home: options.home,
+  });
+  const attachments = await freezeAttachments(
+    options.attachmentPaths,
+    placement.attachmentsDirectory,
+  );
+  (admitted as { attachments: typeof attachments }).attachments = attachments;
+  await writeAdmittedRequestPersistence(admitted.admittedRequestPath, admitted, {
+    sessionDirectory: placement.sessionDirectory,
+    sessionFile: placement.sessionFile,
+  });
+  await writeRoleInvocationLedger(
+    { ...admitted, sessionDirectory: placement.sessionDirectory, sessionFile: placement.sessionFile },
+    admitted.role,
+    options.model,
+  );
 }
 
 /** Build the Pi prompt transport for an admitted Countersign request. */
