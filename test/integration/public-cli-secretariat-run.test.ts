@@ -353,7 +353,9 @@ function secretariatHostDrivingRealTools(input: {
       await createSecretariatRoleRuntime(roleHost, {
         loadSoul: async () => "中书省职分（测试装载）",
         packageRoot: input.packageRoot,
-        home: input.home,
+        // Deliberately wrong optional dependency: production nested summons must
+        // derive machine home from the durable parent run directory.
+        home: join(input.home, "wrong-dependency-home"),
         hostAdapters,
       }).activate();
 
@@ -361,7 +363,9 @@ function secretariatHostDrivingRealTools(input: {
       assert.ok(active.includes(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME));
 
       const ctx = {
-        cwd: request.cwd,
+        // Deliberately wrong host-context cwd: nested public summons must use the
+        // parent run's durable projectRoot instead.
+        cwd: join(input.home, "wrong-host-cwd"),
         mode: "json",
         model: undefined,
         runDirectory: request.runDirectory,
@@ -458,6 +462,8 @@ test("public secretariat through-line: default summon → continue → same-run 
     );
 
     const secretariatRunId = "01a0sec924-0000-7000-8000-000000000001";
+    const attachment = join(home, "ticket-material.md");
+    await writeFile(attachment, "#924 frozen material", "utf8");
     const capture = captureIo();
     const summonDetails: Array<Record<string, unknown>> = [];
     const gateCalls: Array<{ kind: string }> = [];
@@ -480,7 +486,7 @@ test("public secretariat through-line: default summon → continue → same-run 
         summonDetails.push(details);
       },
       steps: [
-        { kind: "summon", instruction: "裁：#924 是否足以开工。" },
+        { kind: "summon", instruction: "- 裁：#924 是否足以开工。" },
         { kind: "summon", instruction: "裁：#924 已按封驳重写，请复审。" },
         {
           kind: "output",
@@ -496,6 +502,8 @@ test("public secretariat through-line: default summon → continue → same-run 
         "test/caller-seat:high",
         "--project",
         project,
+        "--attach",
+        attachment,
         "整理 #924 票面并送庭。",
       ],
       {

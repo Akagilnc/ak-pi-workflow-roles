@@ -926,6 +926,28 @@ function readDiaristTicketAssertion(
   return { kind: "invalid" };
 }
 
+/** Shared durable coordinates for role tools that summon another public role. */
+function readRoleRunCoordinates(ctx: HostContext, label: string): {
+  readonly runDirectory: string;
+  readonly projectRoot: string;
+  readonly home: string;
+  readonly admitted: Record<string, unknown>;
+} {
+  const runDirectory = runDirectoryFromHostContext(ctx);
+  if (runDirectory === undefined) throw new Error(`${label} requires AK_ROLE_RUN_DIR`);
+  const admittedPath = join(runDirectory, "admitted-request.json");
+  const admitted = JSON.parse(readFileSync(admittedPath, "utf8")) as Record<string, unknown>;
+  if (typeof admitted.projectRoot !== "string" || admitted.projectRoot.trim() === "") {
+    throw new Error(`${label} admitted-request missing projectRoot (${admittedPath})`);
+  }
+  return {
+    runDirectory,
+    projectRoot: admitted.projectRoot,
+    home: homeFromRunDirectory(runDirectory),
+    admitted,
+  };
+}
+
 /** Run coordinates + optional pre-bound ticket from durable pages (#779). */
 function readDiaristRunCoordinates(ctx: HostContext): {
   readonly runDirectory: string;
@@ -933,28 +955,17 @@ function readDiaristRunCoordinates(ctx: HostContext): {
   readonly home: string;
   readonly boundTicketNumber?: number;
 } {
-  const runDirectory = runDirectoryFromHostContext(ctx);
-  if (runDirectory === undefined) {
-    throw new Error("diarist accept requires AK_ROLE_RUN_DIR");
-  }
-  const admittedPath = join(runDirectory, "admitted-request.json");
-  const admitted = JSON.parse(readFileSync(admittedPath, "utf8")) as Record<
-    string,
-    unknown
-  >;
-  if (typeof admitted.projectRoot !== "string" || admitted.projectRoot.trim() === "") {
-    throw new Error(`diarist admitted-request missing projectRoot (${admittedPath})`);
-  }
+  const coordinates = readRoleRunCoordinates(ctx, "diarist accept");
   const bound =
-    typeof admitted.ticketNumber === "number" &&
-    Number.isSafeInteger(admitted.ticketNumber) &&
-    admitted.ticketNumber >= 1
-      ? admitted.ticketNumber
+    typeof coordinates.admitted.ticketNumber === "number" &&
+    Number.isSafeInteger(coordinates.admitted.ticketNumber) &&
+    coordinates.admitted.ticketNumber >= 1
+      ? coordinates.admitted.ticketNumber
       : undefined;
   return {
-    runDirectory,
-    projectRoot: admitted.projectRoot,
-    home: homeFromRunDirectory(runDirectory),
+    runDirectory: coordinates.runDirectory,
+    projectRoot: coordinates.projectRoot,
+    home: coordinates.home,
     ...(bound === undefined ? {} : { boundTicketNumber: bound }),
   };
 }
@@ -1119,21 +1130,13 @@ export function createSecretariatRoleRuntime(
           const summon = dependencies.summonCountersign;
           const summoned = summon === undefined
             ? await (async () => {
-                const runDirectory = runDirectoryFromHostContext(ctx);
-                if (runDirectory === undefined) {
-                  throw new Error("secretariat summons requires AK_ROLE_RUN_DIR");
-                }
-                const admittedPath = join(runDirectory, "admitted-request.json");
-                const durable = JSON.parse(readFileSync(admittedPath, "utf8")) as Record<string, unknown>;
-                if (typeof durable.projectRoot !== "string" || durable.projectRoot.trim() === "") {
-                  throw new Error(`secretariat admitted-request missing projectRoot (${admittedPath})`);
-                }
+                const coordinates = readRoleRunCoordinates(ctx, "secretariat summons");
                 const { summonPublicRole } = await import("./public-role-summons.ts");
                 return summonPublicRole({
                   role: "countersign",
-                  argv: ["--project", durable.projectRoot, "--", instruction],
-                  cwd: durable.projectRoot,
-                  home: homeFromRunDirectory(runDirectory),
+                  argv: ["--project", coordinates.projectRoot, "--", instruction],
+                  cwd: coordinates.projectRoot,
+                  home: coordinates.home,
                   ...(signal === undefined ? {} : { signal }),
                   ...(correlationId === undefined ? {} : { correlationId }),
                   ...(dependencies.packageRoot === undefined
