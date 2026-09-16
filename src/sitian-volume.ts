@@ -6,8 +6,10 @@
  * (ticket-provenance header + bare dialogue lines, #901). Appender kernel
  * stays append-only; this module does not restore append watermarks.
  */
+import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
-import { readFile, readlink, symlink, unlink } from "node:fs/promises";
+import { mkdir, readFile, rename, rmdir, unlink } from "node:fs/promises";
+import { join } from "node:path";
 
 import {
   ensureRealDirectoryTree,
@@ -82,25 +84,35 @@ export async function withSitianVolumeTransaction<T>(
 ): Promise<T> {
   const volume = ensureSitianVolume(input);
   const lockPath = `${volume.recordFile}.lock`;
+  const ownerFile = join(lockPath, "owner");
   while (true) {
+    const nonce = randomUUID();
+    let acquired = false;
     try {
-      await symlink(String(process.pid), lockPath);
+      await mkdir(lockPath);
+      acquired = true;
       try {
+        await writeFileAtomically(ownerFile, `${process.pid}:${nonce}\n`);
         return await transaction();
       } finally {
-        await unlink(lockPath).catch(() => undefined);
+        await unlink(ownerFile).catch(() => undefined);
+        await rmdir(lockPath).catch(() => undefined);
       }
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      let holder: number | undefined;
+      if (acquired || (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      let claim: string;
       try {
-        const parsed = Number.parseInt(await readlink(lockPath), 10);
-        if (Number.isSafeInteger(parsed) && parsed > 0) holder = parsed;
+        claim = (await readFile(ownerFile, "utf8")).trim();
       } catch (readError) {
-        if ((readError as NodeJS.ErrnoException).code === "ENOENT") continue;
+        if ((readError as NodeJS.ErrnoException).code === "ENOENT") {
+          await sleep(15); // winner is between mkdir and owner publication
+          continue;
+        }
         throw readError;
       }
-      if (holder === undefined) {
+      const [pidText, staleNonce] = claim.split(":");
+      const holder = Number.parseInt(pidText ?? "", 10);
+      if (!Number.isSafeInteger(holder) || holder <= 0 || !staleNonce) {
         throw new SitianInfrastructureError(
           `Sitian volume transaction lock has no verifiable holder: ${lockPath}`,
         );
@@ -109,9 +121,17 @@ export async function withSitianVolumeTransaction<T>(
         process.kill(holder, 0);
       } catch (signalError) {
         if ((signalError as NodeJS.ErrnoException).code === "ESRCH") {
-          await unlink(lockPath).catch((unlinkError) => {
-            if ((unlinkError as NodeJS.ErrnoException).code !== "ENOENT") throw unlinkError;
-          });
+          // The nonce-addressed nonempty tombstone is deliberately retained.
+          // A second reclaimer of this claim cannot rename a successor lock over it.
+          const tombstone = `${lockPath}.stale-${staleNonce}`;
+          try {
+            await rename(lockPath, tombstone);
+          } catch (renameError) {
+            const code = (renameError as NodeJS.ErrnoException).code;
+            if (code !== "ENOENT" && code !== "EEXIST" && code !== "ENOTEMPTY") {
+              throw renameError;
+            }
+          }
           continue;
         }
         throw signalError;
