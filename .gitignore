@@ -6,6 +6,9 @@ dist/
 # Claude Code session dir (local only)
 .claude/
 
+# Host-native local project surfaces (陛下 2026-09-16:「.agents这种东西直接进 ignore」)
+.agents/
+
 .tmp-same-ticket-resume/
 .tmp-675-probe/
 # worktree-local test fixture roots (#685 r12 / #612)
