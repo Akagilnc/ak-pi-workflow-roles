@@ -27,6 +27,7 @@ test("codex headless host binds and resumes a structured turn", async () => {
   const ledger = createTempPackageHomeLedger({ prefix: "ak-codex-host-", runName: "run@codex" });
   const root = ledger.runDirectory;
   const argvLog = join(root, "argv.log");
+  const promptLog = join(root, "prompt.log");
   const fakeBin = join(root, "fake-codex");
   await writeFile(fakeBin, `#!/usr/bin/env node
 import { appendFileSync, readFileSync } from "node:fs";
@@ -36,10 +37,11 @@ const resumeAt = args.indexOf("resume");
 const resumed = resumeAt >= 0;
 const thread = resumed ? args[resumeAt + 1] : "thread-fake-1";
 const prompt = readFileSync(0, "utf8");
+appendFileSync(${JSON.stringify(promptLog)}, JSON.stringify(prompt) + "\\n");
 const events = [
   { type: "thread.started", thread_id: thread },
   { type: "item.completed", item: { type: "agent_message", text: JSON.stringify({ status: "completed", report: resumed ? "resumed" : "initial" }) } },
-  ...(prompt === "missing-terminal" ? [] : [{ type: "turn.completed" }]),
+  ...(prompt.endsWith("missing-terminal") ? [] : [{ type: "turn.completed" }]),
 ];
 process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
 `, "utf8");
@@ -98,7 +100,10 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     const request: RoleTurnRequest = {
       principal: fixturePrincipal(join(root, "session")),
       activation: { role: "inspector" },
-      methods: [],
+      methods: [
+        { kind: "skill", path: "/package/resources/methods/diagnosing-bugs/SKILL.md" },
+        { kind: "skill", path: "/package/resources/methods/tdd/SKILL.md" },
+      ],
       continuation: { kind: "initial", prompt: "work" },
       model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
       cwd: root,
@@ -163,6 +168,11 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     });
     assert.equal(resumed.knownFailure, undefined, JSON.stringify(resumed));
     assert.deepEqual(receipt, { status: "completed", report: "resumed" });
+    const prompts = (await readFile(promptLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string);
+    assert.deepEqual(prompts.slice(0, 2), [
+      "$diagnosing-bugs $tdd work",
+      "$diagnosing-bugs $tdd continue",
+    ]);
     const argv = (await readFile(argvLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
     assert.deepEqual(argv[1]!.slice(0, 4), ["exec", "--approve-for-me", "resume", "thread-fake-1"]);
     assert.ok(argv[1]!.includes("--output-schema"));

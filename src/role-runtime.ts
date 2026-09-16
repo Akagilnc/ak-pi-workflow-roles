@@ -99,7 +99,6 @@ import {
 } from "./secretariat-contracts.ts";
 import {
   DIARIST_ACCEPTED_TEXT,
-  projectDiaristAmendments,
   projectDiaristSessions,
 } from "./diarist-contracts.ts";
 import { commitDiaristProjection } from "./diarist.ts";
@@ -581,6 +580,8 @@ type NavigatorAttendanceDependency = Omit<NavigatorAttendance, "knownRoutePlaybo
 export type RoleRuntimeDependencies = {
   /** Package root for packaged engine-note resolution (#879). */
   packageRoot?: string;
+  /** Non-identity opening materials delivered in the ordinary role brief. */
+  loadRoleReferenceMaterials?(role: PackagedRole): Promise<string>;
   loadJudgeSoul(): Promise<string>;
   loadFixerSoul?(): Promise<string>;
   loadFixPacket?(path: string): Promise<string>;
@@ -961,26 +962,10 @@ function readDiaristRunCoordinates(ctx: HostContext): {
 const DIARIST_BOUNDS_REASK =
   "边界无法使用。请重交 sessions：每卷 path + ranges，每端以原生 id 或本轮行号二选一指名。" as const;
 
-/** Build reask text that hands unparsable source lines back for amendment. */
-function diaristUnparsableReask(
-  rows: readonly { readonly s: number; readonly line: number; readonly raw: string }[],
-): string {
-  const payload = rows.map((row) => ({
-    s: row.s,
-    line: row.line,
-    raw: row.raw,
-  }));
-  return [
-    "下列源行未能录入，请经 amendments 补写（每条 s + line + speaker + text）；其余边界可保持不变。",
-    JSON.stringify(payload),
-  ].join("\n");
-}
-
 /**
  * #708 / #779 / #901: 起居郎 public seat on the shared filed-officer envelope.
- * LLM judges ticket + dialogue bounds (+ optional amendments); mechanical layer
- * reprojects the unique records.jsonl. Unusable bounds and still-open unparsable
- * lines reask via ParentQueueReaskError (same mechanism as countersign). Machine
+ * LLM judges ticket + dialogue bounds; mechanical layer reprojects the unique
+ * records.jsonl. Unusable bounds reask via ParentQueueReaskError. Machine
  * facts never come from model self-report (锚定宪法).
  */
 export function createDiaristRoleRuntime(
@@ -1011,7 +996,6 @@ export function createDiaristRoleRuntime(
           if (sessions === undefined) {
             throw new ParentQueueReaskError(DIARIST_BOUNDS_REASK);
           }
-          const amendments = projectDiaristAmendments(parameters);
           let facts;
           try {
             facts = await commitDiaristProjection({
@@ -1019,7 +1003,6 @@ export function createDiaristRoleRuntime(
               cwd: coords.projectRoot,
               home: coords.home,
               sessions,
-              amendments,
             });
           } catch (error) {
             // Bound/session input failures → reask via typed identity (not message prefix).
@@ -1031,9 +1014,6 @@ export function createDiaristRoleRuntime(
               );
             }
             throw error;
-          }
-          if (facts.unparsable.length > 0) {
-            throw new ParentQueueReaskError(diaristUnparsableReask(facts.unparsable));
           }
         }
         return parameters;
@@ -1288,7 +1268,8 @@ export function createRoleRuntimeExtension(
     });
 
     let admitted = false;
-    let selectedRole: string | undefined;
+    let selectedRole: PackagedRole | undefined;
+    let roleReferenceMaterials = "";
     /** Live Reviewer parent activation for envelope agent_start prompt assembly. */
     let activeReviewerParent: ReviewerActivation | undefined;
     /** Envelope-owned Reviewer Skill expansion state (ADR 0018 — not a role-module facade). */
@@ -1401,14 +1382,14 @@ export function createRoleRuntimeExtension(
             activeReviewerParent.skillBinding.name,
             text,
           ) ?? text;
-        return text === event.text
-          ? { action: "continue" as const }
-          : { action: "transform" as const, text };
       }
-      return text === event.text
-        ? { action: "continue" as const }
-        : { action: "transform" as const, text };
+      return { action: "continue" as const };
     });
+    // Reference law/guides use the existing typed reading-material channel;
+    // they are not rewritten into operator dialogue or the identity Soul.
+    roleHost.on("before_agent_start", () => roleReferenceMaterials === ""
+      ? undefined
+      : { readingMaterial: { kind: "role-reference-materials", content: roleReferenceMaterials } });
     roleHost.on("before_agent_start", async (event, ctx) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       const prompt = event.prompt;
@@ -2092,6 +2073,7 @@ export function createRoleRuntimeExtension(
       }
       admitted = false;
       selectedRole = undefined;
+      roleReferenceMaterials = "";
       activeReviewerParent = undefined;
       reviewerOriginalRequest = undefined;
       reviewerExpansionCaptured = false;
@@ -2252,6 +2234,7 @@ export function createRoleRuntimeExtension(
         }
 
         await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
+        roleReferenceMaterials = await dependencies.loadRoleReferenceMaterials?.(entry.role) ?? "";
         // #357 T2 / #378 / #380 / #391 / #818: any role+engine activation registers the package detour tool once.
         // Gate is resolveEngineName (RoleHost flag → env fallback) — no per-engine execute branch; no role-module spawn.
         if (!engineDetourRegistered) {

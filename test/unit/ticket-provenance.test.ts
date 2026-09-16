@@ -6,14 +6,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  projectTicketProvenanceAmendments,
   projectTicketProvenanceHeader,
   projectTicketProvenanceLine,
   projectTicketProvenanceSessions,
 } from "../../src/ticket-provenance-contracts.ts";
 import { ticketProvenanceSubject } from "../../src/ticket-provenance.ts";
 import {
-  projectDiaristAmendments,
   projectDiaristSessions,
 } from "../../src/diarist-contracts.ts";
 
@@ -49,19 +47,6 @@ test("projectTicketProvenanceSessions: empty is lawful; malformed is absent", ()
       ranges: [{ from: { id: "a" }, to: { line: 9 } }],
     },
   ]);
-});
-
-test("projectTicketProvenanceAmendments skips unusable members; non-array is empty", () => {
-  assert.deepEqual(projectTicketProvenanceAmendments(undefined), []);
-  assert.deepEqual(projectTicketProvenanceAmendments("x"), []);
-  assert.deepEqual(
-    projectTicketProvenanceAmendments([
-      { s: 0, line: 8, speaker: "owner", text: "补" },
-      { s: 0, line: 9, speaker: "nope", text: "x" },
-      { s: 1, line: 2, speaker: "runner" },
-    ]),
-    [{ s: 0, line: 8, speaker: "owner", text: "补" }],
-  );
 });
 
 test("projectTicketProvenanceHeader and line round-trip the diary shape", () => {
@@ -110,31 +95,24 @@ test("projectTicketProvenanceHeader and line round-trip the diary shape", () => 
   const line = projectTicketProvenanceLine({
     speaker: "runner",
     s: 0,
-    line: 3,
+    sourcePosition: 7,
     id: "m1",
     text: "hi",
   });
   assert.deepEqual(line, {
     speaker: "runner",
     s: 0,
-    line: 3,
+    sourcePosition: 7,
     id: "m1",
     text: "hi",
   });
   assert.equal(projectTicketProvenanceLine({ speaker: "x", s: 0, text: "t" }), undefined);
 });
 
-test("projectDiaristSessions/Amendments: absent fields are empty, not rejection", () => {
+test("projectDiaristSessions: absent field is empty, not rejection", () => {
   assert.deepEqual(projectDiaristSessions({}), []);
-  assert.deepEqual(projectDiaristAmendments({}), []);
   assert.equal(
     projectDiaristSessions({ sessions: [{ path: "/s", ranges: [] }] }),
     undefined,
-  );
-  assert.deepEqual(
-    projectDiaristAmendments({
-      amendments: [{ s: 0, line: 1, speaker: "owner", text: "a" }],
-    }),
-    [{ s: 0, line: 1, speaker: "owner", text: "a" }],
   );
 });

@@ -40,8 +40,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * One physical JSONL line as the single kernel saw it.
  * `row` present = syntactically complete session object at that 1-based line.
  * `error` present = the line is complete but unreadable as a session object;
- * `raw` carries its original bytes so a reader that must keep going (起居录
- * projection, ADR 0075 `unparsable-line-to-diarist`) can hand the line back
+ * `raw` carries its original bytes so readers can preserve source evidence
  * instead of inventing content. The unfinished final fragment at EOF is not a
  * line — live tail is honest absence, never a bad line.
  */

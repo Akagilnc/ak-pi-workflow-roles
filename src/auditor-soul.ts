@@ -85,10 +85,19 @@ export async function loadAuditorSoul(role: AuditorSoulRole): Promise<string> {
   if (soul.trim().length === 0) {
     throw new Error(`The ${role} auditor Soul is blank`);
   }
-  return joinPackageMaterials(materials);
+  return soul;
+}
+
+export function loadAuditorReferenceMaterials(role: AuditorSoulRole): Promise<string> {
+  const soulPath = auditorSoulRelativePath(role);
+  return joinPackageMaterials(AUDITOR_SESSION_MATERIALS[role].filter((path) => path !== soulPath));
 }
 
 /** Runtime loader: subject input decides which soul file to assemble. */
 export async function loadAuditorSoulFromSubjectInput(raw?: string): Promise<string> {
   return loadAuditorSoul(resolveAuditorSubject(raw));
+}
+
+export function loadAuditorReferenceMaterialsFromSubjectInput(raw?: string): Promise<string> {
+  return loadAuditorReferenceMaterials(resolveAuditorSubject(raw));
 }

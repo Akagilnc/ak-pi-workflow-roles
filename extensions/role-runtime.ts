@@ -31,9 +31,14 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts
 import { readOAuthKeepaliveProviders } from "../src/oauth-keepalive.ts";
 import {
   formatNavigatorRoleHelp,
+  type RoleRuntimeDependencies,
 } from "../src/role-runtime.ts";
 import { loadAuditorSoulFromSubjectInput } from "../src/auditor-soul.ts";
-import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "../src/session-opening-materials.ts";
+import { loadPackagedRoleReferenceMaterials } from "../src/role-runtime-dependencies.ts";
+import {
+  loadGatekeeperSessionMaterials,
+  loadMainRoleSessionMaterials,
+} from "../src/session-opening-materials.ts";
 const extensionPath = fileURLToPath(import.meta.url);
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const navigatorRoutePlaybookPath = fileURLToPath(new URL("../resources/navigator-route-playbook.md", import.meta.url));
@@ -105,12 +110,11 @@ export async function loadNavigatorWorkContext(
   });
 }
 
-export default function roleRuntime(pi: ExtensionAPI): void {
-  const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
-  registerNavigatorModelCommand(pi);
+export function createPiRoleRuntimeDependencies(pi: ExtensionAPI): RoleRuntimeDependencies {
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
-  createPiRoleRuntimeExtension({
+  return {
     packageRoot,
+    loadRoleReferenceMaterials: loadPackagedRoleReferenceMaterials,
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
     loadFixPacket: (path) => readFile(path, "utf8"),
@@ -167,7 +171,13 @@ export default function roleRuntime(pi: ExtensionAPI): void {
       }
       return loadHomeCanonicalSkillBinding(name);
     },
-  }, {
+  };
+}
+
+export default function roleRuntime(pi: ExtensionAPI): void {
+  const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
+  registerNavigatorModelCommand(pi);
+  createPiRoleRuntimeExtension(createPiRoleRuntimeDependencies(pi), {
     transcriptFromContext,
     oauthKeepalive: { providers: oauthKeepaliveProviders },
   })(pi);

@@ -10,8 +10,15 @@ import { loadNavigatorWorkContext } from "./navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "./notary-source-run.ts";
 import { loadPackagedCanonicalSkillBinding } from "./package-resources/method-skill-binding.ts";
 import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "./role-runtime.ts";
-import { loadAuditorSoulFromSubjectInput } from "./auditor-soul.ts";
-import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "./session-opening-materials.ts";
+import {
+  loadAuditorReferenceMaterialsFromSubjectInput,
+  loadAuditorSoulFromSubjectInput,
+} from "./auditor-soul.ts";
+import {
+  loadGatekeeperSessionMaterials,
+  loadMainRoleReferenceMaterials,
+  loadMainRoleSessionMaterials,
+} from "./session-opening-materials.ts";
 
 const navigatorRoutePlaybookPath = fileURLToPath(
   new URL("../resources/navigator-route-playbook.md", import.meta.url),
@@ -20,12 +27,20 @@ const collectorHandbookSeedPath = fileURLToPath(
   new URL("../resources/collector-bot-handbook.md", import.meta.url),
 );
 
+/** Single packaged source for reference materials across production composition roots. */
+export function loadPackagedRoleReferenceMaterials(role: Parameters<NonNullable<RoleRuntimeDependencies["loadRoleReferenceMaterials"]>>[0]): Promise<string> {
+  return role === "auditor"
+    ? loadAuditorReferenceMaterialsFromSubjectInput()
+    : loadMainRoleReferenceMaterials(role);
+}
+
 /** Host-neutral packaged role runtime deps for the parent-process envelope. */
 export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeDependencies {
   const doctorAuditor = createPiDoctorAuditor();
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   return {
     packageRoot,
+    loadRoleReferenceMaterials: loadPackagedRoleReferenceMaterials,
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
     loadFixPacket: (path) => readFile(path, "utf8"),
