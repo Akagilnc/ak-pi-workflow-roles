@@ -15,12 +15,7 @@ import { sitianReport } from "./sitian-facade.ts";
 import { createSubmissionLedgerHost } from "./submission-ledger.ts";
 import { createCollectorLedger } from "./collector-ledger.ts";
 
-import {
-  activationTraceRecordSchema,
-  namedActivationCause,
-  type ActivationTraceRecord,
-  type ActivationTraceWriter,
-} from "./activation-trace.ts";
+import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 import {
   homeFromRunDirectory,
   resolveActivationLedgerHomeForPath,
@@ -52,11 +47,7 @@ import {
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
-import {
-  createReceiptDeliveryPolicy,
-  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
-  RECEIPT_DELIVERY_PROMPT,
-} from "./receipt-delivery-policy.ts";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
 import type { CollectorGitHubTransport } from "./collector-github.ts";
@@ -84,18 +75,12 @@ import {
   GLEANER_LEFT_TOOL_SPEC,
   type GleanerLeftRuntimeDependencies,
 } from "./gleaner-left-role.ts";
-import {
-  GLEANER_LEFT_ACCEPTED_TEXT,
-  GLEANER_LEFT_BASE_FLAG,
-} from "./gleaner-left-contracts.ts";
+import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_BASE_FLAG } from "./gleaner-left-contracts.ts";
 import {
   INSPECTOR_TOOL_SPEC,
   type InspectorRuntimeDependencies,
 } from "./inspector-role.ts";
-import {
-  INSPECTOR_ACCEPTED_TEXT,
-  INSPECTOR_SOURCE_RUN_FLAG,
-} from "./inspector-contracts.ts";
+import { INSPECTOR_ACCEPTED_TEXT, INSPECTOR_SOURCE_RUN_FLAG } from "./inspector-contracts.ts";
 import {
   DIARIST_TOOL_SPEC,
   type DiaristRuntimeDependencies,
@@ -135,22 +120,7 @@ import {
 import { AUDITOR_ACCEPTED_TEXT } from "./package-contracts/auditor-output.ts";
 import { GATEKEEPER_ACCEPTED_TEXT } from "./package-contracts/gatekeeper-output.ts";
 import { NAVIGATOR_ACCEPTED_TEXT } from "./package-contracts/navigator-output.ts";
-import {
-  formatNavigatorReport,
-  NAVIGATOR_EVENT_TYPE,
-  navigatorSubjectKey,
-  navigatorUnavailableError,
-  subjectPath,
-  type NavigatorAttendance,
-  type NavigatorAttendanceOptions,
-  type NavigatorEvent,
-  type NavigatorPhase,
-  type NavigatorReport,
-  type NavigatorSettlement,
-  type NavigatorSubjectProvenance,
-  type NavigatorTargetRole,
-  type NavigatorWorkContext,
-} from "./navigator-attendance.ts";
+import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
@@ -159,19 +129,12 @@ import {
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
-import {
-  NAVIGATOR_POST_ROLE_GRACE_MS,
-  raceNavigatorGrace,
-} from "./public-cli/settlement.ts";
-import {
-  PACKAGED_ROLE_REGISTRY,
-  packagedRoleMetadata,
-  packagedRoleOutputTool,
-  packagedRolePhaseFlag,
-  type PackagedRole,
-} from "./packaged-role-registry.ts";
+import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
+import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
-import { createJudgeRoleRuntime } from "./judge-role.ts";
+import {
+  createJudgeRoleRuntime,
+} from "./judge-role.ts";
 import {
   createReviewerRoleRuntime,
   type ReviewerActivation,
@@ -195,16 +158,14 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
   Object.freeze({
     name: "ak-review-scope-keys",
     definition: Object.freeze({
-      description:
-        "Optional comma-separated exact class keys limiting Reviewer scope",
+      description: "Optional comma-separated exact class keys limiting Reviewer scope",
       type: "string" as const,
     }),
   }),
   Object.freeze({
     name: "ak-review-authority-refs",
     definition: Object.freeze({
-      description:
-        "JSON array of durable authority references for Spec-axis material only",
+      description: "JSON array of durable authority references for Spec-axis material only",
       type: "string" as const,
     }),
   }),
@@ -236,8 +197,7 @@ const GLEANER_LEFT_TRANSPORT_FLAGS = Object.freeze([
 export const STATION_CHILD_FLAG = Object.freeze({
   name: "ak-station-child",
   definition: Object.freeze({
-    description:
-      "Station-child role run (omit automatic navigator attendance; #840)",
+    description: "Station-child role run (omit automatic navigator attendance; #840)",
     type: "boolean" as const,
   }),
 } as const);
@@ -246,25 +206,16 @@ export const STATION_CHILD_FLAG = Object.freeze({
  * Decode private transport flags into frozen admitted inputs.
  * Envelope-owned; necessary JSON decode only (public --authority-ref owns grammar).
  */
-function decodeReviewerAdmittedInputs(
-  getFlag: (name: string) => unknown,
-): ReviewerAdmittedInputs {
+function decodeReviewerAdmittedInputs(getFlag: (name: string) => unknown): ReviewerAdmittedInputs {
   let reviewScopeKeys: readonly string[] | undefined;
   const rawScopeKeys = getFlag("ak-review-scope-keys");
   if (rawScopeKeys !== undefined) {
     if (typeof rawScopeKeys !== "string" || rawScopeKeys.length === 0) {
-      throw new Error(
-        "Reviewer scope keys must be a nonempty comma-separated string",
-      );
+      throw new Error("Reviewer scope keys must be a nonempty comma-separated string");
     }
     const parsed = rawScopeKeys.split(",");
-    if (
-      parsed.some((key) => key.trim().length === 0) ||
-      new Set(parsed).size !== parsed.length
-    ) {
-      throw new Error(
-        "Reviewer scope keys contain a blank or exact duplicate key",
-      );
+    if (parsed.some((key) => key.trim().length === 0) || new Set(parsed).size !== parsed.length) {
+      throw new Error("Reviewer scope keys contain a blank or exact duplicate key");
     }
     reviewScopeKeys = Object.freeze(parsed);
   }
@@ -273,9 +224,7 @@ function decodeReviewerAdmittedInputs(
   const rawAuthorityRefs = getFlag("ak-review-authority-refs");
   if (rawAuthorityRefs !== undefined) {
     if (typeof rawAuthorityRefs !== "string") {
-      throw new Error(
-        "Reviewer authority refs transport error: flag value must be a string",
-      );
+      throw new Error("Reviewer authority refs transport error: flag value must be a string");
     }
     let parsed: unknown;
     try {
@@ -285,13 +234,8 @@ function decodeReviewerAdmittedInputs(
         `Reviewer authority refs transport error: JSON decode failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    if (
-      !Array.isArray(parsed) ||
-      parsed.some((ref) => typeof ref !== "string")
-    ) {
-      throw new Error(
-        "Reviewer authority refs transport error: expected a JSON array of strings",
-      );
+    if (!Array.isArray(parsed) || parsed.some((ref) => typeof ref !== "string")) {
+      throw new Error("Reviewer authority refs transport error: expected a JSON array of strings");
     }
     authorityRefs = Object.freeze(parsed as string[]);
   }
@@ -299,10 +243,7 @@ function decodeReviewerAdmittedInputs(
   let ticketNumber: number | undefined;
   const rawTicketNumber = getFlag("ak-review-ticket-number");
   // Shape-invalid flag values do not abort: omit typed candidate; branch→commit→degrade continues.
-  if (
-    typeof rawTicketNumber === "string" &&
-    /^[1-9]\d*$/.test(rawTicketNumber)
-  ) {
+  if (typeof rawTicketNumber === "string" && /^[1-9]\d*$/.test(rawTicketNumber)) {
     ticketNumber = Number(rawTicketNumber);
   }
 
@@ -346,15 +287,13 @@ import {
 
 /** One envelope map for Gatekeeper non-pass and other correct submission rejects (#525). */
 type SubmissionNonPassResult =
-  GatekeeperNonPassResult | CoderSkillExpansionEvidenceMissingResult;
+  | GatekeeperNonPassResult
+  | CoderSkillExpansionEvidenceMissingResult;
 import { JUDGE_OUTPUT_TOOL_NAME } from "./package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "./package-contracts/reviewer-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "./merger-contracts.ts";
-import {
-  createMergerRoleRuntime,
-  type MergerRoleDependencies,
-} from "./merger-role.ts";
+import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-role.ts";
 
 export {
   buildNavigatorInfrastructureFailureFact,
@@ -369,14 +308,8 @@ export {
   type NavigatorInfrastructureFailureFact,
   type PackagedRoleTerminalClassification,
 } from "./navigator-invocation-identity.ts";
-export {
-  activationTraceRecordSchema,
-  namedActivationCause,
-} from "./activation-trace.ts";
-export type {
-  ActivationTraceRecord,
-  ActivationTraceWriter,
-} from "./activation-trace.ts";
+export { activationTraceRecordSchema, namedActivationCause } from "./activation-trace.ts";
+export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-trace.ts";
 export {
   ACCEPTED_ACTIVATION_EVENT,
   ACCEPTED_ACTIVATION_FACT_KEYS,
@@ -425,10 +358,7 @@ export {
   validateToolExecutionObservationRecord,
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
-export type {
-  ToolExecutionObservationRecord,
-  ToolExecutionObservationWriter,
-} from "./tool-execution-observation.ts";
+export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
 export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
@@ -436,13 +366,7 @@ export {
   createGatekeeperOutputTool,
   runGatekeeper,
 } from "./gatekeeper-role.ts";
-export type {
-  GatekeeperResult,
-  GatekeeperSubject,
-  GatekeeperNonPassResult,
-  GateOfficer,
-  RunGatekeeperOptions,
-} from "./gatekeeper-role.ts";
+export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
 export { gateOfficerForSubject } from "./gatekeeper-role.ts";
 import { ParentQueueReaskError } from "./submission-errors.ts";
 
@@ -450,24 +374,14 @@ export {
   DOCTOR_EVIDENCE_TOOL_NAME,
   DOCTOR_OUTPUT_TOOL_NAME,
 } from "./doctor-role.ts";
-export type {
-  DoctorCase,
-  DoctorCaseCost,
-  DoctorSubmission,
-  DoctorOutput,
-  DoctorFinding,
-} from "./doctor-contracts.ts";
-export {
-  validateDoctorSubmissionShape,
-  validateDoctorOutput,
-  DoctorEvidenceStore,
-} from "./doctor-contracts.ts";
+export type { DoctorCase, DoctorCaseCost, DoctorSubmission, DoctorOutput, DoctorFinding } from "./doctor-contracts.ts";
+export { validateDoctorSubmissionShape, validateDoctorOutput, DoctorEvidenceStore } from "./doctor-contracts.ts";
 export { loadDoctorCase } from "./doctor-evidence.ts";
-export { JUDGE_OUTPUT_TOOL_NAME, type JudgeVerdict } from "./judge-role.ts";
 export {
-  ENGINE_DETOUR_TOOL_NAME,
-  AK_ROLE_ENGINE_ENV,
-} from "./engine-detour.ts";
+  JUDGE_OUTPUT_TOOL_NAME,
+  type JudgeVerdict,
+} from "./judge-role.ts";
+export { ENGINE_DETOUR_TOOL_NAME, AK_ROLE_ENGINE_ENV } from "./engine-detour.ts";
 export {
   AGENT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
@@ -485,38 +399,12 @@ export {
   type FixerOutput,
   type WorkerOutput,
 } from "./worker-role.ts";
-export {
-  fixerOutputSchema,
-  validateFixerOutput,
-} from "./package-contracts/fixer-output.ts";
-export type {
-  FixerBlocker,
-  FixerClassResult,
-  FixerPhase,
-  FixerTestEvidence,
-} from "./package-contracts/fixer-output.ts";
-export {
-  fixerPrerequisiteSchema,
-  fixerPrerequisitesSchema,
-  parseFixerPrerequisites,
-  validateFixerPrerequisites,
-} from "./package-contracts/fixer-packet.ts";
-export type {
-  FixerInvocationInput,
-  FixerPrerequisite,
-} from "./package-contracts/fixer-packet.ts";
-export {
-  AUDIT_ESCALATION_KIND,
-  buildAuditEscalationResult,
-  disposeComplianceDecision,
-  isAuditEscalationResult,
-  projectAuditEscalation,
-} from "./audit-escalation.ts";
-export type {
-  AuditEscalationResult,
-  AuditEscalationToolResult,
-  ComplianceDecisionHandlers,
-} from "./audit-escalation.ts";
+export { fixerOutputSchema, validateFixerOutput } from "./package-contracts/fixer-output.ts";
+export type { FixerBlocker, FixerClassResult, FixerPhase, FixerTestEvidence } from "./package-contracts/fixer-output.ts";
+export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./package-contracts/fixer-packet.ts";
+export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
+export { AUDIT_ESCALATION_KIND, buildAuditEscalationResult, disposeComplianceDecision, isAuditEscalationResult, projectAuditEscalation } from "./audit-escalation.ts";
+export type { AuditEscalationResult, AuditEscalationToolResult, ComplianceDecisionHandlers } from "./audit-escalation.ts";
 export {
   AUDITOR_SOUL_ROLES,
   AK_ROLE_AUDITOR_SUBJECT_ENV,
@@ -525,14 +413,8 @@ export {
   resolveAuditorSubject,
 } from "./auditor-soul.ts";
 export type { AuditorSoulRole } from "./auditor-soul.ts";
-export {
-  JUDGE_AUDIT_TOOL_NAME,
-  SOUL_AUDIT_TOOL_NAME,
-} from "./judge-auditor.ts";
-export {
-  DOCTOR_AUDIT_TOOL_NAME,
-  createPiDoctorAuditor,
-} from "./doctor-auditor.ts";
+export { JUDGE_AUDIT_TOOL_NAME, SOUL_AUDIT_TOOL_NAME } from "./judge-auditor.ts";
+export { DOCTOR_AUDIT_TOOL_NAME, createPiDoctorAuditor } from "./doctor-auditor.ts";
 export type { ComplianceDecision } from "./compliance-transport.ts";
 export {
   COLLECTOR_OBSERVE_TOOL,
@@ -547,31 +429,15 @@ export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
 export * from "./navigator-attendance.ts";
 export { MERGER_INPUT_FLAG, createMergerRoleRuntime } from "./merger-role.ts";
-export {
-  MERGER_OUTPUT_TOOL_NAME,
-  mergerInputSchema,
-  mergerOutputSchema,
-  validateMergerInput,
-  validateMergerOutput,
-} from "./merger-contracts.ts";
-export type {
-  MergerInput,
-  MergerMaterial,
-  MergerOutput,
-} from "./merger-contracts.ts";
+export { MERGER_OUTPUT_TOOL_NAME, mergerInputSchema, mergerOutputSchema, validateMergerInput, validateMergerOutput } from "./merger-contracts.ts";
+export type { MergerInput, MergerMaterial, MergerOutput } from "./merger-contracts.ts";
 export { createProductionMergerGitState } from "./merger-git-state.ts";
-export type {
-  MergerGitState,
-  ActiveMergerGitState,
-} from "./merger-git-state.ts";
+export type { MergerGitState, ActiveMergerGitState } from "./merger-git-state.ts";
 export type { MergerRoleDependencies } from "./merger-role.ts";
 
 type WorkerArmable = {
   activate(context?: HostContext): Promise<void>;
-  armSubmissionGate(
-    cwd: string,
-    parent: { getSessionFile(): string | undefined },
-  ): void;
+  armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }): void;
 };
 
 type ActivationRuntime = {
@@ -595,13 +461,10 @@ type ActivationRuntime = {
   };
   doctor: { activate(): Promise<void> };
   notary: {
-    activate(
-      admitted?: import("./notary-role.ts").NotaryAdmittedTicket,
-    ): Promise<void>;
+    activate(admitted?: import("./notary-role.ts").NotaryAdmittedTicket): Promise<void>;
   };
   /** Envelope decodes Notary ticket flag inside the activation stage (ADR 0018). */
-  decodeNotaryAdmitted():
-    import("./notary-role.ts").NotaryAdmittedTicket | undefined;
+  decodeNotaryAdmitted(): import("./notary-role.ts").NotaryAdmittedTicket | undefined;
   countersign: { activate(): Promise<void> };
   gleanerLeft: { activate(): Promise<void> };
   inspector: { activate(): Promise<void> };
@@ -613,110 +476,40 @@ type ActivationRuntime = {
   merger(): Promise<void>;
 };
 
-function activationStage(
-  role: PackagedRole,
-  runtime: ActivationRuntime,
-): { id: string; run(): Promise<void> } {
+function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: string; run(): Promise<void> } {
   switch (role) {
-    case "judge":
-      return {
-        id: "load-and-install",
-        run: async () => runtime.judge.activate(),
-      };
-    case "fixer":
-      return {
-        id: "load-and-install",
-        run: async () => runtime.fixer.activate(),
-      };
-    case "coder":
-      return {
-        id: "load-and-install",
-        run: async () => runtime.coder.activate(runtime.context),
-      };
-    case "reviewer":
-      return {
-        id: "load-and-install",
-        run: async () => {
-          const admitted = runtime.decodeReviewerAdmitted();
-          const activation = await runtime.reviewer.activate(
-            runtime.context,
-            admitted,
-          );
-          runtime.bindReviewerParent(activation);
-        },
-      };
-    case "collector":
-      return {
-        id: "load-and-install",
-        run: async () =>
-          runtime.collector.activate(runtime.context, runtime.event),
-      };
-    case "doctor":
-      return {
-        id: "load-and-install",
-        run: async () => runtime.doctor.activate(),
-      };
-    case "notary":
-      return {
-        id: "load-and-install",
-        run: async () => {
-          // Envelope owns ticket flag read (ADR 0018); role receives admitted value only.
-          await runtime.notary.activate(runtime.decodeNotaryAdmitted());
-        },
-      };
-    case "countersign":
-      return {
-        id: "load-and-install",
-        run: async () => runtime.countersign.activate(),
-      };
-    case "gleaner-left":
-      return {
-        id: "load-and-install",
-        run: async () => runtime.gleanerLeft.activate(),
-      };
-    case "inspector":
-      return {
-        id: "load-and-install",
-        run: async () => runtime.inspector.activate(),
-      };
-    case "gatekeeper":
-      return {
-        id: "load-and-install",
-        run: async () => runtime.gatekeeper.activate(),
-      };
-    case "navigator":
-      return {
-        id: "load-and-install",
-        run: async () => runtime.navigator.activate(),
-      };
-    case "auditor":
-      return {
-        id: "load-and-install",
-        run: async () => runtime.auditor.activate(),
-      };
-    case "diarist":
-      return {
-        id: "load-and-install",
-        run: async () => runtime.diarist.activate(),
-      };
-    case "secretariat":
-      return {
-        id: "load-and-install",
-        run: async () => runtime.secretariat.activate(),
-      };
-    case "merger":
-      return {
-        id: "prepare-git-and-install",
-        run: async () => runtime.merger(),
-      };
+    case "judge": return { id: "load-and-install", run: async () => runtime.judge.activate() };
+    case "fixer": return { id: "load-and-install", run: async () => runtime.fixer.activate() };
+    case "coder": return { id: "load-and-install", run: async () => runtime.coder.activate(runtime.context) };
+    case "reviewer": return { id: "load-and-install", run: async () => {
+      const admitted = runtime.decodeReviewerAdmitted();
+      const activation = await runtime.reviewer.activate(runtime.context, admitted);
+      runtime.bindReviewerParent(activation);
+    } };
+    case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
+    case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
+    case "notary": return {
+      id: "load-and-install",
+      run: async () => {
+        // Envelope owns ticket flag read (ADR 0018); role receives admitted value only.
+        await runtime.notary.activate(runtime.decodeNotaryAdmitted());
+      },
+    };
+    case "countersign": return { id: "load-and-install", run: async () => runtime.countersign.activate() };
+    case "gleaner-left": return { id: "load-and-install", run: async () => runtime.gleanerLeft.activate() };
+    case "inspector": return { id: "load-and-install", run: async () => runtime.inspector.activate() };
+    case "gatekeeper": return { id: "load-and-install", run: async () => runtime.gatekeeper.activate() };
+    case "navigator": return { id: "load-and-install", run: async () => runtime.navigator.activate() };
+    case "auditor": return { id: "load-and-install", run: async () => runtime.auditor.activate() };
+    case "diarist": return { id: "load-and-install", run: async () => runtime.diarist.activate() };
+    case "secretariat": return { id: "load-and-install", run: async () => runtime.secretariat.activate() };
+    case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
   }
 }
 
 function validateActivationTraceRecord(record: unknown): ActivationTraceRecord {
   if (!Value.Check(activationTraceRecordSchema, record)) {
-    throw new TypeError(
-      "Activation trace record does not match its closed contract",
-    );
+    throw new TypeError("Activation trace record does not match its closed contract");
   }
   return record as ActivationTraceRecord;
 }
@@ -731,10 +524,7 @@ async function emitActivationTrace(
 async function executeActivationStage(
   role: string,
   stage: { id: string; run(): Promise<void> },
-  infrastructure: {
-    clock(): string;
-    writeTrace(record: ActivationTraceRecord): void | Promise<void>;
-  },
+  infrastructure: { clock(): string; writeTrace(record: ActivationTraceRecord): void | Promise<void> },
 ): Promise<void> {
   try {
     await stage.run();
@@ -748,10 +538,7 @@ async function executeActivationStage(
         cause: namedActivationCause(activationError),
       });
     } catch (traceError) {
-      throw new AggregateError(
-        [activationError, traceError],
-        `Activation stage ${stage.id} failed and its failure trace could not be emitted`,
-      );
+      throw new AggregateError([activationError, traceError], `Activation stage ${stage.id} failed and its failure trace could not be emitted`);
     }
     throw activationError;
   }
@@ -772,9 +559,7 @@ export class ActivationBarrierError extends Error {
   }
 }
 
-export const WORKFLOW_ROLES = PACKAGED_ROLE_REGISTRY.map(
-  ({ role }) => role,
-) as Array<(typeof PACKAGED_ROLE_REGISTRY)[number]["role"]>;
+export const WORKFLOW_ROLES = PACKAGED_ROLE_REGISTRY.map(({ role }) => role) as Array<(typeof PACKAGED_ROLE_REGISTRY)[number]["role"]>;
 export const ROLE_FLAG = {
   name: "ak-role",
   definition: {
@@ -786,7 +571,10 @@ export const ROLE_FLAG = {
 /** Host-neutral in-process role help for Navigator prepare (Pi and Grok share this). */
 export function formatNavigatorRoleHelp(role: NavigatorTargetRole): string {
   const metadata = packagedRoleMetadata(role);
-  const lines = [`Usage: ak-role ${role}`, ROLE_FLAG.definition.description];
+  const lines = [
+    `Usage: ak-role ${role}`,
+    ROLE_FLAG.definition.description,
+  ];
   if (metadata?.inputFlag !== undefined) {
     lines.push(`  --${metadata.inputFlag} <value>    ${role} input material`);
   }
@@ -799,10 +587,7 @@ export function formatNavigatorRoleHelp(role: NavigatorTargetRole): string {
   return lines.join("\n");
 }
 
-type NavigatorAttendanceDependency = Omit<
-  NavigatorAttendance,
-  "knownRoutePlaybookReadFailure"
-> &
+type NavigatorAttendanceDependency = Omit<NavigatorAttendance, "knownRoutePlaybookReadFailure"> &
   Partial<Pick<NavigatorAttendance, "knownRoutePlaybookReadFailure">>;
 
 export type RoleRuntimeDependencies = {
@@ -821,9 +606,7 @@ export type RoleRuntimeDependencies = {
   createCollectorTransport?(): CollectorGitHubTransport;
   loadDoctorSoul?(): Promise<string>;
   loadNotarySoul?(): Promise<string>;
-  loadNotarySourceRun?(
-    path: string,
-  ): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
+  loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadCountersignSoul?(): Promise<string>;
   loadGleanerLeftSoul?(): Promise<string>;
   loadInspectorSoul?(): Promise<string>;
@@ -832,43 +615,18 @@ export type RoleRuntimeDependencies = {
   loadAuditorSoul?(): Promise<string>;
   loadDiaristSoul?(): Promise<string>;
   loadSecretariatSoul?(): Promise<string>;
-  loadDoctorCase?(
-    path: string,
-  ): Promise<import("./doctor-contracts.ts").DoctorCase>;
+  loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
-  auditDoctorCompliance?(options: {
-    context: HostContext;
-    signal?: AbortSignal;
-  }): Promise<ComplianceDecision>;
+  auditDoctorCompliance?(options: { context: HostContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
-  createNavigatorAttendance?(options: {
-    context: HostContext;
-    role: string;
-    phase: NavigatorPhase;
-    subjectKey: string;
-    subject: string;
-    authority: string;
-    contextError?: unknown;
-    invocationId: string;
-    onEvent: (
-      event: import("./navigator-attendance.ts").NavigatorEvent,
-      report: import("./navigator-attendance.ts").NavigatorReport,
-    ) => void | Promise<void>;
-  }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
-  loadNavigatorWorkContext?(options: {
-    context: HostContext;
-    role: string;
-    phase: NavigatorPhase;
-    getFlag?: (name: string) => unknown;
-  }): Promise<NavigatorWorkContext>;
+  createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
+  loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   loadCanonicalSkillBinding?(
     name: "tdd" | "code-review",
   ): Promise<AnyCanonicalSkillBinding>;
   activationClock?(): string;
-  activationTraceWriter?: (
-    record: ActivationTraceRecord,
-  ) => void | Promise<void>;
+  activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
   /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
   toolExecutionObservationClock?(): string;
   /** Monotonic ms clock for update throttling; defaults to performance.now (not Date.now). */
@@ -880,10 +638,7 @@ function abortContext(ctx: { abort(): void }): void {
   ctx.abort();
 }
 
-function failInfrastructure(
-  error: unknown,
-  ctx: { mode: string; abort(): void },
-): never {
+function failInfrastructure(error: unknown, ctx: { mode: string; abort(): void }): never {
   abortContext(ctx);
   if (ctx.mode === "print" || ctx.mode === "json") process.exitCode = 1;
   throw error;
@@ -897,9 +652,7 @@ type PendingInfrastructureFailure = {
   readonly details: Record<string, unknown>;
 };
 
-function buildPendingInfrastructureFailure(
-  error: unknown,
-): PendingInfrastructureFailure {
+function buildPendingInfrastructureFailure(error: unknown): PendingInfrastructureFailure {
   return {
     details: {
       ...buildNavigatorInfrastructureFailureFact(),
@@ -912,8 +665,7 @@ function navigatorPhase(roleHost: RoleHost, role: string): NavigatorPhase {
   const metadata = packagedRoleMetadata(role);
   if (metadata === undefined || metadata.phases[0] === null) return null;
   const phaseFlag = packagedRolePhaseFlag(role);
-  const requested =
-    phaseFlag === undefined ? undefined : roleHost.getFlag(phaseFlag);
+  const requested = phaseFlag === undefined ? undefined : roleHost.getFlag(phaseFlag);
   return requested === "apply" ? "apply" : "plan";
 }
 
@@ -921,11 +673,7 @@ function navigatorOutputTool(role: string): string | undefined {
   return packagedRoleOutputTool(role);
 }
 
-export function publicNavigatorSettlement(
-  role: string,
-  phase: NavigatorPhase,
-  event: { toolName: string; isError?: unknown; details: unknown },
-): NavigatorSettlement | undefined {
+export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError?: unknown; details: unknown }): NavigatorSettlement | undefined {
   // One shared classifier owns terminal discriminant (lifecycle + settlement + extractors).
   if (event.toolName !== navigatorOutputTool(role)) return undefined;
   const classification = classifyPackagedRoleTerminalResult(event);
@@ -934,36 +682,23 @@ export function publicNavigatorSettlement(
     return { kind: "role_infrastructure_failure", role, phase };
   }
   // accepted/human — project role/phase status; classifier already rejected infra/contradiction.
-  const details =
-    typeof event.details === "object" &&
-    event.details !== null &&
-    !Array.isArray(event.details)
-      ? (event.details as Record<string, unknown>)
-      : {};
+  const details = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
+    ? event.details as Record<string, unknown>
+    : {};
   // Live Navigator consumes only the audit-owned projection; persisted/replayed
   // records are re-authenticated by settlement against retained audit evidence.
   if (isAuditEscalationProjection(event.details)) {
     return { kind: "human_decision", role, phase, status: "audit_escalation" };
   }
-  const status =
-    typeof details.status === "string"
-      ? details.status
-      : typeof details.judgeStatus === "string"
-        ? details.judgeStatus
-        : typeof details.countersignStatus === "string"
-          ? details.countersignStatus
-          : typeof details.secretariatStatus === "string"
-            ? details.secretariatStatus
-            : undefined;
+  const status = typeof details.status === "string"
+    ? details.status
+    : typeof details.judgeStatus === "string" ? details.judgeStatus
+    : typeof details.countersignStatus === "string" ? details.countersignStatus
+    : typeof details.secretariatStatus === "string" ? details.secretariatStatus : undefined;
   if (status !== undefined && status === "escalate") {
     return { kind: "human_decision", role, phase, status };
   }
-  return {
-    kind: "accepted",
-    role,
-    phase,
-    ...(status === undefined ? {} : { status }),
-  };
+  return { kind: "accepted", role, phase, ...(status === undefined ? {} : { status }) };
 }
 
 export async function projectClosedSubmissionLifecycle(
@@ -979,10 +714,7 @@ export async function projectClosedSubmissionLifecycle(
     isError: false,
     details: closed.accepted,
   };
-  context.sessionManager.appendCustomEntry?.(
-    "ak-role-submission-closure",
-    closure,
-  );
+  context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
   await settle(publicNavigatorSettlement(closed.role, phase, closure));
 }
 
@@ -1008,13 +740,7 @@ function createFiledOfficerRuntime(
   roleHost: RoleHost,
   spec: {
     role: string;
-    tool: {
-      name: string;
-      label: string;
-      description: string;
-      promptSnippet: string;
-      parameters: unknown;
-    };
+    tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
     acceptedText: string;
     soulTag: string;
     beforeAccept?: FiledOfficerBeforeAccept;
@@ -1036,23 +762,12 @@ function createFiledOfficerRuntime(
           description: spec.tool.description,
           promptSnippet: spec.tool.promptSnippet,
           parameters: spec.tool.parameters as never,
-          async execute(
-            toolCallId,
-            parameters,
-            signal,
-            _onUpdate,
-            ctx,
-          ): Promise<HostToolResult<unknown>> {
+          async execute(toolCallId, parameters, signal, _onUpdate, ctx): Promise<HostToolResult<unknown>> {
             if (soul === undefined) throw new Error(`${spec.role} 职分未装载`);
             const projected =
               spec.beforeAccept === undefined
                 ? undefined
-                : await spec.beforeAccept({
-                    toolCallId,
-                    parameters,
-                    signal,
-                    ctx,
-                  });
+                : await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
             // Accept-as-is + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
             return {
@@ -1070,9 +785,7 @@ function createFiledOfficerRuntime(
       }
       const all = roleHost.getAllTools().map((tool) => tool.name);
       if (all.filter((name) => name === spec.tool.name).length !== 1) {
-        throw new Error(
-          `${spec.role} required tool collision or missing: ${spec.tool.name}`,
-        );
+        throw new Error(`${spec.role} required tool collision or missing: ${spec.tool.name}`);
       }
     },
   };
@@ -1174,15 +887,12 @@ export function createAuditorRoleRuntime(
       // Source run: only the shared --source-run input face (never own-run fallback).
       const { createAuditorDossierTool, AUDITOR_DOSSIER_TOOL_NAME } =
         await import("./auditor-dossier-tool.ts");
-      const { AK_ROLE_AUDITOR_SOURCE_RUN_ENV } =
-        await import("./auditor-soul.ts");
-      const already = roleHost
-        .getAllTools()
-        .some((tool) => tool.name === AUDITOR_DOSSIER_TOOL_NAME);
+      const { AK_ROLE_AUDITOR_SOURCE_RUN_ENV } = await import("./auditor-soul.ts");
+      const already = roleHost.getAllTools().some((tool) => tool.name === AUDITOR_DOSSIER_TOOL_NAME);
       if (already) return;
       const sourceRun =
-        typeof process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] === "string" &&
-        process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim() !== ""
+        typeof process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV] === "string"
+        && process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim() !== ""
           ? process.env[AK_ROLE_AUDITOR_SOURCE_RUN_ENV].trim()
           : undefined;
       roleHost.registerTool(createAuditorDossierTool(sourceRun) as never);
@@ -1198,10 +908,7 @@ export function createAuditorRoleRuntime(
  */
 function readDiaristTicketAssertion(
   submitted: Record<string, unknown> | undefined,
-):
-  | { kind: "true-unbound" }
-  | { kind: "ticket"; ticketNumber: number }
-  | { kind: "invalid" } {
+): { kind: "true-unbound" } | { kind: "ticket"; ticketNumber: number } | { kind: "invalid" } {
   if (submitted === undefined || !("ticketNumber" in submitted)) {
     return { kind: "true-unbound" };
   }
@@ -1220,30 +927,18 @@ function readDiaristTicketAssertion(
 }
 
 /** Shared durable coordinates for role tools that summon another public role. */
-function readRoleRunCoordinates(
-  ctx: HostContext,
-  label: string,
-): {
+function readRoleRunCoordinates(ctx: HostContext, label: string): {
   readonly runDirectory: string;
   readonly projectRoot: string;
   readonly home: string;
   readonly admitted: Record<string, unknown>;
 } {
   const runDirectory = runDirectoryFromHostContext(ctx);
-  if (runDirectory === undefined)
-    throw new Error(`${label} requires AK_ROLE_RUN_DIR`);
+  if (runDirectory === undefined) throw new Error(`${label} requires AK_ROLE_RUN_DIR`);
   const admittedPath = join(runDirectory, "admitted-request.json");
-  const admitted = JSON.parse(readFileSync(admittedPath, "utf8")) as Record<
-    string,
-    unknown
-  >;
-  if (
-    typeof admitted.projectRoot !== "string" ||
-    admitted.projectRoot.trim() === ""
-  ) {
-    throw new Error(
-      `${label} admitted-request missing projectRoot (${admittedPath})`,
-    );
+  const admitted = JSON.parse(readFileSync(admittedPath, "utf8")) as Record<string, unknown>;
+  if (typeof admitted.projectRoot !== "string" || admitted.projectRoot.trim() === "") {
+    throw new Error(`${label} admitted-request missing projectRoot (${admittedPath})`);
   }
   return {
     runDirectory,
@@ -1281,11 +976,7 @@ const DIARIST_BOUNDS_REASK =
 
 /** Build reask text that hands unparsable source lines back for amendment. */
 function diaristUnparsableReask(
-  rows: readonly {
-    readonly s: number;
-    readonly line: number;
-    readonly raw: string;
-  }[],
+  rows: readonly { readonly s: number; readonly line: number; readonly raw: string }[],
 ): string {
   const payload = rows.map((row) => ({
     s: row.s,
@@ -1318,22 +1009,16 @@ export function createDiaristRoleRuntime(
       soulTag: "diarist",
       beforeAccept: async ({ parameters, ctx }) => {
         const submitted =
-          parameters !== null &&
-          typeof parameters === "object" &&
-          !Array.isArray(parameters)
+          parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
             ? (parameters as Record<string, unknown>)
             : undefined;
         const assertion = readDiaristTicketAssertion(submitted);
         const coords = readDiaristRunCoordinates(ctx);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
-        const ticketNumber =
-          assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
+        const ticketNumber = assertion.kind === "ticket" ? assertion.ticketNumber : undefined;
         if (ticketNumber !== undefined) {
           if (coords.boundTicketNumber === undefined) {
-            await bindTicketNumberOnRunDirectory(
-              coords.runDirectory,
-              ticketNumber,
-            );
+            await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
           }
           const sessions = projectDiaristSessions(parameters);
           if (sessions === undefined) {
@@ -1361,9 +1046,7 @@ export function createDiaristRoleRuntime(
             throw error;
           }
           if (facts.unparsable.length > 0) {
-            throw new ParentQueueReaskError(
-              diaristUnparsableReask(facts.unparsable),
-            );
+            throw new ParentQueueReaskError(diaristUnparsableReask(facts.unparsable));
           }
         }
         return parameters;
@@ -1374,11 +1057,7 @@ export function createDiaristRoleRuntime(
 }
 
 /** Countersign status words the queue reads (#753). */
-const COUNTERSIGN_QUEUE_STATUSES = new Set([
-  "converged",
-  "continue",
-  "escalate",
-]);
+const COUNTERSIGN_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]);
 
 /**
  * Plain-language re-ask when countersignStatus is not a known queue word.
@@ -1416,99 +1095,84 @@ export function createSecretariatRoleRuntime(
       if (!summonRegistered) {
         summonRegistered = true;
         // Capture parent prompt for default summon instruction (envelope already
-        // owns soul inject; this handler only records the assignment text).
-        roleHost.on("before_agent_start", (event) => {
-          if (typeof event.prompt === "string" && event.prompt.trim() !== "") {
-            parentInstruction = event.prompt;
-          }
-        });
-        roleHost.registerTool({
-          name: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
-          label: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.label,
-          description: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.description,
-          promptSnippet: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.promptSnippet,
-          parameters:
-            SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.parameters as never,
-          async execute(
-            _toolCallId,
-            parameters: SecretariatSummonCountersignParameters,
-            signal,
-            _onUpdate,
-            ctx,
-          ): Promise<HostToolResult<unknown>> {
-            const fromArgs =
-              typeof parameters?.instruction === "string"
-                ? parameters.instruction.trim()
-                : "";
-            // #924: instruction comes from tool args or parent prompt only — no
-            // unauthored default summons prose (票号写在传召里; no fabricated fallback).
-            const instruction =
-              fromArgs !== "" ? fromArgs : parentInstruction.trim();
-            const correlationId = (() => {
-              const runDirectory = runDirectoryFromHostContext(ctx);
-              if (runDirectory === undefined) return undefined;
-              return runIdFromRunDirectory(runDirectory);
-            })();
-            const summon = dependencies.summonCountersign;
-            const summoned =
-              summon === undefined
-                ? await (async () => {
-                    const coordinates = readRoleRunCoordinates(
-                      ctx,
-                      "secretariat summons",
-                    );
-                    const { summonPublicRole } =
-                      await import("./public-role-summons.ts");
-                    return summonPublicRole({
-                      role: "countersign",
-                      argv: [
-                        "--project",
-                        coordinates.projectRoot,
-                        "--",
-                        instruction,
-                      ],
-                      cwd: coordinates.projectRoot,
-                      home: coordinates.home,
-                      ...(signal === undefined ? {} : { signal }),
-                      ...(correlationId === undefined ? {} : { correlationId }),
-                      ...(dependencies.packageRoot === undefined
-                        ? {}
-                        : { packageRoot: dependencies.packageRoot }),
-                      ...(dependencies.hostAdapters === undefined
-                        ? {}
-                        : { hostAdapters: dependencies.hostAdapters }),
-                    });
-                  })()
-                : await summon({
-                    instruction,
-                    cwd: ctx.cwd,
-                    ...(signal === undefined ? {} : { signal }),
-                    ...(correlationId === undefined ? {} : { correlationId }),
-                    ...(dependencies.home === undefined
-                      ? {}
-                      : { home: dependencies.home }),
-                    ...(dependencies.packageRoot === undefined
-                      ? {}
-                      : { packageRoot: dependencies.packageRoot }),
-                  });
-            const details = projectSecretariatSummonResult(summoned);
-            const outcomeKind =
-              typeof details.outcomeKind === "string"
-                ? details.outcomeKind
-                : "unknown";
-            const contentText =
-              outcomeKind === "accepted" || outcomeKind === "audit_escalation"
-                ? "给事中回执已送达中书省"
-                : outcomeKind === "failure"
-                  ? "给事中传召失败"
-                  : outcomeKind === "no_receipt"
-                    ? "给事中无回执"
-                    : "给事中传召未得终局";
-            return {
-              content: [{ type: "text" as const, text: contentText }],
-              details,
-            };
-          },
+      // owns soul inject; this handler only records the assignment text).
+      roleHost.on("before_agent_start", (event) => {
+        if (typeof event.prompt === "string" && event.prompt.trim() !== "") {
+          parentInstruction = event.prompt;
+        }
+      });
+      roleHost.registerTool({
+        name: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
+        label: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.label,
+        description: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.description,
+        promptSnippet: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.promptSnippet,
+        parameters: SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC.parameters as never,
+        async execute(
+          _toolCallId,
+          parameters: SecretariatSummonCountersignParameters,
+          signal,
+          _onUpdate,
+          ctx,
+        ): Promise<HostToolResult<unknown>> {
+          const fromArgs =
+            typeof parameters?.instruction === "string"
+              ? parameters.instruction.trim()
+              : "";
+          // #924: instruction comes from tool args or parent prompt only — no
+          // unauthored default summons prose (票号写在传召里; no fabricated fallback).
+          const instruction =
+            fromArgs !== "" ? fromArgs : parentInstruction.trim();
+          const correlationId = (() => {
+            const runDirectory = runDirectoryFromHostContext(ctx);
+            if (runDirectory === undefined) return undefined;
+            return runIdFromRunDirectory(runDirectory);
+          })();
+          const summon = dependencies.summonCountersign;
+          const summoned = summon === undefined
+            ? await (async () => {
+                const coordinates = readRoleRunCoordinates(ctx, "secretariat summons");
+                const { summonPublicRole } = await import("./public-role-summons.ts");
+                return summonPublicRole({
+                  role: "countersign",
+                  argv: ["--project", coordinates.projectRoot, "--", instruction],
+                  cwd: coordinates.projectRoot,
+                  home: coordinates.home,
+                  ...(signal === undefined ? {} : { signal }),
+                  ...(correlationId === undefined ? {} : { correlationId }),
+                  ...(dependencies.packageRoot === undefined
+                    ? {}
+                    : { packageRoot: dependencies.packageRoot }),
+                  ...(dependencies.hostAdapters === undefined
+                    ? {}
+                    : { hostAdapters: dependencies.hostAdapters }),
+                });
+              })()
+            : await summon({
+                instruction,
+                cwd: ctx.cwd,
+                ...(signal === undefined ? {} : { signal }),
+                ...(correlationId === undefined ? {} : { correlationId }),
+                ...(dependencies.home === undefined ? {} : { home: dependencies.home }),
+                ...(dependencies.packageRoot === undefined
+                  ? {}
+                  : { packageRoot: dependencies.packageRoot }),
+              });
+          const details = projectSecretariatSummonResult(summoned);
+          const outcomeKind =
+            typeof details.outcomeKind === "string" ? details.outcomeKind : "unknown";
+          const contentText =
+            outcomeKind === "accepted" || outcomeKind === "audit_escalation"
+              ? "给事中回执已送达中书省"
+              : outcomeKind === "failure"
+                ? "给事中传召失败"
+                : outcomeKind === "no_receipt"
+                  ? "给事中无回执"
+                  : "给事中传召未得终局";
+          return {
+            content: [{ type: "text" as const, text: contentText }],
+            details,
+          };
+        },
         });
       }
       const packageRequired = [
@@ -1518,9 +1182,7 @@ export function createSecretariatRoleRuntime(
       const all = roleHost.getAllTools().map((tool) => tool.name);
       for (const name of packageRequired) {
         if (all.filter((item) => item === name).length !== 1) {
-          throw new Error(
-            `secretariat required tool collision or missing: ${name}`,
-          );
+          throw new Error(`secretariat required tool collision or missing: ${name}`);
         }
       }
       // Host-neutral minimum package surface (#924 G6): declare package tools via
@@ -1529,14 +1191,14 @@ export function createSecretariatRoleRuntime(
       // (public gh path) stays reachable on hosts that expose it.
       const priorActive = roleHost.getActiveTools();
       const hostSurface = priorActive.length > 0 ? priorActive : all;
-      const nextActive = [...new Set([...hostSurface, ...packageRequired])];
+      const nextActive = [
+        ...new Set([...hostSurface, ...packageRequired]),
+      ];
       roleHost.setActiveTools(nextActive);
       const active = roleHost.getActiveTools();
       for (const name of packageRequired) {
         if (!active.includes(name)) {
-          throw new Error(
-            `secretariat failed to activate required tool ${name}`,
-          );
+          throw new Error(`secretariat failed to activate required tool ${name}`);
         }
       }
     },
@@ -1556,9 +1218,7 @@ export function createCountersignRoleRuntime(
     hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
       ? async ({ toolCallId, parameters, signal, ctx }) => {
           const record =
-            parameters !== null &&
-            typeof parameters === "object" &&
-            !Array.isArray(parameters)
+            parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
               ? (parameters as Record<string, unknown>)
               : undefined;
           const status =
@@ -1602,20 +1262,12 @@ export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (envelopeHost: RoleEnvelopeHost) => void {
   return (envelopeHost) => {
-    let projectClosedSubmission: (
-      closed: import("./submission-ledger.ts").ClosedSubmission,
-      context: HostContext,
-    ) => Promise<void> = async () => {
+    let projectClosedSubmission: (closed: import("./submission-ledger.ts").ClosedSubmission, context: HostContext) => Promise<void> = async () => {
       throw new Error("角色终局投射接缝尚未初始化");
     };
     const roleHost = createSubmissionLedgerHost(
       envelopeHost.host,
-      new Map(
-        PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => [
-          outputTool,
-          role,
-        ]),
-      ),
+      new Map(PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => [outputTool, role])),
       failInfrastructure,
       async (closed, context) => projectClosedSubmission(closed, context),
     );
@@ -1639,10 +1291,7 @@ export function createRoleRuntimeExtension(
       roleHost.registerFlag(flag.name, flag.definition);
     }
     // Station-child identity (#840): omit navigator attendance. One flag.
-    roleHost.registerFlag(
-      STATION_CHILD_FLAG.name,
-      STATION_CHILD_FLAG.definition,
-    );
+    roleHost.registerFlag(STATION_CHILD_FLAG.name, STATION_CHILD_FLAG.definition);
     // Register model only. Pi never sets ak-engine — resolveEngineName must
     // fall through to child-process env. An empty default would block that.
     roleHost.registerFlag(ENGINE_MODEL_FLAG_NAME, {
@@ -1660,26 +1309,15 @@ export function createRoleRuntimeExtension(
     let reviewerExpansionCaptured = false;
     let navigatorAttendance: NavigatorAttendanceDependency | undefined;
     // #351: session-lifecycle owner for periodic OAuth refresh (orthogonal to role admission).
-    let pendingNavigatorPresentation:
-      | {
-          event: import("./navigator-attendance.ts").NavigatorEvent;
-          report: import("./navigator-attendance.ts").NavigatorReport;
-        }
-      | undefined;
+    let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     let navigatorSessionParent: string | undefined;
     let navigatorCwd: string | undefined;
     /** toolCallId → fact+evidence; one-shot projected onto durable tool_result (#475). */
-    const pendingInfrastructureFailures = new Map<
-      string,
-      PendingInfrastructureFailure
-    >();
+    const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
     // Envelope-owned execute→tool_result bridge for submission non-pass (ADR 0018 / #525).
-    const pendingSubmissionNonPassByToolCallId = new Map<
-      string,
-      SubmissionNonPassResult
-    >();
+    const pendingSubmissionNonPassByToolCallId = new Map<string, SubmissionNonPassResult>();
     let engineDetourRegistered = false;
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
@@ -1688,9 +1326,7 @@ export function createRoleRuntimeExtension(
     // Public-run fetch observation (in-process-session statusAwareFetch face).
     let priorFetch: typeof globalThis.fetch | undefined;
     let fetchWrapped = false;
-    const settleNavigatorProjection = async (
-      settlement: NavigatorSettlement | undefined,
-    ) => {
+    const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined) => {
       const attendance = navigatorAttendance;
       if (settlement === undefined || attendance === undefined) return;
       const workContext = navigatorWorkContext;
@@ -1703,22 +1339,16 @@ export function createRoleRuntimeExtension(
         // Attach catch immediately so a late rejection after grace timeout cannot
         // surface as unhandledRejection / stale-ctx after session dispose (#675).
         void settlePromise.catch(() => undefined);
-        const raced = await raceNavigatorGrace(
-          settlePromise,
-          NAVIGATOR_POST_ROLE_GRACE_MS,
-        );
+        const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
         if (raced.status !== "timeout") return;
         if (pendingNavigatorPresentation === undefined) {
-          const routePlaybookReadFailure =
-            attendance.knownRoutePlaybookReadFailure?.();
+          const routePlaybookReadFailure = attendance.knownRoutePlaybookReadFailure?.();
           const report: NavigatorReport = {
             disposition: "unavailable",
             unavailableReason: "Navigator exceeded post-role delivery grace",
             unavailableSource: "unknown",
             unavailableCause: "unknown",
-            ...(routePlaybookReadFailure === undefined
-              ? {}
-              : { routePlaybookReadFailure }),
+            ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
           };
           const event: NavigatorEvent = {
             version: 1,
@@ -1730,59 +1360,54 @@ export function createRoleRuntimeExtension(
             unavailableReason: "Navigator exceeded post-role delivery grace",
             unavailableSource: "unknown",
             unavailableCause: "unknown",
-            ...(routePlaybookReadFailure === undefined
-              ? {}
-              : { routePlaybookReadFailure }),
+            ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
           };
           pendingNavigatorPresentation = { event, report };
         }
         // 过时不候: do not await sidecar teardown — parent court must close.
         // Dispose failure is recorded, not washed; it must not re-block the court.
-        void Promise.resolve(attendance.dispose()).then(undefined, (error) => {
-          const diagnostic =
-            error instanceof Error ? error.message : String(error);
-          try {
-            sitianReport({
-              level: "event",
-              kind: "navigator-dispose-failure",
-              cwd: navigatorCwd,
-              sessionParent: navigatorSessionParent,
-              payload: { diagnostic },
-              source: "role-runtime",
-            });
-          } catch (recordError) {
-            envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
-              diagnostic,
-              recordFailure:
-                recordError instanceof Error
-                  ? recordError.message
-                  : String(recordError),
-            });
-          }
-        });
+        void Promise.resolve(attendance.dispose()).then(
+          undefined,
+          (error) => {
+            const diagnostic = error instanceof Error ? error.message : String(error);
+            try {
+              sitianReport({
+                level: "event",
+                kind: "navigator-dispose-failure",
+                cwd: navigatorCwd,
+                sessionParent: navigatorSessionParent,
+                payload: { diagnostic },
+                source: "role-runtime",
+              });
+            } catch (recordError) {
+              envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
+                diagnostic,
+                recordFailure: recordError instanceof Error ? recordError.message : String(recordError),
+              });
+            }
+          },
+        );
       })();
       pendingNavigatorSettlement = pending;
       await pending;
     };
-    projectClosedSubmission = async (closed, context) =>
-      projectClosedSubmissionLifecycle(
-        closed,
-        context,
-        navigatorPhase(roleHost, closed.role),
-        () => receiptDelivery.recordAccepted(),
-        settleNavigatorProjection,
-      );
+    projectClosedSubmission = async (closed, context) => projectClosedSubmissionLifecycle(
+      closed,
+      context,
+      navigatorPhase(roleHost, closed.role),
+      () => receiptDelivery.recordAccepted(),
+      settleNavigatorProjection,
+    );
     roleHost.on("input", (event) => {
       const text = event.text;
       const role = roleHost.getFlag(ROLE_FLAG.name);
-      if (role !== undefined && !admitted)
-        return { action: "handled" as const };
+      if (role !== undefined && !admitted) return { action: "handled" as const };
       // Reviewer: recover original request; Pi argv may already carry native form.
       if (
-        role === "reviewer" &&
-        admitted &&
-        activeReviewerParent !== undefined &&
-        reviewerOriginalRequest === undefined
+        role === "reviewer"
+        && admitted
+        && activeReviewerParent !== undefined
+        && reviewerOriginalRequest === undefined
       ) {
         reviewerOriginalRequest =
           roleHost.capabilities?.skillOriginalRequest?.(
@@ -1807,21 +1432,12 @@ export function createRoleRuntimeExtension(
       // Notary session bound: envelope-owned lifecycle write (ADR 0018 / #582).
       // Ticket flag register/read + session entry live here; role projects admitted bound only.
       if (role === "notary") {
-        const bound = projectNotaryBoundFromFlags((name) =>
-          roleHost.getFlag(name),
-        );
+        const bound = projectNotaryBoundFromFlags((name) => roleHost.getFlag(name));
         if (bound !== undefined) {
-          ctx.sessionManager.appendCustomEntry?.(
-            NOTARY_SESSION_BOUND_ENTRY,
-            bound,
-          );
+          ctx.sessionManager.appendCustomEntry?.(NOTARY_SESSION_BOUND_ENTRY, bound);
         }
       }
-      if (
-        navigatorAttendance !== undefined &&
-        navigatorWorkContext !== undefined &&
-        navigatorWorkContext.contextError === undefined
-      ) {
+      if (navigatorAttendance !== undefined && navigatorWorkContext !== undefined && navigatorWorkContext.contextError === undefined) {
         // Flagged roles already have a concrete packet/task/case/review input.
         // A bare Judge (and other bare packaged entrypoint) gets its concrete
         // user task at this seam; do not copy the assembled system prompt.
@@ -1835,17 +1451,12 @@ export function createRoleRuntimeExtension(
           // nothing else has supplied a subject yet.
           const subject = prompt.trim();
           if (subject !== "") {
-            const root = subjectPath(
-              ctx.sessionManager.getSessionDir(),
-              ctx.cwd,
-            );
-            const subjectProvenance =
-              "user_prompt" satisfies NavigatorSubjectProvenance;
+            const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
+            const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
             const priorAuthority = navigatorWorkContext.authority;
-            const authority =
-              typeof priorAuthority === "string" && priorAuthority.trim() !== ""
-                ? priorAuthority
-                : subject;
+            const authority = typeof priorAuthority === "string" && priorAuthority.trim() !== ""
+              ? priorAuthority
+              : subject;
             navigatorWorkContext = {
               subjectKey: navigatorSubjectKey(root, subject, subjectProvenance),
               subject,
@@ -1882,10 +1493,7 @@ export function createRoleRuntimeExtension(
           activeCollector.ledger.recordActivation(activeCollector.clock);
         }
         return {
-          systemPrompt: collectorBusiness.assembleMaterials(
-            activeCollector,
-            event.systemPrompt,
-          ),
+          systemPrompt: collectorBusiness.assembleMaterials(activeCollector, event.systemPrompt),
         };
       }
     });
@@ -1896,8 +1504,7 @@ export function createRoleRuntimeExtension(
       if (typeof role !== "string" || !isOfficerReviewSeat(role)) return;
       if (roleHost.getFlag(STATION_CHILD_FLAG.name) !== true) return;
       const engine = resolveEngineName((name) => roleHost.getFlag(name));
-      if (engine === undefined || dependencies.packageRoot === undefined)
-        return;
+      if (engine === undefined || dependencies.packageRoot === undefined) return;
       const engineModel = resolveEngineModel((name) => roleHost.getFlag(name));
       const material = engineSessionMaterialFromOptions({
         engine,
@@ -1910,9 +1517,7 @@ export function createRoleRuntimeExtension(
           kind: "engine-session-material" as const,
           name: material.name,
           ...(material.model === undefined ? {} : { model: material.model }),
-          ...(material.materialPath === undefined
-            ? {}
-            : { materialPath: material.materialPath }),
+          ...(material.materialPath === undefined ? {} : { materialPath: material.materialPath }),
         },
       };
     });
@@ -1933,8 +1538,9 @@ export function createRoleRuntimeExtension(
     roleHost.on("before_agent_start", async (_event, ctx) => {
       const runDir = runDirectoryFromHostContext(ctx);
       if (runDir === undefined) return;
-      const { loadCaseDossierReadingMaterial } =
-        await import("./public-cli/case-dossier-delivery.ts");
+      const { loadCaseDossierReadingMaterial } = await import(
+        "./public-cli/case-dossier-delivery.ts"
+      );
       const caseDossier = await loadCaseDossierReadingMaterial(runDir);
       if (caseDossier === undefined) return;
       return { readingMaterial: caseDossier };
@@ -1948,47 +1554,28 @@ export function createRoleRuntimeExtension(
       }
       const pendingInfra = pendingInfrastructureFailures.get(event.toolCallId);
       const isRoleInfrastructureFailure = pendingInfra !== undefined;
-      if (pendingInfra !== undefined)
-        pendingInfrastructureFailures.delete(event.toolCallId);
+      if (pendingInfra !== undefined) pendingInfrastructureFailures.delete(event.toolCallId);
       // One-shot project fact + typed evidence so live settlement and durable session agree.
       const infrastructureDetails = pendingInfra?.details;
-      const classified =
-        infrastructureDetails === undefined
-          ? event
-          : { ...event, details: infrastructureDetails };
+      const classified = infrastructureDetails === undefined
+        ? event
+        : { ...event, details: infrastructureDetails };
       const isOutputTool = event.toolName === navigatorOutputTool(role);
-      const outputClassification = isOutputTool
-        ? classifyPackagedRoleTerminalResult(classified)
-        : undefined;
-      if (
-        isRoleInfrastructureFailure ||
-        outputClassification?.kind === "infrastructure"
-      ) {
+      const outputClassification = isOutputTool ? classifyPackagedRoleTerminalResult(classified) : undefined;
+      if (isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure") {
         receiptDelivery.stopForInfrastructure();
-      } else if (
-        isOutputTool &&
-        outputClassification?.kind === "nonterminal" &&
-        event.isError
-      ) {
+      } else if (isOutputTool && outputClassification?.kind === "nonterminal" && event.isError) {
         const reason = (event.content ?? [])
-          .map((part) =>
-            part.type === "text" && "text" in part ? part.text : "",
-          )
+          .map((part) => part.type === "text" && "text" in part ? part.text : "")
           .join("")
           .trim();
         receiptDelivery.recordRejected(reason);
       }
       // Accepted/human terminal projection belongs exclusively to typed ledger
       // closure. tool_result retains only infrastructure settlement.
-      const settlement =
-        isRoleInfrastructureFailure ||
-        outputClassification?.kind === "infrastructure"
-          ? publicNavigatorSettlement(
-              role,
-              navigatorPhase(roleHost, role),
-              classified,
-            )
-          : undefined;
+      const settlement = isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure"
+        ? publicNavigatorSettlement(role, navigatorPhase(roleHost, role), classified)
+        : undefined;
       await settleNavigatorProjection(settlement);
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
@@ -1997,9 +1584,7 @@ export function createRoleRuntimeExtension(
       }
       // Submission non-pass: throw kept message text for the model; project the
       // envelope-bound structured result onto session details at this tool_result seam.
-      const submissionNonPass = pendingSubmissionNonPassByToolCallId.get(
-        event.toolCallId,
-      );
+      const submissionNonPass = pendingSubmissionNonPassByToolCallId.get(event.toolCallId);
       if (submissionNonPass !== undefined) {
         pendingSubmissionNonPassByToolCallId.delete(event.toolCallId);
         return { details: submissionNonPass, isError: true };
@@ -2017,11 +1602,8 @@ export function createRoleRuntimeExtension(
     // whose queued next turn is consumed before settlement.
     roleHost.on("agent_end", (event, ctx) => {
       const lastMessage = event.messages.at(-1);
-      if (
-        lastMessage?.role === "assistant" &&
-        (lastMessage.stopReason === "error" ||
-          lastMessage.stopReason === "aborted")
-      ) {
+      if (lastMessage?.role === "assistant"
+        && (lastMessage.stopReason === "error" || lastMessage.stopReason === "aborted")) {
         // Abort after an already-recorded receipt must not un-accept or催交.
         if (receiptDelivery.nextAction() !== "accepted") {
           receiptDelivery.stopForInfrastructure();
@@ -2043,25 +1625,16 @@ export function createRoleRuntimeExtension(
             source: "role-runtime",
           });
         } catch {}
-        envelopeHost.sendMessage(
-          {
-            customType: "ak-receipt-delivery-prompt",
-            content: RECEIPT_DELIVERY_PROMPT,
-            display: false,
-          },
-          { triggerTurn: true, deliverAs: "followUp" },
-        );
-      } else if (
-        receiptDelivery.nextAction() === "no-receipt" &&
-        !noReceiptRecorded
-      ) {
+        envelopeHost.sendMessage({
+          customType: "ak-receipt-delivery-prompt",
+          content: RECEIPT_DELIVERY_PROMPT,
+          display: false,
+        }, { triggerTurn: true, deliverAs: "followUp" });
+      } else if (receiptDelivery.nextAction() === "no-receipt" && !noReceiptRecorded) {
         const runPointer = runDirectoryFromHostContext(ctx);
         if (runPointer !== undefined) {
           noReceiptRecorded = true;
-          const facts = receiptDelivery.facts({
-            runPointer,
-            attemptPointer: `current:${runPointer}`,
-          });
+          const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
           envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
           try {
             sitianReport({
@@ -2091,15 +1664,12 @@ export function createRoleRuntimeExtension(
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
       if (presentation === undefined) return;
-      await envelopeHost.sendMessage(
-        {
-          customType: NAVIGATOR_EVENT_TYPE,
-          content: formatNavigatorReport(presentation.report),
-          display: true,
-          details: presentation.event,
-        },
-        { triggerTurn: false },
-      );
+      await envelopeHost.sendMessage({
+        customType: NAVIGATOR_EVENT_TYPE,
+        content: formatNavigatorReport(presentation.report),
+        display: true,
+        details: presentation.event,
+      }, { triggerTurn: false });
     });
     roleHost.on("session_shutdown", async () => {
       // #351: stop OAuth keepalive first so shutdown yields zero further ticks.
@@ -2111,9 +1681,9 @@ export function createRoleRuntimeExtension(
       }
       // #676 J4: collector fatal latch must surface nonzero exit on shutdown (envelope-owned).
       if (
-        selectedRole === "collector" &&
-        activeCollector !== undefined &&
-        activeCollector.ledger.fatal
+        selectedRole === "collector"
+        && activeCollector !== undefined
+        && activeCollector.ledger.fatal
       ) {
         if (process.exitCode === undefined || process.exitCode === 0) {
           process.exitCode = 1;
@@ -2125,15 +1695,12 @@ export function createRoleRuntimeExtension(
       pendingNavigatorPresentation = undefined;
       if (presentation !== undefined) {
         try {
-          await envelopeHost.sendMessage(
-            {
-              customType: NAVIGATOR_EVENT_TYPE,
-              content: formatNavigatorReport(presentation.report),
-              display: true,
-              details: presentation.event,
-            },
-            { triggerTurn: false },
-          );
+          await envelopeHost.sendMessage({
+            customType: NAVIGATOR_EVENT_TYPE,
+            content: formatNavigatorReport(presentation.report),
+            display: true,
+            details: presentation.event,
+          }, { triggerTurn: false });
         } catch {
           // Teardown must not mask the original role failure cause.
         }
@@ -2147,23 +1714,13 @@ export function createRoleRuntimeExtension(
     });
 
     const hostActions = {
-      failInfrastructure(
-        error: unknown,
-        ctx: HostContext,
-        toolCallId?: string,
-      ): never {
+      failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never {
         if (toolCallId !== undefined) {
-          pendingInfrastructureFailures.set(
-            toolCallId,
-            buildPendingInfrastructureFailure(error),
-          );
+          pendingInfrastructureFailures.set(toolCallId, buildPendingInfrastructureFailure(error));
         }
         failInfrastructure(error, ctx);
       },
-      bindSubmissionNonPass(
-        toolCallId: string,
-        result: SubmissionNonPassResult,
-      ): void {
+      bindSubmissionNonPass(toolCallId: string, result: SubmissionNonPassResult): void {
         pendingSubmissionNonPassByToolCallId.set(toolCallId, result);
       },
     };
@@ -2226,8 +1783,7 @@ export function createRoleRuntimeExtension(
           return dependencies.loadReviewerSoul();
         },
         async createPinnedGitReader() {
-          if (dependencies.createReviewerPinnedGitReader === undefined)
-            throw new Error("Reviewer runtime dependencies are not configured");
+          if (dependencies.createReviewerPinnedGitReader === undefined) throw new Error("Reviewer runtime dependencies are not configured");
           return dependencies.createReviewerPinnedGitReader();
         },
         async loadCanonicalSkillBinding(name) {
@@ -2239,62 +1795,30 @@ export function createRoleRuntimeExtension(
       },
       hostActions,
     );
-    const doctor = createDoctorRoleRuntime(
-      roleHost,
-      {
-        async loadSoul() {
-          if (!dependencies.loadDoctorSoul)
-            throw new Error("Doctor runtime dependencies are not configured");
-          return dependencies.loadDoctorSoul();
-        },
-        async loadCase(path) {
-          if (!dependencies.loadDoctorCase)
-            throw new Error("Doctor runtime dependencies are not configured");
-          return dependencies.loadDoctorCase(path);
-        },
-        async auditCompliance(options) {
-          if (!dependencies.auditDoctorCompliance)
-            throw new Error("Doctor runtime dependencies are not configured");
-          return dependencies.auditDoctorCompliance(options);
-        },
+    const doctor = createDoctorRoleRuntime(roleHost, {
+      async loadSoul() { if (!dependencies.loadDoctorSoul) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorSoul(); },
+      async loadCase(path) { if (!dependencies.loadDoctorCase) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorCase(path); },
+      async auditCompliance(options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(options); },
+    }, hostActions);
+    const notary = createNotaryRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadNotarySoul) throw new Error("Notary runtime dependencies are not configured");
+        return dependencies.loadNotarySoul();
       },
-      hostActions,
-    );
-    const notary = createNotaryRoleRuntime(
-      roleHost,
-      {
-        async loadSoul() {
-          if (!dependencies.loadNotarySoul)
-            throw new Error("Notary runtime dependencies are not configured");
-          return dependencies.loadNotarySoul();
-        },
-        async loadSourceRunLocator(path) {
-          if (!dependencies.loadNotarySourceRun)
-            throw new Error("Notary runtime dependencies are not configured");
-          return dependencies.loadNotarySourceRun(path);
-        },
+      async loadSourceRunLocator(path) {
+        if (!dependencies.loadNotarySourceRun) throw new Error("Notary runtime dependencies are not configured");
+        return dependencies.loadNotarySourceRun(path);
       },
-      hostActions,
-    );
-    const countersign = createCountersignRoleRuntime(
-      roleHost,
-      {
-        async loadSoul() {
-          if (!dependencies.loadCountersignSoul)
-            throw new Error(
-              "Countersign runtime dependencies are not configured",
-            );
-          return dependencies.loadCountersignSoul();
-        },
+    }, hostActions);
+    const countersign = createCountersignRoleRuntime(roleHost, {
+      async loadSoul() {
+        if (!dependencies.loadCountersignSoul) throw new Error("Countersign runtime dependencies are not configured");
+        return dependencies.loadCountersignSoul();
       },
-      hostActions,
-    );
+    }, hostActions);
     const gleanerLeftRuntime = createGleanerLeftRoleRuntime(roleHost, {
       async loadSoul() {
-        if (!dependencies.loadGleanerLeftSoul)
-          throw new Error(
-            "Gleaner-left runtime dependencies are not configured",
-          );
+        if (!dependencies.loadGleanerLeftSoul) throw new Error("Gleaner-left runtime dependencies are not configured");
         return dependencies.loadGleanerLeftSoul();
       },
     });
@@ -2306,45 +1830,40 @@ export function createRoleRuntimeExtension(
     };
     const inspector = createInspectorRoleRuntime(roleHost, {
       async loadSoul() {
-        if (!dependencies.loadInspectorSoul)
-          throw new Error("Inspector runtime dependencies are not configured");
+        if (!dependencies.loadInspectorSoul) throw new Error("Inspector runtime dependencies are not configured");
         return dependencies.loadInspectorSoul();
       },
     });
     const gatekeeper = createGatekeeperRoleRuntime(roleHost, {
       async loadSoul() {
-        if (!dependencies.loadGatekeeperSoul)
-          throw new Error("Gatekeeper runtime dependencies are not configured");
+        if (!dependencies.loadGatekeeperSoul) throw new Error("Gatekeeper runtime dependencies are not configured");
         return dependencies.loadGatekeeperSoul();
       },
     });
     const navigator = createNavigatorRoleRuntime(roleHost, {
       async loadSoul() {
-        if (!dependencies.loadNavigatorSoul)
-          throw new Error("Navigator runtime dependencies are not configured");
+        if (!dependencies.loadNavigatorSoul) throw new Error("Navigator runtime dependencies are not configured");
         return dependencies.loadNavigatorSoul();
       },
     });
     const auditor = createAuditorRoleRuntime(roleHost, {
       async loadSoul() {
-        if (!dependencies.loadAuditorSoul)
-          throw new Error("Auditor runtime dependencies are not configured");
+        if (!dependencies.loadAuditorSoul) throw new Error("Auditor runtime dependencies are not configured");
         return dependencies.loadAuditorSoul();
       },
     });
-    const diarist = createDiaristRoleRuntime(roleHost, {
-      async loadSoul() {
-        if (!dependencies.loadDiaristSoul)
-          throw new Error("Diarist runtime dependencies are not configured");
-        return dependencies.loadDiaristSoul();
+    const diarist = createDiaristRoleRuntime(
+      roleHost,
+      {
+        async loadSoul() {
+          if (!dependencies.loadDiaristSoul) throw new Error("Diarist runtime dependencies are not configured");
+          return dependencies.loadDiaristSoul();
+        },
       },
-    });
+    );
     const secretariat = createSecretariatRoleRuntime(roleHost, {
       async loadSoul() {
-        if (!dependencies.loadSecretariatSoul)
-          throw new Error(
-            "Secretariat runtime dependencies are not configured",
-          );
+        if (!dependencies.loadSecretariatSoul) throw new Error("Secretariat runtime dependencies are not configured");
         return dependencies.loadSecretariatSoul();
       },
       ...(dependencies.packageRoot === undefined
@@ -2352,16 +1871,8 @@ export function createRoleRuntimeExtension(
         : { packageRoot: dependencies.packageRoot }),
     });
     const merger = createMergerRoleRuntime(roleHost, {
-      async loadSoul() {
-        if (!dependencies.loadMergerSoul)
-          throw new Error("Merger runtime dependencies are not configured");
-        return dependencies.loadMergerSoul();
-      },
-      async loadInput(path) {
-        if (!dependencies.loadMergerInput)
-          throw new Error("Merger runtime dependencies are not configured");
-        return dependencies.loadMergerInput(path);
-      },
+      async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
+      async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
     });
     // #676 E: shared envelope owns collector lifecycle (mode/fork, tool surface,
     // event gates). Role module supplies business activate/tools/materials only.
@@ -2389,15 +1900,12 @@ export function createRoleRuntimeExtension(
             ...(append === undefined
               ? {}
               : {
-                  journal: {
-                    append(customType, data) {
-                      context.sessionManager?.appendCustomEntry?.(
-                        customType,
-                        data,
-                      );
-                    },
+                journal: {
+                  append(customType, data) {
+                    context.sessionManager?.appendCustomEntry?.(customType, data);
                   },
-                }),
+                },
+              }),
             dossierEntries: context.sessionManager?.getEntries?.() ?? [],
           });
         },
@@ -2450,9 +1958,7 @@ export function createRoleRuntimeExtension(
           for (const required of COLLECTOR_REQUIRED_TOOLS) {
             const prior = preExisting.filter((tool) => tool.name === required);
             if (prior.length > 0) {
-              throw new Error(
-                `Collector required tool name collision: ${required}`,
-              );
+              throw new Error(`Collector required tool name collision: ${required}`);
             }
           }
         }
@@ -2464,38 +1970,27 @@ export function createRoleRuntimeExtension(
             throw new Error(`Collector required tool missing: ${required}`);
           }
           if (matches.length > 1) {
-            throw new Error(
-              `Collector required tool name collision: ${required}`,
-            );
+            throw new Error(`Collector required tool name collision: ${required}`);
           }
         }
         roleHost.setActiveTools([...COLLECTOR_REQUIRED_TOOLS]);
         const active = new Set(roleHost.getActiveTools());
         for (const required of COLLECTOR_REQUIRED_TOOLS) {
           if (!active.has(required)) {
-            throw new Error(
-              `Collector failed to activate required tool ${required}`,
-            );
+            throw new Error(`Collector failed to activate required tool ${required}`);
           }
         }
         for (const name of active) {
           if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(name)) {
-            throw new Error(
-              `Collector active tool surface includes unexpected ${name}`,
-            );
+            throw new Error(`Collector active tool surface includes unexpected ${name}`);
           }
         }
         // Seat-scoped tool_call gate — registered only after collector admission (no install-time tool_call).
         if (!collectorToolCallRegistered) {
           collectorToolCallRegistered = true;
           roleHost.on("tool_call", (toolEvent) => {
-            if (activeCollector === undefined || selectedRole !== "collector")
-              return;
-            if (
-              !(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(
-                toolEvent.toolName,
-              )
-            ) {
+            if (activeCollector === undefined || selectedRole !== "collector") return;
+            if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(toolEvent.toolName)) {
               return {
                 block: true,
                 reason: `通进司禁用工具 ${toolEvent.toolName}`,
@@ -2512,20 +2007,14 @@ export function createRoleRuntimeExtension(
       },
     };
 
-    const clock =
-      dependencies.activationClock ?? (() => new Date().toISOString());
-    const writeTrace =
-      dependencies.activationTraceWriter ?? writeActivationTraceRecord;
+    const clock = dependencies.activationClock ?? (() => new Date().toISOString());
+    const writeTrace = dependencies.activationTraceWriter ?? writeActivationTraceRecord;
     const observationFace = createToolExecutionObservationFace({
       role: () => selectedRole,
       admitted: () => admitted,
       clock: dependencies.toolExecutionObservationClock ?? clock,
-      monoNow:
-        dependencies.toolExecutionObservationMonoNow ??
-        systemToolExecutionObservationMonoNow,
-      write:
-        dependencies.toolExecutionObservationWriter ??
-        writeToolExecutionObservationRecord,
+      monoNow: dependencies.toolExecutionObservationMonoNow ?? systemToolExecutionObservationMonoNow,
+      write: dependencies.toolExecutionObservationWriter ?? writeToolExecutionObservationRecord,
     });
     // ExtensionRunner.emit catches ordinary handler throws, emits extension error, and continues.
     // Observation plane failures must still hit the shared infrastructure termination path
@@ -2563,10 +2052,7 @@ export function createRoleRuntimeExtension(
       const runDir = runDirectoryFromHostContext(ctx);
       if (runDir === undefined) return;
       try {
-        await recordTypedProviderHttpStatus(runDir, {
-          httpStatus: status,
-          provider,
-        });
+        await recordTypedProviderHttpStatus(runDir, { httpStatus: status, provider });
       } catch (error) {
         if (
           status >= 200 &&
@@ -2596,20 +2082,16 @@ export function createRoleRuntimeExtension(
       if (!fetchWrapped && typeof globalThis.fetch === "function") {
         priorFetch = globalThis.fetch.bind(globalThis);
         const underlying = priorFetch;
-        globalThis.fetch = (async (
-          input: RequestInfo | URL,
-          init?: RequestInit,
-        ) => {
+        globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
           const response = await underlying(input, init);
           const runDir = runDirectoryFromHostContext(ctx);
           if (
-            runDir !== undefined &&
-            typeof response?.status === "number" &&
-            (response.status < 200 || response.status >= 300)
+            runDir !== undefined
+            && typeof response?.status === "number"
+            && (response.status < 200 || response.status >= 300)
           ) {
             const provider =
-              typeof ctx.model?.provider === "string" &&
-              ctx.model.provider.trim() !== ""
+              typeof ctx.model?.provider === "string" && ctx.model.provider.trim() !== ""
                 ? ctx.model.provider
                 : "unknown";
             try {
@@ -2645,10 +2127,7 @@ export function createRoleRuntimeExtension(
       if (rawRole === undefined) return;
       const entry = PACKAGED_ROLE_REGISTRY.find(({ role }) => role === rawRole);
       if (entry === undefined) {
-        failInfrastructure(
-          new Error(`Unsupported workflow role: ${String(rawRole)}`),
-          ctx,
-        );
+        failInfrastructure(new Error(`Unsupported workflow role: ${String(rawRole)}`), ctx);
       }
       selectedRole = entry.role;
       await navigatorAttendance?.dispose();
@@ -2693,9 +2172,7 @@ export function createRoleRuntimeExtension(
         // deferred SM materialization must not wipe an in-memory principal marker.
         const bookKey = resolveBookKeyFromGit(ctx.cwd);
         const correlation = correlationIdentityFromEnv();
-        const sessionFile =
-          ctx.sessionManager.getSessionFile?.() ||
-          ctx.sessionManager.getSessionDir?.();
+        const sessionFile = ctx.sessionManager.getSessionFile?.() || ctx.sessionManager.getSessionDir?.();
         const ledgerHome = resolveActivationLedgerHomeForPath(sessionFile);
         const session = durableSessionPointer(ctx.sessionManager);
 
@@ -2703,31 +2180,20 @@ export function createRoleRuntimeExtension(
         // Top-level public entry legs still attend automatically.
         // Navigator seat never re-attaches itself — prepare turns already ARE the navigator
         // public activation (prevents summonPublicRole navigator ↔ attendance recursion).
-        const isStationChild =
-          roleHost.getFlag(STATION_CHILD_FLAG.name) === true;
+        const isStationChild = roleHost.getFlag(STATION_CHILD_FLAG.name) === true;
         if (
-          dependencies.createNavigatorAttendance !== undefined &&
-          entry.role !== "navigator" &&
-          !isStationChild
+          dependencies.createNavigatorAttendance !== undefined
+          && entry.role !== "navigator"
+          && !isStationChild
         ) {
           navigatorSessionParent = ctx.sessionManager.getSessionFile();
           navigatorCwd = ctx.cwd;
           let work: NavigatorWorkContext;
           let contextError: unknown;
           if (dependencies.loadNavigatorWorkContext === undefined) {
-            const fallbackSubjectKey = subjectPath(
-              ctx.sessionManager.getSessionDir(),
-              ctx.cwd,
-            );
-            contextError = new Error(
-              "Navigator work context loader is not configured",
-            );
-            work = {
-              subjectKey: fallbackSubjectKey,
-              subject: `work subject: ${fallbackSubjectKey}`,
-              authority: "",
-              subjectProvenance: "placeholder",
-            };
+            const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
+            contextError = new Error("Navigator work context loader is not configured");
+            work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
           } else {
             try {
               work = await dependencies.loadNavigatorWorkContext({
@@ -2740,36 +2206,22 @@ export function createRoleRuntimeExtension(
             } catch (error) {
               // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
               contextError = navigatorUnavailableError("context", error);
-              const fallbackSubjectKey = subjectPath(
-                ctx.sessionManager.getSessionDir(),
-                ctx.cwd,
-              );
-              work = {
-                subjectKey: fallbackSubjectKey,
-                subject: `work subject: ${fallbackSubjectKey}`,
-                authority: "",
-                subjectProvenance: "placeholder",
-              };
+              const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
+              work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
             }
           }
-          navigatorWorkContext = {
-            ...work,
-            ...(contextError === undefined ? {} : { contextError }),
-          };
+          navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };
           // Shared envelope owns exact invocation principal from admitted session lifecycle.
           // session_start is process activation: resume unfinished principal only when marker
           // role/phase/subjectKey still match; mint for contradictory marker, malformed nearest,
           // missing marker, or terminal already completed.
           const sessionEntries = [...ctx.sessionManager.getEntries()];
           const invocationPhase = navigatorPhase(roleHost, entry.role);
-          const lifecyclePrincipal = resolveLifecycleInvocationPrincipal(
-            sessionEntries,
-            {
-              role: entry.role,
-              phase: invocationPhase,
-              subjectKey: work.subjectKey,
-            },
-          );
+          const lifecyclePrincipal = resolveLifecycleInvocationPrincipal(sessionEntries, {
+            role: entry.role,
+            phase: invocationPhase,
+            subjectKey: work.subjectKey,
+          });
           const invocationId = lifecyclePrincipal.invocationId;
           if (!lifecyclePrincipal.resume) {
             const data = {
@@ -2816,18 +2268,11 @@ export function createRoleRuntimeExtension(
           }
         }
 
-        await executeActivationStage(
-          entry.role,
-          activationStage(entry.role, runtime),
-          { clock, writeTrace },
-        );
+        await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
         // #357 T2 / #378 / #380 / #391 / #818: any role+engine activation registers the package detour tool once.
         // Gate is resolveEngineName (RoleHost flag → env fallback) — no per-engine execute branch; no role-module spawn.
         if (!engineDetourRegistered) {
-          engineDetourRegistered = registerEngineDetourTool(
-            roleHost,
-            hostActions,
-          );
+          engineDetourRegistered = registerEngineDetourTool(roleHost, hostActions);
         }
         // Secretariat owns a declared active surface. The shared engine detour is
         // registered after role activation, so include it here rather than leave
@@ -2840,8 +2285,7 @@ export function createRoleRuntimeExtension(
         // Worker gates ①②: arm records baseline and runs private one-shot hook uninstall (ADR 0070).
         // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.
         if (entry.role === "coder" || entry.role === "fixer") {
-          if (entry.role === "coder")
-            coder.armSubmissionGate(ctx.cwd, ctx.sessionManager);
+          if (entry.role === "coder") coder.armSubmissionGate(ctx.cwd, ctx.sessionManager);
           else fixer.armSubmissionGate(ctx.cwd, ctx.sessionManager);
         }
         appendAcceptedActivationToBook({

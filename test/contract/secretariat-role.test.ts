@@ -88,15 +88,13 @@ test("secretariat activation and reload declare package tools on active surface 
 
 test("secretariat output records any status without shape reject (第 0 条)", async () => {
   const { tools } = await activateSecretariat();
-  const converged = await tools
-    .get(SECRETARIAT_OUTPUT_TOOL_NAME)!
-    .execute(
-      "c1",
-      { secretariatStatus: "converged", ticketNumber: 924 },
-      undefined,
-      undefined,
-      ctx,
-    );
+  const converged = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+    "c1",
+    { secretariatStatus: "converged", ticketNumber: 924 },
+    undefined,
+    undefined,
+    ctx,
+  );
   assert.equal(converged.terminate, true);
   assert.equal(
     (converged.details as { secretariatStatus: string }).secretariatStatus,
@@ -120,15 +118,13 @@ test("secretariat output records any status without shape reject (第 0 条)", a
   );
 
   // 第 0 条 / #924: tool only records; non-canonical status is not code-rejected.
-  const other = await tools
-    .get(SECRETARIAT_OUTPUT_TOOL_NAME)!
-    .execute(
-      "c3",
-      { secretariatStatus: "unexpected" },
-      undefined,
-      undefined,
-      ctx,
-    );
+  const other = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+    "c3",
+    { secretariatStatus: "unexpected" },
+    undefined,
+    undefined,
+    ctx,
+  );
   assert.equal(other.terminate, true);
   assert.equal(
     (other.details as { secretariatStatus: string }).secretariatStatus,
@@ -164,15 +160,13 @@ test("secretariat summon-countersign calls shared seam with parent correlation",
       };
     },
   });
-  const result = await tools
-    .get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!
-    .execute(
-      "summon-1",
-      { instruction: "裁：#924 是否足以开工。" },
-      undefined,
-      undefined,
-      ctx,
-    );
+  const result = await tools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
+    "summon-1",
+    { instruction: "裁：#924 是否足以开工。" },
+    undefined,
+    undefined,
+    ctx,
+  );
   assert.equal(result.terminate, undefined);
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.instruction, "裁：#924 是否足以开工。");
@@ -219,9 +213,7 @@ test("projectSecretariatSummonResult keeps typed terminal kinds (gatekeeper prec
         kind: "audit_escalation",
         role: "countersign",
         status: "audit_escalation",
-        payloads: [
-          { countersignStatus: "escalate", decisionGate: { question: "q" } },
-        ],
+        payloads: [{ countersignStatus: "escalate", decisionGate: { question: "q" } }],
         decisiveFacts: { gate: "open" },
       },
     } as never,
@@ -291,21 +283,16 @@ test("summon tool content text tracks outcome kind (not always 已送达)", asyn
       } as never,
     }),
   });
-  const result = await tools
-    .get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!
-    .execute(
-      "summon-fail",
-      { instruction: "裁：#924" },
-      undefined,
-      undefined,
-      ctx,
-    );
+  const result = await tools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
+    "summon-fail",
+    { instruction: "裁：#924" },
+    undefined,
+    undefined,
+    ctx,
+  );
   assert.equal(
     (result.content as Array<{ text: string }>)[0]?.text,
     "给事中传召失败",
   );
-  assert.equal(
-    (result.details as { outcomeKind: string }).outcomeKind,
-    "failure",
-  );
+  assert.equal((result.details as { outcomeKind: string }).outcomeKind, "failure");
 });

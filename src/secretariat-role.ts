@@ -51,9 +51,7 @@ export const secretariatVerdictSchema = withInfrastructureFailureDeclaration(
 );
 (secretariatVerdictSchema as unknown as { required: string[] }).required = [];
 
-export type SecretariatVerdictParameters = Static<
-  typeof secretariatVerdictSchema
->;
+export type SecretariatVerdictParameters = Static<typeof secretariatVerdictSchema>;
 
 /** 传召给事中参数；形状指引，非 schema 闸。 */
 export const secretariatSummonCountersignSchema = Type.Object(
@@ -66,9 +64,7 @@ export const secretariatSummonCountersignSchema = Type.Object(
   },
   { additionalProperties: true },
 );
-(
-  secretariatSummonCountersignSchema as unknown as { required: string[] }
-).required = [];
+(secretariatSummonCountersignSchema as unknown as { required: string[] }).required = [];
 
 export type SecretariatSummonCountersignParameters = Static<
   typeof secretariatSummonCountersignSchema
@@ -156,13 +152,8 @@ export function projectSecretariatSummonResult(
     return { ...base, outcomeKind: "no_terminal" };
   }
 
-  if (
-    roleOutcome.kind === "accepted" ||
-    roleOutcome.kind === "audit_escalation"
-  ) {
-    const payloads = Array.isArray(roleOutcome.payloads)
-      ? roleOutcome.payloads
-      : undefined;
+  if (roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation") {
+    const payloads = Array.isArray(roleOutcome.payloads) ? roleOutcome.payloads : undefined;
     const latest = latestObjectPayload(payloads);
     const countersignStatus =
       latest !== undefined && typeof latest.countersignStatus === "string"
@@ -187,9 +178,7 @@ export function projectSecretariatSummonResult(
   }
 
   if (roleOutcome.kind === "failure") {
-    const payloads = Array.isArray(roleOutcome.payloads)
-      ? roleOutcome.payloads
-      : undefined;
+    const payloads = Array.isArray(roleOutcome.payloads) ? roleOutcome.payloads : undefined;
     return {
       ...base,
       outcomeKind: "failure",
@@ -214,8 +203,7 @@ export function projectSecretariatSummonResult(
     roleOutcome.status.length > 0
       ? { status: roleOutcome.status }
       : {}),
-    ...("decisiveFacts" in roleOutcome &&
-    roleOutcome.decisiveFacts !== undefined
+    ...("decisiveFacts" in roleOutcome && roleOutcome.decisiveFacts !== undefined
       ? { decisiveFacts: roleOutcome.decisiveFacts }
       : {}),
   };
