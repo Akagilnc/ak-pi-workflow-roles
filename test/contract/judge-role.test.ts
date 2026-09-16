@@ -2202,7 +2202,11 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         } as any;
       };
 
-      const createRole = (role: keyof typeof outputs, decision: typeof pass | typeof bounce | typeof escalation) => {
+      const createRole = (
+        role: keyof typeof outputs,
+        decision: typeof pass | typeof bounce | typeof escalation,
+        failReviewerLens = false,
+      ) => {
         const harness = role === "fixer"
           ? makeHarness({ "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" })
           : role === "reviewer"
@@ -2296,7 +2300,16 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
             }),
             summonLenses: async () => {
               reviewerSummonCalls += 1;
-              return { completeness: { exitCode: 0 }, correctness: { exitCode: 0 } };
+              const accepted = {
+                exitCode: 0,
+                terminal: { roleOutcome: { kind: "accepted" } },
+              };
+              return {
+                completeness: accepted,
+                correctness: failReviewerLens
+                  ? { exitCode: 1, terminal: { roleOutcome: { kind: "failure" } } }
+                  : accepted,
+              };
             },
           }, testHostActions());
         }
@@ -2335,12 +2348,30 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
               },
             );
             assert.ok(activated.loadLensResults);
-            assert.deepEqual(await activated.loadLensResults(), {
-              completeness: { exitCode: 0 },
-              correctness: { exitCode: 0 },
-            });
+            const lensResults = await activated.loadLensResults() as Record<string, {
+              exitCode: number;
+              terminal: { roleOutcome: { kind: string } };
+            }>;
+            assert.equal(lensResults.completeness?.exitCode, 0);
+            assert.equal(lensResults.correctness?.exitCode, 0);
+            assert.equal(lensResults.completeness?.terminal.roleOutcome.kind, "accepted");
+            assert.equal(lensResults.correctness?.terminal.roleOutcome.kind, "accepted");
             await activated.loadLensResults();
             assert.equal(plain.reviewerSummonCalls, 1);
+
+            const failed = createRole("reviewer", pass, true);
+            const failedActivation = await failed.runtime.activate(
+              outputContext(toolName, "reviewer-failed-lens"),
+              {
+                baseRevision: "review-base",
+                lens: "all",
+                authorityRefs: ["CLAUDE.md"],
+              },
+            );
+            await assert.rejects(
+              () => failedActivation.loadLensResults!(),
+              /correctness lens did not produce an accepted terminal/,
+            );
           } else {
             await plain.runtime.activate();
           }

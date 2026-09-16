@@ -610,7 +610,8 @@ export async function summonParallelReviewerLenses(options: {
           cwd: options.projectRoot,
         })),
     );
-    const cleanupFailures = cleanup.flatMap((result) =>
+    const rootCleanup = await Promise.allSettled([rm(root)]);
+    const cleanupFailures = [...cleanup, ...rootCleanup].flatMap((result) =>
       result.status === "rejected" ? [result.reason] : []);
     if (cleanupFailures.length > 0) {
       throw new AggregateError(
@@ -620,7 +621,6 @@ export async function summonParallelReviewerLenses(options: {
         "parallel reviewer worktree cleanup failed",
       );
     }
-    await rm(root, { recursive: true, force: true });
   }
 }
 

@@ -111,6 +111,25 @@ export function createReviewerRoleRuntime(
               admitted,
               context: ctx,
               ...(ctx.signal === undefined ? {} : { signal: ctx.signal }),
+            }).then((summoned) => {
+              if (typeof summoned !== "object" || summoned === null) {
+                throw new Error("Reviewer dual-lens summons returned no structured results");
+              }
+              for (const lens of ["completeness", "correctness"] as const) {
+                const leg = (summoned as Record<string, unknown>)[lens];
+                const result = typeof leg === "object" && leg !== null
+                  ? leg as { exitCode?: unknown; terminal?: { roleOutcome?: { kind?: unknown } } }
+                  : undefined;
+                if (
+                  result?.exitCode !== 0
+                  || result.terminal?.roleOutcome?.kind !== "accepted"
+                ) {
+                  throw new Error(`Reviewer ${lens} lens did not produce an accepted terminal`, {
+                    cause: leg,
+                  });
+                }
+              }
+              return summoned;
             });
           })()
         : undefined;
