@@ -10,8 +10,15 @@ import { loadNavigatorWorkContext } from "./navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "./notary-source-run.ts";
 import { loadPackagedCanonicalSkillBinding } from "./package-resources/method-skill-binding.ts";
 import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "./role-runtime.ts";
-import { loadAuditorSoulFromSubjectInput } from "./auditor-soul.ts";
-import { loadGatekeeperSessionMaterials, loadMainRoleSessionMaterials } from "./session-opening-materials.ts";
+import {
+  loadAuditorReferenceMaterialsFromSubjectInput,
+  loadAuditorSoulFromSubjectInput,
+} from "./auditor-soul.ts";
+import {
+  loadGatekeeperSessionMaterials,
+  loadMainRoleReferenceMaterials,
+  loadMainRoleSessionMaterials,
+} from "./session-opening-materials.ts";
 
 const navigatorRoutePlaybookPath = fileURLToPath(
   new URL("../resources/navigator-route-playbook.md", import.meta.url),
@@ -26,6 +33,9 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   return {
     packageRoot,
+    loadRoleReferenceMaterials: (role) => role === "auditor"
+      ? loadAuditorReferenceMaterialsFromSubjectInput()
+      : loadMainRoleReferenceMaterials(role),
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
     loadFixPacket: (path) => readFile(path, "utf8"),
