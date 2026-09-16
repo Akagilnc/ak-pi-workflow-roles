@@ -27,15 +27,20 @@ const collectorHandbookSeedPath = fileURLToPath(
   new URL("../resources/collector-bot-handbook.md", import.meta.url),
 );
 
+/** Single packaged source for reference materials across production composition roots. */
+export function loadPackagedRoleReferenceMaterials(role: Parameters<NonNullable<RoleRuntimeDependencies["loadRoleReferenceMaterials"]>>[0]): Promise<string> {
+  return role === "auditor"
+    ? loadAuditorReferenceMaterialsFromSubjectInput()
+    : loadMainRoleReferenceMaterials(role);
+}
+
 /** Host-neutral packaged role runtime deps for the parent-process envelope. */
 export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeDependencies {
   const doctorAuditor = createPiDoctorAuditor();
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   return {
     packageRoot,
-    loadRoleReferenceMaterials: (role) => role === "auditor"
-      ? loadAuditorReferenceMaterialsFromSubjectInput()
-      : loadMainRoleReferenceMaterials(role),
+    loadRoleReferenceMaterials: loadPackagedRoleReferenceMaterials,
     loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
     loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
     loadFixPacket: (path) => readFile(path, "utf8"),

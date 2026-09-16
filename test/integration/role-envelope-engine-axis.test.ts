@@ -10,7 +10,9 @@ import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { createPiRoleRuntimeDependencies } from "../../extensions/role-runtime.ts";
 import {
   AK_ROLE_ENGINE_ENV,
   ENGINE_DETOUR_TOOL_NAME,
@@ -173,6 +175,65 @@ test("shared envelope keeps seat identity separate from typed reference material
     try {
       const soul = await packagedMaterials(["souls/judge-auditor.md"]);
       assert.equal(auditor.systemPrompt.body, `\n\n<auditor_soul>\n${soul}</auditor_soul>`);
+      assert.deepEqual(auditor.systemPrompt.materials, [{
+        kind: "role-reference-materials",
+        content: await packagedMaterials([
+          "CLAUDE.md",
+          "souls/audit-law.md",
+          "souls/quality-law.md",
+        ]),
+      }]);
+    } finally {
+      await auditor.dispose?.();
+    }
+  });
+});
+
+test("Pi production root supplies typed main and auditor reference materials", async () => {
+  await withEnvelopeHome(async ({ home, socketPath, request }) => {
+    const dependencies = createPiRoleRuntimeDependencies({
+      getFlag: () => undefined,
+    } as unknown as ExtensionAPI);
+    const judge = await prepareRoleEnvelope({
+      request: request(),
+      dependencies,
+      socketPath,
+    });
+    try {
+      assert.deepEqual(judge.systemPrompt.materials, [{
+        kind: "role-reference-materials",
+        content: await packagedMaterials([
+          "CLAUDE.md",
+          "souls/audit-law.md",
+          "souls/quality-law.md",
+          "souls/judge-output-guide.md",
+        ]),
+      }]);
+    } finally {
+      await judge.dispose?.();
+    }
+
+    const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
+    process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
+    const auditorRun = join(home, "pi-auditor", "run");
+    await mkdir(join(auditorRun, "session"), { recursive: true });
+    let auditor;
+    try {
+      auditor = await prepareRoleEnvelope({
+        request: {
+          ...request(),
+          principal: fixturePrincipal(join(auditorRun, "session")),
+          activation: { role: "auditor" },
+          runDirectory: auditorRun,
+        },
+        dependencies,
+        socketPath: join(home, "pi-auditor.sock"),
+      });
+    } finally {
+      if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
+      else process.env.AK_ROLE_AUDITOR_SUBJECT = priorSubject;
+    }
+    try {
       assert.deepEqual(auditor.systemPrompt.materials, [{
         kind: "role-reference-materials",
         content: await packagedMaterials([
