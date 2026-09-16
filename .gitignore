@@ -3,9 +3,8 @@ coverage/
 dist/
 *.tgz
 
-# Host-native local project surfaces
+# Claude Code session dir (local only)
 .claude/
-.agents/skills
 
 .tmp-same-ticket-resume/
 .tmp-675-probe/
