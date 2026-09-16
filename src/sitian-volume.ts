@@ -7,7 +7,7 @@
  * stays append-only; this module does not restore append watermarks.
  */
 import { appendFileSync } from "node:fs";
-import { readFile, readlink, unlink } from "node:fs/promises";
+import { lstat, readFile, readlink, unlink } from "node:fs/promises";
 import lockfile from "proper-lockfile";
 
 import {
@@ -94,11 +94,24 @@ async function legacyClaimIsLive(path: string): Promise<boolean | undefined> {
   }
 }
 
-async function unlinkLegacyResidue(path: string): Promise<void> {
-  await unlink(path).catch((error: NodeJS.ErrnoException) => {
-    // A concurrent new-protocol winner is a directory and must never be removed.
-    if (error.code !== "ENOENT" && error.code !== "EISDIR" && error.code !== "EPERM") throw error;
-  });
+async function unlinkLegacyResidue(
+  path: string,
+  allowLeaseDirectory: boolean,
+): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT") return;
+    if (allowLeaseDirectory && (code === "EISDIR" || code === "EPERM")) {
+      const current = await lstat(path).catch((statError: NodeJS.ErrnoException) => {
+        if (statError.code === "ENOENT") return undefined;
+        throw statError;
+      });
+      if (current === undefined || current.isDirectory()) return;
+    }
+    throw error;
+  }
 }
 
 /**
@@ -123,12 +136,12 @@ export async function withSitianVolumeTransaction<T>(
       `legacy Sitian volume recovery is still active: ${legacyRecoveryPath}`,
     );
   }
-  if (legacyRecovery === false) await unlinkLegacyResidue(legacyRecoveryPath);
+  if (legacyRecovery === false) await unlinkLegacyResidue(legacyRecoveryPath, false);
   const legacyClaim = await legacyClaimIsLive(lockPath);
   if (legacyClaim === true) {
     throw new SitianInfrastructureError(`legacy Sitian volume transaction is still active: ${lockPath}`);
   }
-  if (legacyClaim === false) await unlinkLegacyResidue(lockPath);
+  if (legacyClaim === false) await unlinkLegacyResidue(lockPath, true);
 
   while (true) {
     let release: (() => Promise<void>) | undefined;
