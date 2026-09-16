@@ -29,16 +29,18 @@ function prefixMethodInvocation(token: string, prompt: string): string {
 
 /** Claude's documented plugin Skill invocation syntax. */
 export function applyClaudeSkillInvocation(methods: readonly MethodBinding[], prompt: string): string {
-  const skills = hostMethodSkills(methods);
-  if (skills.length !== 1) return prompt;
-  return prefixMethodInvocation(`/${HOST_METHOD_PLUGIN_NAME}:${skills[0]!.name}`, prompt);
+  return hostMethodSkills(methods).reduceRight(
+    (invocation, skill) => prefixMethodInvocation(`/${HOST_METHOD_PLUGIN_NAME}:${skill.name}`, invocation),
+    prompt,
+  );
 }
 
 /** Codex's documented explicit Skill invocation syntax. */
 export function applyCodexSkillInvocation(methods: readonly MethodBinding[], prompt: string): string {
-  const skills = hostMethodSkills(methods);
-  if (skills.length !== 1) return prompt;
-  return prefixMethodInvocation(`$${skills[0]!.name}`, prompt);
+  return hostMethodSkills(methods).reduceRight(
+    (invocation, skill) => prefixMethodInvocation(`$${skill.name}`, invocation),
+    prompt,
+  );
 }
 
 /** Install the documented project Skill catalog once and leave it in place. */
