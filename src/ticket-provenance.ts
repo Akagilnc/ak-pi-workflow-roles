@@ -143,11 +143,26 @@ export function resolveTicketProvenanceVolume(
   return { recordFile: path.recordFile, volumeDir: path.sessionDir };
 }
 
+type TicketProvenanceRaw = {
+  readonly raw: string;
+  readonly s: number;
+  readonly sourcePosition: number;
+};
+
 type TicketProvenanceCommit = {
   readonly timestamp: string;
   readonly sessions: readonly TicketProvenanceSession[];
-  readonly lines: readonly (TicketProvenanceLine | string)[];
+  readonly lines: readonly (TicketProvenanceLine | TicketProvenanceRaw | string)[];
 };
+
+function projectTicketProvenanceRaw(value: unknown): TicketProvenanceRaw | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const raw = value as Record<string, unknown>;
+  return typeof raw.raw === "string" && Number.isInteger(raw.s) && (raw.s as number) >= 0 &&
+      Number.isInteger(raw.sourcePosition) && (raw.sourcePosition as number) >= 0
+    ? { raw: raw.raw, s: raw.s as number, sourcePosition: raw.sourcePosition as number }
+    : undefined;
+}
 
 function projectTicketProvenanceCommit(value: unknown): TicketProvenanceCommit | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
@@ -161,12 +176,14 @@ function projectTicketProvenanceCommit(value: unknown): TicketProvenanceCommit |
   if (body.type !== "ticket-provenance-append") return undefined;
   const sessions = projectTicketProvenanceSessions(body.sessions);
   if (sessions === undefined || !Array.isArray(body.lines)) return undefined;
-  const lines: (TicketProvenanceLine | string)[] = [];
+  const lines: (TicketProvenanceLine | TicketProvenanceRaw | string)[] = [];
   for (const raw of body.lines) {
     if (typeof raw === "string") { lines.push(raw); continue; }
     const line = projectTicketProvenanceLine(raw);
-    if (line === undefined) return undefined;
-    lines.push(line);
+    if (line !== undefined) { lines.push(line); continue; }
+    const preserved = projectTicketProvenanceRaw(raw);
+    if (preserved === undefined) return undefined;
+    lines.push(preserved);
   }
   return { timestamp: record.timestamp, sessions, lines };
 }
@@ -180,6 +197,8 @@ export type ReadTicketProvenanceResult = {
    */
   readonly unprojectedRaw: readonly string[];
   readonly recordFile: string;
+  /** Internal cumulative coverage truth, keyed by normalized session index. */
+  readonly sourcePositions: ReadonlyMap<number, ReadonlySet<number>>;
 };
 
 /** Read the unique diary file (empty/absent → no header, no lines). */
@@ -194,7 +213,13 @@ export async function readTicketProvenance(
     text = await readFile(recordFile, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { header: undefined, lines: [], unprojectedRaw: [], recordFile };
+      return {
+        header: undefined,
+        lines: [],
+        unprojectedRaw: [],
+        recordFile,
+        sourcePositions: new Map(),
+      };
     }
     throw error;
   }
@@ -202,6 +227,14 @@ export async function readTicketProvenance(
   let header: TicketProvenanceHeader | undefined;
   const lines: TicketProvenanceLine[] = [];
   const unprojectedRaw: string[] = [];
+  const sourcePositions = new Map<number, Set<number>>();
+  const rememberPosition = (s: number, position: number): boolean => {
+    const seen = sourcePositions.get(s) ?? new Set<number>();
+    const fresh = !seen.has(position);
+    seen.add(position);
+    sourcePositions.set(s, seen);
+    return fresh;
+  };
   let sawFirst = false;
   for (let index = 0; index < physical.length; index += 1) {
     const raw = physical[index]!;
@@ -231,7 +264,15 @@ export async function readTicketProvenance(
       const remapped: TicketProvenanceLine[] = [];
       for (const entry of commit.lines) {
         if (typeof entry === "string") { unprojectedRaw.push(entry); continue; }
-        remapped.push({ ...entry, s: merged.incomingIndexes[entry.s] ?? entry.s });
+        const s = merged.incomingIndexes[entry.s] ?? entry.s;
+        if ("raw" in entry) {
+          if (rememberPosition(s, entry.sourcePosition)) unprojectedRaw.push(entry.raw);
+          continue;
+        }
+        remapped.push({ ...entry, s });
+        if (entry.id === undefined && entry.sourcePosition !== undefined) {
+          rememberPosition(s, entry.sourcePosition);
+        }
       }
       const now = commit.timestamp;
       header = {
@@ -251,7 +292,12 @@ export async function readTicketProvenance(
     // Unknown stock / damaged rows remain readable and are never upgraded in place.
     unprojectedRaw.push(raw);
   }
-  return { header, lines, unprojectedRaw, recordFile };
+  for (const line of lines) {
+    if (line.id === undefined && line.sourcePosition !== undefined) {
+      rememberPosition(line.s, line.sourcePosition);
+    }
+  }
+  return { header, lines, unprojectedRaw, recordFile, sourcePositions };
 }
 
 /**
@@ -370,7 +416,6 @@ function undeclaredSessionRanges(
 ): readonly {
   readonly s: number;
   readonly session: TicketProvenanceSession;
-  readonly priorRanges: readonly TicketProvenanceRange[];
 }[] {
   const priorKeys = new Map<string, Set<string>>();
   for (const session of prior ?? []) {
@@ -382,14 +427,9 @@ function undeclaredSessionRanges(
     }
     for (const range of session.ranges) keys.add(rangeDeclarationKey(range));
   }
-  const priorRanges = new Map<string, readonly TicketProvenanceRange[]>();
-  for (const session of prior ?? []) {
-    priorRanges.set(physicalPathIdentity(session.path), session.ranges);
-  }
   const out: {
     s: number;
     session: TicketProvenanceSession;
-    priorRanges: readonly TicketProvenanceRange[];
   }[] = [];
   for (let s = 0; s < merged.length; s += 1) {
     const session = merged[s]!;
@@ -408,7 +448,6 @@ function undeclaredSessionRanges(
           to: { ...range.to },
         })),
       },
-      priorRanges: priorRanges.get(identity) ?? [],
     });
   }
   return out;
@@ -494,44 +533,12 @@ function normalizeResolvedRanges(
   ranges: readonly TicketProvenanceRange[],
   sessionLines: readonly LedgerSessionLine[],
   sessionPath: string,
-  options?: {
-    readonly skipMissing?: boolean;
-    readonly partialWithin?: readonly TicketProvenanceRange[];
-  },
 ): readonly { readonly fromIndex: number; readonly toIndex: number }[] {
   const resolved: { fromIndex: number; toIndex: number }[] = [];
   for (const range of ranges) {
     const fromIndex = resolveBoundIndex(range.from, sessionLines);
     const toIndex = resolveBoundIndex(range.to, sessionLines);
     if (fromIndex === undefined || toIndex === undefined) {
-      let partial: { fromIndex: number; toIndex: number } | undefined;
-      for (const current of options?.partialWithin ?? []) {
-        if (
-          fromIndex !== undefined &&
-          JSON.stringify(current.from) === JSON.stringify(range.from)
-        ) {
-          const currentTo = resolveBoundIndex(current.to, sessionLines);
-          if (currentTo !== undefined && fromIndex < currentTo) {
-            partial = { fromIndex, toIndex: currentTo - 1 };
-            break;
-          }
-        }
-        if (
-          toIndex !== undefined &&
-          JSON.stringify(current.to) === JSON.stringify(range.to)
-        ) {
-          const currentFrom = resolveBoundIndex(current.from, sessionLines);
-          if (currentFrom !== undefined && currentFrom < toIndex) {
-            partial = { fromIndex: currentFrom + 1, toIndex };
-            break;
-          }
-        }
-      }
-      if (partial !== undefined) {
-        resolved.push(partial);
-        continue;
-      }
-      if (options?.skipMissing) continue;
       throw new TicketProvenanceInputError(
         `bound endpoint not found in ${sessionPath} (from=${JSON.stringify(range.from)} to=${JSON.stringify(range.to)})`,
       );
@@ -567,11 +574,11 @@ async function projectSessionRanges(input: {
   readonly s: number;
   readonly session: TicketProvenanceSession;
   readonly seenIds: Set<string>;
-  readonly priorRanges?: readonly TicketProvenanceRange[];
+  readonly coveredSourcePositions: ReadonlySet<number>;
   readonly home?: string;
 }): Promise<{
   readonly lines: TicketProvenanceLine[];
-  readonly raw: string[];
+  readonly raw: TicketProvenanceRaw[];
   readonly sourcePositionById: ReadonlyMap<string, number>;
 }> {
   assertDialogueSessionSourcePath(input.session.path, input.home);
@@ -605,43 +612,19 @@ async function projectSessionRanges(input: {
   }
   const seenIds = input.seenIds;
   const lines: TicketProvenanceLine[] = [];
-  const raw: string[] = [];
+  const raw: TicketProvenanceRaw[] = [];
   const ranges = normalizeResolvedRanges(
     input.session.ranges,
     sessionLines,
     input.session.path,
   );
-  const covered = normalizeResolvedRanges(
-    input.priorRanges ?? [],
-    sessionLines,
-    input.session.path,
-    { skipMissing: true, partialWithin: input.session.ranges },
-  );
-  const uncovered = ranges.flatMap((range) => {
-    let fragments = [range];
-    for (const prior of covered) {
-      fragments = fragments.flatMap((fragment) => {
-        if (prior.toIndex < fragment.fromIndex || prior.fromIndex > fragment.toIndex) {
-          return [fragment];
-        }
-        const remainder: { fromIndex: number; toIndex: number }[] = [];
-        if (fragment.fromIndex < prior.fromIndex) {
-          remainder.push({ fromIndex: fragment.fromIndex, toIndex: prior.fromIndex - 1 });
-        }
-        if (fragment.toIndex > prior.toIndex) {
-          remainder.push({ fromIndex: prior.toIndex + 1, toIndex: fragment.toIndex });
-        }
-        return remainder;
-      });
-    }
-    return fragments;
-  });
-
-  for (const range of uncovered) {
+  for (const range of ranges) {
     for (let index = range.fromIndex; index <= range.toIndex; index += 1) {
+      const sourcePosition = sourcePositions[index]!;
+      if (input.coveredSourcePositions.has(sourcePosition)) continue;
       const entry = sessionLines[index]!;
       if (entry.row === undefined) {
-        raw.push(entry.raw);
+        raw.push({ raw: entry.raw, s: input.s, sourcePosition });
         continue;
       }
       for (const event of dialogue[index] ?? []) {
@@ -653,7 +636,7 @@ async function projectSessionRanges(input: {
         lines.push({
           speaker: event.speaker,
           s: input.s,
-          sourcePosition: sourcePositions[index]!,
+          sourcePosition,
           ...(event.id === undefined ? {} : { id: event.id }),
           text: event.text,
         });
@@ -715,13 +698,13 @@ export async function reprojectTicketProvenance(input: {
     ),
   );
   const fresh: TicketProvenanceLine[] = [];
-  const raw: string[] = [];
+  const raw: TicketProvenanceRaw[] = [];
   for (const delta of deltas) {
     const projected = await projectSessionRanges({
       s: delta.s,
       session: delta.session,
       seenIds,
-      priorRanges: delta.priorRanges,
+      coveredSourcePositions: prior.sourcePositions.get(delta.s) ?? new Set(),
       ...(input.home === undefined ? {} : { home: input.home }),
     });
     fresh.push(...prior.lines.flatMap((line) => {

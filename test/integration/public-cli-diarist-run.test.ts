@@ -1663,6 +1663,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     const rotatingPath = join(home, ".claude", "projects", "probe", "rotating.jsonl");
     const rotatingStartId = "msg-rotating-start";
     const rotatingEndId = "msg-rotating-end";
+    const middleRotatingId = "msg-rotating-middle";
     const newRotatingId = "msg-rotating-new";
     const rotatingIdlessText = "轮转范围内无原生 id";
     const rotatingRaw = "{rotating unreadable";
@@ -1689,14 +1690,19 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       path: rotatingPath,
       ranges: [{ from: { id: rotatingStartId }, to: { id: rotatingEndId } }],
     }]);
+    const rotatingMiddle = JSON.stringify({
+      type: "user",
+      uuid: middleRotatingId,
+      message: { role: "user", content: [{ type: "text", text: "轮转后新增中段" }] },
+    });
     const rotatingNew = JSON.stringify({
       type: "user",
       uuid: newRotatingId,
-      message: { role: "user", content: [{ type: "text", text: "轮转后" }] },
+      message: { role: "user", content: [{ type: "text", text: "轮转后新增终点" }] },
     });
     await writeFile(
       rotatingPath,
-      [rotatingStart, rotatingIdless, rotatingRaw, rotatingNew].join("\n") + "\n",
+      [rotatingStart, rotatingIdless, rotatingRaw, rotatingMiddle, rotatingNew].join("\n") + "\n",
       "utf8",
     );
     const afterRotation = await runDiarist(
@@ -1705,6 +1711,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     );
     assert.equal(afterRotation.lines.filter((line) => line.text === rotatingIdlessText).length, 1);
     assert.equal(afterRotation.unprojectedRaw.filter((raw) => raw === rotatingRaw).length, 1);
+    assert.equal(afterRotation.lines.filter((line) => line.id === middleRotatingId).length, 1);
     assert.equal(afterRotation.lines.filter((line) => line.id === newRotatingId).length, 1);
 
     // 验收 4：历史源 S1 不可达后，只交新范围 B（S2）仍成功；再交已声明 A 为 no-op。
@@ -1977,6 +1984,37 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       true,
       "projected human task-notification paste must survive later empty-sessions no-op",
     );
+
+    // Historical headers may contain the same physical session under aliases with
+    // ranges split across entries. Coverage comes from persisted source positions,
+    // not whichever alias range happened to overwrite another in a Map.
+    const aliasHistoryPath = join(home, ".claude", "projects", "probe", "alias-history.jsonl");
+    const aliasIdlessText = "别名历史中的无 id 发言";
+    const aliasNewId = "msg-alias-history-new";
+    await writeFile(aliasHistoryPath, [
+      JSON.stringify({ type: "user", message: { role: "user", content: aliasIdlessText } }),
+      JSON.stringify({ type: "assistant", uuid: "alias-runner", message: { role: "assistant", content: "已记录" } }),
+      JSON.stringify({ type: "user", uuid: aliasNewId, message: { role: "user", content: "别名历史后的新增发言" } }),
+    ].join("\n") + "\n", "utf8");
+    await writeFile(paths.recordFile, [
+      JSON.stringify({
+        repo: resolveBookKeyFromGit(project),
+        ticket: TICKET,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        sessions: [
+          { path: aliasHistoryPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] },
+          { path: `${aliasHistoryPath}/./`, ranges: [{ from: { line: 2 }, to: { line: 2 } }] },
+        ],
+      }),
+      JSON.stringify({ speaker: "owner", s: 0, sourcePosition: 0, text: aliasIdlessText }),
+    ].join("\n") + "\n", "utf8");
+    const afterAliasHistory = await runDiarist(
+      "01a0diar00-0000-7000-8000-00000000009c",
+      [{ path: aliasHistoryPath, ranges: [{ from: { line: 1 }, to: { line: 3 } }] }],
+    );
+    assert.equal(afterAliasHistory.lines.filter((line) => line.text === aliasIdlessText).length, 1);
+    assert.equal(afterAliasHistory.lines.filter((line) => line.id === aliasNewId).length, 1);
   });
 });
 
