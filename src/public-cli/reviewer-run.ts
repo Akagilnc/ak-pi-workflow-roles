@@ -4,6 +4,8 @@
  * extra packets. Controlled-failure settlement reuses #107.
  * #526: execution via RoleTurnHost; argv is Pi adapter internal.
  */
+import { mkdir, writeFile } from "node:fs/promises";
+
 import type {
   DurablePrincipalAuthority,
   MethodBinding,
@@ -170,6 +172,9 @@ function createParallelReviewerExecution(
         async executeTurn(request: RoleTurnRequest) {
           const parent = admitted();
           if (parent.lens !== "all") return env.roleTurnHost.executeTurn(request);
+          const coordinates = env.principalAuthority.decode(parent.principal);
+          await mkdir(coordinates.sessionDirectory, { recursive: true });
+          await writeFile(coordinates.sessionFile, "", { encoding: "utf8", flag: "a" });
           const { summonParallelReviewerLenses } = await import("../public-role-summons.ts");
           children = await summonParallelReviewerLenses({
             projectRoot: parent.projectRoot,

@@ -156,7 +156,7 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
   Object.freeze({
     name: "ak-review-lens",
     definition: Object.freeze({
-      description: "Review lens shape: all (parallel default), completeness, or correctness",
+      description: "Single review lens: completeness or correctness",
       type: "string" as const,
     }),
   }),
