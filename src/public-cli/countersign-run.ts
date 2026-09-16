@@ -33,6 +33,8 @@ import {
   bindAdmittedTicketNumber,
   bindCourtTicketNumbersOnAdmitted,
   buildCountersignTransportPrompt,
+  discardPreparedAttachments,
+  freezePreparedAttachmentsIntoRun,
   materializeCountersignInvocation,
   relocateAdmittedRunToTicket,
   prepareAttachmentPaths,
@@ -410,13 +412,23 @@ export async function runPublicCountersign(
     throw error;
   }
 
+  let preparedAttachmentsConsumed = false;
+  const discardAttachmentSnapshot = async (): Promise<void> => {
+    if (preparedAttachmentsConsumed) return;
+    preparedAttachmentsConsumed = true;
+    await discardPreparedAttachments(preparedAttachments);
+  };
   const materializeAdmission = async (): Promise<void> => {
-    await materializeCountersignInvocation(admitted, {
-      home: env.home,
-      principalAuthority: env.principalAuthority,
-      preparedAttachments,
-      ...(env.model === undefined ? {} : { model: env.model }),
-    });
+    try {
+      await materializeCountersignInvocation(admitted, {
+        home: env.home,
+        principalAuthority: env.principalAuthority,
+        preparedAttachments,
+        ...(env.model === undefined ? {} : { model: env.model }),
+      });
+    } finally {
+      await discardAttachmentSnapshot();
+    }
   };
 
   // #637 / #771 / ADR 0079: ticket identity is the 起居郎 LLM typed assertion
@@ -431,16 +443,31 @@ export async function runPublicCountersign(
   let identityDiaristRan = false;
 
   if (env.runCourtDiaristStation === undefined) {
-    const outcome = await invokeCourtDiarist(
-      {
-        instruction: parsed.instruction,
-        projectRoot: admitted.projectRoot,
-        failureLabel: "unbound summons",
-        correlationId: admitted.runId,
-      },
-      env,
-      io,
-    );
+    let outcome: CourtDiaristInvocationResult;
+    try {
+      // The identity child cannot name the newly minted countersign id as parent:
+      // same-ticket lookup may intentionally never materialize that run. A selected
+      // retained run receives its normally correlated refresh child during resume.
+      outcome = await invokeCourtDiarist(
+        {
+          instruction: parsed.instruction,
+          projectRoot: admitted.projectRoot,
+          failureLabel: "unbound summons",
+        },
+        env,
+        io,
+      );
+    } catch (error) {
+      await materializeAdmission();
+      await markRunAdmitted(admitted, env.principalAuthority);
+      return await presentControlledFailure(
+        admitted,
+        { timedOut: false, code: null, stderr: "", thrown: error },
+        countersignAdapters(),
+        env.principalAuthority,
+        io,
+      );
+    }
     identityDiaristRan = true;
 
     if (outcome.identity.kind === "escalate") {
@@ -494,7 +521,6 @@ export async function runPublicCountersign(
       const summons: SameTicketSummonsMaterials = {
         instruction: parsed.instruction,
         instructionEmpty: parsed.instruction.trim() === "",
-        attachmentPaths: parsed.attachmentPaths,
       };
       const resumed = await tryResumeSameTicketSeatRun({
         home: env.home,
@@ -504,6 +530,29 @@ export async function runPublicCountersign(
         freshSummons: env.freshSummons,
         summons,
         resume: async (runId, materials) => {
+          // Consume the same pre-identity snapshot into the retained run; never
+          // reopen caller paths after identity has run.
+          const retained = await loadResumableCountersignRun(
+            env.home,
+            runId,
+            env.principalAuthority,
+          );
+          if (retained.admitted === undefined) {
+            throw new Error(`retained countersign run disappeared before resume: ${runId}`);
+          }
+          let frozenPaths: readonly string[];
+          try {
+            frozenPaths = (await freezePreparedAttachmentsIntoRun(
+              preparedAttachments,
+              retained.admitted.runDirectory,
+            )).map((attachment) => attachment.frozenPath);
+          } finally {
+            await discardAttachmentSnapshot();
+          }
+          const preparedMaterials: SameTicketSummonsMaterials = {
+            ...(materials ?? {}),
+            ...(frozenPaths.length === 0 ? {} : { attachmentPaths: frozenPaths }),
+          };
           // Identity 起居郎 asserted unbound (no issue face). Resume still runs
           // the bound refresh station under the typed key (ADR 0075: 每次过庭都跑是调用者用法).
           // #871: hand the identity set so resume can whole-replace the run fact
@@ -511,7 +560,7 @@ export async function runPublicCountersign(
           return await runPublicCountersignResume(
             {
               runId,
-              ...(materials === undefined ? {} : { summons: materials }),
+              summons: preparedMaterials,
             },
             {
               ...env,

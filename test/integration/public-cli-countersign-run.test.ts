@@ -1710,6 +1710,7 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     ensureTicketProvenanceVolume(582, project, home);
 
     const seen: Array<{ runId: string; kind: string }> = [];
+    let sourceToDeleteDuringIdentity: string | undefined;
     const parentSeal = { countersignStatus: "converged" as const, note: "署" };
     const baseHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
@@ -1717,6 +1718,11 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
       piRunner: async (args, options) => {
         const role = argvFlagValue(args, "--ak-role");
         if (role === "diarist") {
+          if (sourceToDeleteDuringIdentity !== undefined) {
+            const source = sourceToDeleteDuringIdentity;
+            sourceToDeleteDuringIdentity = undefined;
+            await rm(source);
+          }
           return courtPipelinePiRunner(582)(args, options);
         }
         return courtPipelinePiRunner(582, parentSeal)(args, options);
@@ -1763,8 +1769,12 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.equal(seen[0]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
 
     // createRunId would mint s002 if auto-resume were skipped — must not fire.
+    // The accepted attachment snapshot must survive source deletion by identity.
+    const secondAttachment = join(project, "second-court.md");
+    await writeFile(secondAttachment, "second court snapshot", "utf8");
+    sourceToDeleteDuringIdentity = secondAttachment;
     const second = await runPublicCountersign(
-      ["裁：#582 二轮再审。"],
+      ["--attach", secondAttachment, "裁：#582 二轮再审。"],
       {
         ...envBase,
         createRunId: () => "01a0sign00-0000-7000-8000-00000000s002",
@@ -1799,6 +1809,18 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume");
     assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
+    const retainedAttachmentEntries = await readdir(
+      join(first.admitted!.runDirectory, "attachments"),
+      { recursive: true },
+    );
+    const secondSnapshot = retainedAttachmentEntries.find((entry) =>
+      entry.endsWith("00-second-court.md"),
+    );
+    assert.ok(secondSnapshot);
+    assert.equal(
+      await readFile(join(first.admitted!.runDirectory, "attachments", secondSnapshot), "utf8"),
+      "second court snapshot",
+    );
 
     // Third summons must continue selecting s001 without materializing s002/s003.
     const third = await runPublicCountersign(

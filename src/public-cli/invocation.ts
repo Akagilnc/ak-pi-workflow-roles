@@ -6,11 +6,14 @@ import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
   lstat,
+  mkdtemp,
   readFile,
   realpath,
   rename,
+  rm,
   writeFile,
 } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "node:path";
 
 import {
@@ -1230,15 +1233,42 @@ async function readRegularFileAttachment(
   }
 }
 
-export type PreparedAttachment = Awaited<ReturnType<typeof readRegularFileAttachment>>;
+export type PreparedAttachment = {
+  readonly absolute: string;
+  readonly snapshotPath: string;
+};
 
-/** Read deferred attachment inputs once, before any identity child or run persistence. */
+/**
+ * Snapshot deferred inputs sequentially before identity side effects. The staging
+ * files keep aggregate attachment bytes off heap until their final run is known.
+ */
 export async function prepareAttachmentPaths(
   attachmentPaths: readonly string[],
 ): Promise<readonly PreparedAttachment[]> {
-  return await Promise.all(
-    attachmentPaths.map(async (sourcePath) => await readRegularFileAttachment(sourcePath)),
-  );
+  if (attachmentPaths.length === 0) return [];
+  const stagingDirectory = await mkdtemp(join(tmpdir(), "ak-role-attachments-"));
+  const prepared: PreparedAttachment[] = [];
+  try {
+    for (let index = 0; index < attachmentPaths.length; index += 1) {
+      const { absolute, bytes } = await readRegularFileAttachment(attachmentPaths[index]!);
+      const snapshotPath = join(stagingDirectory, String(index).padStart(6, "0"));
+      await writeFile(snapshotPath, bytes);
+      prepared.push({ absolute, snapshotPath });
+    }
+    return prepared;
+  } catch (error) {
+    await rm(stagingDirectory, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+export async function discardPreparedAttachments(
+  prepared: readonly PreparedAttachment[],
+): Promise<void> {
+  const snapshotPath = prepared[0]?.snapshotPath;
+  if (snapshotPath !== undefined) {
+    await rm(dirname(snapshotPath), { recursive: true, force: true });
+  }
 }
 
 async function freezePreparedAttachment(
@@ -1246,13 +1276,13 @@ async function freezePreparedAttachment(
   destinationDir: string,
   index: number,
 ): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
-  const { absolute, bytes } = prepared;
-  const name = `${String(index).padStart(2, "0")}-${basename(absolute)}`;
+  const bytes = await readFile(prepared.snapshotPath);
+  const name = `${String(index).padStart(2, "0")}-${basename(prepared.absolute)}`;
   const frozenPath = join(destinationDir, name);
   await writeFile(frozenPath, bytes);
   return {
     attachment: {
-      provenancePath: absolute,
+      provenancePath: prepared.absolute,
       frozenPath,
       byteLength: bytes.byteLength,
       sha256: sha256Hex(bytes),
@@ -1267,11 +1297,22 @@ async function freezeRegularFileAttachment(
   destinationDir: string,
   index: number,
 ): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
-  return await freezePreparedAttachment(
-    await readRegularFileAttachment(sourcePath),
+  const { absolute, bytes } = await readRegularFileAttachment(sourcePath);
+  const frozenPath = join(
     destinationDir,
-    index,
+    `${String(index).padStart(2, "0")}-${basename(absolute)}`,
   );
+  await writeFile(frozenPath, bytes);
+  return {
+    attachment: {
+      provenancePath: absolute,
+      frozenPath,
+      byteLength: bytes.byteLength,
+      sha256: sha256Hex(bytes),
+      mediaKind: "regular-file",
+    },
+    body: bytes,
+  };
 }
 
 /** Freeze attachments only — ticket binding is the shared LLM seat path (#635). */
@@ -1306,6 +1347,23 @@ export async function freezeAttachmentsIntoRun(
   const attachmentsDirectory = join(runDirectory, "attachments", summonsKey);
   ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
   return freezeAttachments(attachmentPaths, attachmentsDirectory);
+}
+
+/** Persist a pre-identity snapshot directly into the retained same-ticket run. */
+export async function freezePreparedAttachmentsIntoRun(
+  prepared: readonly PreparedAttachment[],
+  runDirectory: string,
+  summonsKey: string = `s-${Date.now().toString(36)}`,
+): Promise<readonly FrozenAttachment[]> {
+  if (prepared.length === 0) return [];
+  const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(runDirectory));
+  const attachmentsDirectory = join(runDirectory, "attachments", summonsKey);
+  ensureRealDirectoryTree(ledgerHome, attachmentsDirectory);
+  const attachments: FrozenAttachment[] = [];
+  for (let index = 0; index < prepared.length; index += 1) {
+    attachments.push((await freezePreparedAttachment(prepared[index]!, attachmentsDirectory, index)).attachment);
+  }
+  return attachments;
 }
 
 function ticketAdmissionFields(
@@ -1558,8 +1616,8 @@ export type AdmitCountersignInvocationOptions = {
 };
 
 /**
- * Atomically admit a Countersign Role run: freeze Attachments, persist the
- * request, write the invocation ledger (#572 / ADR 0074).
+ * Admit a Countersign run immediately, or reserve its coordinates for deferred
+ * materialization after identity lookup (#572 / ADR 0074 / #863).
  */
 export async function admitCountersignInvocation(
   options: AdmitCountersignInvocationOptions,
