@@ -1,6 +1,6 @@
 /**
  * One ACP host description. Every host-specific value the generic ACP adapter
- * needs — binary location, argv shape, resume verb, binding filename, child env,
+ * needs — binary location, argv shape, resume verb, binding filename,
  * optional seat-profile soul — is data here; the lifecycle in role-turn-host.ts
  * stays one copy (#732).
  */
@@ -30,7 +30,6 @@ export type AcpHostDescription = Readonly<{
   boundResume: "session/load" | "session/new";
   /** Durable ACP binding filename written beside the session principal. */
   sessionBindingFile: string;
-  childEnv: Readonly<Record<string, string>>;
   /**
    * When set, the production factory ensures a seat profile whose SOUL.md is a
    * symlink to the packaged role soul, and prefixes argv with `flag <name>`.
@@ -44,8 +43,7 @@ export function resolveAcpBinary(description: AcpHostDescription, operatorHome: 
   return join(operatorHome, ...description.binaryFromHome);
 }
 
-/** Stdio argv: optional profile flag, thinking flag (before the subcommand),
- * prefix, optional model flag pair, suffix. */
+/** Stdio argv: optional profile flag, thinking flag, prefix, model, suffix. */
 export function acpStdioArgs(
   description: AcpHostDescription,
   model?: { readonly model?: string; readonly thinking?: string },

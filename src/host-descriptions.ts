@@ -9,13 +9,6 @@
 import type { AcpHostDescription } from "./acp-host/description.ts";
 import type { HeadlessHostDescription } from "./headless-host/description.ts";
 
-/** Grok CLI reads vendor-private compat surfaces unless each is disabled by name. */
-const PRIVATE_COMPAT_ENV = Object.fromEntries(
-  ["CLAUDE", "CURSOR", "CODEX"].flatMap((vendor) =>
-    ["SKILLS", "RULES", "AGENTS", "MCPS", "HOOKS", "SESSIONS"].map((kind) =>
-      [`GROK_${vendor}_${kind}_ENABLED`, "false"] as const)),
-);
-
 export const DEFAULT_ROLE_TURN_HOST = "pi" as const;
 
 export type HostFamily = "acp" | "headless";
@@ -32,11 +25,6 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
     modelPassing: "argv",
     boundResume: "session/load",
     sessionBindingFile: "grok-acp-session.json",
-    childEnv: Object.freeze({
-      ...PRIVATE_COMPAT_ENV,
-      GROK_MEMORY: "0",
-      GROK_SUBAGENTS: "0",
-    }),
   }),
   /**
    * Operator home `~/.hermes`, native session/load resume, `acp` subcommand.
@@ -55,7 +43,6 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
     modelPassing: "set_model",
     boundResume: "session/load",
     sessionBindingFile: "hermes-acp-session.json",
-    childEnv: Object.freeze({}),
     seatProfileSoul: Object.freeze({
       flag: "-p",
       namePrefix: "ak-",
@@ -69,12 +56,9 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
  * Headless CLI family (#645 / #646). Claude print-mode is the first row;
  * codex exec (#646) adds another. Protocol-specific argv/parse live in
  * headless-host helpers (#752 per-host impl).
- * Claude fixedArgs: print mode, isolation without `--bare` (OAuth stays), full
- * permissions. stream-json + verbose: live host events for sitian records
- * (#811); result is last line. `--setting-sources` empty = load no
- * user/project/local CLAUDE.md/hooks/skills (role envelope is delivered via
- * `--system-prompt` wholesale replace). `--strict-mcp-config` with no
- * `--mcp-config` drops operator MCP + claude.ai connectors.
+ * Claude fixedArgs: print mode, full permissions. stream-json + verbose: live
+ * host events for sitian records (#811); result is last line. Forced methods
+ * ride `--plugin-dir` (#922); operator skill/setting surfaces stay open.
  */
 export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDescription>> = Object.freeze({
   "claude": Object.freeze({
@@ -87,10 +71,6 @@ export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDes
       // Intermediate assistant/tool/system events require verbose with stream-json.
       "--verbose",
       "--permission-mode", "bypassPermissions",
-      // Empty sources: no user/project/local operator surface (envelope owns materials).
-      "--setting-sources", "",
-      // With adapter-supplied --mcp-config only (AK relay); drops operator + claude.ai MCP.
-      "--strict-mcp-config",
     ]),
     promptFlag: "-p",
     modelFlag: "--model",

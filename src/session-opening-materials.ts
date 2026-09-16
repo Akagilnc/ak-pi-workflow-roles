@@ -50,10 +50,26 @@ export async function joinPackageMaterials(
   relativePaths: readonly string[],
 ): Promise<string> {
   const chunks: string[] = [];
-  for (const relativePath of relativePaths) {
-    chunks.push(await readPackageMaterial(relativePath));
-  }
+  for (const relativePath of relativePaths) chunks.push(await readPackageMaterial(relativePath));
   return chunks.join("\n\n");
+}
+
+function roleSoulPath(role: string, materials: readonly string[]): string {
+  const suffix = `/souls/${role}.md`;
+  const path = materials.find((candidate) => `/${candidate}`.endsWith(suffix));
+  if (path === undefined) throw new Error(`session materials omit the ${role} Soul`);
+  return path;
+}
+
+async function loadSeparatedSessionPart(
+  role: string,
+  materials: readonly string[],
+  part: "soul" | "references",
+): Promise<string> {
+  const soul = roleSoulPath(role, materials);
+  return part === "soul"
+    ? readPackageMaterial(soul)
+    : joinPackageMaterials(materials.filter((path) => path !== soul));
 }
 
 type PublicRoleMaterials = {
@@ -72,10 +88,12 @@ export const MAIN_ROLE_SESSION_MATERIALS = {
 
 export type MainRoleSession = keyof typeof MAIN_ROLE_SESSION_MATERIALS;
 
-export function loadMainRoleSessionMaterials(
-  role: MainRoleSession,
-): Promise<string> {
-  return joinPackageMaterials(MAIN_ROLE_SESSION_MATERIALS[role]);
+export function loadMainRoleSessionMaterials(role: MainRoleSession): Promise<string> {
+  return loadSeparatedSessionPart(role, MAIN_ROLE_SESSION_MATERIALS[role], "soul");
+}
+
+export function loadMainRoleReferenceMaterials(role: MainRoleSession): Promise<string> {
+  return loadSeparatedSessionPart(role, MAIN_ROLE_SESSION_MATERIALS[role], "references");
 }
 
 /** Gatekeeper province; notary reuses the public notary materials definition. */
@@ -88,8 +106,6 @@ export const GATEKEEPER_SESSION_MATERIALS = {
 
 export type GatekeeperSessionRole = keyof typeof GATEKEEPER_SESSION_MATERIALS;
 
-export function loadGatekeeperSessionMaterials(
-  role: GatekeeperSessionRole,
-): Promise<string> {
-  return joinPackageMaterials(GATEKEEPER_SESSION_MATERIALS[role]);
+export function loadGatekeeperSessionMaterials(role: GatekeeperSessionRole): Promise<string> {
+  return loadSeparatedSessionPart(role, GATEKEEPER_SESSION_MATERIALS[role], "soul");
 }

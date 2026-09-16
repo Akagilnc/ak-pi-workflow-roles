@@ -55,7 +55,6 @@ export function createProductionAcpRoleTurnHost(options: ProductionAcpHostOption
   const { packageRoot, principalAuthority, description, hostName } = options;
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    ...description.childEnv,
     AK_PACKAGE_ROOT: packageRoot,
   };
 
