@@ -1279,22 +1279,37 @@ export async function withPreparedAttachments<T>(
   return result;
 }
 
-async function freezePreparedAttachment(
-  prepared: PreparedAttachment,
+async function freezeAttachmentBytes(
+  provenancePath: string,
+  bytes: Buffer,
   destinationDir: string,
   index: number,
 ): Promise<FrozenAttachment> {
-  const bytes = await readFile(prepared.snapshotPath);
-  const name = `${String(index).padStart(2, "0")}-${basename(prepared.absolute)}`;
-  const frozenPath = join(destinationDir, name);
+  const frozenPath = join(
+    destinationDir,
+    `${String(index).padStart(2, "0")}-${basename(provenancePath)}`,
+  );
   await writeFile(frozenPath, bytes);
   return {
-    provenancePath: prepared.absolute,
+    provenancePath,
     frozenPath,
     byteLength: bytes.byteLength,
     sha256: sha256Hex(bytes),
     mediaKind: "regular-file",
   };
+}
+
+async function freezePreparedAttachment(
+  prepared: PreparedAttachment,
+  destinationDir: string,
+  index: number,
+): Promise<FrozenAttachment> {
+  return freezeAttachmentBytes(
+    prepared.absolute,
+    await readFile(prepared.snapshotPath),
+    destinationDir,
+    index,
+  );
 }
 
 async function freezeRegularFileAttachment(
@@ -1303,19 +1318,8 @@ async function freezeRegularFileAttachment(
   index: number,
 ): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
   const { absolute, bytes } = await readRegularFileAttachment(sourcePath);
-  const frozenPath = join(
-    destinationDir,
-    `${String(index).padStart(2, "0")}-${basename(absolute)}`,
-  );
-  await writeFile(frozenPath, bytes);
   return {
-    attachment: {
-      provenancePath: absolute,
-      frozenPath,
-      byteLength: bytes.byteLength,
-      sha256: sha256Hex(bytes),
-      mediaKind: "regular-file",
-    },
+    attachment: await freezeAttachmentBytes(absolute, bytes, destinationDir, index),
     body: bytes,
   };
 }
