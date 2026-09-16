@@ -920,15 +920,11 @@ function readRoleRunCoordinates(ctx: HostContext, label: string): {
   readonly projectRoot: string;
   readonly home: string;
   readonly admitted: Record<string, unknown>;
-  readonly invocation: Record<string, unknown>;
 } {
   const runDirectory = runDirectoryFromHostContext(ctx);
   if (runDirectory === undefined) throw new Error(`${label} requires AK_ROLE_RUN_DIR`);
   const admittedPath = join(runDirectory, "admitted-request.json");
   const admitted = JSON.parse(readFileSync(admittedPath, "utf8")) as Record<string, unknown>;
-  const invocation = JSON.parse(
-    readFileSync(join(runDirectory, "invocation.json"), "utf8"),
-  ) as Record<string, unknown>;
   if (typeof admitted.projectRoot !== "string" || admitted.projectRoot.trim() === "") {
     throw new Error(`${label} admitted-request missing projectRoot (${admittedPath})`);
   }
@@ -937,7 +933,6 @@ function readRoleRunCoordinates(ctx: HostContext, label: string): {
     projectRoot: admitted.projectRoot,
     home: homeFromRunDirectory(runDirectory),
     admitted,
-    invocation,
   };
 }
 
@@ -1768,38 +1763,12 @@ export function createRoleRuntimeExtension(
           const coordinates = readRoleRunCoordinates(context, "reviewer dual-lens summons");
           const correlationId = runIdFromRunDirectory(coordinates.runDirectory);
           const { summonParallelReviewerLenses } = await import("./public-role-summons.ts");
-          const invocation = coordinates.invocation;
-          if (
-            typeof invocation.provider !== "string"
-            || typeof invocation.model !== "string"
-            || typeof invocation.host !== "string"
-          ) {
-            throw new Error("reviewer dual-lens summons missing effective parent seat axes");
-          }
-          const effectiveSeat = {
-            seat: "reviewer",
-            source: "invocation",
-            selection: {
-              provider: invocation.provider,
-              model: invocation.model,
-              ...(typeof invocation.thinking === "string"
-                ? { thinking: invocation.thinking }
-                : {}),
-            },
-            ...(typeof invocation.engine === "string" ? { engine: invocation.engine } : {}),
-            ...(typeof invocation.engineModel === "string"
-              ? { engineModel: invocation.engineModel }
-              : {}),
-            engineSource: typeof invocation.engine === "string" ? "invocation" : "unconfigured",
-            host: invocation.host,
-            hostSource: "invocation",
-          } as import("./public-cli/config.ts").EffectiveSeat;
           return summonParallelReviewerLenses({
             projectRoot: coordinates.projectRoot,
             baseRevision: admitted.baseRevision,
             authorityRefs: admitted.authorityRefs ?? [],
             home: coordinates.home,
-            effectiveSeat,
+            ...(context.host === undefined ? {} : { host: context.host }),
             ...(signal === undefined ? {} : { signal }),
             ...(correlationId === undefined ? {} : { correlationId }),
             ...(dependencies.packageRoot === undefined
