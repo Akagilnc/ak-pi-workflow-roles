@@ -51,6 +51,7 @@ import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome(
@@ -128,6 +129,7 @@ function baseEnv(input: {
   role: "coder" | "fixer" | "judge" | "countersign" | "notary";
   toolName: string;
   details: unknown;
+  additionalDetails?: readonly unknown[];
   /** Countersign court station: may bind a typed ticket (起居郎 handoff face). */
   runCourtDiaristStation?: (
     admitted: { ticketNumber?: number; runDirectory: string },
@@ -142,6 +144,25 @@ function baseEnv(input: {
       details: input.details,
     }),
   });
+  const roleTurnHost = input.additionalDetails === undefined
+    ? host
+    : {
+        async executeTurn(request: RoleTurnRequest) {
+          const result = await host.executeTurn(request);
+          for (const [index, details] of input.additionalDetails!.entries()) {
+            await sealAcceptedSubmission({
+              cwd: request.cwd,
+              home: request.home,
+              runId: input.runId,
+              runDirectory: request.runDirectory,
+              role: input.role,
+              details,
+              toolCallId: `call_${input.role}_${index + 2}`,
+            });
+          }
+          return result;
+        },
+      };
   return {
     home: input.home,
     agentDir: join(input.home, ".pi"),
@@ -149,7 +170,7 @@ function baseEnv(input: {
     cwd: input.project,
     principalAuthority: piDurablePrincipalAuthority,
     sessionAppender: appendPiSessionCustomEntry,
-    roleTurnHost: host,
+    roleTurnHost,
     createRunId: () => input.runId,
     // #742: body-path tests stub the court diarist station (no real nested seat).
     ...(input.role === "countersign"
@@ -197,12 +218,21 @@ test("public coder binds its typed receipt assertion without parsing summons tex
         role: "coder",
         toolName: CODER_OUTPUT_TOOL_NAME,
         details: { status: "completed", report: "done", ticketNumber: 582 },
+        additionalDetails: [
+          { status: "completed", report: "later receipt", ticketNumber: 999 },
+        ],
       }),
       captureIo().io,
       parseCoderArgv,
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted outcome");
+    assert.deepEqual(result.terminal.roleOutcome.payloads, [
+      { status: "completed", report: "done", ticketNumber: 582 },
+      { status: "completed", report: "later receipt", ticketNumber: 999 },
+    ]);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
   });
 });

@@ -591,8 +591,7 @@ export async function dispatchPostAdmissionTurn<
           admitted.runId,
           { home: homeFromRunDirectory(admitted.runDirectory), sessionParent: join(admitted.runDirectory, "session", "session.jsonl") },
         );
-        const asserted = [...rows]
-          .reverse()
+        const asserted = rows
           .filter((row) => row.kind === "accepted" && row.role === admitted.role)
           .map((row) => row.accepted)
           .find((payload) => {
