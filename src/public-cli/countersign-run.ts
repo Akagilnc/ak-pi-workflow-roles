@@ -13,9 +13,9 @@
  * effect is what this seat currently does. 起居录 path delivery is owned once by
  * post-admission (#709 / ADR 0081).
  *
- * Wiring (#771): admit first so the countersign run exists; resolve typed identity
- * from 起居郎 after admit; same-ticket resume uses that typed key (abandon the
- * unused mint when resuming). 起居郎 escalate (认不出) and typed failure terminals
+ * Wiring (#771 / #863): resolve typed identity before materializing the admitted
+ * run; same-ticket resume writes only to the retained run. 起居郎 escalate (认不出)
+ * and typed failure terminals
  * (incl. verification failure) settle as countersign controlled failure — never
  * wash into 真无票. Only a true missing lawful typed terminal stays unbound and
  * continues the body (r5 unbound-continue). Bound refresh hands the typed key to
@@ -49,7 +49,6 @@ import {
 import {
   loadResumableCountersignRun,
   markRunAdmitted,
-  markRunTerminal,
   type PublicResumeRequest,
   type RunWriterLease,
   type SameTicketSummonsMaterials,
@@ -395,12 +394,10 @@ export async function runPublicCountersign(
     throw error;
   }
 
-  await markRunAdmitted(admitted, env.principalAuthority);
-
   // #637 / #771 / ADR 0079: ticket identity is the 起居郎 LLM typed assertion
-  // (never mechanical matching of summons text). Resolve that typed key after
-  // admit so the countersign run page exists first; same-ticket re-summons
-  // resume the prior run on the typed key (unused mint is abandoned). The test
+  // (never mechanical matching of summons text). Resolve that typed key before
+  // materializing a run: same-ticket re-summons write only to the retained run.
+  // Controlled failures materialize below so they still have a durable page. The test
   // seam `runCourtDiaristStation` defers identity to beforeDispatch; generic
   // hook failures stay on the parent call-local budget, exhausted nested
   // station children still skip parent auto-resume (#840 父子不层叠).
@@ -422,7 +419,8 @@ export async function runPublicCountersign(
     identityDiaristRan = true;
 
     if (outcome.identity.kind === "escalate") {
-      // 御批: 识别不了就上抛 — settle on the admitted countersign run.
+      // 御批: 识别不了就上抛 — materialize and settle this countersign run.
+      await markRunAdmitted(admitted, env.principalAuthority);
       return await presentControlledFailure(
         admitted,
         {
@@ -443,6 +441,7 @@ export async function runPublicCountersign(
     // is not 真无票 — settle controlled failure on the admitted run (失败诚实).
     // Only a true missing lawful typed terminal keeps the r5 unbound-continue.
     if (outcome.failedWithoutEscalate !== undefined) {
+      await markRunAdmitted(admitted, env.principalAuthority);
       return await presentControlledFailure(
         admitted,
         {
@@ -478,11 +477,6 @@ export async function runPublicCountersign(
         freshSummons: env.freshSummons,
         summons,
         resume: async (runId, materials) => {
-          // Resume selected: file the provisional run under the asserted ticket
-          // before abandoning it, so typed identity never leaves an unbound row.
-          await bindAdmittedTicketNumber(admitted, assertedTicket);
-          await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-          await markRunTerminal(admitted.runDirectory);
           // Identity 起居郎 asserted unbound (no issue face). Resume still runs
           // the bound refresh station under the typed key (ADR 0075: 每次过庭都跑是调用者用法).
           // #871: hand the identity set so resume can whole-replace the run fact
@@ -507,6 +501,10 @@ export async function runPublicCountersign(
       }
     }
   }
+
+  // No prior run was selected. Materialize this invocation now; true-unbound,
+  // first-ticket and deferred test-seam paths all retain their own durable page.
+  await markRunAdmitted(admitted, env.principalAuthority);
 
   if (identityDiaristRan && typedTicket !== undefined) {
     try {

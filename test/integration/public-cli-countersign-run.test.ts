@@ -1705,6 +1705,14 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
       second.admitted?.runId,
       "01a0sign00-0000-7000-8000-00000000s002",
     );
+    const ticketRunsAfterSecondSummons = await readdir(
+      dirname(first.admitted!.runDirectory),
+    );
+    assert.deepEqual(
+      ticketRunsAfterSecondSummons.filter((entry) => entry.endsWith("@countersign")),
+      ["01a0sign00-0000-7000-8000-00000000s001@countersign"],
+      "same-ticket resume must not materialize a provisional run directory",
+    );
     // A dispatched body turn on re-summons must be resume on the prior run.
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "resume");
