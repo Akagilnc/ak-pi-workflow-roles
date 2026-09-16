@@ -254,6 +254,20 @@ export async function readTicketProvenance(
     seen.add(position);
     legacySourcePositions.set(s, seen);
   };
+  const remapCoverage = <T>(
+    coverage: Map<number, Set<T>>,
+    priorIndexes: readonly number[],
+  ): void => {
+    const normalized = new Map<number, Set<T>>();
+    for (const [s, values] of coverage) {
+      const target = priorIndexes[s] ?? s;
+      const union = normalized.get(target) ?? new Set<T>();
+      for (const value of values) union.add(value);
+      normalized.set(target, union);
+    }
+    coverage.clear();
+    for (const [s, values] of normalized) coverage.set(s, values);
+  };
   let sawFirst = false;
   for (let index = 0; index < physical.length; index += 1) {
     const raw = physical[index]!;
@@ -280,10 +294,12 @@ export async function readTicketProvenance(
     const commit = projectTicketProvenanceCommit(parsed);
     if (commit !== undefined) {
       const merged = mergeSessionBounds(header?.sessions, commit.sessions);
+      remapCoverage(sourceIdentities, merged.priorIndexes);
+      remapCoverage(legacySourcePositions, merged.priorIndexes);
       const remapped: TicketProvenanceLine[] = [];
       for (const entry of commit.lines) {
         if (typeof entry === "string") { unprojectedRaw.push(entry); continue; }
-        const s = merged.incomingIndexes[entry.s] ?? entry.s;
+        const s = merged.incomingIndexes[entry.s] ?? merged.priorIndexes[entry.s] ?? entry.s;
         if ("raw" in entry) {
           if (entry.sourceIdentity !== undefined) {
             if (rememberIdentity(s, entry.sourceIdentity)) unprojectedRaw.push(entry.raw);

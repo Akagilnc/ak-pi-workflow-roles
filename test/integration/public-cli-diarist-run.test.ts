@@ -2025,9 +2025,11 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     // ranges split across entries. Coverage comes from persisted source positions,
     // not whichever alias range happened to overwrite another in a Map.
     const aliasHistoryPath = join(home, ".claude", "projects", "probe", "alias-history.jsonl");
+    const aliasRaw = "{alias-history-unprojected";
     const aliasIdlessText = "别名历史中的无 id 发言";
     const aliasNewId = "msg-alias-history-new";
     await writeFile(aliasHistoryPath, [
+      aliasRaw,
       JSON.stringify({ type: "user", message: { role: "user", content: aliasIdlessText } }),
       JSON.stringify({ type: "assistant", uuid: "alias-runner", message: { role: "assistant", content: "已记录" } }),
       JSON.stringify({ type: "user", uuid: aliasNewId, message: { role: "user", content: "别名历史后的新增发言" } }),
@@ -2044,17 +2046,32 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
         ],
       }),
       JSON.stringify({
+        kind: "ticket-provenance",
+        timestamp: "2026-01-02T00:00:00.000Z",
+        payload: {
+          type: "ticket-provenance-append",
+          sessions: [],
+          lines: [{
+            raw: aliasRaw,
+            s: 1,
+            sourcePosition: 0,
+            sourceIdentity: "after\u0000<start>\u00001",
+          }],
+        },
+      }),
+      JSON.stringify({
         speaker: "owner",
         s: 0,
-        sourcePosition: 0,
-        sourceIdentity: "after\u0000<start>\u00001",
+        sourcePosition: 1,
+        sourceIdentity: "after\u0000<start>\u00002",
         text: aliasIdlessText,
       }),
     ].join("\n") + "\n", "utf8");
     const afterAliasHistory = await runDiarist(
       "01a0diar00-0000-7000-8000-00000000009c",
-      [{ path: aliasHistoryPath, ranges: [{ from: { line: 1 }, to: { line: 3 } }] }],
+      [{ path: aliasHistoryPath, ranges: [{ from: { line: 1 }, to: { line: 4 } }] }],
     );
+    assert.equal(afterAliasHistory.unprojectedRaw.filter((raw) => raw === aliasRaw).length, 1);
     assert.equal(afterAliasHistory.lines.filter((line) => line.text === aliasIdlessText).length, 1);
     assert.equal(afterAliasHistory.lines.filter((line) => line.id === aliasNewId).length, 1);
   });
