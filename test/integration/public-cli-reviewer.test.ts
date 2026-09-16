@@ -39,6 +39,7 @@ import {
 import {
   loadResumableReviewerRun,
   markRunAdmitted,
+  readRoleRunState,
   markRunResumable,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
@@ -803,6 +804,10 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         result.terminal?.reviewerChildren?.completeness,
         result.terminal?.reviewerChildren?.correctness,
       ]);
+      assert.equal(
+        (await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state,
+        "terminal",
+      );
     }
 
     // One summons exception must not discard the sibling's original Terminal.
@@ -1335,7 +1340,9 @@ test("default reviewer resume preserves the frozen dual-axis shape", async () =>
     const lenses: string[] = [];
     const dialogues: string[] = [];
     const { io, stdout } = captureIo();
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+    const resumed = await runAkRole([
+      "resume", "--model", "test/caller-seat:high", runId, "--opaque-current-message",
+    ], {
       packageRoot,
       home,
       cwd: project,
@@ -1366,8 +1373,13 @@ test("default reviewer resume preserves the frozen dual-axis shape", async () =>
     });
     assert.equal(resumed.exitCode, 0, stdout.join(""));
     assert.deepEqual(lenses.sort(), ["completeness", "correctness"]);
-    assert.equal(dialogues.every((dialogue) => dialogue.includes("--opaque-resume-request")), true);
+    assert.equal(dialogues.every((dialogue) => dialogue.includes("--opaque-current-message")), true);
+    assert.equal(dialogues.every((dialogue) => !dialogue.includes("--opaque-resume-request")), true);
     assert.equal(resumed.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
     assert.equal(resumed.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
+    assert.equal(
+      (await readRoleRunState(admitted.runDirectory, piDurablePrincipalAuthority))?.state,
+      "terminal",
+    );
   });
 });

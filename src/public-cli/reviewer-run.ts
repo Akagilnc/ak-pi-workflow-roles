@@ -142,34 +142,54 @@ function reviewerResumePrompt(env: ReviewerRunEnv, message?: string): string {
   ).join("\n");
 }
 
-async function runParallelReviewer(
-  admitted: AdmittedReviewerInvocation,
+function createParallelReviewerExecution(
+  admitted: () => AdmittedReviewerInvocation,
+  instruction: () => string,
   env: ReviewerRunEnv,
-  io: CliIo,
-): Promise<{ exitCode: number; admitted: AdmittedReviewerInvocation; terminal: TerminalResult }> {
-  const { summonParallelReviewerLenses } = await import("../public-role-summons.ts");
-  const children = await summonParallelReviewerLenses({
-    projectRoot: admitted.projectRoot,
-    baseRevision: admitted.baseRevision,
-    authorityRefs: admitted.authorityRefs,
-    instruction: admitted.instruction,
-    home: env.home,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...(env.host === undefined ? {} : { host: env.host }),
-    ...(env.engine === undefined ? {} : { engine: env.engine }),
-    ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
-    packageRoot: env.packageRoot,
-    ...(env.signal === undefined ? {} : { signal: env.signal }),
-    correlationId: admitted.runId,
-    roleTurnHost: env.roleTurnHost,
-    ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
-  });
-  const terminal = await settleParallelReviewerTerminalResult(admitted, children);
-  io.stdout((await import("./terminal.ts")).formatTerminalResult(terminal));
+) {
+  let children: Awaited<ReturnType<typeof import("../public-role-summons.ts").summonParallelReviewerLenses>> | undefined;
+  const fallback = reviewerAdapters(env.packageRoot);
+  const adapters: PostAdmissionAdapters<AdmittedReviewerInvocation> = {
+    async trySettle(parent, authority, scope) {
+      if (parent.lens !== "all") return fallback.trySettle(parent, authority, scope);
+      if (children === undefined) return undefined;
+      return settleParallelReviewerTerminalResult(parent, children);
+    },
+    shouldPresentSettled: (terminal) =>
+      admitted().lens === "all" || terminal.roleOutcome.kind === "accepted",
+    ...(fallback.resolveRunnerKnownFailure === undefined
+      ? {}
+      : { resolveRunnerKnownFailure: fallback.resolveRunnerKnownFailure }),
+  };
   return {
-    exitCode: terminal.roleOutcome.kind === "failure" ? 1 : 0,
-    admitted,
-    terminal,
+    env: {
+      ...env,
+      roleTurnHost: {
+        async executeTurn(request: RoleTurnRequest) {
+          const parent = admitted();
+          if (parent.lens !== "all") return env.roleTurnHost.executeTurn(request);
+          const { summonParallelReviewerLenses } = await import("../public-role-summons.ts");
+          children = await summonParallelReviewerLenses({
+            projectRoot: parent.projectRoot,
+            baseRevision: parent.baseRevision,
+            authorityRefs: parent.authorityRefs,
+            instruction: instruction(),
+            home: env.home,
+            ...(env.model === undefined ? {} : { model: env.model }),
+            ...(env.host === undefined ? {} : { host: env.host }),
+            ...(env.engine === undefined ? {} : { engine: env.engine }),
+            ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+            packageRoot: env.packageRoot,
+            ...(env.signal === undefined ? {} : { signal: env.signal }),
+            correlationId: parent.runId,
+            roleTurnHost: env.roleTurnHost,
+            ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+          });
+          return { code: 0, stderr: "", timedOut: false };
+        },
+      },
+    },
+    adapters,
   };
 }
 
@@ -217,17 +237,34 @@ export async function runPublicReviewer(
   await markRunAdmitted(admitted, env.principalAuthority);
 
   if (admitted.lens === "all") {
-    try {
-      return await runParallelReviewer(admitted, env, io);
-    } catch (error) {
-      return (await presentControlledFailure(
-        admitted,
-        { timedOut: false, code: null, stderr: "", thrown: error },
-        reviewerAdapters(env.packageRoot),
-        env.principalAuthority,
-        io,
-      )) as { exitCode: number; admitted: AdmittedReviewerInvocation; terminal: TerminalResult };
-    }
+    const parallel = createParallelReviewerExecution(
+      () => admitted,
+      () => admitted.instruction,
+      env,
+    );
+    return await runPostAdmissionResumable({
+      admitted,
+      env: parallel.env,
+      io,
+      buildInitialRequest: () => buildReviewerTurnRequest(admitted, {
+        packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...pickEngineAxis(env),
+        continuation: { kind: "initial", prompt: admitted.instruction },
+      }),
+      buildResumeRequest: () => buildReviewerTurnRequest(admitted, {
+        packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...pickEngineAxis(env),
+        continuation: { kind: "resume", prompt: reviewerResumePrompt(env) },
+      }),
+      adapters: parallel.adapters,
+      ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+    });
   }
 
   let methodMaterial: PackagedMethodSkillMaterial;
@@ -308,13 +345,23 @@ export async function runPublicReviewerResume(
   admitted?: AdmittedReviewerInvocation;
   terminal?: TerminalResult;
 }> {
+  let activeAdmitted: AdmittedReviewerInvocation | undefined;
+  const parallel = createParallelReviewerExecution(
+    () => {
+      if (activeAdmitted === undefined) throw new Error("reviewer resume admission is not loaded");
+      return activeAdmitted;
+    },
+    () => request.message ?? "",
+    env,
+  );
   return await runPostAdmissionSeatResume({
     request,
-    env,
+    env: parallel.env,
     io,
     load: (effective) =>
       loadResumableReviewerRun(env.home, effective.runId, env.principalAuthority),
     buildTurnRequest: (admitted, effective) => {
+      activeAdmitted = admitted;
       const base = resumeTurnRequestProjectionOptions(admitted, effective, env);
       return buildReviewerTurnRequest(admitted, {
         ...base,
@@ -324,11 +371,11 @@ export async function runPublicReviewerResume(
         },
       });
     },
-    adapters: reviewerAdapters(env.packageRoot),
+    adapters: parallel.adapters,
     afterAdmittedLoad: async (admitted) => {
+      activeAdmitted = admitted;
       if (admitted.lens === "all") {
-        const result = await runParallelReviewer(admitted, env, io);
-        return { kind: "terminal" as const, ...result };
+        return { kind: "continue" as const, adapters: parallel.adapters };
       }
       return resolveResumeMethodMaterialAdapters({
         admitted,
