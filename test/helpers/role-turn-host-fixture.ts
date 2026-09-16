@@ -4,7 +4,7 @@
  * Also owns the one scripted terminating-tool session writer (#502 DRY).
  */
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import {
@@ -46,9 +46,110 @@ export function argvFlagValue(
 }
 
 /**
+ * Wall-clock pair for session rows. Only total order matters (#843 multi-call /
+ * malformed variants share this one writer with scriptedTerminatingToolSession).
+ */
+export function sessionRowTime(n: number): { iso: string; ts: number } {
+  const s = n % 60;
+  const m = Math.floor(n / 60) % 60;
+  const h = Math.floor(n / 3600) % 24;
+  const p = (x: number) => String(x).padStart(2, "0");
+  return { iso: `2026-08-30T${p(h)}:${p(m)}:${p(s)}.000Z`, ts: n };
+}
+
+/** Top-level user message row. */
+export function sessionUserMessageRow(
+  id: string,
+  content: string,
+  n: number,
+) {
+  const t = sessionRowTime(n);
+  return {
+    type: "message" as const,
+    id,
+    parentId: null,
+    timestamp: t.iso,
+    message: { role: "user" as const, content, timestamp: t.ts },
+  };
+}
+
+/**
+ * Bound toolCall+toolResult pair, or orphan toolResult when `bound` is false.
+ * `isError: "omit"` leaves the field absent (malformed non-success decoy).
+ */
+export function sessionToolExchangeRows(input: {
+  readonly stem: string;
+  readonly parentId: string;
+  readonly callId: string;
+  readonly toolName: string;
+  readonly details: unknown;
+  readonly body: string;
+  readonly isError: boolean | "omit";
+  readonly n: number;
+  readonly bound?: boolean;
+}) {
+  const bound = input.bound !== false;
+  const callT = sessionRowTime(input.n);
+  const resultT = sessionRowTime(input.n + 1);
+  const assistantId = `assistant-${input.stem}`;
+  const resultMessage: Record<string, unknown> = {
+    role: "toolResult",
+    toolCallId: input.callId,
+    toolName: input.toolName,
+    content: [{ type: "text", text: input.body }],
+    details: input.details,
+    timestamp: resultT.ts,
+  };
+  if (input.isError !== "omit") resultMessage.isError = input.isError;
+  const result = {
+    type: "message" as const,
+    id: `result-${input.stem}`,
+    parentId: bound ? assistantId : input.parentId,
+    timestamp: resultT.iso,
+    message: resultMessage,
+  };
+  if (!bound) return [result] as const;
+  return [
+    {
+      type: "message" as const,
+      id: assistantId,
+      parentId: input.parentId,
+      timestamp: callT.iso,
+      message: {
+        role: "assistant" as const,
+        content: [{
+          type: "toolCall" as const,
+          id: input.callId,
+          name: input.toolName,
+          arguments: input.details,
+        }],
+        timestamp: callT.ts,
+      },
+    },
+    result,
+  ] as const;
+}
+
+/** Write session JSONL rows (replace or append). */
+export async function writeSessionJsonl(
+  sessionFile: string,
+  rows: readonly unknown[],
+  mode: "replace" | "append" = "replace",
+): Promise<void> {
+  if (mode === "replace") await mkdir(join(sessionFile, ".."), { recursive: true });
+  const chunk = `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`;
+  if (mode === "append") {
+    await writeFile(sessionFile, `${await readFile(sessionFile, "utf8")}${chunk}`, "utf8");
+    return;
+  }
+  await writeFile(sessionFile, chunk, "utf8");
+}
+
+/**
  * One authority: write a terminating-tool session JSONL and optionally return
  * sealedAcceptance. Seats pass role / toolName / details only — no per-seat
- * session-row or flagValue copies (#502).
+ * session-row or flagValue copies (#502). Multi-call / malformed shapes use the
+ * same row helpers above (#843).
  */
 export function scriptedTerminatingToolSession(input: {
   readonly role: TerminalRoleName;
@@ -65,56 +166,22 @@ export function scriptedTerminatingToolSession(input: {
   const toolCallId = input.toolCallId ?? `call_${input.role}_1`;
   const acceptedText = input.acceptedText ?? `${input.role} output accepted`;
   const rows = [
-    {
-      type: "message",
-      id: "user-1",
-      parentId: null,
-      timestamp: "2026-08-30T00:00:00.000Z",
-      message: { role: "user", content: "kickoff", timestamp: 1 },
-    },
-    {
-      type: "message",
-      id: "assistant-1",
+    sessionUserMessageRow("user-1", "kickoff", 1),
+    ...sessionToolExchangeRows({
+      stem: "1",
       parentId: "user-1",
-      timestamp: "2026-08-30T00:00:01.000Z",
-      message: {
-        role: "assistant",
-        content: [
-          {
-            type: "toolCall",
-            id: toolCallId,
-            name: input.toolName,
-            arguments: input.details,
-          },
-        ],
-        timestamp: 2,
-      },
-    },
-    {
-      type: "message",
-      id: "result-1",
-      parentId: "assistant-1",
-      timestamp: "2026-08-30T00:00:02.000Z",
-      message: {
-        role: "toolResult",
-        toolCallId,
-        toolName: input.toolName,
-        content: [{ type: "text", text: acceptedText }],
-        details: input.details,
-        isError,
-        timestamp: 3,
-      },
-    },
+      callId: toolCallId,
+      toolName: input.toolName,
+      details: input.details,
+      body: acceptedText,
+      isError,
+      n: 2,
+    }),
   ];
   return async (extraArgs) => {
     const sessionFile = argvFlagValue(extraArgs, "--session");
     assert.ok(sessionFile);
-    await mkdir(join(sessionFile, ".."), { recursive: true });
-    await writeFile(
-      sessionFile,
-      `${rows.map((row) => JSON.stringify(row)).join("\n")}\n`,
-      "utf8",
-    );
+    await writeSessionJsonl(sessionFile, rows);
     return {
       code: 0,
       timedOut: false,
