@@ -1621,30 +1621,53 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(afterOverlap.unprojectedRaw.filter((raw) => raw === rawB).length, 1);
     assert.equal(afterOverlap.lines.filter((line) => line.id === sessionBSecondId).length, 1);
 
-    // Historical id bounds are carried facts, not prerequisites: source rotation may
-    // remove an old endpoint while a new range in the same session remains valid.
+    // A partially stale historical range still contributes its surviving overlap.
+    // Removing only the old end bound must not replay the id-less/raw prefix.
     const rotatingPath = join(home, ".claude", "projects", "probe", "rotating.jsonl");
-    const oldRotatingId = "msg-rotating-old";
+    const rotatingStartId = "msg-rotating-start";
+    const rotatingEndId = "msg-rotating-end";
     const newRotatingId = "msg-rotating-new";
-    await writeFile(rotatingPath, `${JSON.stringify({
+    const rotatingIdlessText = "轮转范围内无原生 id";
+    const rotatingRaw = "{rotating unreadable";
+    const rotatingStart = JSON.stringify({
       type: "user",
-      uuid: oldRotatingId,
-      message: { role: "user", content: [{ type: "text", text: "轮转前" }] },
-    })}\n`, "utf8");
+      uuid: rotatingStartId,
+      message: { role: "user", content: [{ type: "text", text: "轮转起点" }] },
+    });
+    const rotatingIdless = JSON.stringify({
+      type: "user",
+      message: { role: "user", content: [{ type: "text", text: rotatingIdlessText }] },
+    });
+    const rotatingEnd = JSON.stringify({
+      type: "user",
+      uuid: rotatingEndId,
+      message: { role: "user", content: [{ type: "text", text: "待删除终点" }] },
+    });
+    await writeFile(
+      rotatingPath,
+      [rotatingStart, rotatingIdless, rotatingRaw, rotatingEnd].join("\n") + "\n",
+      "utf8",
+    );
     await runDiarist("01a0diar00-0000-7000-8000-000000000097c", [{
       path: rotatingPath,
-      ranges: [{ from: { id: oldRotatingId }, to: { id: oldRotatingId } }],
+      ranges: [{ from: { id: rotatingStartId }, to: { id: rotatingEndId } }],
     }]);
-    await writeFile(rotatingPath, `${JSON.stringify({
+    const rotatingNew = JSON.stringify({
       type: "user",
       uuid: newRotatingId,
       message: { role: "user", content: [{ type: "text", text: "轮转后" }] },
-    })}\n`, "utf8");
+    });
+    await writeFile(
+      rotatingPath,
+      [rotatingStart, rotatingIdless, rotatingRaw, rotatingNew].join("\n") + "\n",
+      "utf8",
+    );
     const afterRotation = await runDiarist(
       "01a0diar00-0000-7000-8000-000000000097d",
-      [{ path: rotatingPath, ranges: [{ from: { id: newRotatingId }, to: { id: newRotatingId } }] }],
+      [{ path: rotatingPath, ranges: [{ from: { id: rotatingStartId }, to: { id: newRotatingId } }] }],
     );
-    assert.equal(afterRotation.lines.filter((line) => line.id === oldRotatingId).length, 1);
+    assert.equal(afterRotation.lines.filter((line) => line.text === rotatingIdlessText).length, 1);
+    assert.equal(afterRotation.unprojectedRaw.filter((raw) => raw === rotatingRaw).length, 1);
     assert.equal(afterRotation.lines.filter((line) => line.id === newRotatingId).length, 1);
 
     // 验收 4：历史源 S1 不可达后，只交新范围 B（S2）仍成功；再交已声明 A 为 no-op。
@@ -1662,7 +1685,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     );
     assert.equal(
       afterGoneB.lines.length,
-      7,
+      9,
       "resubmit declared bounds while S1 gone is no-op",
     );
     assert.equal(
