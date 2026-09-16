@@ -21,12 +21,16 @@
  * continues the body (r5 unbound-continue). Bound refresh hands the typed key to
  * 起居郎 so freeze loads issue face (ADR 0075: 每次过庭都跑是调用者用法 / typed handoff).
  */
-import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
-import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
-import { CliUsageError } from "./cli-errors.ts";
+import type {
+  DurablePrincipalAuthority,
+  RoleTurnRequest,
+} from "../host-contracts.ts";
 import {
-  projectCourtTicketNumbers,
-} from "../diarist-contracts.ts";
+  engineSessionMaterialFromOptions,
+  pickEngineAxis,
+} from "../package-resources/engine-material.ts";
+import { CliUsageError } from "./cli-errors.ts";
+import { projectCourtTicketNumbers } from "../diarist-contracts.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import {
   admitCountersignInvocation,
@@ -155,11 +159,15 @@ function courtTicketNumbersFromOutcome(
     roleOutcome.kind === "accepted" ||
     roleOutcome.kind === "audit_escalation" ||
     roleOutcome.kind === "failure"
-      ? roleOutcome.payloads ?? []
+      ? (roleOutcome.payloads ?? [])
       : [];
   let latest: readonly number[] | undefined;
   for (const payload of payloads) {
-    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
+    if (
+      typeof payload !== "object" ||
+      payload === null ||
+      Array.isArray(payload)
+    ) {
       continue;
     }
     const record = payload as Record<string, unknown>;
@@ -173,25 +181,34 @@ function courtTicketNumbersFromOutcome(
     if (members.length === 0) {
       // Literal [] is the intentional principal-only replace; non-empty garbage is not.
       if (raw.length === 0) {
-        latest = projectCourtTicketNumbers([], { principalTicket }) ?? undefined;
+        latest =
+          projectCourtTicketNumbers([], { principalTicket }) ?? undefined;
       }
       continue;
     }
-    latest =
-      projectCourtTicketNumbers(raw, { principalTicket }) ?? undefined;
+    latest = projectCourtTicketNumbers(raw, { principalTicket }) ?? undefined;
   }
   return latest;
 }
 
 /** Routing boolean over the child's own typed sequence — does not pick or rewrite a sole row. */
-function courtDiaristEscalated(roleOutcome: TerminalRoleOutcome | undefined): boolean {
+function courtDiaristEscalated(
+  roleOutcome: TerminalRoleOutcome | undefined,
+): boolean {
   if (roleOutcome === undefined) return false;
   if (roleOutcome.kind === "audit_escalation") return true;
   if (roleOutcome.kind !== "accepted") return false;
   return (roleOutcome.payloads ?? []).some((payload) => {
-    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+    if (
+      typeof payload !== "object" ||
+      payload === null ||
+      Array.isArray(payload)
+    )
+      return false;
     const record = payload as Record<string, unknown>;
-    return record.status === "escalate" || record.countersignStatus === "escalate";
+    return (
+      record.status === "escalate" || record.countersignStatus === "escalate"
+    );
   });
 }
 
@@ -203,14 +220,20 @@ function courtDiaristEscalated(roleOutcome: TerminalRoleOutcome | undefined): bo
  * When `boundTicketNumber` is set (typed handoff from countersign), diarist
  * binds under that key before the turn — never mechanical recognition from prose.
  */
-export async function invokeCourtDiarist(input: {
-  readonly instruction: string;
-  readonly projectRoot: string;
-  readonly failureLabel: string;
-  readonly attachmentPaths?: readonly string[];
-  /** Already-verified typed key from countersign (refresh / post-assert handoff). */
-  readonly boundTicketNumber?: number;
-}, env: CourtDiaristSummonEnv, io: CliIo): Promise<CourtDiaristInvocationResult> {
+export async function invokeCourtDiarist(
+  input: {
+    readonly instruction: string;
+    readonly projectRoot: string;
+    readonly failureLabel: string;
+    readonly attachmentPaths?: readonly string[];
+    /** Direct parent run id for durable child lineage (ADR 0010). */
+    readonly correlationId?: string;
+    /** Already-verified typed key from countersign (refresh / post-assert handoff). */
+    readonly boundTicketNumber?: number;
+  },
+  env: CourtDiaristSummonEnv,
+  io: CliIo,
+): Promise<CourtDiaristInvocationResult> {
   // Quiet face: the countersign caller must not see diarist CLI chatter.
   const quietIo: CliIo = {
     stdout() {},
@@ -237,12 +260,17 @@ export async function invokeCourtDiarist(input: {
     io: quietIo,
     ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
     ...(env.signal === undefined ? {} : { signal: env.signal }),
+    ...(input.correlationId === undefined
+      ? {}
+      : { correlationId: input.correlationId }),
     ...(input.boundTicketNumber === undefined
       ? {}
       : { boundTicketNumber: input.boundTicketNumber }),
     // Child seat selects from the composition-root table. Do not pass the
     // already-selected parent adapter (#840 / ADR 0082: --host 旗标>席位配置>缺省 pi).
-    ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+    ...(env.hostAdapters === undefined
+      ? {}
+      : { hostAdapters: env.hostAdapters }),
   });
 
   const roleOutcome = result.terminal?.roleOutcome;
@@ -267,9 +295,13 @@ export async function invokeCourtDiarist(input: {
     };
   }
 
-  const asserted = (result.admitted as { ticketNumber?: number } | undefined)?.ticketNumber;
+  const asserted = (result.admitted as { ticketNumber?: number } | undefined)
+    ?.ticketNumber;
   if (isSafePositiveTicketNumber(asserted)) {
-    const courtTicketNumbers = courtTicketNumbersFromOutcome(roleOutcome, asserted);
+    const courtTicketNumbers = courtTicketNumbersFromOutcome(
+      roleOutcome,
+      asserted,
+    );
     return {
       identity: {
         kind: "ticket",
@@ -331,6 +363,7 @@ export async function runCountersignCourtDiaristStation(
         instruction: `整理 #${ticketNumber} 的本案依据。`,
         projectRoot: admitted.projectRoot,
         failureLabel: `ticket #${ticketNumber}`,
+        correlationId: admitted.runId,
         // Refresh holds a typed key — hand it off so identity is bound before turn.
         boundTicketNumber: ticketNumber,
       },
@@ -344,7 +377,9 @@ export async function runCountersignCourtDiaristStation(
       );
     }
     if (outcome.failedWithoutEscalate !== undefined) {
-      throw new StationChildExhaustedError(outcome.failedWithoutEscalate.diagnostic);
+      throw new StationChildExhaustedError(
+        outcome.failedWithoutEscalate.diagnostic,
+      );
     }
   }
 }
@@ -379,9 +414,13 @@ export async function runPublicCountersign(
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
-      ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.createRunId === undefined
+        ? {}
+        : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
-      ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+      ...(env.correlationId === undefined
+        ? {}
+        : { correlationId: env.correlationId }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -410,6 +449,7 @@ export async function runPublicCountersign(
         instruction: parsed.instruction,
         projectRoot: admitted.projectRoot,
         failureLabel: "unbound summons",
+        correlationId: admitted.runId,
       },
       env,
       io,
@@ -653,7 +693,9 @@ export async function runPublicCountersignResume(
         // #871 B7: durable set damage already identified at load — settle as
         // station-child exhausted → presentControlledFailure (not structural exit 2).
         if (admitted.courtTicketNumbersDamage !== undefined) {
-          throw new StationChildExhaustedError(admitted.courtTicketNumbersDamage);
+          throw new StationChildExhaustedError(
+            admitted.courtTicketNumbersDamage,
+          );
         }
         // #871: same-ticket re-summons may hand a fresh typed set from identity.
         // Whole-set replace onto this run fact; no new set → keep stored set.

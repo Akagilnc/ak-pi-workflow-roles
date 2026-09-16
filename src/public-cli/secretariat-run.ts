@@ -4,8 +4,14 @@
  * Instruction-seat face like Judge; nested countersign is role-tool driven.
  * Ticket identity reuses the court diarist seam (no prose regex; no second lifecycle).
  */
-import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
-import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
+import type {
+  DurablePrincipalAuthority,
+  RoleTurnRequest,
+} from "../host-contracts.ts";
+import {
+  engineSessionMaterialFromOptions,
+  pickEngineAxis,
+} from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitSecretariatInvocation,
@@ -74,7 +80,9 @@ function diaristEnv(env: SecretariatRunEnv): CourtDiaristSummonEnv {
     packageRoot: env.packageRoot,
     ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
     ...(env.signal === undefined ? {} : { signal: env.signal }),
-    ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+    ...(env.hostAdapters === undefined
+      ? {}
+      : { hostAdapters: env.hostAdapters }),
   };
 }
 
@@ -108,9 +116,13 @@ export async function runPublicSecretariat(
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
-      ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.createRunId === undefined
+        ? {}
+        : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
-      ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+      ...(env.correlationId === undefined
+        ? {}
+        : { correlationId: env.correlationId }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -131,7 +143,10 @@ export async function runPublicSecretariat(
       instruction: parsed.instruction,
       projectRoot: admitted.projectRoot,
       failureLabel: "secretariat unbound summons",
-      attachmentPaths: admitted.attachments.map((attachment) => attachment.frozenPath),
+      attachmentPaths: admitted.attachments.map(
+        (attachment) => attachment.frozenPath,
+      ),
+      correlationId: admitted.runId,
     },
     diaristEnv(env),
     io,

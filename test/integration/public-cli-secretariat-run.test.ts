@@ -23,7 +23,10 @@ import type {
   RoleTurnHost,
   RoleTurnRequest,
 } from "../../src/host-contracts.ts";
-import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
+import {
+  runAkRole,
+  type NamedRoleTurnHostAdapter,
+} from "../../src/public-cli/cli.ts";
 import {
   findRunDirectoryById,
   readRoleRunState,
@@ -53,7 +56,9 @@ import {
   resolveSitianRecordPathInLedger,
 } from "../../src/sitian-facade.ts";
 
-async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
+async function withTempHome<T>(
+  scenario: (home: string) => Promise<T>,
+): Promise<T> {
   return withTempRoot("ak-public-cli-secretariat-", async (home) => {
     const quiet = captureIo().io;
     await runAkRole(
@@ -136,8 +141,7 @@ function courtDiaristFor924(): LegacyFauxPiRunner {
       getAllTools: () =>
         registered === undefined ? [] : [{ name: registered.name }],
       setActiveTools() {},
-      getActiveTools: () =>
-        registered === undefined ? [] : [registered.name],
+      getActiveTools: () => (registered === undefined ? [] : [registered.name]),
     } as unknown as RoleHost;
     await createDiaristRoleRuntime(host, {
       loadSoul: async () => "起居郎职分（测试装载）",
@@ -210,12 +214,14 @@ function nestedCountersignHost(input: {
             ctx: HostContext,
           ) => Promise<{ details?: unknown; terminate?: boolean }>;
         }
-      >;
+      >();
       let active: string[] = [];
       const roleHost = {
         registerTool(tool: {
           name: string;
-          execute: (typeof tools extends Map<string, infer V> ? V : never)["execute"];
+          execute: (typeof tools extends Map<string, infer V>
+            ? V
+            : never)["execute"];
         }) {
           tools.set(tool.name, tool);
         },
@@ -308,7 +314,9 @@ function secretariatHostDrivingRealTools(input: {
     packageRoot: input.packageRoot,
     sequence: input.countersignSequence,
     gateCalls: input.gateCalls,
-    ...(input.diaristRunDirectories === undefined ? {} : { diaristRunDirectories: input.diaristRunDirectories }),
+    ...(input.diaristRunDirectories === undefined
+      ? {}
+      : { diaristRunDirectories: input.diaristRunDirectories }),
   });
   const hostAdapters = [adapter("pi", nested)];
 
@@ -335,12 +343,14 @@ function secretariatHostDrivingRealTools(input: {
             ctx: HostContext,
           ) => Promise<{ details?: unknown; terminate?: boolean }>;
         }
-      >;
+      >();
       let active: string[] = [];
       const roleHost = {
         registerTool(tool: {
           name: string;
-          execute: (typeof tools extends Map<string, infer V> ? V : never)["execute"];
+          execute: (typeof tools extends Map<string, infer V>
+            ? V
+            : never)["execute"];
         }) {
           tools.set(tool.name, tool);
         },
@@ -593,10 +603,7 @@ test("public secretariat through-line: default summon → continue → same-run 
       /\/924\/runs\//,
       `parent run must bind under ticket 924; got ${parentRunDir}`,
     );
-    assert.equal(
-      parentRunDir.includes(`${join("unbound", "runs")}`),
-      false,
-    );
+    assert.equal(parentRunDir.includes(`${join("unbound", "runs")}`), false);
     const parentAdmitted = JSON.parse(
       await readFile(join(parentRunDir, "admitted-request.json"), "utf8"),
     ) as { ticketNumber?: number };
@@ -607,13 +614,29 @@ test("public secretariat through-line: default summon → continue → same-run 
         const currentDirectory = await findRunDirectoryById(home, runId);
         assert.ok(currentDirectory);
         return JSON.parse(
-          await readFile(join(currentDirectory, "admitted-request.json"), "utf8"),
-        ) as { attachments?: unknown[] };
+          await readFile(
+            join(currentDirectory, "admitted-request.json"),
+            "utf8",
+          ),
+        ) as { attachments?: unknown[]; correlationId?: string };
       }),
     );
     assert.ok(
-      diaristAdmissions.some((admission) => (admission.attachments?.length ?? 0) > 0),
+      diaristAdmissions.some(
+        (admission) => (admission.attachments?.length ?? 0) > 0,
+      ),
       "identity diarist must receive the secretariat run's frozen attachment",
+    );
+    const diaristCallers = new Set(
+      diaristAdmissions.map((admission) => admission.correlationId),
+    );
+    assert.ok(
+      diaristCallers.has(secretariatRunId),
+      "secretariat identity diarist must record the secretariat as direct caller",
+    );
+    assert.ok(
+      diaristCallers.has(firstRunId as string),
+      "court diarists must record the countersign as direct caller",
     );
 
     const state = await readRoleRunState(
@@ -726,7 +749,10 @@ async function distinctCourtAttemptIds(input: {
   const ids = new Set<string>();
   for (const record of records) {
     const subject = record.subject as { attemptId?: unknown } | undefined;
-    if (typeof subject?.attemptId === "string" && subject.attemptId.length > 0) {
+    if (
+      typeof subject?.attemptId === "string" &&
+      subject.attemptId.length > 0
+    ) {
       ids.add(subject.attemptId);
     }
   }

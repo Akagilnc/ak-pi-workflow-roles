@@ -906,9 +906,7 @@ export function dashedSpellings(
 export function matchDashedOption(
   token: string,
   definitions: readonly PublicOptionDefinition[],
-):
-  | { def: PublicOptionDefinition; inlineValue?: string }
-  | undefined {
+): { def: PublicOptionDefinition; inlineValue?: string } | undefined {
   if (!token.startsWith("-") || token === "-") return undefined;
   for (const def of definitions) {
     if (def.form !== "option") continue;
@@ -982,7 +980,9 @@ export type TypedOptionConsumer = {
    * If `token` is a known positional spelling, record it (repeatable-enforced)
    * and return its definition; otherwise undefined.
    */
-  readonly takePositional: (token: string) => PublicOptionDefinition | undefined;
+  readonly takePositional: (
+    token: string,
+  ) => PublicOptionDefinition | undefined;
   /**
    * Consume a leading role phase token from `positional` using the owner's
    * typed `phase` definition (aliases + defaultValue). Mutates `positional`
@@ -1099,7 +1099,9 @@ export function projectOwnerOptions(
     valueMetavar: def.valueMetavar,
     required: def.required,
     repeatable: def.repeatable,
-    ...(def.defaultValue === undefined ? {} : { defaultValue: def.defaultValue }),
+    ...(def.defaultValue === undefined
+      ? {}
+      : { defaultValue: def.defaultValue }),
     form: def.form,
     ...(def.phases === undefined ? {} : { phases: def.phases }),
     ...(def.modes === undefined ? {} : { modes: def.modes }),
@@ -1154,10 +1156,7 @@ export const PUBLIC_NAVIGATOR_HELP_NOTE =
 const TOP_LEVEL_HELP = {
   command: "top",
   summary: "public role CLI",
-  usage: [
-    "ak-role <command> [options]",
-    "ak-role help <command>",
-  ],
+  usage: ["ak-role <command> [options]", "ak-role help <command>"],
   examples: [
     'ak-role judge --attach ./plan.md "Review this plan."',
     'ak-role coder plan "Propose the first implementation plan."',
@@ -1176,7 +1175,8 @@ const ROLE_COMMAND_HELP = {
   },
   countersign: {
     command: "countersign",
-    summary: "Ticket-court review before work starts; five questions, 署/封驳/上呈.",
+    summary:
+      "Ticket-court review before work starts; five questions, 署/封驳/上呈.",
     usage: ["ak-role countersign [options] [instruction]"],
     examples: [
       'ak-role countersign --attach ./ticket.md "裁：本票 #582 是否足以开工。"',
@@ -1225,7 +1225,7 @@ const ROLE_COMMAND_HELP = {
     usage: ["ak-role collector [--pr <number>] [options] [instruction]"],
     examples: [
       "ak-role collector --pr 42 --repo owner/repository",
-      "ak-role collector --repo owner/repository \"Collect findings for #42\"",
+      'ak-role collector --repo owner/repository "Collect findings for #42"',
       "ak-role collector --pr 42 --request-manifest ./requests.json",
     ],
   },
@@ -1233,13 +1233,12 @@ const ROLE_COMMAND_HELP = {
     command: "doctor",
     summary: "Diagnose one retained case.",
     usage: ["ak-role doctor --issue <number> [options] [instruction]"],
-    examples: [
-      'ak-role doctor --issue 115 "Diagnose this retained case."',
-    ],
+    examples: ['ak-role doctor --issue 115 "Diagnose this retained case."'],
   },
   merger: {
     command: "merger",
-    summary: "Reconcile merge materials in a worktree (escalate when nothing to merge).",
+    summary:
+      "Reconcile merge materials in a worktree (escalate when nothing to merge).",
     usage: ["ak-role merger [options] <instruction>"],
     examples: [
       'ak-role merger --project /path/to/worktree "Reconcile the merge."',
@@ -1247,7 +1246,8 @@ const ROLE_COMMAND_HELP = {
   },
   inspector: {
     command: "inspector",
-    summary: "Direct Inspector (台院) complexity and test-quality check; pass or bounce.",
+    summary:
+      "Direct Inspector (台院) complexity and test-quality check; pass or bounce.",
     usage: ["ak-role inspector [options] [instruction]"],
     examples: [
       'ak-role inspector --attach ./change.patch "Review this material."',
@@ -1263,16 +1263,18 @@ const ROLE_COMMAND_HELP = {
   },
   navigator: {
     command: "navigator",
-    summary: "Direct Navigator (游奕使) route advice: ordered next-role candidates.",
+    summary:
+      "Direct Navigator (游奕使) route advice: ordered next-role candidates.",
     usage: ["ak-role navigator [options] [instruction]"],
-    examples: [
-      'ak-role navigator "刚完成 coder apply 收敛，下一步？"',
-    ],
+    examples: ['ak-role navigator "刚完成 coder apply 收敛，下一步？"'],
   },
   auditor: {
     command: "auditor",
-    summary: "Direct Auditor (审刑院) compliance audit: pass, bounce, or escalate.",
-    usage: ["ak-role auditor --subject <judge|doctor> --source-run <runId@role|path> [options] [instruction]"],
+    summary:
+      "Direct Auditor (审刑院) compliance audit: pass, bounce, or escalate.",
+    usage: [
+      "ak-role auditor --subject <judge|doctor> --source-run <runId@role|path> [options] [instruction]",
+    ],
     examples: [
       'ak-role auditor --subject judge --source-run 01abc…@judge --attach ./dossier "审：本 run 是否合规。"',
       'ak-role auditor --subject doctor --source-run 01abc…@doctor "审：太医候选是否合规。"',
@@ -1291,15 +1293,14 @@ const ROLE_COMMAND_HELP = {
   secretariat: {
     command: "secretariat",
     summary:
-      "Secretariat (中书省): rewrite ticket per 票面法 and drive countersign to converged, continue, or escalate.",
+      "Secretariat (中书省): rewrite ticket per 票面法 and drive countersign to converged or escalate.",
     usage: ["ak-role secretariat [options] [instruction]"],
-    examples: [
-      'ak-role secretariat "整理 #924 票面并送庭。"',
-    ],
+    examples: ['ak-role secretariat "整理 #924 票面并送庭。"'],
   },
   notary: {
     command: "notary",
-    summary: "Direct Notary document check (quote fidelity + ticket alignment); zero prompt/attachment.",
+    summary:
+      "Direct Notary document check (quote fidelity + ticket alignment); zero prompt/attachment.",
     usage: ["ak-role notary --source-run <runId@role|path> [options]"],
     examples: [
       "ak-role notary --source-run 01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
@@ -1331,7 +1332,8 @@ const SUPPORT_COMMAND_HELP = {
   },
   config: {
     command: "config",
-    summary: "Persistent seat model, labor-engine, host, and auto-resume defaults. Host providers live in ~/.ak-roles/host-providers.json (owner-edited).",
+    summary:
+      "Persistent seat model, labor-engine, host, and auto-resume defaults. Host providers live in ~/.ak-roles/host-providers.json (owner-edited).",
     usage: [
       "ak-role config set <seat> <provider/model[:thinking]> [<seat> <spec> ...]",
       "ak-role config unset <gatekeeper|inspector|notary>",
@@ -1366,10 +1368,10 @@ const SUPPORT_COMMAND_HELP = {
     usage: ["ak-role resume <runId> [message]"],
     examples: [
       "ak-role resume 01abc…",
-      "ak-role resume 01abc… \"owner ruling\"",
+      'ak-role resume 01abc… "owner ruling"',
       "ak-role --host grok-build resume 01abc…",
       "ak-role --engine agy resume 01abc…",
-      "ak-role resume --model xai/grok-4.5 01abc… \"owner ruling\"",
+      'ak-role resume --model xai/grok-4.5 01abc… "owner ruling"',
     ],
   },
   new: {
@@ -1442,7 +1444,8 @@ export function renderHumanOwnerOptionLines(
       tags.push(`required:${opt.requiredInModes.join("|")}`);
     }
     if (opt.repeatable) tags.push("repeatable");
-    if (opt.defaultValue !== undefined) tags.push(`default=${opt.defaultValue}`);
+    if (opt.defaultValue !== undefined)
+      tags.push(`default=${opt.defaultValue}`);
     if (opt.form === "positional") tags.push("positional");
     const tagText = tags.length === 0 ? "" : ` [${tags.join(", ")}]`;
     const desc = locale === "zh" ? opt.description.zh : opt.description.en;

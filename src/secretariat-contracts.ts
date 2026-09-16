@@ -1,6 +1,8 @@
 /**
  * Public Secretariat (中书省) terminating receipt contracts.
- * Verdict domain: converged (署) | continue (封驳) | escalate (上呈).
+ * Public terminal domain: converged (署) | escalate (上呈).
+ * A countersign continue is an internal rewrite-and-resubmit fact, not a
+ * Secretariat terminal.
  * (#924) — 原卷保真: the verdict is recognized read-only; no field
  * is defaulted, rewritten, or dropped (ADR 0055).
  */
@@ -14,11 +16,6 @@ export type SecretariatVerdict =
   | {
       secretariatStatus: "converged";
       ticketNumber?: number;
-      note?: string;
-      evidence?: unknown;
-    }
-  | {
-      secretariatStatus: "continue";
       note?: string;
       evidence?: unknown;
     }

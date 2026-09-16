@@ -25,6 +25,7 @@ async function activateSecretariat(options?: {
   }) => Promise<PublicSummonResult>;
   /** Optional pre-existing host-surface tool names (no Pi-name hardcode in role). */
   readonly hostSurfaceTools?: readonly string[];
+  readonly activationCount?: number;
 }): Promise<HostHarness> {
   const tools = new Map<string, { name: string; execute: Function }>();
   let active: string[] = [...(options?.hostSurfaceTools ?? [])];
@@ -50,13 +51,16 @@ async function activateSecretariat(options?: {
       return undefined;
     },
   };
-  await createSecretariatRoleRuntime(roleHost as never, {
+  const runtime = createSecretariatRoleRuntime(roleHost as never, {
     loadSoul: async () => "中书省法",
     packageRoot: "/pkg",
     ...(options?.summonCountersign === undefined
       ? {}
       : { summonCountersign: options.summonCountersign as never }),
-  }).activate();
+  });
+  for (let i = 0; i < (options?.activationCount ?? 1); i += 1) {
+    await runtime.activate();
+  }
   return { tools, activeTools: () => active };
 }
 
@@ -69,9 +73,10 @@ const ctx = {
   abort() {},
 };
 
-test("secretariat activation declares package tools on active surface (G6)", async () => {
+test("secretariat activation and reload declare package tools on active surface (G6)", async () => {
   const { activeTools } = await activateSecretariat({
     hostSurfaceTools: ["host_read", "host_shell"],
+    activationCount: 2,
   });
   const active = activeTools();
   assert.ok(active.includes(SECRETARIAT_OUTPUT_TOOL_NAME));
@@ -83,13 +88,15 @@ test("secretariat activation declares package tools on active surface (G6)", asy
 
 test("secretariat output records any status without shape reject (第 0 条)", async () => {
   const { tools } = await activateSecretariat();
-  const converged = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
-    "c1",
-    { secretariatStatus: "converged", ticketNumber: 924 },
-    undefined,
-    undefined,
-    ctx,
-  );
+  const converged = await tools
+    .get(SECRETARIAT_OUTPUT_TOOL_NAME)!
+    .execute(
+      "c1",
+      { secretariatStatus: "converged", ticketNumber: 924 },
+      undefined,
+      undefined,
+      ctx,
+    );
   assert.equal(converged.terminate, true);
   assert.equal(
     (converged.details as { secretariatStatus: string }).secretariatStatus,
@@ -112,27 +119,16 @@ test("secretariat output records any status without shape reject (第 0 条)", a
     "escalate",
   );
 
-  const continued = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
-    "c3",
-    { secretariatStatus: "continue" },
-    undefined,
-    undefined,
-    ctx,
-  );
-  assert.equal(continued.terminate, true);
-  assert.equal(
-    (continued.details as { secretariatStatus: string }).secretariatStatus,
-    "continue",
-  );
-
   // 第 0 条 / #924: tool only records; non-canonical status is not code-rejected.
-  const other = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
-    "c4",
-    { secretariatStatus: "unexpected" },
-    undefined,
-    undefined,
-    ctx,
-  );
+  const other = await tools
+    .get(SECRETARIAT_OUTPUT_TOOL_NAME)!
+    .execute(
+      "c3",
+      { secretariatStatus: "unexpected" },
+      undefined,
+      undefined,
+      ctx,
+    );
   assert.equal(other.terminate, true);
   assert.equal(
     (other.details as { secretariatStatus: string }).secretariatStatus,
@@ -168,13 +164,15 @@ test("secretariat summon-countersign calls shared seam with parent correlation",
       };
     },
   });
-  const result = await tools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
-    "summon-1",
-    { instruction: "裁：#924 是否足以开工。" },
-    undefined,
-    undefined,
-    ctx,
-  );
+  const result = await tools
+    .get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!
+    .execute(
+      "summon-1",
+      { instruction: "裁：#924 是否足以开工。" },
+      undefined,
+      undefined,
+      ctx,
+    );
   assert.equal(result.terminate, undefined);
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.instruction, "裁：#924 是否足以开工。");
@@ -221,7 +219,9 @@ test("projectSecretariatSummonResult keeps typed terminal kinds (gatekeeper prec
         kind: "audit_escalation",
         role: "countersign",
         status: "audit_escalation",
-        payloads: [{ countersignStatus: "escalate", decisionGate: { question: "q" } }],
+        payloads: [
+          { countersignStatus: "escalate", decisionGate: { question: "q" } },
+        ],
         decisiveFacts: { gate: "open" },
       },
     } as never,
@@ -291,16 +291,21 @@ test("summon tool content text tracks outcome kind (not always 已送达)", asyn
       } as never,
     }),
   });
-  const result = await tools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
-    "summon-fail",
-    { instruction: "裁：#924" },
-    undefined,
-    undefined,
-    ctx,
-  );
+  const result = await tools
+    .get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!
+    .execute(
+      "summon-fail",
+      { instruction: "裁：#924" },
+      undefined,
+      undefined,
+      ctx,
+    );
   assert.equal(
     (result.content as Array<{ text: string }>)[0]?.text,
     "给事中传召失败",
   );
-  assert.equal((result.details as { outcomeKind: string }).outcomeKind, "failure");
+  assert.equal(
+    (result.details as { outcomeKind: string }).outcomeKind,
+    "failure",
+  );
 });
