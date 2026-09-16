@@ -251,10 +251,7 @@ export async function readTicketProvenance(
     // Unknown stock / damaged rows remain readable and are never upgraded in place.
     unprojectedRaw.push(raw);
   }
-  const ordered = header === undefined
-    ? lines
-    : mergeFreshIntoCarried([], await recoverLegacySourcePositions(lines, header.sessions));
-  return { header, lines: ordered, unprojectedRaw, recordFile };
+  return { header, lines, unprojectedRaw, recordFile };
 }
 
 /**
@@ -425,17 +422,24 @@ function mergeFreshIntoCarried(
   carried: readonly TicketProvenanceLine[],
   fresh: readonly TicketProvenanceLine[],
 ): TicketProvenanceLine[] {
-  const seenIds = new Set<string>();
+  const seenIds = new Map<string, TicketProvenanceLine>();
   const bySession = new Map<number, TicketProvenanceLine[]>();
   const absorb = (lines: readonly TicketProvenanceLine[]): void => {
     for (const line of lines) {
       if (line.id !== undefined) {
         const identity = dialogueIdentity(line.s, line.id);
-        if (seenIds.has(identity)) continue;
-        seenIds.add(identity);
+        const seen = seenIds.get(identity);
+        if (seen !== undefined) {
+          if (seen.sourcePosition === undefined && line.sourcePosition !== undefined) {
+            Object.assign(seen, { sourcePosition: line.sourcePosition });
+          }
+          continue;
+        }
+        seenIds.set(identity, line);
       }
       const bucket = bySession.get(line.s) ?? [];
-      bucket.push(line);
+      bucket.push({ ...line });
+      if (line.id !== undefined) seenIds.set(dialogueIdentity(line.s, line.id), bucket.at(-1)!);
       bySession.set(line.s, bucket);
     }
   };
@@ -480,33 +484,6 @@ function stableSourcePositions(
     positions.push(position);
   }
   return positions;
-}
-
-/** Recover stable positions for pre-#926 id-bearing entries when their source remains readable. */
-async function recoverLegacySourcePositions(
-  lines: readonly TicketProvenanceLine[],
-  sessions: readonly TicketProvenanceSession[],
-): Promise<TicketProvenanceLine[]> {
-  const positionBySessionAndId = new Map<string, number>();
-  for (let s = 0; s < sessions.length; s += 1) {
-    let source: LedgerSessionLine[];
-    try {
-      source = await readLedgerSessionJsonlLines(sessions[s]!.path);
-    } catch {
-      continue;
-    }
-    const positions = stableSourcePositions(source);
-    for (let index = 0; index < source.length; index += 1) {
-      const row = source[index]!.row;
-      const id = row === undefined ? undefined : nativeEventId(row);
-      if (id !== undefined) positionBySessionAndId.set(dialogueIdentity(s, id), positions[index]!);
-    }
-  }
-  return lines.map((line) => {
-    if (line.sourcePosition !== undefined || line.id === undefined) return line;
-    const sourcePosition = positionBySessionAndId.get(dialogueIdentity(line.s, line.id));
-    return sourcePosition === undefined ? line : { ...line, sourcePosition };
-  });
 }
 
 /**
@@ -595,6 +572,7 @@ async function projectSessionRanges(input: {
 }): Promise<{
   readonly lines: TicketProvenanceLine[];
   readonly raw: string[];
+  readonly sourcePositionById: ReadonlyMap<string, number>;
 }> {
   assertDialogueSessionSourcePath(input.session.path, input.home);
   let sessionLines: LedgerSessionLine[];
@@ -619,6 +597,12 @@ async function projectSessionRanges(input: {
   const rows = sessionLines.map((entry) => entry.row);
   const dialogue = adaptSessionDialogue(rows);
   const sourcePositions = stableSourcePositions(sessionLines);
+  const sourcePositionById = new Map<string, number>();
+  for (let index = 0; index < sessionLines.length; index += 1) {
+    const row = sessionLines[index]!.row;
+    const id = row === undefined ? undefined : nativeEventId(row);
+    if (id !== undefined) sourcePositionById.set(id, sourcePositions[index]!);
+  }
   const seenIds = input.seenIds;
   const lines: TicketProvenanceLine[] = [];
   const raw: string[] = [];
@@ -676,7 +660,7 @@ async function projectSessionRanges(input: {
       }
     }
   }
-  return { lines, raw };
+  return { lines, raw, sourcePositionById };
 }
 
 /**
@@ -740,6 +724,11 @@ export async function reprojectTicketProvenance(input: {
       priorRanges: delta.priorRanges,
       ...(input.home === undefined ? {} : { home: input.home }),
     });
+    fresh.push(...prior.lines.flatMap((line) => {
+      if (line.s !== delta.s || line.id === undefined || line.sourcePosition !== undefined) return [];
+      const sourcePosition = projected.sourcePositionById.get(line.id);
+      return sourcePosition === undefined ? [] : [{ ...line, sourcePosition }];
+    }));
     fresh.push(...projected.lines);
     raw.push(...projected.raw);
   }
