@@ -924,7 +924,7 @@ export async function withAgentDirProviderFixture<T>(
 
 export async function writeTestSkill(
   home: string,
-  name: "code-review" | "tdd",
+  name: "ak-cross-m-review" | "tdd",
 ): Promise<{ path: string; raw: string }> {
   const skillDirectory = resolve(home, ".agents", "skills", name);
   const skillPath = resolve(skillDirectory, "SKILL.md");

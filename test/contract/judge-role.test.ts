@@ -2206,7 +2206,11 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         const harness = role === "fixer"
           ? makeHarness({ "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" })
           : role === "reviewer"
-            ? makeHarness({ "ak-review-base": "review-base" })
+            ? makeHarness({
+                "ak-review-base": "review-base",
+                "ak-review-lens": "completeness",
+                "ak-review-authority-refs": JSON.stringify(["CLAUDE.md"]),
+              })
             : role === "doctor"
               ? makeHarness({ "ak-doctor-case": "/case" })
               : makeHarness();
@@ -2282,26 +2286,13 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
             auditCompliance,
           }, testHostActions());
         } else {
-          const pin = { repositoryRoot: "/repo", objectFormat: "sha1", targetHead: "target", refs: {} };
           runtime = reviewerRole.createReviewerRoleRuntime(piHostAdapter.host, {
             loadSoul: async () => "reviewer law",
             loadCanonicalSkillBinding: async () => ({
-              name: "code-review" as const,
+              name: "ak-cross-m-review" as const,
               snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: Object.freeze({ text: skill }) },
-              captureExpansion: () => ({ name: "code-review" as const, location: "/skill", content: skill, userMessage: "" }),
+              captureExpansion: () => ({ name: "ak-cross-m-review" as const, location: "/skill", content: skill, userMessage: "" }),
             }),
-            createPinnedGitReader: async () => ({
-              pin,
-              snapshot: async () => pin,
-              resolve: async () => "base",
-              range: async () => ({ base: "base", target: "target", diffCommand: "git diff base...target", diffSha256: "a".repeat(64), commits: ["target"] }),
-              featureTokens: async () => Object.freeze([]),
-              listSpecCandidatePaths: async () => Object.freeze([]),
-              originRepository: async () => undefined,
-              commitMessagesNewestFirst: async () => Object.freeze([]),
-              readPinnedText: async () => undefined,
-            }),
-            runDispatch: async () => { throw new Error("dispatch must not run for refusal"); },
           }, testHostActions());
         }
         return {
@@ -2319,7 +2310,11 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
           // #242 fixer / #495 S6 reviewer: no soul auditor. Fixer still traverses Gatekeeper; reviewer accepts on typed validate.
           const plain = createRole(role, pass);
           if (role === "reviewer") {
-            await plain.runtime.activate(undefined, { baseRevision: "review-base" });
+            await plain.runtime.activate(undefined, {
+              baseRevision: "review-base",
+              lens: "completeness",
+              authorityRefs: ["CLAUDE.md"],
+            });
             assert.deepEqual(
               plain.harness.activeTools(),
               ["read", "write", "grep", "find", "bash"],

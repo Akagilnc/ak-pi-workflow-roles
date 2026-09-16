@@ -28,7 +28,7 @@ export class PackagedMethodSkillUnavailableError extends Error {
 export type PackagedMethodSkillName =
   | "tdd"
   | "diagnosing-bugs"
-  | "code-review"
+  | "ak-cross-m-review"
   | "resolving-merge-conflicts";
 
 export type PackagedMethodFileProvenance = Readonly<{
@@ -84,7 +84,12 @@ const REQUIRED_COMPANIONS: Readonly<
 > = {
   tdd: ["tests.md", "mocking.md", "agents/openai.yaml"],
   "diagnosing-bugs": ["agents/openai.yaml", "scripts/hitl-loop.template.sh"],
-  "code-review": ["agents/openai.yaml"],
+  "ak-cross-m-review": [
+    "CONTEXT.md",
+    "LICENSE",
+    "prompts/cmr-completeness.md",
+    "prompts/cmr-reviewer.md",
+  ],
   "resolving-merge-conflicts": ["agents/openai.yaml"],
 };
 

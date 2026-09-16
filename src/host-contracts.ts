@@ -100,6 +100,8 @@ export type RoleTurnActivation =
   | {
       readonly role: "reviewer";
       readonly baseRevision: string;
+      /** Caller-selected single lens; no default (ADR 0082 reviewer-method-lens). */
+      readonly lens: "completeness" | "correctness";
       readonly authorityRefs: readonly string[];
       readonly ticketNumber?: number;
     }

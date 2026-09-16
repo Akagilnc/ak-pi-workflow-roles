@@ -2333,7 +2333,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       if (role === "judge") return ["judge", ...model, "--project", project, "admit"];
       if (role === "coder") return ["coder", ...model, "plan", "--project", project, "admit"];
       if (role === "fixer") return ["fixer", ...model, "plan", "--project", project, "admit"];
-      if (role === "reviewer") return ["reviewer", ...model, "--project", project, "--base", "main", "admit"];
+      if (role === "reviewer") return ["reviewer", ...model, "--project", project, "--base", "main", "--lens", "completeness", "--authority-ref", "CLAUDE.md", "admit"];
       return ["merger", ...model, "--project", project, "admit"];
     }
 
@@ -2432,11 +2432,13 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       assert.ok(seen);
       assert.equal(seen[seen.indexOf("--session") + 1], admitted.sessionFile);
       assert.equal(seen[seen.indexOf("--session-dir") + 1], admitted.sessionDirectory);
-      // Pi adapter prefixes single forced method onto resume dialogue (#822); judge/coder-plan/fixer plain.
+      // Resume continues the existing method turn instead of invoking its Skill again.
       const rawPrompt = c.message === undefined ? "" : c.message;
       const expectedBody =
         c.role === "reviewer"
-          ? (rawPrompt.length === 0 ? "/skill:code-review" : `/skill:code-review ${rawPrompt}`)
+          ? (c.message === undefined
+            ? "[ak-role:resume-continue]"
+            : `[ak-role:resume-continue]\n\n${c.message}`)
           : c.role === "merger"
             ? (rawPrompt.length === 0
               ? "/skill:resolving-merge-conflicts"

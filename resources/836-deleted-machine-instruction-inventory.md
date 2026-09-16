@@ -9,7 +9,7 @@
 | `compliance-transport.ts` `AUDITOR_DOSSIER_PROMPT` | `本 run 卷宗已就绪。` | 改为台院同形路径指针。 |
 | `doctor-role.ts` case catalog | `provenance: "由留存 session 字节推导，封入受理回执。"` | 删。catalog 只留 cost 与证据指针。 |
 | `collector-role.ts` bounceInfrastructure | `请省略该字段后重新提交。` | 代码打回推翻自报已删。 |
-| `reviewer-role.ts` output description | `Standards/Spec 评审腿由 runtime 以取证子会话代跑…` | 改为「本席自调 code-review skill」。方法步骤在 `resources/methods/code-review/SKILL.md`。 |
+| `reviewer-role.ts` output description | `Standards/Spec 评审腿由 runtime 以取证子会话代跑…` | #836 改为「本席自调 code-review skill」。#917 后随包方法为 `ak-cross-m-review`；`resources/methods/code-review/` 已删，现役指针见 `resources/methods/ak-cross-m-review/SKILL.md`。 |
 | `run-lifecycle.ts` A4.1 | `[ak-role:resume-continue]` | 生产码不再含此字面量。结算只跳过空轮与引擎指针续跑。 |
 | `run-lifecycle.ts` A4.2 | `重新读 <path>` | 前轮已删改写。 |
 | `submission-correctable-error.ts` A4.5 | `终局交卷并非本轮唯一工具调用。` | 删。Pi/ACP `deliverSubmissionRejection` 不再注入该句。 |

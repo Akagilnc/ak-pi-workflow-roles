@@ -507,7 +507,7 @@ test("public runs write one identity-bound invocation ledger for every role", as
       { role: "judge", runId: "public-judge-001", args: ["judge", "--model", "test/caller-seat:high", "--project", project, "judge task"] },
       { role: "coder", runId: "public-coder-001", args: ["coder", "--model", "test/caller-seat:high", "--project", project, "coder task"] },
       { role: "fixer", runId: "public-fixer-001", args: ["fixer", "--model", "test/caller-seat:high", "--project", project, "fixer task"] },
-      { role: "reviewer", runId: "public-reviewer-001", args: ["reviewer", "--model", "test/caller-seat:high", "--project", project, "--base", "HEAD", "reviewer task"] },
+      { role: "reviewer", runId: "public-reviewer-001", args: ["reviewer", "--model", "test/caller-seat:high", "--project", project, "--base", "HEAD", "--lens", "completeness", "--authority-ref", "CLAUDE.md", "reviewer task"] },
       { role: "collector", runId: "public-collector-001", args: ["collector", "--model", "test/caller-seat:high", "--project", project, "--pr", "177", "--repo", "acme/widgets"] },
       { role: "doctor", runId: "public-doctor-001", args: ["doctor", "--model", "test/caller-seat:high", "--project", project, "--issue", "177"] },
       { role: "merger", runId: "public-merger-001", args: ["merger", "--model", "test/caller-seat:high", "--project", project, "merger task"] },

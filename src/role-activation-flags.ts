@@ -30,6 +30,7 @@ export function projectActivationFlags(request: RoleTurnRequest): Map<string, bo
   }
   if (activation.role === "reviewer") {
     flags.set("ak-review-base", activation.baseRevision);
+    flags.set("ak-review-lens", activation.lens);
     flags.set("ak-review-authority-refs", JSON.stringify(activation.authorityRefs));
     if (activation.ticketNumber !== undefined) {
       flags.set("ak-review-ticket-number", String(activation.ticketNumber));

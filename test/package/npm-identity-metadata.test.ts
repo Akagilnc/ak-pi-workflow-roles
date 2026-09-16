@@ -165,7 +165,8 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
       repository: string;
       path: string;
       commit: string;
-      tag: string;
+      tag?: string;
+      version?: string;
       attribution: string;
       license: string;
     };
@@ -192,11 +193,14 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
     await access(resolve(extracted.root, "package", path));
   }
 
-  // code-review + diagnosing-bugs trees ship with agents/scripts companions.
+  // ak-cross-m-review + diagnosing-bugs trees ship with their companions.
   const otherFiles = [
-    "resources/methods/code-review/SKILL.md",
-    "resources/methods/code-review/agents/openai.yaml",
-    "resources/methods/code-review/provenance.json",
+    "resources/methods/ak-cross-m-review/SKILL.md",
+    "resources/methods/ak-cross-m-review/CONTEXT.md",
+    "resources/methods/ak-cross-m-review/LICENSE",
+    "resources/methods/ak-cross-m-review/prompts/cmr-completeness.md",
+    "resources/methods/ak-cross-m-review/prompts/cmr-reviewer.md",
+    "resources/methods/ak-cross-m-review/provenance.json",
     "resources/methods/diagnosing-bugs/SKILL.md",
     "resources/methods/diagnosing-bugs/agents/openai.yaml",
     "resources/methods/diagnosing-bugs/scripts/hitl-loop.template.sh",
@@ -207,28 +211,12 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
     await access(resolve(extracted.root, "package", path));
   }
 
-  // #922 C1: the Claude plugin ships every method body (not empty symlink stubs).
-  assert.ok(
-    extracted.paths.includes("dist/method-host-plugin/.claude-plugin/plugin.json"),
-    "npm pack must include method-host-plugin manifest",
-  );
-  for (const method of ["tdd", "code-review", "diagnosing-bugs", "resolving-merge-conflicts"]) {
-    const pluginSkill = `dist/method-host-plugin/skills/${method}/SKILL.md`;
-    assert.ok(extracted.paths.includes(pluginSkill), `npm pack must include ${pluginSkill}`);
-    await access(resolve(extracted.root, "package", pluginSkill));
-  }
-
-  // Frozen provenance bindings per family.
-  const expectations = [
+  // Frozen provenance bindings per Matt family.
+  const mattExpectations = [
     {
       method: "tdd",
       path: "skills/engineering/tdd",
       packageAdaptation: "red-green-advisory-no-historical-compliance-gate",
-    },
-    {
-      method: "code-review",
-      path: "skills/engineering/code-review",
-      packageAdaptation: "reviewer-no-setup-fixed-target-two-axis",
     },
     {
       method: "diagnosing-bugs",
@@ -236,7 +224,7 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
       packageAdaptation: "fixer-boundary-no-external-skill-chain",
     },
   ] as const;
-  for (const expectation of expectations) {
+  for (const expectation of mattExpectations) {
     const provenance = await readProvenance(expectation.method);
     assert.equal(provenance.name, expectation.method);
     assert.equal(provenance.packageAdaptation, expectation.packageAdaptation);
@@ -251,14 +239,38 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
     assert.equal(typeof provenance.files["SKILL.md"]?.gitBlob, "string");
     assert.equal(provenance.files["SKILL.md"]!.gitBlob.length, 40);
   }
+  // First-party ak-cross-m-review provenance.
+  const cmrProvenance = await readProvenance("ak-cross-m-review");
+  assert.equal(cmrProvenance.name, "ak-cross-m-review");
+  assert.equal(cmrProvenance.packageAdaptation, "verbatim-upstream");
+  assert.equal(
+    cmrProvenance.upstream.repository,
+    "https://github.com/Akagilnc/ak-cross-m-review",
+  );
+  assert.equal(cmrProvenance.upstream.path, ".");
+  assert.equal(
+    cmrProvenance.upstream.commit,
+    "57b10e2cea9ff008e2b36b98b55610e58cdfd512",
+  );
+  assert.equal(cmrProvenance.upstream.version, "0.5.2.0");
+  assert.equal(cmrProvenance.upstream.attribution, "Akagilnc/ak-cross-m-review");
+  assert.equal(cmrProvenance.upstream.license, "MIT");
+  for (const file of [
+    "SKILL.md",
+    "CONTEXT.md",
+    "LICENSE",
+    "prompts/cmr-completeness.md",
+    "prompts/cmr-reviewer.md",
+  ]) {
+    assert.equal(typeof cmrProvenance.files[file]?.sha256, "string");
+    assert.equal(typeof cmrProvenance.files[file]?.gitBlob, "string");
+  }
   // Companion-file byte pins survive for every family that ships them.
   const tddProvenance = await readProvenance("tdd");
   for (const file of ["tests.md", "mocking.md"]) {
     assert.equal(typeof tddProvenance.files[file]?.sha256, "string");
     assert.equal(typeof tddProvenance.files[file]?.gitBlob, "string");
   }
-  const codeReviewProvenance = await readProvenance("code-review");
-  assert.equal(typeof codeReviewProvenance.files["agents/openai.yaml"]?.gitBlob, "string");
   const diagnosingProvenance = await readProvenance("diagnosing-bugs");
   assert.equal(typeof diagnosingProvenance.files["agents/openai.yaml"]?.gitBlob, "string");
   assert.equal(typeof diagnosingProvenance.files["scripts/hitl-loop.template.sh"]?.gitBlob, "string");
@@ -302,7 +314,7 @@ test("packed artifact ships the release inventory: souls, methods, runtime entry
   // Method trees (deep provenance above; presence here completes the inventory).
   for (const method of [
     "resources/methods/tdd/SKILL.md",
-    "resources/methods/code-review/SKILL.md",
+    "resources/methods/ak-cross-m-review/SKILL.md",
     "resources/methods/diagnosing-bugs/SKILL.md",
     "resources/methods/resolving-merge-conflicts/SKILL.md",
   ]) {

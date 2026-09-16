@@ -4,7 +4,7 @@ import { dirname, resolve } from "node:path";
 
 import { stripFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { HostSkillExpansionEvidence } from "./host-contracts.ts";
-export type CanonicalSkillName = "tdd" | "code-review";
+export type CanonicalSkillName = "tdd" | "ak-cross-m-review";
 
 export type CanonicalSkillSnapshot = Readonly<{
   raw: string;
@@ -37,7 +37,7 @@ export type CanonicalSkillBinding<Name extends CanonicalSkillName = CanonicalSki
 
 export type AnyCanonicalSkillBinding =
   | CanonicalSkillBinding<"tdd">
-  | CanonicalSkillBinding<"code-review">;
+  | CanonicalSkillBinding<"ak-cross-m-review">;
 
 export function captureCanonicalSkillExpansion<Name extends CanonicalSkillName>(
   name: Name,

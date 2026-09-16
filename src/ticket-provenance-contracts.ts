@@ -48,26 +48,17 @@ export type TicketProvenanceHeader = {
 
 /**
  * 一条对话（存于不可变投影提交；旧 snapshot 中也可为裸行）。
- * `id` 与 `line` 按源事实存在则记、不存在不编；两者皆无的少数条目
- * 靠录中前后有定位的条目锚定。
+ * `id` 按源事实存在则记、不存在不编；`s` 保留卷定位。
  */
 export type TicketProvenanceLine = {
   readonly speaker: TicketProvenanceSpeaker;
   /** 卷下标（册子头 `sessions` 的位置）。 */
   readonly s: number;
-  readonly line?: number;
+  /** Logical source order for display. */
+  readonly sourcePosition?: number;
+  /** Replay-invariant structural identity used for id-less cumulative coverage. */
+  readonly sourceIdentity?: string;
   readonly id?: string;
-  readonly text: string;
-};
-
-/**
- * 坏行补写：绑定源卷与行，带说话人与正文。
- * 编没编由符宝郎读录核旨，代码不判断（`unparsable-line-to-diarist`）。
- */
-export type TicketProvenanceAmendment = {
-  readonly s: number;
-  readonly line: number;
-  readonly speaker: TicketProvenanceSpeaker;
   readonly text: string;
 };
 
@@ -136,28 +127,6 @@ export function projectTicketProvenanceSessions(
   return sessions;
 }
 
-/**
- * 投影补写集合。缺该字段＝无补写（不拒收）；成员形状不成立的整条跳过——
- * 它没有绑定位置，放不回去。
- */
-export function projectTicketProvenanceAmendments(
-  value: unknown,
-): readonly TicketProvenanceAmendment[] {
-  if (!Array.isArray(value)) return [];
-  const out: TicketProvenanceAmendment[] = [];
-  for (const raw of value) {
-    if (!isRecord(raw)) continue;
-    const s = nonNegativeInteger(raw.s);
-    const line = positiveInteger(raw.line);
-    const speaker = projectSpeaker(raw.speaker);
-    const text = raw.text;
-    if (s === undefined || line === undefined || speaker === undefined) continue;
-    if (typeof text !== "string") continue;
-    out.push({ s, line, speaker, text });
-  }
-  return out;
-}
-
 /** 读回册子头（文件第一行）。形状不成立即 undefined——按无册处理，不猜。 */
 export function projectTicketProvenanceHeader(
   value: unknown,
@@ -190,12 +159,16 @@ export function projectTicketProvenanceLine(
   const s = nonNegativeInteger(value.s);
   if (speaker === undefined || s === undefined) return undefined;
   if (typeof value.text !== "string") return undefined;
-  const line = positiveInteger(value.line);
+  const sourcePosition = nonNegativeInteger(value.sourcePosition);
+  const sourceIdentity = typeof value.sourceIdentity === "string" && value.sourceIdentity !== ""
+    ? value.sourceIdentity
+    : undefined;
   const id = typeof value.id === "string" && value.id !== "" ? value.id : undefined;
   return {
     speaker,
     s,
-    ...(line === undefined ? {} : { line }),
+    ...(sourcePosition === undefined ? {} : { sourcePosition }),
+    ...(sourceIdentity === undefined ? {} : { sourceIdentity }),
     ...(id === undefined ? {} : { id }),
     text: value.text,
   };
