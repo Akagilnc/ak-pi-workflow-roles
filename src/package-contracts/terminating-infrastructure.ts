@@ -62,10 +62,16 @@ export function withTerminatingOutputDeclarations<
     .properties;
   const properties: Record<string, TSchema> = {
     ...(baseProperties ?? {}),
-    ticketNumber: Type.Unknown({
-      description:
-        "可选本票号：尚未绑定时由角色在既有回执中申报；机械层只记录合法正整数，不从散文推导、不验真。缺失或错形不拒收。",
-    }),
+    ...(
+      baseProperties?.ticketNumber === undefined
+        ? {
+            ticketNumber: Type.Unknown({
+              description:
+                "可选本票号：尚未绑定时由角色在既有回执中申报；机械层只记录合法正整数，不从散文推导、不验真。缺失或错形不拒收。",
+            }),
+          }
+        : {}
+    ),
     [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]:
       infrastructureFailureDeclarationSchema.properties[
         INFRASTRUCTURE_FAILURE_DECLARATION_KEY

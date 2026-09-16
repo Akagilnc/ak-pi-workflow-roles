@@ -329,7 +329,7 @@ test("countersign and notary reject --ticket as unknown option (exit 2)", async 
   });
 });
 
-test("notary ticketNumber comes from --source-run admitted form, not a CLI flag", async () => {
+test("notary keeps its bound source-run ticket over a different receipt assertion", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -360,7 +360,7 @@ test("notary ticketNumber comes from --source-run admitted form, not a CLI flag"
           piRunner: scriptedTerminatingToolSession({
             role: "notary",
             toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "pass", findings: [] },
+            details: { status: "pass", findings: [], ticketNumber: 999 },
           }),
         }),
         createRunId: () => "01a063500-0000-7000-8000-0000000notary",
