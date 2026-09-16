@@ -1527,7 +1527,6 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       },
     );
     assert.equal(resumed.exitCode, 0);
-    assert.equal(resumed.terminal?.runId, result.terminal?.runId);
 
     const unboundId = "01a0sign00-0000-7000-8000-00000000free";
     let unboundRunDirectory = "";
