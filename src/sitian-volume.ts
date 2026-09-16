@@ -8,6 +8,9 @@
  */
 import { appendFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { createRequire } from "node:module";
+
+import type { lock as Lock } from "proper-lockfile";
 
 import {
   ensureRealDirectoryTree,
@@ -19,6 +22,9 @@ import {
   SitianInfrastructureError,
   type SitianRecordInput,
 } from "./sitian-contracts.ts";
+
+// Keep CommonJS proper-lockfile external to the published ESM bundle.
+const lockVolume = createRequire(import.meta.url)("proper-lockfile").lock as typeof Lock;
 
 export type SitianVolumePath = {
   readonly recordFile: string;
@@ -65,6 +71,28 @@ export async function readSitianVolumeText(
       `Sitian volume read failure: ${errorText(error)}`,
       { cause: error },
     );
+  }
+}
+
+/** Serialize one volume's complete read→merge→publish transaction. */
+export async function withSitianVolumeTransaction<T>(
+  input: SitianRecordInput,
+  transaction: () => Promise<T>,
+): Promise<T> {
+  const { recordFile } = ensureSitianVolume(input);
+  const release = await lockVolume(recordFile, {
+    lockfilePath: `${recordFile}.lock`,
+    realpath: false,
+    // Do not reclaim a merely paused live writer. Crash residue fails visibly
+    // instead of risking a concurrent read-modify-write lost update.
+    stale: 2_147_483_647,
+    update: 1_073_741_823,
+    retries: { forever: true, minTimeout: 15, maxTimeout: 100 },
+  });
+  try {
+    return await transaction();
+  } finally {
+    await release();
   }
 }
 

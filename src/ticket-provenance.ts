@@ -26,6 +26,7 @@ import {
   readSitianVolumeText,
   resolveSitianVolume,
   rewriteSitianVolume,
+  withSitianVolumeTransaction,
   type SitianRecordInput,
 } from "./sitian-facade.ts";
 import {
@@ -576,6 +577,21 @@ export async function reprojectTicketProvenance(input: {
   readonly amendments?: readonly TicketProvenanceAmendment[];
 }): Promise<ReprojectTicketProvenanceResult> {
   const recordInput = ticketProvenanceRecordInput(input.ticketNumber, input.cwd, input.home);
+  return withSitianVolumeTransaction(recordInput, () =>
+    reprojectTicketProvenanceTransaction(input, recordInput),
+  );
+}
+
+async function reprojectTicketProvenanceTransaction(
+  input: {
+    readonly ticketNumber: number;
+    readonly cwd: string;
+    readonly home?: string;
+    readonly sessions: readonly TicketProvenanceSession[];
+    readonly amendments?: readonly TicketProvenanceAmendment[];
+  },
+  recordInput: SitianRecordInput,
+): Promise<ReprojectTicketProvenanceResult> {
   const prior = await readTicketProvenance(
     input.ticketNumber,
     input.cwd,
