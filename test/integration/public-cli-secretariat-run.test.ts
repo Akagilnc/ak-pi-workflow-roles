@@ -186,6 +186,7 @@ function nestedCountersignHost(input: {
   sequence: ReadonlyArray<{ details: unknown }>;
   gateCalls: Array<{ kind: string }>;
   diaristRunDirectories?: string[];
+  countersignRequests?: RoleTurnRequest[];
 }): RoleTurnHost {
   let call = 0;
   const piRunner: LegacyFauxPiRunner = async (args, options) => {
@@ -281,11 +282,19 @@ function nestedCountersignHost(input: {
     }
     throw new Error(`unexpected nested role: ${role}`);
   };
-  return roleTurnHostFromLegacyPiRunner({
+  const host = roleTurnHostFromLegacyPiRunner({
     packageRoot: input.packageRoot,
     principalAuthority: piDurablePrincipalAuthority,
     piRunner,
   });
+  return {
+    executeTurn(request) {
+      if (request.activation.role === "countersign") {
+        input.countersignRequests?.push(request);
+      }
+      return host.executeTurn(request);
+    },
+  };
 }
 
 /**
@@ -302,6 +311,7 @@ function secretariatHostDrivingRealTools(input: {
   countersignSequence: ReadonlyArray<{ details: unknown }>;
   gateCalls: Array<{ kind: string }>;
   diaristRunDirectories?: string[];
+  countersignRequests?: RoleTurnRequest[];
   onSummonDetails?: (details: Record<string, unknown>) => void;
 }): RoleTurnHost {
   const nested = nestedCountersignHost({
@@ -309,6 +319,7 @@ function secretariatHostDrivingRealTools(input: {
     sequence: input.countersignSequence,
     gateCalls: input.gateCalls,
     ...(input.diaristRunDirectories === undefined ? {} : { diaristRunDirectories: input.diaristRunDirectories }),
+    ...(input.countersignRequests === undefined ? {} : { countersignRequests: input.countersignRequests }),
   });
   const hostAdapters = [adapter("pi", nested)];
 
@@ -474,12 +485,17 @@ test("public secretariat through-line: default summon → continue → same-run 
     const summonDetails: Array<Record<string, unknown>> = [];
     const gateCalls: Array<{ kind: string }> = [];
     const diaristRunDirectories: string[] = [];
+    const countersignRequests: RoleTurnRequest[] = [];
     const host = secretariatHostDrivingRealTools({
       packageRoot,
       home,
       gateCalls,
       diaristRunDirectories,
+      countersignRequests,
       countersignSequence: [
+        {
+          details: { countersignStatus: "converged", note: "先前庭" },
+        },
         {
           details: {
             countersignStatus: "continue",
@@ -502,6 +518,31 @@ test("public secretariat through-line: default summon → continue → same-run 
         },
       ],
     });
+
+    // Seed the real ADR 0079 branch: this ticket already has a countersign run
+    // before Secretariat becomes its caller. The first Secretariat summon must
+    // resume this run while recording the current parent correlation.
+    const priorCountersignRunId = "01a0counter924-0000-7000-8000-000000000001";
+    const prior = await runAkRole(
+      [
+        "countersign",
+        "--model",
+        "test/caller-seat:high",
+        "--project",
+        project,
+        "先前审读 #924。",
+      ],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: capture.io,
+        createRunId: () => priorCountersignRunId,
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+      },
+    );
+    assert.equal(prior.exitCode, 0, capture.stderr.join(""));
 
     const result = await runAkRole(
       [
@@ -544,7 +585,11 @@ test("public secretariat through-line: default summon → continue → same-run 
     assert.equal(summonDetails[1]!.outcomeKind, "accepted");
     assert.equal(summonDetails[1]!.countersignStatus, "converged");
     const firstRunId = summonDetails[0]!.runId;
-    assert.equal(typeof firstRunId, "string");
+    assert.equal(
+      firstRunId,
+      priorCountersignRunId,
+      "first summon must resume the ticket's pre-existing countersign run",
+    );
     assert.equal(
       summonDetails[1]!.runId,
       firstRunId,
@@ -575,13 +620,23 @@ test("public secretariat through-line: default summon → continue → same-run 
       `expected ≥2 courtAttemptIds, got ${[...attemptIds].join(",") || "(none)"}`,
     );
 
-    const admittedRaw = await readFile(
-      join(childRunDir, "invocation.json"),
-      "utf8",
+    const secretariatResumeRequests = countersignRequests.filter(
+      (request) =>
+        request.continuation.kind === "resume" &&
+        request.correlationId === secretariatRunId,
+    );
+    assert.equal(
+      secretariatResumeRequests.length,
+      2,
+      `each resumed countersign leg must carry the current secretariat caller: ${JSON.stringify(countersignRequests.map((request) => ({ kind: request.continuation.kind, correlationId: request.correlationId })))}`,
     );
     assert.ok(
-      admittedRaw.includes(secretariatRunId),
-      "child ledger must reference parent correlation/caller",
+      secretariatResumeRequests.every((request) =>
+        piDurablePrincipalAuthority
+          .decode(request.principal)
+          .sessionDirectory.includes(priorCountersignRunId)
+      ),
+      "both child legs must resume the pre-existing countersign principal",
     );
 
     // G3: parent secretariat run bound under ticket, not unbound.
