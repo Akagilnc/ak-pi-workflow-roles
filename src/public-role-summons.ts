@@ -630,7 +630,7 @@ export async function summonParallelReviewerLenses(options: {
           "--base", options.baseRevision,
           ...options.authorityRefs.flatMap((ref) => ["--authority-ref", ref]),
           "--lens", lens,
-          ...(options.instruction === "" ? [] : [options.instruction]),
+          ...(options.instruction === "" ? [] : ["--", options.instruction]),
         ],
         cwd,
         home: options.home,

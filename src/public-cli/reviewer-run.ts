@@ -142,6 +142,37 @@ function reviewerResumePrompt(env: ReviewerRunEnv, message?: string): string {
   ).join("\n");
 }
 
+async function runParallelReviewer(
+  admitted: AdmittedReviewerInvocation,
+  env: ReviewerRunEnv,
+  io: CliIo,
+): Promise<{ exitCode: number; admitted: AdmittedReviewerInvocation; terminal: TerminalResult }> {
+  const { summonParallelReviewerLenses } = await import("../public-role-summons.ts");
+  const children = await summonParallelReviewerLenses({
+    projectRoot: admitted.projectRoot,
+    baseRevision: admitted.baseRevision,
+    authorityRefs: admitted.authorityRefs,
+    instruction: admitted.instruction,
+    home: env.home,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.host === undefined ? {} : { host: env.host }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+    packageRoot: env.packageRoot,
+    ...(env.signal === undefined ? {} : { signal: env.signal }),
+    correlationId: admitted.runId,
+    roleTurnHost: env.roleTurnHost,
+    ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+  });
+  const terminal = await settleParallelReviewerTerminalResult(admitted, children);
+  io.stdout((await import("./terminal.ts")).formatTerminalResult(terminal));
+  return {
+    exitCode: terminal.roleOutcome.kind === "failure" ? 1 : 0,
+    admitted,
+    terminal,
+  };
+}
+
 export async function runPublicReviewer(
   argv: readonly string[],
   env: ReviewerRunEnv,
@@ -187,30 +218,7 @@ export async function runPublicReviewer(
 
   if (admitted.lens === "all") {
     try {
-      const { summonParallelReviewerLenses } = await import("../public-role-summons.ts");
-      const children = await summonParallelReviewerLenses({
-        projectRoot: admitted.projectRoot,
-        baseRevision: admitted.baseRevision,
-        authorityRefs: admitted.authorityRefs,
-        instruction: admitted.instruction,
-        home: env.home,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...(env.host === undefined ? {} : { host: env.host }),
-        ...(env.engine === undefined ? {} : { engine: env.engine }),
-        ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
-        packageRoot: env.packageRoot,
-        ...(env.signal === undefined ? {} : { signal: env.signal }),
-        correlationId: admitted.runId,
-        roleTurnHost: env.roleTurnHost,
-        ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
-      });
-      const terminal = await settleParallelReviewerTerminalResult(admitted, children);
-      io.stdout((await import("./terminal.ts")).formatTerminalResult(terminal));
-      return {
-        exitCode: terminal.roleOutcome.kind === "failure" ? 1 : 0,
-        admitted,
-        terminal,
-      };
+      return await runParallelReviewer(admitted, env, io);
     } catch (error) {
       return (await presentControlledFailure(
         admitted,
@@ -317,15 +325,20 @@ export async function runPublicReviewerResume(
       });
     },
     adapters: reviewerAdapters(env.packageRoot),
-    afterAdmittedLoad: (admitted) =>
-      resolveResumeMethodMaterialAdapters({
+    afterAdmittedLoad: async (admitted) => {
+      if (admitted.lens === "all") {
+        const result = await runParallelReviewer(admitted, env, io);
+        return { kind: "terminal" as const, ...result };
+      }
+      return resolveResumeMethodMaterialAdapters({
         admitted,
         authority: env.principalAuthority,
         io,
         loadMaterial: () => loadReviewerMethodMaterial(env.packageRoot),
         adaptersWith: (material) => reviewerAdapters(env.packageRoot, material),
         emptyAdapters: reviewerAdapters(env.packageRoot),
-      }),
+      });
+    },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }
