@@ -23,7 +23,12 @@ import {
 } from "../prepared-role-turn.ts";
 
 import { reportHostSessionEvent } from "../host-session-record.ts";
-import { hasHostMethodSkill, packagedMethodPluginDir } from "../host-native-method.ts";
+import {
+  applyClaudeSkillInvocation,
+  applyCodexSkillInvocation,
+  hostMethodSkills,
+  packagedMethodPluginDir,
+} from "../host-native-method.ts";
 import {
   closeJsonSchemaForCodex,
   codexTurnArgs,
@@ -473,7 +478,9 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       let mcpConfigPath: string | undefined;
       let outputSchemaPath: string | undefined;
       let pluginDir: string | undefined;
-      const applyMethodPrompt = (prompt: string) => prompt;
+      let applyMethodPrompt: (prompt: string) => string = codex
+        ? (prompt) => applyCodexSkillInvocation(request.methods, prompt)
+        : (prompt) => prompt;
       if (codex) {
         outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
         await writeFile(
@@ -488,12 +495,13 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
           "utf8",
         );
-        if (hasHostMethodSkill(request.methods)) {
+        if (hostMethodSkills(request.methods).length > 0) {
           const packageRoot = env.AK_PACKAGE_ROOT ?? process.env.AK_PACKAGE_ROOT;
           if (typeof packageRoot !== "string" || packageRoot === "") {
             throw new Error("claude method plugin-dir requires AK_PACKAGE_ROOT");
           }
           pluginDir = packagedMethodPluginDir(packageRoot);
+          applyMethodPrompt = (prompt) => applyClaudeSkillInvocation(request.methods, prompt);
         }
       }
 

@@ -19,6 +19,7 @@ import type {
   RoleTurnKnownFailure,
   RoleTurnRequest,
 } from "./host-contracts.ts";
+import { hostMethodSkills, installWorkspaceMethodSkills } from "./host-native-method.ts";
 import { packagedRoleOutputTool } from "./packaged-role-registry.ts";
 import {
   createRoleRuntimeExtension,
@@ -616,6 +617,14 @@ export async function prepareRoleEnvelope(options: {
       throw new Error(`terminating tool not registered after activation: ${terminatingToolName}`);
     }
     const jsonSchema = terminatingToolJsonSchema(terminating.parameters);
+
+    if (request.host === "codex" && hostMethodSkills(request.methods).length > 0) {
+      const packageRoot = options.dependencies.packageRoot;
+      if (typeof packageRoot !== "string" || packageRoot === "") {
+        throw new Error("codex project Skill catalog requires packageRoot");
+      }
+      await installWorkspaceMethodSkills(request.cwd, packageRoot);
+    }
 
     return {
       mcpServers: [{
