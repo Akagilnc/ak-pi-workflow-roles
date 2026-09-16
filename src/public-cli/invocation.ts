@@ -1230,21 +1230,23 @@ async function readRegularFileAttachment(
   }
 }
 
-/** Validate deferred attachment inputs before any identity child or run persistence. */
-export async function validateAttachmentPaths(
+export type PreparedAttachment = Awaited<ReturnType<typeof readRegularFileAttachment>>;
+
+/** Read deferred attachment inputs once, before any identity child or run persistence. */
+export async function prepareAttachmentPaths(
   attachmentPaths: readonly string[],
-): Promise<void> {
-  for (const sourcePath of attachmentPaths) {
-    await readRegularFileAttachment(sourcePath);
-  }
+): Promise<readonly PreparedAttachment[]> {
+  return await Promise.all(
+    attachmentPaths.map(async (sourcePath) => await readRegularFileAttachment(sourcePath)),
+  );
 }
 
-async function freezeRegularFileAttachment(
-  sourcePath: string,
+async function freezePreparedAttachment(
+  prepared: PreparedAttachment,
   destinationDir: string,
   index: number,
 ): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
-  const { absolute, bytes } = await readRegularFileAttachment(sourcePath);
+  const { absolute, bytes } = prepared;
   const name = `${String(index).padStart(2, "0")}-${basename(absolute)}`;
   const frozenPath = join(destinationDir, name);
   await writeFile(frozenPath, bytes);
@@ -1258,6 +1260,18 @@ async function freezeRegularFileAttachment(
     },
     body: bytes,
   };
+}
+
+async function freezeRegularFileAttachment(
+  sourcePath: string,
+  destinationDir: string,
+  index: number,
+): Promise<{ attachment: FrozenAttachment; body: Buffer }> {
+  return await freezePreparedAttachment(
+    await readRegularFileAttachment(sourcePath),
+    destinationDir,
+    index,
+  );
 }
 
 /** Freeze attachments only — ticket binding is the shared LLM seat path (#635). */
@@ -1626,7 +1640,9 @@ export async function admitCountersignInvocation(
 /** Persist a deferred Countersign admission after same-ticket lookup found no retained run. */
 export async function materializeCountersignInvocation(
   admitted: AdmittedCountersignInvocation,
-  options: Pick<AdmitCountersignInvocationOptions, "home" | "principalAuthority" | "attachmentPaths" | "model">,
+  options: Pick<AdmitCountersignInvocationOptions, "home" | "principalAuthority" | "model"> & {
+    preparedAttachments: readonly PreparedAttachment[];
+  },
 ): Promise<void> {
   const placement = issueAdmissionPlacement(options.principalAuthority, {
     cwd: admitted.projectRoot,
@@ -1635,11 +1651,16 @@ export async function materializeCountersignInvocation(
     subject: { unbound: true },
     home: options.home,
   });
-  const attachments = await freezeAttachments(
-    options.attachmentPaths,
-    placement.attachmentsDirectory,
-  );
-  (admitted as { attachments: typeof attachments }).attachments = attachments;
+  const attachments: FrozenAttachment[] = [];
+  for (let index = 0; index < options.preparedAttachments.length; index += 1) {
+    const frozen = await freezePreparedAttachment(
+      options.preparedAttachments[index]!,
+      placement.attachmentsDirectory,
+      index,
+    );
+    attachments.push(frozen.attachment);
+  }
+  (admitted as { attachments: readonly FrozenAttachment[] }).attachments = attachments;
   await writeAdmittedRequestPersistence(admitted.admittedRequestPath, admitted, {
     sessionDirectory: placement.sessionDirectory,
     sessionFile: placement.sessionFile,

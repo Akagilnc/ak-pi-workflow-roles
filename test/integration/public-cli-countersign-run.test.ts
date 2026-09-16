@@ -1560,6 +1560,52 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
   });
 });
 
+test("public countersign path: identity-time source mutation cannot change the admitted snapshot", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    ensureTicketProvenanceVolume(582, project, home);
+    const source = join(project, "ticket.md");
+    await writeFile(source, "before identity", "utf8");
+    let identityMutated = false;
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        if (argvFlagValue(args, "--ak-role") === "diarist" && !identityMutated) {
+          identityMutated = true;
+          await rm(source);
+        }
+        return courtPipelinePiRunner()(args, options);
+      },
+    });
+
+    const result = await runPublicCountersign(
+      ["--attach", source, "裁：继续审票 #582。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        credentials: { "openai-codex": true, xai: true },
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+        createRunId: () => "01a0sign00-0000-7000-8000-000000000snap",
+        host: "pi",
+      },
+      captureIo().io,
+      parseCountersignArgv,
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(identityMutated, true);
+    assert.equal(
+      await readFile(result.admitted!.attachments[0]!.frozenPath, "utf8"),
+      "before identity",
+    );
+  });
+});
+
 test("A2: exhausted court diarist station is not re-run by parent auto-resume", async () => {
   await withCountersignProject(async ({ home, project }) => {
     ensureTicketProvenanceVolume(582, project, home);

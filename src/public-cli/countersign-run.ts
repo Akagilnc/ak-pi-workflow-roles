@@ -35,7 +35,7 @@ import {
   buildCountersignTransportPrompt,
   materializeCountersignInvocation,
   relocateAdmittedRunToTicket,
-  validateAttachmentPaths,
+  prepareAttachmentPaths,
   type AdmittedCountersignInvocation,
   type ParseCountersignArgvResult,
 } from "./invocation.ts";
@@ -397,19 +397,11 @@ export async function runPublicCountersign(
     throw error;
   }
 
-  const materializeAdmission = async (): Promise<void> => {
-    await materializeCountersignInvocation(admitted, {
-      home: env.home,
-      principalAuthority: env.principalAuthority,
-      attachmentPaths: parsed.attachmentPaths,
-      ...(env.model === undefined ? {} : { model: env.model }),
-    });
-  };
-
-  // Deferred persistence must not defer public input rejection: an invalid
-  // attachment neither summons the identity child nor leaves a partial run.
+  // Deferred persistence must not defer public input rejection: read the
+  // attachment snapshot once before identity, then persist these same bytes.
+  let preparedAttachments;
   try {
-    await validateAttachmentPaths(parsed.attachmentPaths);
+    preparedAttachments = await prepareAttachmentPaths(parsed.attachmentPaths);
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -417,6 +409,15 @@ export async function runPublicCountersign(
     }
     throw error;
   }
+
+  const materializeAdmission = async (): Promise<void> => {
+    await materializeCountersignInvocation(admitted, {
+      home: env.home,
+      principalAuthority: env.principalAuthority,
+      preparedAttachments,
+      ...(env.model === undefined ? {} : { model: env.model }),
+    });
+  };
 
   // #637 / #771 / ADR 0079: ticket identity is the 起居郎 LLM typed assertion
   // (never mechanical matching of summons text). Resolve that typed key before
