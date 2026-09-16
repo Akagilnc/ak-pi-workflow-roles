@@ -1307,8 +1307,8 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       path: fixtureA.path,
       ranges: [
         {
-          from: { line: fixtureA.rangeALine },
-          to: { line: fixtureA.rangeALine },
+          from: { id: fixtureA.plainOwnerId },
+          to: { id: fixtureA.plainOwnerId },
         },
       ],
     };
@@ -1317,8 +1317,8 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       path: fixtureA.path,
       ranges: [
         {
-          from: { line: fixtureA.rangeBLine },
-          to: { line: fixtureA.rangeBLine },
+          from: { id: fixtureA.ownerId },
+          to: { id: fixtureA.ownerId },
         },
       ],
     };
@@ -1378,17 +1378,6 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(afterA2.header?.sessions[0]?.path, fixtureA.path);
     assert.deepEqual(afterA2.header?.sessions[0]?.ranges, rangeA2.ranges);
 
-    // Upgrade boundary: the carried later range predates sourcePosition.
-    const legacyRecords = (await readFile(paths.recordFile, "utf8"))
-      .trimEnd()
-      .split("\n")
-      .map((raw) => {
-        const record = JSON.parse(raw) as { payload?: { lines?: Record<string, unknown>[] } };
-        for (const line of record.payload?.lines ?? []) delete line.sourcePosition;
-        return JSON.stringify(record);
-      });
-    await writeFile(paths.recordFile, `${legacyRecords.join("\n")}\n`, "utf8");
-
     // Round 2: submit only a different session path — A remains; s=0/s=1 both coherent.
     const afterB = await runDiarist("01a0diar00-0000-7000-8000-000000000092", [
       rangeB,
@@ -1422,10 +1411,22 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(afterB.header?.sessions[1]?.path, sessionBPath);
     assert.deepEqual(afterB.header?.sessions[1]?.ranges, rangeB.ranges);
 
-    // Round 3: add the earlier same-session range after the later one.
+    // Round 3: the live source acquired a new leading event. Persisted ordinals must
+    // be refreshed from replay-stable identities before adding the earlier range.
+    const originalA = await readFile(fixtureA.path, "utf8");
+    await writeFile(
+      fixtureA.path,
+      `${JSON.stringify({
+        type: "assistant",
+        uuid: "msg-leading-insert",
+        message: { role: "assistant", content: "later replay inserted this first" },
+      })}\n${originalA}`,
+      "utf8",
+    );
     const afterA = await runDiarist("01a0diar00-0000-7000-8000-000000000093", [
       rangeA,
     ]);
+    await writeFile(fixtureA.path, originalA, "utf8");
     const byIdA2 = new Map(
       afterA.lines
         .filter((line) => line.id !== undefined)
@@ -1447,7 +1448,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.deepEqual(
       afterA.lines.map((line) => line.id),
       [fixtureA.plainOwnerId, fixtureA.ownerId, sessionBOwnerId],
-      "cumulative projection stays grouped by session and source order",
+      "cumulative projection refreshes replay-shifted positions before source ordering",
     );
     assert.equal(afterA.lines.length, 3);
     assert.equal(afterA.header?.sessions.length, 2);
@@ -1459,12 +1460,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     // physicalPathIdentity as I/O seam; keep first-seen header path; no extra s.
     const rangeAEquiv = {
       path: `${fixtureA.path}/./`,
-      ranges: [
-        {
-          from: { line: fixtureA.rangeALine },
-          to: { line: fixtureA.rangeALine },
-        },
-      ],
+      ranges: rangeA.ranges,
     };
     const afterEquiv = await runDiarist(
       "01a0diar00-0000-7000-8000-000000000094",
@@ -1505,12 +1501,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     await symlink(join(home, ".claude", "projects", "probe"), aliasDir);
     const rangeASymlink = {
       path: join(aliasDir, "session-a.jsonl"),
-      ranges: [
-        {
-          from: { line: fixtureA.rangeALine },
-          to: { line: fixtureA.rangeALine },
-        },
-      ],
+      ranges: rangeA.ranges,
     };
     const afterSymlink = await runDiarist(
       "01a0diar00-0000-7000-8000-000000000094b",
@@ -2027,6 +2018,48 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     );
     assert.equal(afterAliasHistory.lines.filter((line) => line.text === aliasIdlessText).length, 1);
     assert.equal(afterAliasHistory.lines.filter((line) => line.id === aliasNewId).length, 1);
+  });
+});
+
+test("ticket provenance gives mixed positioned and legacy rows a total order", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const paths = resolveTicketProvenanceVolume(TICKET, project, home);
+    await mkdir(paths.volumeDir, { recursive: true });
+    const session = {
+      path: "/historical/session.jsonl",
+      ranges: [{ from: { line: 1 }, to: { line: 1 } }],
+    };
+    await writeFile(paths.recordFile, [
+      JSON.stringify({
+        repo: resolveBookKeyFromGit(project),
+        ticket: TICKET,
+        createdAt: "2026-01-01T00:00:00.000Z",
+        updatedAt: "2026-01-01T00:00:00.000Z",
+        sessions: [session],
+      }),
+      JSON.stringify({ speaker: "owner", s: 0, id: "legacy", text: "legacy" }),
+      JSON.stringify({
+        kind: "ticket-provenance",
+        timestamp: "2026-01-02T00:00:00.000Z",
+        payload: {
+          type: "ticket-provenance-append",
+          sessions: [session],
+          lines: [{
+            speaker: "owner",
+            s: 0,
+            id: "positioned",
+            sourcePosition: 4,
+            text: "positioned",
+          }],
+        },
+      }),
+    ].join("\n") + "\n", "utf8");
+
+    const result = await readTicketProvenance(TICKET, project, home);
+    assert.deepEqual(result.lines.map((line) => line.id), ["positioned", "legacy"]);
   });
 });
 

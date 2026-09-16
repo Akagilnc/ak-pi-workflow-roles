@@ -493,24 +493,26 @@ function mergeFreshIntoCarried(
   carried: readonly TicketProvenanceLine[],
   fresh: readonly TicketProvenanceLine[],
 ): TicketProvenanceLine[] {
-  const seenIds = new Map<string, TicketProvenanceLine>();
+  const seenSources = new Map<string, TicketProvenanceLine>();
   const bySession = new Map<number, TicketProvenanceLine[]>();
   const absorb = (lines: readonly TicketProvenanceLine[]): void => {
     for (const line of lines) {
-      if (line.id !== undefined) {
-        const identity = dialogueIdentity(line.s, line.id);
-        const seen = seenIds.get(identity);
-        if (seen !== undefined) {
-          if (seen.sourcePosition === undefined && line.sourcePosition !== undefined) {
-            Object.assign(seen, { sourcePosition: line.sourcePosition });
-          }
-          continue;
+      const sourceIdentity = line.id === undefined
+        ? line.sourceIdentity
+        : `id\u0000${line.id}`;
+      const identity = sourceIdentity === undefined
+        ? undefined
+        : `${line.s}\u0000${sourceIdentity}`;
+      const seen = identity === undefined ? undefined : seenSources.get(identity);
+      if (seen !== undefined) {
+        if (line.sourcePosition !== undefined) {
+          Object.assign(seen, { sourcePosition: line.sourcePosition });
         }
-        seenIds.set(identity, line);
+        continue;
       }
       const bucket = bySession.get(line.s) ?? [];
       bucket.push({ ...line });
-      if (line.id !== undefined) seenIds.set(dialogueIdentity(line.s, line.id), bucket.at(-1)!);
+      if (identity !== undefined) seenSources.set(identity, bucket.at(-1)!);
       bySession.set(line.s, bucket);
     }
   };
@@ -518,10 +520,19 @@ function mergeFreshIntoCarried(
   absorb(fresh);
   return [...bySession.entries()]
     .sort(([left], [right]) => left - right)
-    .flatMap(([, lines]) => lines.sort((left, right) => {
-      if (left.sourcePosition === undefined || right.sourcePosition === undefined) return 0;
-      return left.sourcePosition - right.sourcePosition;
-    }));
+    .flatMap(([, lines]) => lines
+      .map((line, archiveIndex) => ({ line, archiveIndex }))
+      .sort((left, right) => {
+        const leftPosition = left.line.sourcePosition;
+        const rightPosition = right.line.sourcePosition;
+        if (leftPosition === undefined && rightPosition === undefined) {
+          return left.archiveIndex - right.archiveIndex;
+        }
+        if (leftPosition === undefined) return 1;
+        if (rightPosition === undefined) return -1;
+        return leftPosition - rightPosition || left.archiveIndex - right.archiveIndex;
+      })
+      .map(({ line }) => line));
 }
 
 /**
@@ -612,7 +623,7 @@ async function projectSessionRanges(input: {
 }): Promise<{
   readonly lines: TicketProvenanceLine[];
   readonly raw: TicketProvenanceRaw[];
-  readonly sourcePositionById: ReadonlyMap<string, number>;
+  readonly sourcePositionByIdentity: ReadonlyMap<string, number>;
 }> {
   assertDialogueSessionSourcePath(input.session.path, input.home);
   let sessionLines: LedgerSessionLine[];
@@ -637,11 +648,9 @@ async function projectSessionRanges(input: {
   const rows = sessionLines.map((entry) => entry.row);
   const dialogue = adaptSessionDialogue(rows);
   const sourceFacts = stableSourceFacts(sessionLines);
-  const sourcePositionById = new Map<string, number>();
-  for (let index = 0; index < sessionLines.length; index += 1) {
-    const row = sessionLines[index]!.row;
-    const id = row === undefined ? undefined : nativeEventId(row);
-    if (id !== undefined) sourcePositionById.set(id, sourceFacts[index]!.position);
+  const sourcePositionByIdentity = new Map<string, number>();
+  for (const fact of sourceFacts) {
+    sourcePositionByIdentity.set(fact.identity, fact.position);
   }
   const seenIds = input.seenIds;
   const lines: TicketProvenanceLine[] = [];
@@ -677,7 +686,7 @@ async function projectSessionRanges(input: {
       }
     }
   }
-  return { lines, raw, sourcePositionById };
+  return { lines, raw, sourcePositionByIdentity };
 }
 
 /**
@@ -743,8 +752,12 @@ export async function reprojectTicketProvenance(input: {
       ...(input.home === undefined ? {} : { home: input.home }),
     });
     fresh.push(...prior.lines.flatMap((line) => {
-      if (line.s !== delta.s || line.id === undefined || line.sourcePosition !== undefined) return [];
-      const sourcePosition = projected.sourcePositionById.get(line.id);
+      if (line.s !== delta.s) return [];
+      const sourceIdentity = line.id === undefined
+        ? line.sourceIdentity
+        : `id\u0000${line.id}`;
+      if (sourceIdentity === undefined) return [];
+      const sourcePosition = projected.sourcePositionByIdentity.get(sourceIdentity);
       return sourcePosition === undefined ? [] : [{ ...line, sourcePosition }];
     }));
     fresh.push(...projected.lines);
