@@ -1405,9 +1405,6 @@ export function createRoleRuntimeExtension(
       const text = event.text;
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
-      const brief = roleReferenceMaterials === ""
-        ? text
-        : `<role_reference_materials>\n${roleReferenceMaterials}\n</role_reference_materials>\n\n${text}`;
       // Reviewer: recover original request; Pi argv may already carry native form.
       if (
         role === "reviewer"
@@ -1420,14 +1417,14 @@ export function createRoleRuntimeExtension(
             activeReviewerParent.skillBinding.name,
             text,
           ) ?? text;
-        return brief === event.text
-          ? { action: "continue" as const }
-          : { action: "transform" as const, text: brief };
       }
-      return brief === event.text
-        ? { action: "continue" as const }
-        : { action: "transform" as const, text: brief };
+      return { action: "continue" as const };
     });
+    // Reference law/guides use the existing typed reading-material channel;
+    // they are not rewritten into operator dialogue or the identity Soul.
+    roleHost.on("before_agent_start", () => roleReferenceMaterials === ""
+      ? undefined
+      : { readingMaterial: { kind: "role-reference-materials", content: roleReferenceMaterials } });
     roleHost.on("before_agent_start", async (event, ctx) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       const prompt = event.prompt;

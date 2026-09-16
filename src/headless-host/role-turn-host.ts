@@ -24,6 +24,7 @@ import {
 
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
+  applyCodexSkillInvocation,
   applyHostSlashSkillInvocation,
   ensurePackagedMethodPlugin,
   forcedPluginSlashToken,
@@ -455,15 +456,6 @@ function buildTurnArgs(options: {
 /** Headless last hop (#820): session bind/resume, CLI spawn turn, MCP/json-schema/output-schema mount. */
 export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): RoleTurnHost {
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
-    if (isCodexExecDescription(config.description) && request.methods.some((method) => method.kind === "skill")) {
-      return failure(
-        "activation",
-        "UnsupportedHostMethod",
-        "unsupported-method",
-        { host: config.hostName, methodKind: "skill" },
-        `${config.hostName} has no per-run packaged Skill loader`,
-      );
-    }
     const prepared = await config.prepare(request);
     const systemPrompt = renderSystemPromptOverride(prepared.systemPrompt);
     const codex = isCodexExecDescription(config.description);
@@ -487,7 +479,9 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       let mcpConfigPath: string | undefined;
       let outputSchemaPath: string | undefined;
       let pluginDir: string | undefined;
-      let applyMethodPrompt: (prompt: string) => string = (prompt) => prompt;
+      let applyMethodPrompt: (prompt: string) => string = codex
+        ? (prompt) => applyCodexSkillInvocation(request.methods, prompt)
+        : (prompt) => prompt;
       if (codex) {
         outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
         await writeFile(

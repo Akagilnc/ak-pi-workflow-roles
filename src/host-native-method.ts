@@ -1,5 +1,5 @@
 /** #922 Claude's native packaged-plugin method delivery. */
-import { lstat } from "node:fs/promises";
+import { lstat, mkdir, readlink, realpath, symlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { MethodBinding } from "./host-contracts.ts";
 
@@ -35,6 +35,15 @@ export function forcedPluginSlashToken(methods: readonly MethodBinding[]): strin
   return skills.length === 1 ? pluginSkillToken(HOST_METHOD_PLUGIN_NAME, skills[0]!.name) : undefined;
 }
 
+/** Codex's documented project-Skill mention syntax. */
+export function applyCodexSkillInvocation(methods: readonly MethodBinding[], prompt: string): string {
+  const skills = hostMethodSkills(methods);
+  if (skills.length !== 1) return prompt;
+  const token = `$${skills[0]!.name}`;
+  if (alreadyPrefixed(prompt, token)) return prompt;
+  return prompt ? `${token} ${prompt}` : token;
+}
+
 export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<string> {
   const outDir = packagedMethodPluginDir(packageRoot);
   const probe = join(outDir, "skills", "tdd", "SKILL.md");
@@ -42,4 +51,29 @@ export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<s
     if ((await lstat(probe)).isFile()) return outDir;
   } catch { /* missing */ }
   throw new Error(`method-host-plugin missing at ${probe}; package build must materialize it (npm run build / prepack).`);
+}
+
+/** Install the documented Codex/Hermes project Skill catalog once and leave it. */
+export async function installWorkspaceMethodSkills(cwd: string, packageRoot: string): Promise<void> {
+  const target = await realpath(packagedMethodsDir(packageRoot));
+  const link = join(cwd, ".agents", "skills");
+  try {
+    const stat = await lstat(link);
+    if (!stat.isSymbolicLink() || await realpath(link) !== target) {
+      const detail = stat.isSymbolicLink() ? `symlink to ${await readlink(link)}` : "non-symlink entry";
+      throw new Error(`workspace method catalog conflict at ${link}: ${detail}`);
+    }
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  await mkdir(dirname(link), { recursive: true });
+  try {
+    await symlink(target, link);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    if ((await realpath(link).catch(() => "")) !== target) {
+      throw new Error(`workspace method catalog conflict at ${link}`);
+    }
+  }
 }

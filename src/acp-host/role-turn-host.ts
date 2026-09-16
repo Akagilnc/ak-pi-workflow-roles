@@ -14,7 +14,14 @@ import {
   type PreparedRoleTurn,
   type SessionIdentityAuthority,
 } from "../prepared-role-turn.ts";
+import { applyHostSlashSkillInvocation, hostMethodSkills } from "../host-native-method.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
+
+function applyAcpMethodPrompt(host: string, request: RoleTurnRequest, prompt: string): string {
+  const skills = hostMethodSkills(request.methods);
+  if (skills.length !== 1 || host !== "hermes") return prompt;
+  return applyHostSlashSkillInvocation(skills[0]!.name, prompt);
+}
 
 /** ACP v1 surface used by the generic ACP adapter. Protocol details stay in this module. */
 export interface AcpConnection {
@@ -177,7 +184,7 @@ export function connectAcpStdio(options: {
 /** ACP last hop (#820): session open/load/close, prompt, MCP mount, capability/model. */
 export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHost {
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
-    if (request.methods.some((method) => method.kind === "skill")) {
+    if (config.hostName === "grok-build" && hostMethodSkills(request.methods).length > 0) {
       return failure("activation", "UnsupportedHostMethod", "unsupported-method", {
         host: config.hostName,
         methodKind: "skill",
@@ -310,7 +317,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               result = await raceAgainstHostAbort(
                 activeConnection.request("session/prompt", {
                   sessionId: activeSessionId,
-                  prompt: [{ type: "text", text: prompt }],
+                  prompt: [{ type: "text", text: applyAcpMethodPrompt(config.hostName, request, prompt) }],
                 }),
                 combinedAbort,
                 "ACP host aborted",
