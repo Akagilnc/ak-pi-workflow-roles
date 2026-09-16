@@ -1850,47 +1850,35 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
   });
 });
 
-test("ak-role diarist records the same owner text from isolated user and enqueue bounds", async () => {
+test("ak-role diarist selects user and enqueue boundaries inside their declared ranges", async () => {
   const ownerText = "那就不要行号了嘛。反正全文拿去搜索匹配也很快？";
-
   for (const source of ["user", "enqueue"] as const) {
     await withTempHome(async (home) => {
       const project = join(home, "project");
       await mkdir(project, { recursive: true });
       seedGitProject(project);
-      const sessionPath = join(
-        home,
-        ".claude",
-        "projects",
-        `probe-${source}`,
-        "session.jsonl",
-      );
+      const sessionPath = join(home, ".claude", "projects", `probe-${source}`, "session.jsonl");
       await mkdir(join(sessionPath, ".."), { recursive: true });
-      const row = source === "user"
-        ? {
-            type: "user",
-            uuid: `owner-${source}`,
-            message: { role: "user", content: ownerText },
-            origin: { kind: "human" },
-          }
-        : {
-            type: "queue-operation",
-            operation: "enqueue",
-            id: `owner-${source}`,
-            content: ownerText,
-          };
-      await writeFile(sessionPath, `${JSON.stringify(row)}\n`, "utf8");
+      const id = `owner-${source}`;
+      const target = source === "user"
+        ? { type: "user", uuid: id, message: { role: "user", content: ownerText }, origin: { kind: "human" } }
+        : { type: "queue-operation", operation: "enqueue", id, content: ownerText };
+      const rows = source === "user"
+        ? [
+            { type: "queue-operation", operation: "enqueue", id: "outside", content: ownerText },
+            { type: "queue-operation", operation: "dequeue" },
+            target,
+          ]
+        : [target];
+      await writeFile(
+        sessionPath,
+        rows.map((row) => JSON.stringify(row)).join("\n") + "\n",
+        "utf8",
+      );
 
       const { io, stdout } = captureIo();
       const result = await runAkRole(
-        [
-          "diarist",
-          "--model",
-          "test/caller-seat:high",
-          "--project",
-          project,
-          `整理 #${TICKET} 起居录`,
-        ],
+        ["diarist", "--model", "test/caller-seat:high", "--project", project, `整理 #${TICKET} 起居录`],
         {
           home,
           packageRoot,
@@ -1904,20 +1892,24 @@ test("ak-role diarist records the same owner text from isolated user and enqueue
             piRunner: diaristEnvelopeRunner({
               status: "completed",
               ticketNumber: TICKET,
-              sessions: [
-                { path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] },
-              ],
+              sessions: [{
+                path: sessionPath,
+                ranges: [{
+                  from: { line: source === "user" ? 3 : 1 },
+                  to: { line: source === "user" ? 3 : 1 },
+                }],
+              }],
             }),
           }),
         },
       );
-      assert.equal(result.exitCode, 0, stdout.join("") || `${source} boundary failed`);
+      assert.equal(result.exitCode, 0, stdout.join(""));
 
       const volume = await readTicketProvenance(TICKET, project, home);
       assert.deepEqual(
-        volume.lines.map(({ speaker, text, id, s }) => ({ speaker, text, id, s })),
-        [{ speaker: "owner", text: ownerText, id: `owner-${source}`, s: 0 }],
-        `${source} boundary must produce the same owner utterance without a line address`,
+        volume.lines.map(({ speaker, text, id: lineId, s }) => ({ speaker, text, id: lineId, s })),
+        [{ speaker: "owner", text: ownerText, id, s: 0 }],
+        `${source} selection must happen inside the declared range, not over the whole session`,
       );
     });
   }
