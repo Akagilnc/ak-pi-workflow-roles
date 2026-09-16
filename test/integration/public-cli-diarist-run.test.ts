@@ -1366,17 +1366,17 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       return readTicketProvenance(TICKET, project, home);
     }
 
-    // Round 1: record only A on session-a.
-    const afterA = await runDiarist("01a0diar00-0000-7000-8000-000000000091", [
-      rangeA,
+    // Round 1: record the later range on session-a first.
+    const afterA2 = await runDiarist("01a0diar00-0000-7000-8000-000000000091", [
+      rangeA2,
     ]);
-    assert.equal(afterA.lines.length, 1);
-    assert.equal(afterA.lines[0]?.id, fixtureA.plainOwnerId);
-    assert.equal(afterA.lines[0]?.text, fixtureA.plainOwnerText);
-    assert.equal(afterA.lines[0]?.s, 0);
-    assert.equal(afterA.header?.sessions.length, 1);
-    assert.equal(afterA.header?.sessions[0]?.path, fixtureA.path);
-    assert.deepEqual(afterA.header?.sessions[0]?.ranges, rangeA.ranges);
+    assert.equal(afterA2.lines.length, 1);
+    assert.equal(afterA2.lines[0]?.id, fixtureA.ownerId);
+    assert.equal(afterA2.lines[0]?.text, "立文件。送司天台记录。");
+    assert.equal(afterA2.lines[0]?.s, 0);
+    assert.equal(afterA2.header?.sessions.length, 1);
+    assert.equal(afterA2.header?.sessions[0]?.path, fixtureA.path);
+    assert.deepEqual(afterA2.header?.sessions[0]?.ranges, rangeA2.ranges);
 
     // Round 2: submit only a different session path — A remains; s=0/s=1 both coherent.
     const afterB = await runDiarist("01a0diar00-0000-7000-8000-000000000092", [
@@ -1388,12 +1388,12 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
         .map((line) => [line.id!, line]),
     );
     assert.equal(
-      byIdB.get(fixtureA.plainOwnerId)?.text,
-      fixtureA.plainOwnerText,
-      "A identity/text kept",
+      byIdB.get(fixtureA.ownerId)?.text,
+      "立文件。送司天台记录。",
+      "later range identity/text kept",
     );
     assert.equal(
-      byIdB.get(fixtureA.plainOwnerId)?.s,
+      byIdB.get(fixtureA.ownerId)?.s,
       0,
       "prior session keeps s=0",
     );
@@ -1407,16 +1407,16 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     // Header: prior path first, new path second.
     assert.equal(afterB.header?.sessions.length, 2);
     assert.equal(afterB.header?.sessions[0]?.path, fixtureA.path);
-    assert.deepEqual(afterB.header?.sessions[0]?.ranges, rangeA.ranges);
+    assert.deepEqual(afterB.header?.sessions[0]?.ranges, rangeA2.ranges);
     assert.equal(afterB.header?.sessions[1]?.path, sessionBPath);
     assert.deepEqual(afterB.header?.sessions[1]?.ranges, rangeB.ranges);
 
-    // Round 3: same-path additive range on session-a (同卷新增) — history kept, s stable.
-    const afterA2 = await runDiarist("01a0diar00-0000-7000-8000-000000000093", [
-      rangeA2,
+    // Round 3: add the earlier same-session range after the later one.
+    const afterA = await runDiarist("01a0diar00-0000-7000-8000-000000000093", [
+      rangeA,
     ]);
     const byIdA2 = new Map(
-      afterA2.lines
+      afterA.lines
         .filter((line) => line.id !== undefined)
         .map((line) => [line.id!, line]),
     );
@@ -1434,15 +1434,15 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.equal(byIdA2.get(sessionBOwnerId)?.text, sessionBOwnerText);
     assert.equal(byIdA2.get(sessionBOwnerId)?.s, 1);
     assert.deepEqual(
-      afterA2.lines.map((line) => line.s),
-      [0, 0, 1],
+      afterA.lines.map((line) => line.id),
+      [fixtureA.plainOwnerId, fixtureA.ownerId, sessionBOwnerId],
       "cumulative projection stays grouped by session and source order",
     );
-    assert.equal(afterA2.lines.length, 3);
-    assert.equal(afterA2.header?.sessions.length, 2);
-    assert.equal(afterA2.header?.sessions[0]?.ranges.length, 2);
-    assert.deepEqual(afterA2.header?.sessions[0]?.ranges[0], rangeA.ranges[0]);
-    assert.deepEqual(afterA2.header?.sessions[0]?.ranges[1], rangeA2.ranges[0]);
+    assert.equal(afterA.lines.length, 3);
+    assert.equal(afterA.header?.sessions.length, 2);
+    assert.equal(afterA.header?.sessions[0]?.ranges.length, 2);
+    assert.deepEqual(afterA.header?.sessions[0]?.ranges[0], rangeA2.ranges[0]);
+    assert.deepEqual(afterA.header?.sessions[0]?.ranges[1], rangeA.ranges[0]);
 
     // Round 4: equivalent path spelling (p/./) + symlink alias must merge via the same
     // physicalPathIdentity as I/O seam; keep first-seen header path; no extra s.

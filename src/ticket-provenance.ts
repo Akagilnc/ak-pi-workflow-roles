@@ -440,7 +440,43 @@ function mergeFreshIntoCarried(
   absorb(fresh);
   return [...bySession.entries()]
     .sort(([left], [right]) => left - right)
-    .flatMap(([, lines]) => lines);
+    .flatMap(([, lines]) => lines.sort((left, right) => {
+      if (left.sourcePosition === undefined || right.sourcePosition === undefined) return 0;
+      return left.sourcePosition - right.sourcePosition;
+    }));
+}
+
+/**
+ * Give every logical source row a replay-invariant ordinal. Native ids identify
+ * replayed rows directly; idless rows use their ordinal after the preceding
+ * native id. Neither key inspects dialogue text or physical line numbers.
+ */
+function stableSourcePositions(
+  sessionLines: readonly LedgerSessionLine[],
+): readonly number[] {
+  const positionByIdentity = new Map<string, number>();
+  const positions: number[] = [];
+  let precedingId = "<start>";
+  let idlessOffset = 0;
+  for (const entry of sessionLines) {
+    const id = entry.row === undefined ? undefined : nativeEventId(entry.row);
+    if (id !== undefined) {
+      precedingId = id;
+      idlessOffset = 0;
+    } else {
+      idlessOffset += 1;
+    }
+    const identity = id === undefined
+      ? `after\u0000${precedingId}\u0000${idlessOffset}`
+      : `id\u0000${id}`;
+    let position = positionByIdentity.get(identity);
+    if (position === undefined) {
+      position = positionByIdentity.size;
+      positionByIdentity.set(identity, position);
+    }
+    positions.push(position);
+  }
+  return positions;
 }
 
 /**
@@ -552,6 +588,7 @@ async function projectSessionRanges(input: {
 
   const rows = sessionLines.map((entry) => entry.row);
   const dialogue = adaptSessionDialogue(rows);
+  const sourcePositions = stableSourcePositions(sessionLines);
   const seenIds = input.seenIds;
   const lines: TicketProvenanceLine[] = [];
   const raw: string[] = [];
@@ -602,6 +639,7 @@ async function projectSessionRanges(input: {
         lines.push({
           speaker: event.speaker,
           s: input.s,
+          sourcePosition: sourcePositions[index]!,
           ...(event.id === undefined ? {} : { id: event.id }),
           text: event.text,
         });

@@ -95,12 +95,14 @@ test("projectTicketProvenanceHeader and line round-trip the diary shape", () => 
   const line = projectTicketProvenanceLine({
     speaker: "runner",
     s: 0,
+    sourcePosition: 7,
     id: "m1",
     text: "hi",
   });
   assert.deepEqual(line, {
     speaker: "runner",
     s: 0,
+    sourcePosition: 7,
     id: "m1",
     text: "hi",
   });
