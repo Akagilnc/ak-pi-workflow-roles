@@ -1767,7 +1767,7 @@ export function createRoleRuntimeExtension(
           }
           const coordinates = readRoleRunCoordinates(context, "reviewer dual-lens summons");
           const correlationId = runIdFromRunDirectory(coordinates.runDirectory);
-          const { summonPublicRole } = await import("./public-role-summons.ts");
+          const { summonParallelReviewerLenses } = await import("./public-role-summons.ts");
           const invocation = coordinates.invocation;
           if (
             typeof invocation.provider !== "string"
@@ -1794,29 +1794,18 @@ export function createRoleRuntimeExtension(
             host: invocation.host,
             hostSource: "invocation",
           } as import("./public-cli/config.ts").EffectiveSeat;
-          const commonArgv = [
-            "--project", coordinates.projectRoot,
-            "--base", admitted.baseRevision,
-            ...admitted.authorityRefs?.flatMap((ref) => ["--authority-ref", ref]) ?? [],
-          ];
-          const summon = (lens: "completeness" | "correctness") =>
-            summonPublicRole({
-              role: "reviewer",
-              argv: [...commonArgv, "--lens", lens],
-              cwd: coordinates.projectRoot,
-              home: coordinates.home,
-              effectiveSeat,
-              ...(signal === undefined ? {} : { signal }),
-              ...(correlationId === undefined ? {} : { correlationId }),
-              ...(dependencies.packageRoot === undefined
-                ? {}
-                : { packageRoot: dependencies.packageRoot }),
-            });
-          const [completeness, correctness] = await Promise.all([
-            summon("completeness"),
-            summon("correctness"),
-          ]);
-          return { completeness, correctness };
+          return summonParallelReviewerLenses({
+            projectRoot: coordinates.projectRoot,
+            baseRevision: admitted.baseRevision,
+            authorityRefs: admitted.authorityRefs ?? [],
+            home: coordinates.home,
+            effectiveSeat,
+            ...(signal === undefined ? {} : { signal }),
+            ...(correlationId === undefined ? {} : { correlationId }),
+            ...(dependencies.packageRoot === undefined
+              ? {}
+              : { packageRoot: dependencies.packageRoot }),
+          });
         },
       },
       hostActions,

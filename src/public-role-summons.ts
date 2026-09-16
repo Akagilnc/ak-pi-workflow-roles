@@ -9,8 +9,12 @@
  * (`reading 'dirname'`, `reading 'tryHomeFromAkRolesPath'`). Dynamic import
  * starts after the caller module has finished init, so those slots stay intact.
  */
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import type { CliIo } from "./public-cli/cli-io.ts";
 import type { CredentialProviders, EffectiveSeat } from "./public-cli/config.ts";
@@ -89,6 +93,8 @@ export type PublicSummonRequest = {
   /** Caller correlation id for nested leg ledger (ADR 0010 / #924). */
   readonly correlationId?: string;
 };
+
+const execFileAsync = promisify(execFile);
 
 export type PublicSummonResult = {
   readonly exitCode: number;
@@ -530,6 +536,67 @@ export async function summonPublicRole(
       : {}),
     ...(stderr === undefined || stderr === "" ? {} : { stderr }),
   };
+}
+
+/**
+ * Default Reviewer call: two explicit single-axis public legs in independent
+ * detached worktrees, started as one parallel batch. Worktree lifecycle stays
+ * in this shared summons seam, never in the role module.
+ */
+export async function summonParallelReviewerLenses(options: {
+  readonly projectRoot: string;
+  readonly baseRevision: string;
+  readonly authorityRefs: readonly string[];
+  readonly home: string;
+  readonly effectiveSeat: EffectiveSeat;
+  readonly packageRoot?: string;
+  readonly signal?: AbortSignal;
+  readonly correlationId?: string;
+}): Promise<{
+  readonly completeness: PublicSummonResult;
+  readonly correctness: PublicSummonResult;
+}> {
+  const root = await mkdtemp(join(tmpdir(), "ak-reviewer-lenses-"));
+  const completenessRoot = join(root, "completeness");
+  const correctnessRoot = join(root, "correctness");
+  const worktrees = [completenessRoot, correctnessRoot] as const;
+  try {
+    await Promise.all(
+      worktrees.map((path) =>
+        execFileAsync("git", ["worktree", "add", "--detach", path, "HEAD"], {
+          cwd: options.projectRoot,
+        })),
+    );
+    const summon = (lens: "completeness" | "correctness", cwd: string) =>
+      summonPublicRole({
+        role: "reviewer",
+        argv: [
+          "--project", cwd,
+          "--base", options.baseRevision,
+          ...options.authorityRefs.flatMap((ref) => ["--authority-ref", ref]),
+          "--lens", lens,
+        ],
+        cwd,
+        home: options.home,
+        effectiveSeat: options.effectiveSeat,
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
+        ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+      });
+    const [completeness, correctness] = await Promise.all([
+      summon("completeness", completenessRoot),
+      summon("correctness", correctnessRoot),
+    ]);
+    return { completeness, correctness };
+  } finally {
+    await Promise.all(
+      worktrees.map((path) =>
+        execFileAsync("git", ["worktree", "remove", path], {
+          cwd: options.projectRoot,
+        })),
+    );
+    await rm(root, { recursive: true, force: true });
+  }
 }
 
 /** Gate officer summons: notary/auditor via --source-run; inspector via pointer instruction. */
