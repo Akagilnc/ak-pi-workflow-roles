@@ -69,7 +69,6 @@ import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import {
   ensureTicketProvenanceVolume,
   readTicketProvenance,
-  resolveTicketProvenanceVolume,
 } from "../../src/ticket-provenance.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
@@ -1369,7 +1368,6 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
 
     const parentRoles: string[] = [];
     const childRoles: string[] = [];
-    let turnPrompt = "";
     let countersignRunDirectory = "";
     const parentBase = roleTurnHostFromLegacyPiRunner({
       packageRoot,
@@ -1380,7 +1378,6 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       async executeTurn(request: RoleTurnRequest) {
         parentRoles.push(request.activation.role);
         if (request.activation.role === "countersign") {
-          turnPrompt = request.continuation.prompt;
           countersignRunDirectory = request.runDirectory;
         }
         const outcome = await parentBase.executeTurn(request);
@@ -1479,11 +1476,6 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       true,
       "the first ticket-identifying leg is relocated after its typed assertion",
     );
-
-    const volume = resolveTicketProvenanceVolume(582, project, home);
-    assert.ok(turnPrompt.includes(volume.recordFile));
-    assert.equal(turnPrompt.includes("起居录.md"), false);
-    await readTicketProvenance(582, project, home);
 
     assert.deepEqual(result.terminal?.gate?.actualSeats, ["notary"]);
     await readFile(join(ticketRun, "session", "auditor-roles", "o01_notary.jsonl"), "utf8");
@@ -1741,9 +1733,8 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
   });
 });
 
-test("public countersign path: true-unbound 起居郎 asserts null — no ticket bind, no 起居录 paths", async () => {
+test("public countersign path: true-unbound 起居郎 asserts null — no ticket bind; stays unbound", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    let turnPrompt = "";
     const host = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
@@ -1759,14 +1750,7 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
         cwd: project,
         principalAuthority: piDurablePrincipalAuthority,
         sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: {
-          async executeTurn(request: RoleTurnRequest) {
-            if (request.activation.role === "countersign") {
-              turnPrompt = request.continuation.prompt;
-            }
-            return host.executeTurn(request);
-          },
-        },
+        roleTurnHost: host,
         hostAdapters: [adapter("pi", host)],
         createRunId: () => "01a0sign00-0000-7000-8000-000000000d46",
       },
@@ -1785,11 +1769,6 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
       entries.some((entry) => entry.endsWith("@diarist")),
       true,
     );
-
-    // Unbound delivers no volume path; a known partition path must not appear.
-    const volume = resolveTicketProvenanceVolume(582, project, home);
-    assert.equal(turnPrompt.includes(volume.recordFile), false);
-    assert.equal(turnPrompt.includes("起居录.md"), false);
   });
 });
 

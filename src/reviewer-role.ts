@@ -1,7 +1,7 @@
 import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts";
 import { Type } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
-import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 export type { CanonicalSkillBinding };
@@ -43,7 +43,7 @@ const reviewerOutputVariants = Type.Union([
     amendments: Type.Optional(reviewerAmendmentsSchema),
   }, { additionalProperties: false }),
 ]);
-export const reviewerOutputSchema = withInfrastructureFailureDeclaration(
+export const reviewerOutputSchema = withTerminatingOutputDeclarations(
   openToolObjectFromUnion(reviewerOutputVariants),
 );
 export type ReviewerRoleDependencies = {

@@ -2,7 +2,7 @@ import type { Static } from "typebox";
 import { Type } from "typebox";
 
 import { openToolObject } from "./open-tool-schema.ts";
-import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 import {
   INSPECTOR_ACCEPTED_TEXT,
   INSPECTOR_OUTPUT_TOOL_NAME,
@@ -19,7 +19,7 @@ export type { InspectorOutput };
 export { validateRecordedInspectorOutput };
 
 /** 台院事后察举交卷形状；形状指引，非 schema 闸。 */
-export const inspectorOutputSchema = withInfrastructureFailureDeclaration(
+export const inspectorOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       status: Type.Unknown({

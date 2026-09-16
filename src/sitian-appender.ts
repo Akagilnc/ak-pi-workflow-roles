@@ -210,6 +210,22 @@ type SitianRecordPath = {
   readonly ledgerHome: string;
 };
 
+/** Sole records leaf under every sitian volume directory. */
+const SITIAN_RECORDS_LEAF = "records.jsonl" as const;
+
+/**
+ * Ticket-provenance under-book paths (docs/dossier-topology.md sole authority).
+ * Writer ticket branch and owner-visible shape share this join — one code path.
+ */
+function ticketProvenanceUnderBookPaths(
+  ledgerHome: string,
+  bookKey: string,
+  ticketId: string,
+): { sessionDir: string; recordFile: string } {
+  const sessionDir = join(activationBookDirectory(ledgerHome, bookKey), ticketId);
+  return { sessionDir, recordFile: join(sessionDir, SITIAN_RECORDS_LEAF) };
+}
+
 /** Pure topology owner shared by ambient writes and explicit-home submission reads. */
 export function resolveSitianRecordPathInLedger(
   input: SitianRecordInput,
@@ -228,13 +244,16 @@ export function resolveSitianRecordPathInLedger(
     : undefined;
 
   let sessionDir: string;
+  let recordFile: string;
   if (ticketNumber !== undefined) {
     // docs/dossier-topology.md: ticket dir holds the unique records.jsonl directly (#900).
-    const bookDir = activationBookDirectory(
+    const paths = ticketProvenanceUnderBookPaths(
       ledgerHome,
       resolveBookKeyFromGit(input.cwd ?? process.cwd()),
+      ticketNumber,
     );
-    sessionDir = join(bookDir, ticketNumber);
+    sessionDir = paths.sessionDir;
+    recordFile = paths.recordFile;
   } else {
     if (
       input.sessionParent === undefined
@@ -244,10 +263,24 @@ export function resolveSitianRecordPathInLedger(
       throw new Error("Sitian record ownership requires a parent session inside the ledger home");
     }
     sessionDir = join(dirname(input.sessionParent), category);
+    recordFile = join(sessionDir, SITIAN_RECORDS_LEAF);
   }
 
-  const recordFile = join(sessionDir, "records.jsonl");
   return { sessionDir, recordFile, ledgerHome };
+}
+
+/**
+ * Owner-visible ticket 起居录 path shape via the writer ticket joins
+ * (ticketProvenanceUnderBookPaths). Ledger leaf is the package-owned `.ak-roles`
+ * name (ADR 0048); variable slots keep owner labels; no fake-home path reverse.
+ */
+export function projectTicketRecordsPathShape(): string {
+  const { recordFile } = ticketProvenanceUnderBookPaths(
+    join("~", ".ak-roles"),
+    "<簿>",
+    "<票号>",
+  );
+  return recordFile.replace(/\\/g, "/");
 }
 
 /** Compute a write destination from ambient ledger topology (ADR 0065). */

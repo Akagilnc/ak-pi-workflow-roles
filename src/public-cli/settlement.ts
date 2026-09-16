@@ -1086,38 +1086,7 @@ async function loadBoundAuditorVolumes(
   }
   const parentId = parentEntries.find((entry) => entry.type === "session")?.id;
   if (parentId === undefined) return undefined;
-  const isResumeEnvelopeBytes = (value: unknown): boolean => {
-    if (typeof value !== "string") return false;
-    if (value.length === 0) return true;
-    const nl = value.indexOf("\n");
-    const firstLine = nl === -1 ? value : value.slice(0, nl);
-    const body = firstLine === "" && nl !== -1 ? value.slice(nl + 1) : value;
-    return body.startsWith("本次配置的劳务引擎及其手册：") || body.startsWith("- engine:");
-  };
-  const isResumeEnvelope = (msg: unknown): boolean => {
-    if (!isRecord(msg) || msg.role !== "user") return false;
-    const text = typeof msg.text === "string" ? msg.text : typeof (msg as { content?: unknown }).content === "string" ? (msg as { content: string }).content : undefined;
-    if (isResumeEnvelopeBytes(text)) return true;
-    const content = (msg as { content?: unknown }).content;
-    if (Array.isArray(content)) {
-      return content.some((p) => isRecord(p) && (isResumeEnvelopeBytes(p.text) || isResumeEnvelopeBytes(p.content)));
-    }
-    return false;
-  };
-  let latestParentUserIndex = -1;
-  for (let i = parentEntries.length - 1; i >= 0; i -= 1) {
-    const entry = parentEntries[i];
-    if (entry?.type !== "message" || entry.message?.role !== "user") continue;
-    if (isResumeEnvelope(entry.message)) continue;
-    latestParentUserIndex = i;
-    break;
-  }
   const childDirectories = [join(dirname(sessionFile), "auditor-roles")];
-  // Auto-resume seam (owner A): stale check must ignore resume envelope and
-  // prioritize retention. Previous `attemptEntryIndex < latest` discarded the
-  // first attempt's child after resume advanced latest, losing retentionFailure
-  // when retry had no compliance entry. Fix: ignore envelope for staleness and
-  // prefer any valid compliance failure before falling back to primary.
   const valid: BoundAuditorVolume[] = [];
   let sawAnyDirectory = false;
   for (const childDirectory of childDirectories) {
@@ -1166,10 +1135,6 @@ async function loadBoundAuditorVolumes(
           typeof bindingParent?.attemptEntryId === "string"
             ? bindingParent.attemptEntryId
             : undefined;
-        const attemptEntryIndex =
-          attemptEntryId === undefined
-            ? -1
-            : parentEntries.findIndex((entry) => entry.id === attemptEntryId);
         const boundSessionFile =
           typeof bindingParent?.sessionFile === "string"
             ? bindingParent.sessionFile
@@ -1177,12 +1142,7 @@ async function loadBoundAuditorVolumes(
               ? header.parentSession
               : undefined;
         if (boundSessionFile !== sessionFile) continue;
-        if (
-          bindingParent !== undefined &&
-          (bindingParent.sessionId !== parentId || attemptEntryIndex < latestParentUserIndex)
-        ) {
-          continue;
-        }
+        if (bindingParent !== undefined && bindingParent.sessionId !== parentId) continue;
         if (bindingParent === undefined && header.parentSession !== sessionFile) continue;
         valid.push({
           entries: entries.slice(start, end),
@@ -1190,8 +1150,8 @@ async function loadBoundAuditorVolumes(
           sessionFile,
           ...(attemptEntryId === undefined ? {} : { attemptEntryId }),
         });
-        // Keep every qualifying interval in the current parent-user range.
-        // A single first-match break drops later same-user summons failures (#636).
+        // Keep every interval bound to this parent. Auditor payload is relayed as
+        // recorded; code does not expire it from later user-message shape (#858).
       }
     }
   }
@@ -1252,16 +1212,6 @@ function providerStopFallbackFromAuditorVolumes(
     };
   }
   return undefined;
-}
-
-/** Recover a provider stop from the auditor child bound to the current parent attempt. */
-export async function readBoundAuditorKnownFailure(
-  sessionFile: string,
-): Promise<RoleTurnKnownFailure | undefined> {
-  const volumes = await loadBoundAuditorVolumes(sessionFile);
-  if (volumes === undefined) return undefined;
-  return complianceFailureFromAuditorVolumes(volumes)
-    ?? providerStopFallbackFromAuditorVolumes(volumes);
 }
 
 /** Strong auditor tier only — retained compliance-failure entries, no provider-stop fallback. */

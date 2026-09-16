@@ -1,6 +1,6 @@
 import { Type, type Static } from "typebox";
 import { openToolObject } from "./open-tool-schema.ts";
-import { withInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
 // #836 r16 class 3: execute() reads no params for this tool
 // (src/collector-role.ts:431-459) — a closed root only rejects the role for
@@ -124,7 +124,7 @@ export const collectorOutputBaseSchema = openToolObject(
 );
 
 /** Runtime owns the observed evidence; the model submits findings and signals sole-final submission. */
-export const collectorOutputArgsSchema = withInfrastructureFailureDeclaration(
+export const collectorOutputArgsSchema = withTerminatingOutputDeclarations(
   collectorOutputBaseSchema,
 );
 

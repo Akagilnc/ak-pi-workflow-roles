@@ -6,7 +6,7 @@
 import { Type } from "typebox";
 
 import { openToolObject } from "../open-tool-schema.ts";
-import { withInfrastructureFailureDeclaration } from "./terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
 
 export const GATEKEEPER_OUTPUT_TOOL_NAME = "ak_gatekeeper_output";
 export const GATEKEEPER_ACCEPTED_TEXT = "门下省决议已受理";
@@ -26,7 +26,7 @@ export const gatekeeperDecisionSchema = openToolObject(
   }),
 );
 
-export const gatekeeperOutputSchema = withInfrastructureFailureDeclaration(
+export const gatekeeperOutputSchema = withTerminatingOutputDeclarations(
   gatekeeperDecisionSchema,
 );
 
