@@ -57,15 +57,23 @@ export async function ensurePackagedMethodPlugin(packageRoot: string): Promise<s
 export async function installWorkspaceMethodSkills(cwd: string, packageRoot: string): Promise<void> {
   const target = await realpath(packagedMethodsDir(packageRoot));
   const link = join(cwd, ".agents", "skills");
+  let existing: Awaited<ReturnType<typeof lstat>> | undefined;
   try {
-    const stat = await lstat(link);
-    if (!stat.isSymbolicLink() || await realpath(link) !== target) {
-      const detail = stat.isSymbolicLink() ? `symlink to ${await readlink(link)}` : "non-symlink entry";
+    existing = await lstat(link);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  if (existing !== undefined) {
+    const linkedTarget = existing.isSymbolicLink()
+      ? await realpath(link).catch(() => undefined)
+      : undefined;
+    if (linkedTarget !== target) {
+      const detail = existing.isSymbolicLink()
+        ? `symlink to ${await readlink(link)}`
+        : "non-symlink entry";
       throw new Error(`workspace method catalog conflict at ${link}: ${detail}`);
     }
     return;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
   await mkdir(dirname(link), { recursive: true });
   try {
