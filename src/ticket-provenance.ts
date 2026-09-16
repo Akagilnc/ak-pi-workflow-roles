@@ -20,11 +20,7 @@ import {
   type LedgerSessionLine,
 } from "./ledger-session-read.ts";
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
-import {
-  adaptSessionDialogue,
-  isStockTaskNotificationOwnerText,
-  nativeEventId,
-} from "./session-dialogue.ts";
+import { adaptSessionDialogue, nativeEventId } from "./session-dialogue.ts";
 import {
   ensureSitianVolume,
   readSitianVolumeText,
@@ -345,20 +341,6 @@ function undeclaredSessionRanges(
   return out;
 }
 
-/**
- * #918 存量清除（一次性迁移，非每轮永久正文过滤器）：
- * 仅在纯 empty-sessions 转换路径调用。合法投影出的同前缀真人正文须在后续轮次
- * 经普通结转稳定保留（C4）——不得在每次 carry 上按正文再杀一次。
- */
-function purgeStockTaskNotificationOwnerLines(
-  lines: readonly TicketProvenanceLine[],
-): TicketProvenanceLine[] {
-  return lines.filter(
-    (line) =>
-      !(line.speaker === "owner" && isStockTaskNotificationOwnerText(line.text)),
-  );
-}
-
 /** Sort archive rows by session index then source line (stable within equal keys). */
 function compareLinePosition(
   left: TicketProvenanceLine,
@@ -639,8 +621,7 @@ async function projectSessionRanges(input: {
  * #918：已投影行即卷宗——按 s,line 结转；本轮只读 prior 未声明的 range（或新
  * session 区间）。精确重复提交＝幂等 no-op，不因历史源不可读而失败。
  * amendments-only 只按 s,line 在既有 session 索引内就地更新／插入，不重读源。
- * 存量 `<task-notification` 仅在纯 empty-sessions 路径一次性清除；普通结转不按
- * 正文再过滤。证不出的 body 原字节经 unprojectedRaw 原样留存。
+ * 空 sessions 保持现役 no-op；证不出的 body 原字节经 unprojectedRaw 原样留存。
  * Persistence goes through the Sitian volume seam (rewriteSitianVolume).
  */
 export async function reprojectTicketProvenance(input: {
@@ -666,7 +647,7 @@ export async function reprojectTicketProvenance(input: {
   const repo = resolveBookKeyFromGit(input.cwd);
 
   // Empty sessions: amendments-only updates archive by s,line (no source re-read).
-  // Pure empty selection is idempotent no-op, except one-shot stock task-notification purge.
+  // Pure empty selection is idempotent no-op.
   if (input.sessions.length === 0) {
     if (amendments.length > 0) {
       const priorSessions = prior.header?.sessions;
@@ -694,46 +675,20 @@ export async function reprojectTicketProvenance(input: {
       return { recordFile, header, lines, unparsable: [] };
     }
     if (priorNonEmpty) {
-      // 存量一次性迁移：仅当册子头尚无任何 sessions 边界时（从未成功投影过 bounds 的
-      // 纯存量卷）。header.sessions 非空＝管线已接过正式边界，empty 必须是内容 no-op
-      // （验收 3），不得再按正文杀合法投影的同前缀真人行（C4）。
-      // 已有 sessions 的历史伪署存量：不得声称已扫净，不在此 recurring 清。
-      const canMigrateStock =
-        prior.header === undefined || prior.header.sessions.length === 0;
-      const lines = canMigrateStock
-        ? purgeStockTaskNotificationOwnerLines(prior.lines)
-        : [...prior.lines];
-      const header: TicketProvenanceHeader =
-        prior.header ??
-        ({
-          repo,
-          ticket: input.ticketNumber,
-          createdAt: now,
-          updatedAt: now,
-          sessions: [],
-        } satisfies TicketProvenanceHeader);
-      // Stock migration rewrite only when something was actually removed; else exact no-op.
-      if (lines.length === prior.lines.length) {
-        return {
-          recordFile: prior.recordFile,
-          header,
-          lines: prior.lines,
-          unparsable: [],
-        };
-      }
-      const nextHeader: TicketProvenanceHeader = {
-        ...header,
-        repo,
-        ticket: input.ticketNumber,
-        updatedAt: now,
+      return {
+        recordFile: prior.recordFile,
+        header:
+          prior.header ??
+          ({
+            repo,
+            ticket: input.ticketNumber,
+            createdAt: now,
+            updatedAt: now,
+            sessions: [],
+          } satisfies TicketProvenanceHeader),
+        lines: prior.lines,
+        unparsable: [],
       };
-      const recordFile = await publishTicketProvenanceVolume({
-        recordInput,
-        header: nextHeader,
-        lines,
-        unprojectedRaw,
-      });
-      return { recordFile, header: nextHeader, lines, unparsable: [] };
     }
     // First bind with empty selection: mint lawful empty volume.
     const header: TicketProvenanceHeader = {

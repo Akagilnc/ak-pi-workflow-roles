@@ -6,4 +6,4 @@ Status: accepted
 
 **范围修订（#901 / 2026-09-14，与 ADR 0081 同步）：** 陛下实答「D 不支持旧卷」。精确射程＝**旧版 Codex 卷中缺行级 provenance（如 `content_item_kinds` 含 `user.*`）的 owner 输入**不入录、不在 cross-host 支持范围；不得以正文或全卷 originator 冒充行级事实。例外不扩及其他已有可靠结构化说话人事实的宿主。「无原生 id」仍可按 #901 兜底；「无行级 provenance」的旧 Codex 不在兜底之列。不为旧卷另建识别机制、不加正文判断。
 
-**累计与结转（#918 / 2026-09-15，给事中复庭通过）：** 取代「本轮 ranges 即当前完整快照、遗漏即撤回」与「每轮整卷重读历史源重投影」。册子头 `sessions` 为 prior ∪ 本轮的累计并集（ranges 累计单调、遗漏不删除、不设撤回）；同卷新增范围与新 session 索引均保留。**已投影条目即卷宗**：按 `s,line` 结转，不以历史源可读为发布前置；本轮只对 prior 未声明的 range（或既有 session 的新增区间）读源。精确重复提交＝幂等 no-op。amendments-only 只按 `s,line` 在既有 session 索引下就地更新／插入。机器块排除按一般规则（结构化来源 / 已获御裁的固定起始形状 / 真实因果与位置关系），不建标签或正文语义分类表；存量 body 无 `origin.kind` 时，仅正文命中 `<task-notification` 固定起始契约者就地移除，证不出的原样留存。
+**累计与结转（#918 / 2026-09-15，给事中复庭通过）：** 取代「本轮 ranges 即当前完整快照、遗漏即撤回」与「每轮整卷重读历史源重投影」。册子头 `sessions` 为 prior ∪ 本轮的累计并集（ranges 累计单调、遗漏不删除、不设撤回）；同卷新增范围与新 session 索引均保留。**已投影条目即卷宗**：按 `s,line` 结转，不以历史源可读为发布前置；本轮只对 prior 未声明的 range（或既有 session 的新增区间）读源。精确重复提交＝幂等 no-op。物化 user 按自身 typed `origin.kind` 判来源；enqueue 与物化 user 没有 typed 关联，不以位置或正文 identity 反扣，只保留已获御裁的 `<task-notification` 固定起始形状判据，其余维持现状。

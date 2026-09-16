@@ -240,7 +240,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   const removeMachineEnqueueId = "queue-remove-machine-1";
   const removeMachineText =
     "<task-notification>\n<task-id>rm-1</task-id>\n<summary>removed machine</summary>\n</task-notification>";
-  // Slash-command expansion: mat wrap ≠ enqueue, no origin — position pair skips mat, keeps typed input.
+  // Slash-command expansion: mat wrap ≠ enqueue and has no typed association.
   const slashEnqueueId = "queue-slash-ship";
   const slashEnqueueText = "/ship";
   const slashMatText =
@@ -612,7 +612,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
       reason: "absorbed_mid_turn",
     }),
     // 35–37. slash-command expansion: enqueue text ≠ mat wrap, mat has no origin.
-    // Content-join would miss the mat (A2); position pair skips mat, keeps typed /ship.
+    // No typed association joins this materialization back to the enqueue.
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -632,8 +632,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: [{ type: "text", text: slashMatText }],
       },
     }),
-    // 38–40. fixed-prefix enqueue suppressed; same-text mat without origin must not
-    // fall through to fromMessageEvent (B-B: matched.some(!suppress) hole).
+    // 38–40. fixed-prefix classifies the enqueue only; the untyped materialization stays.
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -653,8 +652,8 @@ async function writeDialogueSessionFixture(path: string): Promise<{
         content: bareMachineText,
       },
     }),
-    // 41–43. G4: non-task-notification machine enqueue + mat origin.kind non-human
-    // must not sign owner (causal pair suppresses enqueue; no unauthorized tag table).
+    // 41–43. origin.kind classifies the materialized user only; it is not
+    // reverse-attributed to the unlinked enqueue.
     JSON.stringify({
       type: "queue-operation",
       operation: "enqueue",
@@ -887,15 +886,13 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
     assert.equal(byId.get(fixture.plainOwnerId)?.text, fixture.plainOwnerText);
     assert.equal(byId.get(fixture.ownerId)?.speaker, "owner");
     assert.equal(byId.get(fixture.ownerId)?.text, "立文件。送司天台记录。");
-    // Dequeue materialization must not double-count the enqueue text.
+    // enqueue has no typed link to its materialized user. Preserve both rather than
+    // guessing an identity from position or equal text.
     assert.equal(
       volume.lines.filter((line) => line.text === "立文件。送司天台记录。").length,
-      1,
+      2,
     );
-    assert.equal(
-      volume.lines.some((line) => line.id === "msg-owner-materialized"),
-      false,
-    );
+    assert.equal(byId.get("msg-owner-materialized")?.speaker, "owner");
     // Empty-content enqueue retains nothing — its sole user materialization stays.
     assert.equal(byId.get(fixture.emptyEnqueueOwnerId)?.speaker, "owner");
     assert.equal(
@@ -915,33 +912,28 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
         (line) =>
           line.id === fixture.taskNotificationEnqueueId ||
           line.id === "msg-task-notif-mat" ||
-          line.text === fixture.taskNotificationText ||
-          line.text.startsWith("<task-notification>"),
+          line.text === fixture.taskNotificationText,
       ),
       false,
-      "task-notification enqueue/re-rendered mat must not produce owner diary lines",
+      "fixed-shape enqueue and typed task materialization must not produce owner lines",
     );
     assert.equal(
-      volume.lines.some(
-        (line) =>
-          line.id === fixture.peerOriginEnqueueId ||
-          line.id === "msg-peer-origin-mat" ||
-          line.id === "queue-peer-remove-1",
-      ),
+      volume.lines.some((line) => line.id === "msg-peer-origin-mat"),
       false,
-      "hostInjected peer enqueue/mat/remove must not land as owner (origin.kind causal pair)",
+      "materialized peer user must consume its own typed origin.kind",
     );
     assert.equal(
-      volume.lines.some((line) => line.text === fixture.peerOriginText),
-      false,
-      "peer payload alone must not land as owner",
+      byId.get(fixture.peerOriginEnqueueId)?.speaker,
+      "owner",
+      "unlinked enqueue must retain the approved existing projection",
     );
+    assert.equal(byId.get("queue-peer-remove-1")?.speaker, "owner");
     assert.equal(byId.get(fixture.humanOriginEnqueueId)?.speaker, "owner");
     assert.equal(byId.get(fixture.humanOriginEnqueueId)?.text, fixture.humanOriginText);
     assert.equal(
       volume.lines.filter((line) => line.text === fixture.humanOriginText).length,
-      1,
-      "human-origin queue must keep enqueue once (mat skipped as copy)",
+      2,
+      "human materialization and unlinked enqueue both remain",
     );
     // Non-queue human with origin.kind=human — real discrimination surface (no FIFO reverse-attr).
     assert.equal(byId.get(fixture.humanOriginDirectId)?.speaker, "owner");
@@ -965,40 +957,16 @@ test("ak-role diarist projects dialogue bounds, skips unparsable, reasks, lands 
       false,
       "removed machine queue item must not be owner",
     );
-    // Slash expansion: keep typed enqueue once; skip wrap mat (no content join, no origin).
+    // Untyped materializations are not classified by wrappers or queue position.
     assert.equal(byId.get(fixture.slashEnqueueId)?.speaker, "owner");
     assert.equal(byId.get(fixture.slashEnqueueId)?.text, fixture.slashEnqueueText);
-    assert.equal(
-      volume.lines.some(
-        (line) =>
-          line.id === "msg-slash-mat" ||
-          (typeof line.text === "string" && line.text.includes("<command-message>")),
-      ),
-      false,
-      "slash-command expanded mat must not become owner",
-    );
-    // G4: system-reminder machine via mat origin.kind — enqueue must not sign owner.
-    assert.equal(
-      volume.lines.some(
-        (line) =>
-          line.id === "queue-system-reminder-1" ||
-          line.id === "msg-system-reminder-mat" ||
-          (typeof line.text === "string" && line.text.includes("<system-reminder>")),
-      ),
-      false,
-      "system-reminder machine enqueue/mat must not become owner (causal origin pair)",
-    );
-    // Fixed-prefix enqueue + same-text no-origin mat: both out (not mat fall-through).
-    assert.equal(
-      volume.lines.some(
-        (line) =>
-          line.id === fixture.bareMachineEnqueueId ||
-          line.id === "msg-bare-machine-mat" ||
-          line.text === fixture.bareMachineText,
-      ),
-      false,
-      "suppressed fixed-prefix enqueue must not leave same-text no-origin mat as owner",
-    );
+    assert.equal(byId.get("msg-slash-mat")?.speaker, "owner");
+    // A typed machine materialization is excluded, but its unlinked enqueue remains.
+    assert.equal(byId.get("msg-system-reminder-mat"), undefined);
+    assert.equal(byId.get("queue-system-reminder-1")?.speaker, "owner");
+    // Fixed-prefix authority applies to enqueue only; an untyped user is not reverse-linked.
+    assert.equal(byId.get(fixture.bareMachineEnqueueId), undefined);
+    assert.equal(byId.get("msg-bare-machine-mat")?.speaker, "owner");
     assert.equal(byId.get(fixture.duplicateId)?.text, "首现正文");
     // Duplicate second occurrence must not produce a second line with that id.
     assert.equal(
@@ -1558,68 +1526,6 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       still.lines.some((line) => line.id === sessionCOwnerId),
       true,
       "C must survive failed new-range reask",
-    );
-
-    // 验收 8：存量一次性迁移——仅 header.sessions=[] 的纯存量卷。合法 owner 保留；
-    // `<task-notification` 前缀 owner 消失；证不出的其它前缀原样不动。不新增字段。
-    // 已有 sessions 边界的卷 empty＝内容 no-op（C4），不在此 recurring 清。
-    const stockLegalId = "stock-legal-owner";
-    const stockLegalText = "存量合法陛下发言";
-    const stockTaskText =
-      "<task-notification>\n<task-id>stock-1</task-id>\n<summary>stock machine</summary>\n</task-notification>";
-    const stockOtherText = "<other-unknown-prefix>证不出的前缀原样留存</other-unknown-prefix>";
-    const stockBody = `${JSON.stringify({
-      repo: resolveBookKeyFromGit(project),
-      ticket: TICKET,
-      createdAt: "2026-01-02T00:00:00.000Z",
-      updatedAt: "2026-01-02T00:00:00.000Z",
-      sessions: [],
-    })}\n${[
-      JSON.stringify({
-        speaker: "owner",
-        s: 0,
-        line: 9001,
-        id: stockLegalId,
-        text: stockLegalText,
-      }),
-      JSON.stringify({
-        speaker: "owner",
-        s: 0,
-        line: 9002,
-        id: "stock-task-notif",
-        text: stockTaskText,
-      }),
-      JSON.stringify({
-        speaker: "owner",
-        s: 0,
-        line: 9003,
-        id: "stock-other-prefix",
-        text: stockOtherText,
-      }),
-    ].join("\n")}\n`;
-    await writeFile(paths.recordFile, stockBody, "utf8");
-    const afterStock = await runDiarist("01a0diar00-0000-7000-8000-000000000099", []);
-    assert.equal(
-      afterStock.lines.some((line) => line.id === stockLegalId && line.text === stockLegalText),
-      true,
-      "stock legal owner must remain",
-    );
-    assert.equal(
-      afterStock.lines.some(
-        (line) =>
-          line.id === "stock-task-notif" ||
-          line.text === stockTaskText ||
-          (typeof line.text === "string" && line.text.startsWith("<task-notification")),
-      ),
-      false,
-      "stock <task-notification owner must be removed on one-shot sessions=[] volume",
-    );
-    assert.equal(
-      afterStock.lines.some(
-        (line) => line.id === "stock-other-prefix" && line.text === stockOtherText,
-      ),
-      true,
-      "unprovable other prefix stock must stay untouched",
     );
 
     // C4：合法投影的同前缀真人正文在后续非 empty 轮次必须稳定保留（非永久过滤器）。
