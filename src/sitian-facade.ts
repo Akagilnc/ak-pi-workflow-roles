@@ -4,8 +4,7 @@
  *
  * Write paths:
  * - sitianReport → appender (SitianRecord rows, append + identity claim)
- * - rewriteSitianVolume → whole-file reproject (ticket-provenance bare lines, #901)
- * Read paths: readSitianRecords (canonical rows) / readSitianVolumeText (raw body).
+ * Read paths: readSitianRecords (canonical rows).
  */
 import { appendSitianRecord } from "./sitian-appender.ts";
 import type { RecordPointer, SitianRecordInput } from "./sitian-contracts.ts";
@@ -13,7 +12,6 @@ import type { RecordPointer, SitianRecordInput } from "./sitian-contracts.ts";
 export * from "./sitian-contracts.ts";
 export * from "./sitian-appender.ts";
 export * from "./sitian-reader.ts";
-export * from "./sitian-volume.ts";
 
 /**
  * Sole append API for Sitian canonical records.
