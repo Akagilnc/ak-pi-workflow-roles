@@ -25,10 +25,6 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
     modelPassing: "argv",
     boundResume: "session/load",
     sessionBindingFile: "grok-acp-session.json",
-    childEnv: Object.freeze({
-      GROK_MEMORY: "0",
-      GROK_SUBAGENTS: "0",
-    }),
   }),
   /**
    * Operator home `~/.hermes`, native session/load resume, `acp` subcommand.
@@ -47,7 +43,6 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
     modelPassing: "set_model",
     boundResume: "session/load",
     sessionBindingFile: "hermes-acp-session.json",
-    childEnv: Object.freeze({}),
     seatProfileSoul: Object.freeze({
       flag: "-p",
       namePrefix: "ak-",
@@ -64,7 +59,6 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
  * Claude fixedArgs: print mode, full permissions. stream-json + verbose: live
  * host events for sitian records (#811); result is last line. Forced methods
  * ride `--plugin-dir` (#922); operator skill/setting surfaces stay open.
- * `--strict-mcp-config` keeps the AK relay as the sole MCP config channel.
  */
 export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDescription>> = Object.freeze({
   "claude": Object.freeze({
@@ -77,8 +71,6 @@ export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDes
       // Intermediate assistant/tool/system events require verbose with stream-json.
       "--verbose",
       "--permission-mode", "bypassPermissions",
-      // With adapter-supplied --mcp-config only (AK relay); drops operator + claude.ai MCP.
-      "--strict-mcp-config",
     ]),
     promptFlag: "-p",
     modelFlag: "--model",

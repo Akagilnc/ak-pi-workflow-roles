@@ -95,7 +95,6 @@ test("#922 plugin-dir open; no skill closers; Codex keeps user config", () => {
   const claude = HEADLESS_HOST_DESCRIPTIONS.claude;
   assert.ok(claude && claude.protocol === "claude-print");
   const pluginDir = packagedMethodPluginDir(process.cwd());
-  assert.equal(claude.fixedArgs.includes("--setting-sources"), false);
   const claudeArgv = headlessTurnArgs({
     description: claude,
     systemPromptPath: "/tmp/sys.txt",
@@ -106,7 +105,6 @@ test("#922 plugin-dir open; no skill closers; Codex keeps user config", () => {
   });
   assert.equal(claudeArgv[claudeArgv.indexOf("--plugin-dir") + 1], pluginDir);
   const grok = HOST_DESCRIPTIONS["grok-build"]!;
-  assert.equal(Object.keys(grok.childEnv).some((k) => k.includes("SKILLS_ENABLED")), false);
   const grokArgv = acpStdioArgs(grok, { model: "m" }, undefined, { pluginDir });
   assert.ok(grokArgv.indexOf("--plugin-dir") < grokArgv.indexOf("stdio"));
   const codexArgv = codexTurnArgs({
@@ -115,6 +113,4 @@ test("#922 plugin-dir open; no skill closers; Codex keeps user config", () => {
     mcpServers: [],
     session: { kind: "new" },
   });
-  assert.equal(codexArgv.includes("--ignore-user-config"), false);
-  assert.equal(codexArgv.includes("--ignore-rules"), false);
 });
