@@ -124,7 +124,10 @@ export function createReviewerRoleRuntime(
               ...(signal === undefined ? {} : { signal }),
             });
             return {
-              content: [{ type: "text" as const, text: "双轴 Reviewer 终局已并行送达" }],
+              content: [{
+                type: "text" as const,
+                text: `双轴 Reviewer 终局已并行送达：\n${JSON.stringify(details, null, 2)}`,
+              }],
               details,
             };
           },
