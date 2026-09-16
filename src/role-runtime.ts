@@ -1782,11 +1782,8 @@ export function createRoleRuntimeExtension(
             { terminal?: unknown }
           >;
           return {
-            status: "completed",
-            amendments: {
-              completeness: JSON.stringify(results.completeness.terminal),
-              correctness: JSON.stringify(results.correctness.terminal),
-            },
+            completeness: results.completeness.terminal,
+            correctness: results.correctness.terminal,
           };
         },
       },
@@ -2162,8 +2159,28 @@ export function createRoleRuntimeExtension(
                 projectRoot: coordinates.projectRoot,
                 baseRevision: admitted.baseRevision,
                 authorityRefs: admitted.authorityRefs ?? [],
+                instruction: reviewerOriginalRequest ?? "",
                 home: coordinates.home,
+                ...(context.model?.model === undefined
+                  ? {}
+                  : {
+                      model: {
+                        provider: context.model.provider,
+                        model: context.model.model,
+                        ...(context.model.thinking === undefined
+                          ? {}
+                          : { thinking: context.model.thinking }),
+                      },
+                    }),
                 ...(context.host === undefined ? {} : { host: context.host }),
+                ...(() => {
+                  const engine = resolveEngineName((name) => roleHost.getFlag(name));
+                  const engineModel = resolveEngineModel((name) => roleHost.getFlag(name));
+                  return {
+                    ...(engine === undefined ? {} : { engine }),
+                    ...(engineModel === undefined ? {} : { engineModel }),
+                  };
+                })(),
                 ...(context.signal === undefined ? {} : { signal: context.signal }),
                 ...(correlationId === undefined ? {} : { correlationId }),
                 ...(dependencies.packageRoot === undefined

@@ -455,6 +455,11 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       // Selected host axis (#537 / ADR 0082): omit must not inherit a parent env value.
       if (request.host === undefined || request.host.trim() === "") delete env.AK_ROLE_HOST;
       else env.AK_ROLE_HOST = request.host.trim();
+      if (request.model?.thinking === undefined || request.model.thinking.trim() === "") {
+        delete env.AK_ROLE_THINKING;
+      } else {
+        env.AK_ROLE_THINKING = request.model.thinking.trim();
+      }
       applyEngineChildEnv(env, request.engine);
       // Nested auditor dossier tool binds the parent run pointer when published.
       if (

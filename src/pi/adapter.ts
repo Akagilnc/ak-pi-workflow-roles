@@ -45,7 +45,16 @@ function projectPiContext(context: ExtensionContext, transcriptFromContext?: (co
   const host: HostContext = {
     cwd: context.cwd,
     mode: context.mode,
-    model: context.model === undefined ? undefined : { provider: context.model.provider },
+    model: context.model === undefined
+      ? undefined
+      : {
+          provider: context.model.provider,
+          model: context.model.id,
+          ...(typeof process.env.AK_ROLE_THINKING === "string"
+            && process.env.AK_ROLE_THINKING.trim() !== ""
+            ? { thinking: process.env.AK_ROLE_THINKING.trim() }
+            : {}),
+        },
     ...(typeof process.env.AK_ROLE_RUN_DIR === "string" && process.env.AK_ROLE_RUN_DIR.trim() !== ""
       ? { runDirectory: process.env.AK_ROLE_RUN_DIR }
       : {}),

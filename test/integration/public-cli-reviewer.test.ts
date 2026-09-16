@@ -29,6 +29,7 @@ import {
   resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { summonParallelReviewerLenses } from "../../src/public-role-summons.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitReviewerInvocation as admitReviewerInvocationRaw,
@@ -1037,6 +1038,71 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         "Review the latest commit on both axes.",
       );
     }
+  });
+});
+
+test("default reviewer wire gives both child runs the opaque instruction and effective seat axes", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const requests: import("../../src/host-contracts.ts").RoleTurnRequest[] = [];
+    let waiting = 0;
+    let release!: () => void;
+    const bothStarted = new Promise<void>((resolve) => { release = resolve; });
+    const roleTurnHost: import("../../src/host-contracts.ts").RoleTurnHost = {
+      async executeTurn(request) {
+        requests.push(request);
+        waiting += 1;
+        if (waiting === 2) release();
+        await bothStarted;
+        const lens = request.activation.role === "reviewer" ? request.activation.lens : "all";
+        if (lens === "all") throw new Error("child reviewer must be single-axis");
+        const details = lawfulReviewerReceipt(lens);
+        const coordinates = piDurablePrincipalAuthority.decode(request.principal);
+        await mkdir(coordinates.sessionDirectory, { recursive: true });
+        await writeFile(coordinates.sessionFile, "", "utf8");
+        await sealAcceptedSubmission({
+          runId: request.runDirectory.split("/").at(-1)!.split("@")[0]!,
+          cwd: request.cwd,
+          home,
+          runDirectory: request.runDirectory,
+          role: "reviewer",
+          details,
+          toolCallId: `review-${lens}`,
+        });
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    };
+    let id = 0;
+    const result = await summonParallelReviewerLenses({
+      projectRoot: project,
+      baseRevision: "HEAD",
+      authorityRefs: ["CLAUDE.md"],
+      instruction: "Opaque caller instruction; preserve exactly.",
+      home,
+      packageRoot,
+      model: { provider: "test", model: "inherited-model", thinking: "high" },
+      host: "pi",
+      engine: "codex",
+      engineModel: "inherited-engine-model",
+      correlationId: "parent-reviewer-run",
+      roleTurnHost,
+      createRunId: () => `child-reviewer-${++id}`,
+    });
+    assert.equal(result.completeness.exitCode, 0);
+    assert.equal(result.correctness.exitCode, 0);
+    assert.equal(requests.length, 2);
+    for (const request of requests) {
+      assert.equal(request.continuation.kind, "initial");
+      assert.equal(request.continuation.prompt.includes("Opaque caller instruction; preserve exactly."), true);
+      assert.deepEqual(request.model, { provider: "test", model: "inherited-model", thinking: "high" });
+      assert.equal(request.engine, "codex");
+      assert.equal(request.engineModel, "inherited-engine-model");
+      assert.equal(request.host, "pi");
+      assert.equal(request.correlationId, "parent-reviewer-run");
+    }
+    assert.notEqual(requests[0]!.cwd, requests[1]!.cwd);
   });
 });
 

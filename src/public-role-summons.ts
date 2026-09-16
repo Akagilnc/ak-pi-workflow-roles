@@ -50,8 +50,12 @@ export type PublicSummonRequest = {
   readonly packageRoot?: string;
   readonly io?: CliIo;
   readonly credentials?: CredentialProviders;
-  /** Parent turn's selected host axis for same-seat child legs. */
+  /** Parent turn's effective seat axes for same-seat child legs. */
+  readonly model?: import("./host-contracts.ts").RoleTurnModelConfig;
+  readonly thinking?: import("./public-cli/registry.ts").PublicThinkingLevel;
   readonly host?: string;
+  readonly engine?: string;
+  readonly engineModel?: string;
   readonly agentDir?: string;
   /**
    * Optional Pi argv forwarded to the role-turn host (same face as public CLI
@@ -320,9 +324,28 @@ export async function summonPublicRole(
   const config = await loadPublicCliConfig(home);
   // Nested summons: officer seat only (flag>seat>default pi). #178 order below.
   const resolvedSeat = resolveEffectiveSeat(config, options.role, credentials);
-  const seat = options.host === undefined
-    ? resolvedSeat
-    : { ...resolvedSeat, host: options.host, hostSource: "invocation" as const };
+  const inheritedSelection = options.model === undefined
+    ? undefined
+    : {
+        provider: options.model.provider,
+        model: options.model.model,
+        ...(options.thinking ?? options.model.thinking) === undefined
+          ? {}
+          : { thinking: (options.thinking ?? options.model.thinking) as import("./public-cli/registry.ts").PublicThinkingLevel },
+      };
+  const seat: EffectiveSeat = {
+    ...resolvedSeat,
+    ...(inheritedSelection === undefined
+      ? {}
+      : { selection: inheritedSelection, source: "invocation" as const }),
+    ...(options.host === undefined
+      ? {}
+      : { host: options.host, hostSource: "invocation" as const }),
+    ...(options.engine === undefined
+      ? {}
+      : { engine: options.engine, engineSource: "invocation" as const }),
+    ...(options.engineModel === undefined ? {} : { engineModel: options.engineModel }),
+  };
   const captured = options.io === undefined ? createCapturingIo() : undefined;
   const io = options.io ?? captured!.io;
 
@@ -550,11 +573,18 @@ export async function summonParallelReviewerLenses(options: {
   readonly projectRoot: string;
   readonly baseRevision: string;
   readonly authorityRefs: readonly string[];
+  readonly instruction: string;
   readonly home: string;
+  readonly model?: import("./host-contracts.ts").RoleTurnModelConfig;
   readonly host?: string;
+  readonly engine?: string;
+  readonly engineModel?: string;
   readonly packageRoot?: string;
   readonly signal?: AbortSignal;
   readonly correlationId?: string;
+  readonly roleTurnHost?: RoleTurnHost;
+  readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
+  readonly createRunId?: () => string;
 }): Promise<{
   readonly completeness: PublicSummonResult;
   readonly correctness: PublicSummonResult;
@@ -587,13 +617,20 @@ export async function summonParallelReviewerLenses(options: {
           "--base", options.baseRevision,
           ...options.authorityRefs.flatMap((ref) => ["--authority-ref", ref]),
           "--lens", lens,
+          ...(options.instruction === "" ? [] : [options.instruction]),
         ],
         cwd,
         home: options.home,
+        ...(options.model === undefined ? {} : { model: options.model }),
         ...(options.host === undefined ? {} : { host: options.host }),
+        ...(options.engine === undefined ? {} : { engine: options.engine }),
+        ...(options.engineModel === undefined ? {} : { engineModel: options.engineModel }),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
         ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
         ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+        ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+        ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
+        ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
       });
     const [completeness, correctness] = await Promise.all([
       summon("completeness", completenessRoot),

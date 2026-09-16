@@ -34,7 +34,7 @@ _Avoid_:把「门下省」当作通进司的公开角色名。
 - **起居郎(diarist)**:判断本庭对象是哪张票、本票对话起止于何处的记录者；正文与指针由机械从会话卷原样搬运，不由其誊写。不是设计批准者或施工指挥者。制度与本轮设计分别见 ADR 0075、ADR 0081。
 - **通进司(Collector)**:门下省下的收证衙门。单次调用内认票、阅读 bot 手册与现场活动、按需触发评审、在工作步骤开启可配置等待窗并收证，提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。手册是角色工作记忆（通用＋仓库差异），不是代码状态规则。等待窗默认十分钟、使用方可配置，从 PR 创建成功或本轮触发阶段结束起算，不是从会话激活起算。v1 仅支持 `github.com`。canonical 键仍为 `collector`。
 _Avoid_:门下省（那是省名）。
-- **评审腿(Review leg)**:历史词；现行 Reviewer 不再起子腿。Collector 的可选请求不构成评审腿或身份期待。
+- **评审腿(Review leg)**:公开 Reviewer 父调用省略 `--lens` 时，共享执行接缝并行派发的 completeness／correctness 独立单轴 Reviewer child run；Reviewer 角色本体仍不派 worker。Collector 的可选请求不构成评审腿或身份期待。
 - **Soul 审刑院(Soul-compliance audit)**:独立的实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」；不再限于复核大理寺的程序或既给材料。大理寺审计开庭材料=工厂宪法+己 auditor Soul+审刑院法典(`souls/audit-law.md`)+quality-law;太医审计暂=工厂宪法+己 Soul(御批四)。御史台侧审刑院闸已退役(#495 S6 风闻奏事)。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md),现行职掌见 [ADR 0062](docs/adr/0062-auditor-is-an-independent-substantive-role.md)。
 - **卷宗(Dossier)**:一次 run 在候簿记录之家里的全部既落账材料；卷宗即真源,无投影副本。定位靠机器注入的 typed 指针(`cwd` 与 `AK_ROLE_RUN_DIR`),禁 latest-run/mtime/全局扫描猜测。
 - **先立卷后审卷**:被审对象必先落账,审计只从账上读；手递手传料非法。缺卷或缺被审对象走既有非零故障通道(`missing-dossier` / `missing-subject` 真因落 error artifact),public CLI 无合法 Receipt。
