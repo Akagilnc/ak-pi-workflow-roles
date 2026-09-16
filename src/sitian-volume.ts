@@ -8,8 +8,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
-import { mkdir, readFile, readlink, rename, rmdir, symlink, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { readFile, readlink, rename, symlink, unlink } from "node:fs/promises";
 
 import {
   ensureRealDirectoryTree,
@@ -84,71 +83,49 @@ export async function withSitianVolumeTransaction<T>(
 ): Promise<T> {
   const volume = ensureSitianVolume(input);
   const lockPath = `${volume.recordFile}.lock`;
-  const ownerFile = join(lockPath, "owner");
+  const recoveryPath = `${lockPath}.recover`;
   while (true) {
+    // A stale-claim mover blocks new contenders before touching lockPath.
+    try {
+      const recoveryHolder = Number.parseInt(await readlink(recoveryPath), 10);
+      try {
+        process.kill(recoveryHolder, 0);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ESRCH") {
+          throw new SitianInfrastructureError(
+            `Sitian volume recovery holder died: ${recoveryPath}`,
+          );
+        }
+        throw error;
+      }
+      await sleep(15);
+      continue;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
     const nonce = randomUUID();
+    const ownClaim = `${process.pid}:${nonce}`;
     let acquired = false;
     try {
-      await mkdir(lockPath);
+      // Owner identity and exclusion appear in one atomic filesystem operation.
+      await symlink(ownClaim, lockPath);
       acquired = true;
       try {
-        await writeFileAtomically(ownerFile, `${process.pid}:${nonce}\n`);
         return await transaction();
       } finally {
-        await unlink(ownerFile).catch(() => undefined);
-        await rmdir(lockPath).catch(() => undefined);
+        await unlink(lockPath).catch(() => undefined);
       }
     } catch (error) {
       if (acquired || (error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      let claim: string;
+      let staleClaim: string;
       try {
-        claim = (await readFile(ownerFile, "utf8")).trim();
+        staleClaim = await readlink(lockPath);
       } catch (readError) {
-        if ((readError as NodeJS.ErrnoException).code === "ENOENT") {
-          const recoveryPath = `${lockPath}.recover`;
-          try {
-            await symlink(String(process.pid), recoveryPath);
-            try {
-              // Give a live winner time to finish its atomic owner publication.
-              await sleep(30);
-              try {
-                await readFile(ownerFile, "utf8");
-              } catch (retryError) {
-                if ((retryError as NodeJS.ErrnoException).code !== "ENOENT") throw retryError;
-                await rename(lockPath, `${lockPath}.stale-unowned-${randomUUID()}`)
-                  .catch((renameError) => {
-                    if ((renameError as NodeJS.ErrnoException).code !== "ENOENT") throw renameError;
-                  });
-              }
-            } finally {
-              await unlink(recoveryPath).catch(() => undefined);
-            }
-          } catch (recoveryError) {
-            if ((recoveryError as NodeJS.ErrnoException).code !== "EEXIST") throw recoveryError;
-            let recoveryHolder: number;
-            try {
-              recoveryHolder = Number.parseInt(await readlink(recoveryPath), 10);
-            } catch (readRecoveryError) {
-              if ((readRecoveryError as NodeJS.ErrnoException).code === "ENOENT") continue;
-              throw readRecoveryError;
-            }
-            try {
-              process.kill(recoveryHolder, 0);
-            } catch (signalError) {
-              if ((signalError as NodeJS.ErrnoException).code === "ESRCH") {
-                throw new SitianInfrastructureError(
-                  `Sitian ownerless-lock recovery holder died: ${recoveryPath}`,
-                );
-              }
-              throw signalError;
-            }
-            await sleep(15);
-          }
-          continue;
-        }
+        if ((readError as NodeJS.ErrnoException).code === "ENOENT") continue;
         throw readError;
       }
-      const [pidText, staleNonce] = claim.split(":");
+      const [pidText, staleNonce] = staleClaim.split(":");
       const holder = Number.parseInt(pidText ?? "", 10);
       if (!Number.isSafeInteger(holder) || holder <= 0 || !staleNonce) {
         throw new SitianInfrastructureError(
@@ -157,24 +134,24 @@ export async function withSitianVolumeTransaction<T>(
       }
       try {
         process.kill(holder, 0);
+        await sleep(15);
       } catch (signalError) {
-        if ((signalError as NodeJS.ErrnoException).code === "ESRCH") {
-          // The nonce-addressed nonempty tombstone is deliberately retained.
-          // A second reclaimer of this claim cannot rename a successor lock over it.
-          const tombstone = `${lockPath}.stale-${staleNonce}`;
+        if ((signalError as NodeJS.ErrnoException).code !== "ESRCH") throw signalError;
+        try {
+          await symlink(String(process.pid), recoveryPath);
           try {
-            await rename(lockPath, tombstone);
-          } catch (renameError) {
-            const code = (renameError as NodeJS.ErrnoException).code;
-            if (code !== "ENOENT" && code !== "EEXIST" && code !== "ENOTEMPTY") {
-              throw renameError;
+            // Revalidate under the recovery claim. A slipped successor is never moved.
+            if ((await readlink(lockPath).catch(() => undefined)) === staleClaim) {
+              await rename(lockPath, `${lockPath}.stale-${staleNonce}`);
             }
+          } finally {
+            await unlink(recoveryPath).catch(() => undefined);
           }
-          continue;
+        } catch (recoveryError) {
+          if ((recoveryError as NodeJS.ErrnoException).code !== "EEXIST") throw recoveryError;
+          await sleep(15);
         }
-        throw signalError;
       }
-      await sleep(15);
     }
   }
 }
