@@ -662,13 +662,21 @@ export async function summonParallelReviewerLenses(options: {
   cleanupFailures.push(...rootCleanup.flatMap((result) =>
     result.status === "rejected" ? [result.reason] : []));
   if (cleanupFailures.length > 0) {
-    const diagnostic = new AggregateError(
-      cleanupFailures,
+    const diagnostic = [
       "parallel reviewer worktree cleanup failed",
-    ).message;
+      ...cleanupFailures.map((failure) =>
+        failure instanceof Error ? failure.message : String(failure)),
+    ].join("\n");
+    const withCleanupFailure = (result: PublicSummonResult): PublicSummonResult => ({
+      ...result,
+      exitCode: 1,
+      stderr: [result.stderr, diagnostic].filter(
+        (text): text is string => typeof text === "string" && text !== "",
+      ).join("\n"),
+    });
     results = {
-      completeness: { ...results.completeness, exitCode: 1, stderr: diagnostic },
-      correctness: { ...results.correctness, exitCode: 1, stderr: diagnostic },
+      completeness: withCleanupFailure(results.completeness),
+      correctness: withCleanupFailure(results.correctness),
     };
   }
   return results;
