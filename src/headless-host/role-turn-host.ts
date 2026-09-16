@@ -450,6 +450,12 @@ function buildTurnArgs(options: {
 /** Headless last hop (#820): session bind/resume, CLI spawn turn, MCP/json-schema/output-schema mount. */
 export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): RoleTurnHost {
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
+    if (isCodexExecDescription(config.description) && hasHostMethodSkill(request.methods)) {
+      return failure("activation", "UnsupportedHostMethod", "unsupported-method", {
+        host: config.hostName,
+        methodKind: "skill",
+      });
+    }
     const prepared = await config.prepare(request);
     const systemPrompt = renderSystemPromptOverride(prepared.systemPrompt);
     const codex = isCodexExecDescription(config.description);

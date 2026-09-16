@@ -178,7 +178,7 @@ export function connectAcpStdio(options: {
 /** ACP last hop (#820): session open/load/close, prompt, MCP mount, capability/model. */
 export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHost {
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
-    if (config.hostName === "grok-build" && hasHostMethodSkill(request.methods)) {
+    if ((config.hostName === "grok-build" || config.hostName === "hermes") && hasHostMethodSkill(request.methods)) {
       return failure("activation", "UnsupportedHostMethod", "unsupported-method", {
         host: config.hostName,
         methodKind: "skill",
