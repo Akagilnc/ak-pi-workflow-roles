@@ -61,6 +61,7 @@ export const reviewerOutputSchema = withTerminatingOutputDeclarations(
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadCanonicalSkillBinding(name: "ak-cross-m-review"): Promise<AnyCanonicalSkillBinding>;
+  projectSubmission?(parameters: unknown): unknown;
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
 
@@ -105,7 +106,7 @@ export function createReviewerRoleRuntime(
             if (!soul || !binding) throw new Error("御史台输入未装载");
             return {
               content: [{ type: "text" as const, text: REVIEWER_ACCEPTED_TEXT }],
-              details: parameters,
+              details: dependencies.projectSubmission?.(parameters) ?? parameters,
               terminate: true as const,
             };
           } });

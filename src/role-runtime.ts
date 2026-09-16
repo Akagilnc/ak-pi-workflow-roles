@@ -1456,6 +1456,7 @@ export function createRoleRuntimeExtension(
         const lensResults = activeReviewerParent.loadLensResults === undefined
           ? undefined
           : await activeReviewerParent.loadLensResults();
+        reviewerAggregatedResults = lensResults;
         return {
           systemPrompt: assembleReviewerParentSystemPrompt({
             baseSystemPrompt: event.systemPrompt,
@@ -1758,6 +1759,7 @@ export function createRoleRuntimeExtension(
       },
       hostActions,
     );
+    let reviewerAggregatedResults: unknown;
     const reviewer = createReviewerRoleRuntime(
       roleHost,
       {
@@ -1772,6 +1774,20 @@ export function createRoleRuntimeExtension(
             throw new Error("Reviewer runtime dependencies are not configured");
           }
           return dependencies.loadCanonicalSkillBinding(name);
+        },
+        projectSubmission(parameters) {
+          if (reviewerAggregatedResults === undefined) return parameters;
+          const results = reviewerAggregatedResults as Record<
+            "completeness" | "correctness",
+            { terminal?: unknown }
+          >;
+          return {
+            status: "completed",
+            amendments: {
+              completeness: JSON.stringify(results.completeness.terminal),
+              correctness: JSON.stringify(results.correctness.terminal),
+            },
+          };
         },
       },
       hostActions,
@@ -2125,6 +2141,7 @@ export function createRoleRuntimeExtension(
           return decodeReviewerAdmittedInputs((name) => roleHost.getFlag(name));
         },
         bindReviewerParent(activation, admitted, context) {
+          reviewerAggregatedResults = undefined;
           if (admitted.lens !== "all") {
             activeReviewerParent = activation;
             return;
