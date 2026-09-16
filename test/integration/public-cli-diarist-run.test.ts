@@ -4,6 +4,7 @@
  * Single seam: real entry, scripted host, on-disk session fixture, assert the unique diary file.
  */
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import {
   mkdir,
@@ -1636,9 +1637,15 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
       path: idlessOrderPath,
       ranges: [{ from: { line: 3 }, to: { line: 3 } }],
     }]);
+    const idlessOriginal = await readFile(idlessOrderPath, "utf8");
+    await writeFile(
+      idlessOrderPath,
+      `${JSON.stringify({ type: "user", message: { role: "user", content: "后来前插的无 id 行" } })}\n${idlessOriginal}`,
+      "utf8",
+    );
     const afterIdlessOrder = await runDiarist("01a0diar00-0000-7000-8000-000000000097b2", [{
       path: idlessOrderPath,
-      ranges: [{ from: { line: 1 }, to: { line: 1 } }],
+      ranges: [{ from: { line: 2 }, to: { line: 2 } }],
     }]);
     const idlessOrderSession = afterIdlessOrder.header?.sessions.findIndex(
       (session) => session.path === idlessOrderPath,
@@ -1647,6 +1654,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     assert.deepEqual(
       afterIdlessOrder.lines.filter((line) => line.s === idlessOrderSession).map((line) => line.text),
       [earlyIdless, lateIdless],
+      "id-less identities survive a leading id-less insertion without reordering or duplication",
     );
 
     // A partially stale historical range still contributes its surviving overlap.
@@ -1988,8 +1996,12 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
     const aliasHistoryPath = join(home, ".claude", "projects", "probe", "alias-history.jsonl");
     const aliasIdlessText = "别名历史中的无 id 发言";
     const aliasNewId = "msg-alias-history-new";
+    const aliasIdlessRaw = JSON.stringify({
+      type: "user",
+      message: { role: "user", content: aliasIdlessText },
+    });
     await writeFile(aliasHistoryPath, [
-      JSON.stringify({ type: "user", message: { role: "user", content: aliasIdlessText } }),
+      aliasIdlessRaw,
       JSON.stringify({ type: "assistant", uuid: "alias-runner", message: { role: "assistant", content: "已记录" } }),
       JSON.stringify({ type: "user", uuid: aliasNewId, message: { role: "user", content: "别名历史后的新增发言" } }),
     ].join("\n") + "\n", "utf8");
@@ -2008,7 +2020,7 @@ test("ak-role diarist cumulative ranges keep history and ignore omissions", asyn
         speaker: "owner",
         s: 0,
         sourcePosition: 0,
-        sourceIdentity: "after\u0000<start>\u00001",
+        sourceIdentity: `raw\u0000${createHash("sha256").update(aliasIdlessRaw).digest("hex")}\u00001`,
         text: aliasIdlessText,
       }),
     ].join("\n") + "\n", "utf8");

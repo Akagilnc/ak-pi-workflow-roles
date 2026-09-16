@@ -536,36 +536,24 @@ function mergeFreshIntoCarried(
 }
 
 /**
- * Give every logical source row a replay-invariant ordinal. Native ids identify
- * replayed rows directly; idless rows use their ordinal after the preceding
- * native id. Neither key inspects dialogue text or physical line numbers.
+ * Give every logical source row a replay-stable identity and a current ordinal.
+ * Native ids identify their rows directly. Idless rows use an opaque digest of
+ * the original source bytes plus a same-byte occurrence number: source text is
+ * neither interpreted nor compared as prose, and unrelated insertions cannot
+ * rename an existing row. Physical line numbers never participate.
  */
 function stableSourceFacts(
   sessionLines: readonly LedgerSessionLine[],
 ): readonly { readonly position: number; readonly identity: string }[] {
-  const positionByIdentity = new Map<string, number>();
-  const facts: { position: number; identity: string }[] = [];
-  let precedingId = "<start>";
-  let idlessOffset = 0;
-  for (const entry of sessionLines) {
+  const occurrenceByDigest = new Map<string, number>();
+  return sessionLines.map((entry, position) => {
     const id = entry.row === undefined ? undefined : nativeEventId(entry.row);
-    if (id !== undefined) {
-      precedingId = id;
-      idlessOffset = 0;
-    } else {
-      idlessOffset += 1;
-    }
-    const identity = id === undefined
-      ? `after\u0000${precedingId}\u0000${idlessOffset}`
-      : `id\u0000${id}`;
-    let position = positionByIdentity.get(identity);
-    if (position === undefined) {
-      position = positionByIdentity.size;
-      positionByIdentity.set(identity, position);
-    }
-    facts.push({ position, identity });
-  }
-  return facts;
+    if (id !== undefined) return { position, identity: `id\u0000${id}` };
+    const digest = createHash("sha256").update(entry.raw).digest("hex");
+    const occurrence = (occurrenceByDigest.get(digest) ?? 0) + 1;
+    occurrenceByDigest.set(digest, occurrence);
+    return { position, identity: `raw\u0000${digest}\u0000${occurrence}` };
+  });
 }
 
 /**
