@@ -26,6 +26,7 @@ import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { resolveHostAwareSessionAvailability } from "../session-identity.ts";
+import { cleanupReviewerWorktreeOwnership } from "../reviewer-worktree-lifecycle.ts";
 
 import type {
   ControlledFailureCause,
@@ -1013,6 +1014,7 @@ export async function dispatchPostAdmissionTurn<
       if (persistRunState) {
         try {
           await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
+          await cleanupReviewerWorktreeOwnership(admitted.runDirectory);
         } catch (error) {
           // #836: `settledOutcome.terminal` already carries recorded
           // submissions (attachRecordedSubmissions above). A real run-state

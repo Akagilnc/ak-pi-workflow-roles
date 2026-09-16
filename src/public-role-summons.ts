@@ -25,6 +25,7 @@ import type { PostAdmissionAdapters, PostAdmissionEnv } from "./public-cli/post-
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 import { pickEngineAxis } from "./package-resources/engine-material.ts";
+import { recordReviewerWorktreeOwnership } from "./reviewer-worktree-lifecycle.ts";
 
 /** Env published by the parent activation so nested summons never re-derive root. */
 export const AK_ROLE_PACKAGE_ROOT_ENV = "AK_ROLE_PACKAGE_ROOT" as const;
@@ -742,10 +743,20 @@ export async function summonParallelReviewerLenses(options: {
       correctness: withSealFailure(results.correctness),
     };
   }
-  const resumableWorktrees = new Set([
-    ...(results.completeness.terminal?.resume === undefined ? [] : [completenessRoot]),
-    ...(results.correctness.terminal?.resume === undefined ? [] : [correctnessRoot]),
-  ]);
+  const resumableWorktrees = new Set<string>();
+  for (const [lens, projectRoot] of [
+    ["completeness", completenessRoot],
+    ["correctness", correctnessRoot],
+  ] as const) {
+    const result = results[lens];
+    if (result.terminal?.resume === undefined || result.runDirectory === undefined) continue;
+    await recordReviewerWorktreeOwnership(result.runDirectory, {
+      sourceProjectRoot: options.projectRoot,
+      worktreeRoot: root,
+      projectRoot,
+    });
+    resumableWorktrees.add(projectRoot);
+  }
   const cleanup = await Promise.allSettled(
     [...created]
       .filter((path) => !resumableWorktrees.has(path))

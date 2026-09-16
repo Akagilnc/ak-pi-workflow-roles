@@ -23,6 +23,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { recordReviewerWorktreeOwnership } from "../../src/reviewer-worktree-lifecycle.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import {
@@ -1462,6 +1463,16 @@ test("default reviewer resume preserves the frozen dual-axis shape", async () =>
     await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, "", "utf8");
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
     await markRunResumable(admitted.runDirectory, { httpStatus: 429, provider: "xai" });
+    const retainedRoot = join(home, "retained-reviewer-worktrees");
+    const retainedProject = join(retainedRoot, "completeness");
+    await mkdir(retainedRoot, { recursive: true });
+    execFileSync("git", ["worktree", "add", "--detach", retainedProject, "HEAD"], { cwd: project });
+    await recordReviewerWorktreeOwnership(admitted.runDirectory, {
+      sourceProjectRoot: project,
+      worktreeRoot: retainedRoot,
+      projectRoot: retainedProject,
+    });
+    await access(retainedProject);
 
     const lenses: string[] = [];
     const dialogues: string[] = [];
@@ -1506,6 +1517,14 @@ test("default reviewer resume preserves the frozen dual-axis shape", async () =>
     assert.equal(
       (await readRoleRunState(admitted.runDirectory, piDurablePrincipalAuthority))?.state,
       "terminal",
+    );
+    await assert.rejects(
+      () => access(retainedProject),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(retainedRoot),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
   });
 });
