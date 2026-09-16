@@ -1575,9 +1575,12 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       assert.equal(allowedBookEntries.has(entry), true, entry);
     }
     assert.deepEqual(
-      (await readdir(join(bookRoot, "582", "runs"))).filter((entry) => entry.endsWith("@countersign")),
+      [
+        ...(await readdir(join(bookRoot, "582", "runs"))),
+        ...(await readdir(join(bookRoot, "unbound", "runs"))),
+      ].filter((entry) => entry.endsWith("@countersign")),
       [`${result.terminal!.runId}@countersign`],
-      "same-ticket resume must not materialize a provisional run",
+      "same-ticket resume must not materialize a provisional run in any run partition",
     );
   });
 });
@@ -1814,18 +1817,6 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.notEqual(
       second.admitted?.runId,
       "01a0sign00-0000-7000-8000-00000000s002",
-    );
-    const ticketRunsAfterSecondSummons = await readdir(
-      dirname(first.admitted!.runDirectory),
-    );
-    const unboundRunsAfterSecondSummons = await readdir(
-      join(dirname(dirname(dirname(first.admitted!.runDirectory))), "unbound", "runs"),
-    );
-    assert.deepEqual(
-      [...ticketRunsAfterSecondSummons, ...unboundRunsAfterSecondSummons]
-        .filter((entry) => entry.endsWith("@countersign")),
-      ["01a0sign00-0000-7000-8000-00000000s001@countersign"],
-      "same-ticket resume must not materialize a provisional run in any run partition",
     );
     // A dispatched body turn on re-summons must be resume on the prior run.
     assert.equal(seen.length, 2);
