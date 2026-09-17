@@ -47,7 +47,6 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     assert.equal(harness.retainedContext().authority, "owner decision");
     assert.equal(harness.retainedContext().subjectKey, "/repo/.ak/work/issues/28");
     assert.deepEqual(harness.retainedContext().currentSettlement, settlement);
-    assert.ok(Array.isArray(harness.retainedContext().priorAdvice));
     assert.ok(harness.retainedContext().publicSettlementHistory.some((s: any) => s.kind === "accepted" && s.role === "coder"));
     await Promise.resolve();
     assert.equal(settled, false);

@@ -139,8 +139,6 @@ export type NavigatorContextProjection = {
   currentRole: { role: string; phase: NavigatorPhase };
   /** Present on the unique settlement-bound advice prompt. */
   currentSettlement?: NavigatorSettlement;
-  /** Opaque prior advice prose for this subject — pass-through only; never parsed. */
-  priorAdvice: string[];
   publicSettlementHistory: NavigatorSettlementFact[];
   liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
@@ -175,8 +173,6 @@ export type NavigatorAttendanceOptions = {
 const CONTEXT_ENTRY = "ak-navigator-context";
 const INVOCATION_ENTRY = NAVIGATOR_INVOCATION_ENTRY;
 const SETTLEMENT_ENTRY = "ak-navigator-settlement";
-/** Opaque prior advice bytes for the same subject — not a route ledger. */
-const PRIOR_ADVICE_ENTRY = "ak-navigator-prior-advice";
 const unavailableKeys = new Set<NavigatorUnavailableKey>(["context", "session", "model", "thinking", "auth", "quota", "transport", "unknown"]);
 
 function unavailableKey(value: unknown): NavigatorUnavailableKey | undefined {
@@ -476,25 +472,13 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const publicSettlementHistory = activeSession.entries()
         .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data))
         .map((entry) => entry.data as NavigatorSettlementFact);
-      // Opaque prior advice only — never parse, compare, or branch on content.
-      const priorAdvice = activeSession.entries()
-        .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => (
-          exactRecord(entry)
-          && entry.type === "custom"
-          && entry.customType === PRIOR_ADVICE_ENTRY
-          && exactRecord(entry.data)
-          && entry.data.subjectKey === subjectKey
-          && typeof entry.data.prose === "string"
-          && entry.data.prose.trim() !== ""
-        ))
-        .map((entry) => (entry.data as { prose: string }).prose);
+      // Prior advice is the host session's own history (CLI resume), not a package ledger.
       const projection: NavigatorContextProjection = {
         subjectKey,
         subject,
         authority,
         currentRole: { role: options.role, phase: options.phase },
         currentSettlement: boundSettlement,
-        priorAdvice,
         publicSettlementHistory,
         liveRoleHelp: help,
       };
@@ -509,7 +493,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         `<controlling_authority>\n${authority}\n</controlling_authority>`,
         `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
         `<current_settlement>\n${JSON.stringify(boundSettlement)}\n</current_settlement>`,
-        `<prior_advice>\n${JSON.stringify(priorAdvice)}\n</prior_advice>`,
         `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
         `<live_role_help>\n${helpContext}\n</live_role_help>`,
       ].join("\n\n");
@@ -724,13 +707,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           // #959: present prose as-is on every parent outcome — including
           // human_decision / escalate. Old path wiped prose on escalate and left
           // auto-attendance looking empty after a successful nested summon.
+          // Prior words stay on the host session (CLI resume); no package advice ledger.
           report = { disposition: "advice", prose: drainedProse };
-          // Opaque memory only — model may use it later; code never parses it.
-          session?.appendEntry(PRIOR_ADVICE_ENTRY, {
-            invocationId,
-            subjectKey,
-            prose: drainedProse,
-          });
         } else {
           // Empty/no-receipt prepare → affirmative no-advice (never inferred later).
           report = { disposition: "no-advice" };

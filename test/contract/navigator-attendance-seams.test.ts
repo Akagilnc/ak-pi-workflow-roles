@@ -357,8 +357,8 @@ test("#959 empty prepare body is no-advice; explicit prose settles as advice wit
   });
 });
 
-test("#959 unique advice preserves and passes opaque prior advice on subsequent settles", async () => {
-  await withTempRoot("navigator-prior-advice-", async (root) => {
+test("#959 package does not keep a prior-advice ledger; host session owns continuity", async () => {
+  await withTempRoot("navigator-no-prior-advice-ledger-", async (root) => {
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
       join(root, ".ak-roles", "public-cli.json"),
@@ -371,35 +371,36 @@ test("#959 unique advice preserves and passes opaque prior advice on subsequent 
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, undefined, root);
 
-    // First settle with advice "先前建议A"
     nav.prepare();
     await settleWithAdvice(
       nav,
       harness,
       { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-      { prose: "先前建议A" },
+      { prose: "第一次建议" },
       "first-advice",
     );
     assert.equal(events[0]?.disposition, "advice");
-    assert.equal(events[0]?.prose, "先前建议A");
 
-    // Second settle with advice "后续建议B"
     nav.prepare();
     const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     while (harness.prompts() < 2 || harness.tool() === undefined) {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
-    // On second bound prepare (before execute), assert retainedContext().priorAdvice includes "先前建议A"
-    assert.ok(harness.retainedContext()?.priorAdvice?.includes("先前建议A"));
-    await harness.tool().execute("second-advice", { prose: "后续建议B" }, undefined, undefined, {} as never);
+    const context = harness.retainedContext();
+    assert.equal(
+      "priorAdvice" in (context ?? {}),
+      false,
+      "package must not project a prior-advice field",
+    );
+    await harness.tool().execute("second-advice", { prose: "第二次建议" }, undefined, undefined, {} as never);
     harness.release();
     await waiting;
 
     assert.equal(events[1]?.disposition, "advice");
-    assert.equal(events[1]?.prose, "后续建议B");
-    assert.ok(
+    assert.equal(
       harness.entries.some((entry: any) => entry.customType === "ak-navigator-prior-advice"),
-      "harness entries must contain ak-navigator-prior-advice",
+      false,
+      "package must not book ak-navigator-prior-advice",
     );
   });
 });

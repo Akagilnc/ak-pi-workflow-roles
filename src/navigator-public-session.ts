@@ -2,9 +2,12 @@
  * Navigator attendance session factory (#675 r3).
  * Each prepare turn uses the public navigator activation path (summonPublicRole) —
  * same seat table and shared envelope as `ak-role navigator`.
- * Archivist createRecordSession only books route-memory nest under the parent;
- * no openPiInProcessSession second lifecycle / no agentDir patch on the old path.
+ * Archivist createRecordSession books the attendance nest under the parent;
+ * host conversation continuity uses CLI resume (`resumeRunId`), not a package
+ * advice ledger (development-closure: do not invent package-level memory).
  */
+import { basename } from "node:path";
+
 import { sitianReport } from "./sitian-facade.ts";
 import {
   NavigatorUnavailableError,
@@ -40,13 +43,42 @@ async function resolveNavigatorLedgerHome(context: HostContext): Promise<string 
   return undefined;
 }
 
+/** Resume key only — points at a host run principal, never stores advice prose. */
+const HOST_RUN_POINTER_ENTRY = "ak-navigator-host-run";
+
+function exactRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function runIdFromNavigatorDirectory(runDirectory: string): string | undefined {
+  const entry = basename(runDirectory);
+  const suffix = "@navigator";
+  if (!entry.endsWith(suffix)) return undefined;
+  const runId = entry.slice(0, entry.length - suffix.length);
+  return runId.length > 0 ? runId : undefined;
+}
+
+function readHostRunPointer(entries: readonly unknown[]): string | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!exactRecord(entry)) continue;
+    const customType = entry.customType ?? entry.type;
+    if (customType !== HOST_RUN_POINTER_ENTRY) continue;
+    const data = entry.data;
+    if (exactRecord(data) && typeof data.runId === "string" && data.runId.trim() !== "") {
+      return data.runId.trim();
+    }
+  }
+  return undefined;
+}
+
 export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
   return async ({ context, subject, tool }) => {
     // Model is enforced at prepare (attendance seat resolve) and at prompt (summon).
     // Factory open only books the archivist nest — no package default, no eager seat read.
     let thinkingLevel: string | undefined;
 
-    // Archivist nest for attendance route memory only (ADR 0018 / 0065) — not a session open.
+    // Archivist nest for attendance bookkeeping (ADR 0018 / 0065) — not a host session open.
     // #852: navigator/<work-subject> is the sole book-top exception; always pass subject so
     // unmaterialized/missing parent still gets a durable nest instead of silent in-memory.
     // Home comes from HostContext.runDirectory (or ledger parent path) — never context.home.
@@ -64,6 +96,8 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
     let noReceipt: NoReceiptLifecycleFacts | undefined;
     let disposed = false;
     let inFlightPrompt: Promise<unknown> | undefined;
+    /** In-factory host run id for CLI resume; durable pointer also lives on the nest. */
+    let hostRunId = readHostRunPointer(sessionManager.getEntries() as readonly unknown[]);
 
     return {
       prompt: async (text) => {
@@ -76,13 +110,51 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
         try {
           const { summonPublicRole } = await import("./public-role-summons.ts");
           const summonHome = await resolveNavigatorLedgerHome(context);
-          // Public activation — same face as `ak-role navigator <instruction>` (#675).
-          const summoned = await summonPublicRole({
-            role: "navigator",
-            argv: [text],
-            cwd: context.cwd,
-            ...(summonHome === undefined ? {} : { home: summonHome }),
-          });
+          const resumeRunId = hostRunId;
+
+          // Prefer host CLI resume so prior advice stays on the host session.
+          // Fresh mint only when no pointer or resume cannot open the principal.
+          let summoned = resumeRunId === undefined
+            ? await summonPublicRole({
+              role: "navigator",
+              argv: [text],
+              cwd: context.cwd,
+              ...(summonHome === undefined ? {} : { home: summonHome }),
+            })
+            : await summonPublicRole({
+              role: "navigator",
+              argv: [text],
+              cwd: context.cwd,
+              resumeRunId,
+              ...(summonHome === undefined ? {} : { home: summonHome }),
+            }).catch(async (error) => {
+              // Resume failed (missing principal, wrong role, etc.) — fall back to mint.
+              // Do not invent package advice memory; report transport/session as typed failure
+              // only when the fresh mint also fails below.
+              void error;
+              hostRunId = undefined;
+              return summonPublicRole({
+                role: "navigator",
+                argv: [text],
+                cwd: context.cwd,
+                ...(summonHome === undefined ? {} : { home: summonHome }),
+              });
+            });
+
+          // If resume returned a non-zero exit without a usable terminal, try one fresh mint.
+          if (
+            resumeRunId !== undefined
+            && summoned.terminal === undefined
+            && summoned.exitCode !== 0
+          ) {
+            hostRunId = undefined;
+            summoned = await summonPublicRole({
+              role: "navigator",
+              argv: [text],
+              cwd: context.cwd,
+              ...(summonHome === undefined ? {} : { home: summonHome }),
+            });
+          }
 
           const outcome = summoned.terminal?.roleOutcome;
           if (outcome === undefined) {
@@ -109,6 +181,20 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
             noReceipt = outcome;
             return;
           }
+
+          // Pin host run for the next attendance prompt on this subject (CLI resume key).
+          const runDirectory = summoned.runDirectory
+            ?? (typeof summoned.admitted?.runDirectory === "string"
+              ? summoned.admitted.runDirectory
+              : undefined);
+          if (typeof runDirectory === "string" && runDirectory.trim() !== "") {
+            const nextRunId = runIdFromNavigatorDirectory(runDirectory);
+            if (nextRunId !== undefined) {
+              hostRunId = nextRunId;
+              sessionManager.appendCustomEntry(HOST_RUN_POINTER_ENTRY, { runId: nextRunId });
+            }
+          }
+
           if (outcome.kind !== "accepted") {
             // Non-accepted kinds (e.g. audit_escalation): no prose advice this turn.
             // Not a shape-unusable judgment on the navigator reply (#757).
@@ -169,10 +255,8 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
         } catch (error) {
           throw navigatorUnavailableError("model", error);
         }
-        // No live provider session is pinned here: every prompt is an independent
-        // public summon whose nested CLI reads the current seat table (#675 验收②
-        // / #617 DK-3). A seat edit between prepares therefore applies on the next
-        // summon — it is never an unavailable session.
+        // Resume and fresh mint both read the live seat table (#675 / #617 DK-3).
+        // A seat edit between prepares applies on the next host turn.
         thinkingLevel = nextThinking ?? nextParsed.thinkingLevel;
       },
       getThinkingLevel: () => thinkingLevel,
