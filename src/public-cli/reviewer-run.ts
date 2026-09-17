@@ -197,6 +197,8 @@ export async function runPublicReviewer(
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
       roleTurnHost: env.roleTurnHost,
       ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+      principalAuthority: env.principalAuthority,
+      ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
     });
     const childResults = [children.completeness, children.correctness] as const;
     const terminals = childResults

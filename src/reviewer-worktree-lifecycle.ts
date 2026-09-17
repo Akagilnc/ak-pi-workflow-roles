@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -11,8 +11,19 @@ const ROOT_PREFIX = "ak-reviewer-lenses-";
 type ReviewerWorktreeOwnership = {
   readonly sourceProjectRoot: string;
   readonly worktreeRoot: string;
+  /** Detached worktree axis root (completeness|correctness); git remove target. */
   readonly projectRoot: string;
 };
+
+/** Admitted cwd may be the axis root or the caller's relative subdirectory under it. */
+function admittedProjectMatchesWorktreeAxis(
+  axisRoot: string,
+  admittedProjectRoot: string,
+): boolean {
+  if (admittedProjectRoot === axisRoot) return true;
+  const rel = relative(axisRoot, admittedProjectRoot);
+  return rel !== "" && rel !== "." && rel !== ".." && !rel.startsWith(`..${sep}`);
+}
 
 export async function recordReviewerWorktreeOwnership(
   runDirectory: string,
@@ -52,6 +63,7 @@ export async function cleanupReviewerWorktreeOwnership(
   const projectRoot = await realpath(ownership.projectRoot);
   const worktreeRoot = await realpath(ownership.worktreeRoot);
   const sourceProjectRoot = await realpath(ownership.sourceProjectRoot);
+  const admittedRoot = await realpath(admittedProjectRoot);
   const childCommonDir = await realpath((await execFileAsync(
     "git",
     ["rev-parse", "--path-format=absolute", "--git-common-dir"],
@@ -69,7 +81,7 @@ export async function cleanupReviewerWorktreeOwnership(
   )).stdout.trim());
   const axis = basename(projectRoot);
   if (
-    projectRoot !== await realpath(admittedProjectRoot)
+    !admittedProjectMatchesWorktreeAxis(projectRoot, admittedRoot)
     || dirname(projectRoot) !== worktreeRoot
     || (axis !== "completeness" && axis !== "correctness")
     || !basename(worktreeRoot).startsWith(ROOT_PREFIX)

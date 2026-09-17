@@ -11,15 +11,19 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
 import type { CliIo } from "./public-cli/cli-io.ts";
 import type { CredentialProviders, EffectiveSeat } from "./public-cli/config.ts";
 import type { PublicCallableRole } from "./public-cli/registry.ts";
-import type { RoleTurnHost } from "./host-contracts.ts";
+import type {
+  DurablePrincipalAuthority,
+  RoleTurnHost,
+  RoleTurnModelConfig,
+} from "./host-contracts.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 import { pickEngineAxis } from "./package-resources/engine-material.ts";
@@ -52,11 +56,15 @@ export type PublicSummonRequest = {
   readonly io?: CliIo;
   readonly credentials?: CredentialProviders;
   /** Parent turn's effective seat axes for same-seat child legs. */
-  readonly model?: import("./host-contracts.ts").RoleTurnModelConfig;
+  readonly model?: RoleTurnModelConfig;
   readonly host?: string;
   readonly engine?: string;
   readonly engineModel?: string;
   readonly agentDir?: string;
+  /** Parent durable-principal authority; defaults to the Pi adapter. */
+  readonly principalAuthority?: DurablePrincipalAuthority;
+  /** Parent role-run timeout projected onto the child turn request. */
+  readonly timeoutMs?: number;
   /**
    * Optional Pi argv forwarded to the role-turn host (same face as public CLI
    * seat extraPiArgs). Callers pass explicitly — no process.env test protocol.
@@ -207,7 +215,7 @@ function hostSelectionFailureFromUnknown(error: unknown): HostSelectionFailure |
 
 type SummonEnvOk = {
   readonly home: string;
-  readonly principalAuthority: import("./host-contracts.ts").DurablePrincipalAuthority;
+  readonly principalAuthority: DurablePrincipalAuthority;
   readonly agentDir: string;
   readonly sessionAppender: typeof import("./pi/role-turn-host.ts").appendPiSessionCustomEntry;
   readonly packageRoot: string;
@@ -218,6 +226,7 @@ type SummonEnvOk = {
   readonly engine?: string;
   readonly engineModel?: string;
   readonly host?: string;
+  readonly timeoutMs?: number;
 };
 
 /** #178: missing model is ok:false (typed fact), not a thrown message. */
@@ -237,6 +246,10 @@ async function createSummonEnv(
     readonly extraPiArgs?: readonly string[];
     readonly roleTurnHost?: RoleTurnHost;
     readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
+    readonly principalAuthority?: DurablePrincipalAuthority;
+    readonly timeoutMs?: number;
+    /** Parent env model already host-facing — never project a second time. */
+    readonly hostFacingModel?: RoleTurnModelConfig;
   },
   /** #178: after host selection, before missing-model — structural argv parse once. */
   afterHost?: () => void,
@@ -252,7 +265,7 @@ async function createSummonEnv(
     import("./public-cli/role-turn-host-resolution.ts"),
     import("./public-cli/config.ts"),
   ]);
-  const principalAuthority = piDurablePrincipalAuthority;
+  const principalAuthority = options.principalAuthority ?? piDurablePrincipalAuthority;
   // Host first → argv (afterHost) → missing-model → provider projection (#617/#178/#840).
   const roleTurnHost = resolveRoleTurnHost(
     {
@@ -262,6 +275,7 @@ async function createSummonEnv(
       ...(options.extraPiArgs === undefined || options.extraPiArgs.length === 0
         ? {}
         : { extraPiArgs: options.extraPiArgs }),
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     },
     { role: options.role, seat: options.seat, principalAuthority },
   );
@@ -274,15 +288,18 @@ async function createSummonEnv(
     };
   }
   const hostName = seatWithModel.host ?? "pi";
-  const { loadHostProvidersTable, projectHostFacingProvider } = await import(
-    "./public-cli/host-providers.ts"
-  );
-  const hostFacingSelection = projectHostFacingProvider(
-    seatWithModel.selection,
-    hostName,
-    loadHostProvidersTable(options.home),
-    options.home,
-  );
+  let hostFacingSelection: RoleTurnModelConfig | undefined = options.hostFacingModel;
+  if (hostFacingSelection === undefined) {
+    const { loadHostProvidersTable, projectHostFacingProvider } = await import(
+      "./public-cli/host-providers.ts"
+    );
+    hostFacingSelection = projectHostFacingProvider(
+      seatWithModel.selection,
+      hostName,
+      loadHostProvidersTable(options.home),
+      options.home,
+    );
+  }
   return {
     ok: true,
     env: {
@@ -297,6 +314,7 @@ async function createSummonEnv(
       ...(hostFacingSelection === undefined ? {} : { model: hostFacingSelection }),
       ...projectSeatEngine(seatWithModel),
       ...projectSeatHost(seatWithModel),
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     },
   };
 }
@@ -360,6 +378,12 @@ export async function summonPublicRole(
     ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
     ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
+    ...(options.principalAuthority === undefined
+      ? {}
+      : { principalAuthority: options.principalAuthority }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    // Parent model is already host-facing; child must not project again.
+    ...(options.model === undefined ? {} : { hostFacingModel: options.model }),
   } as const;
 
   type Prepared =
@@ -577,7 +601,7 @@ export async function summonParallelReviewerLenses(options: {
   readonly home: string;
   readonly agentDir?: string;
   readonly credentials?: CredentialProviders;
-  readonly model?: import("./host-contracts.ts").RoleTurnModelConfig;
+  readonly model?: RoleTurnModelConfig;
   readonly host?: string;
   readonly engine?: string;
   readonly engineModel?: string;
@@ -586,16 +610,30 @@ export async function summonParallelReviewerLenses(options: {
   readonly correlationId?: string;
   readonly roleTurnHost?: RoleTurnHost;
   readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
+  readonly principalAuthority?: DurablePrincipalAuthority;
+  readonly timeoutMs?: number;
 }): Promise<{
   readonly completeness: PublicSummonResult;
   readonly correctness: PublicSummonResult;
 }> {
   // Ownership write/validate/remove share one root: git toplevel, never a subdir input.
+  // Caller project may be a repo subdirectory; child runs keep that relative path.
+  const callerProjectRoot = await realpath(options.projectRoot);
   const sourceProjectRoot = await realpath((await execFileAsync(
     "git",
     ["rev-parse", "--show-toplevel"],
-    { cwd: options.projectRoot },
+    { cwd: callerProjectRoot },
   )).stdout.trim());
+  const callerRelative = relative(sourceProjectRoot, callerProjectRoot);
+  const projectRelative =
+    callerRelative === ""
+    || callerRelative === "."
+    || callerRelative.startsWith(`..${sep}`)
+    || callerRelative === ".."
+      ? ""
+      : callerRelative;
+  const childProjectPath = (worktreeAxis: string): string =>
+    projectRelative === "" ? worktreeAxis : join(worktreeAxis, projectRelative);
   const statusArgs = [
     "status",
     "--porcelain=v1",
@@ -649,6 +687,10 @@ export async function summonParallelReviewerLenses(options: {
       await execFileAsync("git", ["worktree", "add", "--detach", path, targetCommit], {
         cwd: sourceProjectRoot,
       });
+      // Preserve caller subdirectory even when it is not present in the pinned commit.
+      if (projectRelative !== "") {
+        await mkdir(childProjectPath(path), { recursive: true });
+      }
       created.add(path);
     }),
   );
@@ -661,17 +703,18 @@ export async function summonParallelReviewerLenses(options: {
     ));
     results = { completeness: failure, correctness: failure };
   } else {
-    const summon = (lens: "completeness" | "correctness", cwd: string) =>
-      summonPublicRole({
+    const summon = (lens: "completeness" | "correctness", worktreeAxis: string) => {
+      const project = childProjectPath(worktreeAxis);
+      return summonPublicRole({
         role: "reviewer",
         argv: [
-          "--project", cwd,
+          "--project", project,
           "--base", baseCommit,
           ...options.authorityRefs.flatMap((ref) => ["--authority-ref", ref]),
           "--lens", lens,
           ...(options.instruction === "" ? [] : ["--", options.instruction]),
         ],
-        cwd,
+        cwd: project,
         home: options.home,
         ...(options.agentDir === undefined ? {} : { agentDir: options.agentDir }),
         ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
@@ -684,7 +727,12 @@ export async function summonParallelReviewerLenses(options: {
         ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
         ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
         ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
+        ...(options.principalAuthority === undefined
+          ? {}
+          : { principalAuthority: options.principalAuthority }),
+        ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       });
+    };
     const settled = await Promise.allSettled([
       summon("completeness", completenessRoot),
       summon("correctness", correctnessRoot),

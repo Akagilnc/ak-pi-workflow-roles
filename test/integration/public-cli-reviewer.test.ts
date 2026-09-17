@@ -1734,6 +1734,31 @@ test("default dual-lens from subdirectory records toplevel ownership and resume 
     const subdir = join(project, "nested", "leaf");
     await mkdir(subdir, { recursive: true });
     const sourceTopLevel = realpathSync(project);
+    // Trap second host-facing projection: first maps test→test-mapped; a second
+    // pass would map test-mapped→test-mapped-twice and fail the provider assert.
+    await mkdir(join(home, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(home, ".ak-roles", "host-providers.json"),
+      `${JSON.stringify({
+        pi: { test: "test-mapped", "test-mapped": "test-mapped-twice" },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+    let principalSealCount = 0;
+    const trackingPrincipalAuthority = {
+      issue: piDurablePrincipalAuthority.issue.bind(piDurablePrincipalAuthority),
+      seal(coordinates: Parameters<typeof piDurablePrincipalAuthority.seal>[0]) {
+        principalSealCount += 1;
+        return piDurablePrincipalAuthority.seal(coordinates);
+      },
+      decode: piDurablePrincipalAuthority.decode.bind(piDurablePrincipalAuthority),
+      isAvailable: piDurablePrincipalAuthority.isAvailable.bind(piDurablePrincipalAuthority),
+    };
+    const capturedChildTurns: Array<{
+      cwd: string;
+      timeoutMs?: number;
+      provider?: string;
+    }> = [];
 
     const { io, stdout } = captureIo();
     const batch = await runAkRole([
@@ -1745,11 +1770,20 @@ test("default dual-lens from subdirectory records toplevel ownership and resume 
       home,
       cwd: subdir,
       credentials: { "openai-codex": true, xai: true },
+      principalAuthority: trackingPrincipalAuthority,
+      reviewerTimeoutMs: 17_777,
       io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
-        principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args) => {
+        principalAuthority: trackingPrincipalAuthority,
+        piRunner: async (args, options) => {
+          capturedChildTurns.push({
+            cwd: options.cwd,
+            ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+            ...(args.includes("--provider")
+              ? { provider: args[args.indexOf("--provider") + 1] }
+              : {}),
+          });
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -1769,6 +1803,16 @@ test("default dual-lens from subdirectory records toplevel ownership and resume 
     const completenessRunId = completenessResume!.slice("ak-role resume ".length);
     const correctnessRunId = correctnessResume!.slice("ak-role resume ".length);
     assert.notEqual(completenessRunId, correctnessRunId);
+    // Batch projected caller principal authority onto both child admissions
+    // (seal also runs on lifecycle bookkeeping; at least one per child).
+    assert.ok(principalSealCount >= 2, `principalSealCount=${principalSealCount}`);
+    // 429 auto-resume may re-enter the host; every child turn must keep the batch projection.
+    assert.ok(capturedChildTurns.length >= 2, `capturedChildTurns=${capturedChildTurns.length}`);
+    for (const turn of capturedChildTurns) {
+      assert.equal(turn.timeoutMs, 17_777);
+      assert.equal(turn.provider, "test-mapped");
+      assert.equal(turn.cwd.endsWith(join("nested", "leaf")), true);
+    }
 
     const bookKey = resolveBookKeyFromGit(project);
     const ownershipPaths = [completenessRunId, correctnessRunId].map((runId) =>
@@ -1782,6 +1826,23 @@ test("default dual-lens from subdirectory records toplevel ownership and resume 
     for (const ownership of ownerships) {
       assert.equal(ownership.sourceProjectRoot, sourceTopLevel);
       await access(ownership.projectRoot);
+    }
+    // Child admitted projectRoot keeps the caller subdirectory inside each worktree axis.
+    for (const runId of [completenessRunId, correctnessRunId]) {
+      const admitted = JSON.parse(
+        await readFile(
+          join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@reviewer`, "admitted-request.json"),
+          "utf8",
+        ),
+      ) as { projectRoot: string };
+      const admittedRoot = realpathSync(admitted.projectRoot);
+      assert.equal(admittedRoot.endsWith(join("nested", "leaf")), true);
+      const axisOwnership = ownerships.find((item) => {
+        const axisRoot = realpathSync(item.projectRoot);
+        return admittedRoot === axisRoot || admittedRoot.startsWith(`${axisRoot}/`);
+      });
+      assert.ok(axisOwnership, `admitted ${admittedRoot} must sit under a retained axis`);
+      assert.equal(realpathSync(join(axisOwnership.projectRoot, "nested", "leaf")), admittedRoot);
     }
     const retainedRoots = [...new Set(ownerships.map((item) => item.worktreeRoot))];
     assert.equal(retainedRoots.length, 1);
