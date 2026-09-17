@@ -39,6 +39,10 @@ import {
   isPlainObject,
   type HeadlessHostDescription,
 } from "./description.ts";
+import {
+  NAVIGATOR_OUTPUT_TOOL_NAME,
+  projectLawfulNavigatorOutput,
+} from "../package-contracts/navigator-output.ts";
 
 export type HeadlessRoleTurnHostConfig = Readonly<{
   description: HeadlessHostDescription;
@@ -483,7 +487,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         : (prompt) => prompt;
       if (codex) {
         // #959: navigator is a prose-exit seat — no closed output-schema.
-        const { NAVIGATOR_OUTPUT_TOOL_NAME } = await import("../package-contracts/navigator-output.ts");
         if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) {
           outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
           await writeFile(
@@ -666,7 +669,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               receipt = JSON.parse(observation.finalMessage);
             } catch {
               // #959: navigator prose exit — free-text agent_message is the receipt.
-              const { NAVIGATOR_OUTPUT_TOOL_NAME } = await import("../package-contracts/navigator-output.ts");
               if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
                 receipt = { prose: observation.finalMessage };
               } else {
@@ -679,14 +681,9 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               }
             }
             // Navigator may still emit JSON; project any shape into prose vehicle.
-            {
-              const { NAVIGATOR_OUTPUT_TOOL_NAME, projectLawfulNavigatorOutput } = await import(
-                "../package-contracts/navigator-output.ts"
-              );
-              if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
-                const projected = projectLawfulNavigatorOutput(receipt);
-                receipt = projected ?? { prose: observation.finalMessage };
-              }
+            if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
+              const projected = projectLawfulNavigatorOutput(receipt);
+              receipt = projected ?? { prose: observation.finalMessage };
             }
             await prepared.ingestStructuredOutput(receipt);
             return { status: "delivered", stderr: spawned.stderr };

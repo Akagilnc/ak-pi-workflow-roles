@@ -145,7 +145,7 @@ function codexTomlStringTable(entries: Readonly<Record<string, string>>): string
  * Free-form JSON leaf for Type.Unknown under Codex strict transport.
  * Strict rejects bare untyped nodes and root-level additionalProperties:true;
  * a $defs anyOf of JSON values (with nested additionalProperties as $ref)
- * is accepted and keeps array/object receipts expressible (navigator candidates).
+ * is accepted and keeps array/object receipts expressible.
  * Package code still does not validate or reject the receipt against schema.
  */
 const CODEX_JSON_VALUE_DEF = "codexJsonValue";

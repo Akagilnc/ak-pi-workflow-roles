@@ -107,7 +107,7 @@ ak-role inspector --model <provider/model[:thinking]> --attach ./change.patch "R
 # 门下省——直调省审：派官或放行
 ak-role gatekeeper --model <provider/model[:thinking]> --attach ./submission.json "审：这批材料该谁审？"
 
-# 游奕使——直调路线建议（有序的下一步角色候选）；随公开入口顶层腿自动出席
+# 游奕使——直调散文路线建议；随公开入口顶层腿自动出席
 ak-role navigator --model <provider/model[:thinking]> "刚完成 coder apply 收敛，下一步？"
 
 # 给事中——票庭五问；票号经由 instruction 识别；受理内先自动起居郎再本席（#742，调用者无感）

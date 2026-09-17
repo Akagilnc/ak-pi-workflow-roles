@@ -117,7 +117,7 @@ ak-role inspector --model <provider/model[:thinking]> --attach ./change.patch "R
 # gatekeeper — direct Gate province review; dispatch an officer or pass
 ak-role gatekeeper --model <provider/model[:thinking]> --attach ./submission.json "审：这批材料该谁审？"
 
-# navigator — direct route advice (ordered next-role candidates); attends automatically on top-level public entry legs only
+# navigator — direct free-form prose route advice; attends automatically on top-level public entry legs only
 ak-role navigator --model <provider/model[:thinking]> "刚完成 coder apply 收敛，下一步？"
 
 # diarist — gather and organize this case's decision basis into its per-ticket 起居录 (LLM resolves the ticket itself, no mechanical verification since #779; countersign admission runs it automatically, other stations summon it explicitly)
