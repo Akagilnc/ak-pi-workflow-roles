@@ -147,6 +147,12 @@ test("Navigator transport failure remains unavailable and does not enter rejecte
     // Cold settle (no early prepare): one feed prompt hits transport failure.
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(harness.prompts(), 1);
+    // Single materials load: one setModel + one INVOCATION (not a second prepare reload).
+    assert.equal(harness.modelSettings.length, 1);
+    assert.equal(
+      harness.entries.filter((entry: any) => entry.customType === "ak-navigator-invocation").length,
+      1,
+    );
     assert.equal(events[0]?.disposition, "unavailable");
     assert.equal(events[0]?.unavailableSource, "transport");
     assert.equal(harness.entries.some((entry: any) => entry.customType === "ak-no-receipt-lifecycle"), false);

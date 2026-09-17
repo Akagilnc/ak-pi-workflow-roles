@@ -345,8 +345,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     help: Array<{ role: NavigatorTargetRole; help: string }>;
     activeSession: NavigatorPreparationSession;
   };
-  /** Cold settle stashes first-pass materials so prepare does not reload. */
-  let preloadedMaterials: MaterialsBundle | undefined;
   /** Materials + session only — no host prompt (cold settle book-before-feed). */
   const loadMaterialsAndSession = async (invocationId: string): Promise<MaterialsBundle> => {
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
@@ -448,7 +446,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     if (session === undefined) throw new Error("Navigator session was not created");
     return { soul, routePlaybook, helpContext, modelSetting, model, help, activeSession: session };
   };
-  const prepare = async (): Promise<string | undefined> => {
+  const prepare = async (materialsBundle?: MaterialsBundle): Promise<string | undefined> => {
     // Exact principal is owned by shared lifecycle (or one mint per attendance).
     // Model/tool/advice paths cannot override it; role-session persistence is
     // pi.appendEntry at lifecycle start — not optional sessionManager probing.
@@ -469,10 +467,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const merged = [prior, next].filter((part) => part.trim() !== "").join("\n\n");
       output = { prose: merged };
     };
-    // Cold settle already loaded materials once; reuse that bundle (no second setModel/help/INVOCATION).
-    const materials = preloadedMaterials ?? await loadMaterialsAndSession(invocationId);
-    preloadedMaterials = undefined;
-    const { soul, routePlaybook, helpContext, help, activeSession } = materials;
+    // Cold settle passes its first-load bundle; early/warm prepare loads here.
+    const { soul, routePlaybook, helpContext, help, activeSession } =
+      materialsBundle ?? await loadMaterialsAndSession(invocationId);
       const publicSettlementHistory = activeSession.entries()
         .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data))
         .map((entry) => entry.data as NavigatorSettlementFact);
@@ -668,7 +665,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const current = session;
       session = undefined;
       activeInvocationId = undefined;
-      preloadedMaterials = undefined;
       return current?.dispose();
     },
   };
@@ -719,19 +715,19 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         // 结果出来喂给它让它自己输出).
         if (session !== undefined) preparationFailure = undefined;
         // Cold settle: materials+session only (no unbound host prompt), then book + feed.
-        // Stash the bundle so prepare reuses it — one loadLiveHelp/setModel/INVOCATION.
+        // Pass the bundle into prepare so loadLiveHelp/setModel/INVOCATION run once.
+        let coldMaterials: MaterialsBundle | undefined;
         if (session === undefined && preparationFailure === undefined) {
           try {
-            preloadedMaterials = await loadMaterialsAndSession(invocationId);
+            coldMaterials = await loadMaterialsAndSession(invocationId);
           } catch (error) {
             preparationFailure = error;
-            preloadedMaterials = undefined;
           }
         }
         session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
         if (preparationFailure === undefined) {
           prepareBoundSettlement = settlement;
-          preparation = prepare();
+          preparation = prepare(coldMaterials);
           void preparation.catch((error) => { preparationFailure = error; });
           try {
             drainedProse = await preparation;
@@ -791,7 +787,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       sessionReady = undefined;
       preparedProse = undefined;
       preparationFailure = undefined;
-      preloadedMaterials = undefined;
       routePlaybookSettlement = undefined;
       routePlaybookReadFailure = undefined;
   }
