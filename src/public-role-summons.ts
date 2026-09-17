@@ -668,17 +668,29 @@ export async function openEphemeralReviewerWorktree(options: {
   const targetCommit = headStdout.trim();
   const root = await mkdtemp(join(tmpdir(), "ak-reviewer-sandbox-"));
   const worktreeRoot = join(root, "work");
+  let registered = false;
+  const rollback = async (cause: unknown): Promise<never> => {
+    // From registration onward, any pre-handle failure must remove the worktree
+    // and root; surface the original cause, not cleanup noise (#946).
+    if (registered) {
+      await execFileAsync("git", ["worktree", "remove", "--force", worktreeRoot], {
+        cwd: sourceProjectRoot,
+      }).catch(() => {});
+    }
+    await rm(root, { recursive: true, force: true }).catch(() => {});
+    throw cause;
+  };
   try {
     await execFileAsync("git", ["worktree", "add", "--detach", worktreeRoot, targetCommit], {
       cwd: sourceProjectRoot,
     });
+    registered = true;
+    // Preserve caller subdirectory even when absent from the pinned commit.
+    if (projectRelative !== "") {
+      await mkdir(reviewerSandboxPath(worktreeRoot, projectRelative), { recursive: true });
+    }
   } catch (error) {
-    await rm(root, { recursive: true, force: true }).catch(() => {});
-    throw error;
-  }
-  // Preserve caller subdirectory even when absent from the pinned commit.
-  if (projectRelative !== "") {
-    await mkdir(reviewerSandboxPath(worktreeRoot, projectRelative), { recursive: true });
+    await rollback(error);
   }
   let closed = false;
   return {
