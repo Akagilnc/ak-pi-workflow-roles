@@ -234,14 +234,14 @@ export type AdmittedNotaryInvocation = AdmittedRoleInvocationBase & {
   readonly sourceRun: NotarySourceRunLocator;
 };
 
-/** Reviewer lens shape: omitted public flag admits the parallel two-axis mode. */
-export type ReviewerLens = "all" | "completeness" | "correctness";
+/** Durable single-axis Reviewer lens. Parallel default is parse-only omission, never admitted. */
+export type ReviewerLens = "completeness" | "correctness";
 
 export type AdmittedReviewerInvocation = AdmittedRoleInvocationBase & {
   readonly role: "reviewer";
   /** Required fixed base revision for the pinned review target (ADR 0037). */
   readonly baseRevision: string;
-  /** Frozen default-two-axis or explicit single-axis shape, reused on resume. */
+  /** Frozen single-axis shape for an ordinary Reviewer run; reused on resume. */
   readonly lens: ReviewerLens;
   /**
    * Required durable authority references/URLs frozen at admission.
@@ -886,8 +886,11 @@ export type ParseReviewerArgvResult = {
   attachmentPaths: string[];
   /** Required fixed base revision for the pinned review target. */
   baseRevision: string;
-  /** Parallel two-axis default or explicit single-axis override. */
-  lens: ReviewerLens;
+  /**
+   * Explicit single-axis override. Omitted public `--lens` is the internal
+   * parallel two-axis branch mark only — never persisted on an admitted run.
+   */
+  lens?: ReviewerLens;
   /** Repeatable durable authority references/URLs (exact order preserved; at least one). */
   authorityRefs: string[];
   project?: string;
@@ -1002,10 +1005,10 @@ export function requireReviewerBaseRevision(value: string | undefined): string {
 
 /** Shared ReviewerLens predicate — sole interpretation owner for fresh + durable. */
 export function isReviewerLens(value: unknown): value is ReviewerLens {
-  return value === "all" || value === "completeness" || value === "correctness";
+  return value === "completeness" || value === "correctness";
 }
 
-/** Admitted lens enum; `all` is the default but not a public flag spelling. */
+/** Admitted single-axis lens enum; public `--lens all` and bare omission are not admitted values. */
 export function requireReviewerLens(value: string | undefined): ReviewerLens {
   const trimmed = (value ?? "").trim();
   if (!isReviewerLens(trimmed)) {
@@ -2891,12 +2894,8 @@ export function parseReviewerArgv(
         continue;
       }
       if (taken.def.id === "lens") {
-        // `all` is the omission default, not a public override spelling.
-        const selected = requireReviewerLens(taken.value);
-        if (selected === "all") {
-          throw new CliUsageError("--lens requires completeness or correctness");
-        }
-        lens = selected;
+        // Public override is single-axis only; omission stays undefined for the parallel branch.
+        lens = requireReviewerLens(taken.value);
         continue;
       }
       if (taken.def.id === "authority-ref") {
@@ -2918,7 +2917,7 @@ export function parseReviewerArgv(
     instruction: positional.join(" "),
     attachmentPaths,
     baseRevision: baseRevision!,
-    lens: lens ?? "all",
+    ...(lens === undefined ? {} : { lens }),
     authorityRefs,
     ...(project === undefined ? {} : { project }),
   };
@@ -2932,7 +2931,7 @@ export type AdmitReviewerInvocationOptions = {
   instruction: string;
   attachmentPaths: readonly string[];
   baseRevision: string;
-  /** Default two-axis or explicit single-axis shape, frozen unchanged at admission. */
+  /** Explicit single-axis shape, frozen unchanged at admission and resume. */
   lens: ReviewerLens;
   /** Required durable authority references/URLs; frozen unchanged at admission. */
   authorityRefs: readonly string[];
@@ -3056,9 +3055,7 @@ export function buildReviewerTransportPrompt(
   admitted: AdmittedReviewerInvocation,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const lines = admitted.lens === "all"
-    ? []
-    : [buildReviewerSkillArgProjection(admitted)];
+  const lines = [buildReviewerSkillArgProjection(admitted)];
   if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
     lines.push("", admitted.instruction);
   }

@@ -616,61 +616,6 @@ export async function summonParallelReviewerLenses(options: {
   readonly completeness: PublicSummonResult;
   readonly correctness: PublicSummonResult;
 }> {
-  // Ownership write/validate/remove share one root: git toplevel, never a subdir input.
-  // Caller project may be a repo subdirectory; child runs keep that relative path.
-  const callerProjectRoot = await realpath(options.projectRoot);
-  const sourceProjectRoot = await realpath((await execFileAsync(
-    "git",
-    ["rev-parse", "--show-toplevel"],
-    { cwd: callerProjectRoot },
-  )).stdout.trim());
-  const callerRelative = relative(sourceProjectRoot, callerProjectRoot);
-  const projectRelative =
-    callerRelative === ""
-    || callerRelative === "."
-    || callerRelative.startsWith(`..${sep}`)
-    || callerRelative === ".."
-      ? ""
-      : callerRelative;
-  const childProjectPath = (worktreeAxis: string): string =>
-    projectRelative === "" ? worktreeAxis : join(worktreeAxis, projectRelative);
-  const statusArgs = [
-    "status",
-    "--porcelain=v1",
-    "--untracked-files=all",
-    "--",
-    ":/",
-    ":(top,exclude).claude/worktrees/**",
-  ] as const;
-  const { stdout: statusStdout } = await execFileAsync("git", statusArgs, {
-    cwd: sourceProjectRoot,
-  });
-  if (statusStdout !== "") {
-    const diagnostic = [
-      "Reviewer target status gate failed:",
-      "git status --porcelain=v1 --untracked-files=all -- :/ ':(top,exclude).claude/worktrees/**'",
-      statusStdout,
-    ].join("\n");
-    const failure = { exitCode: 1, stderr: diagnostic } as const;
-    return { completeness: failure, correctness: failure };
-  }
-  const { stdout: targetStdout } = await execFileAsync(
-    "git",
-    ["rev-parse", "--verify", "HEAD^{commit}"],
-    { cwd: sourceProjectRoot },
-  );
-  const targetCommit = targetStdout.trim();
-  const { stdout: baseStdout } = await execFileAsync(
-    "git",
-    ["rev-parse", "--verify", `${options.baseRevision}^{commit}`],
-    { cwd: sourceProjectRoot },
-  );
-  const baseCommit = baseStdout.trim();
-  const root = await mkdtemp(join(tmpdir(), "ak-reviewer-lenses-"));
-  const completenessRoot = join(root, "completeness");
-  const correctnessRoot = join(root, "correctness");
-  const worktrees = [completenessRoot, correctnessRoot] as const;
-  const created = new Set<string>();
   const describeFailure = (error: unknown): string => {
     if (error instanceof AggregateError) {
       return [error.message, ...error.errors.map(describeFailure)].join("\n");
@@ -681,6 +626,74 @@ export async function summonParallelReviewerLenses(options: {
     exitCode: 1,
     stderr: describeFailure(error),
   });
+  const dualFailure = (error: unknown) => {
+    const failure = failedResult(error);
+    return { completeness: failure, correctness: failure } as const;
+  };
+
+  // Ownership write/validate/remove share one root: git toplevel, never a subdir input.
+  // Caller project may be a repo subdirectory; child runs keep that relative path.
+  // Every pre-dispatch target check failure keeps the existing dual-child batch surface.
+  let sourceProjectRoot: string;
+  let projectRelative: string;
+  let targetCommit: string;
+  let baseCommit: string;
+  const statusArgs = [
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+    "--",
+    ":/",
+    ":(top,exclude).claude/worktrees/**",
+  ] as const;
+  try {
+    const callerProjectRoot = await realpath(options.projectRoot);
+    sourceProjectRoot = await realpath((await execFileAsync(
+      "git",
+      ["rev-parse", "--show-toplevel"],
+      { cwd: callerProjectRoot },
+    )).stdout.trim());
+    const callerRelative = relative(sourceProjectRoot, callerProjectRoot);
+    projectRelative =
+      callerRelative === ""
+      || callerRelative === "."
+      || callerRelative.startsWith(`..${sep}`)
+      || callerRelative === ".."
+        ? ""
+        : callerRelative;
+    const { stdout: statusStdout } = await execFileAsync("git", statusArgs, {
+      cwd: sourceProjectRoot,
+    });
+    if (statusStdout !== "") {
+      const diagnostic = [
+        "Reviewer target status gate failed:",
+        "git status --porcelain=v1 --untracked-files=all -- :/ ':(top,exclude).claude/worktrees/**'",
+        statusStdout,
+      ].join("\n");
+      return dualFailure(new Error(diagnostic));
+    }
+    const { stdout: targetStdout } = await execFileAsync(
+      "git",
+      ["rev-parse", "--verify", "HEAD^{commit}"],
+      { cwd: sourceProjectRoot },
+    );
+    targetCommit = targetStdout.trim();
+    const { stdout: baseStdout } = await execFileAsync(
+      "git",
+      ["rev-parse", "--verify", `${options.baseRevision}^{commit}`],
+      { cwd: sourceProjectRoot },
+    );
+    baseCommit = baseStdout.trim();
+  } catch (error) {
+    return dualFailure(error);
+  }
+  const childProjectPath = (worktreeAxis: string): string =>
+    projectRelative === "" ? worktreeAxis : join(worktreeAxis, projectRelative);
+  const root = await mkdtemp(join(tmpdir(), "ak-reviewer-lenses-"));
+  const completenessRoot = join(root, "completeness");
+  const correctnessRoot = join(root, "correctness");
+  const worktrees = [completenessRoot, correctnessRoot] as const;
+  const created = new Set<string>();
   let results: { completeness: PublicSummonResult; correctness: PublicSummonResult };
   const creation = await Promise.allSettled(
     worktrees.map(async (path) => {

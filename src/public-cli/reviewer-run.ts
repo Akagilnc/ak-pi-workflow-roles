@@ -74,9 +74,6 @@ export function buildReviewerTurnRequest(
   admitted: AdmittedReviewerInvocation,
   options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
-  if (admitted.lens === "all") {
-    throw new Error("default Reviewer batch has no parent Role turn");
-  }
   return projectRoleTurnRequest(
     admitted,
     {
@@ -158,7 +155,7 @@ export async function runPublicReviewer(
     instruction: string;
     attachmentPaths: string[];
     baseRevision: string;
-    lens: ReviewerLens;
+    lens?: ReviewerLens;
     authorityRefs: string[];
     project?: string;
   },
@@ -178,7 +175,8 @@ export async function runPublicReviewer(
     throw error;
   }
 
-  if (parsed.lens === "all") {
+  // Omitted public lens is the parallel two-axis branch mark; never admitted as a parent run.
+  if (parsed.lens === undefined) {
     const { summonParallelReviewerLenses } = await import("../public-role-summons.ts");
     const children = await summonParallelReviewerLenses({
       projectRoot: resolve(parsed.project ?? env.cwd),

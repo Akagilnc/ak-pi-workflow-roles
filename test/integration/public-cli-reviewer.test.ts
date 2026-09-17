@@ -143,9 +143,24 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
       instruction: "",
       attachmentPaths: [],
       baseRevision: "main",
-      lens: "all",
       authorityRefs: ["https://example.test/a"],
     },
+  );
+  // Public `--lens all` is not an admitted single-axis value.
+  assert.throws(
+    () =>
+      parseReviewerArgv([
+        "--base",
+        "main",
+        "--lens",
+        "all",
+        "--authority-ref",
+        "https://example.test/a",
+      ]),
+    (error: unknown) =>
+      isUsage(error) &&
+      error instanceof Error &&
+      error.message === "--lens requires completeness or correctness",
   );
   // Empty lens shares the enum message (not path-helper "requires a path").
   assert.throws(
@@ -1241,7 +1256,7 @@ exec '${realGit}' "$@"
       }
     }
 
-    // Default parent must apply canonical Step 1 before clean detached copies hide dirt.
+    // Default batch must apply canonical Step 1 before clean detached copies hide dirt.
     {
       await writeFile(join(project, "untracked-review-evidence.txt"), "dirty\n", "utf8");
       let childTurns = 0;
@@ -1269,6 +1284,43 @@ exec '${realGit}' "$@"
       assert.equal(dirty.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
       assert.equal(dirty.terminal?.reviewerChildren?.completeness, undefined);
       assert.equal(dirty.terminal?.reviewerChildren?.correctness, undefined);
+      await rm(join(project, "untracked-review-evidence.txt"));
+    }
+
+    // Pre-dispatch target resolution failures keep the dual-child structured surface.
+    {
+      let childTurns = 0;
+      const { io, stdout } = captureIo();
+      const missingBase = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high", "--project", project,
+        "--base", "no-such-reviewer-base-rev", "--authority-ref", "CLAUDE.md",
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-cli-reviewer-missing-base",
+        io,
+        roleTurnHost: {
+          async executeTurn() {
+            childTurns += 1;
+            throw new Error("missing base must not dispatch a child turn");
+          },
+        },
+      });
+      assert.equal(missingBase.exitCode, 1, stdout.join(""));
+      assert.equal(childTurns, 0);
+      assert.equal(missingBase.terminal?.roleOutcome.kind, "failure");
+      assert.equal(missingBase.terminal?.reviewerChildOutcomes?.completeness.exitCode, 1);
+      assert.equal(missingBase.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
+      assert.equal(missingBase.terminal?.reviewerChildren?.completeness, undefined);
+      assert.equal(missingBase.terminal?.reviewerChildren?.correctness, undefined);
+      const completenessDiag = missingBase.terminal?.reviewerChildOutcomes?.completeness.stderr ?? "";
+      const correctnessDiag = missingBase.terminal?.reviewerChildOutcomes?.correctness.stderr ?? "";
+      assert.equal(completenessDiag, correctnessDiag);
+      assert.match(
+        completenessDiag,
+        /no-such-reviewer-base-rev|Needed a single revision|bad revision|unknown revision|fatal:/i,
+      );
     }
   });
 });
@@ -1317,8 +1369,24 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
         (/nonempty durable reference|not inline Spec prose/i.test(error.message)),
     );
 
-    // Base damage keeps durable run identity — never rebrand as fresh --base input.
+    // Legacy durable batch marker `all` is not a resumable single-axis lens.
     persisted.authorityRefs = ["https://example.com/durable-ref"];
+    persisted.lens = "all";
+    await writeFile(
+      admitted.admittedRequestPath,
+      `${JSON.stringify(persisted, null, 2)}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
+      (error: unknown) =>
+        error instanceof CliUsageError &&
+        error.code === "AK_ROLE_USAGE" &&
+        error.message.includes(`role run admitted reviewer lens is missing: ${admitted.runId}`),
+    );
+
+    // Base damage keeps durable run identity — never rebrand as fresh --base input.
+    persisted.lens = "correctness";
     persisted.baseRevision = "";
     await writeFile(
       admitted.admittedRequestPath,
