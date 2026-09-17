@@ -8,9 +8,11 @@ import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
-import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
+import { buildNavigatorInfrastructureFailureFact } from "../../src/navigator-invocation-identity.ts";
+import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_EVENT_TYPE, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { NAVIGATOR_POST_ROLE_GRACE_MS } from "../../src/public-cli/settlement.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
@@ -38,7 +40,7 @@ import {
   settleWithAdvice,
 } from "../helpers/navigator-attendance-kit.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
-import { packageRoot, seedGitRepository, withActivationHome } from "../helpers/pi-test-harness.ts";
+import { flushEventLoopTurns, packageRoot, seedGitRepository, waitForEventLoopCondition, withActivationHome } from "../helpers/pi-test-harness.ts";
 import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
@@ -970,4 +972,130 @@ test("public navigator session takes a seat edit for the next summon instead of 
       },
     );
   });
+});
+
+test("#959 role_infrastructure_failure settlement feed shares post-role grace", async (t) => {
+  // Real entry: admitted session_start → tool_result infrastructure settlement →
+  // settleNavigatorProjection. Never-completing settle must not hang the role;
+  // mock timers advance production 10s grace without wall-clock wait.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+  try {
+    await withActivationHome({ prefix: "ak-nav-infra-grace-" }, async ({ home }) => {
+      const runDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-infra-grace");
+      await mkdir(join(runDir, "session"), { recursive: true });
+      process.env.AK_ROLE_RUN_DIR = runDir;
+
+      const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+      const sent: Array<{ customType?: string; details?: unknown }> = [];
+      let disposeCalls = 0;
+      let settleCalls = 0;
+      const pi = {
+        registerFlag() {},
+        getFlag(name: string) {
+          return name === "ak-role" ? "judge" : undefined;
+        },
+        on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+          handlers.set(name, handler);
+        },
+        registerTool() {},
+        getAllTools() {
+          return [];
+        },
+        setActiveTools() {},
+        getActiveTools() {
+          return [];
+        },
+        appendEntry() {},
+      };
+      const envelopeHost: RoleEnvelopeHost = {
+        host: pi as RoleHost,
+        appendEntry: pi.appendEntry,
+        sendMessage(message) {
+          sent.push(message as { customType?: string; details?: unknown });
+        },
+        startKeepalive() {},
+        stopKeepalive() {},
+      };
+      createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "JUDGE LAW",
+        loadNavigatorWorkContext: async () => ({
+          subjectKey: `${runDir}/work`,
+          subject: "infra grace subject",
+          authority: "infra grace authority",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: () => ({
+          prepare() {},
+          setWorkContext() {},
+          warmHelp() {},
+          isPreparing: () => false,
+          settle: async () => {
+            settleCalls += 1;
+            await new Promise<void>(() => {
+              /* never settles — hung host feed round */
+            });
+          },
+          dispose() {
+            disposeCalls += 1;
+          },
+        }),
+      })(envelopeHost);
+
+      const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+      const sessionManager = SessionManager.create(home, join(runDir, "session"));
+      const ctx = { cwd: home, sessionManager, abort() {} };
+      await handlers.get("session_start")?.({}, ctx);
+
+      const toolResult = handlers.get("tool_result");
+      assert.ok(toolResult, "shared envelope must register tool_result");
+      const pending = Promise.resolve(
+        toolResult(
+          {
+            toolCallId: "infra-hung",
+            toolName: JUDGE_OUTPUT_TOOL_NAME,
+            isError: true,
+            details: buildNavigatorInfrastructureFailureFact(),
+            content: [],
+          },
+          ctx,
+        ),
+      );
+      let settled = false;
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+
+      await flushEventLoopTurns(8);
+      assert.equal(settleCalls, 1, "settlement feed must start");
+      assert.equal(settled, false, "hung feed must still be inside grace");
+
+      t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);
+      await waitForEventLoopCondition(() => settled, {
+        label: "post-role grace must release hung infrastructure settlement",
+        timeoutMs: 500,
+      });
+      assert.equal(disposeCalls >= 1, true, "grace timeout disposes late attendance");
+
+      await handlers.get("agent_settled")?.({}, ctx);
+      const presentation = sent.find((message) => message.customType === NAVIGATOR_EVENT_TYPE);
+      assert.ok(presentation, "grace timeout must project navigator attendance");
+      assert.equal(
+        (presentation.details as { disposition?: string } | undefined)?.disposition,
+        "unavailable",
+      );
+      assert.equal(
+        (presentation.details as { unavailableReason?: string } | undefined)?.unavailableReason,
+        "Navigator exceeded post-role delivery grace",
+      );
+    });
+  } finally {
+    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+  }
 });
