@@ -801,6 +801,8 @@ test("default dual-lens admits both axes without a parent run", async () => {
       assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
       assert.equal(args.includes("--skill"), true);
       assert.equal(args.includes("--ak-review-task"), false);
+      // Ordinary single-axis public semantics: dual-lens legs are not station children.
+      assert.equal(args.includes("--ak-station-child"), false);
       assert.equal(args[args.indexOf("--ak-review-base") + 1], "HEAD~1");
     }
     assert.equal(new Set(childHeads).size, 1);
