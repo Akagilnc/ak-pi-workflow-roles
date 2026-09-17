@@ -20,6 +20,7 @@ import {
 } from "./navigator-session-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
+import type { PublicSummonResult } from "./public-role-summons.ts";
 
 /**
  * Ledger process home for navigator attendance: admitted HostContext.runDirectory
@@ -44,13 +45,13 @@ async function resolveNavigatorLedgerHome(context: HostContext): Promise<string 
 }
 
 /** Resume key only — points at a host run principal, never stores advice prose. */
-const HOST_RUN_POINTER_ENTRY = "ak-navigator-host-run";
+export const NAVIGATOR_HOST_RUN_POINTER_ENTRY = "ak-navigator-host-run";
 
 function exactRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function runIdFromNavigatorDirectory(runDirectory: string): string | undefined {
+export function runIdFromNavigatorDirectory(runDirectory: string): string | undefined {
   const entry = basename(runDirectory);
   const suffix = "@navigator";
   if (!entry.endsWith(suffix)) return undefined;
@@ -58,21 +59,48 @@ function runIdFromNavigatorDirectory(runDirectory: string): string | undefined {
   return runId.length > 0 ? runId : undefined;
 }
 
-function readHostRunPointer(entries: readonly unknown[]): string | undefined {
+export function readNavigatorHostRunPointer(entries: readonly unknown[]): string | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
     if (!exactRecord(entry)) continue;
-    const customType = entry.customType ?? entry.type;
-    if (customType !== HOST_RUN_POINTER_ENTRY) continue;
-    const data = entry.data;
-    if (exactRecord(data) && typeof data.runId === "string" && data.runId.trim() !== "") {
-      return data.runId.trim();
+    if (entry.type === "custom" && entry.customType === NAVIGATOR_HOST_RUN_POINTER_ENTRY) {
+      const data = entry.data;
+      if (exactRecord(data) && typeof data.runId === "string" && data.runId.trim() !== "") {
+        return data.runId.trim();
+      }
     }
   }
   return undefined;
 }
 
-export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
+/**
+ * Only structured CLI absence may fall through to a fresh mint.
+ * Matches public CLI loadResumableRunRecord CliUsageError surfaces
+ * (`unknown role run id` / `session principal is unavailable`).
+ * All other resume outcomes keep their typed failure — no bare catch→fresh.
+ */
+export function isNavigatorResumePrincipalAbsence(result: PublicSummonResult): boolean {
+  if (result.terminal !== undefined) return false;
+  if (result.exitCode === 0) return false;
+  const diagnostic = result.stderr ?? "";
+  return (
+    diagnostic.includes("session principal is unavailable")
+    || diagnostic.includes("unknown role run id")
+  );
+}
+
+export type NavigatorPublicSummon = (options: {
+  readonly role: "navigator";
+  readonly argv: readonly string[];
+  readonly cwd: string;
+  readonly home?: string;
+  readonly resumeRunId?: string;
+}) => Promise<PublicSummonResult>;
+
+export function createNativeNavigatorSessionFactory(deps?: {
+  /** Test/composition inject — production leaves unset and uses public-role-summons. */
+  readonly summonPublicRole?: NavigatorPublicSummon;
+}): NavigatorSessionFactory {
   return async ({ context, subject, tool }) => {
     // Model is enforced at prepare (attendance seat resolve) and at prompt (summon).
     // Factory open only books the archivist nest — no package default, no eager seat read.
@@ -97,7 +125,13 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
     let disposed = false;
     let inFlightPrompt: Promise<unknown> | undefined;
     /** In-factory host run id for CLI resume; durable pointer also lives on the nest. */
-    let hostRunId = readHostRunPointer(sessionManager.getEntries() as readonly unknown[]);
+    let hostRunId = readNavigatorHostRunPointer(sessionManager.getEntries() as readonly unknown[]);
+
+    const summon: NavigatorPublicSummon = deps?.summonPublicRole
+      ?? (async (options) => {
+        const { summonPublicRole } = await import("./public-role-summons.ts");
+        return summonPublicRole(options);
+      });
 
     return {
       prompt: async (text) => {
@@ -108,52 +142,25 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
         noReceipt = undefined;
         const run = (async () => {
         try {
-          const { summonPublicRole } = await import("./public-role-summons.ts");
           const summonHome = await resolveNavigatorLedgerHome(context);
           const resumeRunId = hostRunId;
 
-          // Prefer host CLI resume so prior advice stays on the host session.
-          // Fresh mint only when no pointer or resume cannot open the principal.
-          let summoned = resumeRunId === undefined
-            ? await summonPublicRole({
-              role: "navigator",
-              argv: [text],
-              cwd: context.cwd,
-              ...(summonHome === undefined ? {} : { home: summonHome }),
-            })
-            : await summonPublicRole({
-              role: "navigator",
-              argv: [text],
-              cwd: context.cwd,
-              resumeRunId,
-              ...(summonHome === undefined ? {} : { home: summonHome }),
-            }).catch(async (error) => {
-              // Resume failed (missing principal, wrong role, etc.) — fall back to mint.
-              // Do not invent package advice memory; report transport/session as typed failure
-              // only when the fresh mint also fails below.
-              void error;
-              hostRunId = undefined;
-              return summonPublicRole({
-                role: "navigator",
-                argv: [text],
-                cwd: context.cwd,
-                ...(summonHome === undefined ? {} : { home: summonHome }),
-              });
-            });
+          const baseSummon = {
+            role: "navigator" as const,
+            argv: [text] as const,
+            cwd: context.cwd,
+            ...(summonHome === undefined ? {} : { home: summonHome }),
+          };
 
-          // If resume returned a non-zero exit without a usable terminal, try one fresh mint.
-          if (
-            resumeRunId !== undefined
-            && summoned.terminal === undefined
-            && summoned.exitCode !== 0
-          ) {
+          // Prefer host CLI resume so prior advice stays on the host session.
+          // Fresh mint only when CLI reports structured principal absence.
+          let summoned = resumeRunId === undefined
+            ? await summon(baseSummon)
+            : await summon({ ...baseSummon, resumeRunId });
+
+          if (resumeRunId !== undefined && isNavigatorResumePrincipalAbsence(summoned)) {
             hostRunId = undefined;
-            summoned = await summonPublicRole({
-              role: "navigator",
-              argv: [text],
-              cwd: context.cwd,
-              ...(summonHome === undefined ? {} : { home: summonHome }),
-            });
+            summoned = await summon(baseSummon);
           }
 
           const outcome = summoned.terminal?.roleOutcome;
@@ -191,7 +198,7 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
             const nextRunId = runIdFromNavigatorDirectory(runDirectory);
             if (nextRunId !== undefined) {
               hostRunId = nextRunId;
-              sessionManager.appendCustomEntry(HOST_RUN_POINTER_ENTRY, { runId: nextRunId });
+              sessionManager.appendCustomEntry(NAVIGATOR_HOST_RUN_POINTER_ENTRY, { runId: nextRunId });
             }
           }
 
