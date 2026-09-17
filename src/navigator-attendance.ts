@@ -214,29 +214,10 @@ function rejectedPrepareReason(entries: readonly unknown[], start: number): stri
 }
 
 /**
- * #959: last assistant text parts as attendance prose exit.
- * Tool-call-only messages yield undefined — those already ride the tool path.
- */
-function lastAssistantProseFromEntries(entries: readonly unknown[], start = 0): string | undefined {
-  const recent = entries.slice(start);
-  for (let index = recent.length - 1; index >= 0; index -= 1) {
-    const entry = recent[index];
-    if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)) continue;
-    if (entry.message.role !== "assistant" || !Array.isArray(entry.message.content)) continue;
-    const texts: string[] = [];
-    for (const part of entry.message.content) {
-      if (exactRecord(part) && part.type === "text" && typeof part.text === "string" && part.text.length > 0) {
-        texts.push(part.text);
-      }
-    }
-    if (texts.length > 0) return texts.join("");
-  }
-  return undefined;
-}
-
-/**
  * #959: extract prose from any prepare submission shape. Missing/empty → undefined.
  * Never a rejection — shape is not an admission gate.
+ * Production prose arrives via nested public summon → prepare tool.execute only;
+ * archivist entries() never carries assistant message text, so no parallel harvest.
  */
 function normalizePrepareProse(value: unknown): string | undefined {
   return navigatorProseFromUnknown(value);
@@ -328,7 +309,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let settlementTail: Promise<void> = Promise.resolve();
   let settlementFailure: unknown;
   let preparationFailure: unknown;
-  let preparationNoReceipt = false;
   let routePlaybookReadFailure: string | undefined;
   let disposed = false;
   /** One-shot live-help warm; consumed by the next prepare so later prepares reread live help. */
@@ -364,7 +344,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     // Model/tool/advice paths cannot override it; role-session persistence is
     // pi.appendEntry at lifecycle start — not optional sessionManager probing.
     // #959: prepare is one-shot prose advice — no settlement-bound rebind / route memory.
-    preparationNoReceipt = false;
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
@@ -514,14 +493,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         try {
           if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
           const delivery = createReceiptDeliveryPolicy();
-          /** Harvest prose written this prompt when the model skipped the prepare tool. */
-          const harvestProseIfNeeded = (entryStart: number): void => {
-            if (output !== undefined) return;
-            const harvested = lastAssistantProseFromEntries(activeSession.entries(), entryStart);
-            if (harvested !== undefined && harvested.trim() !== "") {
-              output = { prose: harvested };
-            }
-          };
+          // Production prose arrives only via nested summon → prepare tool.execute
+          // (navigator-public-session). No assistant-entry harvest — entries() is
+          // archivist custom-only on the wired factory (#959).
           const promptAllowingRejectedPrepare = async (text: string, deliveryRequest: boolean) => {
             const entryStart = activeSession.entries().length;
             prepareBatchRejected = false;
@@ -553,17 +527,15 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
               delivery.recordNestedNoReceipt(sessionNoReceipt);
               return;
             }
-            // #959: assistant prose is a lawful exit — same as tool submit.
-            harvestProseIfNeeded(entryStart);
             if (deliveryRequest && output === undefined) delivery.recordDeliveryRequest();
           };
           await promptAllowingRejectedPrepare(request, false);
           // #959: no typed-tool 催交 for missing prose. Continue only after a
-          // rejected prepare while budget remains (correction), still harvesting.
+          // rejected prepare while budget remains (correction).
           while (output === undefined && prepareBatchRejected && delivery.nextAction() === "request-delivery") {
             await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
           }
-          // Neither tool nor prose: exhaust budget silently (no 催交 prompt) so
+          // No prepare tool output: exhaust budget silently (no 催交 prompt) so
           // no_receipt facts stay lawful — mirrors role-runtime navigator exit.
           if (output === undefined && delivery.nextAction() === "request-delivery") {
             while (delivery.nextAction() === "request-delivery") {
@@ -573,7 +545,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
             const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
             activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
-            preparationNoReceipt = true;
             preparedProse = undefined;
             return undefined;
           }
@@ -663,60 +634,49 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       if (disposed) return;
       const invocationId = activeInvocationId ?? invocationPrincipal;
       let report: NavigatorReport;
-      if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
-        // Contract: lawful human/role outcomes emit affirmative typed no-advice when
-        // preparation completed; rejected preparation remains typed unavailable.
-        // Drain the in-flight work so the next driver input cannot start a second prompt on the same native session.
-        if (sessionReady !== undefined) {
-          try { await sessionReady; } catch (error) { preparationFailure ??= error; }
+      // Drain in-flight prepare for every settlement kind so the next driver
+      // input cannot start a second prompt on the same native session.
+      let drainedProse: string | undefined;
+      if (sessionReady !== undefined) {
+        try { await sessionReady; } catch (error) { preparationFailure ??= error; }
+      }
+      if (preparation !== undefined) {
+        try {
+          drainedProse = await preparation;
+        } catch (error) {
+          preparationFailure ??= error;
         }
-        if (preparation !== undefined) {
-          try { await preparation; } catch (error) { preparationFailure ??= error; }
-        }
-        session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.kind === "human_decision" ? { status: settlement.status } : {}) });
-        if (preparationFailure !== undefined) {
-          report = unavailable(invocationId, preparationFailure);
-        } else {
-          // Affirmative no-advice attendance — never inferred later from absence.
-          report = { disposition: "no-advice" };
-        }
+      }
+      session?.appendEntry(SETTLEMENT_ENTRY, {
+        invocationId,
+        subjectKey,
+        role: settlement.role,
+        phase: settlement.phase,
+        kind: settlement.kind,
+        ...("status" in settlement && settlement.status !== undefined
+          ? { status: settlement.status }
+          : {}),
+      });
+      if (preparationFailure !== undefined) {
+        // Contract: README.md#Navigator-attendance — failed attendance is typed
+        // unavailable without invalidating the role Receipt; retain the cause.
+        report = unavailable(invocationId, preparationFailure);
       } else if (settlement.kind === "arrival") {
-        // Contract: README.md#Navigator-attendance — failed attendance is reported as typed unavailable rather than silently discarded.
-        if (sessionReady !== undefined) {
-          try { await sessionReady; } catch (error) { preparationFailure ??= error; }
-        }
-        if (preparation !== undefined) {
-          try { await preparation; } catch (error) { preparationFailure ??= error; }
-        }
-        report = preparationFailure === undefined
-          ? { disposition: "arrival", ...(settlement.message === undefined ? {} : { arrivalMessage: settlement.message }) }
-          : unavailable(invocationId, preparationFailure);
-      } else if (preparation === undefined) {
+        report = {
+          disposition: "arrival",
+          ...(settlement.message === undefined ? {} : { arrivalMessage: settlement.message }),
+        };
+      } else if (typeof drainedProse === "string" && drainedProse.trim() !== "") {
+        // #959: present prose as-is on every parent outcome — including
+        // human_decision / escalate. Old path wiped prose on escalate and left
+        // auto-attendance looking empty after a successful nested summon.
+        report = { disposition: "advice", prose: drainedProse };
+      } else if (settlement.kind === "accepted" && preparation === undefined) {
         report = unavailable(invocationId, "Navigator preparation did not start");
       } else {
-        try {
-          if (sessionReady !== undefined) await sessionReady;
-          const prose = await preparation;
-          session?.appendEntry(SETTLEMENT_ENTRY, {
-            invocationId,
-            subjectKey,
-            role: settlement.role,
-            phase: settlement.phase,
-            kind: settlement.kind,
-            ...(settlement.status === undefined ? {} : { status: settlement.status }),
-          });
-          // #959: present prose as-is. No candidate ranking, no next.role gate,
-          // no stale-context rebind. Empty/no-receipt → affirmative no-advice.
-          // Unavailable is reserved for host/process/context failure only.
-          if (typeof prose === "string" && prose.trim() !== "") {
-            report = { disposition: "advice", prose };
-          } else {
-            report = { disposition: "no-advice" };
-          }
-        // Contract: README.md#Navigator-attendance — Navigator failures become typed unavailable without invalidating the role Receipt; retain the original cause in the unavailable report.
-        } catch (error) {
-          report = unavailable(invocationId, error);
-        }
+        // Empty/no-receipt prepare, or human/infra parent with no prose →
+        // affirmative no-advice (never inferred later from absence).
+        report = { disposition: "no-advice" };
       }
       // A primary preparation failure may reject Promise.all before the optional
       // routebook read finishes. Preserve that primary unavailable cause while
@@ -754,7 +714,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       sessionReady = undefined;
       preparedProse = undefined;
       preparationFailure = undefined;
-      preparationNoReceipt = false;
       routePlaybookSettlement = undefined;
       routePlaybookReadFailure = undefined;
   }

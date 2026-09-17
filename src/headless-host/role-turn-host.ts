@@ -407,7 +407,8 @@ function terminalFromSpawned(
 function buildTurnArgs(options: {
   readonly description: HeadlessHostDescription;
   readonly systemPromptPath: string;
-  readonly jsonSchema: Readonly<Record<string, unknown>>;
+  /** Closed schema; omit for #959 navigator prose-exit seats. */
+  readonly jsonSchema?: Readonly<Record<string, unknown>>;
   readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
   readonly mcpConfigPath?: string;
   readonly outputSchemaPath?: string;
@@ -444,7 +445,8 @@ function buildTurnArgs(options: {
   return headlessTurnArgs({
     description: options.description,
     systemPromptPath: options.systemPromptPath,
-    jsonSchema: options.jsonSchema,
+    // #959: navigator omits --json-schema so free-form prose is a lawful exit.
+    ...(options.jsonSchema === undefined ? {} : { jsonSchema: options.jsonSchema }),
     mcpConfigPath: options.mcpConfigPath,
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.effort === undefined ? {} : { effort: options.effort }),
@@ -521,7 +523,10 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             args = buildTurnArgs({
               description: config.description,
               systemPromptPath,
-              jsonSchema: prepared.jsonSchema,
+              // #959: navigator prose exit — no closed JSON schema on claude either.
+              ...(prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
+                ? {}
+                : { jsonSchema: prepared.jsonSchema }),
               mcpServers: prepared.mcpServers,
               ...(mcpConfigPath === undefined ? {} : { mcpConfigPath }),
               ...(outputSchemaPath === undefined ? {} : { outputSchemaPath }),
@@ -662,8 +667,16 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             }
 
             // #959: navigator prose exit — final agent_message is presented as-is.
-            // Do not JSON.parse or project fields; the whole text is the receipt body.
+            // Empty text is not a lawful accepted receipt (align pi no_receipt / loud empty).
             if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
+              if (observation.finalMessage.trim() === "") {
+                return terminalFromSpawned(spawned, {
+                  cause: "output",
+                  identity: { name: "HeadlessEmptyOutput", code: "empty-stdout" },
+                  diagnostic: spawned.stderr.trim() || "codex exec produced empty agent_message",
+                  details: { sessionId, exitCode: spawned.code },
+                });
+              }
               await prepared.ingestStructuredOutput({ prose: observation.finalMessage });
               return { status: "delivered", stderr: spawned.stderr };
             }
@@ -726,6 +739,14 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
 
           if (envelope.structured_output !== undefined) {
             await prepared.ingestStructuredOutput(envelope.structured_output);
+          } else if (
+            prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME
+            && typeof envelope.result === "string"
+            && envelope.result.trim() !== ""
+          ) {
+            // #959: claude prose exit — free-form result text is the receipt body
+            // when structured_output is absent (json-schema omitted for navigator).
+            await prepared.ingestStructuredOutput({ prose: envelope.result });
           }
           return { status: "delivered", stderr: spawned.stderr };
         },

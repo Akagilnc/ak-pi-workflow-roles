@@ -32,7 +32,6 @@ export function sessionHarness() {
   let providerFailure: { source: "transport"; cause: "transport" } | undefined;
   const sessionNoReceipts: NoReceiptLifecycleFacts[] = [];
   let noReceipt: NoReceiptLifecycleFacts | undefined;
-  const pendingAssistantProse: string[] = [];
   const session: NavigatorPreparationSession = {
     async prompt(_text) {
       prompts += 1;
@@ -53,14 +52,6 @@ export function sessionHarness() {
         throw new Error(transport);
       }
       await new Promise<void>((resolve) => { releasePrompt = resolve; });
-      // After release: optional assistant-prose-only exit (no prepare tool).
-      const prose = pendingAssistantProse.shift();
-      if (prose !== undefined) {
-        entries.push({
-          type: "message",
-          message: { role: "assistant", content: [{ type: "text", text: prose }] },
-        });
-      }
     },
     appendEntry(_type, data) { entries.push({ type: "custom", customType: _type, data }); },
     entries: () => entries,
@@ -81,13 +72,6 @@ export function sessionHarness() {
     prompts: () => prompts,
     rejectPrepare(...reasons: string[]) { rejectedPrepareReasons.push(...reasons); },
     failTransport(...reasons: string[]) { transportFailures.push(...reasons); },
-    /**
-     * Next released prompt finishes with assistant text only (no prepare tool).
-     * #959 prose exit path for auto-attendance.
-     */
-    finishWithAssistantProse(text: string) {
-      pendingAssistantProse.push(text);
-    },
     /** Next prompt settles the session itself without an accepted receipt (#675 nested no-receipt). */
     settleWithoutReceipt(...rejectedReasons: string[]) {
       sessionNoReceipts.push({

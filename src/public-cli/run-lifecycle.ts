@@ -128,10 +128,14 @@ export type RoleRunRecord = {
 };
 
 /**
- * Package-owned auto-resume turn trigger when the caller supplies no message.
- * Chinese + neutral (ADR 0073 scope-steering sense): no scope, no conclusion.
- * Non-empty so hosts that reject empty stdin (codex) still receive a prompt (#959).
- * Manual bare `ak-role resume` does not use this — ADR 0080 keeps entries separate.
+ * Package-owned non-empty Chinese neutral resume transport (#959 / ADR 0073).
+ * Used by:
+ *   - auto-resume (all seats via buildAutoResumeContinuationPrompt) — required so
+ *     hosts that reject empty stdin (codex) still receive a prompt;
+ *   - reviewer seat manual resume (reviewerResumePrompt) — same non-empty need on
+ *     that seat's own manual entry.
+ * Generic bare `ak-role resume` stays empty-capable via selectResumeContinuationPrompt
+ * / buildResumeContinuationPrompt — ADR 0080 keeps auto and generic-manual entries separate.
  */
 export const RESUME_TRANSPORT_ENVELOPE = "继续。" as const;
 

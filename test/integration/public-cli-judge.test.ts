@@ -4,9 +4,9 @@ import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
- * #106 public Judge path — admission, freeze, terminal settlement, grace, renderer.
+ * #106 public Judge path — admission, freeze, terminal settlement, grace.
  * Seams: parseJudgeArgv / admitJudgeInvocation / TerminalResult / raceNavigatorGrace /
- * renderPublicAkRoleCommand / runAkRole(judge) with injectable Pi runner.
+ * runAkRole(judge) with injectable Pi runner.
  */
 import assert from "node:assert/strict";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
@@ -33,7 +33,6 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { renderPublicAkRoleCommand } from "../../src/public-cli/command-renderer.ts";
 import {
   admitJudgeInvocation,
   buildJudgeTransportPrompt,
@@ -343,29 +342,7 @@ test("structurally empty request stays empty while attachments remain typed tran
   assert.match(withAttach, /\/frozen\/00-a\.txt/);
 });
 
-test("registry renderer owns public command text; model prose is ignored", () => {
-  assert.equal(
-    renderPublicAkRoleCommand({ role: "reviewer", phase: null }),
-    undefined,
-  );
-  assert.equal(
-    renderPublicAkRoleCommand({ role: "gleaner-left", phase: null }),
-    undefined,
-  );
-  assert.equal(
-    renderPublicAkRoleCommand({ role: "fixer", phase: "apply" }),
-    "ak-role fixer apply",
-  );
-  assert.equal(
-    renderPublicAkRoleCommand({ role: "coder", phase: "plan" }),
-    "ak-role coder plan",
-  );
-  // #639: navigator is a callable role like any other, so its advice renders.
-  assert.equal(
-    renderPublicAkRoleCommand({ role: "navigator", phase: null }),
-    "ak-role navigator",
-  );
-
+test("#959 adviceNavigatorFact projects prose as-is", () => {
   const fact = adviceNavigatorFact({
     prose: "next seat → reviewer",
   });

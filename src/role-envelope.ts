@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -115,7 +115,11 @@ export async function prepareRoleEnvelope(options: {
   await mkdir(request.runDirectory, { recursive: true });
 
   // Durable principal file for isAvailable / resumable settlement (public-cli).
-  // #617 DK-4: header layout only — never host conversation/tool writeback into Pi JSONL.
+  // #617 DK-4: never host conversation/tool writeback into Pi JSONL.
+  // #959: package-owned custom entries (invocation marker, submission-closure,
+  // navigator attendance, no-receipt) MUST flush so parent settlement can read
+  // them after the headless process ends — memory-only books left extractNavigatorFact
+  // with no durable terminal / attendance on codex/claude/ACP parents.
   let sessionFile = options.sessionFile ?? join(request.runDirectory, "session", "session.jsonl");
   await mkdir(dirname(sessionFile), { recursive: true });
   if (request.continuation.kind !== "resume") {
@@ -135,6 +139,23 @@ export async function prepareRoleEnvelope(options: {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
+  // Settlement reads the durable file after the turn; write must complete before
+  // closeRound returns. Sync-order via chained promise kept on the envelope.
+  let durableWriteChain: Promise<void> = Promise.resolve();
+  /** Append one package-owned session entry to the durable principal (fire-and-order). */
+  const persistPackageSessionEntry = (entry: Record<string, unknown>): void => {
+    const line = `${JSON.stringify({
+      ...entry,
+      id: typeof entry.id === "string" ? entry.id : randomUUID(),
+      timestamp: typeof entry.timestamp === "string" ? entry.timestamp : new Date().toISOString(),
+    })}\n`;
+    durableWriteChain = durableWriteChain
+      .then(() => appendFile(sessionFile, line, "utf8"))
+      .catch(() => {
+        // Durable bookkeeping is best-effort relative to the role turn; settlement
+        // still has submission-ledger. Do not mask the turn result.
+      });
+  };
   const context: HostContext = {
     cwd: request.cwd,
     mode: "print",
@@ -155,6 +176,7 @@ export async function prepareRoleEnvelope(options: {
         const entry = { type: "custom", customType, data };
         sessionEntries.push(entry);
         customEntries.push({ customType, data });
+        persistPackageSessionEntry(entry);
       },
     },
     abort() {
@@ -170,6 +192,7 @@ export async function prepareRoleEnvelope(options: {
     const entry = { type: "custom_message", customType, ...payload, message: payload };
     sessionEntries.push(entry);
     customEntries.push({ customType, data: message.details ?? message.content });
+    persistPackageSessionEntry(entry);
   };
 
   const emit = async (event: string, value: unknown): Promise<unknown[]> => {
@@ -505,6 +528,11 @@ export async function prepareRoleEnvelope(options: {
     disposed = true;
     const cleanupFailures: unknown[] = [];
     try {
+      await durableWriteChain;
+    } catch {
+      // Best-effort drain of package session flushes before teardown.
+    }
+    try {
       await emit("session_shutdown", {});
     } catch (error) {
       cleanupFailures.push(error);
@@ -553,6 +581,7 @@ export async function prepareRoleEnvelope(options: {
       // Pi flushes navigator attendance on agent_settled; session/prompt
       // resolution is the ACP host equivalent round boundary.
       await emit("agent_settled", {});
+      await durableWriteChain;
       return { accepted: true as const };
     }
     if (rejection !== undefined) {
@@ -567,6 +596,7 @@ export async function prepareRoleEnvelope(options: {
     // #836: host ended without a recorded submission is not a failure.
     // Settlement presents ledger contents; empty ledger → no_receipt.
     await emit("agent_settled", {});
+    await durableWriteChain;
     return { accepted: true as const };
   };
 

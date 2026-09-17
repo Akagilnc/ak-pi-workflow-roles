@@ -213,8 +213,8 @@ test("#959 prose advice settles as-is across prepares while changed settings are
   });
 });
 
-test("typed owner-decision and role-infrastructure outcomes emit affirmative no-advice", async () => {
-  await withTempRoot("navigator-no-advice-", async (root) => {
+test("#959 human_decision and role-infrastructure still present prepared prose", async () => {
+  await withTempRoot("navigator-human-prose-", async (root) => {
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
       join(root, ".ak-roles", "public-cli.json"),
@@ -228,23 +228,26 @@ test("typed owner-decision and role-infrastructure outcomes emit affirmative no-
     nav.prepare();
     while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
     const owner = nav.settle({ kind: "human_decision", role: "coder", phase: "apply", status: "escalate" });
-    await harness.tool().execute("no-advice-owner", proseAdvice(), undefined, undefined, {} as never);
+    await harness.tool().execute("advice-owner", proseAdvice("escalate 后仍呈现散文"), undefined, undefined, {} as never);
     harness.release();
     await owner;
     nav.prepare();
     while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
     const infra = nav.settle({ kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
-    await harness.tool().execute("no-advice-infra", proseAdvice(), undefined, undefined, {} as never);
+    await harness.tool().execute("advice-infra", proseAdvice("infra 后仍呈现散文"), undefined, undefined, {} as never);
     harness.release();
     await infra;
     assert.equal(events.length, 2);
-    assert.equal(events[0]?.disposition, "no-advice");
+    // #959: parent escalate/infra must not wipe already-prepared navigator prose.
+    assert.equal(events[0]?.disposition, "advice");
+    assert.equal(events[0]?.prose, "escalate 后仍呈现散文");
     assert.equal(typeof events[0]?.invocationId, "string");
     assert.ok(String(events[0]?.invocationId).length > 0);
     assert.equal(events[0]?.role, "coder");
     assert.equal(events[0]?.phase, "apply");
     assert.equal(typeof events[0]?.subjectKey, "string");
-    assert.equal(events[1]?.disposition, "no-advice");
+    assert.equal(events[1]?.disposition, "advice");
+    assert.equal(events[1]?.prose, "infra 后仍呈现散文");
     // One attendance instance keeps one exact principal across settles.
     assert.equal(events[1]?.invocationId, events[0]?.invocationId);
     assert.equal(harness.prompts(), 2);
@@ -443,5 +446,4 @@ test("model settings are exact and typed settlement projection ignores prose and
   assert.deepEqual(publicNavigatorSettlement("secretariat", null, { toolName: "ak_secretariat_output", isError: false, details: { secretariatStatus: "escalate" } }), { kind: "human_decision", role: "secretariat", phase: null, status: "escalate" });
   assert.deepEqual(publicNavigatorSettlement("secretariat", null, { toolName: "ak_secretariat_output", isError: false, details: { secretariatStatus: "converged" } }), { kind: "accepted", role: "secretariat", phase: null, status: "converged" });
   assert.notEqual(publicNavigatorSettlement("fixer", "apply", { toolName: "ak_fixer_output", isError: false, details: { kind: "audit_escalation", conflicts: ["authority"], auditDecisionGate: { question: "Which?", options: ["owner"] } } })?.kind, "human_decision");
-  // selectNavigatorCandidate status membership is owned by the status-specific outrank table.
 });

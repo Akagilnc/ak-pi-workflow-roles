@@ -9,12 +9,53 @@ import {
 } from "../external-host-turn-loop.ts";
 
 import { reportHostSessionEvent } from "../host-session-record.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../package-contracts/navigator-output.ts";
 import {
   renderSystemPromptOverride,
   type PreparedRoleTurn,
   type SessionIdentityAuthority,
 } from "../prepared-role-turn.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
+
+/**
+ * #959: collect free-form agent text from ACP session/update stream.
+ * Used only when the navigator seat spoke prose without calling the output tool.
+ * Thought/reasoning chunks are never receipt prose.
+ */
+function acpAgentTextChunk(params: Readonly<Record<string, unknown>>): string | undefined {
+  const update = params.sessionUpdate ?? params.update;
+  if (typeof update !== "string") return undefined;
+  if (update.includes("thought") || update.includes("reasoning")) return undefined;
+  // Accept agent message kinds; reject other session/update types.
+  if (
+    update !== "agent_message_chunk"
+    && update !== "agent_message"
+    && update !== "message"
+    && !update.endsWith("_message_chunk")
+    && !update.endsWith("_message")
+  ) {
+    return undefined;
+  }
+  const content = params.content;
+  if (typeof content === "string" && content.length > 0) return content;
+  if (typeof content === "object" && content !== null && !Array.isArray(content)) {
+    const record = content as Record<string, unknown>;
+    if (typeof record.text === "string" && record.text.length > 0) return record.text;
+  }
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const part of content) {
+      if (typeof part === "string" && part.length > 0) parts.push(part);
+      else if (typeof part === "object" && part !== null) {
+        const record = part as Record<string, unknown>;
+        if (typeof record.text === "string" && record.text.length > 0) parts.push(record.text);
+      }
+    }
+    if (parts.length > 0) return parts.join("");
+  }
+  if (typeof params.text === "string" && params.text.length > 0) return params.text;
+  return undefined;
+}
 
 /** ACP v1 surface used by the generic ACP adapter. Protocol details stay in this module. */
 export interface AcpConnection {
@@ -214,8 +255,12 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       ): Promise<Readonly<Record<string, unknown>>> =>
         raceAgainstHostAbort(connection!.request(method, params), recordAbort.signal, "host-session-record-failed");
 
+      // #959: accumulate navigator free-form agent text across the prompt stream.
+      const agentProseChunks: string[] = [];
       connection.onNotification?.((method, params) => {
         if (method !== "session/update" || hostSessionRecordFailure !== undefined) return;
+        const chunk = acpAgentTextChunk(params);
+        if (chunk !== undefined) agentProseChunks.push(chunk);
         try {
           reportHostSessionEvent({
             host: config.hostName,
@@ -320,6 +365,15 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
                 status: "terminal",
                 result: failure("output", "AcpRefusal", "refusal", { sessionId }),
               };
+            }
+            // #959: navigator prose exit when the model spoke without the output tool.
+            // Tool path still wins via MCP; ingest is a no-op once the tool already sealed.
+            if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
+              const prose = agentProseChunks.join("").trim();
+              if (prose !== "") {
+                await prepared.ingestStructuredOutput({ prose });
+              }
+              agentProseChunks.length = 0;
             }
             return { status: "delivered", stderr: activeConnection.stderr?.() ?? "" };
           },

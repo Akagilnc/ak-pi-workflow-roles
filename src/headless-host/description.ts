@@ -83,7 +83,11 @@ export function headlessTurnArgs(options: {
   readonly description: ClaudePrintHostDescription;
   /** Absolute path written by the adapter; paired with `systemPromptFlag`. */
   readonly systemPromptPath: string;
-  readonly jsonSchema: Readonly<Record<string, unknown>>;
+  /**
+   * Closed JSON Schema for structured_output seats.
+   * Optional: omit for prose-exit seats (#959 navigator) so the model may speak free text.
+   */
+  readonly jsonSchema?: Readonly<Record<string, unknown>>;
   /** Absolute path to host-native MCP config JSON; omitted when no AK MCP servers. */
   readonly mcpConfigPath?: string;
   readonly model?: string;
@@ -99,9 +103,10 @@ export function headlessTurnArgs(options: {
     ...description.fixedArgs,
     description.systemPromptFlag,
     options.systemPromptPath,
-    description.jsonSchemaFlag,
-    JSON.stringify(options.jsonSchema),
   ];
+  if (options.jsonSchema !== undefined) {
+    args.push(description.jsonSchemaFlag, JSON.stringify(options.jsonSchema));
+  }
   if (options.pluginDir) args.push("--plugin-dir", options.pluginDir);
   if (options.mcpConfigPath !== undefined && options.mcpConfigPath !== "") {
     args.push(description.mcpConfigFlag, options.mcpConfigPath);

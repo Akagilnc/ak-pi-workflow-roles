@@ -5,7 +5,6 @@ import { build } from "esbuild";
 
 const entries = [
   "packaged-role-registry",
-  "public-command-renderer",
   "work-subject-identity",
   "navigator-invocation-identity",
   // Static import of navigator-invocation-identity (#603: non-bundle graph closure).
@@ -205,6 +204,17 @@ export async function buildPackageArtifacts() {
   await mkdir(pluginDir, { recursive: true });
   await cp("resources/method-host-plugin/.claude-plugin", join(pluginDir, ".claude-plugin"), { recursive: true });
   await cp("resources/methods", join(pluginDir, "skills"), { recursive: true });
+  // Bundled public-cli main resolves ../resources from dist/ → dist/resources.
+  // Keep navigator route playbook beside that face so auto-attendance reads it.
+  await mkdir(join("dist", "resources"), { recursive: true });
+  await copyFile(
+    resolve("resources/navigator-route-playbook.md"),
+    join("dist", "resources", "navigator-route-playbook.md"),
+  );
+  await copyFile(
+    resolve("resources/collector-bot-handbook.md"),
+    join("dist", "resources", "collector-bot-handbook.md"),
+  );
 }
 
 const isMain =
