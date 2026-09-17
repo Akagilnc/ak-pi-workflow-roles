@@ -5,7 +5,6 @@ import { build } from "esbuild";
 
 const entries = [
   "packaged-role-registry",
-  "public-command-renderer",
   "work-subject-identity",
   "navigator-invocation-identity",
   // Static import of navigator-invocation-identity (#603: non-bundle graph closure).
@@ -22,6 +21,10 @@ const entries = [
   "activation-ledger-topology",
   "activation-reconciliation",
   "archivist-record-entry",
+  // Pure subject nest topology — static import of archivist-record-entry;
+  // cold discovery without SessionManager (#636). Keep listed while that
+  // relative edge remains (#857 removal left the import graph open).
+  "archivist-record-topology",
   // Session material loaders used by published non-bundle roots.
   "session-opening-materials",
   // Value-import closure of published non-bundle roots (build-package-only loadable).
@@ -205,6 +208,8 @@ export async function buildPackageArtifacts() {
   await mkdir(pluginDir, { recursive: true });
   await cp("resources/method-host-plugin/.claude-plugin", join(pluginDir, ".claude-plugin"), { recursive: true });
   await cp("resources/methods", join(pluginDir, "skills"), { recursive: true });
+  // Packaged handbook/playbook paths resolve via injected packageRoot (#962) —
+  // do not mirror resources/ into dist/resources (one authority, no parallel copy).
 }
 
 const isMain =

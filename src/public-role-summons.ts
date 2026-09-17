@@ -104,6 +104,12 @@ export type PublicSummonRequest = {
   /** Caller correlation id for nested leg ledger (ADR 0010 / #924). */
   readonly correlationId?: string;
   /**
+   * Resume an existing instruction-seat run via public CLI resume (host-native
+   * session continuity). Used by navigator attendance so prior advice stays on
+   * the host session — not a package-built advice ledger.
+   */
+  readonly resumeRunId?: string;
+  /**
    * Ephemeral host-turn cwd override (#946 fresh-copy sandbox). Admission keeps
    * the public --project / cwd identity; the host turn runs under this path.
    */
@@ -516,7 +522,7 @@ export async function summonPublicRole(
     case "navigator":
     case "gatekeeper": {
       const seat = options.role;
-      const [{ runPublicInstructionSeat }, invocation] = await Promise.all([
+      const [{ runPublicInstructionSeat, runPublicInstructionSeatResume }, invocation] = await Promise.all([
         import("./public-cli/instruction-seat-run.ts"),
         import("./public-cli/invocation.ts"),
       ]);
@@ -526,10 +532,33 @@ export async function summonPublicRole(
           : seat === "navigator"
             ? invocation.parseNavigatorArgv
             : invocation.parseGatekeeperArgv;
-      const stepped = await runPrepared(parse, (env, once) =>
-        runPublicInstructionSeat(options.argv, env as never, io, seat, once));
-      if ("fail" in stepped) return stepped.fail;
-      result = stepped.ok;
+      const resumeRunId = typeof options.resumeRunId === "string" && options.resumeRunId.trim() !== ""
+        ? options.resumeRunId.trim()
+        : undefined;
+      if (resumeRunId !== undefined) {
+        // Host CLI resume — same face as `ak-role resume <runId> [message]`.
+        // Instruction/materials ride summons.instruction (not package memory).
+        const instruction = options.argv[0] ?? "";
+        const stepped = await runPrepared(parse, (env) =>
+          runPublicInstructionSeatResume(
+            {
+              runId: resumeRunId,
+              summons: {
+                instruction,
+                instructionEmpty: instruction.trim() === "",
+              },
+            },
+            env as never,
+            io,
+          ));
+        if ("fail" in stepped) return stepped.fail;
+        result = stepped.ok;
+      } else {
+        const stepped = await runPrepared(parse, (env, once) =>
+          runPublicInstructionSeat(options.argv, env as never, io, seat, once));
+        if ("fail" in stepped) return stepped.fail;
+        result = stepped.ok;
+      }
       break;
     }
     case "judge": {

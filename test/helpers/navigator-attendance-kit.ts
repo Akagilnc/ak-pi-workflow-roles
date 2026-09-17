@@ -1,8 +1,8 @@
 /**
- * Shared fixtures for Navigator attendance coverage (#420 整改拆分).
- * Extracted verbatim from test/contract/navigator-attendance.test.ts — no behavior change.
+ * Shared fixtures for Navigator attendance coverage (#420 / #959).
+ * #959: navigator speaks prose — fixtures submit free-form advice, not candidates.
  */
-import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorCandidate, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
+import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
 import { RECEIPT_DELIVERY_TURN_LIMIT, type NoReceiptLifecycleFacts } from "../../src/receipt-delivery-policy.ts";
 
 export function context(home?: string) {
@@ -16,21 +16,9 @@ export function context(home?: string) {
   } as never;
 }
 
-export function candidate(overrides: Partial<NavigatorCandidate> = {}) {
-  const base: NavigatorCandidate = {
-    id: "small-fix",
-    matches: { role: "coder", phase: "apply" as const, kind: "accepted" as const, statuses: ["completed", "refused"] },
-    route: [{ role: "coder" as const, phase: "apply" as const }, { role: "reviewer" as const, phase: null }, { role: "judge" as const, phase: null }],
-    next: { role: "reviewer" as const, phase: null },
-    reason: "The implementation is ready for an independent review.",
-  };
-  return {
-    candidates: [{
-      ...base,
-      ...overrides,
-      matches: { ...base.matches!, ...(overrides.matches ?? {}) },
-    }],
-  };
+/** Prose advice batch for prepare tool.execute. */
+export function proseAdvice(prose = "下一步送 reviewer 独立审阅实现。"): { prose: string } {
+  return { prose };
 }
 
 export function sessionHarness() {
@@ -63,6 +51,7 @@ export function sessionHarness() {
         providerFailure = { source: "transport", cause: "transport" };
         throw new Error(transport);
       }
+      // Executor runs sync: park flag is visible before prompt() yields to the caller.
       await new Promise<void>((resolve) => { releasePrompt = resolve; });
     },
     appendEntry(_type, data) { entries.push({ type: "custom", customType: _type, data }); },
@@ -80,7 +69,13 @@ export function sessionHarness() {
   return {
     factory: async ({ tool: nextTool }: { tool: any }) => { tool = nextTool; return session; },
     tool: () => tool,
-    release: () => releasePrompt?.(),
+    /** True while prompt() is parked on the release gate (not merely counted). */
+    isPromptParked: () => releasePrompt !== undefined,
+    release: () => {
+      const release = releasePrompt;
+      releasePrompt = undefined;
+      release?.();
+    },
     prompts: () => prompts,
     rejectPrepare(...reasons: string[]) { rejectedPrepareReasons.push(...reasons); },
     failTransport(...reasons: string[]) { transportFailures.push(...reasons); },
@@ -125,33 +120,51 @@ export async function attendance(
   });
 }
 
-/**
- * Complete settle. Unmatched speculative advice triggers one settlement-bound rebind
- * (stale-context repair, not next.role legality). Answer that rebind with the same batch
- * when the harness opens a second prompt; matched advice completes without it.
- */
-export async function settleAnsweringRebind(
-  nav: { settle(settlement: unknown): Promise<void> },
-  harness: ReturnType<typeof sessionHarness>,
-  settlement: unknown,
-  rebindBatch: unknown,
-  rebindToolCallId = "settlement-rebind",
-): Promise<void> {
-  const promptsBefore = harness.prompts();
-  let settled = false;
-  const settling = nav.settle(settlement).finally(() => { settled = true; });
-  // Poll until settle finishes or a settlement-bound rebind opens another prompt.
-  while (!settled && harness.prompts() <= promptsBefore) {
+/** Yield until the event-loop condition holds. No fixed spin budget — those race createSession under load. */
+async function waitForEventLoop(condition: () => boolean): Promise<void> {
+  while (!condition()) {
     await new Promise<void>((resolve) => setImmediate(resolve));
   }
-  if (!settled) {
-    while (harness.tool() === undefined && !settled) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    if (!settled) {
-      await harness.tool().execute(rebindToolCallId, rebindBatch as never, undefined, undefined, {} as never);
-      harness.release();
-    }
+}
+
+/**
+ * Release the early ready-wait prompt gate while prepare() is still in flight.
+ * Fixed setImmediate budgets raced createSession under load and deadlocked
+ * (#959 CI file timeouts). Gate state + live isPreparing (not prompt count):
+ * - slow createSession: wait until parked, then release
+ * - already parked: release immediately
+ * - non-parking early prompt already finished: isPreparing false → no wait
+ */
+async function releaseEarlyReadyWait(
+  nav: { isPreparing(): boolean },
+  harness: ReturnType<typeof sessionHarness>,
+): Promise<void> {
+  await waitForEventLoop(() => !nav.isPreparing() || harness.isPromptParked());
+  if (!harness.isPromptParked()) return;
+  harness.release();
+  // Prompt continuation finishes the early turn on the next macrotask.
+  await new Promise<void>((resolve) => setImmediate(resolve));
+}
+
+/**
+ * #959: early prepare() runs the host round from parent start (ready and wait);
+ * settle feeds currentSettlement and takes the output prompt.
+ */
+export async function settleWithAdvice(
+  nav: Awaited<ReturnType<typeof attendance>>,
+  harness: ReturnType<typeof sessionHarness>,
+  settlement: Parameters<Awaited<ReturnType<typeof attendance>>["settle"]>[0] | { kind: string; role: string; phase: "plan" | "apply" | null; status?: string },
+  body: unknown = proseAdvice(),
+  toolCallId = "prepare",
+): Promise<void> {
+  // Live in-flight only (resolved early prepare no longer reports isPreparing).
+  if (nav.isPreparing()) {
+    await releaseEarlyReadyWait(nav, harness);
   }
-  await settling;
+  const targetPrompts = harness.prompts() + 1;
+  const waiting = nav.settle(settlement as never);
+  await waitForEventLoop(() => harness.prompts() >= targetPrompts && harness.tool() !== undefined);
+  await harness.tool().execute(toolCallId, body as never, undefined, undefined, {} as never);
+  harness.release();
+  await waiting;
 }

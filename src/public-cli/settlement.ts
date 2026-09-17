@@ -123,7 +123,6 @@ import {
   parseInvocationMarkerIdentity,
   type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
-import type { NavigatorPhase } from "../navigator-attendance.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
   RECEIPT_DELIVERY_TURN_LIMIT,
@@ -360,7 +359,7 @@ import {
   exitCodeForTerminalOutcome,
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
-  recommendationNavigatorFact,
+  adviceNavigatorFact,
   type ControlledFailureCause,
   type TerminalArtifactRef,
   type TerminalGateFact,
@@ -782,7 +781,13 @@ export function explicitInternalKnownFailureClassificationInput(
   };
 }
 
-/** Post-role Navigator delivery grace (Issue #11 / #101 / #106 / #159). */
+/**
+ * Post-role Navigator delivery grace (Issue #11 / #101 / #106 / #159).
+ * After the parent finishes: wait at most this long for navigator output, then
+ * stop waiting. Navigator must already be running from parent start (prepare
+ * host round in parallel); this window is only the tail after parent end — not
+ * the budget to start a cold full host turn (owner 2026-09-17 #959).
+ */
 export const NAVIGATOR_POST_ROLE_GRACE_MS = 10_000;
 
 type SessionMessage = {
@@ -1931,11 +1936,6 @@ export type LawfulJudgeRoleOutcome = Extract<
   TerminalRoleOutcome,
   { kind: "accepted" } | { kind: "audit_escalation" }
 >;
-function navigatorPhaseValue(value: unknown): NavigatorPhase {
-  if (value === "plan" || value === "apply") return value;
-  return null;
-}
-
 /**
  * Minimal attendance provenance against the bound marker (ADR 0043).
  * Keep only invocationId + post-terminal ordering. Runtime-self-produced
@@ -1960,35 +1960,44 @@ function parseNavigatorAttendanceDetails(
   const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string"
     ? { advisoryDiagnostic: details.routePlaybookReadFailure }
     : {};
-  if (disposition === "recommendation") {
-    const next = details.next;
-    if (!isRecord(next) || typeof next.role !== "string") {
+  // #959: advice prose is presented as-is. Legacy "recommendation" with next/reason/
+  // command is projected into prose so historical sessions still render — never wash
+  // a real recommendation into no-advice when any advice body is recoverable.
+  if (disposition === "advice" || disposition === "recommendation") {
+    let prose: string | undefined;
+    if (typeof details.prose === "string" && details.prose.trim() !== "") {
+      prose = details.prose;
+    } else {
+      const next = isRecord(details.next) && typeof details.next.role === "string"
+        ? details.next.role
+        : undefined;
+      const reason = typeof details.reason === "string" && details.reason.trim() !== ""
+        ? details.reason
+        : undefined;
+      const command = typeof details.command === "string" && details.command.trim() !== ""
+        ? details.command
+        : undefined;
+      if (reason !== undefined && next !== undefined) {
+        prose = `${reason}（下一步：${next}）`;
+      } else if (reason !== undefined) {
+        prose = reason;
+      } else if (next !== undefined) {
+        // Historical recommendation with only typed next — still real advice.
+        prose = `下一步：${next}`;
+      } else if (command !== undefined) {
+        prose = command;
+      }
+    }
+    if (prose === undefined || prose.trim() === "") {
+      // Attended but empty body is affirmative no-advice, not unavailable (#959).
       return {
-        disposition: "unavailable",
-        source: "unknown",
-        reason: "navigator recommendation missing typed next role",
+        disposition: "no-advice",
+        ...advisoryDiagnostic,
       };
     }
-    const reason = typeof details.reason === "string" ? details.reason : "";
-    const route = Array.isArray(details.route)
-      ? details.route
-          .filter(isRecord)
-          .map((target) => ({
-            role: String(target.role),
-            phase: navigatorPhaseValue(target.phase),
-          }))
-      : undefined;
-    return recommendationNavigatorFact({
+    return adviceNavigatorFact({
+      prose,
       ...advisoryDiagnostic,
-      next: {
-        role: next.role,
-        phase: navigatorPhaseValue(next.phase),
-      },
-      reason,
-      ...(route === undefined ? {} : { route }),
-      ...(typeof details.command === "string"
-        ? { modelCommand: details.command }
-        : {}),
     });
   }
   if (disposition === "unavailable") {

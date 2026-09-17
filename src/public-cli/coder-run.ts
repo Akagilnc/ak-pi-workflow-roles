@@ -22,7 +22,7 @@ import {
   type AdmittedCoderInvocation,
 } from "./invocation.ts";
 import {
-  buildResumeContinuationPrompt,
+  buildAutoResumeContinuationPrompt,
   loadResumableCoderRun,
   markRunAdmitted,
   type PublicResumeRequest,
@@ -198,7 +198,7 @@ export async function runPublicCoder(
           : { correlationId: admitted.correlationId ?? env.correlationId }),
         continuation: {
           kind: "resume",
-          prompt: buildResumeContinuationPrompt({
+          prompt: buildAutoResumeContinuationPrompt({
             packageRoot: env.packageRoot,
             ...pickEngineAxis(env),
           }),

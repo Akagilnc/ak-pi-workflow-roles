@@ -517,6 +517,65 @@ async function restoreState(cwd: string, runId: string, scope: SubmissionLedgerR
   };
 }
 
+/** Sole HostContext-derived session parent for ledger restore/append (never process.env). */
+function sessionParentFromHostContext(context: HostContext): string | undefined {
+  const runDirectory = runDirectoryFromHostContext(context);
+  if (runDirectory !== undefined) return join(runDirectory, "session", "session.jsonl");
+  const sessionFile = context.sessionManager.getSessionFile?.();
+  if (typeof sessionFile === "string" && sessionFile.length > 0) return sessionFile;
+  const sessionDir = context.sessionManager.getSessionDir?.();
+  if (typeof sessionDir === "string" && sessionDir.length > 0) {
+    return join(sessionDir, "session.jsonl");
+  }
+  return undefined;
+}
+
+function homeFromHostContext(context: HostContext, home?: string): string | undefined {
+  if (home !== undefined) return home;
+  const sessionParent = sessionParentFromHostContext(context);
+  return sessionParent !== undefined ? tryHomeFromAkRolesPath(sessionParent) : undefined;
+}
+
+/**
+ * #959: seal one accepted submission without a model tool call.
+ * Same ledger row shape and priorEventId chain as the terminating-tool wrap.
+ * Used when a prose-exit seat (navigator) harvests the final assistant text.
+ */
+export async function sealAcceptedSubmission(options: {
+  readonly context: HostContext;
+  readonly role: TerminalRoleName;
+  readonly accepted: unknown;
+  readonly toolCallId: string;
+  readonly home?: string;
+}): Promise<void> {
+  const runId = runIdentity(options.context);
+  const attemptId = attemptIdentity(options.context, runId);
+  const sessionParent = sessionParentFromHostContext(options.context);
+  const home = homeFromHostContext(options.context, options.home);
+  const state = await restoreState(options.context.cwd, runId, {
+    ...(home === undefined ? {} : { home }),
+    ...(sessionParent === undefined ? {} : { sessionParent }),
+  });
+  const pointer = sitianReport({
+    level: "event",
+    kind: "sealed",
+    subject: { runId, attemptId },
+    ...(state.prior === undefined ? {} : { priorEventId: state.prior.identity }),
+    payload: {
+      type: "sealed",
+      attemptId,
+      toolCallId: options.toolCallId,
+      role: options.role,
+      accepted: options.accepted,
+    },
+    source: "role-runtime",
+    cwd: options.context.cwd,
+    ...(home !== undefined ? { home } : {}),
+    ...(sessionParent === undefined ? {} : { sessionParent }),
+  });
+  state.prior = pointer;
+}
+
 /**
  * Submission ledger host — record only (#836).
  * Each terminating submission is appended with the role's original payload.
@@ -531,28 +590,11 @@ export function createSubmissionLedgerHost(
   options?: { home?: string },
 ): RoleHost {
   const states = new Map<string, Promise<LedgerState>>();
-  /** Sole HostContext-derived run coordinate for restore and append (never process.env). */
-  const sessionParentFromContext = (context: HostContext): string | undefined => {
-    const runDirectory = runDirectoryFromHostContext(context);
-    if (runDirectory !== undefined) {
-      return join(runDirectory, "session", "session.jsonl");
-    }
-    const sessionFile = context.sessionManager.getSessionFile?.();
-    if (typeof sessionFile === "string" && sessionFile.length > 0) return sessionFile;
-    const sessionDir = context.sessionManager.getSessionDir?.();
-    if (typeof sessionDir === "string" && sessionDir.length > 0) {
-      return join(sessionDir, "session.jsonl");
-    }
-    return undefined;
-  };
-  const resolveHomeFromContext = (context: HostContext): string | undefined => {
-    if (options?.home !== undefined) return options.home;
-    const sessionParent = sessionParentFromContext(context);
-    return sessionParent !== undefined ? tryHomeFromAkRolesPath(sessionParent) : undefined;
-  };
+  const resolveHomeFromContext = (context: HostContext): string | undefined =>
+    homeFromHostContext(context, options?.home);
   const stateFor = (context: HostContext, runId: string) => states.get(runId) ?? (() => {
     const home = resolveHomeFromContext(context);
-    const sessionParent = sessionParentFromContext(context);
+    const sessionParent = sessionParentFromHostContext(context);
     const pending = restoreState(context.cwd, runId, {
       ...(home === undefined ? {} : { home }),
       ...(sessionParent === undefined ? {} : { sessionParent }),
@@ -562,7 +604,7 @@ export function createSubmissionLedgerHost(
   })();
   const appendFor = (state: LedgerState, context: HostContext, runId: string, attemptId: string, event: SubmissionLedgerEvent): RecordPointer => {
     const home = resolveHomeFromContext(context);
-    const sessionParent = sessionParentFromContext(context);
+    const sessionParent = sessionParentFromHostContext(context);
     const pointer = sitianReport({
       level: "event",
       kind: event.type,

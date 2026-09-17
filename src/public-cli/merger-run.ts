@@ -24,7 +24,7 @@ import {
 import {
   loadResumableMergerRun,
   markRunAdmitted,
-  buildResumeContinuationPrompt,
+  buildAutoResumeContinuationPrompt,
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
@@ -241,7 +241,7 @@ export async function runPublicMerger(
           : { correlationId: admitted.correlationId ?? env.correlationId }),
         continuation: {
           kind: "resume",
-          prompt: buildResumeContinuationPrompt({
+          prompt: buildAutoResumeContinuationPrompt({
             packageRoot: env.packageRoot,
             ...pickEngineAxis(env),
           }),

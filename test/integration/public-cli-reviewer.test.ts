@@ -1337,7 +1337,10 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
         const resumeDialogue = readUserDialogueStdin(resumeStdin ?? "");
-        assert.equal(resumeDialogue, "[ak-role:resume-continue]");
+        const { RESUME_TRANSPORT_ENVELOPE } = await import("../../src/public-cli/run-lifecycle.ts");
+        assert.equal(resumeDialogue, RESUME_TRANSPORT_ENVELOPE);
+        assert.equal(resumeDialogue.includes("/skill:"), false);
+        assert.equal(resumeDialogue.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         // Resume runs in a fresh copy of the source tree at resume time (#946 10a).
         assert.notEqual(realpathSync(options.cwd), realpathSync(project));

@@ -4,9 +4,9 @@ import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
- * #106 public Judge path — admission, freeze, terminal settlement, grace, renderer.
+ * #106 public Judge path — admission, freeze, terminal settlement, grace.
  * Seams: parseJudgeArgv / admitJudgeInvocation / TerminalResult / raceNavigatorGrace /
- * renderPublicAkRoleCommand / runAkRole(judge) with injectable Pi runner.
+ * runAkRole(judge) with injectable Pi runner.
  */
 import assert from "node:assert/strict";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
@@ -33,7 +33,6 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { renderPublicAkRoleCommand } from "../../src/public-cli/command-renderer.ts";
 import {
   admitJudgeInvocation,
   buildJudgeTransportPrompt,
@@ -47,7 +46,7 @@ import {
 } from "../../src/public-cli/settlement.ts";
 import {
   formatTerminalResult,
-  recommendationNavigatorFact,
+  adviceNavigatorFact,
   type TerminalResult,
   type TerminalRoleOutcome,
 } from "../../src/public-cli/terminal.ts";
@@ -342,37 +341,13 @@ test("structurally empty request stays empty while attachments remain typed tran
   assert.match(withAttach, /\/frozen\/00-a\.txt/);
 });
 
-test("registry renderer owns public command text; model prose is ignored", () => {
-  assert.equal(
-    renderPublicAkRoleCommand({ role: "reviewer", phase: null }),
-    undefined,
-  );
-  assert.equal(
-    renderPublicAkRoleCommand({ role: "gleaner-left", phase: null }),
-    undefined,
-  );
-  assert.equal(
-    renderPublicAkRoleCommand({ role: "fixer", phase: "apply" }),
-    "ak-role fixer apply",
-  );
-  assert.equal(
-    renderPublicAkRoleCommand({ role: "coder", phase: "plan" }),
-    "ak-role coder plan",
-  );
-  // #639: navigator is a callable role like any other, so its advice renders.
-  assert.equal(
-    renderPublicAkRoleCommand({ role: "navigator", phase: null }),
-    "ak-role navigator",
-  );
-
-  const fact = recommendationNavigatorFact({
-    next: { role: "reviewer", phase: null },
-    reason: "next seat",
-    modelCommand: "Usage: pi --ak-role reviewer --help DO NOT USE",
+test("#959 adviceNavigatorFact projects prose as-is", () => {
+  const fact = adviceNavigatorFact({
+    prose: "next seat → reviewer",
   });
-  assert.equal(fact.disposition, "recommendation");
-  if (fact.disposition === "recommendation") {
-    assert.equal(fact.command, "Usage: pi --ak-role reviewer --help DO NOT USE");
+  assert.equal(fact.disposition, "advice");
+  if (fact.disposition === "advice") {
+    assert.equal(fact.prose, "next seat → reviewer");
   }
 });
 
@@ -384,10 +359,8 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
       payloads: [{ judgeStatus: "converged", note: "done" }],
     },
     navigator: {
-      disposition: "recommendation",
-      next: { role: "fixer", phase: "apply" },
-      reason: "repair next",
-      command: "ak-role fixer apply",
+      disposition: "advice",
+      prose: "repair next → fixer apply",
     },
     artifacts: [
       { kind: "report", path: "/r/artifacts/report.json" },
@@ -400,11 +373,9 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
   assert.equal(terminal.roleOutcome.kind, "accepted");
   assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["converged"]);
   assert.equal((objectPayloads(terminal.roleOutcome)[0] ?? {}).judgeStatus, "converged");
-  assert.equal(terminal.navigator.disposition, "recommendation");
-  if (terminal.navigator.disposition === "recommendation") {
-    assert.equal(terminal.navigator.next.role, "fixer");
-    assert.equal(terminal.navigator.next.phase, "apply");
-    assert.equal(terminal.navigator.command, "ak-role fixer apply");
+  assert.equal(terminal.navigator.disposition, "advice");
+  if (terminal.navigator.disposition === "advice") {
+    assert.equal(terminal.navigator.prose, "repair next → fixer apply");
   }
   assert.equal(terminal.artifacts.length, 2);
   assert.equal(terminal.runId, "run-term-1");
@@ -498,6 +469,27 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
     },
   ]);
   assert.equal(badDisposition.disposition, "unavailable");
+
+  // #959: historical recommendation with only next must stay advice, not no-advice.
+  const legacyNextOnly = extractNavigatorFact([
+    invocationPrincipal,
+    judgeTerminal,
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: {
+        details: {
+          ...correlated,
+          disposition: "recommendation",
+          next: { role: "reviewer", phase: null },
+        },
+      },
+    },
+  ]);
+  assert.equal(legacyNextOnly.disposition, "advice");
+  if (legacyNextOnly.disposition === "advice") {
+    assert.ok(legacyNextOnly.prose.includes("reviewer"));
+  }
 });
 
 test("extractNavigatorFact keeps minimal invocationId provenance and post-terminal order", async () => {
@@ -726,8 +718,8 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
   ]);
   assert.equal(twoDurable.disposition, "no-advice");
 
-  // Real entry → external result: divergent recommendation (next differs from settlement role) appears as-is.
-  const divergentRecommendation = extractNavigatorFact([
+  // Real entry → external result: divergent prose advice appears as-is (#959).
+  const divergentAdvice = extractNavigatorFact([
     sessionHeader,
     invocation(currentInvocationId),
     currentTerminal,
@@ -736,23 +728,19 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
       customType: "ak-navigator-attendance",
       message: {
         details: {
-          disposition: "recommendation",
+          disposition: "advice",
           invocationId: currentInvocationId,
           role: "judge",
           phase: null,
           subjectKey,
-          next: { role: "merger", phase: null },
-          reason: "游奕使建议直接合并（与判词无关，原样交调用者）",
-          command: "ak-role merger",
+          prose: "游奕使建议直接合并（与判词无关，原样交调用者）",
         },
       },
     },
   ]);
-  assert.equal(divergentRecommendation.disposition, "recommendation");
-  if (divergentRecommendation.disposition === "recommendation") {
-    assert.deepEqual(divergentRecommendation.next, { role: "merger", phase: null });
-    assert.equal(divergentRecommendation.reason, "游奕使建议直接合并（与判词无关，原样交调用者）");
-    assert.equal(divergentRecommendation.command, "ak-role merger");
+  assert.equal(divergentAdvice.disposition, "advice");
+  if (divergentAdvice.disposition === "advice") {
+    assert.equal(divergentAdvice.prose, "游奕使建议直接合并（与判词无关，原样交调用者）");
   }
 });
 
@@ -1030,15 +1018,13 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
               message: {
                 details: {
                   version: 1,
-                  disposition: "recommendation",
+                  disposition: "advice",
                   invocationId: "019f8c2a-5555-7555-8555-555555555555",
                   role: "judge",
                   phase: null,
                   // Matches admitted projectRoot work identity.
                   subjectKey,
-                  next: { role: "reviewer", phase: null },
-                  reason: "review next",
-                  command: "Usage: pi --ak-role reviewer --help",
+                  prose: "review next → reviewer",
                 },
               },
             },
@@ -1134,9 +1120,9 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       ((objectPayloads(terminal.roleOutcome)[0] ?? {}).auditNoReceipt as { acceptedReceipt?: unknown })?.acceptedReceipt,
       false,
     );
-    assert.equal(terminal.navigator.disposition, "recommendation");
-    if (terminal.navigator.disposition === "recommendation") {
-      assert.equal(terminal.navigator.next.role, "reviewer");
+    assert.equal(terminal.navigator.disposition, "advice");
+    if (terminal.navigator.disposition === "advice") {
+      assert.ok(terminal.navigator.prose.includes("review"));
     }
     assert.equal(terminal.runId, "run-cli-judge-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);

@@ -2,9 +2,12 @@
  * Navigator attendance session factory (#675 r3).
  * Each prepare turn uses the public navigator activation path (summonPublicRole) —
  * same seat table and shared envelope as `ak-role navigator`.
- * Archivist createRecordSession only books route-memory nest under the parent;
- * no openPiInProcessSession second lifecycle / no agentDir patch on the old path.
+ * Archivist createRecordSession books the attendance nest under the parent;
+ * host conversation continuity uses CLI resume (`resumeRunId`), not a package
+ * advice ledger (development-closure: do not invent package-level memory).
  */
+import { basename } from "node:path";
+
 import { sitianReport } from "./sitian-facade.ts";
 import {
   NavigatorUnavailableError,
@@ -17,6 +20,8 @@ import {
 } from "./navigator-session-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
+import type { PublicSummonResult } from "./public-role-summons.ts";
+import { CliUsageError } from "./public-cli/cli-errors.ts";
 
 /**
  * Ledger process home for navigator attendance: admitted HostContext.runDirectory
@@ -40,13 +45,73 @@ async function resolveNavigatorLedgerHome(context: HostContext): Promise<string 
   return undefined;
 }
 
-export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
+/** Resume key only — points at a host run principal, never stores advice prose. */
+export const NAVIGATOR_HOST_RUN_POINTER_ENTRY = "ak-navigator-host-run";
+
+function exactRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+export function runIdFromNavigatorDirectory(runDirectory: string): string | undefined {
+  const entry = basename(runDirectory);
+  const suffix = "@navigator";
+  if (!entry.endsWith(suffix)) return undefined;
+  const runId = entry.slice(0, entry.length - suffix.length);
+  return runId.length > 0 ? runId : undefined;
+}
+
+export function readNavigatorHostRunPointer(entries: readonly unknown[]): string | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (!exactRecord(entry)) continue;
+    if (entry.type === "custom" && entry.customType === NAVIGATOR_HOST_RUN_POINTER_ENTRY) {
+      const data = entry.data;
+      if (exactRecord(data) && typeof data.runId === "string" && data.runId.trim() !== "") {
+        return data.runId.trim();
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Typed preflight via public CLI load path: can this run reopen as navigator?
+ * CliUsageError (code AK_ROLE_USAGE) from loadResumableInstructionSeatRun means
+ * unknown id / principal unavailable / non-instruction seat — not resumable.
+ * Other throws propagate. Never reads stderr prose.
+ */
+export async function navigatorHostRunResumable(home: string, runId: string): Promise<boolean> {
+  const { piDurablePrincipalAuthority } = await import("./pi/durable-principal.ts");
+  const { loadResumableInstructionSeatRun } = await import("./public-cli/run-lifecycle.ts");
+  try {
+    const loaded = await loadResumableInstructionSeatRun(home, runId, piDurablePrincipalAuthority);
+    return loaded.admitted.role === "navigator";
+  } catch (error) {
+    if (error instanceof CliUsageError) return false;
+    throw error;
+  }
+}
+
+export type NavigatorPublicSummon = (options: {
+  readonly role: "navigator";
+  readonly argv: readonly string[];
+  readonly cwd: string;
+  readonly home?: string;
+  readonly resumeRunId?: string;
+}) => Promise<PublicSummonResult>;
+
+export function createNativeNavigatorSessionFactory(deps?: {
+  /** Test/composition inject — production leaves unset and uses public-role-summons. */
+  readonly summonPublicRole?: NavigatorPublicSummon;
+  /** Test inject — production uses navigatorHostRunResumable (typed CLI load). */
+  readonly hostRunResumable?: (home: string, runId: string) => Promise<boolean>;
+}): NavigatorSessionFactory {
   return async ({ context, subject, tool }) => {
     // Model is enforced at prepare (attendance seat resolve) and at prompt (summon).
     // Factory open only books the archivist nest — no package default, no eager seat read.
     let thinkingLevel: string | undefined;
 
-    // Archivist nest for attendance route memory only (ADR 0018 / 0065) — not a session open.
+    // Archivist nest for attendance bookkeeping (ADR 0018 / 0065) — not a host session open.
     // #852: navigator/<work-subject> is the sole book-top exception; always pass subject so
     // unmaterialized/missing parent still gets a durable nest instead of silent in-memory.
     // Home comes from HostContext.runDirectory (or ledger parent path) — never context.home.
@@ -64,6 +129,14 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
     let noReceipt: NoReceiptLifecycleFacts | undefined;
     let disposed = false;
     let inFlightPrompt: Promise<unknown> | undefined;
+    /** In-factory host run id for CLI resume; durable pointer also lives on the nest. */
+    let hostRunId = readNavigatorHostRunPointer(sessionManager.getEntries() as readonly unknown[]);
+
+    const summon: NavigatorPublicSummon = deps?.summonPublicRole
+      ?? (async (options) => {
+        const { summonPublicRole } = await import("./public-role-summons.ts");
+        return summonPublicRole(options);
+      });
 
     return {
       prompt: async (text) => {
@@ -74,15 +147,28 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
         noReceipt = undefined;
         const run = (async () => {
         try {
-          const { summonPublicRole } = await import("./public-role-summons.ts");
           const summonHome = await resolveNavigatorLedgerHome(context);
-          // Public activation — same face as `ak-role navigator <instruction>` (#675).
-          const summoned = await summonPublicRole({
-            role: "navigator",
-            argv: [text],
+          const resumeRunId = hostRunId;
+
+          const baseSummon = {
+            role: "navigator" as const,
+            argv: [text] as const,
             cwd: context.cwd,
             ...(summonHome === undefined ? {} : { home: summonHome }),
-          });
+          };
+
+          // Prefer host CLI resume so prior advice stays on the host session.
+          // Fresh mint only when typed load says the principal cannot reopen.
+          const resumable = deps?.hostRunResumable ?? navigatorHostRunResumable;
+          let summoned: PublicSummonResult;
+          if (resumeRunId === undefined || summonHome === undefined) {
+            summoned = await summon(baseSummon);
+          } else if (await resumable(summonHome, resumeRunId)) {
+            summoned = await summon({ ...baseSummon, resumeRunId });
+          } else {
+            hostRunId = undefined;
+            summoned = await summon(baseSummon);
+          }
 
           const outcome = summoned.terminal?.roleOutcome;
           if (outcome === undefined) {
@@ -109,23 +195,40 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
             noReceipt = outcome;
             return;
           }
+
+          // Pin host run for the next attendance prompt on this subject (CLI resume key).
+          const runDirectory = summoned.runDirectory
+            ?? (typeof summoned.admitted?.runDirectory === "string"
+              ? summoned.admitted.runDirectory
+              : undefined);
+          if (typeof runDirectory === "string" && runDirectory.trim() !== "") {
+            const nextRunId = runIdFromNavigatorDirectory(runDirectory);
+            if (nextRunId !== undefined) {
+              hostRunId = nextRunId;
+              sessionManager.appendCustomEntry(NAVIGATOR_HOST_RUN_POINTER_ENTRY, { runId: nextRunId });
+            }
+          }
+
           if (outcome.kind !== "accepted") {
-            // Non-accepted kinds (e.g. audit_escalation): no route advice this turn.
+            // Non-accepted kinds (e.g. audit_escalation): no prose advice this turn.
             // Not a shape-unusable judgment on the navigator reply (#757).
             return;
           }
+          // #959: present navigator words as prose. No candidates/next parsing.
+          const { navigatorProseFromUnknown } = await import("./package-contracts/navigator-output.ts");
+          const proseParts: string[] = [];
           for (const payload of outcome.payloads ?? []) {
-            if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
-            const candidates = (payload as { candidates?: unknown }).candidates;
-            if (!Array.isArray(candidates)) continue;
-            await tool.execute(
-              "navigator-public-prepare",
-              { candidates },
-              undefined,
-              undefined,
-              context as never,
-            );
+            const prose = navigatorProseFromUnknown(payload);
+            if (prose !== undefined) proseParts.push(prose);
           }
+          if (proseParts.length === 0) return;
+          await tool.execute(
+            "navigator-public-prepare",
+            { prose: proseParts.join("\n\n") },
+            undefined,
+            undefined,
+            context as never,
+          );
         } catch (error) {
           if (error instanceof NavigatorUnavailableError) throw error;
           const fact = navigatorProviderFailureFromError(error);
@@ -166,10 +269,8 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
         } catch (error) {
           throw navigatorUnavailableError("model", error);
         }
-        // No live provider session is pinned here: every prompt is an independent
-        // public summon whose nested CLI reads the current seat table (#675 验收②
-        // / #617 DK-3). A seat edit between prepares therefore applies on the next
-        // summon — it is never an unavailable session.
+        // Resume and fresh mint both read the live seat table (#675 / #617 DK-3).
+        // A seat edit between prepares applies on the next host turn.
         thinkingLevel = nextThinking ?? nextParsed.thinkingLevel;
       },
       getThinkingLevel: () => thinkingLevel,

@@ -10,11 +10,62 @@ import {
 
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
+  NAVIGATOR_OUTPUT_TOOL_NAME,
+  navigatorProseFromUnknown,
+} from "../package-contracts/navigator-output.ts";
+import {
   renderSystemPromptOverride,
   type PreparedRoleTurn,
   type SessionIdentityAuthority,
 } from "../prepared-role-turn.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
+
+/**
+ * #959: collect free-form agent text from ACP session/update stream.
+ * Used only when the navigator seat spoke prose without calling the output tool.
+ * ACP agent speech is only agent_message / agent_message_chunk — never user,
+ * thought, or other *_message kinds (load replay must not poison the bucket).
+ *
+ * Standard ACP nests under params.update: { sessionUpdate, content }.
+ * Flat params.sessionUpdate / string params.update remain accepted for host variants.
+ */
+function acpAgentTextChunk(params: Readonly<Record<string, unknown>>): string | undefined {
+  let kind: unknown;
+  let content: unknown;
+  let textFallback: unknown;
+
+  const nested = params.update;
+  if (typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
+    const record = nested as Record<string, unknown>;
+    kind = record.sessionUpdate;
+    content = record.content;
+    textFallback = record.text;
+  } else {
+    kind = params.sessionUpdate ?? nested;
+    content = params.content;
+    textFallback = params.text;
+  }
+
+  if (kind !== "agent_message_chunk" && kind !== "agent_message") return undefined;
+  if (typeof content === "string" && content.length > 0) return content;
+  if (typeof content === "object" && content !== null && !Array.isArray(content)) {
+    const record = content as Record<string, unknown>;
+    if (typeof record.text === "string" && record.text.length > 0) return record.text;
+  }
+  if (Array.isArray(content)) {
+    const parts: string[] = [];
+    for (const part of content) {
+      if (typeof part === "string" && part.length > 0) parts.push(part);
+      else if (typeof part === "object" && part !== null) {
+        const record = part as Record<string, unknown>;
+        if (typeof record.text === "string" && record.text.length > 0) parts.push(record.text);
+      }
+    }
+    if (parts.length > 0) return parts.join("");
+  }
+  if (typeof textFallback === "string" && textFallback.length > 0) return textFallback;
+  return undefined;
+}
 
 /** ACP v1 surface used by the generic ACP adapter. Protocol details stay in this module. */
 export interface AcpConnection {
@@ -43,7 +94,13 @@ export type AcpRoleTurnHostConfig = Readonly<{
   prepare(request: RoleTurnRequest): Promise<PreparedRoleTurn>;
 }>;
 
-function failure(cause: "activation" | "session" | "output", name: string, code: string, details?: Readonly<Record<string, unknown>>): RoleTurnResult {
+function failure(
+  cause: "activation" | "session" | "output",
+  name: string,
+  code: string,
+  details?: Readonly<Record<string, unknown>>,
+  diagnostic?: string,
+): RoleTurnResult {
   return {
     code: null,
     stderr: "",
@@ -51,7 +108,23 @@ function failure(cause: "activation" | "session" | "output", name: string, code:
     knownFailure: {
       cause,
       identity: { name, code },
+      ...(diagnostic === undefined ? {} : { diagnostic }),
       ...(details === undefined ? {} : { details }),
+    },
+  };
+}
+
+/** Success→dispose failure; existing failure keeps primary cause + cleanup detail. */
+function withCleanupFailure(outcome: RoleTurnResult, cleanupError: unknown): RoleTurnResult {
+  const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+  if (outcome.knownFailure === undefined) {
+    return failure("session", "AcpDisposeFailure", "dispose-failed", { cleanupError: message }, message);
+  }
+  return {
+    ...outcome,
+    knownFailure: {
+      ...outcome.knownFailure,
+      details: { ...(outcome.knownFailure.details ?? {}), cleanupError: message },
     },
   };
 }
@@ -182,10 +255,12 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
     let connection: AcpConnection | undefined;
     let sessionId: string | undefined;
     let accepted = false;
+    // Mutable so dispose failure can outrank a clean turn (headless withCleanupFailure face).
+    let outcome: RoleTurnResult = failure("session", "AcpNoOutcome", "no-outcome");
     try {
       if (prepared.mcpServers.length === 0) {
-        return failure("activation", "UncontrolledAcpSession", "ak-config-missing");
-      }
+        outcome = failure("activation", "UncontrolledAcpSession", "ak-config-missing");
+      } else {
       connection = await config.connect(request);
       // Live host-session records: ACP session/update → sitian sole entry (#811).
       // One abort + one race helper + one outer projection — write failure ends
@@ -214,8 +289,17 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       ): Promise<Readonly<Record<string, unknown>>> =>
         raceAgainstHostAbort(connection!.request(method, params), recordAbort.signal, "host-session-record-failed");
 
+      // #959: navigator free-form agent text — only while session/prompt is in flight.
+      // session/load replays history via session/update; those must not enter the bucket
+      // (resume / set_model load would otherwise prepend prior turns as "this turn" prose).
+      const agentProseChunks: string[] = [];
+      let collectAgentProse = false;
       connection.onNotification?.((method, params) => {
         if (method !== "session/update" || hostSessionRecordFailure !== undefined) return;
+        if (collectAgentProse) {
+          const chunk = acpAgentTextChunk(params);
+          if (chunk !== undefined) agentProseChunks.push(chunk);
+        }
         try {
           reportHostSessionEvent({
             host: config.hostName,
@@ -243,11 +327,11 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         if (request.model !== undefined && availableModels !== undefined && !availableModels.some((entry) =>
           typeof entry === "object" && entry !== null
           && (entry as { modelId?: unknown }).modelId === acpModelId(config.modelPassing, request.model))) {
-          return failure("activation", "AcpHostModelMismatch", "host-model-mismatch", {
+          outcome = failure("activation", "AcpHostModelMismatch", "host-model-mismatch", {
             provider: request.model.provider,
             model: request.model.model,
           });
-        }
+        } else {
 
         const sessionBindParams = {
           cwd: request.cwd,
@@ -269,15 +353,19 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             sessionId = await loadSession(boundSessionId);
           }
         }
+        let sessionReady = true;
         if (sessionId === undefined) {
           const session = await rpc("session/new", sessionBindParams);
           sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
           if (sessionId === undefined || sessionId === "") {
-            return failure("session", "AcpSessionFailure", "session-id-missing");
+            outcome = failure("session", "AcpSessionFailure", "session-id-missing");
+            sessionReady = false;
+          } else {
+            await config.sessionIdentity.bind(request.principal, sessionId);
           }
-          await config.sessionIdentity.bind(request.principal, sessionId);
         }
 
+        if (sessionReady) {
         // set_model seat provider:model (#778); may rebuild agent — re-bind via loadSession.
         if (config.modelPassing === "set_model" && request.model !== undefined && sessionId !== undefined) {
           await rpc("session/set_model", {
@@ -300,6 +388,9 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             if (abortSignal !== undefined) abortParts.push(abortSignal);
             const combinedAbort = AbortSignal.any(abortParts);
             let result: Readonly<Record<string, unknown>>;
+            // Open the prose gate only for this prompt round; clear any stale chunks first.
+            agentProseChunks.length = 0;
+            collectAgentProse = prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME;
             try {
               result = await raceAgainstHostAbort(
                 activeConnection.request("session/prompt", {
@@ -310,16 +401,32 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
                 "ACP host aborted",
               );
             } catch (error) {
+              collectAgentProse = false;
+              agentProseChunks.length = 0;
               if (hostSessionRecordFailure !== undefined) {
                 return { status: "terminal", result: hostSessionRecordResult() };
               }
               throw error;
             }
+            collectAgentProse = false;
             if (result.stopReason === "refusal") {
+              agentProseChunks.length = 0;
               return {
                 status: "terminal",
                 result: failure("output", "AcpRefusal", "refusal", { sessionId }),
               };
+            }
+            // #959: navigator prose exit when the model spoke without the output tool.
+            // Tool path still wins via MCP; ingest is a no-op once the tool already sealed.
+            // Emptiness via shared projector; payload keeps original bytes (LLM 原话过手).
+            if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
+              const prose = agentProseChunks.join("");
+              agentProseChunks.length = 0;
+              if (navigatorProseFromUnknown(prose) !== undefined) {
+                await prepared.ingestStructuredOutput({ prose });
+              }
+            } else {
+              agentProseChunks.length = 0;
             }
             return { status: "delivered", stderr: activeConnection.stderr?.() ?? "" };
           },
@@ -328,14 +435,19 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             accepted = true;
           },
         });
-        if (hostSessionRecordFailure !== undefined) return hostSessionRecordResult();
-        return turnResult;
+        outcome = hostSessionRecordFailure !== undefined ? hostSessionRecordResult() : turnResult;
+        } // sessionReady
+        } // model match else
       } catch (error) {
         // recordAbort races setup RPCs via raceAgainstHostAbort (host-aborted code);
         // noteHostSessionRecordFailure always sets the typed failure before aborting.
-        if (hostSessionRecordFailure !== undefined) return hostSessionRecordResult();
-        throw error;
+        if (hostSessionRecordFailure !== undefined) {
+          outcome = hostSessionRecordResult();
+        } else {
+          throw error;
+        }
       }
+      } // mcpServers else
     } finally {
       if (connection !== undefined) {
         if (sessionId !== undefined && !accepted) {
@@ -345,8 +457,12 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         try { await connection.close(); }
         catch { /* keep turn result */ }
       }
-      try { await prepared.dispose?.(); }
-      catch { /* keep turn result */ }
+      try {
+        await prepared.dispose?.();
+      } catch (cleanupError) {
+        outcome = withCleanupFailure(outcome, cleanupError);
+      }
     }
+    return outcome;
   });
 }

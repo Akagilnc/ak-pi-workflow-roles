@@ -83,7 +83,11 @@ export function headlessTurnArgs(options: {
   readonly description: ClaudePrintHostDescription;
   /** Absolute path written by the adapter; paired with `systemPromptFlag`. */
   readonly systemPromptPath: string;
-  readonly jsonSchema: Readonly<Record<string, unknown>>;
+  /**
+   * Closed JSON Schema for structured_output seats.
+   * Optional: omit for prose-exit seats (#959 navigator) so the model may speak free text.
+   */
+  readonly jsonSchema?: Readonly<Record<string, unknown>>;
   /** Absolute path to host-native MCP config JSON; omitted when no AK MCP servers. */
   readonly mcpConfigPath?: string;
   readonly model?: string;
@@ -99,9 +103,10 @@ export function headlessTurnArgs(options: {
     ...description.fixedArgs,
     description.systemPromptFlag,
     options.systemPromptPath,
-    description.jsonSchemaFlag,
-    JSON.stringify(options.jsonSchema),
   ];
+  if (options.jsonSchema !== undefined) {
+    args.push(description.jsonSchemaFlag, JSON.stringify(options.jsonSchema));
+  }
   if (options.pluginDir) args.push("--plugin-dir", options.pluginDir);
   if (options.mcpConfigPath !== undefined && options.mcpConfigPath !== "") {
     args.push(description.mcpConfigFlag, options.mcpConfigPath);
@@ -145,7 +150,7 @@ function codexTomlStringTable(entries: Readonly<Record<string, string>>): string
  * Free-form JSON leaf for Type.Unknown under Codex strict transport.
  * Strict rejects bare untyped nodes and root-level additionalProperties:true;
  * a $defs anyOf of JSON values (with nested additionalProperties as $ref)
- * is accepted and keeps array/object receipts expressible (navigator candidates).
+ * is accepted and keeps array/object receipts expressible.
  * Package code still does not validate or reject the receipt against schema.
  */
 const CODEX_JSON_VALUE_DEF = "codexJsonValue";
@@ -398,8 +403,11 @@ function codexMcpConfigArgs(
 export function codexTurnArgs(options: {
   /** Absolute path for `-c model_instructions_file=…`. */
   readonly systemPromptPath: string;
-  /** Absolute path for `--output-schema` (closed transport schema). */
-  readonly outputSchemaPath: string;
+  /**
+   * Absolute path for `--output-schema` (closed transport schema).
+   * Optional: omit for prose-exit seats (#959 navigator) so agent_message stays free text.
+   */
+  readonly outputSchemaPath?: string;
   readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
   readonly model?: string;
   readonly effort?: string;
@@ -441,7 +449,9 @@ export function codexTurnArgs(options: {
   }
 
   args.push("-c", `model_instructions_file=${codexTomlString(options.systemPromptPath)}`);
-  args.push("--output-schema", options.outputSchemaPath);
+  if (options.outputSchemaPath !== undefined) {
+    args.push("--output-schema", options.outputSchemaPath);
+  }
   args.push(...codexMcpConfigArgs(options.mcpServers));
 
   if (options.model !== undefined && options.model !== "") {

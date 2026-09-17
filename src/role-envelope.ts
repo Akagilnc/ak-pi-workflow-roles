@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, writeFile } from "node:fs/promises";
 import { createServer, type Server, type Socket } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -115,7 +115,11 @@ export async function prepareRoleEnvelope(options: {
   await mkdir(request.runDirectory, { recursive: true });
 
   // Durable principal file for isAvailable / resumable settlement (public-cli).
-  // #617 DK-4: header layout only — never host conversation/tool writeback into Pi JSONL.
+  // #617 DK-4: never host conversation/tool writeback into Pi JSONL.
+  // #959: package-owned custom entries (invocation marker, submission-closure,
+  // navigator attendance, no-receipt) MUST flush so parent settlement can read
+  // them after the headless process ends — memory-only books left extractNavigatorFact
+  // with no durable terminal / attendance on codex/claude/ACP parents.
   let sessionFile = options.sessionFile ?? join(request.runDirectory, "session", "session.jsonl");
   await mkdir(dirname(sessionFile), { recursive: true });
   if (request.continuation.kind !== "resume") {
@@ -135,6 +139,31 @@ export async function prepareRoleEnvelope(options: {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
   }
+  // Settlement reads the durable file after the turn; write must complete before
+  // closeRound returns. Sync-order via chained promise kept on the envelope.
+  // Chain itself never rejects (closeRound/dispose stay orderly). Required package
+  // entry flush failure arms the existing typed infrastructure-failure slot —
+  // never log-and-continue into accepted (#959 失败诚实).
+  let durableWriteChain: Promise<void> = Promise.resolve();
+  /** Filled by rememberInfrastructureFailure; declared later, closed over here. */
+  let armDurableWriteFailure: ((customType: string, diagnostic: string) => void) | undefined;
+  /** Append one package-owned session entry to the durable principal (fire-and-order). */
+  const persistPackageSessionEntry = (entry: Record<string, unknown>): void => {
+    const customType = typeof entry.customType === "string" ? entry.customType : "unknown";
+    const line = `${JSON.stringify({
+      ...entry,
+      id: typeof entry.id === "string" ? entry.id : randomUUID(),
+      timestamp: typeof entry.timestamp === "string" ? entry.timestamp : new Date().toISOString(),
+    })}\n`;
+    durableWriteChain = durableWriteChain.then(async () => {
+      try {
+        await appendFile(sessionFile, line, "utf8");
+      } catch (error) {
+        const diagnostic = error instanceof Error ? error.message : String(error);
+        armDurableWriteFailure?.(customType, diagnostic);
+      }
+    });
+  };
   const context: HostContext = {
     cwd: request.cwd,
     mode: "print",
@@ -155,6 +184,7 @@ export async function prepareRoleEnvelope(options: {
         const entry = { type: "custom", customType, data };
         sessionEntries.push(entry);
         customEntries.push({ customType, data });
+        persistPackageSessionEntry(entry);
       },
     },
     abort() {
@@ -170,6 +200,7 @@ export async function prepareRoleEnvelope(options: {
     const entry = { type: "custom_message", customType, ...payload, message: payload };
     sessionEntries.push(entry);
     customEntries.push({ customType, data: message.details ?? message.content });
+    persistPackageSessionEntry(entry);
   };
 
   const emit = async (event: string, value: unknown): Promise<unknown[]> => {
@@ -304,6 +335,17 @@ export async function prepareRoleEnvelope(options: {
     };
     hostAbort.abort();
   }
+  armDurableWriteFailure = (customType, diagnostic) => {
+    rememberInfrastructureFailure(
+      {
+        cause: "infrastructure",
+        kind: "role_infrastructure_failure",
+        code: "durable-session-write-failed",
+        customType,
+      },
+      [{ type: "text", text: `ak-role: durable session entry flush failed (${customType}): ${diagnostic}` }],
+    );
+  };
   /**
    * One non-correctable infra pathway for execute throws and pre-execution emits:
    * build fact → fill closeRound slot → arm hostAbort. Projection may follow.
@@ -500,12 +542,47 @@ export async function prepareRoleEnvelope(options: {
   let disposed = false;
   // Per-turn run/court identity lives on HostContext (request-scoped). Engine
   // axis is already a RoleHost flag — never process.env (#818 P1 / #879).
+
+  /** True once closeRound returned an infrastructure failure to the host. */
+  let durableFailureHandedToCloseRound = false;
+  /** Drain required package-owned writes; infrastructure outranks every close outcome. */
+  const settleDurableWrites = async (): Promise<
+    | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
+    | undefined
+  > => {
+    await durableWriteChain;
+    if (infrastructureRoundFailure !== undefined) {
+      durableFailureHandedToCloseRound = true;
+      return { accepted: false as const, failure: infrastructureRoundFailure };
+    }
+    return undefined;
+  };
+
   const dispose = async (): Promise<void> => {
     if (disposed) return;
     disposed = true;
     const cleanupFailures: unknown[] = [];
+    // session_shutdown may still append package durable entries (navigator
+    // attendance when agent_settled was skipped). Drain only after those
+    // handlers — single terminal judgment via settleDurableWrites (#959).
     try {
       await emit("session_shutdown", {});
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    try {
+      // Always drain post-shutdown writes. Only throw when the host has not
+      // already received this infrastructure failure via closeRound.
+      const alreadyHanded = durableFailureHandedToCloseRound;
+      const durableFailure = await settleDurableWrites();
+      if (durableFailure !== undefined && !alreadyHanded) {
+        cleanupFailures.push(
+          Object.assign(
+            new Error(durableFailure.failure.diagnostic ?? "durable session entry flush failed"),
+            { code: durableFailure.failure.identity?.code ?? "durable-session-write-failed" },
+          ),
+        );
+      }
     } catch (error) {
       cleanupFailures.push(error);
     }
@@ -532,8 +609,7 @@ export async function prepareRoleEnvelope(options: {
     // duplicate so structured_output + tool-call does not arm non-sole.
     if (calls.some((call) => call.toolName === terminatingToolName)) return;
     await invokeAkTool(terminatingToolName, params ?? {});
-  }
-
+  };
   const closeRound: PreparedRoleTurn["closeRound"] = async () => {
     // Typed round boundary: hand the complete call list to the shared ledger once.
     if (calls.length > 0) {
@@ -543,6 +619,7 @@ export async function prepareRoleEnvelope(options: {
     }
     // Infrastructure failure outranks accepted closure / correctable retry (#593).
     if (infrastructureRoundFailure !== undefined) {
+      durableFailureHandedToCloseRound = true;
       return { accepted: false as const, failure: infrastructureRoundFailure };
     }
     let closure: { customType: string; data: unknown } | undefined;
@@ -553,6 +630,8 @@ export async function prepareRoleEnvelope(options: {
       // Pi flushes navigator attendance on agent_settled; session/prompt
       // resolution is the ACP host equivalent round boundary.
       await emit("agent_settled", {});
+      const durableFailure = await settleDurableWrites();
+      if (durableFailure !== undefined) return durableFailure;
       return { accepted: true as const };
     }
     if (rejection !== undefined) {
@@ -562,11 +641,17 @@ export async function prepareRoleEnvelope(options: {
         message: rejection.message,
       };
       rejection = undefined;
+      // Drain write chain before retry: a package-owned append may still fail after
+      // the correctable rejection was booked; infrastructure outranks retry.
+      const durableFailure = await settleDurableWrites();
+      if (durableFailure !== undefined) return durableFailure;
       return { accepted: false as const, retry };
     }
     // #836: host ended without a recorded submission is not a failure.
     // Settlement presents ledger contents; empty ledger → no_receipt.
     await emit("agent_settled", {});
+    const durableFailure = await settleDurableWrites();
+    if (durableFailure !== undefined) return durableFailure;
     return { accepted: true as const };
   };
 

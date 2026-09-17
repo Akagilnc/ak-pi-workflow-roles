@@ -8,9 +8,11 @@ import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
-import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
+import { buildNavigatorInfrastructureFailureFact } from "../../src/navigator-invocation-identity.ts";
+import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_EVENT_TYPE, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { NAVIGATOR_POST_ROLE_GRACE_MS } from "../../src/public-cli/settlement.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
@@ -35,9 +37,10 @@ import {
   context,
   sessionHarness,
   attendance,
-  settleAnsweringRebind } from "../helpers/navigator-attendance-kit.ts";
+  settleWithAdvice,
+} from "../helpers/navigator-attendance-kit.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
-import { packageRoot, seedGitRepository, withActivationHome } from "../helpers/pi-test-harness.ts";
+import { flushEventLoopTurns, packageRoot, seedGitRepository, waitForEventLoopCondition, withActivationHome } from "../helpers/pi-test-harness.ts";
 import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
@@ -112,44 +115,37 @@ test("role-input authority wins verbatim; files fall back; neither is honestly u
   });
 });
 
-test("prepare tool accepts direction-only and broken ancillary shape once without retry", async () => {
+test("prepare tool accepts free-form prose once without retry (#959)", async () => {
   const accepted: unknown[] = [];
   const tool = createNavigatorPrepareTool((value) => { accepted.push(value); });
 
-  // Direction-only v1 shape: usable next survives without route/matches/reason/command/ids.
-  const directionOnly = {
-    candidates: [{ next: { role: "fixer", phase: "apply" } }] };
-  const first = await tool.execute("direction-only", directionOnly as never, undefined, undefined, {} as never);
-  assert.equal(accepted.length, 1, "direction-only batch must be accepted");
+  const proseOnly = { prose: "下一步送 fixer apply" };
+  const first = await tool.execute("prose-only", proseOnly as never, undefined, undefined, {} as never);
+  assert.equal(accepted.length, 1, "prose batch must be accepted");
   assert.equal((first as { terminate?: boolean }).terminate, true);
 
-  // Broken route / next outside route / missing reason+command must not open a correction loop.
-  const brokenAncillary = {
-    candidates: [{
-      id: "broken-route",
-      matches: { role: "coder", phase: "apply", kind: "accepted" },
-      route: [{ role: "coder", phase: "apply" }],
-      next: { role: "reviewer", phase: null },
-      command: "Usage: model prose must not gate acceptance" }] };
-  const second = await tool.execute("broken-ancillary", brokenAncillary as never, undefined, undefined, {} as never);
-  assert.equal(accepted.length, 2, "broken ancillary shape still accepted once");
+  // Free-form object without prose field must not open a correction loop.
+  const freeForm = {
+    role: "reviewer",
+    command: "ak-role reviewer",
+    reason: "Usage: model prose must not gate acceptance",
+  };
+  const second = await tool.execute("free-form", freeForm as never, undefined, undefined, {} as never);
+  assert.equal(accepted.length, 2, "free-form shape still accepted once");
   assert.equal((second as { terminate?: boolean }).terminate, true);
   assert.equal((second as { details?: { error?: string } }).details?.error, undefined);
 });
 
-test("prepare provider schema admits object-root nested malformation through real Tool validation", async () => {
+test("prepare provider schema admits object-root free-form through real Tool validation (#959)", async () => {
   const accepted: unknown[] = [];
   const tool = createNavigatorPrepareTool((value) => { accepted.push(value); });
   // Production gate is pi-ai validateToolArguments against tool.parameters — not direct execute.
-  // Nested advisory shape must never reject before the unique execute/normalize path.
+  // Nested advisory shape must never reject before the unique execute path.
   const payloads = [
-    { name: "route:string", args: { candidates: [{ next: { role: "judge" }, route: "coder→judge" }] } },
-    { name: "reason:number", args: { candidates: [{ next: { role: "judge" }, reason: 42 }] } },
-    { name: "matches:string", args: { candidates: [{ next: { role: "judge" }, matches: "fixer" }] } },
-    { name: "missing candidates", args: {} },
-    { name: "candidates:string", args: { candidates: "malformed" } },
-    { name: "candidates:[42]", args: { candidates: [42] } },
-    { name: "next:string", args: { candidates: [{ next: "malformed" }] } },
+    { name: "prose:string", args: { prose: "送大理寺" } },
+    { name: "free-form role", args: { role: "judge", reason: "核验" } },
+    { name: "empty object", args: {} },
+    { name: "legacy candidates", args: { candidates: [{ next: { role: "judge" } }] } },
   ] as const;
   for (const payload of payloads) {
     const validated = validateToolArguments(tool as never, {
@@ -161,7 +157,6 @@ test("prepare provider schema admits object-root nested malformation through rea
   }
   assert.equal(accepted.length, payloads.length, "every object-root payload reaches the unique execute sink exactly once");
 
-  // Usable next survives nested malformation after real validate→execute→settle.
   await withTempRoot("navigator-schema-gate-", async (root) => {
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
@@ -176,67 +171,38 @@ test("prepare provider schema admits object-root nested malformation through rea
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-      const usableArgs = {
-        candidates: [{
-          next: { role: "fixer", phase: "apply" },
-          route: "not-an-array",
-          matches: "not-an-object",
-          reason: 7 }] };
-      const malformed = validateToolArguments(harness.tool() as never, {
-        id: "live-usable",
-        name: NAVIGATOR_PREPARE_TOOL_NAME,
-        arguments: structuredClone(usableArgs) } as never);
-      await harness.tool().execute("live-usable", malformed as never, undefined, undefined, {} as never);
-      harness.release();
-      // Malformed matches normalize away → unmatched → one settlement-bound rebind; next still passes through.
-      await settleAnsweringRebind(
+      await settleWithAdvice(
         nav,
         harness,
         { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-        malformed,
-        "live-usable-rebind",
+        { prose: "下一步送 fixer apply" },
+        "live-prose",
       );
-      assert.equal(events[0]?.disposition, "recommendation");
-      assert.deepEqual(events[0]?.next, { role: "fixer", phase: "apply" });
-      assert.equal(events[0]?.command, "ak-role fixer apply");
+      assert.equal(events[0]?.disposition, "advice");
+      assert.equal(events[0]?.prose, "下一步送 fixer apply");
     }
 
-    // Nested malformation without usable next → honest typed unavailable (no retry loop).
-    for (const [name, args] of [
-      ["candidates-string", { candidates: "malformed" }],
-      ["candidates-number-items", { candidates: [42] }],
-      ["next-string", { candidates: [{ next: "malformed" }] }],
-    ] as const) {
+    // Empty body → affirmative no-advice (not unavailable for missing next).
+    {
       const harness = sessionHarness();
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-      const validated = validateToolArguments(harness.tool() as never, {
-        id: name,
-        name: NAVIGATOR_PREPARE_TOOL_NAME,
-        arguments: structuredClone(args) } as never);
-      await harness.tool().execute(name, validated as never, undefined, undefined, {} as never);
-      harness.release();
-      // No usable next → no rebind; settles unavailable immediately.
-      await settleAnsweringRebind(
+      await settleWithAdvice(
         nav,
         harness,
         { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-        validated,
-        `${name}-rebind`,
+        {},
+        "empty",
       );
-      assert.equal(events.length, 1, `${name} settles once`);
-      assert.equal(events[0]?.disposition, "unavailable", `${name} has no usable next`);
-      assert.equal(events[0]?.unavailableSource, "unknown");
-      assert.equal(typeof events[0]?.unavailableReason, "string");
+      assert.equal(events.length, 1);
+      assert.equal(events[0]?.disposition, "no-advice");
     }
   });
 });
 
-test("direction-only prepare settles recommendation; missing next is honest unavailable", async () => {
-  await withTempRoot("navigator-direction-only-", async (root) => {
+test("#959 prose prepare settles advice; empty body is no-advice not unavailable", async () => {
+  await withTempRoot("navigator-prose-only-", async (root) => {
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
       join(root, ".ak-roles", "public-cli.json"),
@@ -245,182 +211,92 @@ test("direction-only prepare settles recommendation; missing next is honest unav
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
 
-    // 1) usable next without route/reason/command/matches/id → recommendation
-    // Unmatched direction-only is settlement-rebound once, then passed through as-is.
     {
       const harness = sessionHarness();
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-      const directionOnly = { candidates: [{ next: { role: "fixer", phase: "apply" } }] };
-      await harness.tool().execute(
-        "direction-only",
-        directionOnly,
-        undefined,
-        undefined,
-        {} as never,
-      );
-      harness.release();
-      await settleAnsweringRebind(
+      await settleWithAdvice(
         nav,
         harness,
         { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-        directionOnly,
-        "direction-only-rebind",
+        { prose: "下一步送 fixer apply" },
+        "prose-only",
       );
       assert.equal(events.length, 1);
-      assert.equal(events[0].disposition, "recommendation");
-      assert.deepEqual(events[0].next, { role: "fixer", phase: "apply" });
-      assert.equal(events[0].route, undefined);
-      assert.equal(events[0].reason, undefined);
-      assert.equal(events[0].command, "ak-role fixer apply");
-      assert.equal(harness.prompts(), 2, "unmatched direction-only forces one settlement-bound rebind");
+      assert.equal(events[0].disposition, "advice");
+      assert.equal(events[0].prose, "下一步送 fixer apply");
+      assert.equal(harness.retainedContext()?.currentSettlement?.kind, "accepted");
+      // early ready-wait + settlement feed output
+      assert.equal(harness.prompts(), 2, "early prepare then settlement-fed output");
     }
 
-    // 2) next survives broken route + absent reason/command
     {
       const harness = sessionHarness();
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-      const brokenRoute = {
-        candidates: [{
-          route: [{ role: "coder", phase: "apply" }],
-          next: { role: "reviewer", phase: null } }] };
-      await harness.tool().execute(
-        "broken-route",
-        brokenRoute,
-        undefined,
-        undefined,
-        {} as never,
-      );
-      harness.release();
-      await settleAnsweringRebind(
+      await settleWithAdvice(
         nav,
         harness,
         { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-        brokenRoute,
-        "broken-route-rebind",
-      );
-      assert.equal(events[0].disposition, "recommendation");
-      assert.deepEqual(events[0].next, { role: "reviewer", phase: null });
-      // Broken/historical route may normalize; next must not be downgraded.
-      assert.notEqual(events[0].disposition, "unavailable");
-    }
-
-    // 3) accepted submission with no machine-usable next → honest unavailable, no invented direction
-    {
-      const harness = sessionHarness();
-      const events: any[] = [];
-      const nav = await attendance(setting, harness, events, undefined, root);
-      nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-      const noNext = { candidates: [{ reason: "still thinking", route: [{ role: "not-a-role", phase: null }] }] };
-      await harness.tool().execute(
-        "no-next",
-        noNext,
-        undefined,
-        undefined,
-        {} as never,
-      );
-      harness.release();
-      await settleAnsweringRebind(
-        nav,
-        harness,
-        { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-        noNext,
-        "no-next-rebind",
+        { reason: "still thinking", role: "not-a-role" },
+        "legacy-free-form",
       );
       assert.equal(events.length, 1);
-      assert.equal(events[0].disposition, "unavailable");
-      assert.equal(events[0].next, undefined);
-      assert.equal(events[0].unavailableSource, "unknown");
-      assert.equal(events[0].unavailableCause, "unknown");
-      assert.notEqual(events[0].unavailableReason, undefined);
+      assert.equal(events[0].disposition, "advice");
+      assert.ok(typeof events[0].prose === "string" && events[0].prose.includes("still thinking"));
+    }
+
+    {
+      const harness = sessionHarness();
+      const events: any[] = [];
+      const nav = await attendance(setting, harness, events, undefined, root);
+      nav.prepare();
+      await settleWithAdvice(
+        nav,
+        harness,
+        { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
+        { prose: "  " },
+        "empty-prose",
+      );
+      assert.equal(events.length, 1);
+      assert.equal(events[0].disposition, "no-advice");
     }
   });
 });
 
-test("advice command derives phase token from registry metadata for every packaged role", async () => {
-  await withTempRoot("navigator-command-registry-", async (root) => {
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-    );
-    const setting = join(root, "model.json");
-    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
-
-    // Registry output tools are contract-owned. Every public role is a lawful
-    // navigator route target (#675 — no nested-only seat exclusions).
-    assert.deepEqual(
-      NAVIGATOR_TARGETS.map(({ role }) => role),
-      PACKAGED_ROLE_REGISTRY.map(({ role }) => role),
-    );
-    assert.deepEqual(
-      PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => ({ role, outputTool })),
-      [
-        { role: "judge", outputTool: JUDGE_OUTPUT_TOOL_NAME },
-        { role: "fixer", outputTool: FIXER_OUTPUT_TOOL_NAME },
-        { role: "coder", outputTool: CODER_OUTPUT_TOOL_NAME },
-        { role: "reviewer", outputTool: REVIEWER_OUTPUT_TOOL_NAME },
-        { role: "collector", outputTool: COLLECTOR_OUTPUT_TOOL },
-        { role: "doctor", outputTool: DOCTOR_OUTPUT_TOOL_NAME },
-        { role: "merger", outputTool: MERGER_OUTPUT_TOOL_NAME },
-        { role: "notary", outputTool: NOTARY_OUTPUT_TOOL_NAME },
-        { role: "countersign", outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME },
-        { role: "secretariat", outputTool: "ak_secretariat_output" },
-        { role: "gleaner-left", outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME },
-        { role: "inspector", outputTool: INSPECTOR_OUTPUT_TOOL_NAME },
-        { role: "gatekeeper", outputTool: "ak_gatekeeper_output" },
-        { role: "navigator", outputTool: "ak_navigator_output" },
-        { role: "auditor", outputTool: "ak_auditor_output" },
-        { role: "diarist", outputTool: "ak_diarist_output" },
-      ],
-    );
-
-    // Command ownership is registry phases on normalized next — route seats only.
-    // Unmatched next is rebound once then passed through as-is (no next.role legality table).
-    for (const entry of PACKAGED_ROLE_REGISTRY.filter(
-      (e) => e.role !== "auditor",
-    )) {
-      for (const phase of entry.phases) {
-        const harness = sessionHarness();
-        const events: any[] = [];
-        const nav = await attendance(setting, harness, events, undefined, root);
-        nav.prepare();
-        while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-        const batch = { candidates: [{ next: { role: entry.role, phase } }] };
-        await harness.tool().execute(
-          `cmd-${entry.role}-${String(phase)}`,
-          batch,
-          undefined,
-          undefined,
-          {} as never,
-        );
-        harness.release();
-        const settlement = { kind: "accepted" as const, role: "coder", phase: "apply" as const, status: "completed" };
-        await settleAnsweringRebind(
-          nav,
-          harness,
-          settlement,
-          batch,
-          `cmd-rebind-${entry.role}-${String(phase)}`,
-        );
-        assert.equal(events[0]?.disposition, "recommendation", entry.role);
-        assert.deepEqual(events[0]?.next, { role: entry.role, phase });
-        const expected = "bareCommand" in entry && entry.bareCommand === false
-          ? undefined
-          : phase === null ? `ak-role ${entry.role}` : `ak-role ${entry.role} ${phase}`;
-        assert.equal(events[0]?.command, expected, `${entry.role}/${String(phase)}`);
-      }
-    }
-  });
+test("registry still lists every packaged role as a navigator target (#959 prose keeps help surface)", async () => {
+  // Registry output tools are contract-owned. Every public role remains a lawful
+  // navigator help target (#675 — no nested-only seat exclusions).
+  assert.deepEqual(
+    NAVIGATOR_TARGETS.map(({ role }) => role),
+    PACKAGED_ROLE_REGISTRY.map(({ role }) => role),
+  );
+  assert.deepEqual(
+    PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => ({ role, outputTool })),
+    [
+      { role: "judge", outputTool: JUDGE_OUTPUT_TOOL_NAME },
+      { role: "fixer", outputTool: FIXER_OUTPUT_TOOL_NAME },
+      { role: "coder", outputTool: CODER_OUTPUT_TOOL_NAME },
+      { role: "reviewer", outputTool: REVIEWER_OUTPUT_TOOL_NAME },
+      { role: "collector", outputTool: COLLECTOR_OUTPUT_TOOL },
+      { role: "doctor", outputTool: DOCTOR_OUTPUT_TOOL_NAME },
+      { role: "merger", outputTool: MERGER_OUTPUT_TOOL_NAME },
+      { role: "notary", outputTool: NOTARY_OUTPUT_TOOL_NAME },
+      { role: "countersign", outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME },
+      { role: "secretariat", outputTool: "ak_secretariat_output" },
+      { role: "gleaner-left", outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME },
+      { role: "inspector", outputTool: INSPECTOR_OUTPUT_TOOL_NAME },
+      { role: "gatekeeper", outputTool: "ak_gatekeeper_output" },
+      { role: "navigator", outputTool: "ak_navigator_output" },
+      { role: "auditor", outputTool: "ak_auditor_output" },
+      { role: "diarist", outputTool: "ak_diarist_output" },
+    ],
+  );
 });
 
-test("completed Fixer/Coder settlement does not invent next without model/authority direction", async () => {
+test("#959 empty prepare body is no-advice; explicit prose settles as advice without invented next", async () => {
   await withTempRoot("navigator-no-invented-route-", async (root) => {
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
@@ -442,39 +318,20 @@ test("completed Fixer/Coder settlement does not invent next without model/author
         modelSettingPath: setting,
         onEvent: async (event) => { events.push(event); } });
       nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-      await harness.tool().execute("batch", batch as never, undefined, undefined, {} as never);
-      harness.release();
-      await settleAnsweringRebind(
-        nav,
-        harness,
-        { kind: "accepted", role, phase: "apply", status: "completed" },
-        batch,
-        "empty-advice-rebind",
-      );
+      await settleWithAdvice(nav, harness, { kind: "accepted", role, phase: "apply", status: "completed" }, batch, "batch");
       return events[0];
     }
 
-    // Empty advice after completed Fixer → honest unavailable; never invent Judge/Reviewer.
-    const fixerEmpty = await settleEmptyAdvice("fixer", { candidates: [] });
-    assert.equal(fixerEmpty?.disposition, "unavailable");
-    assert.equal(fixerEmpty?.next, undefined);
-    assert.equal(fixerEmpty?.unavailableSource, "unknown");
-    assert.equal(fixerEmpty?.unavailableCause, "unknown");
-    assert.notEqual(fixerEmpty?.unavailableReason, undefined);
-    assert.notEqual(fixerEmpty?.next?.role, "judge");
-    assert.notEqual(fixerEmpty?.next?.role, "reviewer");
+    // Empty advice → no-advice; never invent a next seat.
+    const fixerEmpty = await settleEmptyAdvice("fixer", {});
+    assert.equal(fixerEmpty?.disposition, "no-advice");
+    assert.equal(fixerEmpty?.prose, undefined);
 
-    // Empty advice after completed Coder → honest unavailable; never invent Reviewer.
-    const coderEmpty = await settleEmptyAdvice("coder", {});
-    assert.equal(coderEmpty?.disposition, "unavailable");
-    assert.equal(coderEmpty?.next, undefined);
-    assert.equal(coderEmpty?.unavailableSource, "unknown");
-    assert.equal(coderEmpty?.unavailableCause, "unknown");
-    assert.notEqual(coderEmpty?.unavailableReason, undefined);
-    assert.notEqual(coderEmpty?.next?.role, "reviewer");
+    const coderEmpty = await settleEmptyAdvice("coder", { prose: "   " });
+    assert.equal(coderEmpty?.disposition, "no-advice");
+    assert.equal(coderEmpty?.prose, undefined);
 
-    // Explicit model next still settles as recommendation (no host default involved).
+    // Explicit prose settles as advice.
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = createNavigatorAttendance({
@@ -486,26 +343,63 @@ test("completed Fixer/Coder settlement does not invent next without model/author
       modelSettingPath: setting,
       onEvent: async (event) => { events.push(event); } });
     nav.prepare();
-    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    const explicit = {
-      candidates: [{ next: { role: "coder", phase: "apply" }, reason: "authority names coder apply next" }] };
-    await harness.tool().execute(
-      "explicit",
-      explicit,
-      undefined,
-      undefined,
-      {} as never,
-    );
-    harness.release();
-    await settleAnsweringRebind(
+    await settleWithAdvice(
       nav,
       harness,
       { kind: "accepted", role: "fixer", phase: "apply", status: "completed" },
-      explicit,
-      "explicit-rebind",
+      { prose: "authority names coder apply next" },
+      "explicit",
     );
-    assert.equal(events[0]?.disposition, "recommendation");
-    assert.deepEqual(events[0]?.next, { role: "coder", phase: "apply" });
+    assert.equal(events[0]?.disposition, "advice");
+    assert.equal(events[0]?.prose, "authority names coder apply next");
+  });
+});
+
+test("#959 package does not keep a prior-advice ledger; host session owns continuity", async () => {
+  await withTempRoot("navigator-no-prior-advice-ledger-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, undefined, root);
+
+    nav.prepare();
+    await settleWithAdvice(
+      nav,
+      harness,
+      { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
+      { prose: "第一次建议" },
+      "first-advice",
+    );
+    assert.equal(events[0]?.disposition, "advice");
+
+    nav.prepare();
+    await settleWithAdvice(
+      nav,
+      harness,
+      { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
+      { prose: "第二次建议" },
+      "second-advice",
+    );
+    const context = harness.retainedContext();
+    assert.equal(
+      "priorAdvice" in (context ?? {}),
+      false,
+      "package must not project a prior-advice field",
+    );
+
+    assert.equal(events[1]?.disposition, "advice");
+    assert.equal(
+      harness.entries.some((entry: any) => entry.customType === "ak-navigator-prior-advice"),
+      false,
+      "package must not book ak-navigator-prior-advice",
+    );
   });
 });
 test("empty authority at prepare is honest context unavailable", async () => {
@@ -533,7 +427,7 @@ test("empty authority at prepare is honest context unavailable", async () => {
     assert.equal(events[0].disposition, "unavailable");
     assert.equal(events[0].unavailableSource, "context");
     assert.equal(events[0].unavailableCause, "context");
-    assert.equal(events[0].next, undefined);
+    assert.equal(events[0].prose, undefined);
     assert.notEqual(events[0].unavailableReason, undefined);
     });
 });
@@ -1078,4 +972,131 @@ test("public navigator session takes a seat edit for the next summon instead of 
       },
     );
   });
+});
+
+test("#959 role_infrastructure_failure settlement feed shares post-role grace", async (t) => {
+  // Real entry: admitted session_start → tool_result infrastructure settlement →
+  // settleNavigatorProjection. Never-completing settle must not hang the role;
+  // mock timers advance production 10s grace without wall-clock wait.
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+  try {
+    await withActivationHome({ prefix: "ak-nav-infra-grace-" }, async ({ home }) => {
+      const runDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-infra-grace");
+      await mkdir(join(runDir, "session"), { recursive: true });
+      process.env.AK_ROLE_RUN_DIR = runDir;
+
+      const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+      const sent: Array<{ customType?: string; details?: unknown }> = [];
+      let disposeCalls = 0;
+      let settleCalls = 0;
+      const pi = {
+        registerFlag() {},
+        getFlag(name: string) {
+          return name === "ak-role" ? "judge" : undefined;
+        },
+        on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+          handlers.set(name, handler);
+        },
+        registerTool() {},
+        getAllTools() {
+          return [];
+        },
+        setActiveTools() {},
+        getActiveTools() {
+          return [];
+        },
+        appendEntry() {},
+      };
+      const envelopeHost: RoleEnvelopeHost = {
+        host: pi as RoleHost,
+        appendEntry: pi.appendEntry,
+        sendMessage(message) {
+          sent.push(message as { customType?: string; details?: unknown });
+        },
+        startKeepalive() {},
+        stopKeepalive() {},
+      };
+      createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "JUDGE LAW",
+        loadNavigatorWorkContext: async () => ({
+          subjectKey: `${runDir}/work`,
+          subject: "infra grace subject",
+          authority: "infra grace authority",
+          subjectProvenance: "role_input" as const,
+        }),
+        createNavigatorAttendance: () => ({
+          prepare() {},
+          setWorkContext() {},
+          warmHelp() {},
+          isPreparing: () => false,
+          settle: async () => {
+            settleCalls += 1;
+            await new Promise<void>(() => {
+              /* never settles — hung host feed round */
+            });
+          },
+          dispose() {
+            disposeCalls += 1;
+          },
+        }),
+      })(envelopeHost);
+
+      const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+      const sessionManager = SessionManager.create(home, join(runDir, "session"));
+      const ctx = { cwd: home, sessionManager, abort() {} };
+      await handlers.get("session_start")?.({}, ctx);
+
+      const toolResult = handlers.get("tool_result");
+      assert.ok(toolResult, "shared envelope must register tool_result");
+      const pending = Promise.resolve(
+        toolResult(
+          {
+            toolCallId: "infra-hung",
+            toolName: JUDGE_OUTPUT_TOOL_NAME,
+            isError: true,
+            details: buildNavigatorInfrastructureFailureFact(),
+            content: [],
+          },
+          ctx,
+        ),
+      );
+      let settled = false;
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+
+      await flushEventLoopTurns(8);
+      assert.equal(settleCalls, 1, "settlement feed must start");
+      assert.equal(settled, false, "hung feed must still be inside grace");
+
+      t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);
+      await waitForEventLoopCondition(() => settled, {
+        label: "post-role grace must release hung infrastructure settlement",
+        timeoutMs: 500,
+      });
+      assert.equal(disposeCalls >= 1, true, "grace timeout disposes late attendance");
+
+      await handlers.get("agent_settled")?.({}, ctx);
+      const presentation = sent.find((message) => message.customType === NAVIGATOR_EVENT_TYPE);
+      assert.ok(presentation, "grace timeout must project navigator attendance");
+      assert.equal(
+        (presentation.details as { disposition?: string } | undefined)?.disposition,
+        "unavailable",
+      );
+      assert.equal(
+        (presentation.details as { unavailableReason?: string } | undefined)?.unavailableReason,
+        "Navigator exceeded post-role delivery grace",
+      );
+    });
+  } finally {
+    t.mock.timers.reset();
+    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+  }
 });

@@ -10,6 +10,7 @@ import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import {
+  buildAutoResumeContinuationPrompt,
   buildResumeContinuationPrompt,
   RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
@@ -1624,7 +1625,7 @@ export async function runPostAdmissionOneShot<
       ...input.request,
       continuation: {
         kind: "resume",
-        prompt: buildResumeContinuationPrompt({
+        prompt: buildAutoResumeContinuationPrompt({
           packageRoot: input.env.packageRoot,
           ...pickEngineAxis({
             engine: input.effectiveEngine ?? input.env.engine,

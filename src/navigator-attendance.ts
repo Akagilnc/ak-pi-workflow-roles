@@ -10,7 +10,7 @@ import {
   NAVIGATOR_INVOCATION_ENTRY,
   mintNavigatorInvocationId,
 } from "./navigator-invocation-identity.ts";
-import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY, type PackagedRole } from "./packaged-role-registry.ts";
 import {
   activationBookDirectory,
   resolveActivationLedgerHome,
@@ -58,9 +58,9 @@ export {
 };
 export { createNativeNavigatorSessionFactory };
 export { resolveNavigatorSeatSelection };
-import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
+import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_ACCEPTED_TEXT = "游奕使准备已接受";
@@ -100,24 +100,15 @@ export type NavigatorWorkContext = {
   contextError?: unknown;
 };
 
-export type NavigatorRouteTarget = { role: string; phase: NavigatorPhase };
-/** Normalized preparation advice. v1 success needs machine-usable next only. */
-export type NavigatorCandidate = {
-  id?: string;
-  matches?: { role: string; phase: NavigatorPhase; kind: "accepted"; statuses?: string[] };
-  route?: NavigatorRouteTarget[];
-  next?: NavigatorRouteTarget;
-  reason?: string;
-  command?: string;
-};
-
+/**
+ * #959: Navigator speaks free-form prose. Code does not parse, rank, or judge
+ * the advice — only whether attendance itself failed (host/process).
+ */
 export type NavigatorReport = {
   /** Affirmative attendance only. Lawful no-advice is typed, never inferred from absence. */
-  disposition: "recommendation" | "no-advice" | "unavailable" | "arrival";
-  route?: NavigatorRouteTarget[];
-  next?: NavigatorRouteTarget;
-  reason?: string;
-  command?: string;
+  disposition: "advice" | "no-advice" | "unavailable" | "arrival";
+  /** Present when disposition is advice — navigator words, presented as-is. */
+  prose?: string;
   unavailableReason?: string;
   unavailableSource?: NavigatorUnavailableKey;
   unavailableCause?: NavigatorUnavailableKey;
@@ -132,10 +123,7 @@ export type NavigatorEvent = {
   role: string;
   phase: NavigatorPhase;
   subjectKey: string;
-  route?: NavigatorRouteTarget[];
-  next?: NavigatorRouteTarget;
-  reason?: string;
-  command?: string;
+  prose?: string;
   unavailableReason?: string;
   unavailableSource?: NavigatorUnavailableKey;
   unavailableCause?: NavigatorUnavailableKey;
@@ -149,21 +137,17 @@ export type NavigatorContextProjection = {
   subject: string;
   authority: string;
   currentRole: { role: string; phase: NavigatorPhase };
-  /** Present only on settlement-bound prepare; speculative prepare omits it. */
+  /** Present on the unique settlement-bound advice prompt. */
   currentSettlement?: NavigatorSettlement;
-  priorRoute: NavigatorRouteTarget[] | null;
   publicSettlementHistory: NavigatorSettlementFact[];
   liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
 
-// Provider admission is ADR 0060 object root only. Nested advisory shape
-// (candidates/next/route/matches/reason/command) is never a gate — every object
-// root reaches the unique execute/normalize path exactly once.
-// Field guidance only — candidates shape is never an acceptance gate (Rule 0).
+// #959: prepare is a prose vehicle. Object root only (ADR 0060); nested shape is
+// never a gate — every object root reaches execute exactly once (Rule 0).
 const prepareSchema = Type.Object({
-  candidates: Type.Optional(Type.Unknown({
-    description:
-      "方向候选；candidates[].next.role 必填，phase 可选，route/matches/reason/command 可选上下文，非受理闸",
+  prose: Type.Optional(Type.Unknown({
+    description: "游奕使散文建议，原样呈现。不要求 candidates/next 结构。非受理闸",
   })),
 }, { additionalProperties: true });
 type PrepareOutput = Static<typeof prepareSchema>;
@@ -186,11 +170,9 @@ export type NavigatorAttendanceOptions = {
   onEvent: (event: NavigatorEvent, report: NavigatorReport) => void | Promise<void>;
 };
 
-const ROUTE_ENTRY = "ak-navigator-route";
 const CONTEXT_ENTRY = "ak-navigator-context";
 const INVOCATION_ENTRY = NAVIGATOR_INVOCATION_ENTRY;
 const SETTLEMENT_ENTRY = "ak-navigator-settlement";
-const targetRoles = new Set<string>(NAVIGATOR_TARGETS.map(({ role }) => role));
 const unavailableKeys = new Set<NavigatorUnavailableKey>(["context", "session", "model", "thinking", "auth", "quota", "transport", "unknown"]);
 
 function unavailableKey(value: unknown): NavigatorUnavailableKey | undefined {
@@ -232,85 +214,15 @@ function rejectedPrepareReason(entries: readonly unknown[], start: number): stri
   }
   return reason;
 }
-function targetIsValid(value: unknown): value is NavigatorRouteTarget {
-  if (!exactRecord(value) || !targetRoles.has(String(value.role))) return false;
-  const metadata = packagedRoleMetadata(String(value.role));
-  return metadata !== undefined && metadata.phases.includes(value.phase as never);
-}
 
-/** Keep the role/phase the model wrote. Unknown seats stay on the advice. */
-function normalizeTarget(value: unknown): NavigatorRouteTarget | undefined {
-  if (!exactRecord(value)) return undefined;
-  const role = typeof value.role === "string" ? value.role.trim() : "";
-  if (role === "") return undefined;
-  if (value.phase === undefined || value.phase === null) {
-    return { role, phase: null };
-  }
-  if (value.phase === "plan" || value.phase === "apply") {
-    return { role, phase: value.phase };
-  }
-  return { role, phase: null };
-}
-
-function normalizeMatches(value: unknown): NavigatorCandidate["matches"] | undefined {
-  if (!exactRecord(value)) return undefined;
-  if (typeof value.role !== "string" || value.role.trim() === "") return undefined;
-  if (value.kind !== "accepted") return undefined;
-  let phase: NavigatorPhase;
-  if (value.phase === undefined || value.phase === null) phase = null;
-  else if (value.phase === "plan" || value.phase === "apply") phase = value.phase;
-  else return undefined;
-  if (value.statuses !== undefined) {
-    if (!Array.isArray(value.statuses) || value.statuses.some((status) => typeof status !== "string" || status.trim() === "")) {
-      return undefined;
-    }
-    return {
-      role: value.role,
-      phase,
-      kind: "accepted",
-      statuses: [...value.statuses],
-    };
-  }
-  return { role: value.role, phase, kind: "accepted" };
-}
-
-/** Normalize one submitted candidate. Broken ancillary fields are dropped, never a rejection. */
-function normalizeCandidate(value: unknown): NavigatorCandidate | undefined {
-  if (!exactRecord(value)) return undefined;
-  const next = normalizeTarget(value.next);
-  const route = Array.isArray(value.route)
-    ? value.route.map(normalizeTarget).filter((target): target is NavigatorRouteTarget => target !== undefined)
-    : undefined;
-  const matches = normalizeMatches(value.matches);
-  const id = typeof value.id === "string" && value.id.trim() !== "" ? value.id : undefined;
-  const reason = typeof value.reason === "string" && value.reason.trim() !== "" ? value.reason : undefined;
-  const command = typeof value.command === "string" ? value.command : undefined;
-  return {
-    ...(id === undefined ? {} : { id }),
-    ...(matches === undefined ? {} : { matches }),
-    ...(route === undefined || route.length === 0 ? {} : { route }),
-    ...(next === undefined ? {} : { next }),
-    ...(reason === undefined ? {} : { reason }),
-    ...(command === undefined ? {} : { command }),
-  };
-}
-
-/** Accept any prepare submission shape; missing/malformed candidates become empty advice. */
-function normalizePrepareOutput(value: unknown): NavigatorCandidate[] {
-  if (!exactRecord(value) || !Array.isArray(value.candidates)) return [];
-  return value.candidates
-    .map(normalizeCandidate)
-    .filter((candidate): candidate is NavigatorCandidate => candidate !== undefined);
-}
-
-function routeEqual(a: readonly NavigatorRouteTarget[] | undefined, b: readonly NavigatorRouteTarget[]): boolean {
-  return a !== undefined && a.length === b.length && a.every((target, index) => target.role === b[index]!.role && target.phase === b[index]!.phase);
-}
-function routeText(route: readonly NavigatorRouteTarget[]): string {
-  return route.map((target) => target.phase === null ? target.role : `${target.role} ${target.phase}`).join(" → ");
-}
-function targetText(target: NavigatorRouteTarget): string {
-  return target.phase === null ? target.role : `${target.role} ${target.phase}`;
+/**
+ * #959: extract prose from any prepare submission shape. Missing/empty → undefined.
+ * Never a rejection — shape is not an admission gate.
+ * Production prose arrives via nested public summon → prepare tool.execute only;
+ * archivist entries() never carries assistant message text, so no parallel harvest.
+ */
+function normalizePrepareProse(value: unknown): string | undefined {
+  return navigatorProseFromUnknown(value);
 }
 
 export function navigatorSubjectKey(
@@ -346,65 +258,14 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
   return {
     name: NAVIGATOR_PREPARE_TOOL_NAME,
     label: "游奕使准备",
-    description: "提交游奕使方向建议。",
+    description: "提交游奕使散文建议。",
     parameters: prepareSchema,
     async execute(_id, value) {
-      // Rule 0: the unique prepare submission is accepted once. Ancillary shape is
-      // normalized later; never open a format-correction retry loop here.
+      // Rule 0: the unique prepare submission is accepted once. Shape is never a gate.
       onOutput(value as PrepareOutput);
       return { content: [{ type: "text" as const, text: NAVIGATOR_PREPARE_ACCEPTED_TEXT }], details: value, terminate: true as const };
     },
   };
-}
-
-/**
- * Candidate pick plus whether matches keyed it to this settlement.
- * Single owner for role/phase/status match truth (selection ranking + stale-context rebind).
- * Structural only — never inspects next.role for routing legality.
- */
-export type NavigatorCandidateSelection = {
-  readonly candidate: NavigatorCandidate;
-  /** True when matches keyed this candidate to the settlement (no stale-context rebind). */
-  readonly matchedToSettlement: boolean;
-};
-
-export function selectNavigatorCandidate(
-  candidates: readonly NavigatorCandidate[],
-  settlement: NavigatorSettlement,
-): NavigatorCandidateSelection | undefined {
-  if (settlement.kind !== "accepted") return undefined;
-  const usable = candidates.filter((candidate) => candidate.next !== undefined);
-  if (usable.length === 0) return undefined;
-  const rolePhaseMatched = usable.filter((candidate) =>
-    candidate.matches !== undefined
-    && candidate.matches.role === settlement.role
-    && candidate.matches.phase === settlement.phase,
-  );
-  // Status-specific candidates outrank role/phase generics regardless of declaration order.
-  if (rolePhaseMatched.length > 0) {
-    if (settlement.status !== undefined) {
-      const statusSpecific = rolePhaseMatched.find(
-        (candidate) =>
-          candidate.matches?.statuses !== undefined &&
-          candidate.matches.statuses.includes(settlement.status!),
-      );
-      if (statusSpecific !== undefined) {
-        return { candidate: statusSpecific, matchedToSettlement: true };
-      }
-    }
-    const rolePhaseGeneric = rolePhaseMatched.find(
-      (candidate) => candidate.matches?.statuses === undefined,
-    );
-    if (rolePhaseGeneric !== undefined) {
-      return { candidate: rolePhaseGeneric, matchedToSettlement: true };
-    }
-    return undefined;
-  }
-  // v1 direction-only / broken matches: absent match metadata must not drop a usable next.
-  // Not settlement-keyed → caller may run one stale-context rebind.
-  const unbound = usable.find((candidate) => candidate.matches === undefined);
-  if (unbound === undefined) return undefined;
-  return { candidate: unbound, matchedToSettlement: false };
 }
 
 export function formatNavigatorReport(report: NavigatorReport): string {
@@ -418,54 +279,27 @@ export function formatNavigatorReport(report: NavigatorReport): string {
   if (report.disposition === "arrival") {
     return [...playbookFailure, ...(report.arrivalMessage ? [report.arrivalMessage] : [])].join("\n");
   }
-  return [
-    ...playbookFailure,
-    ...(report.route === undefined ? [] : [`路线：${routeText(report.route)}`]),
-    ...(report.next === undefined ? [] : [`下一步：${targetText(report.next)}`]),
-    ...(report.reason === undefined || report.reason.trim() === "" ? [] : [`理由：${report.reason}`]),
-    ...(report.command === undefined || report.command.trim() === "" ? [] : [`命令：${report.command}`]),
-  ].join("\n");
-}
-
-export type SettlementNavigation = {
-  disposition: "recommendation";
-  route?: NavigatorRouteTarget[];
-  next: NavigatorRouteTarget;
-  reason?: string;
-  command?: string;
-};
-
-/** Recommendation essentials for the one mandatory last-ak_*_output extraction. */
-export function settlementNavigationFromEvent(event: NavigatorEvent): SettlementNavigation | undefined {
-  if (event.disposition !== "recommendation") return undefined;
-  if (event.next === undefined) return undefined;
-  return {
-    disposition: "recommendation",
-    ...(event.route === undefined ? {} : { route: event.route }),
-    next: event.next,
-    ...(event.reason === undefined ? {} : { reason: event.reason }),
-    ...(event.command === undefined ? {} : { command: event.command }),
-  };
+  // advice — prose as-is
+  return [...playbookFailure, ...(report.prose ? [report.prose] : [])].join("\n");
 }
 
 export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
-  let preparation: Promise<NavigatorCandidate[]> | undefined;
+  let preparation: Promise<string | undefined> | undefined;
+  let preparationInFlight = false;
   let sessionReady: Promise<NavigatorPreparationSession> | undefined;
   let session: NavigatorPreparationSession | undefined;
   let subjectKey = options.subjectKey;
   let subject = options.subject;
   let authority = options.authority;
   let contextError = options.contextError;
-  let candidates: NavigatorCandidate[] | undefined;
+  let preparedProse: string | undefined;
   // Shared lifecycle owns the principal when supplied; otherwise mint once per attendance.
   const invocationPrincipal = options.invocationId ?? mintNavigatorInvocationId();
   let activeInvocationId: string | undefined = invocationPrincipal;
-  let previousRoute: NavigatorRouteTarget[] | undefined;
   let outputSink: ((value: PrepareOutput) => void) | undefined;
   let settlementTail: Promise<void> = Promise.resolve();
   let settlementFailure: unknown;
   let preparationFailure: unknown;
-  let preparationNoReceipt = false;
   let routePlaybookReadFailure: string | undefined;
   let disposed = false;
   /** One-shot live-help warm; consumed by the next prepare so later prepares reread live help. */
@@ -496,19 +330,23 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     };
   };
   let routePlaybookSettlement: Promise<void> | undefined;
-  /** Settlement-bound prepare only; cleared at the start of each prepare body. */
+  /**
+   * Settlement fed for the output prompt. Early prepare() runs the host round
+   * from parent start (ready and wait); settleOnce feeds currentSettlement and
+   * lets navigator speak. No candidates/next parse (owner 2026-09-17 #959).
+   */
   let prepareBoundSettlement: NavigatorSettlement | undefined;
-  const prepare = async (): Promise<NavigatorCandidate[]> => {
-    // Exact principal is owned by shared lifecycle (or one mint per attendance).
-    // Model/tool/advice paths cannot override it; role-session persistence is
-    // pi.appendEntry at lifecycle start — not optional sessionManager probing.
-    const boundSettlement = prepareBoundSettlement;
-    prepareBoundSettlement = undefined;
-    // Each prepare owns the no-receipt flag; a later settlement-bound rebind must
-    // not inherit a speculative no-receipt outcome.
-    preparationNoReceipt = false;
-    const invocationId = invocationPrincipal;
-    activeInvocationId = invocationId;
+  type MaterialsBundle = {
+    soul: string;
+    routePlaybook: string;
+    helpContext: string;
+    modelSetting: string;
+    model: ReturnType<typeof parseNavigatorModelSetting>;
+    help: Array<{ role: NavigatorTargetRole; help: string }>;
+    activeSession: NavigatorPreparationSession;
+  };
+  /** Materials + session only — no host prompt (cold settle book-before-feed). */
+  const loadMaterialsAndSession = async (invocationId: string): Promise<MaterialsBundle> => {
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
     if (typeof authority !== "string" || authority.trim() === "") {
       throw navigatorUnavailableError(
@@ -516,161 +354,173 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         new Error("controlling authority content was not supplied as typed work context"),
       );
     }
-
-      // Load soul / model setting / live help in parallel. Live help is N pi --help
-      // subprocesses; serializing it behind session create made the post-role 10s
-      // grace cover help-boot under load (ENOENT / unavailable flake). Session
-      // create still follows context load so tool registration and prompt stay
-      // one readiness step for callers.
-      let soul: string;
-      let modelSetting: string;
-      let help: Array<{ role: NavigatorTargetRole; help: string }>;
-      let routePlaybook = "";
-      routePlaybookReadFailure = undefined;
-      const soulPromise = (async () => {
-        try {
-          const text = (await options.loadSoul()).trim();
-          if (!text) throw new Error("Navigator soul is empty");
-          return text;
-        } catch (error) {
-          // Contract: README.md#Navigator-attendance — context-loading failures become typed unavailable reports while retaining the original cause.
-          throw navigatorUnavailableError("context", error);
-        }
-      })();
-      const routePlaybookPromise = (async () => {
-        if (options.loadRoutePlaybook === undefined) return "";
-        try {
-          return await options.loadRoutePlaybook();
-        } catch (error) {
-          routePlaybookReadFailure = error instanceof Error ? error.message : String(error);
-          return "";
-        }
-      })();
-      // Preparation is fail-fast for its primary dependencies, but settlement
-      // independently drains this optional diagnostic before emitting attendance.
-      routePlaybookSettlement = routePlaybookPromise.then(() => undefined);
-      const modelPromise = (async () => {
-        try {
-          // Same resolution authority as createNativeNavigatorSessionFactory (#590).
-          const resolved = await resolveNavigatorSeatSelection(options.context);
-          return resolved.configuredLabel;
-        } catch (error) {
-          if (error instanceof NavigatorUnavailableError) throw error;
-          throw navigatorUnavailableError("model", error);
-        }
-      })();
-      // Prefer one-shot warm from session_start; clear so the next prepare reloads live.
-      const helpPromise = warmedHelp ?? loadLiveHelp();
-      warmedHelp = undefined;
-      [soul, routePlaybook, modelSetting, help] = await Promise.all([
-        soulPromise,
-        routePlaybookPromise,
-        modelPromise,
-        helpPromise,
-      ]);
-
-      let model: ReturnType<typeof parseNavigatorModelSetting>;
+    let soul: string;
+    let modelSetting: string;
+    let help: Array<{ role: NavigatorTargetRole; help: string }>;
+    let routePlaybook = "";
+    routePlaybookReadFailure = undefined;
+    const soulPromise = (async () => {
       try {
-        model = parseNavigatorModelSetting(modelSetting);
+        const text = (await options.loadSoul()).trim();
+        if (!text) throw new Error("Navigator soul is empty");
+        return text;
       } catch (error) {
+        throw navigatorUnavailableError("context", error);
+      }
+    })();
+    const routePlaybookPromise = (async () => {
+      if (options.loadRoutePlaybook === undefined) return "";
+      try {
+        return await options.loadRoutePlaybook();
+      } catch (error) {
+        routePlaybookReadFailure = error instanceof Error ? error.message : String(error);
+        return "";
+      }
+    })();
+    routePlaybookSettlement = routePlaybookPromise.then(() => undefined);
+    const modelPromise = (async () => {
+      try {
+        const resolved = await resolveNavigatorSeatSelection(options.context);
+        return resolved.configuredLabel;
+      } catch (error) {
+        if (error instanceof NavigatorUnavailableError) throw error;
         throw navigatorUnavailableError("model", error);
       }
-      const helpContext = help.map(({ role, help: text }) => `<role_help role="${role}">\n${text}\n</role_help>`).join("\n");
-      let output: PrepareOutput | undefined;
-      let prepareBatchRejected = false;
-      outputSink = (value) => {
-        // #836: extra prepare calls append; they do not void the first batch.
-        if (output === undefined) {
-          output = value;
-          return;
-        }
-        const prior = output.candidates;
-        const next = value.candidates;
-        const merged = [
-          ...(Array.isArray(prior) ? prior : prior === undefined ? [] : [prior]),
-          ...(Array.isArray(next) ? next : next === undefined ? [] : [next]),
-        ];
-        output = { ...value, candidates: merged };
-      };
-      const tool = createNavigatorPrepareTool((value) => { outputSink?.(value); });
-      if (session === undefined) {
-        sessionReady = (async () => {
-          let created: NavigatorPreparationSession;
-          try {
-            created = await options.createSession({ context: options.context, subject: subjectKey, ...(options.modelSettingPath === undefined ? {} : { modelSettingPath: options.modelSettingPath }), tool });
-          } catch (error) {
-            throw navigatorUnavailableError("session", error);
-          }
-          if (disposed) {
-            await created.dispose();
-            throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-          }
-          try {
-            await created.setModel?.(modelSetting, model.thinkingLevel);
-            if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-            created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
-            if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-            session = created;
-            return created;
-          } catch (error) {
-            if (session !== created) await created.dispose();
-            throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
-          }
-        })();
-        await sessionReady;
-        sessionReady = undefined;
-      } else {
+    })();
+    const helpPromise = warmedHelp ?? loadLiveHelp();
+    warmedHelp = undefined;
+    [soul, routePlaybook, modelSetting, help] = await Promise.all([
+      soulPromise,
+      routePlaybookPromise,
+      modelPromise,
+      helpPromise,
+    ]);
+    let model: ReturnType<typeof parseNavigatorModelSetting>;
+    try {
+      model = parseNavigatorModelSetting(modelSetting);
+    } catch (error) {
+      throw navigatorUnavailableError("model", error);
+    }
+    const helpContext = help.map(({ role, help: text }) => `<role_help role="${role}">\n${text}\n</role_help>`).join("\n");
+    const tool = createNavigatorPrepareTool((value) => { outputSink?.(value); });
+    if (session === undefined) {
+      sessionReady = (async () => {
+        let created: NavigatorPreparationSession;
         try {
-          await session.setModel?.(modelSetting, model.thinkingLevel);
+          created = await options.createSession({
+            context: options.context,
+            subject: subjectKey,
+            ...(options.modelSettingPath === undefined ? {} : { modelSettingPath: options.modelSettingPath }),
+            tool,
+          });
         } catch (error) {
-          // Contract: README.md#Navigator-attendance — resumed-session configuration failures remain typed unavailable and retain the original cause.
+          throw navigatorUnavailableError("session", error);
+        }
+        if (disposed) {
+          await created.dispose();
+          throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+        }
+        try {
+          await created.setModel?.(modelSetting, model.thinkingLevel);
+          if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+          created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+          if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+          session = created;
+          return created;
+        } catch (error) {
+          if (session !== created) await created.dispose();
           throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
         }
-        session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+      })();
+      await sessionReady;
+      sessionReady = undefined;
+    } else {
+      try {
+        await session.setModel?.(modelSetting, model.thinkingLevel);
+      } catch (error) {
+        throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
       }
-      if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-      const activeSession = session;
-      if (activeSession === undefined) throw new Error("Navigator session was not created");
-      const prior = activeSession.entries().filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord(entry.data) && entry.data.subjectKey === subjectKey).at(-1)?.data;
-      if (exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))) {
-        previousRoute = prior.route.map((target) => ({ role: target.role as NavigatorTargetRole, phase: target.phase as NavigatorPhase }));
+      session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+    }
+    if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+    if (session === undefined) throw new Error("Navigator session was not created");
+    return { soul, routePlaybook, helpContext, modelSetting, model, help, activeSession: session };
+  };
+  const prepare = async (materialsBundle?: MaterialsBundle): Promise<string | undefined> => {
+    // Exact principal is owned by shared lifecycle (or one mint per attendance).
+    // Model/tool/advice paths cannot override it; role-session persistence is
+    // pi.appendEntry at lifecycle start — not optional sessionManager probing.
+    const boundSettlement = prepareBoundSettlement;
+    prepareBoundSettlement = undefined;
+    const invocationId = invocationPrincipal;
+    activeInvocationId = invocationId;
+    let output: PrepareOutput | undefined;
+    let prepareBatchRejected = false;
+    outputSink = (value) => {
+      // #836: extra prepare calls keep the first prose; later calls append as more prose.
+      if (output === undefined) {
+        output = value;
+        return;
       }
+      const prior = normalizePrepareProse(output) ?? "";
+      const next = normalizePrepareProse(value) ?? "";
+      const merged = [prior, next].filter((part) => part.trim() !== "").join("\n\n");
+      output = { prose: merged };
+    };
+    // Cold settle passes its first-load bundle; early/warm prepare loads here.
+    const { soul, routePlaybook, helpContext, help, activeSession } =
+      materialsBundle ?? await loadMaterialsAndSession(invocationId);
       const publicSettlementHistory = activeSession.entries()
         .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data))
         .map((entry) => entry.data as NavigatorSettlementFact);
+      // Prior advice is the host session's own history (CLI resume), not a package ledger.
       const projection: NavigatorContextProjection = {
         subjectKey,
         subject,
         authority,
         currentRole: { role: options.role, phase: options.phase },
         ...(boundSettlement === undefined ? {} : { currentSettlement: boundSettlement }),
-        priorRoute: exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))
-          ? prior.route.map((target) => ({ role: target.role as NavigatorTargetRole, phase: target.phase as NavigatorPhase }))
-          : null,
         publicSettlementHistory,
         liveRoleHelp: help,
       };
       activeSession.appendEntry(CONTEXT_ENTRY, projection);
-      const request = [
-        "本次导航材料如下：",
-        `<navigator_soul>\n${soul}\n</navigator_soul>`,
-        ...(routePlaybookReadFailure === undefined
-          ? [`<route_playbook>\n${routePlaybook}\n</route_playbook>`]
-          : ["可选路线手册未能读取。"]),
-        `<work_subject>\n${subject}\n</work_subject>`,
-        `<controlling_authority>\n${authority}\n</controlling_authority>`,
-        `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
-        ...(boundSettlement === undefined
-          ? []
-          : [`<current_settlement>\n${JSON.stringify(boundSettlement)}\n</current_settlement>`]),
-        `<prior_route>\n${JSON.stringify(prior ?? null)}\n</prior_route>`,
-        `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
-        `<live_role_help>\n${helpContext}\n</live_role_help>`,
-      ].join("\n\n");
+      // Early (parent start): full host round — ready and wait. Settlement-bound:
+      // feed the result and let navigator speak (owner 2026-09-17 #959).
+      // ADR 0073: phase behavior text lives in resources/navigator-route-playbook.md;
+      // code only binds a neutral phase pointer + typed materials.
+      const request = boundSettlement === undefined
+        ? [
+          "本轮为待命轮。",
+          `<navigator_soul>\n${soul}\n</navigator_soul>`,
+          ...(routePlaybookReadFailure === undefined
+            ? [`<route_playbook>\n${routePlaybook}\n</route_playbook>`]
+            : ["可选路线手册未能读取。"]),
+          `<work_subject>\n${subject}\n</work_subject>`,
+          `<controlling_authority>\n${authority}\n</controlling_authority>`,
+          `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
+          `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
+          `<live_role_help>\n${helpContext}\n</live_role_help>`,
+        ].join("\n\n")
+        : [
+          "本轮为结算投喂轮。",
+          `<navigator_soul>\n${soul}\n</navigator_soul>`,
+          ...(routePlaybookReadFailure === undefined
+            ? [`<route_playbook>\n${routePlaybook}\n</route_playbook>`]
+            : ["可选路线手册未能读取。"]),
+          `<work_subject>\n${subject}\n</work_subject>`,
+          `<controlling_authority>\n${authority}\n</controlling_authority>`,
+          `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
+          `<current_settlement>\n${JSON.stringify(boundSettlement)}\n</current_settlement>`,
+          `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
+          `<live_role_help>\n${helpContext}\n</live_role_help>`,
+        ].join("\n\n");
       try {
         try {
           if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
           const delivery = createReceiptDeliveryPolicy();
+          // Production prose arrives only via nested summon → prepare tool.execute
+          // (navigator-public-session). No assistant-entry harvest — entries() is
+          // archivist custom-only on the wired factory (#959).
           const promptAllowingRejectedPrepare = async (text: string, deliveryRequest: boolean) => {
             const entryStart = activeSession.entries().length;
             prepareBatchRejected = false;
@@ -705,20 +555,33 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             if (deliveryRequest && output === undefined) delivery.recordDeliveryRequest();
           };
           await promptAllowingRejectedPrepare(request, false);
-          while (output === undefined && delivery.nextAction() === "request-delivery") {
-            await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
-          }
-          if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
-            const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
-            activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
-            preparationNoReceipt = true;
-            candidates = [];
-            return candidates;
+          // Bound output only: correction after rejected prepare. Early ready-wait
+          // does not 催交 final advice (owner: prepare then wait for settlement feed).
+          if (boundSettlement !== undefined) {
+            while (output === undefined && prepareBatchRejected && delivery.nextAction() === "request-delivery") {
+              await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
+            }
+            if (output === undefined && delivery.nextAction() === "request-delivery") {
+              while (delivery.nextAction() === "request-delivery") {
+                delivery.recordDeliveryRequest();
+              }
+            }
+            if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
+              const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
+              activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+              preparedProse = undefined;
+              return undefined;
+            }
           }
         } catch (error) {
           throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
         }
         if (output === undefined) {
+          // Early host round: ready and wait — no final prose until settlement is fed.
+          if (boundSettlement === undefined) {
+            preparedProse = undefined;
+            return undefined;
+          }
           const nativeFailure = [...activeSession.entries()].reverse().find((entry: unknown) => {
             if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)) return false;
             return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
@@ -734,8 +597,13 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const cause = providerFailure?.cause ?? source;
           throw navigatorUnavailableError(source, errorMessage, cause);
         }
-        candidates = normalizePrepareOutput(output);
-        return candidates;
+        // Early tool/prose is not final advice — discard; settlement feed owns output.
+        if (boundSettlement === undefined) {
+          preparedProse = undefined;
+          return undefined;
+        }
+        preparedProse = normalizePrepareProse(output);
+        return preparedProse;
       } finally {
         outputSink = undefined;
       }
@@ -747,7 +615,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       if (next.subjectKey !== subjectKey && session !== undefined) {
         const previous = session;
         session = undefined;
-        previousRoute = undefined;
         closing = previous.dispose();
       }
       subjectKey = next.subjectKey;
@@ -770,12 +637,17 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     prepare(): void {
       if (disposed || preparation !== undefined) return;
       preparationFailure = undefined;
-      preparation = prepare();
+      // Track live in-flight only — a resolved preparation still held until settle
+      // drain must not read as preparing (test helpers release early ready-wait by this).
+      preparationInFlight = true;
+      preparation = prepare().finally(() => {
+        preparationInFlight = false;
+      });
       // Contract: README.md#Navigator-attendance — background preparation rejection is drained so the later typed settlement can report unavailable; retain the exact cause until settlement.
       void preparation.catch((error) => { preparationFailure = error; });
     },
     isPreparing(): boolean {
-      return preparation !== undefined || sessionReady !== undefined;
+      return preparationInFlight;
     },
     knownRoutePlaybookReadFailure(): string | undefined {
       return routePlaybookReadFailure;
@@ -802,84 +674,81 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       if (disposed) return;
       const invocationId = activeInvocationId ?? invocationPrincipal;
       let report: NavigatorReport;
-      if (settlement.kind === "human_decision" || settlement.kind === "role_infrastructure_failure") {
-        // Contract: lawful human/role outcomes emit affirmative typed no-advice when
-        // preparation completed; rejected preparation remains typed unavailable.
-        // Drain the in-flight work so the next driver input cannot start a second prompt on the same native session.
-        if (sessionReady !== undefined) {
-          try { await sessionReady; } catch (error) { preparationFailure ??= error; }
+      // Drain in-flight early prepare (parent-start host round: ready and wait).
+      // Then feed settlement for the output prompt on the same host session.
+      if (sessionReady !== undefined) {
+        try { await sessionReady; } catch (error) { preparationFailure ??= error; }
+      }
+      if (preparation !== undefined) {
+        try {
+          await preparation;
+        } catch (error) {
+          preparationFailure ??= error;
         }
-        if (preparation !== undefined) {
-          try { await preparation; } catch (error) { preparationFailure ??= error; }
-        }
-        session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.kind === "human_decision" ? { status: settlement.status } : {}) });
+        preparation = undefined;
+      }
+      const settlementFact = {
+        invocationId,
+        subjectKey,
+        role: settlement.role,
+        phase: settlement.phase,
+        kind: settlement.kind,
+        ...("status" in settlement && settlement.status !== undefined
+          ? { status: settlement.status }
+          : {}),
+      };
+      // Arrival is presentation-only: never start soul/model/help/session just to book.
+      let drainedProse: string | undefined;
+      if (settlement.kind === "arrival") {
+        session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
         if (preparationFailure !== undefined) {
           report = unavailable(invocationId, preparationFailure);
         } else {
-          // Affirmative no-advice attendance — never inferred later from absence.
-          report = { disposition: "no-advice" };
-        }
-      } else if (settlement.kind === "arrival") {
-        // Contract: README.md#Navigator-attendance — failed attendance is reported as typed unavailable rather than silently discarded.
-        if (sessionReady !== undefined) {
-          try { await sessionReady; } catch (error) { preparationFailure ??= error; }
-        }
-        if (preparation !== undefined) {
-          try { await preparation; } catch (error) { preparationFailure ??= error; }
-        }
-        report = preparationFailure === undefined
-          ? { disposition: "arrival", ...(settlement.message === undefined ? {} : { arrivalMessage: settlement.message }) }
-          : unavailable(invocationId, preparationFailure);
-      } else if (preparation === undefined) {
-        report = unavailable(invocationId, "Navigator preparation did not start");
-      } else {
-        try {
-          if (sessionReady !== undefined) await sessionReady;
-          let prepared = await preparation;
-          session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
-          let selected = selectNavigatorCandidate(prepared, settlement);
-          // Speculative prepare runs before this terminal exists and may treat prior
-          // history as decisive. When selection provenance says matches did not key
-          // this candidate to the settlement, rebind once with currentSettlement.
-          // Stale-context repair only — reachable without any next.role legality
-          // table. After selection (speculative or rebound), advice is passed
-          // through as-is (ADR 0010 / ADR 0061: caller may ignore).
-          if (selected?.candidate.next !== undefined && !selected.matchedToSettlement) {
-            if (disposed) return;
-            prepareBoundSettlement = settlement;
-            prepared = await prepare();
-            if (disposed) return;
-            selected = selectNavigatorCandidate(prepared, settlement);
-          }
-          // Budget exhaustion is affirmative typed no-advice; malformed submitted
-          // advice remains the existing unavailable path.
-          const selectedCandidate = selected?.candidate;
-          if (selectedCandidate?.next === undefined && preparationNoReceipt) {
-            report = { disposition: "no-advice" };
-          } else if (selectedCandidate?.next === undefined) {
-            throw new Error("Navigator prepared no machine-usable next direction");
-          } else {
-          const selectedRoute = selectedCandidate.route;
-          const routeChanged = selectedRoute !== undefined && !routeEqual(previousRoute, selectedRoute);
-          const command =
-            typeof selectedCandidate.command === "string" && selectedCandidate.command.trim() !== ""
-              ? selectedCandidate.command
-              : renderPublicAkRoleCommand(selectedCandidate.next);
           report = {
-            disposition: "recommendation",
-            ...(routeChanged ? { route: selectedRoute } : {}),
-            next: selectedCandidate.next,
-            ...(selectedCandidate.reason === undefined ? {} : { reason: selectedCandidate.reason }),
-            ...(command === undefined ? {} : { command }),
+            disposition: "arrival",
+            ...(settlement.message === undefined ? {} : { arrivalMessage: settlement.message }),
           };
-          if (selectedRoute !== undefined) {
-            previousRoute = selectedRoute;
-            session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selectedRoute });
+        }
+      } else {
+        // Feed settlement; navigator speaks. Clear early-path failure only when a
+        // session already exists so the output prompt can run (owner: 准备好了就等着，
+        // 结果出来喂给它让它自己输出).
+        if (session !== undefined) preparationFailure = undefined;
+        // Cold settle: materials+session only (no unbound host prompt), then book + feed.
+        // Pass the bundle into prepare so loadLiveHelp/setModel/INVOCATION run once.
+        let coldMaterials: MaterialsBundle | undefined;
+        if (session === undefined && preparationFailure === undefined) {
+          try {
+            coldMaterials = await loadMaterialsAndSession(invocationId);
+          } catch (error) {
+            preparationFailure = error;
           }
+        }
+        session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
+        if (preparationFailure === undefined) {
+          prepareBoundSettlement = settlement;
+          preparation = prepare(coldMaterials);
+          void preparation.catch((error) => { preparationFailure = error; });
+          try {
+            drainedProse = await preparation;
+          } catch (error) {
+            preparationFailure ??= error;
           }
-        // Contract: README.md#Navigator-attendance — Navigator failures become typed unavailable without invalidating the role Receipt; retain the original cause in the unavailable report.
-        } catch (error) {
-          report = unavailable(invocationId, error);
+          preparation = undefined;
+        }
+        if (preparationFailure !== undefined) {
+          // Contract: README.md#Navigator-attendance — failed attendance is typed
+          // unavailable without invalidating the role Receipt; retain the cause.
+          report = unavailable(invocationId, preparationFailure);
+        } else if (typeof drainedProse === "string" && drainedProse.trim() !== "") {
+          // #959: present prose as-is on every parent outcome — including
+          // human_decision / escalate. Old path wiped prose on escalate and left
+          // auto-attendance looking empty after a successful nested summon.
+          // Prior words stay on the host session (CLI resume); no package advice ledger.
+          report = { disposition: "advice", prose: drainedProse };
+        } else {
+          // Empty/no-receipt prepare → affirmative no-advice (never inferred later).
+          report = { disposition: "no-advice" };
         }
       }
       // A primary preparation failure may reject Promise.all before the optional
@@ -896,10 +765,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         role: options.role,
         phase: options.phase,
         subjectKey,
-        ...(report.route === undefined ? {} : { route: report.route }),
-        ...(report.next === undefined ? {} : { next: report.next }),
-        ...(report.reason === undefined ? {} : { reason: report.reason }),
-        ...(report.command === undefined ? {} : { command: report.command }),
+        ...(report.prose === undefined ? {} : { prose: report.prose }),
         ...(report.unavailableReason === undefined ? {} : { unavailableReason: report.unavailableReason }),
         ...(report.unavailableSource === undefined ? {} : { unavailableSource: report.unavailableSource }),
         ...(report.unavailableCause === undefined ? {} : { unavailableCause: report.unavailableCause }),
@@ -907,7 +773,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         ...(report.arrivalMessage === undefined ? {} : { arrivalMessage: report.arrivalMessage }),
       };
       // Dispose during post-role grace must ignore late completion (ADR 0052 / #106 / #675).
-      // Every settled disposition (recommendation | no-advice | unavailable | arrival) is affirmative.
+      // Every settled disposition (advice | no-advice | unavailable | arrival) is affirmative.
       // Only the disposed bit is typed authority to drop — never match free-text Error.message.
       if (disposed) return;
       try {
@@ -919,9 +785,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       }
       preparation = undefined;
       sessionReady = undefined;
-      candidates = undefined;
+      preparedProse = undefined;
       preparationFailure = undefined;
-      preparationNoReceipt = false;
       routePlaybookSettlement = undefined;
       routePlaybookReadFailure = undefined;
   }
