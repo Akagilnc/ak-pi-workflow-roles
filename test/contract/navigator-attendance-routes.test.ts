@@ -47,6 +47,28 @@ test("persistent model edits are immediate and have no fallback", async () => {
 
 test("future arrival is typed and presentation-only", async () => {
   await withTempRoot("navigator-arrival-", async (root) => {
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, undefined, root);
+    // Presentation-only: no seat table, no prepare — must not open a session just to book.
+    await nav.settle({ kind: "arrival", role: "lander", phase: null, message: "抵达" });
+    assert.equal(events[0]?.disposition, "arrival");
+    assert.equal(events[0]?.arrivalMessage, "抵达");
+    assert.equal(formatNavigatorReport({ disposition: "arrival", arrivalMessage: "抵达" }), "抵达");
+    assert.equal(harness.prompts(), 0, "arrival must not run the advice prompt");
+    assert.equal(harness.tool(), undefined, "arrival must not create a session");
+    assert.equal(
+      harness.entries.some((entry: any) => entry.customType === "ak-navigator-settlement"),
+      false,
+      "without a nest, arrival stays presentation-only and does not invent a session to book",
+    );
+  });
+});
+
+test("#959 arrival books settlement on an existing nest without re-prompting", async () => {
+  await withTempRoot("navigator-arrival-existing-nest-", async (root) => {
     await mkdir(join(root, ".ak-roles"), { recursive: true });
     await writeFile(
       join(root, ".ak-roles", "public-cli.json"),
@@ -57,12 +79,12 @@ test("future arrival is typed and presentation-only", async () => {
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, undefined, root);
+    // Warm creates the nest; arrival must book on it without a second advice prompt.
+    nav.prepare();
+    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
     await nav.settle({ kind: "arrival", role: "lander", phase: null, message: "抵达" });
     assert.equal(events[0]?.disposition, "arrival");
-    assert.equal(events[0]?.arrivalMessage, "抵达");
-    assert.equal(formatNavigatorReport({ disposition: "arrival", arrivalMessage: "抵达" }), "抵达");
     assert.equal(harness.prompts(), 0, "arrival must not run the advice prompt");
-    // Every settlement kind books the nest — including arrival.
     const settlementEntry = harness.entries.find((entry: any) => entry.customType === "ak-navigator-settlement") as any;
     assert.equal(settlementEntry?.data?.kind, "arrival");
     assert.equal(settlementEntry?.data?.role, "lander");

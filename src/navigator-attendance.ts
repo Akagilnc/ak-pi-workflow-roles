@@ -681,9 +681,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           ? { status: settlement.status }
           : {}),
       };
-      // Every settlement kind books the nest (including arrival) so history stays complete.
-      // Arrival still does not run the advice prompt.
-      if (session === undefined && preparationFailure === undefined) {
+      // Book settlement on an existing nest for every kind (including arrival).
+      // Arrival is presentation-only: never start soul/model/help/session just to book.
+      // Non-arrival advice still ensures a session before the unique bound prompt.
+      if (settlement.kind !== "arrival" && session === undefined && preparationFailure === undefined) {
         preparation = prepare();
         try { await preparation; } catch (error) { preparationFailure ??= error; }
         preparation = undefined;
