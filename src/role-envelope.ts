@@ -542,14 +542,47 @@ export async function prepareRoleEnvelope(options: {
   let disposed = false;
   // Per-turn run/court identity lives on HostContext (request-scoped). Engine
   // axis is already a RoleHost flag — never process.env (#818 P1 / #879).
+
+  /** True once closeRound returned an infrastructure failure to the host. */
+  let durableFailureHandedToCloseRound = false;
+  /** Drain required package-owned writes; infrastructure outranks every close outcome. */
+  const settleDurableWrites = async (): Promise<
+    | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
+    | undefined
+  > => {
+    await durableWriteChain;
+    if (infrastructureRoundFailure !== undefined) {
+      durableFailureHandedToCloseRound = true;
+      return { accepted: false as const, failure: infrastructureRoundFailure };
+    }
+    return undefined;
+  };
+
   const dispose = async (): Promise<void> => {
     if (disposed) return;
     disposed = true;
     const cleanupFailures: unknown[] = [];
-    // Chain never rejects (failures already logged at append); drain ordered writes.
-    await durableWriteChain;
+    // session_shutdown may still append package durable entries (navigator
+    // attendance when agent_settled was skipped). Drain only after those
+    // handlers — single terminal judgment via settleDurableWrites (#959).
     try {
       await emit("session_shutdown", {});
+    } catch (error) {
+      cleanupFailures.push(error);
+    }
+    try {
+      // Always drain post-shutdown writes. Only throw when the host has not
+      // already received this infrastructure failure via closeRound.
+      const alreadyHanded = durableFailureHandedToCloseRound;
+      const durableFailure = await settleDurableWrites();
+      if (durableFailure !== undefined && !alreadyHanded) {
+        cleanupFailures.push(
+          Object.assign(
+            new Error(durableFailure.failure.diagnostic ?? "durable session entry flush failed"),
+            { code: durableFailure.failure.identity?.code ?? "durable-session-write-failed" },
+          ),
+        );
+      }
     } catch (error) {
       cleanupFailures.push(error);
     }
@@ -576,18 +609,6 @@ export async function prepareRoleEnvelope(options: {
     // duplicate so structured_output + tool-call does not arm non-sole.
     if (calls.some((call) => call.toolName === terminatingToolName)) return;
     await invokeAkTool(terminatingToolName, params ?? {});
-  }
-
-  /** Drain required package-owned writes; infrastructure outranks every close outcome. */
-  const settleDurableWrites = async (): Promise<
-    | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
-    | undefined
-  > => {
-    await durableWriteChain;
-    if (infrastructureRoundFailure !== undefined) {
-      return { accepted: false as const, failure: infrastructureRoundFailure };
-    }
-    return undefined;
   };
   const closeRound: PreparedRoleTurn["closeRound"] = async () => {
     // Typed round boundary: hand the complete call list to the shared ledger once.
@@ -598,6 +619,7 @@ export async function prepareRoleEnvelope(options: {
     }
     // Infrastructure failure outranks accepted closure / correctable retry (#593).
     if (infrastructureRoundFailure !== undefined) {
+      durableFailureHandedToCloseRound = true;
       return { accepted: false as const, failure: infrastructureRoundFailure };
     }
     let closure: { customType: string; data: unknown } | undefined;

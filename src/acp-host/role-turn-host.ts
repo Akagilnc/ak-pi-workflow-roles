@@ -94,7 +94,13 @@ export type AcpRoleTurnHostConfig = Readonly<{
   prepare(request: RoleTurnRequest): Promise<PreparedRoleTurn>;
 }>;
 
-function failure(cause: "activation" | "session" | "output", name: string, code: string, details?: Readonly<Record<string, unknown>>): RoleTurnResult {
+function failure(
+  cause: "activation" | "session" | "output",
+  name: string,
+  code: string,
+  details?: Readonly<Record<string, unknown>>,
+  diagnostic?: string,
+): RoleTurnResult {
   return {
     code: null,
     stderr: "",
@@ -102,7 +108,23 @@ function failure(cause: "activation" | "session" | "output", name: string, code:
     knownFailure: {
       cause,
       identity: { name, code },
+      ...(diagnostic === undefined ? {} : { diagnostic }),
       ...(details === undefined ? {} : { details }),
+    },
+  };
+}
+
+/** Success→dispose failure; existing failure keeps primary cause + cleanup detail. */
+function withCleanupFailure(outcome: RoleTurnResult, cleanupError: unknown): RoleTurnResult {
+  const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError);
+  if (outcome.knownFailure === undefined) {
+    return failure("session", "AcpDisposeFailure", "dispose-failed", { cleanupError: message }, message);
+  }
+  return {
+    ...outcome,
+    knownFailure: {
+      ...outcome.knownFailure,
+      details: { ...(outcome.knownFailure.details ?? {}), cleanupError: message },
     },
   };
 }
@@ -233,10 +255,12 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
     let connection: AcpConnection | undefined;
     let sessionId: string | undefined;
     let accepted = false;
+    // Mutable so dispose failure can outrank a clean turn (headless withCleanupFailure face).
+    let outcome: RoleTurnResult = failure("session", "AcpNoOutcome", "no-outcome");
     try {
       if (prepared.mcpServers.length === 0) {
-        return failure("activation", "UncontrolledAcpSession", "ak-config-missing");
-      }
+        outcome = failure("activation", "UncontrolledAcpSession", "ak-config-missing");
+      } else {
       connection = await config.connect(request);
       // Live host-session records: ACP session/update → sitian sole entry (#811).
       // One abort + one race helper + one outer projection — write failure ends
@@ -303,11 +327,11 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         if (request.model !== undefined && availableModels !== undefined && !availableModels.some((entry) =>
           typeof entry === "object" && entry !== null
           && (entry as { modelId?: unknown }).modelId === acpModelId(config.modelPassing, request.model))) {
-          return failure("activation", "AcpHostModelMismatch", "host-model-mismatch", {
+          outcome = failure("activation", "AcpHostModelMismatch", "host-model-mismatch", {
             provider: request.model.provider,
             model: request.model.model,
           });
-        }
+        } else {
 
         const sessionBindParams = {
           cwd: request.cwd,
@@ -329,15 +353,19 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             sessionId = await loadSession(boundSessionId);
           }
         }
+        let sessionReady = true;
         if (sessionId === undefined) {
           const session = await rpc("session/new", sessionBindParams);
           sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
           if (sessionId === undefined || sessionId === "") {
-            return failure("session", "AcpSessionFailure", "session-id-missing");
+            outcome = failure("session", "AcpSessionFailure", "session-id-missing");
+            sessionReady = false;
+          } else {
+            await config.sessionIdentity.bind(request.principal, sessionId);
           }
-          await config.sessionIdentity.bind(request.principal, sessionId);
         }
 
+        if (sessionReady) {
         // set_model seat provider:model (#778); may rebuild agent — re-bind via loadSession.
         if (config.modelPassing === "set_model" && request.model !== undefined && sessionId !== undefined) {
           await rpc("session/set_model", {
@@ -407,14 +435,19 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             accepted = true;
           },
         });
-        if (hostSessionRecordFailure !== undefined) return hostSessionRecordResult();
-        return turnResult;
+        outcome = hostSessionRecordFailure !== undefined ? hostSessionRecordResult() : turnResult;
+        } // sessionReady
+        } // model match else
       } catch (error) {
         // recordAbort races setup RPCs via raceAgainstHostAbort (host-aborted code);
         // noteHostSessionRecordFailure always sets the typed failure before aborting.
-        if (hostSessionRecordFailure !== undefined) return hostSessionRecordResult();
-        throw error;
+        if (hostSessionRecordFailure !== undefined) {
+          outcome = hostSessionRecordResult();
+        } else {
+          throw error;
+        }
       }
+      } // mcpServers else
     } finally {
       if (connection !== undefined) {
         if (sessionId !== undefined && !accepted) {
@@ -424,8 +457,12 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         try { await connection.close(); }
         catch { /* keep turn result */ }
       }
-      try { await prepared.dispose?.(); }
-      catch { /* keep turn result */ }
+      try {
+        await prepared.dispose?.();
+      } catch (cleanupError) {
+        outcome = withCleanupFailure(outcome, cleanupError);
+      }
     }
+    return outcome;
   });
 }
