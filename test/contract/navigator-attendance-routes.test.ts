@@ -47,6 +47,11 @@ test("persistent model edits are immediate and have no fallback", async () => {
 
 test("future arrival is typed and presentation-only", async () => {
   await withTempRoot("navigator-arrival-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
     const setting = join(root, "model.json");
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
@@ -56,7 +61,11 @@ test("future arrival is typed and presentation-only", async () => {
     assert.equal(events[0]?.disposition, "arrival");
     assert.equal(events[0]?.arrivalMessage, "抵达");
     assert.equal(formatNavigatorReport({ disposition: "arrival", arrivalMessage: "抵达" }), "抵达");
-    assert.equal(harness.prompts(), 0);
+    assert.equal(harness.prompts(), 0, "arrival must not run the advice prompt");
+    // Every settlement kind books the nest — including arrival.
+    const settlementEntry = harness.entries.find((entry: any) => entry.customType === "ak-navigator-settlement") as any;
+    assert.equal(settlementEntry?.data?.kind, "arrival");
+    assert.equal(settlementEntry?.data?.role, "lander");
   });
 });
 

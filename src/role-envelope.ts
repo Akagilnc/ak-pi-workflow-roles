@@ -578,6 +578,17 @@ export async function prepareRoleEnvelope(options: {
     await invokeAkTool(terminatingToolName, params ?? {});
   }
 
+  /** Drain required package-owned writes; infrastructure outranks every close outcome. */
+  const settleDurableWrites = async (): Promise<
+    | { readonly accepted: false; readonly failure: RoleTurnKnownFailure }
+    | undefined
+  > => {
+    await durableWriteChain;
+    if (infrastructureRoundFailure !== undefined) {
+      return { accepted: false as const, failure: infrastructureRoundFailure };
+    }
+    return undefined;
+  };
   const closeRound: PreparedRoleTurn["closeRound"] = async () => {
     // Typed round boundary: hand the complete call list to the shared ledger once.
     if (calls.length > 0) {
@@ -597,12 +608,8 @@ export async function prepareRoleEnvelope(options: {
       // Pi flushes navigator attendance on agent_settled; session/prompt
       // resolution is the ACP host equivalent round boundary.
       await emit("agent_settled", {});
-      await durableWriteChain;
-      // Re-check after the chain: required package entry flush failure is armed
-      // asynchronously on the write path and must not fall through to accepted.
-      if (infrastructureRoundFailure !== undefined) {
-        return { accepted: false as const, failure: infrastructureRoundFailure };
-      }
+      const durableFailure = await settleDurableWrites();
+      if (durableFailure !== undefined) return durableFailure;
       return { accepted: true as const };
     }
     if (rejection !== undefined) {
@@ -612,15 +619,17 @@ export async function prepareRoleEnvelope(options: {
         message: rejection.message,
       };
       rejection = undefined;
+      // Drain write chain before retry: a package-owned append may still fail after
+      // the correctable rejection was booked; infrastructure outranks retry.
+      const durableFailure = await settleDurableWrites();
+      if (durableFailure !== undefined) return durableFailure;
       return { accepted: false as const, retry };
     }
     // #836: host ended without a recorded submission is not a failure.
     // Settlement presents ledger contents; empty ledger → no_receipt.
     await emit("agent_settled", {});
-    await durableWriteChain;
-    if (infrastructureRoundFailure !== undefined) {
-      return { accepted: false as const, failure: infrastructureRoundFailure };
-    }
+    const durableFailure = await settleDurableWrites();
+    if (durableFailure !== undefined) return durableFailure;
     return { accepted: true as const };
   };
 

@@ -681,6 +681,14 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           ? { status: settlement.status }
           : {}),
       };
+      // Every settlement kind books the nest (including arrival) so history stays complete.
+      // Arrival still does not run the advice prompt.
+      if (session === undefined && preparationFailure === undefined) {
+        preparation = prepare();
+        try { await preparation; } catch (error) { preparationFailure ??= error; }
+        preparation = undefined;
+      }
+      session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
       let drainedProse: string | undefined;
       if (settlement.kind === "arrival") {
         if (preparationFailure !== undefined) {
@@ -692,14 +700,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           };
         }
       } else {
-        // Ensure session exists so current settlement is booked before the unique
-        // advice prompt (history + currentSettlement both see this terminal).
-        if (session === undefined && preparationFailure === undefined) {
-          preparation = prepare();
-          try { await preparation; } catch (error) { preparationFailure ??= error; }
-          preparation = undefined;
-        }
-        session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
         // Unique advice after the current settlement is known. Clear warm-path
         // failure only when a session already exists so bound prepare can run;
         // hard warm failures (no session) stay typed unavailable.
