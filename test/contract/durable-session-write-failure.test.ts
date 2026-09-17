@@ -5,7 +5,7 @@
  * returns; their flush failure is a dispose terminal failure, not washed.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -103,6 +103,12 @@ function assertDurableFlushFailure(closed: {
   assert.match(String(failure?.diagnostic ?? ""), /durable session entry flush failed/);
 }
 
+/** Root-independent write failure: path becomes a directory → appendFile EISDIR. */
+async function poisonSessionFileWrite(sessionFile: string): Promise<void> {
+  await rm(sessionFile, { force: true });
+  await mkdir(sessionFile);
+}
+
 test("#959 durable session entry flush failure is infrastructure not accepted", async () => {
   await withTempEnvelopeHome("navigator", async ({ home, runDirectory, sessionDir, sessionFile, socketPath }) => {
     // Temp seat table only — never touch the real public-cli.json (席位表法).
@@ -128,11 +134,10 @@ test("#959 durable session entry flush failure is infrastructure not accepted", 
       sessionFile,
     });
     try {
-      await chmod(sessionFile, 0o444);
+      await poisonSessionFileWrite(sessionFile);
       await prepared.ingestStructuredOutput({ prose: "下一步送 reviewer" });
       assertDurableFlushFailure(await prepared.closeRound());
     } finally {
-      await chmod(sessionFile, 0o644).catch(() => undefined);
       await prepared.dispose?.();
     }
   });
@@ -176,13 +181,12 @@ test("#959 durable flush failure outranks correctable rejection retry", async ()
       sessionFile,
     });
     try {
-      await chmod(sessionFile, 0o444);
+      await poisonSessionFileWrite(sessionFile);
       await prepared.ingestStructuredOutput(
         sampleCompletedDoctorOutput({ issueNumber: 959, runsPath }),
       );
       assertDurableFlushFailure(await prepared.closeRound());
     } finally {
-      await chmod(sessionFile, 0o644).catch(() => undefined);
       await prepared.dispose?.();
     }
   });
@@ -220,8 +224,8 @@ test("#959 session_shutdown durable flush failure surfaces from dispose", async 
       sessionFile,
     });
     try {
-      // Writable during prepare (invocation marker); lock before dispose flush.
-      await chmod(sessionFile, 0o444);
+      // Writable during prepare (invocation marker); poison before dispose flush.
+      await poisonSessionFileWrite(sessionFile);
       await assert.rejects(
         async () => prepared.dispose?.(),
         (error: unknown) => {
@@ -237,7 +241,6 @@ test("#959 session_shutdown durable flush failure surfaces from dispose", async 
         },
       );
     } finally {
-      await chmod(sessionFile, 0o644).catch(() => undefined);
       // Already disposed (or failed mid-dispose); second call is a no-op.
       await prepared.dispose?.().catch(() => undefined);
     }

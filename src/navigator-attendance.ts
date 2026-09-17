@@ -336,8 +336,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
    * lets navigator speak. No candidates/next parse (owner 2026-09-17 #959).
    */
   let prepareBoundSettlement: NavigatorSettlement | undefined;
-  /** Materials + session only — no host prompt (cold settle book-before-feed). */
-  const loadMaterialsAndSession = async (invocationId: string): Promise<{
+  type MaterialsBundle = {
     soul: string;
     routePlaybook: string;
     helpContext: string;
@@ -345,7 +344,11 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     model: ReturnType<typeof parseNavigatorModelSetting>;
     help: Array<{ role: NavigatorTargetRole; help: string }>;
     activeSession: NavigatorPreparationSession;
-  }> => {
+  };
+  /** Cold settle stashes first-pass materials so prepare does not reload. */
+  let preloadedMaterials: MaterialsBundle | undefined;
+  /** Materials + session only — no host prompt (cold settle book-before-feed). */
+  const loadMaterialsAndSession = async (invocationId: string): Promise<MaterialsBundle> => {
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
     if (typeof authority !== "string" || authority.trim() === "") {
       throw navigatorUnavailableError(
@@ -466,7 +469,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const merged = [prior, next].filter((part) => part.trim() !== "").join("\n\n");
       output = { prose: merged };
     };
-    const { soul, routePlaybook, helpContext, help, activeSession } = await loadMaterialsAndSession(invocationId);
+    // Cold settle already loaded materials once; reuse that bundle (no second setModel/help/INVOCATION).
+    const materials = preloadedMaterials ?? await loadMaterialsAndSession(invocationId);
+    preloadedMaterials = undefined;
+    const { soul, routePlaybook, helpContext, help, activeSession } = materials;
       const publicSettlementHistory = activeSession.entries()
         .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data))
         .map((entry) => entry.data as NavigatorSettlementFact);
@@ -662,6 +668,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const current = session;
       session = undefined;
       activeInvocationId = undefined;
+      preloadedMaterials = undefined;
       return current?.dispose();
     },
   };
@@ -712,11 +719,13 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         // 结果出来喂给它让它自己输出).
         if (session !== undefined) preparationFailure = undefined;
         // Cold settle: materials+session only (no unbound host prompt), then book + feed.
+        // Stash the bundle so prepare reuses it — one loadLiveHelp/setModel/INVOCATION.
         if (session === undefined && preparationFailure === undefined) {
           try {
-            await loadMaterialsAndSession(invocationId);
+            preloadedMaterials = await loadMaterialsAndSession(invocationId);
           } catch (error) {
             preparationFailure = error;
+            preloadedMaterials = undefined;
           }
         }
         session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
@@ -782,6 +791,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       sessionReady = undefined;
       preparedProse = undefined;
       preparationFailure = undefined;
+      preloadedMaterials = undefined;
       routePlaybookSettlement = undefined;
       routePlaybookReadFailure = undefined;
   }
