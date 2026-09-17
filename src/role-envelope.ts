@@ -141,10 +141,12 @@ export async function prepareRoleEnvelope(options: {
   }
   // Settlement reads the durable file after the turn; write must complete before
   // closeRound returns. Sync-order via chained promise kept on the envelope.
-  // Chain itself never rejects (so closeRound/dispose stay orderly); each append
-  // failure is logged on stderr with the customType so the true cause is not lost
-  // when attendance/invocation only live on this file (#959 失败诚实).
+  // Chain itself never rejects (closeRound/dispose stay orderly). Required package
+  // entry flush failure arms the existing typed infrastructure-failure slot —
+  // never log-and-continue into accepted (#959 失败诚实).
   let durableWriteChain: Promise<void> = Promise.resolve();
+  /** Filled by rememberInfrastructureFailure; declared later, closed over here. */
+  let armDurableWriteFailure: ((customType: string, diagnostic: string) => void) | undefined;
   /** Append one package-owned session entry to the durable principal (fire-and-order). */
   const persistPackageSessionEntry = (entry: Record<string, unknown>): void => {
     const customType = typeof entry.customType === "string" ? entry.customType : "unknown";
@@ -158,13 +160,7 @@ export async function prepareRoleEnvelope(options: {
         await appendFile(sessionFile, line, "utf8");
       } catch (error) {
         const diagnostic = error instanceof Error ? error.message : String(error);
-        try {
-          process.stderr.write(
-            `ak-role: durable session entry flush failed (${customType}): ${diagnostic}\n`,
-          );
-        } catch {
-          // stderr itself failed — nothing further without masking the turn.
-        }
+        armDurableWriteFailure?.(customType, diagnostic);
       }
     });
   };
@@ -339,6 +335,17 @@ export async function prepareRoleEnvelope(options: {
     };
     hostAbort.abort();
   }
+  armDurableWriteFailure = (customType, diagnostic) => {
+    rememberInfrastructureFailure(
+      {
+        cause: "infrastructure",
+        kind: "role_infrastructure_failure",
+        code: "durable-session-write-failed",
+        customType,
+      },
+      [{ type: "text", text: `ak-role: durable session entry flush failed (${customType}): ${diagnostic}` }],
+    );
+  };
   /**
    * One non-correctable infra pathway for execute throws and pre-execution emits:
    * build fact → fill closeRound slot → arm hostAbort. Projection may follow.
@@ -591,6 +598,11 @@ export async function prepareRoleEnvelope(options: {
       // resolution is the ACP host equivalent round boundary.
       await emit("agent_settled", {});
       await durableWriteChain;
+      // Re-check after the chain: required package entry flush failure is armed
+      // asynchronously on the write path and must not fall through to accepted.
+      if (infrastructureRoundFailure !== undefined) {
+        return { accepted: false as const, failure: infrastructureRoundFailure };
+      }
       return { accepted: true as const };
     }
     if (rejection !== undefined) {
@@ -606,6 +618,9 @@ export async function prepareRoleEnvelope(options: {
     // Settlement presents ledger contents; empty ledger → no_receipt.
     await emit("agent_settled", {});
     await durableWriteChain;
+    if (infrastructureRoundFailure !== undefined) {
+      return { accepted: false as const, failure: infrastructureRoundFailure };
+    }
     return { accepted: true as const };
   };
 

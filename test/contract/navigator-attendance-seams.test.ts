@@ -35,6 +35,7 @@ import {
   context,
   sessionHarness,
   attendance,
+  settleWithAdvice,
 } from "../helpers/navigator-attendance-kit.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot, seedGitRepository, withActivationHome } from "../helpers/pi-test-harness.ts";
@@ -168,7 +169,8 @@ test("prepare provider schema admits object-root free-form through real Tool val
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+      const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      while (harness.tool() === undefined || harness.prompts() < 1) await new Promise<void>((resolve) => setImmediate(resolve));
       const usableArgs = { prose: "下一步送 fixer apply" };
       const validated = validateToolArguments(harness.tool() as never, {
         id: "live-prose",
@@ -176,7 +178,7 @@ test("prepare provider schema admits object-root free-form through real Tool val
         arguments: structuredClone(usableArgs) } as never);
       await harness.tool().execute("live-prose", validated as never, undefined, undefined, {} as never);
       harness.release();
-      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      await waiting;
       assert.equal(events[0]?.disposition, "advice");
       assert.equal(events[0]?.prose, "下一步送 fixer apply");
     }
@@ -187,14 +189,15 @@ test("prepare provider schema admits object-root free-form through real Tool val
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+      const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      while (harness.tool() === undefined || harness.prompts() < 1) await new Promise<void>((resolve) => setImmediate(resolve));
       const validated = validateToolArguments(harness.tool() as never, {
         id: "empty",
         name: NAVIGATOR_PREPARE_TOOL_NAME,
         arguments: {} } as never);
       await harness.tool().execute("empty", validated as never, undefined, undefined, {} as never);
       harness.release();
-      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      await waiting;
       assert.equal(events.length, 1);
       assert.equal(events[0]?.disposition, "no-advice");
     }
@@ -216,20 +219,18 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-      await harness.tool().execute(
-        "prose-only",
+      await settleWithAdvice(
+        nav,
+        harness,
+        { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
         { prose: "下一步送 fixer apply" },
-        undefined,
-        undefined,
-        {} as never,
+        "prose-only",
       );
-      harness.release();
-      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "advice");
       assert.equal(events[0].prose, "下一步送 fixer apply");
-      assert.equal(harness.prompts(), 1, "#959 no settlement-bound rebind");
+      assert.equal(harness.retainedContext()?.currentSettlement?.kind, "accepted");
+      assert.equal(harness.prompts(), 1, "one settlement-bound advice prompt");
     }
 
     {
@@ -237,17 +238,13 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-      // Historical free-form without next — must not be unavailable.
-      await harness.tool().execute(
-        "legacy-free-form",
+      await settleWithAdvice(
+        nav,
+        harness,
+        { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
         { reason: "still thinking", role: "not-a-role" },
-        undefined,
-        undefined,
-        {} as never,
+        "legacy-free-form",
       );
-      harness.release();
-      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "advice");
       assert.ok(typeof events[0].prose === "string" && events[0].prose.includes("still thinking"));
@@ -258,16 +255,13 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-      await harness.tool().execute(
-        "empty-prose",
+      await settleWithAdvice(
+        nav,
+        harness,
+        { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
         { prose: "  " },
-        undefined,
-        undefined,
-        {} as never,
+        "empty-prose",
       );
-      harness.release();
-      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "no-advice");
     }
@@ -326,10 +320,7 @@ test("#959 empty prepare body is no-advice; explicit prose settles as advice wit
         modelSettingPath: setting,
         onEvent: async (event) => { events.push(event); } });
       nav.prepare();
-      while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-      await harness.tool().execute("batch", batch as never, undefined, undefined, {} as never);
-      harness.release();
-      await nav.settle({ kind: "accepted", role, phase: "apply", status: "completed" });
+      await settleWithAdvice(nav, harness, { kind: "accepted", role, phase: "apply", status: "completed" }, batch, "batch");
       return events[0];
     }
 
@@ -354,18 +345,62 @@ test("#959 empty prepare body is no-advice; explicit prose settles as advice wit
       modelSettingPath: setting,
       onEvent: async (event) => { events.push(event); } });
     nav.prepare();
-    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    await harness.tool().execute(
-      "explicit",
+    await settleWithAdvice(
+      nav,
+      harness,
+      { kind: "accepted", role: "fixer", phase: "apply", status: "completed" },
       { prose: "authority names coder apply next" },
-      undefined,
-      undefined,
-      {} as never,
+      "explicit",
     );
-    harness.release();
-    await nav.settle({ kind: "accepted", role: "fixer", phase: "apply", status: "completed" });
     assert.equal(events[0]?.disposition, "advice");
     assert.equal(events[0]?.prose, "authority names coder apply next");
+  });
+});
+
+test("#959 unique advice preserves and passes opaque prior advice on subsequent settles", async () => {
+  await withTempRoot("navigator-prior-advice-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, undefined, root);
+
+    // First settle with advice "先前建议A"
+    nav.prepare();
+    await settleWithAdvice(
+      nav,
+      harness,
+      { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
+      { prose: "先前建议A" },
+      "first-advice",
+    );
+    assert.equal(events[0]?.disposition, "advice");
+    assert.equal(events[0]?.prose, "先前建议A");
+
+    // Second settle with advice "后续建议B"
+    nav.prepare();
+    const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    while (harness.prompts() < 2 || harness.tool() === undefined) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    // On second bound prepare (before execute), assert retainedContext().priorAdvice includes "先前建议A"
+    assert.ok(harness.retainedContext()?.priorAdvice?.includes("先前建议A"));
+    await harness.tool().execute("second-advice", { prose: "后续建议B" }, undefined, undefined, {} as never);
+    harness.release();
+    await waiting;
+
+    assert.equal(events[1]?.disposition, "advice");
+    assert.equal(events[1]?.prose, "后续建议B");
+    assert.ok(
+      harness.entries.some((entry: any) => entry.customType === "ak-navigator-prior-advice"),
+      "harness entries must contain ak-navigator-prior-advice",
+    );
   });
 });
 test("empty authority at prepare is honest context unavailable", async () => {

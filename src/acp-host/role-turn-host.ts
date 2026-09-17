@@ -9,7 +9,10 @@ import {
 } from "../external-host-turn-loop.ts";
 
 import { reportHostSessionEvent } from "../host-session-record.ts";
-import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../package-contracts/navigator-output.ts";
+import {
+  NAVIGATOR_OUTPUT_TOOL_NAME,
+  navigatorProseFromUnknown,
+} from "../package-contracts/navigator-output.ts";
 import {
   renderSystemPromptOverride,
   type PreparedRoleTurn,
@@ -370,10 +373,11 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             }
             // #959: navigator prose exit when the model spoke without the output tool.
             // Tool path still wins via MCP; ingest is a no-op once the tool already sealed.
+            // Emptiness via shared projector; payload keeps original bytes (LLM 原话过手).
             if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
-              const prose = agentProseChunks.join("").trim();
+              const prose = agentProseChunks.join("");
               agentProseChunks.length = 0;
-              if (prose !== "") {
+              if (navigatorProseFromUnknown(prose) !== undefined) {
                 await prepared.ingestStructuredOutput({ prose });
               }
             } else {

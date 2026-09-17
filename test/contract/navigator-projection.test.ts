@@ -7,6 +7,7 @@ import test from "node:test";
 import { acceptedFacts } from "../../src/package-contracts/terminating-tools.ts";
 import {
   NAVIGATOR_OUTPUT_TOOL_NAME,
+  navigatorProseFromUnknown,
   projectLawfulNavigatorOutput,
 } from "../../src/package-contracts/navigator-output.ts";
 
@@ -32,4 +33,10 @@ test("navigator projection accepts free-form object as prose body (#959)", () =>
 
 test("navigator projection accepts bare string prose", () => {
   assert.deepEqual(projectLawfulNavigatorOutput("送 reviewer"), { prose: "送 reviewer" });
+});
+
+test("#959 prose emptiness uses trim; payload keeps original whitespace", () => {
+  assert.equal(navigatorProseFromUnknown("  下一步送大理寺  \n"), "  下一步送大理寺  \n");
+  assert.equal(navigatorProseFromUnknown("\n\t  \n"), undefined);
+  assert.equal(navigatorProseFromUnknown(""), undefined);
 });

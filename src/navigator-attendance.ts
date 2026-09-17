@@ -137,6 +137,10 @@ export type NavigatorContextProjection = {
   subject: string;
   authority: string;
   currentRole: { role: string; phase: NavigatorPhase };
+  /** Present on the unique settlement-bound advice prompt. */
+  currentSettlement?: NavigatorSettlement;
+  /** Opaque prior advice prose for this subject — pass-through only; never parsed. */
+  priorAdvice: string[];
   publicSettlementHistory: NavigatorSettlementFact[];
   liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
@@ -171,6 +175,8 @@ export type NavigatorAttendanceOptions = {
 const CONTEXT_ENTRY = "ak-navigator-context";
 const INVOCATION_ENTRY = NAVIGATOR_INVOCATION_ENTRY;
 const SETTLEMENT_ENTRY = "ak-navigator-settlement";
+/** Opaque prior advice bytes for the same subject — not a route ledger. */
+const PRIOR_ADVICE_ENTRY = "ak-navigator-prior-advice";
 const unavailableKeys = new Set<NavigatorUnavailableKey>(["context", "session", "model", "thinking", "auth", "quota", "transport", "unknown"]);
 
 function unavailableKey(value: unknown): NavigatorUnavailableKey | undefined {
@@ -327,11 +333,18 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     };
   };
   let routePlaybookSettlement: Promise<void> | undefined;
+  /**
+   * Settlement that the unique advice prompt must see. Early prepare() warms
+   * session/materials only; settleOnce sets this and runs one bound prompt.
+   * No speculative advice, no candidates/next parse, no second rebind ranking.
+   */
+  let prepareBoundSettlement: NavigatorSettlement | undefined;
   const prepare = async (): Promise<string | undefined> => {
     // Exact principal is owned by shared lifecycle (or one mint per attendance).
     // Model/tool/advice paths cannot override it; role-session persistence is
     // pi.appendEntry at lifecycle start — not optional sessionManager probing.
-    // #959: prepare is one-shot prose advice — no settlement-bound rebind / route memory.
+    const boundSettlement = prepareBoundSettlement;
+    prepareBoundSettlement = undefined;
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
@@ -453,14 +466,35 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
       const activeSession = session;
       if (activeSession === undefined) throw new Error("Navigator session was not created");
+      // #959: early prepare() warms session/materials only. Unique advice runs once
+      // after settleOnce binds the just-completed settlement — no speculative prose.
+      if (boundSettlement === undefined) {
+        outputSink = undefined;
+        preparedProse = undefined;
+        return undefined;
+      }
       const publicSettlementHistory = activeSession.entries()
         .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data))
         .map((entry) => entry.data as NavigatorSettlementFact);
+      // Opaque prior advice only — never parse, compare, or branch on content.
+      const priorAdvice = activeSession.entries()
+        .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => (
+          exactRecord(entry)
+          && entry.type === "custom"
+          && entry.customType === PRIOR_ADVICE_ENTRY
+          && exactRecord(entry.data)
+          && entry.data.subjectKey === subjectKey
+          && typeof entry.data.prose === "string"
+          && entry.data.prose.trim() !== ""
+        ))
+        .map((entry) => (entry.data as { prose: string }).prose);
       const projection: NavigatorContextProjection = {
         subjectKey,
         subject,
         authority,
         currentRole: { role: options.role, phase: options.phase },
+        currentSettlement: boundSettlement,
+        priorAdvice,
         publicSettlementHistory,
         liveRoleHelp: help,
       };
@@ -474,6 +508,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         `<work_subject>\n${subject}\n</work_subject>`,
         `<controlling_authority>\n${authority}\n</controlling_authority>`,
         `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
+        `<current_settlement>\n${JSON.stringify(boundSettlement)}\n</current_settlement>`,
+        `<prior_advice>\n${JSON.stringify(priorAdvice)}\n</prior_advice>`,
         `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
         `<live_role_help>\n${helpContext}\n</live_role_help>`,
       ].join("\n\n");
@@ -622,20 +658,20 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       if (disposed) return;
       const invocationId = activeInvocationId ?? invocationPrincipal;
       let report: NavigatorReport;
-      // Drain in-flight prepare for every settlement kind so the next driver
-      // input cannot start a second prompt on the same native session.
-      let drainedProse: string | undefined;
+      // Drain in-flight warm prepare so the next driver cannot start a second
+      // session create on the same attendance. Warm returns no prose.
       if (sessionReady !== undefined) {
         try { await sessionReady; } catch (error) { preparationFailure ??= error; }
       }
       if (preparation !== undefined) {
         try {
-          drainedProse = await preparation;
+          await preparation;
         } catch (error) {
           preparationFailure ??= error;
         }
+        preparation = undefined;
       }
-      session?.appendEntry(SETTLEMENT_ENTRY, {
+      const settlementFact = {
         invocationId,
         subjectKey,
         role: settlement.role,
@@ -644,27 +680,60 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         ...("status" in settlement && settlement.status !== undefined
           ? { status: settlement.status }
           : {}),
-      });
-      if (preparationFailure !== undefined) {
-        // Contract: README.md#Navigator-attendance — failed attendance is typed
-        // unavailable without invalidating the role Receipt; retain the cause.
-        report = unavailable(invocationId, preparationFailure);
-      } else if (settlement.kind === "arrival") {
-        report = {
-          disposition: "arrival",
-          ...(settlement.message === undefined ? {} : { arrivalMessage: settlement.message }),
-        };
-      } else if (typeof drainedProse === "string" && drainedProse.trim() !== "") {
-        // #959: present prose as-is on every parent outcome — including
-        // human_decision / escalate. Old path wiped prose on escalate and left
-        // auto-attendance looking empty after a successful nested summon.
-        report = { disposition: "advice", prose: drainedProse };
-      } else if (settlement.kind === "accepted" && preparation === undefined) {
-        report = unavailable(invocationId, "Navigator preparation did not start");
+      };
+      let drainedProse: string | undefined;
+      if (settlement.kind === "arrival") {
+        if (preparationFailure !== undefined) {
+          report = unavailable(invocationId, preparationFailure);
+        } else {
+          report = {
+            disposition: "arrival",
+            ...(settlement.message === undefined ? {} : { arrivalMessage: settlement.message }),
+          };
+        }
       } else {
-        // Empty/no-receipt prepare, or human/infra parent with no prose →
-        // affirmative no-advice (never inferred later from absence).
-        report = { disposition: "no-advice" };
+        // Ensure session exists so current settlement is booked before the unique
+        // advice prompt (history + currentSettlement both see this terminal).
+        if (session === undefined && preparationFailure === undefined) {
+          preparation = prepare();
+          try { await preparation; } catch (error) { preparationFailure ??= error; }
+          preparation = undefined;
+        }
+        session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
+        // Unique advice after the current settlement is known. Clear warm-path
+        // failure only when a session already exists so bound prepare can run;
+        // hard warm failures (no session) stay typed unavailable.
+        if (session !== undefined) preparationFailure = undefined;
+        if (preparationFailure === undefined) {
+          prepareBoundSettlement = settlement;
+          preparation = prepare();
+          void preparation.catch((error) => { preparationFailure = error; });
+          try {
+            drainedProse = await preparation;
+          } catch (error) {
+            preparationFailure ??= error;
+          }
+          preparation = undefined;
+        }
+        if (preparationFailure !== undefined) {
+          // Contract: README.md#Navigator-attendance — failed attendance is typed
+          // unavailable without invalidating the role Receipt; retain the cause.
+          report = unavailable(invocationId, preparationFailure);
+        } else if (typeof drainedProse === "string" && drainedProse.trim() !== "") {
+          // #959: present prose as-is on every parent outcome — including
+          // human_decision / escalate. Old path wiped prose on escalate and left
+          // auto-attendance looking empty after a successful nested summon.
+          report = { disposition: "advice", prose: drainedProse };
+          // Opaque memory only — model may use it later; code never parses it.
+          session?.appendEntry(PRIOR_ADVICE_ENTRY, {
+            invocationId,
+            subjectKey,
+            prose: drainedProse,
+          });
+        } else {
+          // Empty/no-receipt prepare → affirmative no-advice (never inferred later).
+          report = { disposition: "no-advice" };
+        }
       }
       // A primary preparation failure may reject Promise.all before the optional
       // routebook read finishes. Preserve that primary unavailable cause while

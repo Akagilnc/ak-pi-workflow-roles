@@ -19,6 +19,7 @@ import {
   sessionHarness,
   attendance,
   proseAdvice,
+  settleWithAdvice,
 } from "../helpers/navigator-attendance-kit.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
@@ -215,11 +216,14 @@ test("attendance dispose settles session close rejection on the caller", async (
         onEvent: async () => {},
       });
       nav.prepare();
+      const settleP = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       await prompted;
       await assert.rejects(
         () => Promise.resolve(nav.dispose()),
         (error: unknown) => error === closeBoom,
       );
+      releasePrompt?.();
+      await settleP.catch(() => {});
     } finally {
       releasePrompt?.();
     }
@@ -264,7 +268,7 @@ test("resumed setModel session failures preserve typed source and cause", async 
           entries: () => [],
           async setModel() {
             setModelCalls += 1;
-            if (setModelCalls > 1) {
+            if (setModelCalls > 2) {
               throw new Error("setModel blew up with untyped wording");
             }
           },
@@ -301,21 +305,16 @@ test("#959 free-form prose without next is advice, not unavailable", async () =>
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, undefined, root);
     nav.prepare();
-    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    // Historical shape that used to be rejected for missing candidates[].next
-    await harness.tool().execute(
-      "prepare",
+    await settleWithAdvice(
+      nav,
+      harness,
+      { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
       {
         role: "judge",
         command: "ak-role judge",
         reason: "应先由大理寺独立核验",
       },
-      undefined,
-      undefined,
-      {} as never,
     );
-    harness.release();
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(events[0]?.disposition, "advice");
     assert.ok(typeof events[0]?.prose === "string" && events[0].prose.includes("大理寺"));
   });
@@ -334,10 +333,12 @@ test("#959 empty prose after prepare is no-advice, not machine-usable unavailabl
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, undefined, root);
     nav.prepare();
-    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    await harness.tool().execute("prepare", { prose: "   " }, undefined, undefined, {} as never);
-    harness.release();
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    await settleWithAdvice(
+      nav,
+      harness,
+      { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
+      { prose: "   " },
+    );
     assert.equal(events[0]?.disposition, "no-advice");
   });
 });
@@ -355,10 +356,12 @@ test("#959 prose advice is presented as written", async () => {
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, undefined, root);
     nav.prepare();
-    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    await harness.tool().execute("prepare", proseAdvice("先送 reviewer"), undefined, undefined, {} as never);
-    harness.release();
-    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    await settleWithAdvice(
+      nav,
+      harness,
+      { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
+      proseAdvice("先送 reviewer"),
+    );
     assert.equal(events[0]?.disposition, "advice");
     assert.equal(events[0]?.prose, "先送 reviewer");
   });

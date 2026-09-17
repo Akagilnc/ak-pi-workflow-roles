@@ -112,3 +112,24 @@ export async function attendance(
     onEvent: async (event) => { events.push(event); },
   });
 }
+
+/**
+ * #959: unique advice runs after settle binds currentSettlement. Warm prepare()
+ * creates the session; settle starts the one prompt. Execute+release during settle.
+ */
+export async function settleWithAdvice(
+  nav: Awaited<ReturnType<typeof attendance>>,
+  harness: ReturnType<typeof sessionHarness>,
+  settlement: Parameters<Awaited<ReturnType<typeof attendance>>["settle"]>[0] | { kind: string; role: string; phase: "plan" | "apply" | null; status?: string },
+  body: unknown = proseAdvice(),
+  toolCallId = "prepare",
+): Promise<void> {
+  const targetPrompts = harness.prompts() + 1;
+  const waiting = nav.settle(settlement as never);
+  while (harness.prompts() < targetPrompts || harness.tool() === undefined) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  await harness.tool().execute(toolCallId, body as never, undefined, undefined, {} as never);
+  harness.release();
+  await waiting;
+}
