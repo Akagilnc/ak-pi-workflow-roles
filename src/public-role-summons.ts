@@ -642,17 +642,21 @@ function reviewerSandboxPath(worktreeAxis: string, projectRelative: string): str
   return projectRelative === "" ? worktreeAxis : join(worktreeAxis, projectRelative);
 }
 
+export type EphemeralReviewerWorktree = {
+  readonly executionCwd: string;
+  /** Always safe to call once; delete failure is diagnostic only (#946 10a). */
+  readonly close: () => Promise<void>;
+};
+
 /**
- * One ephemeral detached worktree at the source tree's current HEAD.
- * Always removed after `run` settles; delete failure is diagnostic only (#946 10a).
- * Shared by explicit `--lens` and any Reviewer resume. Dual-lens batch mints its
- * own pair so both legs share one PRE_HEAD snapshot — it does not call this.
+ * Open one ephemeral detached worktree at the source tree's current HEAD.
+ * Caller must close. Shared by explicit `--lens` and any Reviewer resume.
+ * Dual-lens batch mints its own pair so both legs share one PRE_HEAD snapshot.
  */
-export async function withEphemeralReviewerWorktree<T>(options: {
+export async function openEphemeralReviewerWorktree(options: {
   readonly projectRoot: string;
-  readonly run: (executionCwd: string) => Promise<T>;
   readonly onCleanupDiagnostic?: (diagnostic: string) => void;
-}): Promise<T> {
+}): Promise<EphemeralReviewerWorktree> {
   const { sourceProjectRoot, projectRelative } = await resolveReviewerWorktreeRoots(
     options.projectRoot,
   );
@@ -664,19 +668,24 @@ export async function withEphemeralReviewerWorktree<T>(options: {
   const targetCommit = headStdout.trim();
   const root = await mkdtemp(join(tmpdir(), "ak-reviewer-sandbox-"));
   const worktreeRoot = join(root, "work");
-  let created = false;
   try {
     await execFileAsync("git", ["worktree", "add", "--detach", worktreeRoot, targetCommit], {
       cwd: sourceProjectRoot,
     });
-    created = true;
-    // Preserve caller subdirectory even when absent from the pinned commit.
-    if (projectRelative !== "") {
-      await mkdir(reviewerSandboxPath(worktreeRoot, projectRelative), { recursive: true });
-    }
-    return await options.run(reviewerSandboxPath(worktreeRoot, projectRelative));
-  } finally {
-    if (created) {
+  } catch (error) {
+    await rm(root, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  }
+  // Preserve caller subdirectory even when absent from the pinned commit.
+  if (projectRelative !== "") {
+    await mkdir(reviewerSandboxPath(worktreeRoot, projectRelative), { recursive: true });
+  }
+  let closed = false;
+  return {
+    executionCwd: reviewerSandboxPath(worktreeRoot, projectRelative),
+    close: async () => {
+      if (closed) return;
+      closed = true;
       const cleanupErrors: unknown[] = [];
       try {
         await execFileAsync("git", ["worktree", "remove", worktreeRoot], {
@@ -697,9 +706,29 @@ export async function withEphemeralReviewerWorktree<T>(options: {
             error instanceof Error ? error.message : String(error)),
         ].join("\n"));
       }
-    } else {
-      await rm(root, { recursive: true, force: true }).catch(() => {});
-    }
+    },
+  };
+}
+
+/**
+ * One ephemeral detached worktree at the source tree's current HEAD.
+ * Always removed after `run` settles; delete failure is diagnostic only (#946 10a).
+ */
+export async function withEphemeralReviewerWorktree<T>(options: {
+  readonly projectRoot: string;
+  readonly run: (executionCwd: string) => Promise<T>;
+  readonly onCleanupDiagnostic?: (diagnostic: string) => void;
+}): Promise<T> {
+  const sandbox = await openEphemeralReviewerWorktree({
+    projectRoot: options.projectRoot,
+    ...(options.onCleanupDiagnostic === undefined
+      ? {}
+      : { onCleanupDiagnostic: options.onCleanupDiagnostic }),
+  });
+  try {
+    return await options.run(sandbox.executionCwd);
+  } finally {
+    await sandbox.close();
   }
 }
 

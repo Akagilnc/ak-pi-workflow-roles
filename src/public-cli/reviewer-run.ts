@@ -406,6 +406,8 @@ export async function runPublicReviewer(
  * Restores task/base/session identity; model override is temporary.
  * Execution always uses a fresh worktree of the source tree at resume time
  * (#946 统一新副本 / 10a) — no old worktree, no ownership record.
+ * Fresh-copy mint reuses the coordinator's single pre-lease load via
+ * afterAdmittedPrepare; does not pre-load outside the coordinator.
  */
 export async function runPublicReviewerResume(
   request: PublicResumeRequest,
@@ -416,68 +418,63 @@ export async function runPublicReviewerResume(
   admitted?: AdmittedReviewerInvocation;
   terminal?: TerminalResult;
 }> {
-  // Resolve durable projectRoot once so the sandbox roots on the admitted
-  // caller project; seat resume still loads through the ordinary path (open-court
-  // rehydrate may load again under lease).
-  let projectRoot: string;
-  try {
-    const preliminary = await loadResumableReviewerRun(
-      env.home,
-      request.runId,
-      env.principalAuthority,
-    );
-    projectRoot = preliminary.admitted.projectRoot;
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-  try {
-    return await runReviewerTurnInFreshCopy(env, projectRoot, io, async (sandboxedEnv) =>
-      await runPostAdmissionSeatResume({
-        request,
-        env: sandboxedEnv,
+  // Call-local cell: afterAdmittedPrepare writes executionCwd; buildTurnRequest reads it.
+  // Keeps the single-load coordinator contract — no preliminary load outside.
+  const sandbox: { executionCwd?: string } = {
+    ...(env.executionCwd === undefined ? {} : { executionCwd: env.executionCwd }),
+  };
+  return await runPostAdmissionSeatResume({
+    request,
+    env,
+    io,
+    load: (effective) =>
+      loadResumableReviewerRun(env.home, effective.runId, env.principalAuthority),
+    buildTurnRequest: (admitted, effective) => {
+      const activeEnv: ReviewerRunEnv = sandbox.executionCwd === undefined
+        ? env
+        : { ...env, executionCwd: sandbox.executionCwd };
+      const base = resumeTurnRequestProjectionOptions(admitted, effective, activeEnv);
+      return buildReviewerTurnRequest(admitted, {
+        ...base,
+        // Fresh copy at resume time; durable projectRoot unchanged.
+        ...(sandbox.executionCwd === undefined ? {} : { cwd: sandbox.executionCwd }),
+        continuation: {
+          kind: "resume",
+          prompt: reviewerResumePrompt(activeEnv, effective.message),
+        },
+      });
+    },
+    adapters: reviewerAdapters(env.packageRoot),
+    afterAdmittedLoad: async (admitted) => {
+      return resolveResumeMethodMaterialAdapters({
+        admitted,
+        authority: env.principalAuthority,
         io,
-        load: (effective) =>
-          loadResumableReviewerRun(
-            sandboxedEnv.home,
-            effective.runId,
-            sandboxedEnv.principalAuthority,
-          ),
-        buildTurnRequest: (admitted, effective) => {
-          const base = resumeTurnRequestProjectionOptions(admitted, effective, sandboxedEnv);
-          return buildReviewerTurnRequest(admitted, {
-            ...base,
-            // Fresh copy at resume time; durable projectRoot unchanged.
-            ...(sandboxedEnv.executionCwd === undefined
-              ? {}
-              : { cwd: sandboxedEnv.executionCwd }),
-            continuation: {
-              kind: "resume",
-              prompt: reviewerResumePrompt(sandboxedEnv, effective.message),
-            },
-          });
+        loadMaterial: () => loadReviewerMethodMaterial(env.packageRoot),
+        adaptersWith: (material) => reviewerAdapters(env.packageRoot, material),
+        emptyAdapters: reviewerAdapters(env.packageRoot),
+      });
+    },
+    afterAdmittedPrepare: async (admitted) => {
+      // Already sandboxed (in-batch auto-resume path) — nothing to mint.
+      if (sandbox.executionCwd !== undefined) {
+        return { env: { ...env, executionCwd: sandbox.executionCwd } };
+      }
+      const { openEphemeralReviewerWorktree } = await import("../public-role-summons.ts");
+      const opened = await openEphemeralReviewerWorktree({
+        projectRoot: admitted.projectRoot,
+        onCleanupDiagnostic: (diagnostic) => {
+          io.stderr(`${diagnostic}\n`);
         },
-        adapters: reviewerAdapters(sandboxedEnv.packageRoot),
-        afterAdmittedLoad: async (admitted) => {
-          return resolveResumeMethodMaterialAdapters({
-            admitted,
-            authority: sandboxedEnv.principalAuthority,
-            io,
-            loadMaterial: () => loadReviewerMethodMaterial(sandboxedEnv.packageRoot),
-            adaptersWith: (material) => reviewerAdapters(sandboxedEnv.packageRoot, material),
-            emptyAdapters: reviewerAdapters(sandboxedEnv.packageRoot),
-          });
-        },
-        ...(sandboxedEnv.engine === undefined ? {} : { effectiveEngine: sandboxedEnv.engine }),
-      }));
-  } catch (error) {
-    const diagnostic = error instanceof Error ? error.message : String(error);
-    io.stderr(`${diagnostic}\n`);
-    return { exitCode: 1 };
-  }
+      });
+      sandbox.executionCwd = opened.executionCwd;
+      return {
+        env: { ...env, executionCwd: opened.executionCwd },
+        cleanup: opened.close,
+      };
+    },
+    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+  });
 }
 
 export type { RoleTurnKnownFailure, PackagedMethodSkillProvenance };

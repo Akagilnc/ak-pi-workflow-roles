@@ -1358,6 +1358,16 @@ export async function runPostAdmissionSeatResume<
   afterAdmittedLoad?: (
     admitted: A,
   ) => Promise<AfterAdmittedLoadResult<A, T>>;
+  /**
+   * After the single pre-lease load (and optional afterAdmittedLoad), prepare
+   * call-local execution context. Reviewer fresh-copy (#946) mints an ephemeral
+   * worktree from the admitted projectRoot here — reuses this load, does not
+   * pre-load outside the coordinator. cleanup runs after dispatch settles.
+   */
+  afterAdmittedPrepare?: (admitted: A) => Promise<{
+    readonly env?: PostAdmissionEnv;
+    readonly cleanup?: () => Promise<void>;
+  }>;
   effectiveEngine?: string;
 }): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
   let request = input.request;
@@ -1387,6 +1397,10 @@ export async function runPostAdmissionSeatResume<
     }
     adapters = prepared.adapters;
   }
+
+  // Call-local execution env; afterAdmittedPrepare may replace it (Reviewer fresh-copy).
+  let env = input.env;
+  let preparedCleanup: (() => Promise<void>) | undefined;
 
   const buildRequestAfterLease = async (): Promise<RoleTurnRequest> => {
         let openCourtAttemptId: string | undefined;
@@ -1470,8 +1484,14 @@ export async function runPostAdmissionSeatResume<
   // Court recovery / open under lease, then dispatch.
   // Station-child same-ticket/same-parent resume is call-local auto-resume
   // (#840 / #416). Public `ak-role resume` stays one-shot (ADR 0080).
+  // afterAdmittedPrepare runs inside this try so mint failure and cleanup share one finally.
   try {
-    if (input.env.stationChild === true) {
+    if (input.afterAdmittedPrepare !== undefined) {
+      const prepared = await input.afterAdmittedPrepare(loaded.admitted);
+      if (prepared.env !== undefined) env = prepared.env;
+      preparedCleanup = prepared.cleanup;
+    }
+    if (env.stationChild === true) {
       let firstTurn: RoleTurnRequest | undefined;
       const stationAdapters = withOnceSuccessfulBeforeDispatch(adapters);
       type StationChildAttempt = { readonly resumeTurn: boolean };
@@ -1483,14 +1503,14 @@ export async function runPostAdmissionSeatResume<
       });
       return await runWithAutoResumeLoop({
         admitted: loaded.admitted,
-        principalAuthority: input.env.principalAuthority,
+        principalAuthority: env.principalAuthority,
         isPrincipalAvailable: resolveHostAwareSessionAvailability(
-          input.env.host,
-          input.env.principalAuthority,
+          env.host,
+          env.principalAuthority,
         ),
         io: input.io,
-        sessionAppender: input.env.sessionAppender,
-        autoResumeLimit: input.env.autoResumeLimit,
+        sessionAppender: env.sessionAppender,
+        autoResumeLimit: env.autoResumeLimit,
         buildInitialPayload: (): StationChildAttempt => ({ resumeTurn: false }),
         buildResumePayload: (): StationChildAttempt => ({ resumeTurn: true }),
         // Same as public manual resume: prior-court sealed acceptance is not a
@@ -1528,7 +1548,7 @@ export async function runPostAdmissionSeatResume<
             dispatch: async (turnRequest) => {
               const result = await dispatchPostAdmissionTurn({
                 admitted: loaded.admitted,
-                env: input.env,
+                env,
                 io: attemptIo,
                 request: turnRequest,
                 lease,
@@ -1540,7 +1560,7 @@ export async function runPostAdmissionSeatResume<
               });
               return settleDeferredPersist(
                 loaded.admitted,
-                input.env.principalAuthority,
+                env.principalAuthority,
                 stationAdapters,
                 attemptIo,
                 result,
@@ -1551,7 +1571,7 @@ export async function runPostAdmissionSeatResume<
     }
     return await runPostAdmissionManualResume({
       admitted: loaded.admitted,
-      env: input.env,
+      env,
       io: input.io,
       adapters,
       ...(input.effectiveEngine === undefined
@@ -1567,6 +1587,10 @@ export async function runPostAdmissionSeatResume<
       return { exitCode: 2 };
     }
     throw error;
+  } finally {
+    if (preparedCleanup !== undefined) {
+      await preparedCleanup();
+    }
   }
 }
 
