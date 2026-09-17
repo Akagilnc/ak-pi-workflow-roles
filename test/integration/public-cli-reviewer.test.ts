@@ -809,6 +809,8 @@ test("default dual-lens admits both axes without a parent run", async () => {
       encoding: "utf8",
     }).trim());
     assert.equal(result.terminal?.batch, "reviewer");
+    // Parentless batch must not invent affirmative no-advice (#946).
+    assert.equal(result.terminal?.navigator.disposition, "unavailable");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
       result.terminal?.roleOutcome.kind === "accepted"

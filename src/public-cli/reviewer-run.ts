@@ -243,7 +243,13 @@ export async function runPublicReviewer(
         completeness: { exitCode: children.completeness.exitCode, ...(children.completeness.stderr === undefined ? {} : { stderr: children.completeness.stderr }) },
         correctness: { exitCode: children.correctness.exitCode, ...(children.correctness.stderr === undefined ? {} : { stderr: children.correctness.stderr }) },
       },
-      navigator: { disposition: "no-advice" },
+      // Batch has no parent run and no own attendance; no-advice is affirmative
+      // only (navigator-attendance.ts). Children carry their own navigator facts.
+      navigator: {
+        disposition: "unavailable",
+        source: "unknown",
+        reason: "Reviewer batch has no parent-run Navigator attendance",
+      },
       artifacts: terminals.flatMap((item) => item.artifacts),
     };
     io.stdout(formatTerminalResult(terminal));

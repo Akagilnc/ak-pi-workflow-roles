@@ -108,6 +108,13 @@ export type PublicSummonRequest = {
    * the public --project / cwd identity; only the initial turn uses this path.
    */
   readonly executionCwd?: string;
+  /**
+   * Nested court station child (default true): omit Navigator auto-attendance
+   * and use station-child resume. Ordinary public-equivalent legs (dual-lens
+   * Reviewer axes) pass false so behavior matches a top-level single-axis call
+   * (#946 / ADR 0082).
+   */
+  readonly stationChild?: boolean;
 };
 
 const execFileAsync = promisify(execFile);
@@ -404,7 +411,9 @@ export async function summonPublicRole(
         ok: true,
         env: {
           ...built.env,
-          stationChild: true,
+          // Nested court stations keep station-child semantics; dual-lens
+          // ordinary Reviewer axes opt out (#946 / ADR 0082).
+          ...(options.stationChild === false ? {} : { stationChild: true }),
           // Forward composition-root adapters so nested court stations (e.g.
           // countersign → diarist) select the same faux/production table (#924).
           ...(options.hostAdapters === undefined
@@ -756,6 +765,8 @@ export async function summonParallelReviewerLenses(options: {
         argv: withReviewerLens(options.argv, lens),
         cwd: options.cwd,
         executionCwd: sandbox,
+        // Ordinary single-axis public semantics — not a nested court station.
+        stationChild: false,
         home: options.home,
         ...(options.agentDir === undefined ? {} : { agentDir: options.agentDir }),
         ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
