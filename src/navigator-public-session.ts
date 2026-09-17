@@ -21,6 +21,7 @@ import {
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
+import { CliUsageError } from "./public-cli/cli-errors.ts";
 
 /**
  * Ledger process home for navigator attendance: admitted HostContext.runDirectory
@@ -74,19 +75,21 @@ export function readNavigatorHostRunPointer(entries: readonly unknown[]): string
 }
 
 /**
- * Only structured CLI absence may fall through to a fresh mint.
- * Matches public CLI loadResumableRunRecord CliUsageError surfaces
- * (`unknown role run id` / `session principal is unavailable`).
- * All other resume outcomes keep their typed failure — no bare catch→fresh.
+ * Typed preflight via public CLI load path: can this run reopen as navigator?
+ * CliUsageError (code AK_ROLE_USAGE) from loadResumableInstructionSeatRun means
+ * unknown id / principal unavailable / non-instruction seat — not resumable.
+ * Other throws propagate. Never reads stderr prose.
  */
-export function isNavigatorResumePrincipalAbsence(result: PublicSummonResult): boolean {
-  if (result.terminal !== undefined) return false;
-  if (result.exitCode === 0) return false;
-  const diagnostic = result.stderr ?? "";
-  return (
-    diagnostic.includes("session principal is unavailable")
-    || diagnostic.includes("unknown role run id")
-  );
+export async function navigatorHostRunResumable(home: string, runId: string): Promise<boolean> {
+  const { piDurablePrincipalAuthority } = await import("./pi/durable-principal.ts");
+  const { loadResumableInstructionSeatRun } = await import("./public-cli/run-lifecycle.ts");
+  try {
+    const loaded = await loadResumableInstructionSeatRun(home, runId, piDurablePrincipalAuthority);
+    return loaded.admitted.role === "navigator";
+  } catch (error) {
+    if (error instanceof CliUsageError) return false;
+    throw error;
+  }
 }
 
 export type NavigatorPublicSummon = (options: {
@@ -100,6 +103,8 @@ export type NavigatorPublicSummon = (options: {
 export function createNativeNavigatorSessionFactory(deps?: {
   /** Test/composition inject — production leaves unset and uses public-role-summons. */
   readonly summonPublicRole?: NavigatorPublicSummon;
+  /** Test inject — production uses navigatorHostRunResumable (typed CLI load). */
+  readonly hostRunResumable?: (home: string, runId: string) => Promise<boolean>;
 }): NavigatorSessionFactory {
   return async ({ context, subject, tool }) => {
     // Model is enforced at prepare (attendance seat resolve) and at prompt (summon).
@@ -153,12 +158,14 @@ export function createNativeNavigatorSessionFactory(deps?: {
           };
 
           // Prefer host CLI resume so prior advice stays on the host session.
-          // Fresh mint only when CLI reports structured principal absence.
-          let summoned = resumeRunId === undefined
-            ? await summon(baseSummon)
-            : await summon({ ...baseSummon, resumeRunId });
-
-          if (resumeRunId !== undefined && isNavigatorResumePrincipalAbsence(summoned)) {
+          // Fresh mint only when typed load says the principal cannot reopen.
+          const resumable = deps?.hostRunResumable ?? navigatorHostRunResumable;
+          let summoned: PublicSummonResult;
+          if (resumeRunId === undefined || summonHome === undefined) {
+            summoned = await summon(baseSummon);
+          } else if (await resumable(summonHome, resumeRunId)) {
+            summoned = await summon({ ...baseSummon, resumeRunId });
+          } else {
             hostRunId = undefined;
             summoned = await summon(baseSummon);
           }

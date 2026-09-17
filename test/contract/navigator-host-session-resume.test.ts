@@ -1,6 +1,7 @@
 /**
  * #959: navigator prior advice stays on the host session via CLI resume.
  * Package only pins a host runId pointer — never a prose advice ledger.
+ * Fresh mint only after typed load says principal cannot reopen (CliUsageError).
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -9,7 +10,6 @@ import { join } from "node:path";
 
 import {
   createNativeNavigatorSessionFactory,
-  isNavigatorResumePrincipalAbsence,
   NAVIGATOR_HOST_RUN_POINTER_ENTRY,
   readNavigatorHostRunPointer,
   runIdFromNavigatorDirectory,
@@ -18,40 +18,7 @@ import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { seedGitRepository } from "../helpers/pi-test-harness.ts";
 
-test("resume principal absence is only the structured CLI surfaces", () => {
-  assert.equal(
-    isNavigatorResumePrincipalAbsence({
-      exitCode: 2,
-      stderr: "role run Pi session principal is unavailable: abc",
-    }),
-    true,
-  );
-  assert.equal(
-    isNavigatorResumePrincipalAbsence({
-      exitCode: 2,
-      stderr: "unknown role run id: abc",
-    }),
-    true,
-  );
-  assert.equal(
-    isNavigatorResumePrincipalAbsence({
-      exitCode: 1,
-      stderr: "provider auth down",
-    }),
-    false,
-    "auth/transport failures must not look like principal absence",
-  );
-  assert.equal(
-    isNavigatorResumePrincipalAbsence({
-      exitCode: 1,
-      terminal: {
-        roleOutcome: { kind: "failure", diagnostic: "quota", decisiveFacts: {} },
-      } as never,
-      stderr: "session principal is unavailable",
-    }),
-    false,
-    "a finished failure terminal is never treated as absence",
-  );
+test("runId is derived from navigator run directory basename", () => {
   assert.equal(runIdFromNavigatorDirectory("/book/runs/01abc@navigator"), "01abc");
   assert.equal(runIdFromNavigatorDirectory("/book/runs/01abc@judge"), undefined);
 });
@@ -67,6 +34,12 @@ test("#959 second attendance prompt resumes the pinned host runId", async () => 
 
     const runDirectory = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navhost@navigator");
     await mkdir(join(runDirectory, "session"), { recursive: true });
+    // Materialize a principal file so typed loadResumable path can succeed if used;
+    // this case injects summon and forces resumable via first mint pointer only.
+    await writeFile(
+      join(runDirectory, "session", "session.jsonl"),
+      `${JSON.stringify({ type: "session", version: 3, id: "01navhost", timestamp: "2026-01-01T00:00:00.000Z", cwd: root })}\n`,
+    );
 
     const summons: Array<{ resumeRunId?: string; argv: readonly string[] }> = [];
     let call = 0;
@@ -109,10 +82,17 @@ test("#959 second attendance prompt resumes the pinned host runId", async () => 
     };
 
     const prepared: string[] = [];
-    const session = await createNativeNavigatorSessionFactory({ summonPublicRole: summon })({
+    const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
+    await mkdir(join(parentRun, "session"), { recursive: true });
+
+    const session = await createNativeNavigatorSessionFactory({
+      summonPublicRole: summon,
+      // Second prompt: treat pinned run as resumable without going through disk load.
+      hostRunResumable: async (_home, runId) => runId === "01navhost",
+    })({
       context: {
         cwd: root,
-        runDirectory: join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder"),
+        runDirectory: parentRun,
         sessionManager: undefined,
       } as never,
       subject: "/work/subject-resume",
@@ -149,11 +129,13 @@ test("#959 second attendance prompt resumes the pinned host runId", async () => 
   });
 });
 
-test("#959 non-absence resume failure stays unavailable — no catch-all fresh mint", async () => {
+test("#959 non-resumable preflight mints once; resume transport failure does not remint", async () => {
   await withTempRoot("navigator-host-resume-fail-", async (root) => {
     seedGitRepository(root);
     const runDirectory = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navfail@navigator");
     await mkdir(join(runDirectory, "session"), { recursive: true });
+    const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
+    await mkdir(join(parentRun, "session"), { recursive: true });
 
     let calls = 0;
     const summon = async (options: {
@@ -165,10 +147,16 @@ test("#959 non-absence resume failure stays unavailable — no catch-all fresh m
     }): Promise<PublicSummonResult> => {
       calls += 1;
       if (options.resumeRunId !== undefined) {
-        // Structured transport failure on resume — must NOT trigger a second mint.
         return {
           exitCode: 1,
           stderr: "provider auth down",
+          terminal: {
+            roleOutcome: {
+              kind: "failure",
+              diagnostic: "provider auth down",
+              decisiveFacts: {},
+            },
+          } as never,
         };
       }
       return {
@@ -183,10 +171,13 @@ test("#959 non-absence resume failure stays unavailable — no catch-all fresh m
       };
     };
 
-    const session = await createNativeNavigatorSessionFactory({ summonPublicRole: summon })({
+    const session = await createNativeNavigatorSessionFactory({
+      summonPublicRole: summon,
+      hostRunResumable: async () => true,
+    })({
       context: {
         cwd: root,
-        runDirectory: join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder"),
+        runDirectory: parentRun,
       } as never,
       subject: "/work/subject-fail",
       tool: {
@@ -203,7 +194,7 @@ test("#959 non-absence resume failure stays unavailable — no catch-all fresh m
       () => session.prompt("second"),
       (error: unknown) => {
         assert.ok(error instanceof Error);
-        assert.match(error.message, /no terminal|auth|provider/i);
+        assert.match(error.message, /auth|provider/i);
         return true;
       },
     );
@@ -212,15 +203,18 @@ test("#959 non-absence resume failure stays unavailable — no catch-all fresh m
   });
 });
 
-test("#959 principal absence on resume may mint once", async () => {
+test("#959 typed non-resumable preflight allows one fresh mint", async () => {
   await withTempRoot("navigator-host-resume-absent-", async (root) => {
     seedGitRepository(root);
     const firstDir = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navfirst@navigator");
     const mintedDir = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navminted@navigator");
     await mkdir(join(firstDir, "session"), { recursive: true });
     await mkdir(join(mintedDir, "session"), { recursive: true });
+    const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
+    await mkdir(join(parentRun, "session"), { recursive: true });
 
     let calls = 0;
+    let allowResume = false;
     const summon = async (options: {
       readonly role: "navigator";
       readonly argv: readonly string[];
@@ -229,12 +223,11 @@ test("#959 principal absence on resume may mint once", async () => {
       readonly resumeRunId?: string;
     }): Promise<PublicSummonResult> => {
       calls += 1;
-      if (options.resumeRunId !== undefined) {
-        return {
-          exitCode: 2,
-          stderr: `role run Pi session principal is unavailable: ${options.resumeRunId}`,
-        };
-      }
+      assert.equal(
+        options.resumeRunId,
+        undefined,
+        "when preflight says non-resumable, summon must mint without resumeRunId",
+      );
       const runDirectory = calls === 1 ? firstDir : mintedDir;
       return {
         exitCode: 0,
@@ -248,10 +241,13 @@ test("#959 principal absence on resume may mint once", async () => {
       };
     };
 
-    const session = await createNativeNavigatorSessionFactory({ summonPublicRole: summon })({
+    const session = await createNativeNavigatorSessionFactory({
+      summonPublicRole: summon,
+      hostRunResumable: async () => allowResume,
+    })({
       context: {
         cwd: root,
-        runDirectory: join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder"),
+        runDirectory: parentRun,
       } as never,
       subject: "/work/subject-absent",
       tool: {
@@ -262,12 +258,15 @@ test("#959 principal absence on resume may mint once", async () => {
       } as never,
     });
 
+    allowResume = false;
     await session.prompt("first-mint");
     assert.equal(calls, 1);
     assert.equal(readNavigatorHostRunPointer(session.entries() as readonly unknown[]), "01navfirst");
 
+    // Pinned run is no longer resumable (typed preflight false) → one fresh mint.
+    allowResume = false;
     await session.prompt("after-absence");
-    assert.equal(calls, 3, "resume absence + one fresh mint");
+    assert.equal(calls, 2, "non-resumable preflight → single fresh mint");
     assert.equal(readNavigatorHostRunPointer(session.entries() as readonly unknown[]), "01navminted");
     await session.dispose();
   });
