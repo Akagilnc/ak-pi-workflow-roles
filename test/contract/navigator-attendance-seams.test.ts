@@ -169,16 +169,13 @@ test("prepare provider schema admits object-root free-form through real Tool val
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
-      const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-      while (harness.tool() === undefined || harness.prompts() < 1) await new Promise<void>((resolve) => setImmediate(resolve));
-      const usableArgs = { prose: "下一步送 fixer apply" };
-      const validated = validateToolArguments(harness.tool() as never, {
-        id: "live-prose",
-        name: NAVIGATOR_PREPARE_TOOL_NAME,
-        arguments: structuredClone(usableArgs) } as never);
-      await harness.tool().execute("live-prose", validated as never, undefined, undefined, {} as never);
-      harness.release();
-      await waiting;
+      await settleWithAdvice(
+        nav,
+        harness,
+        { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
+        { prose: "下一步送 fixer apply" },
+        "live-prose",
+      );
       assert.equal(events[0]?.disposition, "advice");
       assert.equal(events[0]?.prose, "下一步送 fixer apply");
     }
@@ -189,15 +186,13 @@ test("prepare provider schema admits object-root free-form through real Tool val
       const events: any[] = [];
       const nav = await attendance(setting, harness, events, undefined, root);
       nav.prepare();
-      const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-      while (harness.tool() === undefined || harness.prompts() < 1) await new Promise<void>((resolve) => setImmediate(resolve));
-      const validated = validateToolArguments(harness.tool() as never, {
-        id: "empty",
-        name: NAVIGATOR_PREPARE_TOOL_NAME,
-        arguments: {} } as never);
-      await harness.tool().execute("empty", validated as never, undefined, undefined, {} as never);
-      harness.release();
-      await waiting;
+      await settleWithAdvice(
+        nav,
+        harness,
+        { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
+        {},
+        "empty",
+      );
       assert.equal(events.length, 1);
       assert.equal(events[0]?.disposition, "no-advice");
     }
@@ -230,7 +225,8 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
       assert.equal(events[0].disposition, "advice");
       assert.equal(events[0].prose, "下一步送 fixer apply");
       assert.equal(harness.retainedContext()?.currentSettlement?.kind, "accepted");
-      assert.equal(harness.prompts(), 1, "one settlement-bound advice prompt");
+      // early ready-wait + settlement feed output
+      assert.equal(harness.prompts(), 2, "early prepare then settlement-fed output");
     }
 
     {
@@ -382,19 +378,19 @@ test("#959 package does not keep a prior-advice ledger; host session owns contin
     assert.equal(events[0]?.disposition, "advice");
 
     nav.prepare();
-    const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    while (harness.prompts() < 2 || harness.tool() === undefined) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
+    await settleWithAdvice(
+      nav,
+      harness,
+      { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
+      { prose: "第二次建议" },
+      "second-advice",
+    );
     const context = harness.retainedContext();
     assert.equal(
       "priorAdvice" in (context ?? {}),
       false,
       "package must not project a prior-advice field",
     );
-    await harness.tool().execute("second-advice", { prose: "第二次建议" }, undefined, undefined, {} as never);
-    harness.release();
-    await waiting;
 
     assert.equal(events[1]?.disposition, "advice");
     assert.equal(

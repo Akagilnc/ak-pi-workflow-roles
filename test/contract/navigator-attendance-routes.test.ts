@@ -79,12 +79,15 @@ test("#959 arrival books settlement on an existing nest without re-prompting", a
     const harness = sessionHarness();
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, undefined, root);
-    // Warm creates the nest; arrival must book on it without a second advice prompt.
+    // Early prepare opens the nest; finish ready-wait, then arrival books without a feed prompt.
     nav.prepare();
-    while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
+    while (harness.prompts() < 1) await new Promise<void>((resolve) => setImmediate(resolve));
+    harness.release();
+    for (let i = 0; i < 40; i += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+    const promptsBeforeArrival = harness.prompts();
     await nav.settle({ kind: "arrival", role: "lander", phase: null, message: "抵达" });
     assert.equal(events[0]?.disposition, "arrival");
-    assert.equal(harness.prompts(), 0, "arrival must not run the advice prompt");
+    assert.equal(harness.prompts(), promptsBeforeArrival, "arrival must not run a settlement feed prompt");
     const settlementEntry = harness.entries.find((entry: any) => entry.customType === "ak-navigator-settlement") as any;
     assert.equal(settlementEntry?.data?.kind, "arrival");
     assert.equal(settlementEntry?.data?.role, "lander");
@@ -247,8 +250,9 @@ test("attendance dispose settles session close rejection on the caller", async (
         onEvent: async () => {},
       });
       nav.prepare();
-      const settleP = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       await prompted;
+      // Early ready-wait is in flight; dispose during parent-end settle path.
+      const settleP = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       await assert.rejects(
         () => Promise.resolve(nav.dispose()),
         (error: unknown) => error === closeBoom,

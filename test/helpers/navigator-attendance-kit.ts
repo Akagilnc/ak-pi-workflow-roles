@@ -113,9 +113,22 @@ export async function attendance(
   });
 }
 
+/** Release the current in-flight prompt gate (early ready-wait has no final advice body). */
+async function releaseInFlightPrompt(harness: ReturnType<typeof sessionHarness>): Promise<void> {
+  const before = harness.prompts();
+  // Prompt may already be parked on the release gate.
+  for (let i = 0; i < 20 && harness.prompts() < before + 1; i += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  harness.release();
+  for (let i = 0; i < 40; i += 1) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
 /**
- * #959: unique advice runs after settle binds currentSettlement. Warm prepare()
- * creates the session; settle starts the one prompt. Execute+release during settle.
+ * #959: early prepare() runs the host round from parent start (ready and wait);
+ * settle feeds currentSettlement and takes the output prompt.
  */
 export async function settleWithAdvice(
   nav: Awaited<ReturnType<typeof attendance>>,
@@ -124,6 +137,22 @@ export async function settleWithAdvice(
   body: unknown = proseAdvice(),
   toolCallId = "prepare",
 ): Promise<void> {
+  // Finish early ready-wait if prepare() already opened a host prompt.
+  if (nav.isPreparing() || harness.prompts() > 0) {
+    const before = harness.prompts();
+    await releaseInFlightPrompt(harness);
+    // If prepare had not yet opened a prompt, settle path will open the feed prompt alone.
+    if (harness.prompts() === before && nav.isPreparing()) {
+      // Wait until early prompt exists, then release.
+      for (let i = 0; i < 50 && harness.prompts() === before; i += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+      harness.release();
+      for (let i = 0; i < 40; i += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    }
+  }
   const targetPrompts = harness.prompts() + 1;
   const waiting = nav.settle(settlement as never);
   while (harness.prompts() < targetPrompts || harness.tool() === undefined) {

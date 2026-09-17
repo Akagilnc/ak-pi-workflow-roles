@@ -330,11 +330,129 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   };
   let routePlaybookSettlement: Promise<void> | undefined;
   /**
-   * Settlement that the unique advice prompt must see. Early prepare() warms
-   * session/materials only; settleOnce sets this and runs one bound prompt.
-   * No speculative advice, no candidates/next parse, no second rebind ranking.
+   * Settlement fed for the output prompt. Early prepare() runs the host round
+   * from parent start (ready and wait); settleOnce feeds currentSettlement and
+   * lets navigator speak. No candidates/next parse (owner 2026-09-17 #959).
    */
   let prepareBoundSettlement: NavigatorSettlement | undefined;
+  /** Materials + session only — no host prompt (cold settle book-before-feed). */
+  let preparedMaterials: {
+    soul: string;
+    routePlaybook: string;
+    helpContext: string;
+    modelSetting: string;
+    model: ReturnType<typeof parseNavigatorModelSetting>;
+    help: Array<{ role: NavigatorTargetRole; help: string }>;
+  } | undefined;
+  const loadMaterialsAndSession = async (invocationId: string): Promise<{
+    soul: string;
+    routePlaybook: string;
+    helpContext: string;
+    modelSetting: string;
+    model: ReturnType<typeof parseNavigatorModelSetting>;
+    help: Array<{ role: NavigatorTargetRole; help: string }>;
+    activeSession: NavigatorPreparationSession;
+  }> => {
+    if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
+    if (typeof authority !== "string" || authority.trim() === "") {
+      throw navigatorUnavailableError(
+        "context",
+        new Error("controlling authority content was not supplied as typed work context"),
+      );
+    }
+    let soul: string;
+    let modelSetting: string;
+    let help: Array<{ role: NavigatorTargetRole; help: string }>;
+    let routePlaybook = "";
+    routePlaybookReadFailure = undefined;
+    const soulPromise = (async () => {
+      try {
+        const text = (await options.loadSoul()).trim();
+        if (!text) throw new Error("Navigator soul is empty");
+        return text;
+      } catch (error) {
+        throw navigatorUnavailableError("context", error);
+      }
+    })();
+    const routePlaybookPromise = (async () => {
+      if (options.loadRoutePlaybook === undefined) return "";
+      try {
+        return await options.loadRoutePlaybook();
+      } catch (error) {
+        routePlaybookReadFailure = error instanceof Error ? error.message : String(error);
+        return "";
+      }
+    })();
+    routePlaybookSettlement = routePlaybookPromise.then(() => undefined);
+    const modelPromise = (async () => {
+      try {
+        const resolved = await resolveNavigatorSeatSelection(options.context);
+        return resolved.configuredLabel;
+      } catch (error) {
+        if (error instanceof NavigatorUnavailableError) throw error;
+        throw navigatorUnavailableError("model", error);
+      }
+    })();
+    const helpPromise = warmedHelp ?? loadLiveHelp();
+    warmedHelp = undefined;
+    [soul, routePlaybook, modelSetting, help] = await Promise.all([
+      soulPromise,
+      routePlaybookPromise,
+      modelPromise,
+      helpPromise,
+    ]);
+    let model: ReturnType<typeof parseNavigatorModelSetting>;
+    try {
+      model = parseNavigatorModelSetting(modelSetting);
+    } catch (error) {
+      throw navigatorUnavailableError("model", error);
+    }
+    const helpContext = help.map(({ role, help: text }) => `<role_help role="${role}">\n${text}\n</role_help>`).join("\n");
+    const tool = createNavigatorPrepareTool((value) => { outputSink?.(value); });
+    if (session === undefined) {
+      sessionReady = (async () => {
+        let created: NavigatorPreparationSession;
+        try {
+          created = await options.createSession({
+            context: options.context,
+            subject: subjectKey,
+            ...(options.modelSettingPath === undefined ? {} : { modelSettingPath: options.modelSettingPath }),
+            tool,
+          });
+        } catch (error) {
+          throw navigatorUnavailableError("session", error);
+        }
+        if (disposed) {
+          await created.dispose();
+          throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+        }
+        try {
+          await created.setModel?.(modelSetting, model.thinkingLevel);
+          if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+          created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+          if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+          session = created;
+          return created;
+        } catch (error) {
+          if (session !== created) await created.dispose();
+          throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
+        }
+      })();
+      await sessionReady;
+      sessionReady = undefined;
+    } else {
+      try {
+        await session.setModel?.(modelSetting, model.thinkingLevel);
+      } catch (error) {
+        throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
+      }
+      session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
+    }
+    if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
+    if (session === undefined) throw new Error("Navigator session was not created");
+    preparedMaterials = { soul, routePlaybook, helpContext, modelSetting, model, help };
+    return { soul, routePlaybook, helpContext, modelSetting, model, help, activeSession: session };
+  };
   const prepare = async (): Promise<string | undefined> => {
     // Exact principal is owned by shared lifecycle (or one mint per attendance).
     // Model/tool/advice paths cannot override it; role-session persistence is
@@ -343,131 +461,20 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     prepareBoundSettlement = undefined;
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
-    if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
-    if (typeof authority !== "string" || authority.trim() === "") {
-      throw navigatorUnavailableError(
-        "context",
-        new Error("controlling authority content was not supplied as typed work context"),
-      );
-    }
-
-      // Load soul / model setting / live help in parallel. Live help is N pi --help
-      // subprocesses; serializing it behind session create used to blow the post-role
-      // grace under load (ENOENT / unavailable flake). Session create still follows
-      // context load so tool registration and prompt stay one readiness step.
-      let soul: string;
-      let modelSetting: string;
-      let help: Array<{ role: NavigatorTargetRole; help: string }>;
-      let routePlaybook = "";
-      routePlaybookReadFailure = undefined;
-      const soulPromise = (async () => {
-        try {
-          const text = (await options.loadSoul()).trim();
-          if (!text) throw new Error("Navigator soul is empty");
-          return text;
-        } catch (error) {
-          // Contract: README.md#Navigator-attendance — context-loading failures become typed unavailable reports while retaining the original cause.
-          throw navigatorUnavailableError("context", error);
-        }
-      })();
-      const routePlaybookPromise = (async () => {
-        if (options.loadRoutePlaybook === undefined) return "";
-        try {
-          return await options.loadRoutePlaybook();
-        } catch (error) {
-          routePlaybookReadFailure = error instanceof Error ? error.message : String(error);
-          return "";
-        }
-      })();
-      // Preparation is fail-fast for its primary dependencies, but settlement
-      // independently drains this optional diagnostic before emitting attendance.
-      routePlaybookSettlement = routePlaybookPromise.then(() => undefined);
-      const modelPromise = (async () => {
-        try {
-          // Same resolution authority as createNativeNavigatorSessionFactory (#590).
-          const resolved = await resolveNavigatorSeatSelection(options.context);
-          return resolved.configuredLabel;
-        } catch (error) {
-          if (error instanceof NavigatorUnavailableError) throw error;
-          throw navigatorUnavailableError("model", error);
-        }
-      })();
-      // Prefer one-shot warm from session_start; clear so the next prepare reloads live.
-      const helpPromise = warmedHelp ?? loadLiveHelp();
-      warmedHelp = undefined;
-      [soul, routePlaybook, modelSetting, help] = await Promise.all([
-        soulPromise,
-        routePlaybookPromise,
-        modelPromise,
-        helpPromise,
-      ]);
-
-      let model: ReturnType<typeof parseNavigatorModelSetting>;
-      try {
-        model = parseNavigatorModelSetting(modelSetting);
-      } catch (error) {
-        throw navigatorUnavailableError("model", error);
+    let output: PrepareOutput | undefined;
+    let prepareBatchRejected = false;
+    outputSink = (value) => {
+      // #836: extra prepare calls keep the first prose; later calls append as more prose.
+      if (output === undefined) {
+        output = value;
+        return;
       }
-      const helpContext = help.map(({ role, help: text }) => `<role_help role="${role}">\n${text}\n</role_help>`).join("\n");
-      let output: PrepareOutput | undefined;
-      let prepareBatchRejected = false;
-      outputSink = (value) => {
-        // #836: extra prepare calls keep the first prose; later calls append as more prose.
-        if (output === undefined) {
-          output = value;
-          return;
-        }
-        const prior = normalizePrepareProse(output) ?? "";
-        const next = normalizePrepareProse(value) ?? "";
-        const merged = [prior, next].filter((part) => part.trim() !== "").join("\n\n");
-        output = { prose: merged };
-      };
-      const tool = createNavigatorPrepareTool((value) => { outputSink?.(value); });
-      if (session === undefined) {
-        sessionReady = (async () => {
-          let created: NavigatorPreparationSession;
-          try {
-            created = await options.createSession({ context: options.context, subject: subjectKey, ...(options.modelSettingPath === undefined ? {} : { modelSettingPath: options.modelSettingPath }), tool });
-          } catch (error) {
-            throw navigatorUnavailableError("session", error);
-          }
-          if (disposed) {
-            await created.dispose();
-            throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-          }
-          try {
-            await created.setModel?.(modelSetting, model.thinkingLevel);
-            if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-            created.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
-            if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-            session = created;
-            return created;
-          } catch (error) {
-            if (session !== created) await created.dispose();
-            throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
-          }
-        })();
-        await sessionReady;
-        sessionReady = undefined;
-      } else {
-        try {
-          await session.setModel?.(modelSetting, model.thinkingLevel);
-        } catch (error) {
-          // Contract: README.md#Navigator-attendance — resumed-session configuration failures remain typed unavailable and retain the original cause.
-          throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("session", error);
-        }
-        session.appendEntry(INVOCATION_ENTRY, { invocationId, role: options.role, phase: options.phase, subjectKey });
-      }
-      if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
-      const activeSession = session;
-      if (activeSession === undefined) throw new Error("Navigator session was not created");
-      // #959: early prepare() warms session/materials only. Unique advice runs once
-      // after settleOnce binds the just-completed settlement — no speculative prose.
-      if (boundSettlement === undefined) {
-        outputSink = undefined;
-        preparedProse = undefined;
-        return undefined;
-      }
+      const prior = normalizePrepareProse(output) ?? "";
+      const next = normalizePrepareProse(value) ?? "";
+      const merged = [prior, next].filter((part) => part.trim() !== "").join("\n\n");
+      output = { prose: merged };
+    };
+    const { soul, routePlaybook, helpContext, help, activeSession } = await loadMaterialsAndSession(invocationId);
       const publicSettlementHistory = activeSession.entries()
         .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data))
         .map((entry) => entry.data as NavigatorSettlementFact);
@@ -477,24 +484,39 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         subject,
         authority,
         currentRole: { role: options.role, phase: options.phase },
-        currentSettlement: boundSettlement,
+        ...(boundSettlement === undefined ? {} : { currentSettlement: boundSettlement }),
         publicSettlementHistory,
         liveRoleHelp: help,
       };
       activeSession.appendEntry(CONTEXT_ENTRY, projection);
-      const request = [
-        "本次导航材料如下：",
-        `<navigator_soul>\n${soul}\n</navigator_soul>`,
-        ...(routePlaybookReadFailure === undefined
-          ? [`<route_playbook>\n${routePlaybook}\n</route_playbook>`]
-          : ["可选路线手册未能读取。"]),
-        `<work_subject>\n${subject}\n</work_subject>`,
-        `<controlling_authority>\n${authority}\n</controlling_authority>`,
-        `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
-        `<current_settlement>\n${JSON.stringify(boundSettlement)}\n</current_settlement>`,
-        `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
-        `<live_role_help>\n${helpContext}\n</live_role_help>`,
-      ].join("\n\n");
+      // Early (parent start): full host round — ready and wait. Settlement-bound:
+      // feed the result and let navigator speak (owner 2026-09-17 #959).
+      const request = boundSettlement === undefined
+        ? [
+          "父衙门进行中。请在本宿主会话熟悉下列材料并待命；结算结果送达后，再给出下一步建议。本轮不要提交最终路线建议。",
+          `<navigator_soul>\n${soul}\n</navigator_soul>`,
+          ...(routePlaybookReadFailure === undefined
+            ? [`<route_playbook>\n${routePlaybook}\n</route_playbook>`]
+            : ["可选路线手册未能读取。"]),
+          `<work_subject>\n${subject}\n</work_subject>`,
+          `<controlling_authority>\n${authority}\n</controlling_authority>`,
+          `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
+          `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
+          `<live_role_help>\n${helpContext}\n</live_role_help>`,
+        ].join("\n\n")
+        : [
+          "父衙门结算已送达。请根据下列材料给出下一步建议。",
+          `<navigator_soul>\n${soul}\n</navigator_soul>`,
+          ...(routePlaybookReadFailure === undefined
+            ? [`<route_playbook>\n${routePlaybook}\n</route_playbook>`]
+            : ["可选路线手册未能读取。"]),
+          `<work_subject>\n${subject}\n</work_subject>`,
+          `<controlling_authority>\n${authority}\n</controlling_authority>`,
+          `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
+          `<current_settlement>\n${JSON.stringify(boundSettlement)}\n</current_settlement>`,
+          `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
+          `<live_role_help>\n${helpContext}\n</live_role_help>`,
+        ].join("\n\n");
       try {
         try {
           if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
@@ -536,28 +558,33 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             if (deliveryRequest && output === undefined) delivery.recordDeliveryRequest();
           };
           await promptAllowingRejectedPrepare(request, false);
-          // #959: no typed-tool 催交 for missing prose. Continue only after a
-          // rejected prepare while budget remains (correction).
-          while (output === undefined && prepareBatchRejected && delivery.nextAction() === "request-delivery") {
-            await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
-          }
-          // No prepare tool output: exhaust budget silently (no 催交 prompt) so
-          // no_receipt facts stay lawful — mirrors role-runtime navigator exit.
-          if (output === undefined && delivery.nextAction() === "request-delivery") {
-            while (delivery.nextAction() === "request-delivery") {
-              delivery.recordDeliveryRequest();
+          // Bound output only: correction after rejected prepare. Early ready-wait
+          // does not 催交 final advice (owner: prepare then wait for settlement feed).
+          if (boundSettlement !== undefined) {
+            while (output === undefined && prepareBatchRejected && delivery.nextAction() === "request-delivery") {
+              await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
             }
-          }
-          if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
-            const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
-            activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
-            preparedProse = undefined;
-            return undefined;
+            if (output === undefined && delivery.nextAction() === "request-delivery") {
+              while (delivery.nextAction() === "request-delivery") {
+                delivery.recordDeliveryRequest();
+              }
+            }
+            if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
+              const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
+              activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+              preparedProse = undefined;
+              return undefined;
+            }
           }
         } catch (error) {
           throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
         }
         if (output === undefined) {
+          // Early host round: ready and wait — no final prose until settlement is fed.
+          if (boundSettlement === undefined) {
+            preparedProse = undefined;
+            return undefined;
+          }
           const nativeFailure = [...activeSession.entries()].reverse().find((entry: unknown) => {
             if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)) return false;
             return entry.message.role === "assistant" && typeof entry.message.errorMessage === "string" && entry.message.errorMessage.trim() !== "";
@@ -572,6 +599,11 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const source = providerFailure?.source ?? "unknown";
           const cause = providerFailure?.cause ?? source;
           throw navigatorUnavailableError(source, errorMessage, cause);
+        }
+        // Early tool/prose is not final advice — discard; settlement feed owns output.
+        if (boundSettlement === undefined) {
+          preparedProse = undefined;
+          return undefined;
         }
         preparedProse = normalizePrepareProse(output);
         return preparedProse;
@@ -640,8 +672,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       if (disposed) return;
       const invocationId = activeInvocationId ?? invocationPrincipal;
       let report: NavigatorReport;
-      // Drain in-flight warm prepare so the next driver cannot start a second
-      // session create on the same attendance. Warm returns no prose.
+      // Drain in-flight early prepare (parent-start host round: ready and wait).
+      // Then feed settlement for the output prompt on the same host session.
       if (sessionReady !== undefined) {
         try { await sessionReady; } catch (error) { preparationFailure ??= error; }
       }
@@ -663,17 +695,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           ? { status: settlement.status }
           : {}),
       };
-      // Book settlement on an existing nest for every kind (including arrival).
       // Arrival is presentation-only: never start soul/model/help/session just to book.
-      // Non-arrival advice still ensures a session before the unique bound prompt.
-      if (settlement.kind !== "arrival" && session === undefined && preparationFailure === undefined) {
-        preparation = prepare();
-        try { await preparation; } catch (error) { preparationFailure ??= error; }
-        preparation = undefined;
-      }
-      session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
       let drainedProse: string | undefined;
       if (settlement.kind === "arrival") {
+        session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
         if (preparationFailure !== undefined) {
           report = unavailable(invocationId, preparationFailure);
         } else {
@@ -683,10 +708,19 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           };
         }
       } else {
-        // Unique advice after the current settlement is known. Clear warm-path
-        // failure only when a session already exists so bound prepare can run;
-        // hard warm failures (no session) stay typed unavailable.
+        // Feed settlement; navigator speaks. Clear early-path failure only when a
+        // session already exists so the output prompt can run (owner: 准备好了就等着，
+        // 结果出来喂给它让它自己输出).
         if (session !== undefined) preparationFailure = undefined;
+        // Cold settle: materials+session only (no unbound host prompt), then book + feed.
+        if (session === undefined && preparationFailure === undefined) {
+          try {
+            await loadMaterialsAndSession(invocationId);
+          } catch (error) {
+            preparationFailure = error;
+          }
+        }
+        session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
         if (preparationFailure === undefined) {
           prepareBoundSettlement = settlement;
           preparation = prepare();

@@ -855,8 +855,8 @@ test("withPhysicalAliasFixture removes root and rethrows original unlink error",
   await assertPathGone(aliasRoot);
 });
 
-test("raceNavigatorGrace uses production grace and yields timeout sentinel", async () => {
-  assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 60_000);
+test("raceNavigatorGrace is ten seconds and yields timeout sentinel", async () => {
+  assert.equal(NAVIGATOR_POST_ROLE_GRACE_MS, 10_000);
 
   // Timeout path: production default grace + deferred sleep (no wall clock, no short override).
   let capturedDelay: number | undefined;
@@ -883,14 +883,14 @@ test("raceNavigatorGrace uses production grace and yields timeout sentinel", asy
   await Promise.resolve();
   await Promise.resolve();
 
-  assert.equal(capturedDelay, 60_000);
+  assert.equal(capturedDelay, 10_000);
   assert.equal(raceResolved, false);
 
   releaseTimer();
   assert.deepEqual(await pendingRace, { status: "timeout" });
   assert.equal(raceResolved, true);
 
-  // Early completion while deferred timer stays unreleased: grace is a maximum, not a fixed delay.
+  // Early completion while deferred timer stays unreleased: 10s is a maximum, not a fixed delay.
   let holdEarlyTimer!: () => void;
   const earlyTimerHeld = new Promise<void>((resolve) => {
     holdEarlyTimer = resolve;
@@ -899,7 +899,7 @@ test("raceNavigatorGrace uses production grace and yields timeout sentinel", asy
     Promise.resolve("ok"),
     NAVIGATOR_POST_ROLE_GRACE_MS,
     async (ms) => {
-      assert.equal(ms, 60_000);
+      assert.equal(ms, 10_000);
       await earlyTimerHeld;
     },
   );
