@@ -1732,7 +1732,15 @@ test("default dual-lens from subdirectory rebinds caller project and deletes eph
       const admitted = JSON.parse(
         await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
       ) as { projectRoot: string; baseRevision: string; lens: string };
+      const runState = JSON.parse(
+        await readFile(join(runDirectory, "run-state.json"), "utf8"),
+      ) as { projectRoot: string };
+      const invocation = JSON.parse(
+        await readFile(join(runDirectory, "invocation.json"), "utf8"),
+      ) as { projectRoot: string };
       assert.equal(realpathSync(admitted.projectRoot), callerProjectRoot);
+      assert.equal(realpathSync(runState.projectRoot), callerProjectRoot);
+      assert.equal(realpathSync(invocation.projectRoot), callerProjectRoot);
       assert.equal(admitted.baseRevision, "HEAD~1");
       assert.ok(admitted.lens === "completeness" || admitted.lens === "correctness");
     }

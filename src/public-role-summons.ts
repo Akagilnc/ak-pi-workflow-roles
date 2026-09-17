@@ -619,13 +619,18 @@ async function rebindDualLensChildProjectRoot(
   callerProjectRoot: string,
 ): Promise<PublicSummonResult> {
   if (result.runDirectory === undefined) return result;
-  // Resume loads projectRoot from run-state first; admitted-request must match.
+  // Resume loads projectRoot from run-state; admitted-request and invocation are
+  // the other durable identity pages and must match the caller project (10a).
   await rewriteProjectRootPage(
     join(result.runDirectory, "run-state.json"),
     callerProjectRoot,
   );
   await rewriteProjectRootPage(
     join(result.runDirectory, "admitted-request.json"),
+    callerProjectRoot,
+  );
+  await rewriteProjectRootPage(
+    join(result.runDirectory, "invocation.json"),
     callerProjectRoot,
   );
   if (result.admitted === undefined) return result;
