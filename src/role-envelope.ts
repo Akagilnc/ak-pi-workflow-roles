@@ -141,20 +141,32 @@ export async function prepareRoleEnvelope(options: {
   }
   // Settlement reads the durable file after the turn; write must complete before
   // closeRound returns. Sync-order via chained promise kept on the envelope.
+  // Chain itself never rejects (so closeRound/dispose stay orderly); each append
+  // failure is logged on stderr with the customType so the true cause is not lost
+  // when attendance/invocation only live on this file (#959 失败诚实).
   let durableWriteChain: Promise<void> = Promise.resolve();
   /** Append one package-owned session entry to the durable principal (fire-and-order). */
   const persistPackageSessionEntry = (entry: Record<string, unknown>): void => {
+    const customType = typeof entry.customType === "string" ? entry.customType : "unknown";
     const line = `${JSON.stringify({
       ...entry,
       id: typeof entry.id === "string" ? entry.id : randomUUID(),
       timestamp: typeof entry.timestamp === "string" ? entry.timestamp : new Date().toISOString(),
     })}\n`;
-    durableWriteChain = durableWriteChain
-      .then(() => appendFile(sessionFile, line, "utf8"))
-      .catch(() => {
-        // Durable bookkeeping is best-effort relative to the role turn; settlement
-        // still has submission-ledger. Do not mask the turn result.
-      });
+    durableWriteChain = durableWriteChain.then(async () => {
+      try {
+        await appendFile(sessionFile, line, "utf8");
+      } catch (error) {
+        const diagnostic = error instanceof Error ? error.message : String(error);
+        try {
+          process.stderr.write(
+            `ak-role: durable session entry flush failed (${customType}): ${diagnostic}\n`,
+          );
+        } catch {
+          // stderr itself failed — nothing further without masking the turn.
+        }
+      }
+    });
   };
   const context: HostContext = {
     cwd: request.cwd,
@@ -527,11 +539,8 @@ export async function prepareRoleEnvelope(options: {
     if (disposed) return;
     disposed = true;
     const cleanupFailures: unknown[] = [];
-    try {
-      await durableWriteChain;
-    } catch {
-      // Best-effort drain of package session flushes before teardown.
-    }
+    // Chain never rejects (failures already logged at append); drain ordered writes.
+    await durableWriteChain;
     try {
       await emit("session_shutdown", {});
     } catch (error) {

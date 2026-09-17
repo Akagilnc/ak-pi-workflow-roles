@@ -20,22 +20,12 @@ import { acpModelId, type AcpHostDescription } from "./description.ts";
 /**
  * #959: collect free-form agent text from ACP session/update stream.
  * Used only when the navigator seat spoke prose without calling the output tool.
- * Thought/reasoning chunks are never receipt prose.
+ * ACP agent speech is only agent_message / agent_message_chunk — never user,
+ * thought, or other *_message kinds (load replay must not poison the bucket).
  */
 function acpAgentTextChunk(params: Readonly<Record<string, unknown>>): string | undefined {
   const update = params.sessionUpdate ?? params.update;
-  if (typeof update !== "string") return undefined;
-  if (update.includes("thought") || update.includes("reasoning")) return undefined;
-  // Accept agent message kinds; reject other session/update types.
-  if (
-    update !== "agent_message_chunk"
-    && update !== "agent_message"
-    && update !== "message"
-    && !update.endsWith("_message_chunk")
-    && !update.endsWith("_message")
-  ) {
-    return undefined;
-  }
+  if (update !== "agent_message_chunk" && update !== "agent_message") return undefined;
   const content = params.content;
   if (typeof content === "string" && content.length > 0) return content;
   if (typeof content === "object" && content !== null && !Array.isArray(content)) {
@@ -255,12 +245,17 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       ): Promise<Readonly<Record<string, unknown>>> =>
         raceAgainstHostAbort(connection!.request(method, params), recordAbort.signal, "host-session-record-failed");
 
-      // #959: accumulate navigator free-form agent text across the prompt stream.
+      // #959: navigator free-form agent text — only while session/prompt is in flight.
+      // session/load replays history via session/update; those must not enter the bucket
+      // (resume / set_model load would otherwise prepend prior turns as "this turn" prose).
       const agentProseChunks: string[] = [];
+      let collectAgentProse = false;
       connection.onNotification?.((method, params) => {
         if (method !== "session/update" || hostSessionRecordFailure !== undefined) return;
-        const chunk = acpAgentTextChunk(params);
-        if (chunk !== undefined) agentProseChunks.push(chunk);
+        if (collectAgentProse) {
+          const chunk = acpAgentTextChunk(params);
+          if (chunk !== undefined) agentProseChunks.push(chunk);
+        }
         try {
           reportHostSessionEvent({
             host: config.hostName,
@@ -345,6 +340,9 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             if (abortSignal !== undefined) abortParts.push(abortSignal);
             const combinedAbort = AbortSignal.any(abortParts);
             let result: Readonly<Record<string, unknown>>;
+            // Open the prose gate only for this prompt round; clear any stale chunks first.
+            agentProseChunks.length = 0;
+            collectAgentProse = prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME;
             try {
               result = await raceAgainstHostAbort(
                 activeConnection.request("session/prompt", {
@@ -355,12 +353,16 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
                 "ACP host aborted",
               );
             } catch (error) {
+              collectAgentProse = false;
+              agentProseChunks.length = 0;
               if (hostSessionRecordFailure !== undefined) {
                 return { status: "terminal", result: hostSessionRecordResult() };
               }
               throw error;
             }
+            collectAgentProse = false;
             if (result.stopReason === "refusal") {
+              agentProseChunks.length = 0;
               return {
                 status: "terminal",
                 result: failure("output", "AcpRefusal", "refusal", { sessionId }),
@@ -370,9 +372,11 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             // Tool path still wins via MCP; ingest is a no-op once the tool already sealed.
             if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
               const prose = agentProseChunks.join("").trim();
+              agentProseChunks.length = 0;
               if (prose !== "") {
                 await prepared.ingestStructuredOutput({ prose });
               }
+            } else {
               agentProseChunks.length = 0;
             }
             return { status: "delivered", stderr: activeConnection.stderr?.() ?? "" };
