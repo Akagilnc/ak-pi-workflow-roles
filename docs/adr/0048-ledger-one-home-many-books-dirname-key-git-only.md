@@ -3,5 +3,3 @@
 Status: accepted
 
 候簿集中在包所有的机器级一家，session 直接写进家、不设归档搬运；分簿键是 git common dir 宿主目录的 basename，非 git 目录点火即响亮拒绝。
-
-无模型 run 没有宿主 session 可直写；共享 run 生命周期在同一候簿坐标建立 typed 无模型卷宗主体。产品接缝不得创建空 session 文件冒充宿主誊本。

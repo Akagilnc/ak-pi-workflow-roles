@@ -1,17 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
-import { admitJudgeInvocation } from "../../src/public-cli/invocation.ts";
-import { dispatchPostAdmissionTurn } from "../../src/public-cli/post-admission.ts";
-import { acquireRunWriterLease, isDurablePrincipalAvailable, markRunAdmitted } from "../../src/public-cli/run-lifecycle.ts";
-import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 import type {
   RoleTurnHost,
@@ -19,7 +15,6 @@ import type {
   RoleTurnResult,
 } from "../../src/host-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 
 /**
@@ -129,94 +124,4 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
       "converged",
     );
     });
-});
-
-test("shared lifecycle owns a non-Reviewer model-less principal and dossier", async () => {
-  await withTempRoot("ak-model-less-lifecycle-", async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    execFileSync("git", ["init", "-b", "main"], { cwd: project });
-    execFileSync("git", ["config", "user.email", "cli@test.local"], { cwd: project });
-    execFileSync("git", ["config", "user.name", "CLI Test"], { cwd: project });
-    execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: project });
-    const admitted = await admitJudgeInvocation({
-      home, cwd: project, instruction: "model-less shared run", attachmentPaths: [],
-      principalAuthority: piDurablePrincipalAuthority, createRunId: () => "model-less-judge",
-    });
-    await markRunAdmitted(admitted, piDurablePrincipalAuthority);
-    const lease = await acquireRunWriterLease(admitted.runDirectory);
-    const terminal: TerminalResult = {
-      roleOutcome: { kind: "accepted", role: "judge", payloads: [{ judgeStatus: "converged" }] },
-      navigator: { disposition: "no-advice" },
-      artifacts: [],
-      runId: admitted.runId,
-    };
-    const result = await dispatchPostAdmissionTurn({
-      admitted,
-      env: {
-        home, cwd: project, agentDir: join(home, ".pi", "agent"), packageRoot,
-        roleTurnHost: { async executeTurn() { return { code: 0, stderr: "", timedOut: false }; } },
-        principalAuthority: piDurablePrincipalAuthority,
-        sessionAppender: async () => {},
-      },
-      io: { stdout() {}, stderr() {} },
-      request: {
-        principal: admitted.principal,
-        activation: { role: "judge" }, methods: [], modelLess: true,
-        continuation: { kind: "initial", prompt: "" }, cwd: project, home,
-        agentDir: join(home, ".pi", "agent"), runDirectory: admitted.runDirectory,
-      },
-      lease,
-      adapters: { async trySettle() { return terminal; } },
-    });
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(await isDurablePrincipalAvailable(admitted.principal, piDurablePrincipalAuthority), true);
-    await access(join(admitted.runDirectory, "session", "model-less-run.json"));
-    await assert.rejects(
-      () => access(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-
-    let resumedModelLess = false;
-    const resumed = await runAkRole([
-      "resume", "--model", "test/caller-seat:high", admitted.runId,
-    ], {
-      packageRoot,
-      home,
-      cwd: project,
-      credentials: { "openai-codex": true, xai: true },
-      io: { stdout() {}, stderr() {} },
-      roleTurnHost: {
-        async executeTurn(request) {
-          resumedModelLess = request.modelLess === true;
-          await sealAcceptedSubmission({
-            cwd: project,
-            runId: admitted.runId,
-            runDirectory: admitted.runDirectory,
-            home,
-            role: "judge",
-            details: { judgeStatus: "converged", note: "model-less resume settled" },
-            toolCallId: "model-less-resume",
-          });
-          return { code: 0, stderr: "", timedOut: false };
-        },
-      },
-    });
-    assert.equal(resumed.exitCode, 0);
-    assert.equal(resumedModelLess, true);
-    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    const modelLessRecords = (await readFile(
-      join(admitted.runDirectory, "session", "model-less-records.jsonl"),
-      "utf8",
-    )).trim().split("\n");
-    assert.equal(modelLessRecords.length >= 1, true);
-    assert.equal(
-      (JSON.parse(modelLessRecords.at(-1)!) as { customType?: string }).customType,
-      "ak_run_attempt_history",
-    );
-    await assert.rejects(
-      () => access(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-  });
 });

@@ -25,7 +25,6 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { recordReviewerWorktreeOwnership } from "../../src/reviewer-worktree-lifecycle.ts";
-import { establishModelLessRunPrincipal } from "../../src/session-identity.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import {
@@ -798,8 +797,8 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         const childAdmitted = JSON.parse(
           await readFile(join(reportPath, "..", "..", "admitted-request.json"), "utf8"),
         ) as { correlationId?: string };
-        assert.equal(childInvocation.correlationId, "run-cli-reviewer-blank-ok");
-        assert.equal(childAdmitted.correlationId, "run-cli-reviewer-blank-ok");
+        assert.equal(childInvocation.correlationId, undefined);
+        assert.equal(childAdmitted.correlationId, undefined);
       }
 
       const bookKey = resolveBookKeyFromGit(project);
@@ -811,42 +810,18 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         "unbound", "runs",
         "run-cli-reviewer-blank-ok@reviewer",
       );
-      await access(join(runDirectory, "admitted-request.json"));
       await assert.rejects(
-        () => access(join(runDirectory, "task.md")),
+        () => access(join(runDirectory, "admitted-request.json")),
         (error: NodeJS.ErrnoException) => error.code === "ENOENT",
       );
       const projectEntries = await readdir(project);
       assert.deepEqual(
       projectEntries.includes("docs"), false);
       assert.equal(projectEntries.includes(".agents"), false);
-      // Durable parent report directly embeds both original child Terminals.
-      const completedReport = JSON.parse(
-        await readFile(join(runDirectory, "artifacts", "report.json"), "utf8"),
-      ) as {
-        role: string;
-        outcome?: {
-          kind?: string;
-          payloads?: ReadonlyArray<Record<string, unknown>>;
-        };
-      };
-      assert.equal(completedReport.role, "reviewer");
-      assert.equal(completedReport.outcome?.kind, "accepted");
-      assert.equal(completedReport.outcome?.payloads?.length, 2);
-      assert.deepEqual(completedReport.outcome?.payloads, [
-        result.terminal?.reviewerChildren?.completeness,
-        result.terminal?.reviewerChildren?.correctness,
-      ]);
-      assert.equal(
-        (await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state,
-        "terminal",
-      );
-      await access(join(runDirectory, "session", "model-less-run.json"));
-      await access(join(runDirectory, "session", "model-less-records.jsonl"));
-      await assert.rejects(
-        () => access(join(runDirectory, "session", "session.jsonl")),
-        (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-      );
+      assert.equal(result.terminal?.batch, "reviewer");
+      assert.equal(result.terminal?.roleOutcome.kind === "accepted"
+        ? result.terminal.roleOutcome.payloads?.length
+        : 0, 2);
     }
 
     // One summons exception must not discard the sibling's original Terminal.
@@ -1445,94 +1420,6 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         ? payloadStatusSequence(resumed.terminal.roleOutcome)
         : [],
       ["completed"],
-    );
-  });
-});
-
-
-test("default reviewer resume preserves the frozen dual-axis shape", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "work");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const linkedSource = join(home, "linked-source");
-    execFileSync("git", ["worktree", "add", "--detach", linkedSource, "HEAD"], { cwd: project });
-    const retainedRoot = await mkdtemp(join(tmpdir(), "ak-reviewer-lenses-"));
-    const retainedProject = join(retainedRoot, "completeness");
-    execFileSync("git", ["worktree", "add", "--detach", retainedProject, "HEAD"], { cwd: linkedSource });
-    const runId = "run-cli-reviewer-default-resume";
-    const admitted = await admitReviewerInvocationRaw({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: retainedProject,
-      instruction: "--opaque-resume-request",
-      attachmentPaths: [],
-      baseRevision: "main",
-      lens: "all",
-      authorityRefs: ["CLAUDE.md"],
-      createRunId: () => runId,
-    });
-    await establishModelLessRunPrincipal(piDurablePrincipalAuthority, admitted.principal);
-    await markRunAdmitted(admitted, piDurablePrincipalAuthority);
-    await markRunResumable(admitted.runDirectory, { httpStatus: 429, provider: "xai" });
-    await recordReviewerWorktreeOwnership(admitted.runDirectory, {
-      sourceProjectRoot: linkedSource,
-      worktreeRoot: retainedRoot,
-      projectRoot: retainedProject,
-    });
-    await access(retainedProject);
-
-    const lenses: string[] = [];
-    const dialogues: string[] = [];
-    const { io, stdout } = captureIo();
-    const resumed = await runAkRole([
-      "resume", "--model", "test/caller-seat:high", runId, "--opaque-current-message",
-    ], {
-      packageRoot,
-      home,
-      cwd: project,
-      io,
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-        packageRoot,
-        principalAuthority: piDurablePrincipalAuthority,
-        piRunner: async (args, options) => {
-          const lens = args[args.indexOf("--ak-review-lens") + 1] as "completeness" | "correctness";
-          lenses.push(lens);
-          dialogues.push(readUserDialogueStdin(options.stdin ?? ""));
-          const sessionFile = args[args.indexOf("--session") + 1]!;
-          await mkdir(join(sessionFile, ".."), { recursive: true });
-          const details = lawfulReviewerReceipt(lens);
-          await writeFile(sessionFile, `${JSON.stringify({
-            type: "message",
-            message: { role: "toolResult", toolCallId: `resume-${lens}`, toolName: REVIEWER_OUTPUT_TOOL_NAME, isError: false, details },
-          })}\n`, "utf8");
-          return {
-            code: 0,
-            sealedAcceptance: { role: "reviewer" as const, details, toolCallId: `resume-${lens}` },
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-      }),
-    });
-    assert.equal(resumed.exitCode, 0, stdout.join(""));
-    assert.deepEqual(lenses.sort(), ["completeness", "correctness"]);
-    assert.equal(dialogues.every((dialogue) => dialogue.includes("--opaque-current-message")), true);
-    assert.equal(dialogues.every((dialogue) => dialogue.includes("--opaque-resume-request")), true);
-    assert.equal(resumed.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
-    assert.equal(resumed.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
-    assert.equal(
-      (await readRoleRunState(admitted.runDirectory, piDurablePrincipalAuthority))?.state,
-      "terminal",
-    );
-    await assert.rejects(
-      () => access(retainedProject),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(retainedRoot),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
   });
 });

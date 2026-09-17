@@ -97,7 +97,6 @@ export type RoleTurnActivation =
       readonly packetPath: string;
       readonly prerequisitesPath?: string;
     }
-  | { readonly role: "reviewer-parent" }
   | {
       readonly role: "reviewer";
       readonly baseRevision: string;
@@ -197,8 +196,6 @@ export type RoleTurnRequest = {
    * and resume-with-message set this; bare resume without an open court omits it.
    */
   readonly courtAttemptId?: string;
-  /** Deterministic run with no host model session; shared lifecycle owns its dossier. */
-  readonly modelLess?: true;
   /**
    * Public-invocation scope (#537): one ak-role call. Auto-resume reuses it;
    * explicit resume mints a new one. Owned by this shared Host envelope — not

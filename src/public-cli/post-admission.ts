@@ -25,11 +25,7 @@ import {
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
-import {
-  establishModelLessRunPrincipal,
-  isModelLessRunPrincipalAvailable,
-  resolveHostAwareSessionAvailability,
-} from "../session-identity.ts";
+import { resolveHostAwareSessionAvailability } from "../session-identity.ts";
 import { cleanupReviewerWorktreeOwnership } from "../reviewer-worktree-lifecycle.ts";
 
 import type {
@@ -770,12 +766,6 @@ export async function dispatchPostAdmissionTurn<
     // Authoritative host write happens here, at the real dispatch boundary —
     // immediately before the turn actually starts, after every retryable
     // pre-turn step above has succeeded on this attempt (#840 r9 判词 class 2).
-    const modelLess = turnRequest.modelLess === true
-      || await isModelLessRunPrincipalAvailable(env.principalAuthority, admitted.principal);
-    if (modelLess) {
-      turnRequest = { ...turnRequest, modelLess: true };
-      await establishModelLessRunPrincipal(env.principalAuthority, admitted.principal);
-    }
     await markRunRunning(
       admitted.runDirectory,
       env.model,

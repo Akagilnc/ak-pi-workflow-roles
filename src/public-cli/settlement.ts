@@ -26,7 +26,6 @@ import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import type { RoleTurnKnownFailure } from "../host-contracts.ts";
 import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
-import { appendModelLessRunRecord } from "../session-identity.ts";
 import {
   isV1ResumableProvider,
   readLatestTypedProviderHttpObservation,
@@ -1883,16 +1882,6 @@ export async function appendRunAttemptHistory(
   source: AttemptHistorySource,
   outcome: AttemptHistoryOutcome,
 ): Promise<void> {
-  const timestamp = new Date().toISOString();
-  const baseAttemptData = {
-    role: source.role,
-    runId: source.runId,
-    recordedAt: timestamp,
-    outcome,
-  };
-  if (await appendModelLessRunRecord(source.sessionFile, ATTEMPT_HISTORY_ENTRY_TYPE, baseAttemptData)) {
-    return;
-  }
   const entries = await readBoundSessionEntries(source.sessionFile);
   let parentId: string | null = null;
   let priorEntries = 0;
@@ -1905,9 +1894,13 @@ export async function appendRunAttemptHistory(
       priorEntries += 1;
     }
   }
+  const timestamp = new Date().toISOString();
   const attemptData = {
     sequence: priorEntries + 1,
-    ...baseAttemptData,
+    role: source.role,
+    runId: source.runId,
+    recordedAt: timestamp,
+    outcome,
   };
   const line = `${JSON.stringify({
     type: "custom",
@@ -3640,83 +3633,6 @@ export async function trySettleReviewerTerminalResult(
 ): Promise<TerminalResult | undefined> {
   return settleLawfulReviewerTerminalResult(admitted, authority, options, scope);
 }
-
-/** Deterministic default-Reviewer parent settlement: no third model turn. */
-export async function settleParallelReviewerTerminalResult(
-  admitted: AdmittedReviewerInvocation,
-  authority: DurablePrincipalAuthority,
-  children: Readonly<{
-    completeness: import("../public-role-summons.ts").PublicSummonResult;
-    correctness: import("../public-role-summons.ts").PublicSummonResult;
-  }>,
-): Promise<TerminalResult> {
-  const reviewerChildren = {
-    ...(children.completeness.terminal === undefined
-      ? {}
-      : { completeness: children.completeness.terminal }),
-    ...(children.correctness.terminal === undefined
-      ? {}
-      : { correctness: children.correctness.terminal }),
-  };
-  const originalTerminals = [
-    children.completeness.terminal,
-    children.correctness.terminal,
-  ].filter((terminal): terminal is TerminalResult => terminal !== undefined);
-  const failedChildren = [children.completeness, children.correctness].filter((child) =>
-    child.exitCode !== 0
-    || child.terminal === undefined
-    || child.terminal.roleOutcome.kind === "failure"
-    || child.terminal.roleOutcome.kind === "no_receipt"
-  );
-  const roleOutcome: TerminalRoleOutcome = failedChildren.length === 0
-    ? { kind: "accepted", role: "reviewer", payloads: originalTerminals }
-    : {
-        kind: "failure",
-        role: "reviewer",
-        diagnostic: `${failedChildren.length} reviewer child run(s) did not complete successfully`,
-        decisiveFacts: {
-          failedChildren: failedChildren.length,
-          missingTerminals: 2 - originalTerminals.length,
-        },
-        payloads: originalTerminals,
-      };
-  const reviewerChildOutcomes = {
-    completeness: {
-      exitCode: children.completeness.exitCode,
-      ...(children.completeness.stderr === undefined ? {} : { stderr: children.completeness.stderr }),
-    },
-    correctness: {
-      exitCode: children.correctness.exitCode,
-      ...(children.correctness.stderr === undefined ? {} : { stderr: children.correctness.stderr }),
-    },
-  };
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  await appendRunAttemptHistory(
-    { role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile },
-    roleOutcome,
-  );
-  const artifactsDirectory = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join(artifactsDirectory, "report.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify({
-      role: "reviewer",
-      outcome: roleOutcome,
-      reviewerChildren,
-      reviewerChildOutcomes,
-    }, null, 2)}\n`,
-    "utf8",
-  );
-  return {
-    roleOutcome,
-    reviewerChildren,
-    reviewerChildOutcomes,
-    navigator: { disposition: "no-advice" },
-    artifacts: [{ kind: "report", path: reportPath }],
-    runId: admitted.runId,
-  };
-}
-
 
 /**
  * Observe forced Merger resolving-merge-conflicts Skill expansions from the session.

@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import type { DurablePrincipal, DurablePrincipalAuthority } from "./host-contracts.ts";
@@ -42,75 +42,6 @@ export function createSessionIdentityAuthority(
   };
 }
 
-const MODEL_LESS_RUN_FILE = "model-less-run.json";
-
-export async function establishModelLessRunPrincipal(
-  authority: DurablePrincipalAuthority,
-  principal: DurablePrincipal,
-): Promise<void> {
-  const coordinates = authority.decode(principal);
-  await mkdir(coordinates.sessionDirectory, { recursive: true });
-  const path = join(coordinates.sessionDirectory, MODEL_LESS_RUN_FILE);
-  try {
-    await writeFile(path, `${JSON.stringify({ version: 1, kind: "model-less-run" })}\n`, {
-      encoding: "utf8",
-      mode: 0o600,
-      flag: "wx",
-    });
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error;
-  }
-}
-
-export async function appendModelLessRunRecord(
-  sessionFile: string,
-  customType: string,
-  data: Record<string, unknown>,
-): Promise<boolean> {
-  const sessionDirectory = dirname(sessionFile);
-  try {
-    const marker: unknown = JSON.parse(await readFile(join(sessionDirectory, MODEL_LESS_RUN_FILE), "utf8"));
-    if (typeof marker !== "object" || marker === null || (marker as { kind?: unknown }).kind !== "model-less-run") {
-      return false;
-    }
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
-    throw error;
-  }
-  const recordsPath = join(sessionDirectory, "model-less-records.jsonl");
-  let sequence = 1;
-  try {
-    const prior = (await readFile(recordsPath, "utf8")).trim().split("\n").filter(Boolean);
-    sequence = prior.length + 1;
-  } catch (error) {
-    if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
-  }
-  await appendFile(
-    recordsPath,
-    `${JSON.stringify({ type: "custom", customType, data: { sequence, ...data } })}\n`,
-    "utf8",
-  );
-  return true;
-}
-
-export async function isModelLessRunPrincipalAvailable(
-  authority: DurablePrincipalAuthority,
-  principal: DurablePrincipal,
-): Promise<boolean> {
-  try {
-    const value: unknown = JSON.parse(await readFile(
-      join(authority.decode(principal).sessionDirectory, MODEL_LESS_RUN_FILE),
-      "utf8",
-    ));
-    return typeof value === "object" && value !== null
-      && (value as { version?: unknown }).version === 1
-      && (value as { kind?: unknown }).kind === "model-less-run";
-  } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
-    throw error;
-  }
-}
-
 /**
  * Host-aware resumable-session probe (#840 P1). The shared auto-resume loop
  * (public-cli/auto-resume.ts) asks one question — "can this principal's turn
@@ -126,19 +57,16 @@ export function resolveHostAwareSessionAvailability(
   host: string | undefined,
   principalAuthority: DurablePrincipalAuthority,
 ): (principal: DurablePrincipal) => Promise<boolean> {
-  let hostAvailable: (principal: DurablePrincipal) => Promise<boolean>;
   if (host === undefined || host === DEFAULT_ROLE_TURN_HOST) {
-    hostAvailable = (principal) => principalAuthority.isAvailable(principal);
-  } else {
-    const description = lookupHostDescription(host) ?? lookupHeadlessHostDescription(host);
-    if (description === undefined) {
-      hostAvailable = () => Promise.resolve(false);
-    } else {
-      const sessionIdentity = createSessionIdentityAuthority(principalAuthority, description.sessionBindingFile);
-      hostAvailable = async (principal) => (await sessionIdentity.load(principal)) !== undefined;
-    }
+    return (principal) => principalAuthority.isAvailable(principal);
   }
-  return async (principal) =>
-    (await isModelLessRunPrincipalAvailable(principalAuthority, principal))
-    || hostAvailable(principal);
+  const description = lookupHostDescription(host) ?? lookupHeadlessHostDescription(host);
+  if (description === undefined) {
+    // Host selection already fails closed on an unregistered name (#510) long
+    // before a turn dispatches; mirror the same fail-closed default here
+    // rather than guessing at pi's binding for a name pi does not own.
+    return () => Promise.resolve(false);
+  }
+  const sessionIdentity = createSessionIdentityAuthority(principalAuthority, description.sessionBindingFile);
+  return async (principal) => (await sessionIdentity.load(principal)) !== undefined;
 }

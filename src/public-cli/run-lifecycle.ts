@@ -11,7 +11,6 @@ import type {
  */
 import { chmod, lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, isAbsolute, join } from "node:path";
-import { isModelLessRunPrincipalAvailable } from "../session-identity.ts";
 
 import {
   activationBookDirectory,
@@ -709,8 +708,7 @@ export async function isDurablePrincipalAvailable(
   principal: DurablePrincipal,
   authority: DurablePrincipalAuthority,
 ): Promise<boolean> {
-  return (await isModelLessRunPrincipalAvailable(authority, principal))
-    || authority.isAvailable(principal);
+  return authority.isAvailable(principal);
 }
 
 export class RunWriterLeaseHeldError extends Error {

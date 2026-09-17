@@ -211,9 +211,17 @@ export type TerminalResult = {
       /** Resumable failure: run ID appears only inside resume.command. */
       resume: TerminalResume;
       runId?: undefined;
+      batch?: undefined;
     }
   | {
       runId: string;
+      resume?: undefined;
+      batch?: undefined;
+    }
+  | {
+      /** Deterministic public batch projection; no parent Role run exists. */
+      batch: "reviewer";
+      runId?: undefined;
       resume?: undefined;
     }
 );
