@@ -385,3 +385,26 @@ test("#959 prose advice is presented as written", async () => {
     assert.equal(events[0]?.prose, "先送 reviewer");
   });
 });
+
+test("#959 assistant prose without prepare tool is advice; no typed 催交", async () => {
+  await withTempRoot("navigator-prose-no-tool-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const harness = sessionHarness();
+    const events: any[] = [];
+    const nav = await attendance(setting, harness, events, undefined, root);
+    nav.prepare();
+    while (harness.prompts() < 1) await new Promise<void>((resolve) => setImmediate(resolve));
+    harness.finishWithAssistantProse("下一步送 reviewer，无需 JSON 工具。");
+    harness.release();
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(harness.prompts(), 1, "prose exit must not open typed delivery 催交");
+    assert.equal(events[0]?.disposition, "advice");
+    assert.equal(events[0]?.prose, "下一步送 reviewer，无需 JSON 工具。");
+  });
+});

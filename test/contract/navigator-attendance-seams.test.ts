@@ -35,7 +35,7 @@ import {
   context,
   sessionHarness,
   attendance,
-  settleAnsweringRebind } from "../helpers/navigator-attendance-kit.ts";
+} from "../helpers/navigator-attendance-kit.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot, seedGitRepository, withActivationHome } from "../helpers/pi-test-harness.ts";
 import { withTempRoot, withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
@@ -176,11 +176,7 @@ test("prepare provider schema admits object-root free-form through real Tool val
         arguments: structuredClone(usableArgs) } as never);
       await harness.tool().execute("live-prose", validated as never, undefined, undefined, {} as never);
       harness.release();
-      await settleAnsweringRebind(
-        nav,
-        harness,
-        { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-      );
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       assert.equal(events[0]?.disposition, "advice");
       assert.equal(events[0]?.prose, "下一步送 fixer apply");
     }
@@ -198,11 +194,7 @@ test("prepare provider schema admits object-root free-form through real Tool val
         arguments: {} } as never);
       await harness.tool().execute("empty", validated as never, undefined, undefined, {} as never);
       harness.release();
-      await settleAnsweringRebind(
-        nav,
-        harness,
-        { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-      );
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       assert.equal(events.length, 1);
       assert.equal(events[0]?.disposition, "no-advice");
     }
@@ -233,11 +225,7 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
         {} as never,
       );
       harness.release();
-      await settleAnsweringRebind(
-        nav,
-        harness,
-        { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-      );
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "advice");
       assert.equal(events[0].prose, "下一步送 fixer apply");
@@ -259,11 +247,7 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
         {} as never,
       );
       harness.release();
-      await settleAnsweringRebind(
-        nav,
-        harness,
-        { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-      );
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "advice");
       assert.ok(typeof events[0].prose === "string" && events[0].prose.includes("still thinking"));
@@ -283,11 +267,7 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
         {} as never,
       );
       harness.release();
-      await settleAnsweringRebind(
-        nav,
-        harness,
-        { kind: "accepted", role: "coder", phase: "apply", status: "completed" },
-      );
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "no-advice");
     }
@@ -349,11 +329,7 @@ test("#959 empty prepare body is no-advice; explicit prose settles as advice wit
       while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
       await harness.tool().execute("batch", batch as never, undefined, undefined, {} as never);
       harness.release();
-      await settleAnsweringRebind(
-        nav,
-        harness,
-        { kind: "accepted", role, phase: "apply", status: "completed" },
-      );
+      await nav.settle({ kind: "accepted", role, phase: "apply", status: "completed" });
       return events[0];
     }
 
@@ -387,11 +363,7 @@ test("#959 empty prepare body is no-advice; explicit prose settles as advice wit
       {} as never,
     );
     harness.release();
-    await settleAnsweringRebind(
-      nav,
-      harness,
-      { kind: "accepted", role: "fixer", phase: "apply", status: "completed" },
-    );
+    await nav.settle({ kind: "accepted", role: "fixer", phase: "apply", status: "completed" });
     assert.equal(events[0]?.disposition, "advice");
     assert.equal(events[0]?.prose, "authority names coder apply next");
   });

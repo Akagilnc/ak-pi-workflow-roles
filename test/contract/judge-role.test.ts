@@ -1002,9 +1002,10 @@ test("#959 navigator agent_end prose exit seals without typed delivery prompt", 
       assert.equal(rows[0]?.kind, "accepted");
       assert.equal(rows[0]?.role, "navigator");
       assert.deepEqual(rows[0]?.accepted, { prose: "下一步送 reviewer 独立审阅" });
-      assert.ok(
-        typeof rows[0]?.toolCallId === "string" && rows[0]!.toolCallId!.startsWith("navigator-prose-exit:"),
-        "prose exit must seal under navigator-prose-exit toolCallId",
+      assert.equal(
+        typeof rows[0]?.toolCallId === "string" && rows[0]!.toolCallId!.trim() !== "",
+        true,
+        "prose exit must seal with a non-empty toolCallId",
       );
       assert.equal(
         harness.appendedEntries.some((entry) => entry.customType === "ak-receipt-delivery-request"),

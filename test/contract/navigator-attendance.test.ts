@@ -16,7 +16,7 @@ import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } fr
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import {
   context,
-  candidate,
+  proseAdvice,
   sessionHarness,
   attendance,
 } from "../helpers/navigator-attendance-kit.ts";
@@ -45,7 +45,7 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" }).then(() => { settled = true; });
     await Promise.resolve();
     assert.equal(settled, false);
-    await harness.tool().execute("prepare", candidate(), undefined, undefined, {} as never);
+    await harness.tool().execute("prepare", proseAdvice(), undefined, undefined, {} as never);
     harness.release();
     await waiting;
     assert.equal(events.length, 1);
@@ -74,7 +74,7 @@ test("rejected Navigator prepare consumes budget and correction succeeds in the 
     const nav = await attendance(setting, harness, events, undefined, root);
     nav.prepare();
     while (harness.prompts() < 2 || harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    await harness.tool().execute("corrected-prepare", candidate(), undefined, undefined, {} as never);
+    await harness.tool().execute("corrected-prepare", proseAdvice(), undefined, undefined, {} as never);
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(harness.prompts(), 2);
@@ -147,7 +147,7 @@ test("live help changes the next hint without a static template or fabricated ta
     nav.prepare();
     while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(harness.retainedContext().liveRoleHelp.find((entry: any) => entry.role === "coder").help.includes("ak-coder-phase"), true);
-    await harness.tool().execute("prepare-1", candidate(), undefined, undefined, {} as never);
+    await harness.tool().execute("prepare-1", proseAdvice(), undefined, undefined, {} as never);
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     help = "Usage: pi --ak-role coder --ak-coder-task <file>";
@@ -155,7 +155,7 @@ test("live help changes the next hint without a static template or fabricated ta
     while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(harness.retainedContext().liveRoleHelp.find((entry: any) => entry.role === "coder").help.includes("ak-coder-task"), true);
     assert.equal(harness.retainedContext().liveRoleHelp.some((entry: any) => entry.help.includes("/repo/task.md")), false);
-    await harness.tool().execute("prepare-2", candidate(), undefined, undefined, {} as never);
+    await harness.tool().execute("prepare-2", proseAdvice(), undefined, undefined, {} as never);
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
   });
@@ -228,13 +228,13 @@ test("typed owner-decision and role-infrastructure outcomes emit affirmative no-
     nav.prepare();
     while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
     const owner = nav.settle({ kind: "human_decision", role: "coder", phase: "apply", status: "escalate" });
-    await harness.tool().execute("no-advice-owner", candidate(), undefined, undefined, {} as never);
+    await harness.tool().execute("no-advice-owner", proseAdvice(), undefined, undefined, {} as never);
     harness.release();
     await owner;
     nav.prepare();
     while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
     const infra = nav.settle({ kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
-    await harness.tool().execute("no-advice-infra", candidate(), undefined, undefined, {} as never);
+    await harness.tool().execute("no-advice-infra", proseAdvice(), undefined, undefined, {} as never);
     harness.release();
     await infra;
     assert.equal(events.length, 2);

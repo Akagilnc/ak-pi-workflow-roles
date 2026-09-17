@@ -128,9 +128,10 @@ export type RoleRunRecord = {
 };
 
 /**
- * Package-owned turn trigger for resume when the caller supplies no message.
- * Chinese + neutral (ADR 0073): no scope, no conclusion, no judgment guidance.
+ * Package-owned auto-resume turn trigger when the caller supplies no message.
+ * Chinese + neutral (ADR 0073 scope-steering sense): no scope, no conclusion.
  * Non-empty so hosts that reject empty stdin (codex) still receive a prompt (#959).
+ * Manual bare `ak-role resume` does not use this — ADR 0080 keeps entries separate.
  */
 export const RESUME_TRANSPORT_ENVELOPE = "继续。" as const;
 
@@ -173,22 +174,23 @@ export type SameTicketSummonsMaterials = {
 };
 
 /**
- * Unique continuation-prompt selector for manual/auto engine-axis resume
- * (#471 / #600 / #736 / #959). Message present → those bytes; absent → Chinese
- * neutral non-empty envelope (ADR 0073) plus optional engine pointers.
+ * Manual resume continuation selector (#471 / #600 / #736 / ADR 0080).
+ * Message present → those bytes; absent → engine pointers only (may be empty).
  * Caller message (including blank) still wins verbatim when supplied.
+ * Auto-resume must use buildAutoResumeContinuationPrompt — do not fold the
+ * non-empty Chinese envelope into this shared manual selector (#959).
  */
 export function selectResumeContinuationPrompt(
   message?: string,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const lines = message !== undefined ? [message] : [RESUME_TRANSPORT_ENVELOPE];
+  const lines = message !== undefined ? [message] : [];
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 /**
- * Resume continuation with engine material resolved from the seat env (#600).
- * Seat table / invocation engine axis rides the same prompt seam as initial runs.
+ * Manual resume continuation with engine material from the seat env (#600).
+ * Bare manual resume stays empty-prompt-capable; auto-resume is a separate entry.
  */
 export function buildResumeContinuationPrompt(options: {
   packageRoot: string;
@@ -198,6 +200,25 @@ export function buildResumeContinuationPrompt(options: {
 }): string {
   return selectResumeContinuationPrompt(
     options.message,
+    engineSessionMaterialFromOptions({
+      packageRoot: options.packageRoot,
+      ...pickEngineAxis(options),
+    }),
+  );
+}
+
+/**
+ * Auto-resume continuation only (#959 / ADR 0080).
+ * Always non-empty: Chinese neutral envelope plus optional engine pointers.
+ * Never call this from manual `ak-role resume`.
+ */
+export function buildAutoResumeContinuationPrompt(options: {
+  packageRoot: string;
+  engine?: string;
+  engineModel?: string;
+}): string {
+  return selectResumeContinuationPrompt(
+    RESUME_TRANSPORT_ENVELOPE,
     engineSessionMaterialFromOptions({
       packageRoot: options.packageRoot,
       ...pickEngineAxis(options),

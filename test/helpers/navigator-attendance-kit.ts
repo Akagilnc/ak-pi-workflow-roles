@@ -21,20 +21,6 @@ export function proseAdvice(prose = "下一步送 reviewer 独立审阅实现。
   return { prose };
 }
 
-/**
- * @deprecated #959 candidate shape retired — kept as alias that maps to prose so
- * older test call sites that still pass candidate-like objects via execute get
- * a prose body (navigatorProseFromUnknown stringifies free-form objects).
- */
-export function candidate(overrides: Record<string, unknown> = {}) {
-  if (typeof overrides.prose === "string") return { prose: overrides.prose };
-  if (typeof overrides.reason === "string") return { prose: overrides.reason };
-  return {
-    prose: "The implementation is ready for an independent review.",
-    ...overrides,
-  };
-}
-
 export function sessionHarness() {
   const entries: unknown[] = [];
   const modelSettings: Array<{ model: string; thinkingLevel?: string }> = [];
@@ -46,6 +32,7 @@ export function sessionHarness() {
   let providerFailure: { source: "transport"; cause: "transport" } | undefined;
   const sessionNoReceipts: NoReceiptLifecycleFacts[] = [];
   let noReceipt: NoReceiptLifecycleFacts | undefined;
+  const pendingAssistantProse: string[] = [];
   const session: NavigatorPreparationSession = {
     async prompt(_text) {
       prompts += 1;
@@ -66,6 +53,14 @@ export function sessionHarness() {
         throw new Error(transport);
       }
       await new Promise<void>((resolve) => { releasePrompt = resolve; });
+      // After release: optional assistant-prose-only exit (no prepare tool).
+      const prose = pendingAssistantProse.shift();
+      if (prose !== undefined) {
+        entries.push({
+          type: "message",
+          message: { role: "assistant", content: [{ type: "text", text: prose }] },
+        });
+      }
     },
     appendEntry(_type, data) { entries.push({ type: "custom", customType: _type, data }); },
     entries: () => entries,
@@ -86,6 +81,13 @@ export function sessionHarness() {
     prompts: () => prompts,
     rejectPrepare(...reasons: string[]) { rejectedPrepareReasons.push(...reasons); },
     failTransport(...reasons: string[]) { transportFailures.push(...reasons); },
+    /**
+     * Next released prompt finishes with assistant text only (no prepare tool).
+     * #959 prose exit path for auto-attendance.
+     */
+    finishWithAssistantProse(text: string) {
+      pendingAssistantProse.push(text);
+    },
     /** Next prompt settles the session itself without an accepted receipt (#675 nested no-receipt). */
     settleWithoutReceipt(...rejectedReasons: string[]) {
       sessionNoReceipts.push({
@@ -125,18 +127,4 @@ export async function attendance(
     modelSettingPath: path,
     onEvent: async (event) => { events.push(event); },
   });
-}
-
-/**
- * Complete settle. #959: no settlement-bound rebind — prose advice settles once.
- * rebindBatch is ignored (kept for call-site compatibility during migration).
- */
-export async function settleAnsweringRebind(
-  nav: { settle(settlement: unknown): Promise<void> },
-  harness: ReturnType<typeof sessionHarness>,
-  settlement: unknown,
-  _rebindBatch?: unknown,
-  _rebindToolCallId = "settlement-rebind",
-): Promise<void> {
-  await nav.settle(settlement);
 }

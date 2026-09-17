@@ -10,7 +10,7 @@ import {
   NAVIGATOR_INVOCATION_ENTRY,
   mintNavigatorInvocationId,
 } from "./navigator-invocation-identity.ts";
-import { PACKAGED_ROLE_REGISTRY, type PackagedRole, packagedRoleMetadata } from "./packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY, type PackagedRole } from "./packaged-role-registry.ts";
 import {
   activationBookDirectory,
   resolveActivationLedgerHome,
@@ -100,8 +100,6 @@ export type NavigatorWorkContext = {
   contextError?: unknown;
 };
 
-export type NavigatorRouteTarget = { role: string; phase: NavigatorPhase };
-
 /**
  * #959: Navigator speaks free-form prose. Code does not parse, rank, or judge
  * the advice — only whether attendance itself failed (host/process).
@@ -139,9 +137,6 @@ export type NavigatorContextProjection = {
   subject: string;
   authority: string;
   currentRole: { role: string; phase: NavigatorPhase };
-  /** Present only on settlement-bound prepare; speculative prepare omits it. */
-  currentSettlement?: NavigatorSettlement;
-  priorRoute: NavigatorRouteTarget[] | null;
   publicSettlementHistory: NavigatorSettlementFact[];
   liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
@@ -173,11 +168,9 @@ export type NavigatorAttendanceOptions = {
   onEvent: (event: NavigatorEvent, report: NavigatorReport) => void | Promise<void>;
 };
 
-const ROUTE_ENTRY = "ak-navigator-route";
 const CONTEXT_ENTRY = "ak-navigator-context";
 const INVOCATION_ENTRY = NAVIGATOR_INVOCATION_ENTRY;
 const SETTLEMENT_ENTRY = "ak-navigator-settlement";
-const targetRoles = new Set<string>(NAVIGATOR_TARGETS.map(({ role }) => role));
 const unavailableKeys = new Set<NavigatorUnavailableKey>(["context", "session", "model", "thinking", "auth", "quota", "transport", "unknown"]);
 
 function unavailableKey(value: unknown): NavigatorUnavailableKey | undefined {
@@ -219,10 +212,26 @@ function rejectedPrepareReason(entries: readonly unknown[], start: number): stri
   }
   return reason;
 }
-function targetIsValid(value: unknown): value is NavigatorRouteTarget {
-  if (!exactRecord(value) || !targetRoles.has(String(value.role))) return false;
-  const metadata = packagedRoleMetadata(String(value.role));
-  return metadata !== undefined && metadata.phases.includes(value.phase as never);
+
+/**
+ * #959: last assistant text parts as attendance prose exit.
+ * Tool-call-only messages yield undefined — those already ride the tool path.
+ */
+function lastAssistantProseFromEntries(entries: readonly unknown[], start = 0): string | undefined {
+  const recent = entries.slice(start);
+  for (let index = recent.length - 1; index >= 0; index -= 1) {
+    const entry = recent[index];
+    if (!exactRecord(entry) || entry.type !== "message" || !exactRecord(entry.message)) continue;
+    if (entry.message.role !== "assistant" || !Array.isArray(entry.message.content)) continue;
+    const texts: string[] = [];
+    for (const part of entry.message.content) {
+      if (exactRecord(part) && part.type === "text" && typeof part.text === "string" && part.text.length > 0) {
+        texts.push(part.text);
+      }
+    }
+    if (texts.length > 0) return texts.join("");
+  }
+  return undefined;
 }
 
 /**
@@ -354,10 +363,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     // Exact principal is owned by shared lifecycle (or one mint per attendance).
     // Model/tool/advice paths cannot override it; role-session persistence is
     // pi.appendEntry at lifecycle start — not optional sessionManager probing.
-    // #959: no settlement-bound rebind; prepare is one-shot prose advice.
-    const boundSettlement: NavigatorSettlement | undefined = undefined;
-    // Each prepare owns the no-receipt flag; a later settlement-bound rebind must
-    // not inherit a speculative no-receipt outcome.
+    // #959: prepare is one-shot prose advice — no settlement-bound rebind / route memory.
     preparationNoReceipt = false;
     const invocationId = invocationPrincipal;
     activeInvocationId = invocationId;
@@ -480,7 +486,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
       const activeSession = session;
       if (activeSession === undefined) throw new Error("Navigator session was not created");
-      const prior = activeSession.entries().filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord(entry.data) && entry.data.subjectKey === subjectKey).at(-1)?.data;
       const publicSettlementHistory = activeSession.entries()
         .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data))
         .map((entry) => entry.data as NavigatorSettlementFact);
@@ -489,10 +494,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         subject,
         authority,
         currentRole: { role: options.role, phase: options.phase },
-        ...(boundSettlement === undefined ? {} : { currentSettlement: boundSettlement }),
-        priorRoute: exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))
-          ? prior.route.map((target) => ({ role: target.role as NavigatorTargetRole, phase: target.phase as NavigatorPhase }))
-          : null,
         publicSettlementHistory,
         liveRoleHelp: help,
       };
@@ -506,10 +507,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         `<work_subject>\n${subject}\n</work_subject>`,
         `<controlling_authority>\n${authority}\n</controlling_authority>`,
         `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
-        ...(boundSettlement === undefined
-          ? []
-          : [`<current_settlement>\n${JSON.stringify(boundSettlement)}\n</current_settlement>`]),
-        `<prior_route>\n${JSON.stringify(prior ?? null)}\n</prior_route>`,
         `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
         `<live_role_help>\n${helpContext}\n</live_role_help>`,
       ].join("\n\n");
@@ -517,6 +514,14 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         try {
           if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
           const delivery = createReceiptDeliveryPolicy();
+          /** Harvest prose written this prompt when the model skipped the prepare tool. */
+          const harvestProseIfNeeded = (entryStart: number): void => {
+            if (output !== undefined) return;
+            const harvested = lastAssistantProseFromEntries(activeSession.entries(), entryStart);
+            if (harvested !== undefined && harvested.trim() !== "") {
+              output = { prose: harvested };
+            }
+          };
           const promptAllowingRejectedPrepare = async (text: string, deliveryRequest: boolean) => {
             const entryStart = activeSession.entries().length;
             prepareBatchRejected = false;
@@ -548,11 +553,22 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
               delivery.recordNestedNoReceipt(sessionNoReceipt);
               return;
             }
+            // #959: assistant prose is a lawful exit — same as tool submit.
+            harvestProseIfNeeded(entryStart);
             if (deliveryRequest && output === undefined) delivery.recordDeliveryRequest();
           };
           await promptAllowingRejectedPrepare(request, false);
-          while (output === undefined && delivery.nextAction() === "request-delivery") {
+          // #959: no typed-tool 催交 for missing prose. Continue only after a
+          // rejected prepare while budget remains (correction), still harvesting.
+          while (output === undefined && prepareBatchRejected && delivery.nextAction() === "request-delivery") {
             await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
+          }
+          // Neither tool nor prose: exhaust budget silently (no 催交 prompt) so
+          // no_receipt facts stay lawful — mirrors role-runtime navigator exit.
+          if (output === undefined && delivery.nextAction() === "request-delivery") {
+            while (delivery.nextAction() === "request-delivery") {
+              delivery.recordDeliveryRequest();
+            }
           }
           if (output === undefined && delivery.nextAction() === "no-receipt" && activeSession.providerFailure?.() === undefined) {
             const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
