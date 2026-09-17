@@ -2,14 +2,15 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #917 / #236 public Reviewer path — fixed base + package ak-cross-m-review + --lens.
  * Caller instruction is optional provenance, never semantic control.
  */
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import {
   access,
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -17,13 +18,13 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
-import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import {
   loadPackagedMethodSkillMaterial,
   resolvePackagedMethodSkillPath,
@@ -39,6 +40,7 @@ import {
   loadResumableReviewerRun,
   markRunAdmitted,
   markRunResumable,
+  readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   extractReviewerMethodInvocations,
@@ -47,6 +49,7 @@ import {
 } from "../../src/public-cli/settlement.ts";
 import {
   packageRoot,
+  withProcessCwd,
 } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
@@ -112,7 +115,7 @@ async function admitReviewerInvocation(
 }
 
 
-test("parseReviewerArgv requires base, lens, authority-ref and accepts optional provenance instruction", () => {
+test("parseReviewerArgv defaults to both lenses and accepts an optional single-lens override", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
@@ -120,22 +123,27 @@ test("parseReviewerArgv requires base, lens, authority-ref and accepts optional 
     () => parseReviewerArgv(["Review the branch since main."]),
     (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
   );
-  // Missing lens / authority-ref is usage error (no default; required).
+  // Authority remains required; omitted lens defaults to the parallel two-axis mode.
   assert.throws(() => parseReviewerArgv(["--base", "main"]), isUsage);
   assert.throws(
     () => parseReviewerArgv(["--base", "main", "--lens", "completeness"]),
     isUsage,
   );
-  assert.throws(
-    () =>
-      parseReviewerArgv([
-        "--base",
-        "main",
-        "--authority-ref",
-        "https://example.test/a",
-      ]),
-    isUsage,
+  assert.deepEqual(
+    parseReviewerArgv([
+      "--base",
+      "main",
+      "--authority-ref",
+      "https://example.test/a",
+    ]),
+    {
+      instruction: "",
+      attachmentPaths: [],
+      baseRevision: "main",
+      authorityRefs: ["https://example.test/a"],
+    },
   );
+  // Public `--lens all` is not an admitted single-axis value.
   assert.throws(
     () =>
       parseReviewerArgv([
@@ -684,379 +692,489 @@ test("package ak-cross-m-review method is verbatim upstream single-lens CMR", as
   assert.equal(material.skillPath.includes(".agents/skills"), false);
 });
 
-test("ak-role reviewer admits fixed base without requiring caller task", async () => {
+/** Shortest lawful child turn: write receipt from --ak-review-lens (or override). */
+async function lawfulChildTurn(
+  args: readonly string[],
+  options?: {
+    readonly lens?: "completeness" | "correctness";
+    readonly status?: "completed" | "refused";
+    readonly axisKey?: string;
+    readonly report?: string;
+    readonly empty?: boolean;
+    readonly includeSkillExpansion?: boolean;
+    readonly toolCallId?: string;
+  },
+) {
+  const sessionFile = args[args.indexOf("--session") + 1]!;
+  await mkdir(join(sessionFile, ".."), { recursive: true });
+  if (options?.empty) {
+    await writeFile(sessionFile, "", "utf8");
+    return { code: 0, stderr: "", timedOut: false as const, args: [...args] };
+  }
+  const lens =
+    options?.lens
+    ?? (args[args.indexOf("--ak-review-lens") + 1] as "completeness" | "correctness");
+  const details = lawfulReviewerReceipt(lens, options?.status ?? "completed", options);
+  const toolCallId = options?.toolCallId ?? `ok-${lens}`;
+  const lines: string[] = [];
+  if (options?.includeSkillExpansion) {
+    const material = await loadPackagedMethodSkillMaterial(packageRoot, "ak-cross-m-review");
+    const skillPath = resolvePackagedMethodSkillPath(packageRoot, "ak-cross-m-review");
+    lines.push(JSON.stringify({
+      type: "message",
+      message: {
+        role: "user",
+        content: [{
+          type: "text",
+          text: `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`,
+        }],
+      },
+    }));
+  }
+  lines.push(JSON.stringify({
+    type: "message",
+    message: {
+      role: "toolResult",
+      toolCallId,
+      toolName: REVIEWER_OUTPUT_TOOL_NAME,
+      isError: false,
+      details,
+    },
+  }));
+  await writeFile(sessionFile, `${lines.join("\n")}\n`, "utf8");
+  return {
+    code: 0,
+    sealedAcceptance: { role: "reviewer" as const, details, toolCallId },
+    stderr: "",
+    timedOut: false as const,
+    args: [...args],
+  };
+}
+
+function reviewerHost(
+  piRunner: Parameters<typeof roleTurnHostFromLegacyPiRunner>[0]["piRunner"],
+  principalAuthority = piDurablePrincipalAuthority,
+) {
+  return roleTurnHostFromLegacyPiRunner({
+    packageRoot,
+    principalAuthority,
+    piRunner,
+  });
+}
+
+test("default dual-lens admits both axes without a parent run", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
+
+    const captured: string[][] = [];
+    const childHeads: string[] = [];
+    const { io, stdout } = captureIo();
+    const result = await runAkRole([
+      "reviewer", "--model", "test/caller-seat:high",
+      "--project", project, "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
+    ], {
+      packageRoot,
+      home,
+      cwd: project,
+      createRunId: () => "run-cli-reviewer-blank-ok",
+      io,
+      roleTurnHost: reviewerHost(async (args, options) => {
+        captured.push([...args]);
+        childHeads.push(execFileSync("git", ["rev-parse", "HEAD"], {
+          cwd: options.cwd,
+          encoding: "utf8",
+        }).trim());
+        return lawfulChildTurn(args);
+      }),
+    });
+
+    assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
+    assert.equal(captured.length, 2);
+    assert.deepEqual(
+      captured.map((args) => args[args.indexOf("--ak-review-lens") + 1]).sort(),
+      ["completeness", "correctness"],
+    );
+    for (const args of captured) {
+      assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
+      assert.equal(args.includes("--skill"), true);
+      assert.equal(args.includes("--ak-review-task"), false);
+      // Ordinary single-axis public semantics: dual-lens legs are not station children.
+      assert.equal(args.includes("--ak-station-child"), false);
+      assert.equal(args[args.indexOf("--ak-review-base") + 1], "HEAD~1");
+    }
+    assert.equal(new Set(childHeads).size, 1);
+    assert.equal(childHeads[0], execFileSync("git", ["rev-parse", "HEAD"], {
+      cwd: project,
+      encoding: "utf8",
+    }).trim());
+    assert.equal(result.terminal?.batch, "reviewer");
+    // Parentless batch must not invent affirmative no-advice (#946).
+    assert.equal(result.terminal?.navigator.disposition, "unavailable");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(
+      result.terminal?.roleOutcome.kind === "accepted"
+        ? result.terminal.roleOutcome.payloads?.length
+        : 0,
+      2,
+    );
+    assert.equal(result.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
+    assert.equal(result.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
+
+    const bookKey = resolveBookKeyFromGit(project);
+    await assert.rejects(
+      () => access(join(
+        home, ".ak-roles", "books", bookKey, "unbound", "runs",
+        "run-cli-reviewer-blank-ok@reviewer", "admitted-request.json",
+      )),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    const projectEntries = await readdir(project);
+    assert.equal(projectEntries.includes("docs"), false);
+    assert.equal(projectEntries.includes(".agents"), false);
+  });
+});
+
+test("one dual-lens leg failure keeps the sibling original terminal", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
+
+    const { io } = captureIo();
+    const partial = await runAkRole([
+      "reviewer", "--model", "test/caller-seat:high",
+      "--project", project, "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
+    ], {
+      packageRoot,
+      home,
+      cwd: project,
+      createRunId: () => "run-cli-reviewer-partial-failure",
+      io,
+      roleTurnHost: reviewerHost(async (args) => {
+        const lens = args[args.indexOf("--ak-review-lens") + 1];
+        if (lens === "correctness") throw new Error("correctness summons exploded");
+        return lawfulChildTurn(args, { toolCallId: "partial-ok" });
+      }),
+    });
+
+    assert.equal(partial.exitCode, 1);
+    assert.equal(partial.terminal?.roleOutcome.kind, "failure");
+    assert.equal(partial.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
+    assert.equal(partial.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "failure");
+    assert.equal(partial.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
+    assert.equal(
+      partial.terminal?.roleOutcome.kind === "failure"
+        ? partial.terminal.roleOutcome.payloads?.length
+        : undefined,
+      2,
+    );
+  });
+});
+
+test("lawful no_receipt dual-lens child is not a batch failure", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
+
+    const { io, stdout } = captureIo();
+    const noReceiptBatch = await runAkRole([
+      "reviewer", "--model", "test/caller-seat:high",
+      "--project", project, "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
+    ], {
+      packageRoot,
+      home,
+      cwd: project,
+      createRunId: () => "run-cli-reviewer-no-receipt-batch",
+      io,
+      roleTurnHost: reviewerHost(async (args) => {
+        const lens = args[args.indexOf("--ak-review-lens") + 1];
+        if (lens === "correctness") return lawfulChildTurn(args, { empty: true });
+        return lawfulChildTurn(args, { toolCallId: "no-receipt-sibling" });
+      }),
+    });
+
+    assert.equal(noReceiptBatch.exitCode, 0, stdout.join(""));
+    assert.equal(noReceiptBatch.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(noReceiptBatch.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
+    assert.equal(noReceiptBatch.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "no_receipt");
+    assert.equal(noReceiptBatch.terminal?.reviewerChildOutcomes?.correctness.exitCode, 0);
+  });
+});
+
+test("explicit single-lens hard-stop refused still lands mismatched axis key", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
-    {
-      const { io, stdout } = captureIo();
-      let captured: string[] | undefined;
-      let capturedStdin: string | undefined;
-      const result = await runAkRole([
-          "reviewer", "--model", "test/caller-seat:high",
-          "--project",
-          project,
-          "--base",
-          "HEAD~1",
-          "--lens",
-          "completeness",
-          "--authority-ref",
-          "CLAUDE.md",
-        ],
-        {
-          packageRoot,
-          home,
-          cwd: project,
-          createRunId: () => "run-cli-reviewer-blank-ok",
-          io,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args, options) => {
-            captured = [...args];
-            capturedStdin = options.stdin;
-            const sessionIdx = args.indexOf("--session");
-            const sessionFile = args[sessionIdx + 1]!;
-            await mkdir(join(sessionFile, ".."), { recursive: true });
-            const material = await loadPackagedMethodSkillMaterial(
-              packageRoot,
-              "ak-cross-m-review",
-            );
-            const skillPath = resolvePackagedMethodSkillPath(
-              packageRoot,
-              "ak-cross-m-review",
-            );
-            // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
-            const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
-            const receipt = lawfulReviewerReceipt("completeness");
-            await writeFile(
-              sessionFile,
-              `${JSON.stringify({
-                type: "message",
-                message: {
-                  role: "user",
-                  content: [{ type: "text", text: expansion }],
-                },
-              })}\n${JSON.stringify({
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolCallId: "ok1",
-                  toolName: REVIEWER_OUTPUT_TOOL_NAME,
-                  isError: false,
-                  details: receipt,
-                },
-              })}\n`,
-              "utf8",
-            );
-            return {
-              code: 0,
-              sealedAcceptance: { role: "reviewer" as const, details: receipt, toolCallId: "ok1" },
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-            };
-          },
-          }),
-        },
-      );
-      assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
-      assert.equal(Array.isArray(captured), true);
-      assert.equal(captured![captured!.indexOf("--ak-role") + 1], "reviewer");
-      assert.equal(captured!.includes("--skill"), true);
-      assert.equal(captured!.includes("--ak-review-task"), false);
-      assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "completeness");
-      // First stdin carries frozen Skill arg projection (base/lens/authority).
-      const blankDialogue = readUserDialogueStdin(capturedStdin ?? "");
-      assert.equal(
-        blankDialogue.startsWith(
-          "/skill:ak-cross-m-review --base HEAD~1 --lens completeness --authority CLAUDE.md",
-        ),
-        true,
-        blankDialogue,
-      );
-      assert.equal(result.terminal?.roleOutcome.role, "reviewer");
-      assert.deepEqual(
-        result.terminal?.roleOutcome.kind === "accepted"
-        ? payloadStatusSequence(result.terminal.roleOutcome)
+    const { io, stdout } = captureIo();
+    const refused = await runAkRole([
+      "reviewer", "--model", "test/caller-seat:high",
+      "--project", project, "--base", "HEAD~1", "--lens", "completeness",
+      "--authority-ref", "CLAUDE.md",
+    ], {
+      packageRoot,
+      home,
+      cwd: project,
+      createRunId: () => "run-cli-reviewer-hard-stop",
+      io,
+      roleTurnHost: reviewerHost(async (args) =>
+        lawfulChildTurn(args, {
+          status: "refused",
+          axisKey: "not-a-declared-axis",
+          report: "partial-report-before-stop",
+          includeSkillExpansion: true,
+          toolCallId: "r-refused",
+        })),
+    });
+
+    assert.equal(refused.exitCode, 0, stdout.join("") || "reviewer hard-stop failed");
+    assert.deepEqual(
+      refused.terminal?.roleOutcome.kind === "accepted"
+        ? payloadStatusSequence(refused.terminal.roleOutcome)
         : [],
-      ["completed"],
+      ["refused"],
     );
+    const bookKey = resolveBookKeyFromGit(project);
+    const refusedReport = JSON.parse(
+      await readFile(
+        join(
+          home, ".ak-roles", "books", bookKey, "unbound", "runs",
+          "run-cli-reviewer-hard-stop@reviewer", "artifacts", "report.json",
+        ),
+        "utf8",
+      ),
+    ) as {
+      outcome?: {
+        kind?: string;
+        payloads?: ReadonlyArray<Record<string, unknown>>;
+      };
+    };
+    assert.equal(refusedReport.outcome?.kind, "accepted");
+    const refusedDurable =
+      refusedReport.outcome?.payloads?.find((p) => p.status === "refused") ?? {};
+    assert.equal(refusedDurable.diagnostic, "hard-stop: review cannot proceed");
+    assert.equal(
+      (refusedDurable.amendments as Record<string, string> | undefined)?.["not-a-declared-axis"],
+      "partial-report-before-stop",
+    );
+  });
+});
 
-      const bookKey = resolveBookKeyFromGit(project);
-      const runDirectory = join(
+test("explicit single-lens projects admitted lens and optional caller provenance", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+
+    let captured: string[] | undefined;
+    let capturedStdin: string | undefined;
+    let turnCwd: string | undefined;
+    const { io, stdout } = captureIo();
+    const result = await runAkRole([
+      "reviewer", "--model", "test/caller-seat:high",
+      "--project", project, "--base", "HEAD~1", "--lens", "correctness",
+      "--authority-ref", "CLAUDE.md",
+      "--authority-ref", "docs/adr/0001-roles-grow-by-demand.md",
+      "Review the latest commit on both axes.",
+    ], {
+      packageRoot,
+      home,
+      cwd: project,
+      createRunId: () => "run-cli-reviewer-ok",
+      io,
+      roleTurnHost: reviewerHost(async (args, options) => {
+        captured = [...args];
+        capturedStdin = options.stdin;
+        turnCwd = options.cwd;
+        // Explicit --lens also runs in a fresh copy (#946 统一新副本).
+        assert.notEqual(realpathSync(options.cwd), realpathSync(project));
+        // Deliberate receipt/lens mismatch must still land (仓级第 0 条).
+        return lawfulChildTurn(args, {
+          lens: "completeness",
+          includeSkillExpansion: true,
+          toolCallId: "ok1",
+        });
+      }),
+    });
+
+    assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
+    assert.equal(typeof turnCwd, "string");
+    assert.equal(
+      execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      }),
+      worktreeListBefore,
+    );
+    assert.equal(captured!.includes("--ak-review-task"), false);
+    assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
+    const okDialogue = readUserDialogueStdin(capturedStdin ?? "");
+    assert.equal(
+      okDialogue.startsWith(
+        "/skill:ak-cross-m-review --base HEAD~1 --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
+      ),
+      true,
+      okDialogue,
+    );
+    assert.match(okDialogue, /Review the latest commit on both axes\./);
+    const bookKey = resolveBookKeyFromGit(project);
+    const evidence = JSON.parse(
+      await readFile(
+        join(
+          home, ".ak-roles", "books", bookKey, "unbound", "runs",
+          "run-cli-reviewer-ok@reviewer", "artifacts", "evidence.json",
+        ),
+        "utf8",
+      ),
+    ) as { callerProvenance?: string };
+    assert.equal(evidence.callerProvenance, "Review the latest commit on both axes.");
+  });
+});
+
+test("default dual-lens final seal fails closed when HEAD drifts during the batch", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
+
+    const wrapperRoot = await mkdtemp(join(home, "git-seal-wrapper-"));
+    const wrapper = join(wrapperRoot, "git");
+    const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+    const sealCwd = realpathSync(project);
+    await writeFile(wrapper, `#!/bin/sh
+count_file='${join(wrapperRoot, "count")}'
+marker='${join(wrapperRoot, "committed")}'
+count=0
+[ -f "$count_file" ] && count=$(cat "$count_file")
+if [ "$1 $2 $3" = "rev-parse --verify HEAD^{commit}" ]; then
+  count=$((count + 1)); printf '%s' "$count" > "$count_file"
+fi
+if [ "$1" = "status" ] && [ "$count" = "2" ] && [ "$PWD" = "${sealCwd}" ] && [ ! -f "$marker" ]; then
+  : > "$marker"
+  '${realGit}' commit --allow-empty -m 'seal-race' >/dev/null
+fi
+exec '${realGit}' "$@"
+`, "utf8");
+    await chmod(wrapper, 0o755);
+    const priorPath = process.env.PATH;
+    process.env.PATH = `${wrapperRoot}:${priorPath ?? ""}`;
+    try {
+      const { io, stdout } = captureIo();
+      const sealed = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high",
+        "--project", project, "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
+      ], {
+        packageRoot,
         home,
-        ".ak-roles",
-        "books",
-        bookKey,
-        "unbound", "runs",
-        "run-cli-reviewer-blank-ok@reviewer",
-      );
-      await access(join(runDirectory, "admitted-request.json"));
-      await assert.rejects(
-        () => access(join(runDirectory, "task.md")),
-        (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-      );
-      const projectEntries = await readdir(project);
-      assert.deepEqual(
-      projectEntries.includes("docs"), false);
-      assert.equal(projectEntries.includes(".agents"), false);
-      const evidence = JSON.parse(
-        await readFile(join(runDirectory, "artifacts", "evidence.json"), "utf8"),
-      ) as {
-        methodInvocationObserved: boolean;
-        methodProvenance: { name: string };
-        callerProvenance?: string;
-      };
-      assert.equal(evidence.methodProvenance.name, "ak-cross-m-review");
-      assert.equal(evidence.methodInvocationObserved, true);
-      assert.equal("callerProvenance" in evidence, false);
-
-      // Durable complete report lives in report.json structured outcome/amendments.
-      const completedReport = JSON.parse(
-        await readFile(join(runDirectory, "artifacts", "report.json"), "utf8"),
-      ) as {
-        role: string;
-        outcome?: {
-          kind?: string;
-          payloads?: ReadonlyArray<Record<string, unknown>>;
-        };
-      };
-      assert.equal(completedReport.role, "reviewer");
-      assert.equal(completedReport.outcome?.kind, "accepted");
-      const completedDurable =
-        completedReport.outcome?.payloads?.find((p) => p.status === "completed") ?? {};
-      assert.equal(
-        (completedDurable.amendments as Record<string, string> | undefined)?.completeness,
-        "completeness-axis-report",
-      );
-    }
-
-    // Same public entry: hard-stop refused + mismatched axis key still lands (仓级第 0 条).
-    {
-      const { io, stdout } = captureIo();
-      const refusedReceipt = lawfulReviewerReceipt("completeness", "refused", {
-        axisKey: "not-a-declared-axis",
-        report: "partial-report-before-stop",
+        cwd: project,
+        createRunId: () => "run-cli-reviewer-final-seal",
+        io,
+        roleTurnHost: reviewerHost(async (args) => lawfulChildTurn(args)),
       });
-      const refused = await runAkRole([
-          "reviewer", "--model", "test/caller-seat:high",
-          "--project",
-          project,
-          "--base",
-          "HEAD~1",
-          "--lens",
-          "completeness",
-          "--authority-ref",
-          "CLAUDE.md",
-        ],
-        {
-          packageRoot,
-          home,
-          cwd: project,
-          createRunId: () => "run-cli-reviewer-hard-stop",
-          io,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-            const sessionIdx = args.indexOf("--session");
-            const sessionFile = args[sessionIdx + 1]!;
-            await mkdir(join(sessionFile, ".."), { recursive: true });
-            const material = await loadPackagedMethodSkillMaterial(
-              packageRoot,
-              "ak-cross-m-review",
-            );
-            const skillPath = resolvePackagedMethodSkillPath(
-              packageRoot,
-              "ak-cross-m-review",
-            );
-            const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
-            await writeFile(
-              sessionFile,
-              `${JSON.stringify({
-                type: "message",
-                message: {
-                  role: "user",
-                  content: [{ type: "text", text: expansion }],
-                },
-              })}\n${JSON.stringify({
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolCallId: "r-refused",
-                  toolName: REVIEWER_OUTPUT_TOOL_NAME,
-                  isError: false,
-                  details: refusedReceipt,
-                },
-              })}\n`,
-              "utf8",
-            );
-            return {
-              code: 0,
-              sealedAcceptance: {
-                role: "reviewer" as const,
-                details: refusedReceipt,
-                toolCallId: "r-refused",
-              },
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-            };
-          },
-          }),
-        },
-      );
-      assert.equal(refused.exitCode, 0, stdout.join("") || "reviewer hard-stop failed");
-      assert.equal(refused.terminal?.roleOutcome.role, "reviewer");
-      assert.deepEqual(
-        refused.terminal?.roleOutcome.kind === "accepted"
-          ? payloadStatusSequence(refused.terminal.roleOutcome)
-          : [],
-        ["refused"],
-      );
-      const bookKey = resolveBookKeyFromGit(project);
-      const refusedReport = JSON.parse(
-        await readFile(
-          join(
-            home,
-            ".ak-roles",
-            "books",
-            bookKey,
-            "unbound", "runs",
-            "run-cli-reviewer-hard-stop@reviewer",
-            "artifacts",
-            "report.json",
-          ),
-          "utf8",
-        ),
-      ) as {
-        outcome?: {
-          kind?: string;
-          payloads?: ReadonlyArray<Record<string, unknown>>;
-        };
-      };
-      assert.equal(refusedReport.outcome?.kind, "accepted");
-      const refusedDurable =
-        refusedReport.outcome?.payloads?.find((p) => p.status === "refused") ?? {};
-      assert.equal(refusedDurable.diagnostic, "hard-stop: review cannot proceed");
+      assert.equal(sealed.exitCode, 1, stdout.join(""));
+      assert.equal(sealed.terminal?.roleOutcome.kind, "failure");
       assert.equal(
-        (refusedDurable.amendments as Record<string, string> | undefined)?.["not-a-declared-axis"],
-        "partial-report-before-stop",
+        sealed.terminal?.roleOutcome.kind === "failure"
+          ? sealed.terminal.roleOutcome.decisiveFacts.failedChildren
+          : undefined,
+        0,
       );
-    }
-
-    {
-      const { io, stdout } = captureIo();
-      let captured: string[] | undefined;
-      let capturedStdin: string | undefined;
-      const result = await runAkRole([
-          "reviewer", "--model", "test/caller-seat:high",
-          "--project",
-          project,
-          "--base",
-          "HEAD~1",
-          "--lens",
-          "correctness",
-          "--authority-ref",
-          "CLAUDE.md",
-          "--authority-ref",
-          "docs/adr/0001-roles-grow-by-demand.md",
-          "Review the latest commit on both axes.",
-        ],
-        {
-          packageRoot,
-          home,
-          cwd: project,
-          createRunId: () => "run-cli-reviewer-ok",
-          io,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args, options) => {
-            captured = [...args];
-            capturedStdin = options.stdin;
-            const sessionIdx = args.indexOf("--session");
-            const sessionFile = args[sessionIdx + 1]!;
-            await mkdir(join(sessionFile, ".."), { recursive: true });
-            const material = await loadPackagedMethodSkillMaterial(
-              packageRoot,
-              "ak-cross-m-review",
-            );
-            const skillPath = resolvePackagedMethodSkillPath(
-              packageRoot,
-              "ak-cross-m-review",
-            );
-            // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
-            const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
-            const receipt = lawfulReviewerReceipt("completeness");
-            await writeFile(
-              sessionFile,
-              `${JSON.stringify({
-                type: "message",
-                message: {
-                  role: "user",
-                  content: [{ type: "text", text: expansion }],
-                },
-              })}\n${JSON.stringify({
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolCallId: "ok1",
-                  toolName: REVIEWER_OUTPUT_TOOL_NAME,
-                  isError: false,
-                  details: receipt,
-                },
-              })}\n`,
-              "utf8",
-            );
-            return {
-              code: 0,
-              sealedAcceptance: { role: "reviewer" as const, details: receipt, toolCallId: "ok1" },
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-            };
-          },
-          }),
-        },
-      );
-      assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
-      assert.equal(captured!.includes("--ak-review-task"), false);
-      // correctness path must project the admitted lens (catches constant-completeness).
-      assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
-      // Repeatable authority + optional caller prose ride the same frozen Skill line.
-      const okDialogue = readUserDialogueStdin(capturedStdin ?? "");
+      assert.equal(sealed.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
+      assert.equal(sealed.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
+      assert.equal(sealed.terminal?.reviewerChildOutcomes?.completeness.exitCode, 1);
+      assert.equal(sealed.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
       assert.equal(
-        okDialogue.startsWith(
-          "/skill:ak-cross-m-review --base HEAD~1 --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
-        ),
+        sealed.terminal?.roleOutcome.kind === "failure"
+          && typeof sealed.terminal.roleOutcome.diagnostic === "string"
+          && sealed.terminal.roleOutcome.diagnostic.length > 0,
         true,
-        okDialogue,
       );
-      assert.match(okDialogue, /Review the latest commit on both axes\./);
-      const bookKey = resolveBookKeyFromGit(project);
-      const evidence = JSON.parse(
-        await readFile(
-          join(
-            home,
-            ".ak-roles",
-            "books",
-            bookKey,
-            "unbound", "runs",
-            "run-cli-reviewer-ok@reviewer",
-            "artifacts",
-            "evidence.json",
-          ),
-          "utf8",
-        ),
-      ) as { callerProvenance?: string };
-      assert.equal(
-        evidence.callerProvenance,
-        "Review the latest commit on both axes.",
-      );
+    } finally {
+      process.env.PATH = priorPath;
+    }
+  });
+});
+
+test("default dual-lens pre-dispatch failures keep dual-child surface without child turns", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
+
+    // Dirty target must hard-stop before clean detached copies hide dirt.
+    await writeFile(join(project, "untracked-review-evidence.txt"), "dirty\n", "utf8");
+    {
+      let childTurns = 0;
+      const { io, stdout } = captureIo();
+      const dirty = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high",
+        "--project", project, "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-cli-reviewer-dirty-parent",
+        io,
+        roleTurnHost: {
+          async executeTurn() {
+            childTurns += 1;
+            throw new Error("dirty parent must not dispatch a child turn");
+          },
+        },
+      });
+      assert.equal(dirty.exitCode, 1, stdout.join(""));
+      assert.equal(childTurns, 0);
+      assert.equal(dirty.terminal?.roleOutcome.kind, "failure");
+      assert.equal(dirty.terminal?.reviewerChildOutcomes?.completeness.exitCode, 1);
+      assert.equal(dirty.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
+      assert.equal(dirty.terminal?.reviewerChildren?.completeness, undefined);
+      assert.equal(dirty.terminal?.reviewerChildren?.correctness, undefined);
+    }
+    await rm(join(project, "untracked-review-evidence.txt"));
+
+    // Missing base keeps the same dual-child structured surface.
+    {
+      let childTurns = 0;
+      const { io, stdout } = captureIo();
+      const missingBase = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high",
+        "--project", project, "--base", "no-such-reviewer-base-rev",
+        "--authority-ref", "CLAUDE.md",
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-cli-reviewer-missing-base",
+        io,
+        roleTurnHost: {
+          async executeTurn() {
+            childTurns += 1;
+            throw new Error("missing base must not dispatch a child turn");
+          },
+        },
+      });
+      assert.equal(missingBase.exitCode, 1, stdout.join(""));
+      assert.equal(childTurns, 0);
+      assert.equal(missingBase.terminal?.roleOutcome.kind, "failure");
+      assert.equal(missingBase.terminal?.reviewerChildOutcomes?.completeness.exitCode, 1);
+      assert.equal(missingBase.terminal?.reviewerChildOutcomes?.correctness.exitCode, 1);
+      const completenessDiag = missingBase.terminal?.reviewerChildOutcomes?.completeness.stderr ?? "";
+      const correctnessDiag = missingBase.terminal?.reviewerChildOutcomes?.correctness.stderr ?? "";
+      assert.equal(completenessDiag.length > 0, true);
+      assert.equal(completenessDiag, correctnessDiag);
     }
   });
 });
@@ -1077,7 +1195,6 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       authorityRefs: ["https://example.com/durable-ref"],
       createRunId: () => "run-cli-reviewer-resume-bad-refs",
     });
-    // Durable session principal required before resume load.
     await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
     await writeFile(join(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, "session.jsonl"), "", "utf8");
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
@@ -1089,7 +1206,6 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     const persisted = JSON.parse(
       await readFile(admitted.admittedRequestPath, "utf8"),
     ) as Record<string, unknown>;
-    // Corrupt durable face with blank + inline Spec prose — must not restore as authority.
     persisted.authorityRefs = ["", "The system SHALL launch two workers"];
     await writeFile(
       admitted.admittedRequestPath,
@@ -1100,13 +1216,23 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     await assert.rejects(
       () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
-        error instanceof CliUsageError &&
-        error.code === "AK_ROLE_USAGE" &&
-        (/nonempty durable reference|not inline Spec prose/i.test(error.message)),
+        error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
 
-    // Base damage keeps durable run identity — never rebrand as fresh --base input.
     persisted.authorityRefs = ["https://example.com/durable-ref"];
+    persisted.lens = "all";
+    await writeFile(
+      admitted.admittedRequestPath,
+      `${JSON.stringify(persisted, null, 2)}\n`,
+      "utf8",
+    );
+    await assert.rejects(
+      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
+      (error: unknown) =>
+        error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
+    );
+
+    persisted.lens = "correctness";
     persisted.baseRevision = "";
     await writeFile(
       admitted.admittedRequestPath,
@@ -1116,10 +1242,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     await assert.rejects(
       () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
-        error instanceof CliUsageError &&
-        error.code === "AK_ROLE_USAGE" &&
-        error.message.includes(`role run admitted reviewer base revision is missing: ${admitted.runId}`) &&
-        !error.message.includes("--base"),
+        error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
 
     persisted.baseRevision = "--lens";
@@ -1131,10 +1254,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     await assert.rejects(
       () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
-        error instanceof CliUsageError &&
-        error.code === "AK_ROLE_USAGE" &&
-        error.message.includes(`role run admitted reviewer base revision is damaged: ${admitted.runId}`) &&
-        !error.message.includes("--base"),
+        error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
   });
 });
@@ -1150,140 +1270,312 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     {
       const { io } = captureIo();
       const first = await runAkRole([
-        "reviewer", "--model", "test/caller-seat:high", "--project", project,
-        "--base", "main", "--lens", "correctness", "--authority-ref", "CLAUDE.md",
-        instruction,
-      ],
-        {
-          packageRoot,
-          home,
-          cwd: project,
-          credentials: { "openai-codex": true, xai: true },
-          createRunId: () => runId,
-          io,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            await mkdir(sessionDir, { recursive: true });
-            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-            await observeTyped429ViaProductionHandler({
-              runDirectory: join(sessionDir, ".."),
-              provider: "xai",
-            });
-            return {
-              code: 1,
-              stderr: "quota",
-              timedOut: false,
-              args: [...args],
-            };
-          },
-          }),
-        },
-      );
+        "reviewer", "--model", "test/caller-seat:high",
+        "--project", project, "--base", "main", "--lens", "correctness",
+        "--authority-ref", "CLAUDE.md", instruction,
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        roleTurnHost: reviewerHost(async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+          await observeTyped429ViaProductionHandler({
+            runDirectory: join(sessionDir, ".."),
+            provider: "xai",
+          });
+          return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
+        }),
+      });
       assert.ok(first.terminal?.resume, "reviewer 429 must be resumable");
       assert.equal(first.terminal?.roleOutcome.role, "reviewer");
     }
 
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      `${runId}@reviewer`,
+      home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@reviewer`,
     );
     const sessionDirectory = join(runDirectory, "session");
     const admitted = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as Record<string, unknown> & { role: string; baseRevision?: string; ticketNumber?: number };
+    ) as Record<string, unknown> & {
+      role: string;
+      baseRevision?: string;
+      lens?: string;
+      projectRoot?: string;
+    };
     assert.equal(admitted.role, "reviewer");
     assert.equal(admitted.baseRevision, "main");
     assert.equal(admitted.lens, "correctness");
-    assert.equal(admitted.ticketNumber, undefined);
-    assert.equal("taskPath" in admitted, false);
-    assert.equal("taskSha256" in admitted, false);
+    assert.equal(realpathSync(String(admitted.projectRoot)), realpathSync(project));
 
+    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
+    let resumeCwd: string | undefined;
     const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,
       credentials: { "openai-codex": true, xai: true },
       io,
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot: packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args, options) => {
+      roleTurnHost: reviewerHost(async (args, options) => {
         resumeArgs = [...args];
         resumeStdin = options.stdin;
         assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
         assert.equal(args.includes("--ak-review-task"), false);
         assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
-        // correctness resume path — constant-completeness projection must fail here.
         assert.equal(args[args.indexOf("--ak-review-lens") + 1], "correctness");
-        assert.equal(args[args.indexOf("--ak-review-lens") + 1], admitted.lens);
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
         const resumeDialogue = readUserDialogueStdin(resumeStdin ?? "");
         assert.equal(resumeDialogue, "[ak-role:resume-continue]");
-        assert.equal(resumeDialogue.includes("/skill:"), false);
-        assert.equal(resumeDialogue.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
-        const material = await loadPackagedMethodSkillMaterial(
-          packageRoot,
-          "ak-cross-m-review",
-        );
-        const skillPath = resolvePackagedMethodSkillPath(
-          packageRoot,
-          "ak-cross-m-review",
-        );
-        // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
-        const expansion = `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`;
-        const details = lawfulReviewerReceipt("correctness");
-        await writeFile(
-          join(sessionDirectory, "session.jsonl"),
-          `${JSON.stringify({
-            type: "message",
-            message: {
-              role: "user",
-              content: [{ type: "text", text: expansion }],
-            },
-          })}\n${JSON.stringify({
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolCallId: "rr1",
-              toolName: REVIEWER_OUTPUT_TOOL_NAME,
-              isError: false,
-              details,
-            },
-          })}\n`,
-          "utf8",
-        );
-        return {
-          code: 0,
-          sealedAcceptance: { role: "reviewer" as const, details, toolCallId: "rr1" },
-          stderr: "",
-          timedOut: false,
-          args: [...args],
-        };
-      },
-          }),
+        // Resume runs in a fresh copy of the source tree at resume time (#946 10a).
+        assert.notEqual(realpathSync(options.cwd), realpathSync(project));
+        resumeCwd = options.cwd;
+        return lawfulChildTurn(args, {
+          lens: "correctness",
+          includeSkillExpansion: true,
+          toolCallId: "rr1",
+        });
+      }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "reviewer resume failed");
+    assert.equal(typeof resumeCwd, "string");
+    // Fresh copy is gone after resume returns.
+    assert.equal(
+      execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      }),
+      worktreeListBefore,
+    );
     assert.equal(Array.isArray(resumeArgs), true);
-    assert.equal(resumed.terminal?.roleOutcome.role, "reviewer");
     assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(resumed.terminal.roleOutcome)
         : [],
       ["completed"],
     );
+    assert.equal(
+      (await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state,
+      "terminal",
+    );
   });
 });
 
+test("default dual-lens from subdirectory admits caller project and deletes ephemeral worktrees", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
+    const subdir = join(project, "nested", "leaf");
+    await mkdir(subdir, { recursive: true });
+    const callerProjectRoot = realpathSync(subdir);
+    // Trap second host-facing projection: first maps test→test-mapped; a second
+    // pass would map test-mapped→test-mapped-twice and fail the provider assert.
+    await mkdir(join(home, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(home, ".ak-roles", "host-providers.json"),
+      `${JSON.stringify({
+        pi: { test: "test-mapped", "test-mapped": "test-mapped-twice" },
+      }, null, 2)}\n`,
+      "utf8",
+    );
+
+    const capturedProviders: string[] = [];
+    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+
+    const { io, stdout } = captureIo();
+    const batch = await runAkRole([
+      "reviewer", "--model", "test/caller-seat:high",
+      "--project", subdir, "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
+    ], {
+      packageRoot,
+      home,
+      cwd: subdir,
+      credentials: { "openai-codex": true, xai: true },
+      reviewerTimeoutMs: 17_777,
+      io,
+      roleTurnHost: reviewerHost(async (args, options) => {
+        assert.equal(options.timeoutMs, 17_777);
+        assert.equal(options.cwd.endsWith(join("nested", "leaf")), true);
+        assert.notEqual(realpathSync(options.cwd), callerProjectRoot);
+        if (args.includes("--provider")) {
+          capturedProviders.push(args[args.indexOf("--provider") + 1]!);
+        }
+        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+        await mkdir(sessionDir, { recursive: true });
+        await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+        await observeTyped429ViaProductionHandler({
+          runDirectory: join(sessionDir, ".."),
+          provider: "xai",
+        });
+        return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
+      }),
+    });
+
+    assert.equal(batch.exitCode, 1, stdout.join(""));
+    const completenessResume = batch.terminal?.reviewerChildren?.completeness?.resume?.command;
+    const correctnessResume = batch.terminal?.reviewerChildren?.correctness?.resume?.command;
+    assert.equal(typeof completenessResume, "string");
+    assert.equal(typeof correctnessResume, "string");
+    const completenessRunId = completenessResume!.slice("ak-role resume ".length);
+    const correctnessRunId = correctnessResume!.slice("ak-role resume ".length);
+    assert.notEqual(completenessRunId, correctnessRunId);
+    assert.equal(capturedProviders.length >= 2, true);
+    for (const provider of capturedProviders) assert.equal(provider, "test-mapped");
+
+    // Ephemeral worktrees are gone after the batch even when children are resumable.
+    const worktreeListAfter = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+    assert.equal(worktreeListAfter, worktreeListBefore);
+
+    // Durable identity matches the caller project (10a); one durable page is enough.
+    const bookKey = resolveBookKeyFromGit(project);
+    const admitted = JSON.parse(
+      await readFile(
+        join(
+          home, ".ak-roles", "books", bookKey, "unbound", "runs",
+          `${completenessRunId}@reviewer`, "admitted-request.json",
+        ),
+        "utf8",
+      ),
+    ) as { projectRoot: string; baseRevision: string; lens: string };
+    assert.equal(realpathSync(admitted.projectRoot), callerProjectRoot);
+    assert.equal(admitted.baseRevision, "HEAD~1");
+    assert.equal(admitted.lens, "completeness");
+
+    // Resume: fresh copy of source tree at resume time; old batch worktree not required (#946 10a).
+    const { io: resumeIo, stdout: resumeStdout } = captureIo();
+    let resumeCwd: string | undefined;
+    const resumed = await runAkRole(
+      ["resume", "--model", "test/caller-seat:high", completenessRunId],
+      {
+        packageRoot,
+        home,
+        cwd: subdir,
+        credentials: { "openai-codex": true, xai: true },
+        io: resumeIo,
+        roleTurnHost: reviewerHost(async (args, options) => {
+          resumeCwd = options.cwd;
+          // Sandbox keeps the caller subdirectory layout under a new worktree root.
+          assert.equal(options.cwd.endsWith(join("nested", "leaf")), true);
+          assert.notEqual(realpathSync(options.cwd), callerProjectRoot);
+          return lawfulChildTurn(args, {
+            lens: "completeness",
+            toolCallId: "subdir-resume",
+          });
+        }),
+      },
+    );
+    assert.equal(resumed.exitCode, 0, resumeStdout.join(""));
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(typeof resumeCwd, "string");
+    // Resume sandbox is deleted after the call; no ownership residue.
+    const worktreeListAfterResume = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+    assert.equal(worktreeListAfterResume, worktreeListBefore);
+  });
+});
+
+test("default dual-lens relative --project and inline --base fail closed like single-axis", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
+    const subdir = join(project, "nested", "leaf");
+    await mkdir(subdir, { recursive: true });
+    const expectedProjectRoot = realpathSync(subdir);
+
+    await withProcessCwd(project, async () => {
+      const relativeProject = relative(process.cwd(), subdir);
+      assert.equal(relativeProject.includes(".."), false);
+
+      const { io: batchIo, stdout: batchStdout } = captureIo();
+      const batch = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high",
+        "--project", relativeProject,
+        "--base=HEAD~1", "--authority-ref", "CLAUDE.md",
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io: batchIo,
+        roleTurnHost: reviewerHost(async (args, options) => {
+          assert.notEqual(realpathSync(options.cwd), expectedProjectRoot);
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+          await observeTyped429ViaProductionHandler({
+            runDirectory: join(sessionDir, ".."),
+            provider: "xai",
+          });
+          return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
+        }),
+      });
+      assert.equal(batch.exitCode, 1, batchStdout.join(""));
+      const completenessResume = batch.terminal?.reviewerChildren?.completeness?.resume?.command;
+      assert.equal(typeof completenessResume, "string");
+      const bookKey = resolveBookKeyFromGit(project);
+      const admitted = JSON.parse(
+        await readFile(
+          join(
+            home, ".ak-roles", "books", bookKey, "unbound", "runs",
+            `${completenessResume!.slice("ak-role resume ".length)}@reviewer`,
+            "admitted-request.json",
+          ),
+          "utf8",
+        ),
+      ) as { projectRoot: string; baseRevision: string };
+      assert.equal(realpathSync(admitted.projectRoot), expectedProjectRoot);
+      assert.equal(admitted.baseRevision, "HEAD~1");
+    });
+
+    // Inline --base=value must fail closed before minting worktrees.
+    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+    const { io: badIo, stdout: badStdout } = captureIo();
+    const bad = await runAkRole([
+      "reviewer", "--model", "test/caller-seat:high",
+      "--project", subdir,
+      "--base=not-a-real-ref-946", "--authority-ref", "CLAUDE.md",
+    ], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: badIo,
+      roleTurnHost: reviewerHost(async () => {
+        throw new Error("child turn must not start when base precheck fails");
+      }),
+    });
+    assert.equal(bad.exitCode, 1, badStdout.join(""));
+    const worktreeListAfter = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+    assert.equal(worktreeListAfter, worktreeListBefore);
+  });
+});

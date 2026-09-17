@@ -4,4 +4,4 @@ Status: accepted
 
 顶层公开面不变：用户仍是 ak-role 调角色做一件事，仅多 --host；中层步骤抽象统一，接任何 CLI 只多出该宿主实现，底层是宿主无关的角色本体；每类变更只落一层，分层脱钩是代码/逻辑零耦合、只经显式契约；机构（闸/审刑院子会话/门下省派发/结算/家册）永留 AK 侧。pi 是适配器之一、无特权、只是缺省宿主，终局移除 pi，切片不得加深 pi 耦合，pi 专有接缝只准留在 pi adapter 内；所有角色走同一条可插拔管线（装载→输入检查→过程执行→输出检查/交卷闸环→结算），不适配者按类型开新管线、上限约二至三根；司天台接受不同 CLI 输出并经统一入口存放；宿主契约封顶为会话/轮次/工具挂载/能力声明四组动词，交卷工具即闸入口，受控会话为硬要求。--host 旗标加席位配置双通道且优先级为旗标>席位配置>缺省 pi，未注册 host 或模型×宿主不匹配一律响亮报错、禁静默顶替；池令×host 不加机制；运输面是适配器内政；中层含 host 与 engine 两轴；角色本体载体是代码接缝、不造 manifest、两张角色注册表合一，新包名等于同一代码库就地分层；设计票开庭须逐条对抗。
 
-Decision key `reviewer-method-lens=caller-selected-parent-run`：Reviewer 单 lens 由调用者选定并在父腿 invoking session 内自执行，不起子腿、不要求独立副本；宿主中立。
+公开 Reviewer 命令省略 `--lens` 时，共享执行接缝并行发起 completeness 与 correctness 两条独立的普通单轴 Reviewer run，并把两份原始 Terminal 一起呈给调用方；命令本身不建立父 run。`--lens completeness|correctness` 只起指定的一条 run。各腿复用 canonical `ak-cross-m-review` 的既有单轴路径，分别拥有 run、session 与 typed 出口；共享呈现层不得串行、吞掉或改标任一终局。

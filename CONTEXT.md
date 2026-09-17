@@ -22,7 +22,7 @@
 - **Fixer(修内司)**:以 `plan`(只规划)或 `apply`(施工)阶段处理调用方提供的修理包；apply 按 finding 结算为完成或合法拒绝，混合结算称 `partially_completed`，不是未完进度；另有只表示本次调用未结清的 `unfinished` 交棒，定义见 README Fixer。
 - **Coder(将作监)**:以 `plan`/`apply` 两阶段完成首次实现或据理拒绝派单的角色。apply 绑定包内 canonical Matt TDD 方法 Skill（宿主调用能力与缺口以 README「强制方法 Skill」为唯一说明，ADR 0082 / #922）；自查三连证据留在 report 供调用方处置,两者都不进入 Soul。apply 可用 `unfinished` 携带非空 typed `remainingScope` 交出未结清范围；这是可续交棒而非失败,不豁免验收。Coder 回执不以新 commit 为无条件前提（ADR 0024）；`completed` 零 commit 仅触发防忘提醒闸一次（ADR 0066），`planned`/`refused`/`unfinished` 零 commit 合法。拒绝可零 commit 直接交调用方处置。
 - **未完终态(Unfinished)**:两个 worker 角色 apply 阶段的合法交卷状态，语义为**受阻求援**——仅当前置条件缺失或违宪导致本次调用无法完成时可用，回执必须说明理由；缺待拍决策/答复＝前置缺失的一种(2026-08-12 收窄与执法位见 ADR 0050 Amendment / #292)。它是**可续的交棒,不是失败,也不是验收结论**:既不表达基础设施故障(那走非零退出),也不豁免任何验收。规范见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。#72 的 #75/#76 两条施工腿均已装配。
-- **Reviewer(御史台)**:围绕一个固定目标形成独立、可追溯代码评审的角色;不修复、不发布、不路由、不作最终裁决。绑定包内 canonical `ak-cross-m-review` 方法 Skill（宿主调用能力与缺口以 README「强制方法 Skill」为唯一说明，ADR 0082 / #922）；公开 `--lens completeness|correctness` 由调用者选定单 lens，本席自执行；回执只表达 `completed` 或 `refused`，amendments 轴为 completeness/correctness，不表达批准、合并或流转语义。
+- **Reviewer(御史台)**:围绕一个固定目标形成独立、可追溯代码评审的寺监级角色;不派 worker、不修复、不发布、不路由、不作最终裁决。绑定包内 canonical `ak-cross-m-review` 方法 Skill（ADR 0082 / #922）；单次角色调用只执行一个冻结 lens。公开 Reviewer 命令省略 `--lens` 时由外层共享执行接缝并行发起 completeness 与 correctness 两条普通单轴 run，并把两份原始终局一起呈现（命令本身无父 run）；显式 `--lens completeness|correctness` 只跑该轴；回执只表达 `completed` 或 `refused`，amendments 轴为 completeness/correctness，不表达批准、合并或流转语义。
 - **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
 - **门下省(Gate province)**:审署诏敕与质量保证的省部级席位。它是调用者可经公开入口单独传召的普通角色，不再由交卷闸主动传召；给事中（票庭）亦属本省，由调用者开工前传召。省不是纯分类词，也不是外层编排器。各官仍是独立角色，自己提交 typed 结果。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 与 [ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。
 _Avoid_:把「门下省」当作通进司的公开角色名。
@@ -34,7 +34,7 @@ _Avoid_:把「门下省」当作通进司的公开角色名。
 - **起居郎(diarist)**:判断本庭对象是哪张票、本票对话起止于何处的记录者；正文与指针由机械从会话卷原样搬运，不由其誊写。不是设计批准者或施工指挥者。制度与本轮设计分别见 ADR 0075、ADR 0081。
 - **通进司(Collector)**:门下省下的收证衙门。单次调用内认票、阅读 bot 手册与现场活动、按需触发评审、在工作步骤开启可配置等待窗并收证，提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。手册是角色工作记忆（通用＋仓库差异），不是代码状态规则。等待窗默认十分钟、使用方可配置，从 PR 创建成功或本轮触发阶段结束起算，不是从会话激活起算。v1 仅支持 `github.com`。canonical 键仍为 `collector`。
 _Avoid_:门下省（那是省名）。
-- **评审腿(Review leg)**:历史词；现行 Reviewer 不再起子腿。Collector 的可选请求不构成评审腿或身份期待。
+- **评审腿(Review leg)**:公开 Reviewer 命令省略 `--lens` 时，共享执行接缝并行发起的 completeness／correctness 普通单轴 Reviewer run；命令本身不建立父 run，Reviewer 角色本体仍不派 worker。Collector 的可选请求不构成评审腿或身份期待。
 - **Soul 审刑院(Soul-compliance audit)**:独立的实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」；不再限于复核大理寺的程序或既给材料。大理寺审计开庭材料=工厂宪法+己 auditor Soul+审刑院法典(`souls/audit-law.md`)+quality-law;太医审计暂=工厂宪法+己 Soul(御批四)。御史台侧审刑院闸已退役(#495 S6 风闻奏事)。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md),现行职掌见 [ADR 0062](docs/adr/0062-auditor-is-an-independent-substantive-role.md)。
 - **卷宗(Dossier)**:一次 run 在候簿记录之家里的全部既落账材料；卷宗即真源,无投影副本。定位靠机器注入的 typed 指针(`cwd` 与 `AK_ROLE_RUN_DIR`),禁 latest-run/mtime/全局扫描猜测。
 - **先立卷后审卷**:被审对象必先落账,审计只从账上读；手递手传料非法。缺卷或缺被审对象走既有非零故障通道(`missing-dossier` / `missing-subject` 真因落 error artifact),public CLI 无合法 Receipt。

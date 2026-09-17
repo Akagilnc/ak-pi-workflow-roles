@@ -9,15 +9,23 @@
  * (`reading 'dirname'`, `reading 'tryHomeFromAkRolesPath'`). Dynamic import
  * starts after the caller module has finished init, so those slots stay intact.
  */
+import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { join } from "node:path";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, relative, sep } from "node:path";
+import { promisify } from "node:util";
 
 import type { CliIo } from "./public-cli/cli-io.ts";
 import type { CredentialProviders, EffectiveSeat } from "./public-cli/config.ts";
 import type { PublicCallableRole } from "./public-cli/registry.ts";
-import type { RoleTurnHost } from "./host-contracts.ts";
-import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
+import type {
+  DurablePrincipalAuthority,
+  RoleTurnHost,
+  RoleTurnModelConfig,
+} from "./host-contracts.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
+import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 import { pickEngineAxis } from "./package-resources/engine-material.ts";
 
 /** Env published by the parent activation so nested summons never re-derive root. */
@@ -33,7 +41,8 @@ export type PublicSummonRole =
   | "judge"
   | "doctor"
   | "diarist"
-  | "countersign";
+  | "countersign"
+  | "reviewer";
 
 export type PublicSummonRequest = {
   readonly role: PublicSummonRole;
@@ -45,7 +54,16 @@ export type PublicSummonRequest = {
   readonly packageRoot?: string;
   readonly io?: CliIo;
   readonly credentials?: CredentialProviders;
+  /** Parent turn's effective seat axes for same-seat child legs. */
+  readonly model?: RoleTurnModelConfig;
+  readonly host?: string;
+  readonly engine?: string;
+  readonly engineModel?: string;
   readonly agentDir?: string;
+  /** Parent durable-principal authority; defaults to the Pi adapter. */
+  readonly principalAuthority?: DurablePrincipalAuthority;
+  /** Parent role-run timeout projected onto the child turn request. */
+  readonly timeoutMs?: number;
   /**
    * Optional Pi argv forwarded to the role-turn host (same face as public CLI
    * seat extraPiArgs). Callers pass explicitly — no process.env test protocol.
@@ -85,7 +103,21 @@ export type PublicSummonRequest = {
   readonly boundTicketNumber?: number;
   /** Caller correlation id for nested leg ledger (ADR 0010 / #924). */
   readonly correlationId?: string;
+  /**
+   * Ephemeral host-turn cwd override (#946 fresh-copy sandbox). Admission keeps
+   * the public --project / cwd identity; the host turn runs under this path.
+   */
+  readonly executionCwd?: string;
+  /**
+   * Nested court station child (default true): omit Navigator auto-attendance
+   * and use station-child resume. Ordinary public-equivalent legs (dual-lens
+   * Reviewer axes) pass false so behavior matches a top-level single-axis call
+   * (#946 / ADR 0082).
+   */
+  readonly stationChild?: boolean;
 };
+
+const execFileAsync = promisify(execFile);
 
 export type PublicSummonResult = {
   readonly exitCode: number;
@@ -194,7 +226,7 @@ function hostSelectionFailureFromUnknown(error: unknown): HostSelectionFailure |
 
 type SummonEnvOk = {
   readonly home: string;
-  readonly principalAuthority: import("./host-contracts.ts").DurablePrincipalAuthority;
+  readonly principalAuthority: DurablePrincipalAuthority;
   readonly agentDir: string;
   readonly sessionAppender: typeof import("./pi/role-turn-host.ts").appendPiSessionCustomEntry;
   readonly packageRoot: string;
@@ -205,6 +237,7 @@ type SummonEnvOk = {
   readonly engine?: string;
   readonly engineModel?: string;
   readonly host?: string;
+  readonly timeoutMs?: number;
 };
 
 /** #178: missing model is ok:false (typed fact), not a thrown message. */
@@ -224,6 +257,10 @@ async function createSummonEnv(
     readonly extraPiArgs?: readonly string[];
     readonly roleTurnHost?: RoleTurnHost;
     readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
+    readonly principalAuthority?: DurablePrincipalAuthority;
+    readonly timeoutMs?: number;
+    /** Parent env model already host-facing — never project a second time. */
+    readonly hostFacingModel?: RoleTurnModelConfig;
   },
   /** #178: after host selection, before missing-model — structural argv parse once. */
   afterHost?: () => void,
@@ -239,7 +276,7 @@ async function createSummonEnv(
     import("./public-cli/role-turn-host-resolution.ts"),
     import("./public-cli/config.ts"),
   ]);
-  const principalAuthority = piDurablePrincipalAuthority;
+  const principalAuthority = options.principalAuthority ?? piDurablePrincipalAuthority;
   // Host first → argv (afterHost) → missing-model → provider projection (#617/#178/#840).
   const roleTurnHost = resolveRoleTurnHost(
     {
@@ -249,6 +286,7 @@ async function createSummonEnv(
       ...(options.extraPiArgs === undefined || options.extraPiArgs.length === 0
         ? {}
         : { extraPiArgs: options.extraPiArgs }),
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     },
     { role: options.role, seat: options.seat, principalAuthority },
   );
@@ -261,15 +299,18 @@ async function createSummonEnv(
     };
   }
   const hostName = seatWithModel.host ?? "pi";
-  const { loadHostProvidersTable, projectHostFacingProvider } = await import(
-    "./public-cli/host-providers.ts"
-  );
-  const hostFacingSelection = projectHostFacingProvider(
-    seatWithModel.selection,
-    hostName,
-    loadHostProvidersTable(options.home),
-    options.home,
-  );
+  let hostFacingSelection: RoleTurnModelConfig | undefined = options.hostFacingModel;
+  if (hostFacingSelection === undefined) {
+    const { loadHostProvidersTable, projectHostFacingProvider } = await import(
+      "./public-cli/host-providers.ts"
+    );
+    hostFacingSelection = projectHostFacingProvider(
+      seatWithModel.selection,
+      hostName,
+      loadHostProvidersTable(options.home),
+      options.home,
+    );
+  }
   return {
     ok: true,
     env: {
@@ -284,6 +325,7 @@ async function createSummonEnv(
       ...(hostFacingSelection === undefined ? {} : { model: hostFacingSelection }),
       ...projectSeatEngine(seatWithModel),
       ...projectSeatHost(seatWithModel),
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
     },
   };
 }
@@ -310,7 +352,29 @@ export async function summonPublicRole(
     options.credentials ?? (await loadCredentialProviders(agentDir));
   const config = await loadPublicCliConfig(home);
   // Nested summons: officer seat only (flag>seat>default pi). #178 order below.
-  const seat = resolveEffectiveSeat(config, options.role, credentials);
+  const resolvedSeat = resolveEffectiveSeat(config, options.role, credentials);
+  const inheritedSelection = options.model === undefined
+    ? undefined
+    : {
+        provider: options.model.provider,
+        model: options.model.model,
+        ...(options.model.thinking === undefined
+          ? {}
+          : { thinking: options.model.thinking as import("./public-cli/registry.ts").PublicThinkingLevel }),
+      };
+  const seat: EffectiveSeat = {
+    ...resolvedSeat,
+    ...(inheritedSelection === undefined
+      ? {}
+      : { selection: inheritedSelection, source: "invocation" as const }),
+    ...(options.host === undefined
+      ? {}
+      : { host: options.host, hostSource: "invocation" as const }),
+    ...(options.engine === undefined
+      ? {}
+      : { engine: options.engine, engineSource: "invocation" as const }),
+    ...(options.engineModel === undefined ? {} : { engineModel: options.engineModel }),
+  };
   const captured = options.io === undefined ? createCapturingIo() : undefined;
   const io = options.io ?? captured!.io;
 
@@ -325,6 +389,12 @@ export async function summonPublicRole(
     ...(options.extraPiArgs === undefined ? {} : { extraPiArgs: options.extraPiArgs }),
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
     ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
+    ...(options.principalAuthority === undefined
+      ? {}
+      : { principalAuthority: options.principalAuthority }),
+    ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    // Parent model is already host-facing; child must not project again.
+    ...(options.model === undefined ? {} : { hostFacingModel: options.model }),
   } as const;
 
   type Prepared =
@@ -341,7 +411,9 @@ export async function summonPublicRole(
         ok: true,
         env: {
           ...built.env,
-          stationChild: true,
+          // Nested court stations keep station-child semantics; dual-lens
+          // ordinary Reviewer axes opt out (#946 / ADR 0082).
+          ...(options.stationChild === false ? {} : { stationChild: true }),
           // Forward composition-root adapters so nested court stations (e.g.
           // countersign → diarist) select the same faux/production table (#924).
           ...(options.hostAdapters === undefined
@@ -362,6 +434,7 @@ export async function summonPublicRole(
             ? {}
             : { correlationId: options.correlationId }),
           ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+          ...(options.executionCwd === undefined ? {} : { executionCwd: options.executionCwd }),
         },
       };
     } catch (error) {
@@ -503,6 +576,17 @@ export async function summonPublicRole(
       result = stepped.ok;
       break;
     }
+    case "reviewer": {
+      const [{ runPublicReviewer }, { parseReviewerArgv }] = await Promise.all([
+        import("./public-cli/reviewer-run.ts"),
+        import("./public-cli/invocation.ts"),
+      ]);
+      const stepped = await runPrepared(parseReviewerArgv, (env, once) =>
+        runPublicReviewer(options.argv, env as never, io, once));
+      if ("fail" in stepped) return stepped.fail;
+      result = stepped.ok;
+      break;
+    }
   }
 
   const stderr = captured?.stderrText();
@@ -516,6 +600,415 @@ export async function summonPublicRole(
       : {}),
     ...(stderr === undefined || stderr === "" ? {} : { stderr }),
   };
+}
+
+/**
+ * Inject `--lens` into a public Reviewer argv that has none. Keeps every other
+ * token (including `--project` and `--`) exactly as the single-axis entry saw it.
+ */
+function withReviewerLens(
+  argv: readonly string[],
+  lens: "completeness" | "correctness",
+): string[] {
+  const separator = argv.indexOf("--");
+  if (separator === -1) return [...argv, "--lens", lens];
+  return [...argv.slice(0, separator), "--lens", lens, ...argv.slice(separator)];
+}
+
+/** Caller project may be a repo subdirectory; sandboxes keep that relative path. */
+async function resolveReviewerWorktreeRoots(projectRoot: string): Promise<{
+  readonly callerProjectRoot: string;
+  readonly sourceProjectRoot: string;
+  readonly projectRelative: string;
+}> {
+  const callerProjectRoot = await realpath(projectRoot);
+  const sourceProjectRoot = await realpath((await execFileAsync(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    { cwd: callerProjectRoot },
+  )).stdout.trim());
+  const callerRelative = relative(sourceProjectRoot, callerProjectRoot);
+  const projectRelative =
+    callerRelative === ""
+    || callerRelative === "."
+    || callerRelative.startsWith(`..${sep}`)
+    || callerRelative === ".."
+      ? ""
+      : callerRelative;
+  return { callerProjectRoot, sourceProjectRoot, projectRelative };
+}
+
+function reviewerSandboxPath(worktreeAxis: string, projectRelative: string): string {
+  return projectRelative === "" ? worktreeAxis : join(worktreeAxis, projectRelative);
+}
+
+export type EphemeralReviewerWorktree = {
+  readonly executionCwd: string;
+  /** Always safe to call once; delete failure is diagnostic only (#946 10a). */
+  readonly close: () => Promise<void>;
+};
+
+/**
+ * Open one ephemeral detached worktree at the source tree's current HEAD.
+ * Caller must close. Shared by explicit `--lens` and any Reviewer resume.
+ * Dual-lens batch mints its own pair so both legs share one PRE_HEAD snapshot.
+ */
+export async function openEphemeralReviewerWorktree(options: {
+  readonly projectRoot: string;
+  readonly onCleanupDiagnostic?: (diagnostic: string) => void;
+}): Promise<EphemeralReviewerWorktree> {
+  const { sourceProjectRoot, projectRelative } = await resolveReviewerWorktreeRoots(
+    options.projectRoot,
+  );
+  const { stdout: headStdout } = await execFileAsync(
+    "git",
+    ["rev-parse", "--verify", "HEAD^{commit}"],
+    { cwd: sourceProjectRoot },
+  );
+  const targetCommit = headStdout.trim();
+  const root = await mkdtemp(join(tmpdir(), "ak-reviewer-sandbox-"));
+  const worktreeRoot = join(root, "work");
+  let registered = false;
+  const rollback = async (cause: unknown): Promise<never> => {
+    // From registration onward, any pre-handle failure must remove the worktree
+    // and root. Keep the original prep cause; cleanup failures are diagnostic
+    // only (10a) — same face as close(), never silent (#946).
+    const cleanupErrors: unknown[] = [];
+    if (registered) {
+      try {
+        await execFileAsync("git", ["worktree", "remove", "--force", worktreeRoot], {
+          cwd: sourceProjectRoot,
+        });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+    }
+    try {
+      await rm(root, { recursive: true, force: true });
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (cleanupErrors.length > 0) {
+      options.onCleanupDiagnostic?.([
+        "reviewer worktree cleanup failed",
+        ...cleanupErrors.map((error) =>
+          error instanceof Error ? error.message : String(error)),
+      ].join("\n"));
+    }
+    throw cause;
+  };
+  try {
+    await execFileAsync("git", ["worktree", "add", "--detach", worktreeRoot, targetCommit], {
+      cwd: sourceProjectRoot,
+    });
+    registered = true;
+    // Preserve caller subdirectory even when absent from the pinned commit.
+    if (projectRelative !== "") {
+      await mkdir(reviewerSandboxPath(worktreeRoot, projectRelative), { recursive: true });
+    }
+  } catch (error) {
+    await rollback(error);
+  }
+  let closed = false;
+  return {
+    executionCwd: reviewerSandboxPath(worktreeRoot, projectRelative),
+    close: async () => {
+      if (closed) return;
+      closed = true;
+      const cleanupErrors: unknown[] = [];
+      try {
+        await execFileAsync("git", ["worktree", "remove", worktreeRoot], {
+          cwd: sourceProjectRoot,
+        });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        await rm(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        options.onCleanupDiagnostic?.([
+          "reviewer worktree cleanup failed",
+          ...cleanupErrors.map((error) =>
+            error instanceof Error ? error.message : String(error)),
+        ].join("\n"));
+      }
+    },
+  };
+}
+
+/**
+ * One ephemeral detached worktree at the source tree's current HEAD.
+ * Always removed after `run` settles; delete failure is diagnostic only (#946 10a).
+ */
+export async function withEphemeralReviewerWorktree<T>(options: {
+  readonly projectRoot: string;
+  readonly run: (executionCwd: string) => Promise<T>;
+  readonly onCleanupDiagnostic?: (diagnostic: string) => void;
+}): Promise<T> {
+  const sandbox = await openEphemeralReviewerWorktree({
+    projectRoot: options.projectRoot,
+    ...(options.onCleanupDiagnostic === undefined
+      ? {}
+      : { onCleanupDiagnostic: options.onCleanupDiagnostic }),
+  });
+  try {
+    return await options.run(sandbox.executionCwd);
+  } finally {
+    await sandbox.close();
+  }
+}
+
+/**
+ * Default Reviewer call: two explicit single-axis public legs in independent
+ * ephemeral detached worktrees, started as one parallel batch. Each leg reuses
+ * the caller's public argv and only adds `--lens` (10a). Worktrees are stateless
+ * execution sandboxes — created from the caller's current HEAD, always deleted
+ * when the call ends (delete failure is diagnostic only). Lifecycle stays in
+ * this shared summons seam, never in the role module (#946).
+ */
+export async function summonParallelReviewerLenses(options: {
+  /** Public argv after the role token; must not already carry `--lens`. */
+  readonly argv: readonly string[];
+  /** Same cwd the single-axis public entry would receive for this call. */
+  readonly cwd: string;
+  readonly projectRoot: string;
+  /** Typed --base from the public parse; used only for pre-worktree fail-closed check. */
+  readonly baseRevision: string;
+  readonly home: string;
+  readonly agentDir?: string;
+  readonly credentials?: CredentialProviders;
+  readonly model?: RoleTurnModelConfig;
+  readonly host?: string;
+  readonly engine?: string;
+  readonly engineModel?: string;
+  readonly packageRoot?: string;
+  readonly signal?: AbortSignal;
+  readonly correlationId?: string;
+  readonly roleTurnHost?: RoleTurnHost;
+  readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
+  readonly principalAuthority?: DurablePrincipalAuthority;
+  readonly timeoutMs?: number;
+}): Promise<{
+  readonly completeness: PublicSummonResult;
+  readonly correctness: PublicSummonResult;
+}> {
+  const describeFailure = (error: unknown): string => {
+    if (error instanceof AggregateError) {
+      return [error.message, ...error.errors.map(describeFailure)].join("\n");
+    }
+    return error instanceof Error ? error.message : String(error);
+  };
+  const failedResult = (error: unknown): PublicSummonResult => ({
+    exitCode: 1,
+    stderr: describeFailure(error),
+  });
+  const dualFailure = (error: unknown) => {
+    const failure = failedResult(error);
+    return { completeness: failure, correctness: failure } as const;
+  };
+
+  // Worktree prep shares one root: git toplevel, never a subdir input.
+  // Caller project may be a repo subdirectory; child sandboxes keep that relative path.
+  // Every pre-dispatch target check failure keeps the existing dual-child batch surface.
+  let sourceProjectRoot: string;
+  let projectRelative: string;
+  let targetCommit: string;
+  const statusArgs = [
+    "status",
+    "--porcelain=v1",
+    "--untracked-files=all",
+    "--",
+    ":/",
+    ":(top,exclude).claude/worktrees/**",
+  ] as const;
+  try {
+    const roots = await resolveReviewerWorktreeRoots(options.projectRoot);
+    sourceProjectRoot = roots.sourceProjectRoot;
+    projectRelative = roots.projectRelative;
+    const { stdout: statusStdout } = await execFileAsync("git", statusArgs, {
+      cwd: sourceProjectRoot,
+    });
+    if (statusStdout !== "") {
+      const diagnostic = [
+        "Reviewer target status gate failed:",
+        "git status --porcelain=v1 --untracked-files=all -- :/ ':(top,exclude).claude/worktrees/**'",
+        statusStdout,
+      ].join("\n");
+      return dualFailure(new Error(diagnostic));
+    }
+    const { stdout: targetStdout } = await execFileAsync(
+      "git",
+      ["rev-parse", "--verify", "HEAD^{commit}"],
+      { cwd: sourceProjectRoot },
+    );
+    targetCommit = targetStdout.trim();
+    // Typed base from the public parse — covers --base value and --base=value alike.
+    // Child legs still carry the original argv token unchanged (10a).
+    await execFileAsync(
+      "git",
+      ["rev-parse", "--verify", `${options.baseRevision}^{commit}`],
+      { cwd: sourceProjectRoot },
+    );
+  } catch (error) {
+    return dualFailure(error);
+  }
+  const root = await mkdtemp(join(tmpdir(), "ak-reviewer-lenses-"));
+  const completenessRoot = join(root, "completeness");
+  const correctnessRoot = join(root, "correctness");
+  const worktrees = [completenessRoot, correctnessRoot] as const;
+  const created = new Set<string>();
+  let results: { completeness: PublicSummonResult; correctness: PublicSummonResult };
+  const creation = await Promise.allSettled(
+    worktrees.map(async (path) => {
+      await execFileAsync("git", ["worktree", "add", "--detach", path, targetCommit], {
+        cwd: sourceProjectRoot,
+      });
+      // Git has registered the worktree — enter the rollback set before any further
+      // prep (mkdir of caller subdirectory) so a later failure cannot leak the entry.
+      created.add(path);
+      // Preserve caller subdirectory even when it is not present in the pinned commit.
+      if (projectRelative !== "") {
+        await mkdir(reviewerSandboxPath(path, projectRelative), { recursive: true });
+      }
+    }),
+  );
+  const creationFailures = creation.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : []);
+  if (creationFailures.length > 0) {
+    const failure = failedResult(new AggregateError(
+      creationFailures,
+      "parallel reviewer worktree creation failed",
+    ));
+    results = { completeness: failure, correctness: failure };
+  } else {
+    const summon = (
+      lens: "completeness" | "correctness",
+      worktreeAxis: string,
+    ): Promise<PublicSummonResult> => {
+      // Single-axis public entry as-is: caller's argv + only --lens, under the
+      // same cwd the omitted-lens call used. Durable projectRoot admits from
+      // that argv/cwd pair. Ephemeral worktree is executionCwd only (#946).
+      const sandbox = reviewerSandboxPath(worktreeAxis, projectRelative);
+      return summonPublicRole({
+        role: "reviewer",
+        argv: withReviewerLens(options.argv, lens),
+        cwd: options.cwd,
+        executionCwd: sandbox,
+        // Ordinary single-axis public semantics — not a nested court station.
+        stationChild: false,
+        home: options.home,
+        ...(options.agentDir === undefined ? {} : { agentDir: options.agentDir }),
+        ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
+        ...(options.model === undefined ? {} : { model: options.model }),
+        ...(options.host === undefined ? {} : { host: options.host }),
+        ...(options.engine === undefined ? {} : { engine: options.engine }),
+        ...(options.engineModel === undefined ? {} : { engineModel: options.engineModel }),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
+        ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+        ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+        ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
+        ...(options.principalAuthority === undefined
+          ? {}
+          : { principalAuthority: options.principalAuthority }),
+        ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+      });
+    };
+    const settled = await Promise.allSettled([
+      summon("completeness", completenessRoot),
+      summon("correctness", correctnessRoot),
+    ]);
+    results = {
+      completeness: settled[0].status === "fulfilled"
+        ? settled[0].value
+        : failedResult(settled[0].reason),
+      correctness: settled[1].status === "fulfilled"
+        ? settled[1].value
+        : failedResult(settled[1].reason),
+    };
+  }
+  let sealDiagnostic: string | undefined;
+  try {
+    const { stdout: headBeforeStdout } = await execFileAsync(
+      "git",
+      ["rev-parse", "--verify", "HEAD^{commit}"],
+      { cwd: sourceProjectRoot },
+    );
+    const { stdout: sealedStatusStdout } = await execFileAsync("git", statusArgs, {
+      cwd: sourceProjectRoot,
+    });
+    const { stdout: headAfterStdout } = await execFileAsync(
+      "git",
+      ["rev-parse", "--verify", "HEAD^{commit}"],
+      { cwd: sourceProjectRoot },
+    );
+    const headBefore = headBeforeStdout.trim();
+    const headAfter = headAfterStdout.trim();
+    if (
+      headBefore !== targetCommit
+      || headAfter !== targetCommit
+      || sealedStatusStdout !== ""
+    ) {
+      sealDiagnostic = [
+        "Reviewer target final seal failed:",
+        `HEAD before status => ${headBefore}`,
+        `HEAD after status => ${headAfter}`,
+        `expected PRE_HEAD ${targetCommit}`,
+        "git status --porcelain=v1 --untracked-files=all -- :/ ':(top,exclude).claude/worktrees/**'",
+        sealedStatusStdout,
+      ].join("\n");
+    }
+  } catch (error) {
+    sealDiagnostic = `Reviewer target final seal failed:\n${describeFailure(error)}`;
+  }
+  if (sealDiagnostic !== undefined) {
+    const withSealFailure = (result: PublicSummonResult): PublicSummonResult => ({
+      ...result,
+      exitCode: 1,
+      stderr: [result.stderr, sealDiagnostic].filter(
+        (text): text is string => typeof text === "string" && text !== "",
+      ).join("\n"),
+    });
+    results = {
+      completeness: withSealFailure(results.completeness),
+      correctness: withSealFailure(results.correctness),
+    };
+  }
+  // Stateless worktrees: always remove every axis created for this call.
+  // Delete failure is diagnostic only — do not flip child exit codes; leftover
+  // tmp dirs are left to the OS and git worktree prune (#946).
+  const cleanup = await Promise.allSettled(
+    [...created].map((path) =>
+      execFileAsync("git", ["worktree", "remove", path], { cwd: sourceProjectRoot })),
+  );
+  const cleanupFailures = cleanup.flatMap((result) =>
+    result.status === "rejected" ? [result.reason] : []);
+  if (cleanupFailures.length === 0) {
+    const rootCleanup = await Promise.allSettled([rm(root, { recursive: true, force: true })]);
+    cleanupFailures.push(...rootCleanup.flatMap((result) =>
+      result.status === "rejected" ? [result.reason] : []));
+  }
+  if (cleanupFailures.length > 0) {
+    const diagnostic = [
+      "parallel reviewer worktree cleanup failed",
+      ...cleanupFailures.map((failure) =>
+        failure instanceof Error ? failure.message : String(failure)),
+    ].join("\n");
+    const withCleanupDiagnostic = (result: PublicSummonResult): PublicSummonResult => ({
+      ...result,
+      stderr: [result.stderr, diagnostic].filter(
+        (text): text is string => typeof text === "string" && text !== "",
+      ).join("\n"),
+    });
+    results = {
+      completeness: withCleanupDiagnostic(results.completeness),
+      correctness: withCleanupDiagnostic(results.correctness),
+    };
+  }
+  return results;
 }
 
 /** Gate officer summons: notary/auditor via --source-run; inspector via pointer instruction. */
