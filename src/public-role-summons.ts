@@ -617,7 +617,11 @@ function withReviewerLens(
 export async function summonParallelReviewerLenses(options: {
   /** Public argv after the role token; must not already carry `--lens`. */
   readonly argv: readonly string[];
+  /** Same cwd the single-axis public entry would receive for this call. */
+  readonly cwd: string;
   readonly projectRoot: string;
+  /** Typed --base from the public parse; used only for pre-worktree fail-closed check. */
+  readonly baseRevision: string;
   readonly home: string;
   readonly agentDir?: string;
   readonly credentials?: CredentialProviders;
@@ -666,11 +670,6 @@ export async function summonParallelReviewerLenses(options: {
     ":/",
     ":(top,exclude).claude/worktrees/**",
   ] as const;
-  const baseFlag = options.argv.indexOf("--base");
-  const baseRevision =
-    baseFlag >= 0 && baseFlag + 1 < options.argv.length
-      ? options.argv[baseFlag + 1]
-      : undefined;
   try {
     callerProjectRoot = await realpath(options.projectRoot);
     sourceProjectRoot = await realpath((await execFileAsync(
@@ -703,15 +702,13 @@ export async function summonParallelReviewerLenses(options: {
       { cwd: sourceProjectRoot },
     );
     targetCommit = targetStdout.trim();
-    // Fail closed before minting worktrees when the caller's --base does not resolve.
+    // Typed base from the public parse — covers --base value and --base=value alike.
     // Child legs still carry the original argv token unchanged (10a).
-    if (baseRevision !== undefined) {
-      await execFileAsync(
-        "git",
-        ["rev-parse", "--verify", `${baseRevision}^{commit}`],
-        { cwd: sourceProjectRoot },
-      );
-    }
+    await execFileAsync(
+      "git",
+      ["rev-parse", "--verify", `${options.baseRevision}^{commit}`],
+      { cwd: sourceProjectRoot },
+    );
   } catch (error) {
     return dualFailure(error);
   }
@@ -750,14 +747,14 @@ export async function summonParallelReviewerLenses(options: {
       lens: "completeness" | "correctness",
       worktreeAxis: string,
     ): Promise<PublicSummonResult> => {
-      // Single-axis public entry as-is: caller's argv + only --lens. Durable
-      // projectRoot admits from that argv (caller --project / cwd). Ephemeral
-      // worktree is executionCwd only — no post-hoc identity rewrite (#946).
+      // Single-axis public entry as-is: caller's argv + only --lens, under the
+      // same cwd the omitted-lens call used. Durable projectRoot admits from
+      // that argv/cwd pair. Ephemeral worktree is executionCwd only (#946).
       const sandbox = childProjectPath(worktreeAxis);
       return summonPublicRole({
         role: "reviewer",
         argv: withReviewerLens(options.argv, lens),
-        cwd: callerProjectRoot,
+        cwd: options.cwd,
         executionCwd: sandbox,
         home: options.home,
         ...(options.agentDir === undefined ? {} : { agentDir: options.agentDir }),

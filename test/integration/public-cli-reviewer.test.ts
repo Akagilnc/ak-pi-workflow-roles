@@ -18,7 +18,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -49,6 +49,7 @@ import {
 } from "../../src/public-cli/settlement.ts";
 import {
   packageRoot,
+  withProcessCwd,
 } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
@@ -1824,5 +1825,147 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
     );
     assert.equal(resumedSibling.exitCode, 0, resumeStdout2.join(""));
     assert.equal(resumedSibling.terminal?.roleOutcome.kind, "accepted");
+  });
+});
+
+test("default dual-lens relative --project and --base=value match single-axis identity", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
+    const subdir = join(project, "nested", "leaf");
+    await mkdir(subdir, { recursive: true });
+    const expectedProjectRoot = realpathSync(subdir);
+
+    // Relative --project is resolved from process.cwd (public CLI face). Run under
+    // the repo root so dual-lens and explicit single-axis share one interpretation.
+    await withProcessCwd(project, async () => {
+      const relativeProject = relative(process.cwd(), subdir);
+      assert.equal(relativeProject.includes(".."), false);
+
+      const { io: singleIo, stdout: singleStdout } = captureIo();
+      const single = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high",
+        "--project", relativeProject,
+        "--base=HEAD~1", "--lens", "completeness", "--authority-ref", "CLAUDE.md",
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-cli-reviewer-relative-single",
+        io: singleIo,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+            await observeTyped429ViaProductionHandler({
+              runDirectory: join(sessionDir, ".."),
+              provider: "xai",
+            });
+            return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
+          },
+        }),
+      });
+      assert.equal(single.exitCode, 1, singleStdout.join(""));
+      const singleResume = single.terminal?.resume?.command;
+      assert.equal(typeof singleResume, "string");
+      const singleRunId = singleResume!.slice("ak-role resume ".length);
+      const bookKey = resolveBookKeyFromGit(project);
+      const singleAdmitted = JSON.parse(
+        await readFile(
+          join(home, ".ak-roles", "books", bookKey, "unbound", "runs",
+            `${singleRunId}@reviewer`, "admitted-request.json"),
+          "utf8",
+        ),
+      ) as { projectRoot: string; baseRevision: string };
+      assert.equal(realpathSync(singleAdmitted.projectRoot), expectedProjectRoot);
+      assert.equal(singleAdmitted.baseRevision, "HEAD~1");
+
+      const { io: batchIo, stdout: batchStdout } = captureIo();
+      const batch = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high",
+        "--project", relativeProject,
+        "--base=HEAD~1", "--authority-ref", "CLAUDE.md",
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io: batchIo,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args, options) => {
+            assert.notEqual(realpathSync(options.cwd), expectedProjectRoot);
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+            await observeTyped429ViaProductionHandler({
+              runDirectory: join(sessionDir, ".."),
+              provider: "xai",
+            });
+            return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
+          },
+        }),
+      });
+      assert.equal(batch.exitCode, 1, batchStdout.join(""));
+      const completenessResume = batch.terminal?.reviewerChildren?.completeness?.resume?.command;
+      const correctnessResume = batch.terminal?.reviewerChildren?.correctness?.resume?.command;
+      assert.equal(typeof completenessResume, "string");
+      assert.equal(typeof correctnessResume, "string");
+      for (const runId of [
+        completenessResume!.slice("ak-role resume ".length),
+        correctnessResume!.slice("ak-role resume ".length),
+      ]) {
+        const admitted = JSON.parse(
+          await readFile(
+            join(home, ".ak-roles", "books", bookKey, "unbound", "runs",
+              `${runId}@reviewer`, "admitted-request.json"),
+            "utf8",
+          ),
+        ) as { projectRoot: string; baseRevision: string; lens: string };
+        // 10a: same durable identity as the explicit single-axis call above.
+        assert.equal(realpathSync(admitted.projectRoot), expectedProjectRoot);
+        assert.equal(admitted.projectRoot, singleAdmitted.projectRoot);
+        assert.equal(admitted.baseRevision, "HEAD~1");
+        assert.ok(admitted.lens === "completeness" || admitted.lens === "correctness");
+      }
+    });
+
+    // Inline --base=value must fail closed before minting worktrees (same as spaced form).
+    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+    const { io: badIo, stdout: badStdout } = captureIo();
+    const bad = await runAkRole([
+      "reviewer", "--model", "test/caller-seat:high",
+      "--project", subdir,
+      "--base=not-a-real-ref-946", "--authority-ref", "CLAUDE.md",
+    ], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: badIo,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async () => {
+          throw new Error("child turn must not start when base precheck fails");
+        },
+      }),
+    });
+    assert.equal(bad.exitCode, 1, badStdout.join(""));
+    const worktreeListAfter = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+    assert.equal(worktreeListAfter, worktreeListBefore);
   });
 });

@@ -181,7 +181,13 @@ export async function runPublicReviewer(
     const { summonParallelReviewerLenses } = await import("../public-role-summons.ts");
     const children = await summonParallelReviewerLenses({
       argv,
+      // Replay argv under the same cwd the single-axis entry would see (10a).
+      // Do not substitute the resolved project path — relative --project must
+      // not be re-resolved against a shifted cwd.
+      cwd: env.cwd,
       projectRoot: resolve(parsed.project ?? env.cwd),
+      // Typed base from the public parse — precheck only; child argv stays verbatim.
+      baseRevision: parsed.baseRevision,
       home: env.home,
       agentDir: env.agentDir,
       ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
