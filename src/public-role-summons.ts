@@ -671,13 +671,30 @@ export async function openEphemeralReviewerWorktree(options: {
   let registered = false;
   const rollback = async (cause: unknown): Promise<never> => {
     // From registration onward, any pre-handle failure must remove the worktree
-    // and root; surface the original cause, not cleanup noise (#946).
+    // and root. Keep the original prep cause; cleanup failures are diagnostic
+    // only (10a) — same face as close(), never silent (#946).
+    const cleanupErrors: unknown[] = [];
     if (registered) {
-      await execFileAsync("git", ["worktree", "remove", "--force", worktreeRoot], {
-        cwd: sourceProjectRoot,
-      }).catch(() => {});
+      try {
+        await execFileAsync("git", ["worktree", "remove", "--force", worktreeRoot], {
+          cwd: sourceProjectRoot,
+        });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
     }
-    await rm(root, { recursive: true, force: true }).catch(() => {});
+    try {
+      await rm(root, { recursive: true, force: true });
+    } catch (error) {
+      cleanupErrors.push(error);
+    }
+    if (cleanupErrors.length > 0) {
+      options.onCleanupDiagnostic?.([
+        "reviewer worktree cleanup failed",
+        ...cleanupErrors.map((error) =>
+          error instanceof Error ? error.message : String(error)),
+      ].join("\n"));
+    }
     throw cause;
   };
   try {
