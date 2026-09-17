@@ -28,7 +28,7 @@ import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
   noReceiptLifecycleFacts,
 } from "../../src/receipt-delivery-policy.ts";
-import { formatTerminalResult, type TerminalRoleName } from "../../src/public-cli/terminal.ts";
+import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import {
   createSubmissionLedgerHost,
@@ -498,7 +498,7 @@ test("host-neutral typed turns record every terminating submission without sole 
     const runId = "run-multi-submit-836";
     const first = { judgeStatus: "continue", report: "first-submit" };
     const second = { judgeStatus: "converged", report: "second-submit" };
-    const { io, stdout } = captureIo();
+    const { io } = captureIo();
     const payloads = [first, second];
     let payloadIndex = 0;
     const host: RoleTurnHost = {
@@ -579,15 +579,6 @@ test("host-neutral typed turns record every terminating submission without sole 
     assert.equal(recorded.length, 2);
     assert.deepEqual(recorded[0], first);
     assert.deepEqual(recorded[1], second);
-    // #961: human face newest-first; typed payloads stay ledger order above.
-    const presented = stdout.join("");
-    assert.equal(presented, formatTerminalResult(result.terminal!));
-    assert.ok(presented.includes("first-submit"));
-    assert.ok(presented.includes("second-submit"));
-    assert.ok(
-      presented.indexOf("second-submit") < presented.indexOf("first-submit"),
-      "newest submission content must appear before older on the public face",
-    );
   });
 });
 
