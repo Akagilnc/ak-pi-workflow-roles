@@ -285,6 +285,7 @@ export function formatNavigatorReport(report: NavigatorReport): string {
 
 export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let preparation: Promise<string | undefined> | undefined;
+  let preparationInFlight = false;
   let sessionReady: Promise<NavigatorPreparationSession> | undefined;
   let session: NavigatorPreparationSession | undefined;
   let subjectKey = options.subjectKey;
@@ -633,12 +634,17 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     prepare(): void {
       if (disposed || preparation !== undefined) return;
       preparationFailure = undefined;
-      preparation = prepare();
+      // Track live in-flight only — a resolved preparation still held until settle
+      // drain must not read as preparing (test helpers release early ready-wait by this).
+      preparationInFlight = true;
+      preparation = prepare().finally(() => {
+        preparationInFlight = false;
+      });
       // Contract: README.md#Navigator-attendance — background preparation rejection is drained so the later typed settlement can report unavailable; retain the exact cause until settlement.
       void preparation.catch((error) => { preparationFailure = error; });
     },
     isPreparing(): boolean {
-      return preparation !== undefined || sessionReady !== undefined;
+      return preparationInFlight;
     },
     knownRoutePlaybookReadFailure(): string | undefined {
       return routePlaybookReadFailure;

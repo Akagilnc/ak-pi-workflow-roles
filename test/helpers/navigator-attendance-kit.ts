@@ -128,29 +128,19 @@ async function waitForEventLoop(condition: () => boolean): Promise<void> {
 }
 
 /**
- * Release the early ready-wait prompt gate.
- * Early prepare parks on harness.release; settle awaits that prepare. A fixed
- * setImmediate budget that loses the race with createSession deadlocks:
- * settle waits for the parked prompt, the helper waits for settle's feed prompt
- * (#959 CI: navigator-attendance{,-seams,-routes} file timeouts).
- *
- * Gate state, not cumulative prompt count: if the early prompt is already
- * parked, prompts() == before and waiting for prompts() > before self-locks
- * (release is after the wait). Wait for isPromptParked (or a finished
- * non-parking prompt) then release only when parked.
+ * Release the early ready-wait prompt gate while prepare() is still in flight.
+ * Fixed setImmediate budgets raced createSession under load and deadlocked
+ * (#959 CI file timeouts). Gate state + live isPreparing (not prompt count):
+ * - slow createSession: wait until parked, then release
+ * - already parked: release immediately
+ * - non-parking early prompt already finished: isPreparing false → no wait
  */
 async function releaseEarlyReadyWait(
+  nav: { isPreparing(): boolean },
   harness: ReturnType<typeof sessionHarness>,
 ): Promise<void> {
-  const before = harness.prompts();
-  await waitForEventLoop(
-    () => harness.isPromptParked() || harness.prompts() > before,
-  );
-  if (!harness.isPromptParked()) {
-    // Rejected/transport/no-receipt path finished the prompt without parking.
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    return;
-  }
+  await waitForEventLoop(() => !nav.isPreparing() || harness.isPromptParked());
+  if (!harness.isPromptParked()) return;
   harness.release();
   // Prompt continuation finishes the early turn on the next macrotask.
   await new Promise<void>((resolve) => setImmediate(resolve));
@@ -167,11 +157,9 @@ export async function settleWithAdvice(
   body: unknown = proseAdvice(),
   toolCallId = "prepare",
 ): Promise<void> {
-  // Finish early ready-wait only when prepare() is in flight. Do not key off
-  // cumulative prompt count — prior settles leave prompts() > 0 and would hang
-  // waiting for a prompt that never opens.
+  // Live in-flight only (resolved early prepare no longer reports isPreparing).
   if (nav.isPreparing()) {
-    await releaseEarlyReadyWait(harness);
+    await releaseEarlyReadyWait(nav, harness);
   }
   const targetPrompts = harness.prompts() + 1;
   const waiting = nav.settle(settlement as never);
