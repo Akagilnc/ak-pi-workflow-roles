@@ -482,9 +482,11 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       activeSession.appendEntry(CONTEXT_ENTRY, projection);
       // Early (parent start): full host round — ready and wait. Settlement-bound:
       // feed the result and let navigator speak (owner 2026-09-17 #959).
+      // ADR 0073: phase behavior text lives in resources/navigator-route-playbook.md;
+      // code only binds a neutral phase pointer + typed materials.
       const request = boundSettlement === undefined
         ? [
-          "父衙门进行中。请在本宿主会话熟悉下列材料并待命；结算结果送达后，再给出下一步建议。本轮不要提交最终路线建议。",
+          "本轮为待命轮。",
           `<navigator_soul>\n${soul}\n</navigator_soul>`,
           ...(routePlaybookReadFailure === undefined
             ? [`<route_playbook>\n${routePlaybook}\n</route_playbook>`]
@@ -496,7 +498,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           `<live_role_help>\n${helpContext}\n</live_role_help>`,
         ].join("\n\n")
         : [
-          "父衙门结算已送达。请根据下列材料给出下一步建议。",
+          "本轮为结算投喂轮。",
           `<navigator_soul>\n${soul}\n</navigator_soul>`,
           ...(routePlaybookReadFailure === undefined
             ? [`<route_playbook>\n${routePlaybook}\n</route_playbook>`]
