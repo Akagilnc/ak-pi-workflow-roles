@@ -1518,101 +1518,113 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     execFileSync("git", ["worktree", "add", "--detach", retainedProject2, "HEAD"], {
       cwd: linkedSource,
     });
-    const runId2 = "run-cli-reviewer-resume-cleanup-diag";
-    {
-      const { io } = captureIo();
-      const first = await runAkRole([
-        "reviewer", "--model", "test/caller-seat:high", "--project", retainedProject2,
-        "--base", "main", "--lens", "correctness", "--authority-ref", "CLAUDE.md",
-        instruction,
-      ], {
-        packageRoot,
-        home,
-        cwd: retainedProject2,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId2,
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            await mkdir(sessionDir, { recursive: true });
-            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-            await observeTyped429ViaProductionHandler({
-              runDirectory: join(sessionDir, ".."),
-              provider: "xai",
-            });
-            return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
-          },
-        }),
-      });
-      assert.ok(first.terminal?.resume);
-    }
-    const runDirectory2 = join(
-      home, ".ak-roles", "books", resolveBookKeyFromGit(retainedProject2),
-      "unbound", "runs", `${runId2}@reviewer`,
-    );
-    // Deliberately invalid ownership so cleanup throws after accepted settlement.
-    await recordReviewerWorktreeOwnership(runDirectory2, {
-      sourceProjectRoot: linkedSource,
-      worktreeRoot: retainedRoot2,
-      projectRoot: join(retainedRoot2, "not-an-axis"),
-    });
-    const { io: io2, stdout: stdout2 } = captureIo();
-    const resumedDirtyCleanup = await runAkRole(
-      ["resume", "--model", "test/caller-seat:high", runId2],
+    try {
+      const runId2 = "run-cli-reviewer-resume-cleanup-diag";
       {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        io: io2,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        const { io } = captureIo();
+        const first = await runAkRole([
+          "reviewer", "--model", "test/caller-seat:high", "--project", retainedProject2,
+          "--base", "main", "--lens", "correctness", "--authority-ref", "CLAUDE.md",
+          instruction,
+        ], {
           packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            const details = lawfulReviewerReceipt("correctness");
-            await writeFile(
-              join(sessionDir, "session.jsonl"),
-              `${JSON.stringify({
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolCallId: "rr-cleanup",
-                  toolName: REVIEWER_OUTPUT_TOOL_NAME,
-                  isError: false,
-                  details,
-                },
-              })}\n`,
-              "utf8",
-            );
-            return {
-              code: 0,
-              sealedAcceptance: { role: "reviewer" as const, details, toolCallId: "rr-cleanup" },
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-            };
-          },
-        }),
-      },
-    );
-    assert.equal(resumedDirtyCleanup.exitCode, 0, stdout2.join(""));
-    assert.equal(resumedDirtyCleanup.terminal?.roleOutcome.kind, "accepted");
-    const sessionLines = (await readFile(join(runDirectory2, "session", "session.jsonl"), "utf8"))
-      .trim()
-      .split("\n")
-      .filter(Boolean);
-    const dossierEntries = sessionLines
-      .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
-      .filter((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE);
-    assert.equal(dossierEntries.length >= 1, true);
-    assert.equal(typeof dossierEntries[0]?.data?.diagnostic, "string");
-    assert.ok((dossierEntries[0]?.data?.diagnostic as string).length > 0);
-    // Worktree left in place because cleanup refused the mismatched ownership.
-    await access(retainedProject2);
+          home,
+          cwd: retainedProject2,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => runId2,
+          io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+              await mkdir(sessionDir, { recursive: true });
+              await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+              await observeTyped429ViaProductionHandler({
+                runDirectory: join(sessionDir, ".."),
+                provider: "xai",
+              });
+              return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
+            },
+          }),
+        });
+        assert.ok(first.terminal?.resume);
+      }
+      const runDirectory2 = join(
+        home, ".ak-roles", "books", resolveBookKeyFromGit(retainedProject2),
+        "unbound", "runs", `${runId2}@reviewer`,
+      );
+      // Deliberately invalid ownership so cleanup throws after accepted settlement.
+      await recordReviewerWorktreeOwnership(runDirectory2, {
+        sourceProjectRoot: linkedSource,
+        worktreeRoot: retainedRoot2,
+        projectRoot: join(retainedRoot2, "not-an-axis"),
+      });
+      const { io: io2, stdout: stdout2 } = captureIo();
+      const resumedDirtyCleanup = await runAkRole(
+        ["resume", "--model", "test/caller-seat:high", runId2],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          io: io2,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot,
+            principalAuthority: piDurablePrincipalAuthority,
+            piRunner: async (args) => {
+              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+              const details = lawfulReviewerReceipt("correctness");
+              await writeFile(
+                join(sessionDir, "session.jsonl"),
+                `${JSON.stringify({
+                  type: "message",
+                  message: {
+                    role: "toolResult",
+                    toolCallId: "rr-cleanup",
+                    toolName: REVIEWER_OUTPUT_TOOL_NAME,
+                    isError: false,
+                    details,
+                  },
+                })}\n`,
+                "utf8",
+              );
+              return {
+                code: 0,
+                sealedAcceptance: { role: "reviewer" as const, details, toolCallId: "rr-cleanup" },
+                stderr: "",
+                timedOut: false,
+                args: [...args],
+              };
+            },
+          }),
+        },
+      );
+      assert.equal(resumedDirtyCleanup.exitCode, 0, stdout2.join(""));
+      assert.equal(resumedDirtyCleanup.terminal?.roleOutcome.kind, "accepted");
+      const sessionLines = (await readFile(join(runDirectory2, "session", "session.jsonl"), "utf8"))
+        .trim()
+        .split("\n")
+        .filter(Boolean);
+      const dossierEntries = sessionLines
+        .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } })
+        .filter((entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE);
+      assert.equal(dossierEntries.length >= 1, true);
+      assert.equal(typeof dossierEntries[0]?.data?.diagnostic, "string");
+      assert.ok((dossierEntries[0]?.data?.diagnostic as string).length > 0);
+      // Worktree left in place because cleanup refused the mismatched ownership.
+      await access(retainedProject2);
+    } finally {
+      // Test-owned teardown: production correctly refused; do not leave orphan checkouts.
+      try {
+        execFileSync("git", ["worktree", "remove", "--force", retainedProject2], {
+          cwd: linkedSource,
+        });
+      } catch {
+        // already removed or never registered
+      }
+      await rm(retainedRoot2, { recursive: true, force: true });
+    }
 
     // Lawful no_receipt resume also reclaims the retained worktree.
     const retainedRoot3 = await mkdtemp(join(tmpdir(), "ak-reviewer-lenses-"));
