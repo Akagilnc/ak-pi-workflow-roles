@@ -11,7 +11,7 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
@@ -103,6 +103,11 @@ export type PublicSummonRequest = {
   readonly boundTicketNumber?: number;
   /** Caller correlation id for nested leg ledger (ADR 0010 / #924). */
   readonly correlationId?: string;
+  /**
+   * Ephemeral host-turn cwd override (#946 dual-lens sandbox). Admission keeps
+   * the public --project / cwd identity; only the initial turn uses this path.
+   */
+  readonly executionCwd?: string;
 };
 
 const execFileAsync = promisify(execFile);
@@ -420,6 +425,7 @@ export async function summonPublicRole(
             ? {}
             : { correlationId: options.correlationId }),
           ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+          ...(options.executionCwd === undefined ? {} : { executionCwd: options.executionCwd }),
         },
       };
     } catch (error) {
@@ -588,70 +594,30 @@ export async function summonPublicRole(
 }
 
 /**
- * After an ephemeral dual-lens child finishes in a detached worktree, rebind the
- * durable admitted projectRoot to the caller's project so resume matches the
- * explicit single-axis entry and does not depend on the deleted worktree (#946).
+ * Inject `--lens` into a public Reviewer argv that has none. Keeps every other
+ * token (including `--project` and `--`) exactly as the single-axis entry saw it.
  */
-async function rewriteProjectRootPage(
-  path: string,
-  callerProjectRoot: string,
-): Promise<void> {
-  let current: Record<string, unknown>;
-  try {
-    current = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
-  } catch (error) {
-    if (error instanceof Error && "code" in error
-      && (error as NodeJS.ErrnoException).code === "ENOENT") {
-      return;
-    }
-    throw error;
-  }
-  if (current.projectRoot === callerProjectRoot) return;
-  await writeFile(
-    path,
-    `${JSON.stringify({ ...current, projectRoot: callerProjectRoot }, null, 2)}\n`,
-    "utf8",
-  );
-}
-
-async function rebindDualLensChildProjectRoot(
-  result: PublicSummonResult,
-  callerProjectRoot: string,
-): Promise<PublicSummonResult> {
-  if (result.runDirectory === undefined) return result;
-  // Resume loads projectRoot from run-state; admitted-request and invocation are
-  // the other durable identity pages and must match the caller project (10a).
-  await rewriteProjectRootPage(
-    join(result.runDirectory, "run-state.json"),
-    callerProjectRoot,
-  );
-  await rewriteProjectRootPage(
-    join(result.runDirectory, "admitted-request.json"),
-    callerProjectRoot,
-  );
-  await rewriteProjectRootPage(
-    join(result.runDirectory, "invocation.json"),
-    callerProjectRoot,
-  );
-  if (result.admitted === undefined) return result;
-  return {
-    ...result,
-    admitted: { ...result.admitted, projectRoot: callerProjectRoot },
-  };
+function withReviewerLens(
+  argv: readonly string[],
+  lens: "completeness" | "correctness",
+): string[] {
+  const separator = argv.indexOf("--");
+  if (separator === -1) return [...argv, "--lens", lens];
+  return [...argv.slice(0, separator), "--lens", lens, ...argv.slice(separator)];
 }
 
 /**
  * Default Reviewer call: two explicit single-axis public legs in independent
- * ephemeral detached worktrees, started as one parallel batch. Worktrees are
- * stateless — created from the caller's current HEAD, always deleted when the
- * call ends (delete failure is diagnostic only). Lifecycle stays in this shared
- * summons seam, never in the role module (#946).
+ * ephemeral detached worktrees, started as one parallel batch. Each leg reuses
+ * the caller's public argv and only adds `--lens` (10a). Worktrees are stateless
+ * execution sandboxes — created from the caller's current HEAD, always deleted
+ * when the call ends (delete failure is diagnostic only). Lifecycle stays in
+ * this shared summons seam, never in the role module (#946).
  */
 export async function summonParallelReviewerLenses(options: {
+  /** Public argv after the role token; must not already carry `--lens`. */
+  readonly argv: readonly string[];
   readonly projectRoot: string;
-  readonly baseRevision: string;
-  readonly authorityRefs: readonly string[];
-  readonly instruction: string;
   readonly home: string;
   readonly agentDir?: string;
   readonly credentials?: CredentialProviders;
@@ -685,8 +651,8 @@ export async function summonParallelReviewerLenses(options: {
     return { completeness: failure, correctness: failure } as const;
   };
 
-  // Ownership write/validate/remove share one root: git toplevel, never a subdir input.
-  // Caller project may be a repo subdirectory; child runs keep that relative path.
+  // Worktree prep shares one root: git toplevel, never a subdir input.
+  // Caller project may be a repo subdirectory; child sandboxes keep that relative path.
   // Every pre-dispatch target check failure keeps the existing dual-child batch surface.
   let sourceProjectRoot: string;
   let callerProjectRoot: string;
@@ -700,6 +666,11 @@ export async function summonParallelReviewerLenses(options: {
     ":/",
     ":(top,exclude).claude/worktrees/**",
   ] as const;
+  const baseFlag = options.argv.indexOf("--base");
+  const baseRevision =
+    baseFlag >= 0 && baseFlag + 1 < options.argv.length
+      ? options.argv[baseFlag + 1]
+      : undefined;
   try {
     callerProjectRoot = await realpath(options.projectRoot);
     sourceProjectRoot = await realpath((await execFileAsync(
@@ -732,13 +703,15 @@ export async function summonParallelReviewerLenses(options: {
       { cwd: sourceProjectRoot },
     );
     targetCommit = targetStdout.trim();
-    // Validate base resolves on the source tree; argv still carries the caller's
-    // original baseRevision so dual-lens admission matches explicit --lens.
-    await execFileAsync(
-      "git",
-      ["rev-parse", "--verify", `${options.baseRevision}^{commit}`],
-      { cwd: sourceProjectRoot },
-    );
+    // Fail closed before minting worktrees when the caller's --base does not resolve.
+    // Child legs still carry the original argv token unchanged (10a).
+    if (baseRevision !== undefined) {
+      await execFileAsync(
+        "git",
+        ["rev-parse", "--verify", `${baseRevision}^{commit}`],
+        { cwd: sourceProjectRoot },
+      );
+    }
   } catch (error) {
     return dualFailure(error);
   }
@@ -773,25 +746,19 @@ export async function summonParallelReviewerLenses(options: {
     ));
     results = { completeness: failure, correctness: failure };
   } else {
-    const summon = async (
+    const summon = (
       lens: "completeness" | "correctness",
       worktreeAxis: string,
     ): Promise<PublicSummonResult> => {
-      // Ephemeral worktree is the execution sandbox only. Argv mirrors the
-      // explicit single-axis entry (same base/authority/instruction; only lens
-      // differs) aside from --project pointing at the sandbox path during the
-      // turn; durable projectRoot is rebound to the caller after the leg returns.
-      const project = childProjectPath(worktreeAxis);
-      const child = await summonPublicRole({
+      // Single-axis public entry as-is: caller's argv + only --lens. Durable
+      // projectRoot admits from that argv (caller --project / cwd). Ephemeral
+      // worktree is executionCwd only — no post-hoc identity rewrite (#946).
+      const sandbox = childProjectPath(worktreeAxis);
+      return summonPublicRole({
         role: "reviewer",
-        argv: [
-          "--project", project,
-          "--base", options.baseRevision,
-          ...options.authorityRefs.flatMap((ref) => ["--authority-ref", ref]),
-          "--lens", lens,
-          ...(options.instruction === "" ? [] : ["--", options.instruction]),
-        ],
-        cwd: project,
+        argv: withReviewerLens(options.argv, lens),
+        cwd: callerProjectRoot,
+        executionCwd: sandbox,
         home: options.home,
         ...(options.agentDir === undefined ? {} : { agentDir: options.agentDir }),
         ...(options.credentials === undefined ? {} : { credentials: options.credentials }),
@@ -809,7 +776,6 @@ export async function summonParallelReviewerLenses(options: {
           : { principalAuthority: options.principalAuthority }),
         ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       });
-      return rebindDualLensChildProjectRoot(child, callerProjectRoot);
     };
     const settled = await Promise.allSettled([
       summon("completeness", completenessRoot),

@@ -176,13 +176,12 @@ export async function runPublicReviewer(
   }
 
   // Omitted public lens is the parallel two-axis branch mark; never admitted as a parent run.
+  // Each leg reuses this call's public argv and only adds --lens (#946 / 10a).
   if (parsed.lens === undefined) {
     const { summonParallelReviewerLenses } = await import("../public-role-summons.ts");
     const children = await summonParallelReviewerLenses({
+      argv,
       projectRoot: resolve(parsed.project ?? env.cwd),
-      baseRevision: parsed.baseRevision,
-      authorityRefs: parsed.authorityRefs,
-      instruction: parsed.instruction,
       home: env.home,
       agentDir: env.agentDir,
       ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
@@ -304,6 +303,9 @@ export async function runPublicReviewer(
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
           : { correlationId: admitted.correlationId ?? env.correlationId }),
+        // Dual-lens sandbox only: turn runs in the ephemeral worktree while durable
+        // projectRoot stays the caller project. Present only inside the dual-lens summon.
+        ...(env.executionCwd === undefined ? {} : { cwd: env.executionCwd }),
         continuation: {
           kind: "initial",
           prompt: buildReviewerTransportPrompt(
@@ -326,6 +328,9 @@ export async function runPublicReviewer(
         ...(admitted.correlationId === undefined && env.correlationId === undefined
           ? {}
           : { correlationId: admitted.correlationId ?? env.correlationId }),
+        // Same dual-lens summon still owns the sandbox for in-batch auto-resume.
+        // Manual `ak-role resume` after the batch never sets executionCwd.
+        ...(env.executionCwd === undefined ? {} : { cwd: env.executionCwd }),
         continuation: {
           kind: "resume",
           prompt: reviewerResumePrompt(env),

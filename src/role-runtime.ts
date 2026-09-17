@@ -441,7 +441,7 @@ type ActivationRuntime = {
   };
   /** Envelope decodes Reviewer transport flags inside the activation stage. */
   decodeReviewerAdmitted(): ReviewerAdmittedInputs;
-  /** Envelope stores live parent activation and owns default dual-leg execution. */
+  /** Envelope stores live Reviewer activation for agent_start prompt assembly. */
   bindReviewerParent(activation: ReviewerActivation): void;
   collector: {
     activate(context: HostContext, event: { reason: string }): Promise<void>;

@@ -236,6 +236,11 @@ export type PostAdmissionEnv = {
   freshSummons?: true;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
+  /**
+   * Ephemeral host-turn cwd for dual-lens sandbox execution (#946). Admission
+   * and durable projectRoot stay on the caller project; resume ignores this.
+   */
+  executionCwd?: string;
 };
 
 /**
@@ -1029,8 +1034,6 @@ export async function dispatchPostAdmissionTurn<
           // at all. skipRunStateWrite: the write that just threw is the same
           // write presentControlledFailure would otherwise retry — don't
           // call a known-failing operation twice.
-          // Worktree cleanup is NOT in this try: it runs in finishAfterTurn
-          // after the sealed terminal is fixed, and must never re-settle it.
           const failed = await settleAfterTurnStarted(
           admitted,
           withEngineDetourInvocationScope({

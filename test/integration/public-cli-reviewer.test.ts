@@ -1556,8 +1556,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       "terminal",
     );
 
-    // Lawful no_receipt resume keeps the single-axis source project and does not
-    // invent worktree ownership pages.
+    // Lawful no_receipt resume keeps the single-axis source project.
     const runId3 = "run-cli-reviewer-resume-no-receipt";
     {
       const { io } = captureIo();
@@ -1588,14 +1587,6 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       });
       assert.ok(first.terminal?.resume);
     }
-    const runDirectory3 = join(
-      home, ".ak-roles", "books", bookKey,
-      "unbound", "runs", `${runId3}@reviewer`,
-    );
-    await assert.rejects(
-      () => access(join(runDirectory3, "reviewer-worktree-ownership.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
     const { io: io3, stdout: stdout3 } = captureIo();
     const resumedNoReceipt = await runAkRole(
       ["resume", "--model", "test/caller-seat:high", runId3],
@@ -1621,7 +1612,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
   });
 });
 
-test("default dual-lens from subdirectory rebinds caller project and deletes ephemeral worktrees", async () => {
+test("default dual-lens from subdirectory admits caller project and deletes ephemeral worktrees", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -1725,10 +1716,8 @@ test("default dual-lens from subdirectory rebinds caller project and deletes eph
       const runDirectory = join(
         home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@reviewer`,
       );
-      await assert.rejects(
-        () => access(join(runDirectory, "reviewer-worktree-ownership.json")),
-        (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-      );
+      // Durable identity matches the same call with explicit --lens (10a):
+      // admitted at the caller project, never the deleted sandbox worktree.
       const admitted = JSON.parse(
         await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
       ) as { projectRoot: string; baseRevision: string; lens: string };
