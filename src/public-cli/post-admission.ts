@@ -585,7 +585,6 @@ export async function dispatchPostAdmissionTurn<
   const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
     if (afterDispatchApplied) return result;
     afterDispatchApplied = true;
-    let outcome: DispatchOutcome = result;
     try {
       // #858: an unbound seat may assert its ticket on the existing receipt.
       // Read the original accepted payload; do not rewrite it, infer from prose,
@@ -610,6 +609,7 @@ export async function dispatchPostAdmissionTurn<
         if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
       }
       if (adapters.afterDispatch !== undefined) await adapters.afterDispatch(admitted, lease);
+      return result;
     } catch (error) {
       const primaryFailure =
         result.terminal !== undefined
@@ -621,28 +621,27 @@ export async function dispatchPostAdmissionTurn<
           `afterDispatch failed beside primary terminal (best-effort continue): ${describeErrorIdentity(error)}`,
           io,
         );
-      } else {
-        outcome = {
-          ...(await presentControlledFailure(
-            admitted,
-            withEngineDetourInvocationScope({
-              timedOut: false,
-              code: null,
-              stderr: "",
-              thrown: error,
-            }, request.invocationScopeId),
-            adapters,
-            env.principalAuthority,
-            io,
-            persistRunState,
-          )) as { exitCode: number; admitted: A; terminal: T },
-          ...(result.turnDispatched === true ? { turnDispatched: true as const } : {}),
-          ...(result.skipAutoResume === true ? { skipAutoResume: true as const } : {}),
-          ...deferredPersist,
-        };
+        return result;
       }
+      return {
+        ...(await presentControlledFailure(
+          admitted,
+          withEngineDetourInvocationScope({
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+          }, request.invocationScopeId),
+          adapters,
+          env.principalAuthority,
+          io,
+          persistRunState,
+        )) as { exitCode: number; admitted: A; terminal: T },
+        ...(result.turnDispatched === true ? { turnDispatched: true as const } : {}),
+        ...(result.skipAutoResume === true ? { skipAutoResume: true as const } : {}),
+        ...deferredPersist,
+      };
     }
-    return outcome;
   };
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
@@ -731,11 +730,7 @@ export async function dispatchPostAdmissionTurn<
           persistRunState,
         )) as { exitCode: number; admitted: A; terminal: T };
         if (error instanceof StationChildExhaustedError) {
-          return {
-            ...settled,
-            skipAutoResume: true as const,
-            ...deferredPersist,
-          };
+          return { ...settled, skipAutoResume: true as const, ...deferredPersist };
         }
         return { ...settled, ...deferredPersist };
       }

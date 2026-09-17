@@ -2320,7 +2320,6 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
               ["read", "write", "grep", "find", "bash"],
               "Reviewer activation must preserve Pi's evidence tool surface",
             );
-
           } else {
             await plain.runtime.activate();
           }
