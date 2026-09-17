@@ -153,12 +153,12 @@ function seedGitProject(root: string): void {
 
 
 
-test("S1: judge escalate public CLI prints every decisionGate option text in order", async () => {
+test("S1: judge escalate public CLI keeps decisionGate options on typed payload in order", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const { io, stdout } = captureIo();
+    const { io } = captureIo();
     const options = ["采纳既有法源", "改采审刑院意见"];
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "show escalation options"],
       {
@@ -196,11 +196,10 @@ test("S1: judge escalate public CLI prints every decisionGate option text in ord
 
     assert.equal(result.exitCode, 0);
     assert.ok(result.terminal);
-    assert.equal(stdout.join(""), formatTerminalResult(result.terminal));
-    const face = stdout.join("");
-    assert.ok(face.includes(options[0]!));
-    assert.ok(face.includes(options[1]!));
-    assert.ok(face.indexOf(options[0]!) < face.indexOf(options[1]!));
+    assert.equal(result.terminal.roleOutcome.kind, "accepted");
+    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["escalate"]);
+    const payload = objectPayloads(result.terminal.roleOutcome)[0] ?? {};
+    assert.deepEqual(payload.decisionGate, { question: "请二选一", options });
   });
 });
 
