@@ -25,11 +25,28 @@ import { acpModelId, type AcpHostDescription } from "./description.ts";
  * Used only when the navigator seat spoke prose without calling the output tool.
  * ACP agent speech is only agent_message / agent_message_chunk — never user,
  * thought, or other *_message kinds (load replay must not poison the bucket).
+ *
+ * Standard ACP nests under params.update: { sessionUpdate, content }.
+ * Flat params.sessionUpdate / string params.update remain accepted for host variants.
  */
 function acpAgentTextChunk(params: Readonly<Record<string, unknown>>): string | undefined {
-  const update = params.sessionUpdate ?? params.update;
-  if (update !== "agent_message_chunk" && update !== "agent_message") return undefined;
-  const content = params.content;
+  let kind: unknown;
+  let content: unknown;
+  let textFallback: unknown;
+
+  const nested = params.update;
+  if (typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
+    const record = nested as Record<string, unknown>;
+    kind = record.sessionUpdate;
+    content = record.content;
+    textFallback = record.text;
+  } else {
+    kind = params.sessionUpdate ?? nested;
+    content = params.content;
+    textFallback = params.text;
+  }
+
+  if (kind !== "agent_message_chunk" && kind !== "agent_message") return undefined;
   if (typeof content === "string" && content.length > 0) return content;
   if (typeof content === "object" && content !== null && !Array.isArray(content)) {
     const record = content as Record<string, unknown>;
@@ -46,7 +63,7 @@ function acpAgentTextChunk(params: Readonly<Record<string, unknown>>): string | 
     }
     if (parts.length > 0) return parts.join("");
   }
-  if (typeof params.text === "string" && params.text.length > 0) return params.text;
+  if (typeof textFallback === "string" && textFallback.length > 0) return textFallback;
   return undefined;
 }
 
