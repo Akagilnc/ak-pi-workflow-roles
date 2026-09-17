@@ -11,7 +11,7 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
@@ -27,7 +27,6 @@ import type {
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import type { HostSelectionFailure, NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 import { pickEngineAxis } from "./package-resources/engine-material.ts";
-import { recordReviewerWorktreeOwnership } from "./reviewer-worktree-lifecycle.ts";
 
 /** Env published by the parent activation so nested summons never re-derive root. */
 export const AK_ROLE_PACKAGE_ROOT_ENV = "AK_ROLE_PACKAGE_ROOT" as const;
@@ -589,9 +588,59 @@ export async function summonPublicRole(
 }
 
 /**
+ * After an ephemeral dual-lens child finishes in a detached worktree, rebind the
+ * durable admitted projectRoot to the caller's project so resume matches the
+ * explicit single-axis entry and does not depend on the deleted worktree (#946).
+ */
+async function rewriteProjectRootPage(
+  path: string,
+  callerProjectRoot: string,
+): Promise<void> {
+  let current: Record<string, unknown>;
+  try {
+    current = JSON.parse(await readFile(path, "utf8")) as Record<string, unknown>;
+  } catch (error) {
+    if (error instanceof Error && "code" in error
+      && (error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+  if (current.projectRoot === callerProjectRoot) return;
+  await writeFile(
+    path,
+    `${JSON.stringify({ ...current, projectRoot: callerProjectRoot }, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+async function rebindDualLensChildProjectRoot(
+  result: PublicSummonResult,
+  callerProjectRoot: string,
+): Promise<PublicSummonResult> {
+  if (result.runDirectory === undefined) return result;
+  // Resume loads projectRoot from run-state first; admitted-request must match.
+  await rewriteProjectRootPage(
+    join(result.runDirectory, "run-state.json"),
+    callerProjectRoot,
+  );
+  await rewriteProjectRootPage(
+    join(result.runDirectory, "admitted-request.json"),
+    callerProjectRoot,
+  );
+  if (result.admitted === undefined) return result;
+  return {
+    ...result,
+    admitted: { ...result.admitted, projectRoot: callerProjectRoot },
+  };
+}
+
+/**
  * Default Reviewer call: two explicit single-axis public legs in independent
- * detached worktrees, started as one parallel batch. Worktree lifecycle stays
- * in this shared summons seam, never in the role module.
+ * ephemeral detached worktrees, started as one parallel batch. Worktrees are
+ * stateless — created from the caller's current HEAD, always deleted when the
+ * call ends (delete failure is diagnostic only). Lifecycle stays in this shared
+ * summons seam, never in the role module (#946).
  */
 export async function summonParallelReviewerLenses(options: {
   readonly projectRoot: string;
@@ -635,9 +684,9 @@ export async function summonParallelReviewerLenses(options: {
   // Caller project may be a repo subdirectory; child runs keep that relative path.
   // Every pre-dispatch target check failure keeps the existing dual-child batch surface.
   let sourceProjectRoot: string;
+  let callerProjectRoot: string;
   let projectRelative: string;
   let targetCommit: string;
-  let baseCommit: string;
   const statusArgs = [
     "status",
     "--porcelain=v1",
@@ -647,7 +696,7 @@ export async function summonParallelReviewerLenses(options: {
     ":(top,exclude).claude/worktrees/**",
   ] as const;
   try {
-    const callerProjectRoot = await realpath(options.projectRoot);
+    callerProjectRoot = await realpath(options.projectRoot);
     sourceProjectRoot = await realpath((await execFileAsync(
       "git",
       ["rev-parse", "--show-toplevel"],
@@ -678,12 +727,13 @@ export async function summonParallelReviewerLenses(options: {
       { cwd: sourceProjectRoot },
     );
     targetCommit = targetStdout.trim();
-    const { stdout: baseStdout } = await execFileAsync(
+    // Validate base resolves on the source tree; argv still carries the caller's
+    // original baseRevision so dual-lens admission matches explicit --lens.
+    await execFileAsync(
       "git",
       ["rev-parse", "--verify", `${options.baseRevision}^{commit}`],
       { cwd: sourceProjectRoot },
     );
-    baseCommit = baseStdout.trim();
   } catch (error) {
     return dualFailure(error);
   }
@@ -718,13 +768,20 @@ export async function summonParallelReviewerLenses(options: {
     ));
     results = { completeness: failure, correctness: failure };
   } else {
-    const summon = (lens: "completeness" | "correctness", worktreeAxis: string) => {
+    const summon = async (
+      lens: "completeness" | "correctness",
+      worktreeAxis: string,
+    ): Promise<PublicSummonResult> => {
+      // Ephemeral worktree is the execution sandbox only. Argv mirrors the
+      // explicit single-axis entry (same base/authority/instruction; only lens
+      // differs) aside from --project pointing at the sandbox path during the
+      // turn; durable projectRoot is rebound to the caller after the leg returns.
       const project = childProjectPath(worktreeAxis);
-      return summonPublicRole({
+      const child = await summonPublicRole({
         role: "reviewer",
         argv: [
           "--project", project,
-          "--base", baseCommit,
+          "--base", options.baseRevision,
           ...options.authorityRefs.flatMap((ref) => ["--authority-ref", ref]),
           "--lens", lens,
           ...(options.instruction === "" ? [] : ["--", options.instruction]),
@@ -747,6 +804,7 @@ export async function summonParallelReviewerLenses(options: {
           : { principalAuthority: options.principalAuthority }),
         ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       });
+      return rebindDualLensChildProjectRoot(child, callerProjectRoot);
     };
     const settled = await Promise.allSettled([
       summon("completeness", completenessRoot),
@@ -808,59 +866,35 @@ export async function summonParallelReviewerLenses(options: {
       correctness: withSealFailure(results.correctness),
     };
   }
-  const resumableWorktrees = new Set<string>();
-  const ownershipFailures: unknown[] = [];
-  for (const [lens, childProjectRoot] of [
-    ["completeness", completenessRoot],
-    ["correctness", correctnessRoot],
-  ] as const) {
-    const result = results[lens];
-    if (result.terminal?.resume === undefined || result.runDirectory === undefined) continue;
-    try {
-      await recordReviewerWorktreeOwnership(result.runDirectory, {
-        sourceProjectRoot,
-        worktreeRoot: root,
-        projectRoot: childProjectRoot,
-      });
-      resumableWorktrees.add(childProjectRoot);
-    } catch (error) {
-      // Keep the sealed resume terminal and the worktree; losing either would
-      // destroy a lawful 429 continuation. Diagnostic rides beside the result.
-      ownershipFailures.push(error);
-      resumableWorktrees.add(childProjectRoot);
-    }
-  }
+  // Stateless worktrees: always remove every axis created for this call.
+  // Delete failure is diagnostic only — do not flip child exit codes; leftover
+  // tmp dirs are left to the OS and git worktree prune (#946).
   const cleanup = await Promise.allSettled(
-    [...created]
-      .filter((path) => !resumableWorktrees.has(path))
-      .map((path) =>
-        execFileAsync("git", ["worktree", "remove", path], { cwd: sourceProjectRoot })),
+    [...created].map((path) =>
+      execFileAsync("git", ["worktree", "remove", path], { cwd: sourceProjectRoot })),
   );
   const cleanupFailures = cleanup.flatMap((result) =>
     result.status === "rejected" ? [result.reason] : []);
-  if (cleanupFailures.length === 0 && resumableWorktrees.size === 0) {
-    const rootCleanup = await Promise.allSettled([rm(root, { recursive: true })]);
+  if (cleanupFailures.length === 0) {
+    const rootCleanup = await Promise.allSettled([rm(root, { recursive: true, force: true })]);
     cleanupFailures.push(...rootCleanup.flatMap((result) =>
       result.status === "rejected" ? [result.reason] : []));
   }
-  const lifecycleFailures = [...ownershipFailures, ...cleanupFailures];
-  if (lifecycleFailures.length > 0) {
-    // Present the real cleanup/ownership diagnostic without re-settling an
-    // already sealed child Terminal or flipping its lawful exitCode.
+  if (cleanupFailures.length > 0) {
     const diagnostic = [
-      "parallel reviewer worktree lifecycle failed",
-      ...lifecycleFailures.map((failure) =>
+      "parallel reviewer worktree cleanup failed",
+      ...cleanupFailures.map((failure) =>
         failure instanceof Error ? failure.message : String(failure)),
     ].join("\n");
-    const withLifecycleDiagnostic = (result: PublicSummonResult): PublicSummonResult => ({
+    const withCleanupDiagnostic = (result: PublicSummonResult): PublicSummonResult => ({
       ...result,
       stderr: [result.stderr, diagnostic].filter(
         (text): text is string => typeof text === "string" && text !== "",
       ).join("\n"),
     });
     results = {
-      completeness: withLifecycleDiagnostic(results.completeness),
-      correctness: withLifecycleDiagnostic(results.correctness),
+      completeness: withCleanupDiagnostic(results.completeness),
+      correctness: withCleanupDiagnostic(results.correctness),
     };
   }
   return results;

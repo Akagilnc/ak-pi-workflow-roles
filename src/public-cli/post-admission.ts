@@ -26,7 +26,6 @@ import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { resolveHostAwareSessionAvailability } from "../session-identity.ts";
-import { cleanupReviewerWorktreeOwnership } from "../reviewer-worktree-lifecycle.ts";
 
 import type {
   ControlledFailureCause,
@@ -638,30 +637,6 @@ export async function dispatchPostAdmissionTurn<
         };
       }
     }
-    await reclaimSealedReviewerWorktree(outcome);
-    return outcome;
-  };
-  // Single retained-Reviewer worktree ownership seam (#946): every sealed final
-  // path (accepted / no_receipt / non-continuable failure), including pre-turn
-  // controlled failures that never reach finishAfterTurn, reclaims the detached
-  // child. resume-bearing terminals keep the worktree for manual continuation.
-  // Missing ownership file is a no-op; cleanup failure must never re-settle an
-  // already sealed Terminal.
-  const reclaimSealedReviewerWorktree = async (
-    outcome: DispatchOutcome,
-  ): Promise<DispatchOutcome> => {
-    if (outcome.terminal !== undefined && outcome.terminal.resume === undefined) {
-      try {
-        await cleanupReviewerWorktreeOwnership(admitted.runDirectory, admitted.projectRoot);
-      } catch (error) {
-        await recordBestEffortPostDispatchDiagnostic(
-          admitted,
-          env,
-          `reviewer worktree cleanup failed after sealed terminal (best-effort continue): ${describeErrorIdentity(error)}`,
-          io,
-        );
-      }
-    }
     return outcome;
   };
   try {
@@ -670,7 +645,7 @@ export async function dispatchPostAdmissionTurn<
       env.credentials,
     );
     if (missingCredential !== undefined) {
-      return await reclaimSealedReviewerWorktree({
+      return {
         ...(await presentControlledFailure(
           admitted,
           withEngineDetourInvocationScope(missingCredential, request.invocationScopeId),
@@ -680,7 +655,7 @@ export async function dispatchPostAdmissionTurn<
           persistRunState,
         )) as { exitCode: number; admitted: A; terminal: T },
         ...deferredPersist,
-      });
+      };
     }
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
     // Single authority projectHostTransitionPriorNative classifies the prior native volume.
@@ -704,7 +679,7 @@ export async function dispatchPostAdmissionTurn<
           : undefined;
     } catch (error) {
       // prior-native IO is on the public one-shot path — controlled failure, not bare throw.
-      return await reclaimSealedReviewerWorktree({
+      return {
         ...(await presentControlledFailure(
           admitted,
           withEngineDetourInvocationScope({
@@ -719,7 +694,7 @@ export async function dispatchPostAdmissionTurn<
           persistRunState,
         )) as { exitCode: number; admitted: A; terminal: T },
         ...deferredPersist,
-      });
+      };
     }
 
     await clearTypedProviderHttpObservation(admitted.runDirectory);
@@ -751,13 +726,13 @@ export async function dispatchPostAdmissionTurn<
           persistRunState,
         )) as { exitCode: number; admitted: A; terminal: T };
         if (error instanceof StationChildExhaustedError) {
-          return await reclaimSealedReviewerWorktree({
+          return {
             ...settled,
             skipAutoResume: true as const,
             ...deferredPersist,
-          });
+          };
         }
-        return await reclaimSealedReviewerWorktree({ ...settled, ...deferredPersist });
+        return { ...settled, ...deferredPersist };
       }
     }
 
