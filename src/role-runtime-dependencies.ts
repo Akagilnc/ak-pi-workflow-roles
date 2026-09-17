@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import { createGhCollectorGitHubTransport } from "./collector-github.ts";
@@ -20,13 +20,6 @@ import {
   loadMainRoleSessionMaterials,
 } from "./session-opening-materials.ts";
 
-const navigatorRoutePlaybookPath = fileURLToPath(
-  new URL("../resources/navigator-route-playbook.md", import.meta.url),
-);
-const collectorHandbookSeedPath = fileURLToPath(
-  new URL("../resources/collector-bot-handbook.md", import.meta.url),
-);
-
 /** Single packaged source for reference materials across production composition roots. */
 export function loadPackagedRoleReferenceMaterials(role: Parameters<NonNullable<RoleRuntimeDependencies["loadRoleReferenceMaterials"]>>[0]): Promise<string> {
   return role === "auditor"
@@ -36,6 +29,11 @@ export function loadPackagedRoleReferenceMaterials(role: Parameters<NonNullable<
 
 /** Host-neutral packaged role runtime deps for the parent-process envelope. */
 export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeDependencies {
+  // packageRoot is the install root (resources/ lives there). Never resolve via
+  // import.meta.url — headless/acp production-host bundles live under dist/*/
+  // and would otherwise look for dist/resources/ (#962).
+  const navigatorRoutePlaybookPath = join(packageRoot, "resources/navigator-route-playbook.md");
+  const collectorHandbookSeedPath = join(packageRoot, "resources/collector-bot-handbook.md");
   const doctorAuditor = createPiDoctorAuditor();
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   return {
