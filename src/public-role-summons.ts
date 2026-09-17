@@ -700,11 +700,13 @@ export async function summonParallelReviewerLenses(options: {
       await execFileAsync("git", ["worktree", "add", "--detach", path, targetCommit], {
         cwd: sourceProjectRoot,
       });
+      // Git has registered the worktree — enter the rollback set before any further
+      // prep (mkdir of caller subdirectory) so a later failure cannot leak the entry.
+      created.add(path);
       // Preserve caller subdirectory even when it is not present in the pinned commit.
       if (projectRelative !== "") {
         await mkdir(childProjectPath(path), { recursive: true });
       }
-      created.add(path);
     }),
   );
   const creationFailures = creation.flatMap((result) =>
