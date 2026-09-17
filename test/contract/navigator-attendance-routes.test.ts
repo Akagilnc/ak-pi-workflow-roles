@@ -7,7 +7,6 @@ import { join, resolve } from "node:path";
 import {
   createNavigatorAttendance,
   formatNavigatorReport,
-  settlementNavigationFromEvent,
   writeNavigatorModelSetting,
   navigatorSubjectKey,
   navigatorSubjectKeyForInput,
@@ -60,35 +59,14 @@ test("future arrival is typed and presentation-only", async () => {
   });
 });
 
-test("#959 settlement navigation essentials keep prose as written", () => {
-  const adviceEvent = {
-    version: 1 as const,
-    disposition: "advice" as const,
-    invocationId: "i1",
-    role: "judge",
-    phase: null,
-    subjectKey: "/repo",
-    prose: "下一步送 reviewer 独立审阅",
-  };
-  assert.deepEqual(settlementNavigationFromEvent(adviceEvent), {
-    disposition: "advice",
-    prose: "下一步送 reviewer 独立审阅",
-  });
-  assert.equal(
-    settlementNavigationFromEvent({
-      version: 1,
-      disposition: "advice",
-      invocationId: "i2",
-      role: "judge",
-      phase: null,
-      subjectKey: "/repo",
-      prose: "   ",
-    }),
-    undefined,
-  );
+test("#959 advice prose is presented as written", () => {
   assert.equal(
     formatNavigatorReport({ disposition: "advice", prose: "送大理寺" }),
     "送大理寺",
+  );
+  assert.equal(
+    formatNavigatorReport({ disposition: "advice", prose: "" }),
+    "",
   );
 });
 

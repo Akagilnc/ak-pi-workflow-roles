@@ -281,18 +281,6 @@ export function formatNavigatorReport(report: NavigatorReport): string {
   return [...playbookFailure, ...(report.prose ? [report.prose] : [])].join("\n");
 }
 
-/** Advice essentials for the one mandatory last-ak_*_output extraction. */
-export type SettlementNavigation = {
-  disposition: "advice";
-  prose: string;
-};
-
-export function settlementNavigationFromEvent(event: NavigatorEvent): SettlementNavigation | undefined {
-  if (event.disposition !== "advice") return undefined;
-  if (typeof event.prose !== "string" || event.prose.trim() === "") return undefined;
-  return { disposition: "advice", prose: event.prose };
-}
-
 export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let preparation: Promise<string | undefined> | undefined;
   let sessionReady: Promise<NavigatorPreparationSession> | undefined;

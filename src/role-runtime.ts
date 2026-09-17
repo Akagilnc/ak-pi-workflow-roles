@@ -1580,12 +1580,6 @@ export function createRoleRuntimeExtension(
         pendingSubmissionNonPassByToolCallId.delete(event.toolCallId);
         return { details: submissionNonPass, isError: true };
       }
-      // Recommendation rides the accepted settlement record's content so the one
-      // mandatory last-ak_*_output extraction surfaces route/next/reason without
-      // a second file, grep, or nesting step. Receipt details stay contract-pure;
-      // unavailable/no-advice leave the settlement untouched.
-      if (event.isError) return;
-      return;
     });
     // Queue receipt delivery before `agent_settled`: that event means Pi has
     // already decided no queued continuation will run, so a triggerTurn there is
