@@ -336,14 +336,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
    */
   let prepareBoundSettlement: NavigatorSettlement | undefined;
   /** Materials + session only — no host prompt (cold settle book-before-feed). */
-  let preparedMaterials: {
-    soul: string;
-    routePlaybook: string;
-    helpContext: string;
-    modelSetting: string;
-    model: ReturnType<typeof parseNavigatorModelSetting>;
-    help: Array<{ role: NavigatorTargetRole; help: string }>;
-  } | undefined;
   const loadMaterialsAndSession = async (invocationId: string): Promise<{
     soul: string;
     routePlaybook: string;
@@ -450,7 +442,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     }
     if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
     if (session === undefined) throw new Error("Navigator session was not created");
-    preparedMaterials = { soul, routePlaybook, helpContext, modelSetting, model, help };
     return { soul, routePlaybook, helpContext, modelSetting, model, help, activeSession: session };
   };
   const prepare = async (): Promise<string | undefined> => {
