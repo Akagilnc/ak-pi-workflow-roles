@@ -198,26 +198,35 @@ export async function runPublicReviewer(
       roleTurnHost: env.roleTurnHost,
       ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
     });
-    const terminals = [children.completeness.terminal, children.correctness.terminal]
+    const childResults = [children.completeness, children.correctness] as const;
+    const terminals = childResults
+      .map((child) => child.terminal)
       .filter((terminal): terminal is TerminalResult => terminal !== undefined);
     // ADR 0052 / terminal.ts: lawful typed child terminals (accepted / no_receipt /
     // audit_escalation) are not batch failures. Child exitCode remains the live
     // surface for seal/infrastructure overlays that keep the original Terminal.
-    const failed = [children.completeness, children.correctness].some((child) =>
-      child.exitCode !== 0
-      || child.terminal === undefined
-      || !isLawfulTypedTerminalOutcome(child.terminal.roleOutcome));
+    // failedChildren counts only non-lawful/missing child Terminals; seal overlays
+    // that flip exitCode while keeping lawful Terminals are a separate identity.
+    const failedChildren = childResults.filter((child) =>
+      child.terminal === undefined
+      || !isLawfulTypedTerminalOutcome(child.terminal.roleOutcome)).length;
+    const overlayExit = childResults.some((child) => child.exitCode !== 0);
+    const failed = failedChildren > 0 || overlayExit;
+    const overlayDiagnostics = [...new Set(
+      childResults
+        .map((child) => child.stderr)
+        .filter((text): text is string => typeof text === "string" && text !== ""),
+    )];
     const terminal: TerminalResult = {
       batch: "reviewer",
       roleOutcome: failed
         ? {
             kind: "failure",
             role: "reviewer",
-            diagnostic: "Reviewer batch child failure",
-            decisiveFacts: {
-              failedChildren: 2 - terminals.filter((item) =>
-                isLawfulTypedTerminalOutcome(item.roleOutcome)).length,
-            },
+            diagnostic: failedChildren > 0
+              ? "Reviewer batch child failure"
+              : (overlayDiagnostics[0] ?? "Reviewer batch infrastructure failure"),
+            decisiveFacts: { failedChildren },
             payloads: terminals,
           }
         : { kind: "accepted", role: "reviewer", payloads: terminals },

@@ -11,7 +11,7 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -586,11 +586,16 @@ export async function summonParallelReviewerLenses(options: {
   readonly correlationId?: string;
   readonly roleTurnHost?: RoleTurnHost;
   readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
-  readonly createRunId?: () => string;
 }): Promise<{
   readonly completeness: PublicSummonResult;
   readonly correctness: PublicSummonResult;
 }> {
+  // Ownership write/validate/remove share one root: git toplevel, never a subdir input.
+  const sourceProjectRoot = await realpath((await execFileAsync(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    { cwd: options.projectRoot },
+  )).stdout.trim());
   const statusArgs = [
     "status",
     "--porcelain=v1",
@@ -600,7 +605,7 @@ export async function summonParallelReviewerLenses(options: {
     ":(top,exclude).claude/worktrees/**",
   ] as const;
   const { stdout: statusStdout } = await execFileAsync("git", statusArgs, {
-    cwd: options.projectRoot,
+    cwd: sourceProjectRoot,
   });
   if (statusStdout !== "") {
     const diagnostic = [
@@ -614,13 +619,13 @@ export async function summonParallelReviewerLenses(options: {
   const { stdout: targetStdout } = await execFileAsync(
     "git",
     ["rev-parse", "--verify", "HEAD^{commit}"],
-    { cwd: options.projectRoot },
+    { cwd: sourceProjectRoot },
   );
   const targetCommit = targetStdout.trim();
   const { stdout: baseStdout } = await execFileAsync(
     "git",
     ["rev-parse", "--verify", `${options.baseRevision}^{commit}`],
-    { cwd: options.projectRoot },
+    { cwd: sourceProjectRoot },
   );
   const baseCommit = baseStdout.trim();
   const root = await mkdtemp(join(tmpdir(), "ak-reviewer-lenses-"));
@@ -642,7 +647,7 @@ export async function summonParallelReviewerLenses(options: {
   const creation = await Promise.allSettled(
     worktrees.map(async (path) => {
       await execFileAsync("git", ["worktree", "add", "--detach", path, targetCommit], {
-        cwd: options.projectRoot,
+        cwd: sourceProjectRoot,
       });
       created.add(path);
     }),
@@ -679,7 +684,6 @@ export async function summonParallelReviewerLenses(options: {
         ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
         ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
         ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
-        ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
       });
     const settled = await Promise.allSettled([
       summon("completeness", completenessRoot),
@@ -699,15 +703,15 @@ export async function summonParallelReviewerLenses(options: {
     const { stdout: headBeforeStdout } = await execFileAsync(
       "git",
       ["rev-parse", "--verify", "HEAD^{commit}"],
-      { cwd: options.projectRoot },
+      { cwd: sourceProjectRoot },
     );
     const { stdout: sealedStatusStdout } = await execFileAsync("git", statusArgs, {
-      cwd: options.projectRoot,
+      cwd: sourceProjectRoot,
     });
     const { stdout: headAfterStdout } = await execFileAsync(
       "git",
       ["rev-parse", "--verify", "HEAD^{commit}"],
-      { cwd: options.projectRoot },
+      { cwd: sourceProjectRoot },
     );
     const headBefore = headBeforeStdout.trim();
     const headAfter = headAfterStdout.trim();
@@ -743,7 +747,7 @@ export async function summonParallelReviewerLenses(options: {
   }
   const resumableWorktrees = new Set<string>();
   const ownershipFailures: unknown[] = [];
-  for (const [lens, projectRoot] of [
+  for (const [lens, childProjectRoot] of [
     ["completeness", completenessRoot],
     ["correctness", correctnessRoot],
   ] as const) {
@@ -751,23 +755,23 @@ export async function summonParallelReviewerLenses(options: {
     if (result.terminal?.resume === undefined || result.runDirectory === undefined) continue;
     try {
       await recordReviewerWorktreeOwnership(result.runDirectory, {
-        sourceProjectRoot: options.projectRoot,
+        sourceProjectRoot,
         worktreeRoot: root,
-        projectRoot,
+        projectRoot: childProjectRoot,
       });
-      resumableWorktrees.add(projectRoot);
+      resumableWorktrees.add(childProjectRoot);
     } catch (error) {
       // Keep the sealed resume terminal and the worktree; losing either would
       // destroy a lawful 429 continuation. Diagnostic rides beside the result.
       ownershipFailures.push(error);
-      resumableWorktrees.add(projectRoot);
+      resumableWorktrees.add(childProjectRoot);
     }
   }
   const cleanup = await Promise.allSettled(
     [...created]
       .filter((path) => !resumableWorktrees.has(path))
       .map((path) =>
-        execFileAsync("git", ["worktree", "remove", path], { cwd: options.projectRoot })),
+        execFileAsync("git", ["worktree", "remove", path], { cwd: sourceProjectRoot })),
   );
   const cleanupFailures = cleanup.flatMap((result) =>
     result.status === "rejected" ? [result.reason] : []);

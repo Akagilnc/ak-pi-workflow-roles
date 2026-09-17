@@ -8,6 +8,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
  * Caller instruction is optional provenance, never semantic control.
  */
 import assert from "node:assert/strict";
+import { realpathSync } from "node:fs";
 import {
   access,
   chmod,
@@ -1159,6 +1160,8 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
       const wrapperRoot = await mkdtemp(join(home, "git-seal-wrapper-"));
       const wrapper = join(wrapperRoot, "git");
       const realGit = execFileSync("which", ["git"], { encoding: "utf8" }).trim();
+      // Summons normalizes cwd to realpath(toplevel); wrapper must match that root.
+      const sealCwd = realpathSync(project);
       await writeFile(wrapper, `#!/bin/sh
 count_file='${join(wrapperRoot, "count")}'
 marker='${join(wrapperRoot, "committed")}'
@@ -1167,7 +1170,7 @@ count=0
 if [ "$1 $2 $3" = "rev-parse --verify HEAD^{commit}" ]; then
   count=$((count + 1)); printf '%s' "$count" > "$count_file"
 fi
-if [ "$1" = "status" ] && [ "$count" = "2" ] && [ "$PWD" = "${project}" ] && [ ! -f "$marker" ]; then
+if [ "$1" = "status" ] && [ "$count" = "2" ] && [ "$PWD" = "${sealCwd}" ] && [ ! -f "$marker" ]; then
   : > "$marker"
   '${realGit}' commit --allow-empty -m 'seal-race' >/dev/null
 fi
@@ -1211,6 +1214,24 @@ exec '${realGit}' "$@"
         });
         assert.equal(sealed.exitCode, 1, stdout.join(""));
         assert.equal(sealed.terminal?.roleOutcome.kind, "failure");
+        assert.equal(
+          sealed.terminal?.roleOutcome.kind === "failure"
+            ? sealed.terminal.roleOutcome.decisiveFacts.failedChildren
+            : undefined,
+          0,
+        );
+        assert.equal(
+          sealed.terminal?.roleOutcome.kind === "failure"
+            ? sealed.terminal.roleOutcome.diagnostic.includes("Reviewer target final seal failed")
+            : false,
+          true,
+        );
+        assert.equal(
+          sealed.terminal?.roleOutcome.kind === "failure"
+            ? sealed.terminal.roleOutcome.diagnostic.includes("Reviewer batch child failure")
+            : true,
+          false,
+        );
         assert.equal(sealed.terminal?.reviewerChildren?.completeness?.roleOutcome.kind, "accepted");
         assert.equal(sealed.terminal?.reviewerChildren?.correctness?.roleOutcome.kind, "accepted");
         assert.equal(sealed.terminal?.reviewerChildOutcomes?.completeness.exitCode, 1);
@@ -1699,6 +1720,170 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     );
     await assert.rejects(
       () => access(retainedRoot3),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+  });
+});
+
+test("default dual-lens from subdirectory records toplevel ownership and resume reclaims", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
+    const subdir = join(project, "nested", "leaf");
+    await mkdir(subdir, { recursive: true });
+    const sourceTopLevel = realpathSync(project);
+
+    const { io, stdout } = captureIo();
+    const batch = await runAkRole([
+      "reviewer", "--model", "test/caller-seat:high",
+      "--project", subdir,
+      "--base", "HEAD~1", "--authority-ref", "CLAUDE.md",
+    ], {
+      packageRoot,
+      home,
+      cwd: subdir,
+      credentials: { "openai-codex": true, xai: true },
+      io,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+          await observeTyped429ViaProductionHandler({
+            runDirectory: join(sessionDir, ".."),
+            provider: "xai",
+          });
+          return { code: 1, stderr: "quota", timedOut: false, args: [...args] };
+        },
+      }),
+    });
+    assert.equal(batch.exitCode, 1, stdout.join(""));
+    const completenessResume = batch.terminal?.reviewerChildren?.completeness?.resume?.command;
+    const correctnessResume = batch.terminal?.reviewerChildren?.correctness?.resume?.command;
+    assert.equal(typeof completenessResume, "string");
+    assert.equal(typeof correctnessResume, "string");
+    const completenessRunId = completenessResume!.slice("ak-role resume ".length);
+    const correctnessRunId = correctnessResume!.slice("ak-role resume ".length);
+    assert.notEqual(completenessRunId, correctnessRunId);
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const ownershipPaths = [completenessRunId, correctnessRunId].map((runId) =>
+      join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@reviewer`, "reviewer-worktree-ownership.json"));
+    const ownerships = await Promise.all(ownershipPaths.map(async (path) =>
+      JSON.parse(await readFile(path, "utf8")) as {
+        sourceProjectRoot: string;
+        worktreeRoot: string;
+        projectRoot: string;
+      }));
+    for (const ownership of ownerships) {
+      assert.equal(ownership.sourceProjectRoot, sourceTopLevel);
+      await access(ownership.projectRoot);
+    }
+    const retainedRoots = [...new Set(ownerships.map((item) => item.worktreeRoot))];
+    assert.equal(retainedRoots.length, 1);
+
+    // Single-axis resume must reclaim through the same toplevel ownership rule.
+    const { io: resumeIo, stdout: resumeStdout } = captureIo();
+    const resumed = await runAkRole(
+      ["resume", "--model", "test/caller-seat:high", completenessRunId],
+      {
+        packageRoot,
+        home,
+        cwd: subdir,
+        credentials: { "openai-codex": true, xai: true },
+        io: resumeIo,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            const details = lawfulReviewerReceipt("completeness");
+            await writeFile(
+              join(sessionDir, "session.jsonl"),
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "subdir-resume",
+                  toolName: REVIEWER_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details,
+                },
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              sealedAcceptance: { role: "reviewer" as const, details, toolCallId: "subdir-resume" },
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        }),
+      },
+    );
+    assert.equal(resumed.exitCode, 0, resumeStdout.join(""));
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    await assert.rejects(
+      () => access(ownerships[0]!.projectRoot),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    // Sibling retained axis still owns its checkout; shared root stays until both reclaim.
+    await access(ownerships[1]!.projectRoot);
+    await access(retainedRoots[0]!);
+
+    const { io: resumeIo2, stdout: resumeStdout2 } = captureIo();
+    const resumedSibling = await runAkRole(
+      ["resume", "--model", "test/caller-seat:high", correctnessRunId],
+      {
+        packageRoot,
+        home,
+        cwd: subdir,
+        credentials: { "openai-codex": true, xai: true },
+        io: resumeIo2,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            const details = lawfulReviewerReceipt("correctness");
+            await writeFile(
+              join(sessionDir, "session.jsonl"),
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "subdir-resume-sibling",
+                  toolName: REVIEWER_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details,
+                },
+              })}\n`,
+              "utf8",
+            );
+            return {
+              code: 0,
+              sealedAcceptance: { role: "reviewer" as const, details, toolCallId: "subdir-resume-sibling" },
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        }),
+      },
+    );
+    assert.equal(resumedSibling.exitCode, 0, resumeStdout2.join(""));
+    await assert.rejects(
+      () => access(ownerships[1]!.projectRoot),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(retainedRoots[0]!),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
   });
