@@ -287,14 +287,16 @@ export function formatTerminalResult(result: TerminalResult): string {
   if (result.autoResumeCount !== undefined) {
     lines.push(`autoResumeCount\t${encodeTerminalField(String(result.autoResumeCount))}`);
   }
-  // Role-result block: original payloads in ledger order (#836 / ADR 0052).
+  // Role-result block: original payloads, newest first for humans (#961).
+  // Typed payloads/submissions stay ledger order; only this presentation reverses.
   const payloads =
     result.roleOutcome.kind === "accepted" || result.roleOutcome.kind === "audit_escalation"
       ? result.roleOutcome.payloads ?? result.submissions ?? []
       : result.roleOutcome.kind === "failure"
         ? result.roleOutcome.payloads ?? result.submissions ?? []
         : result.submissions ?? [];
-  for (const payload of payloads) {
+  for (let i = payloads.length - 1; i >= 0; i -= 1) {
+    const payload = payloads[i]!;
     const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
     lines.push(`submission\t${encodeTerminalField(rendered)}`);
   }
