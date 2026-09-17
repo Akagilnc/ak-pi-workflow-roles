@@ -26,6 +26,7 @@ import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import type { RoleTurnKnownFailure } from "../host-contracts.ts";
 import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
+import { appendModelLessRunRecord } from "../session-identity.ts";
 import {
   isV1ResumableProvider,
   readLatestTypedProviderHttpObservation,
@@ -1882,6 +1883,16 @@ export async function appendRunAttemptHistory(
   source: AttemptHistorySource,
   outcome: AttemptHistoryOutcome,
 ): Promise<void> {
+  const timestamp = new Date().toISOString();
+  const baseAttemptData = {
+    role: source.role,
+    runId: source.runId,
+    recordedAt: timestamp,
+    outcome,
+  };
+  if (await appendModelLessRunRecord(source.sessionFile, ATTEMPT_HISTORY_ENTRY_TYPE, baseAttemptData)) {
+    return;
+  }
   const entries = await readBoundSessionEntries(source.sessionFile);
   let parentId: string | null = null;
   let priorEntries = 0;
@@ -1894,13 +1905,9 @@ export async function appendRunAttemptHistory(
       priorEntries += 1;
     }
   }
-  const timestamp = new Date().toISOString();
   const attemptData = {
     sequence: priorEntries + 1,
-    role: source.role,
-    runId: source.runId,
-    recordedAt: timestamp,
-    outcome,
+    ...baseAttemptData,
   };
   const line = `${JSON.stringify({
     type: "custom",

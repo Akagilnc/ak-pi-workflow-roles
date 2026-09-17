@@ -11,7 +11,7 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
@@ -824,9 +824,6 @@ export function createParallelReviewerExecution(
         async executeTurn(request: RoleTurnRequest) {
           const parent = admitted();
           if (parent.lens !== "all") return env.roleTurnHost.executeTurn(request);
-          const coordinates = env.principalAuthority.decode(parent.principal);
-          await mkdir(coordinates.sessionDirectory, { recursive: true });
-          await writeFile(coordinates.sessionFile, "", { encoding: "utf8", flag: "a" });
           children = await summonParallelReviewerLenses({
             projectRoot: parent.projectRoot,
             baseRevision: parent.baseRevision,

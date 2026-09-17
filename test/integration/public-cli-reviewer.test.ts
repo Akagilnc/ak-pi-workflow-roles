@@ -25,6 +25,7 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { recordReviewerWorktreeOwnership } from "../../src/reviewer-worktree-lifecycle.ts";
+import { establishModelLessRunPrincipal } from "../../src/session-identity.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import {
@@ -840,6 +841,12 @@ test("ak-role reviewer admits fixed base without requiring caller task", async (
         (await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state,
         "terminal",
       );
+      await access(join(runDirectory, "session", "model-less-run.json"));
+      await access(join(runDirectory, "session", "model-less-records.jsonl"));
+      await assert.rejects(
+        () => access(join(runDirectory, "session", "session.jsonl")),
+        (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+      );
     }
 
     // One summons exception must not discard the sibling's original Terminal.
@@ -1465,8 +1472,7 @@ test("default reviewer resume preserves the frozen dual-axis shape", async () =>
       authorityRefs: ["CLAUDE.md"],
       createRunId: () => runId,
     });
-    await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
-    await writeFile(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile, "", "utf8");
+    await establishModelLessRunPrincipal(piDurablePrincipalAuthority, admitted.principal);
     await markRunAdmitted(admitted, piDurablePrincipalAuthority);
     await markRunResumable(admitted.runDirectory, { httpStatus: 429, provider: "xai" });
     await recordReviewerWorktreeOwnership(admitted.runDirectory, {

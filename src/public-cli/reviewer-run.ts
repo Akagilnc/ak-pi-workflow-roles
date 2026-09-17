@@ -69,7 +69,7 @@ export function buildReviewerTurnRequest(
   admitted: AdmittedReviewerInvocation,
   options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
-  return projectRoleTurnRequest(
+  const request = projectRoleTurnRequest(
     admitted,
     {
       activation: admitted.lens === "all"
@@ -85,6 +85,7 @@ export function buildReviewerTurnRequest(
     },
     options,
   );
+  return admitted.lens === "all" ? { ...request, modelLess: true } : request;
 }
 
 function reviewerAdapters(

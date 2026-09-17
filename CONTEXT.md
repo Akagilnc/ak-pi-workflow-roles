@@ -48,7 +48,7 @@ _Avoid_:门下省（那是省名）。
 - **调用请求(Invocation request)**:一次角色调用的输入，由可选 opaque instruction、零到多个 attachments 与少量角色专属参数组成；内容是否充分由角色判断，不由 CLI 分类或裁决。
 - **附件(Attachment)**:调用者明确附给一次角色调用、并在受理时冻结内容的材料；原路径只表明出处，resume 继续消费同一份材料而非路径上的后来版本。
 - **终局结果(Terminal result)**:公开角色 CLI 对一次已受理调用交付的完整结果，汇合角色结算、Navigator 出席事实与声明的 artifacts；session 结束仍无已接受回执时,可汇合当前 run/attempt 绑定的 typed 无回执生命周期记录（`acceptedReceipt=false`）,由调用者裁断；该记录不是回执。过程事件与 session 记录不是终局结果。
-- **角色运行(Role run)**:一次已受理角色调用的持久执行身份，连接其调用请求、Pi session 与终局结果，并可在用户改选模型后继续同一现场。
+- **角色运行(Role run)**:一次已受理角色调用的持久执行身份，连接其调用请求、执行卷宗与终局结果，并可在用户改选模型后继续同一现场。有模型 run 连接宿主 session；无模型 run 由共享生命周期建立 typed 卷宗主体，不伪造宿主 session。
 - **候簿(Ledger book)**:包所有的机器级记录之家,按主仓分簿(键=git common dir 宿主目录的 basename)。它是记录落点的唯一真源;消费者仓零侵入——记录不写进被服务的仓库。_Avoid_:家册、账本目录、工作区记录。
 - **司天台(Archivist)**:记录的所有者。两件职掌——**如实记录**(记录的落点由它决定,不由写入方各自选)与**生成高阶数据**(从记录派生可消费的结论,双面对账是其第一期实例)。确定性机制,非 LLM 角色。_Avoid_:Recorder、Docket、遥测。
 - **太史(Analyst)**:司天台的分析席。只读司天台记录、生成高阶数据(首例:耗时榜单——腿墙钟总榜＋单腿动作榜,耗时两桶归因——模型等待与工具执行两桶互斥、加和≡腿墙钟,返工作为正交透镜另计,角色成功率);确定性机制,非 LLM 角色,可单独调用;指标居基础记录同家下的独立目录。建设排在二期记录工程后。规范见 [ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)。_Avoid_:遥测、metrics-service、Telemetry。
