@@ -176,5 +176,47 @@ test("shared lifecycle owns a non-Reviewer model-less principal and dossier", as
       () => access(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
+
+    let resumedModelLess = false;
+    const resumed = await runAkRole([
+      "resume", "--model", "test/caller-seat:high", admitted.runId,
+    ], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: { stdout() {}, stderr() {} },
+      roleTurnHost: {
+        async executeTurn(request) {
+          resumedModelLess = request.modelLess === true;
+          await sealAcceptedSubmission({
+            cwd: project,
+            runId: admitted.runId,
+            runDirectory: admitted.runDirectory,
+            home,
+            role: "judge",
+            details: { judgeStatus: "converged", note: "model-less resume settled" },
+            toolCallId: "model-less-resume",
+          });
+          return { code: 0, stderr: "", timedOut: false };
+        },
+      },
+    });
+    assert.equal(resumed.exitCode, 0);
+    assert.equal(resumedModelLess, true);
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    const modelLessRecords = (await readFile(
+      join(admitted.runDirectory, "session", "model-less-records.jsonl"),
+      "utf8",
+    )).trim().split("\n");
+    assert.equal(modelLessRecords.length >= 1, true);
+    assert.equal(
+      (JSON.parse(modelLessRecords.at(-1)!) as { customType?: string }).customType,
+      "ak_run_attempt_history",
+    );
+    await assert.rejects(
+      () => access(piDurablePrincipalAuthority.decode(admitted.principal).sessionFile),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
   });
 });
