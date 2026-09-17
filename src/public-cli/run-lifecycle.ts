@@ -177,7 +177,12 @@ export function selectResumeContinuationPrompt(
   message?: string,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  const lines = message !== undefined ? [message] : [];
+  // #959: auto-resume without a caller message must still hand the host a
+  // non-empty prompt. Codex rejects empty stdin (`No prompt provided via stdin.`);
+  // the package-owned transport envelope is the same non-semantic trigger
+  // reviewer / station-child resume already use. Caller message (including
+  // blank) still wins verbatim when supplied.
+  const lines = message !== undefined ? [message] : [RESUME_TRANSPORT_ENVELOPE];
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 

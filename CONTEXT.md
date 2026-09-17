@@ -2,11 +2,11 @@
 
 > 只放术语,零实现细节。决策的为什么在 `docs/adr/`。
 
-- **角色(Role)**:有明确职掌、受门禁约束、以 typed 交卷物为唯一法定出口的**车间内**治理单元。角色只管一次调用的内政。按派单权分两品级:**寺监级**不派发 worker、不含编排拓扑;**省部级**可在自己一次调用的内政之内作为 caller 派发正经角色调用,其每腿全程入册、correlation 标 caller。两品级只是法律分类,不建通用品级 runtime、权限继承机制,不为后续省部级席位预造框架。**实现不限于 LLM**:确定性机制同样可以是角色(如司天第一期,[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md) 不设 LLM 角色)。soul 与工具门禁是 LLM 角色的形态,不是角色的定义。
+- **角色(Role)**:有明确职掌、受门禁约束、以交卷物为法定出口的**车间内**治理单元（默认 typed；游奕使按陛下原话以散文为出口，[#959](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/959)）。角色只管一次调用的内政。按派单权分两品级:**寺监级**不派发 worker、不含编排拓扑;**省部级**可在自己一次调用的内政之内作为 caller 派发正经角色调用,其每腿全程入册、correlation 标 caller。两品级只是法律分类,不建通用品级 runtime、权限继承机制,不为后续省部级席位预造框架。**实现不限于 LLM**:确定性机制同样可以是角色(如司天第一期,[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md) 不设 LLM 角色)。soul 与工具门禁是 LLM 角色的形态,不是角色的定义。
 - **Soul**:LLM 角色的身份与不可约判断原则,经系统提示注入。分两层:**通用层**(本包内,零业务词)与**业务 overlay**(宿主项目附加)。审刑院与门下省的共享执法准绳另立法典(`souls/audit-law.md`、`souls/quality-law.md`)；票面公用准绳见《票面法》(`souls/ticket-law.md`，#924);审刑院法典参审四席=大理寺/御史台主会话+两审计席(太医线不动)([#470](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/470) 御批四)。确定性角色无 soul。
 - **角色方法 Skill(Role method Skill)**:供一个角色执行具体任务方法的包版本化材料；Soul 持有不可约职责与判断原则，Skill 持有可替换的方法步骤。强制 Skill 是包的运行依赖，不是用户 home 目录的隐含前提。
 - **角色门禁(Role gating)**:车间内的机械限制——对 LLM 角色是工具集收窄与工具调用拦截,对确定性角色是其自身的能力边界。区别于 soul 的文本约束:门禁是拦得住的,不靠自觉。
-- **交卷工具(Submission tool)**:角色具名的 terminating 工具(`ak_<role>_output`)。**回执(Receipt)** = 其 typed 产物,是角色劳动成果的唯一法定出口;散文不构成交卷。工具＝回执 schema 通道：handler 只记录回执与排队,不校验形状、不判内容、不丢字段([#750](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/750) / [#757](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/757))。无回执终局是生命周期对「未获接受回执」的 typed 事实陈述,不是回执,也不伪造角色劳动成果。并非每个角色都有交卷工具。
+- **交卷工具(Submission tool)**:角色具名的 terminating 工具(`ak_<role>_output`)。**回执(Receipt)** = 其产物,是角色劳动成果的法定出口（默认 typed；游奕使按陛下原话以散文为出口，[#959](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/959)）。工具＝回执通道：handler 只记录回执与排队,不校验形状、不判内容、不丢字段([#750](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/750) / [#757](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/757))。无回执终局是生命周期对「未获接受回执」的 typed 事实陈述,不是回执,也不伪造角色劳动成果。并非每个角色都有交卷工具。
 - **审核席(Review seat)**:父席交卷后由代码排队传召的审核角色(给事中→符宝郎、判官→审刑院、将作监/修内司→台院)。代码只读结论字段(`pass`/`bounce`/`escalate`)以排队;对方说了什么原样递回父席;每次带传召的复审即新一庭,审核席照常交卷;读不出三态则 resume 说话者本人——代码不分类、不映射、不判「不可读/不可用/不合法」、不替对方终局、不替选下一步、不丢字段。传输/生命周期事实(进程死、无交卷、文件缺失)如实呈现;ADR 0066 typed 闸与 autoResumeLimit 保留。
 - **格式契约(Format contract)**:在一个具名输入、输出或持久化边界上,由真实生产路径执行、会改变接受或拒绝结果,并且有明确 owner 与 consumer 的格式不变式。同一契约的多种表达不是多个契约;重复真源、校验缺口、已删除或不可达的格式也不是契约。
 - **最小必需验证(Minimum-required validation)**:输入输出只验证必须有的;除此之外一概不管。

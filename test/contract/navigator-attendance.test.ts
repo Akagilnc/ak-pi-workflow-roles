@@ -49,18 +49,13 @@ test("Navigator preparation overlaps settlement, waits for the same call, and pr
     harness.release();
     await waiting;
     assert.equal(events.length, 1);
-    assert.equal(events[0].disposition, "recommendation");
-    assert.deepEqual(events[0].route, candidate().candidates[0]!.route);
+    assert.equal(events[0].disposition, "advice");
+    assert.equal(typeof events[0].prose, "string");
+    assert.ok(events[0].prose.trim().length > 0);
     const invocation = harness.entries.find((entry: any) => entry.customType === "ak-navigator-invocation");
     const settlement = harness.entries.find((entry: any) => entry.customType === "ak-navigator-settlement");
-    const route = harness.entries.find((entry: any) => entry.customType === "ak-navigator-route");
     assert.equal((invocation as any).data.invocationId, events[0].invocationId);
     assert.equal((settlement as any).data.invocationId, events[0].invocationId);
-    assert.equal((route as any).data.invocationId, events[0].invocationId);
-    assert.deepEqual(events[0].next, candidate().candidates[0]!.next);
-    assert.equal(events[0].reason, candidate().candidates[0]!.reason);
-    // Required --base cannot be inferred from role/phase, so no unusable bare command is emitted.
-    assert.equal(events[0].command, undefined);
   });
 });
 
@@ -83,7 +78,8 @@ test("rejected Navigator prepare consumes budget and correction succeeds in the 
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(harness.prompts(), 2);
-    assert.equal(events[0]?.disposition, "recommendation");
+    assert.equal(events[0]?.disposition, "advice");
+    assert.ok(typeof events[0]?.prose === "string" && events[0].prose.trim().length > 0);
   });
 });
 
@@ -165,8 +161,8 @@ test("live help changes the next hint without a static template or fabricated ta
   });
 });
 
-test("unchanged routes are omitted after a native-session route entry, while changed settings are reread", async () => {
-  await withTempRoot("navigator-route-", async (root) => {
+test("#959 prose advice settles as-is across prepares while changed settings are reread", async () => {
+  await withTempRoot("navigator-prose-settings-", async (root) => {
     // Existing withTempRoot holds the caller navigator seat fixture; pass as explicit context.home.
     const { savePublicCliConfig } = await import("../../src/public-cli/config.ts");
     await savePublicCliConfig(
@@ -180,20 +176,22 @@ test("unchanged routes are omitted after a native-session route entry, while cha
     const nav = await attendance(setting, harness, events, undefined, root);
     nav.prepare();
     while (harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
-    await harness.tool().execute("prepare-1", candidate(), undefined, undefined, {} as never);
+    await harness.tool().execute("prepare-1", { prose: "第一步：送 reviewer" }, undefined, undefined, {} as never);
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.ok(events[0].route);
+    assert.equal(events[0].disposition, "advice");
+    assert.equal(events[0].prose, "第一步：送 reviewer");
     await savePublicCliConfig(
       { seats: { navigator: { provider: "provider", model: "two" } } },
       root,
     );
     nav.prepare();
     while (harness.prompts() < 2) await new Promise<void>((resolve) => setImmediate(resolve));
-    await harness.tool().execute("prepare-2", candidate(), undefined, undefined, {} as never);
+    await harness.tool().execute("prepare-2", { prose: "第二步：仍送 reviewer" }, undefined, undefined, {} as never);
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.equal(events[1].route, undefined);
+    assert.equal(events[1].disposition, "advice");
+    assert.equal(events[1].prose, "第二步：仍送 reviewer");
     assert.equal(harness.prompts(), 2);
     await savePublicCliConfig(
       { seats: { navigator: { provider: "provider", model: "three" } } },
@@ -201,19 +199,17 @@ test("unchanged routes are omitted after a native-session route entry, while cha
     );
     nav.prepare();
     while (harness.prompts() < 3) await new Promise<void>((resolve) => setImmediate(resolve));
-    const original = candidate().candidates[0]!;
-    const revised = { candidates: [{ id: original.id, matches: original.matches, reason: original.reason, route: [{ role: "coder" as const, phase: "apply" as const }, { role: "fixer" as const, phase: "apply" as const }, { role: "judge" as const, phase: null }], next: { role: "fixer" as const, phase: "apply" as const } }] };
-    await harness.tool().execute("prepare-3", revised, undefined, undefined, {} as never);
+    await harness.tool().execute("prepare-3", { prose: "第三步：改送 fixer" }, undefined, undefined, {} as never);
     harness.release();
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-    assert.deepEqual(events[2].route, revised.candidates[0]!.route);
+    assert.equal(events[2].disposition, "advice");
+    assert.equal(events[2].prose, "第三步：改送 fixer");
     // #675 ⑥: bare provider/model has no invented thinking default.
     assert.deepEqual(harness.modelSettings, [
       { model: "provider/one" },
       { model: "provider/two" },
       { model: "provider/three" },
     ]);
-    assert.ok(harness.entries.some((entry: any) => entry.customType === "ak-navigator-route"));
   });
 });
 

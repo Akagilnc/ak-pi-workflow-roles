@@ -422,10 +422,10 @@ function buildTurnArgs(options: {
     if (options.sessionKind === "resume" && !options.sessionId) {
       throw new Error("codex resume requires a bound thread_id");
     }
-    if (options.outputSchemaPath === undefined) throw new Error("codex requires an output schema path");
+    // #959: prose-exit seats (navigator) omit --output-schema; other seats still require it.
     return codexTurnArgs({
       systemPromptPath: options.systemPromptPath,
-      outputSchemaPath: options.outputSchemaPath,
+      ...(options.outputSchemaPath === undefined ? {} : { outputSchemaPath: options.outputSchemaPath }),
       mcpServers: options.mcpServers,
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.effort === undefined ? {} : { effort: options.effort }),
@@ -482,12 +482,16 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         ? (prompt) => applyCodexSkillInvocation(request.methods, prompt)
         : (prompt) => prompt;
       if (codex) {
-        outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
-        await writeFile(
-          outputSchemaPath,
-          `${JSON.stringify(closeJsonSchemaForCodex(prepared.jsonSchema), null, 2)}\n`,
-          "utf8",
-        );
+        // #959: navigator is a prose-exit seat — no closed output-schema.
+        const { NAVIGATOR_OUTPUT_TOOL_NAME } = await import("../package-contracts/navigator-output.ts");
+        if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) {
+          outputSchemaPath = join(request.runDirectory, "headless-output-schema.json");
+          await writeFile(
+            outputSchemaPath,
+            `${JSON.stringify(closeJsonSchemaForCodex(prepared.jsonSchema), null, 2)}\n`,
+            "utf8",
+          );
+        }
       } else {
         mcpConfigPath = join(request.runDirectory, "headless-mcp-config.json");
         await writeFile(
@@ -661,12 +665,28 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             try {
               receipt = JSON.parse(observation.finalMessage);
             } catch {
-              return terminalFromSpawned(spawned, {
-                cause: "output",
-                identity: { name: "HeadlessEmptyOutput", code: "unparseable-final-message" },
-                diagnostic: "codex final agent_message was not JSON",
-                details: { sessionId, exitCode: spawned.code },
-              });
+              // #959: navigator prose exit — free-text agent_message is the receipt.
+              const { NAVIGATOR_OUTPUT_TOOL_NAME } = await import("../package-contracts/navigator-output.ts");
+              if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
+                receipt = { prose: observation.finalMessage };
+              } else {
+                return terminalFromSpawned(spawned, {
+                  cause: "output",
+                  identity: { name: "HeadlessEmptyOutput", code: "unparseable-final-message" },
+                  diagnostic: "codex final agent_message was not JSON",
+                  details: { sessionId, exitCode: spawned.code },
+                });
+              }
+            }
+            // Navigator may still emit JSON; project any shape into prose vehicle.
+            {
+              const { NAVIGATOR_OUTPUT_TOOL_NAME, projectLawfulNavigatorOutput } = await import(
+                "../package-contracts/navigator-output.ts"
+              );
+              if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
+                const projected = projectLawfulNavigatorOutput(receipt);
+                receipt = projected ?? { prose: observation.finalMessage };
+              }
             }
             await prepared.ingestStructuredOutput(receipt);
             return { status: "delivered", stderr: spawned.stderr };

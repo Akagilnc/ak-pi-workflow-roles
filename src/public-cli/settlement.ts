@@ -123,7 +123,6 @@ import {
   parseInvocationMarkerIdentity,
   type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
-import type { NavigatorPhase } from "../navigator-attendance.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
   RECEIPT_DELIVERY_TURN_LIMIT,
@@ -360,7 +359,7 @@ import {
   exitCodeForTerminalOutcome,
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
-  recommendationNavigatorFact,
+  adviceNavigatorFact,
   type ControlledFailureCause,
   type TerminalArtifactRef,
   type TerminalGateFact,
@@ -1931,11 +1930,6 @@ export type LawfulJudgeRoleOutcome = Extract<
   TerminalRoleOutcome,
   { kind: "accepted" } | { kind: "audit_escalation" }
 >;
-function navigatorPhaseValue(value: unknown): NavigatorPhase {
-  if (value === "plan" || value === "apply") return value;
-  return null;
-}
-
 /**
  * Minimal attendance provenance against the bound marker (ADR 0043).
  * Keep only invocationId + post-terminal ordering. Runtime-self-produced
@@ -1960,35 +1954,31 @@ function parseNavigatorAttendanceDetails(
   const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string"
     ? { advisoryDiagnostic: details.routePlaybookReadFailure }
     : {};
-  if (disposition === "recommendation") {
-    const next = details.next;
-    if (!isRecord(next) || typeof next.role !== "string") {
+  // #959: advice prose is presented as-is. Legacy "recommendation" with next/reason
+  // is projected into prose so historical sessions still render without shape gates.
+  if (disposition === "advice" || disposition === "recommendation") {
+    let prose: string | undefined;
+    if (typeof details.prose === "string" && details.prose.trim() !== "") {
+      prose = details.prose;
+    } else if (typeof details.reason === "string" && details.reason.trim() !== "") {
+      // Legacy recommendation shape — reason was the human-facing advice body.
+      const next = isRecord(details.next) && typeof details.next.role === "string"
+        ? details.next.role
+        : undefined;
+      prose = next === undefined ? details.reason : `${details.reason}（下一步：${next}）`;
+    } else if (typeof details.command === "string" && details.command.trim() !== "") {
+      prose = details.command;
+    }
+    if (prose === undefined || prose.trim() === "") {
+      // Attended but empty body is affirmative no-advice, not unavailable (#959).
       return {
-        disposition: "unavailable",
-        source: "unknown",
-        reason: "navigator recommendation missing typed next role",
+        disposition: "no-advice",
+        ...advisoryDiagnostic,
       };
     }
-    const reason = typeof details.reason === "string" ? details.reason : "";
-    const route = Array.isArray(details.route)
-      ? details.route
-          .filter(isRecord)
-          .map((target) => ({
-            role: String(target.role),
-            phase: navigatorPhaseValue(target.phase),
-          }))
-      : undefined;
-    return recommendationNavigatorFact({
+    return adviceNavigatorFact({
+      prose,
       ...advisoryDiagnostic,
-      next: {
-        role: next.role,
-        phase: navigatorPhaseValue(next.phase),
-      },
-      reason,
-      ...(route === undefined ? {} : { route }),
-      ...(typeof details.command === "string"
-        ? { modelCommand: details.command }
-        : {}),
     });
   }
   if (disposition === "unavailable") {

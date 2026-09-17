@@ -58,9 +58,9 @@ export {
 };
 export { createNativeNavigatorSessionFactory };
 export { resolveNavigatorSeatSelection };
-import { renderPublicAkRoleCommand } from "./public-command-renderer.ts";
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
+import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export const NAVIGATOR_PREPARE_ACCEPTED_TEXT = "游奕使准备已接受";
@@ -101,23 +101,16 @@ export type NavigatorWorkContext = {
 };
 
 export type NavigatorRouteTarget = { role: string; phase: NavigatorPhase };
-/** Normalized preparation advice. v1 success needs machine-usable next only. */
-export type NavigatorCandidate = {
-  id?: string;
-  matches?: { role: string; phase: NavigatorPhase; kind: "accepted"; statuses?: string[] };
-  route?: NavigatorRouteTarget[];
-  next?: NavigatorRouteTarget;
-  reason?: string;
-  command?: string;
-};
 
+/**
+ * #959: Navigator speaks free-form prose. Code does not parse, rank, or judge
+ * the advice — only whether attendance itself failed (host/process).
+ */
 export type NavigatorReport = {
   /** Affirmative attendance only. Lawful no-advice is typed, never inferred from absence. */
-  disposition: "recommendation" | "no-advice" | "unavailable" | "arrival";
-  route?: NavigatorRouteTarget[];
-  next?: NavigatorRouteTarget;
-  reason?: string;
-  command?: string;
+  disposition: "advice" | "no-advice" | "unavailable" | "arrival";
+  /** Present when disposition is advice — navigator words, presented as-is. */
+  prose?: string;
   unavailableReason?: string;
   unavailableSource?: NavigatorUnavailableKey;
   unavailableCause?: NavigatorUnavailableKey;
@@ -132,10 +125,7 @@ export type NavigatorEvent = {
   role: string;
   phase: NavigatorPhase;
   subjectKey: string;
-  route?: NavigatorRouteTarget[];
-  next?: NavigatorRouteTarget;
-  reason?: string;
-  command?: string;
+  prose?: string;
   unavailableReason?: string;
   unavailableSource?: NavigatorUnavailableKey;
   unavailableCause?: NavigatorUnavailableKey;
@@ -156,14 +146,11 @@ export type NavigatorContextProjection = {
   liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
 };
 
-// Provider admission is ADR 0060 object root only. Nested advisory shape
-// (candidates/next/route/matches/reason/command) is never a gate — every object
-// root reaches the unique execute/normalize path exactly once.
-// Field guidance only — candidates shape is never an acceptance gate (Rule 0).
+// #959: prepare is a prose vehicle. Object root only (ADR 0060); nested shape is
+// never a gate — every object root reaches execute exactly once (Rule 0).
 const prepareSchema = Type.Object({
-  candidates: Type.Optional(Type.Unknown({
-    description:
-      "方向候选；candidates[].next.role 必填，phase 可选，route/matches/reason/command 可选上下文，非受理闸",
+  prose: Type.Optional(Type.Unknown({
+    description: "游奕使散文建议，原样呈现。不要求 candidates/next 结构。非受理闸",
   })),
 }, { additionalProperties: true });
 type PrepareOutput = Static<typeof prepareSchema>;
@@ -238,79 +225,12 @@ function targetIsValid(value: unknown): value is NavigatorRouteTarget {
   return metadata !== undefined && metadata.phases.includes(value.phase as never);
 }
 
-/** Keep the role/phase the model wrote. Unknown seats stay on the advice. */
-function normalizeTarget(value: unknown): NavigatorRouteTarget | undefined {
-  if (!exactRecord(value)) return undefined;
-  const role = typeof value.role === "string" ? value.role.trim() : "";
-  if (role === "") return undefined;
-  if (value.phase === undefined || value.phase === null) {
-    return { role, phase: null };
-  }
-  if (value.phase === "plan" || value.phase === "apply") {
-    return { role, phase: value.phase };
-  }
-  return { role, phase: null };
-}
-
-function normalizeMatches(value: unknown): NavigatorCandidate["matches"] | undefined {
-  if (!exactRecord(value)) return undefined;
-  if (typeof value.role !== "string" || value.role.trim() === "") return undefined;
-  if (value.kind !== "accepted") return undefined;
-  let phase: NavigatorPhase;
-  if (value.phase === undefined || value.phase === null) phase = null;
-  else if (value.phase === "plan" || value.phase === "apply") phase = value.phase;
-  else return undefined;
-  if (value.statuses !== undefined) {
-    if (!Array.isArray(value.statuses) || value.statuses.some((status) => typeof status !== "string" || status.trim() === "")) {
-      return undefined;
-    }
-    return {
-      role: value.role,
-      phase,
-      kind: "accepted",
-      statuses: [...value.statuses],
-    };
-  }
-  return { role: value.role, phase, kind: "accepted" };
-}
-
-/** Normalize one submitted candidate. Broken ancillary fields are dropped, never a rejection. */
-function normalizeCandidate(value: unknown): NavigatorCandidate | undefined {
-  if (!exactRecord(value)) return undefined;
-  const next = normalizeTarget(value.next);
-  const route = Array.isArray(value.route)
-    ? value.route.map(normalizeTarget).filter((target): target is NavigatorRouteTarget => target !== undefined)
-    : undefined;
-  const matches = normalizeMatches(value.matches);
-  const id = typeof value.id === "string" && value.id.trim() !== "" ? value.id : undefined;
-  const reason = typeof value.reason === "string" && value.reason.trim() !== "" ? value.reason : undefined;
-  const command = typeof value.command === "string" ? value.command : undefined;
-  return {
-    ...(id === undefined ? {} : { id }),
-    ...(matches === undefined ? {} : { matches }),
-    ...(route === undefined || route.length === 0 ? {} : { route }),
-    ...(next === undefined ? {} : { next }),
-    ...(reason === undefined ? {} : { reason }),
-    ...(command === undefined ? {} : { command }),
-  };
-}
-
-/** Accept any prepare submission shape; missing/malformed candidates become empty advice. */
-function normalizePrepareOutput(value: unknown): NavigatorCandidate[] {
-  if (!exactRecord(value) || !Array.isArray(value.candidates)) return [];
-  return value.candidates
-    .map(normalizeCandidate)
-    .filter((candidate): candidate is NavigatorCandidate => candidate !== undefined);
-}
-
-function routeEqual(a: readonly NavigatorRouteTarget[] | undefined, b: readonly NavigatorRouteTarget[]): boolean {
-  return a !== undefined && a.length === b.length && a.every((target, index) => target.role === b[index]!.role && target.phase === b[index]!.phase);
-}
-function routeText(route: readonly NavigatorRouteTarget[]): string {
-  return route.map((target) => target.phase === null ? target.role : `${target.role} ${target.phase}`).join(" → ");
-}
-function targetText(target: NavigatorRouteTarget): string {
-  return target.phase === null ? target.role : `${target.role} ${target.phase}`;
+/**
+ * #959: extract prose from any prepare submission shape. Missing/empty → undefined.
+ * Never a rejection — shape is not an admission gate.
+ */
+function normalizePrepareProse(value: unknown): string | undefined {
+  return navigatorProseFromUnknown(value);
 }
 
 export function navigatorSubjectKey(
@@ -346,65 +266,14 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
   return {
     name: NAVIGATOR_PREPARE_TOOL_NAME,
     label: "游奕使准备",
-    description: "提交游奕使方向建议。",
+    description: "提交游奕使散文建议。",
     parameters: prepareSchema,
     async execute(_id, value) {
-      // Rule 0: the unique prepare submission is accepted once. Ancillary shape is
-      // normalized later; never open a format-correction retry loop here.
+      // Rule 0: the unique prepare submission is accepted once. Shape is never a gate.
       onOutput(value as PrepareOutput);
       return { content: [{ type: "text" as const, text: NAVIGATOR_PREPARE_ACCEPTED_TEXT }], details: value, terminate: true as const };
     },
   };
-}
-
-/**
- * Candidate pick plus whether matches keyed it to this settlement.
- * Single owner for role/phase/status match truth (selection ranking + stale-context rebind).
- * Structural only — never inspects next.role for routing legality.
- */
-export type NavigatorCandidateSelection = {
-  readonly candidate: NavigatorCandidate;
-  /** True when matches keyed this candidate to the settlement (no stale-context rebind). */
-  readonly matchedToSettlement: boolean;
-};
-
-export function selectNavigatorCandidate(
-  candidates: readonly NavigatorCandidate[],
-  settlement: NavigatorSettlement,
-): NavigatorCandidateSelection | undefined {
-  if (settlement.kind !== "accepted") return undefined;
-  const usable = candidates.filter((candidate) => candidate.next !== undefined);
-  if (usable.length === 0) return undefined;
-  const rolePhaseMatched = usable.filter((candidate) =>
-    candidate.matches !== undefined
-    && candidate.matches.role === settlement.role
-    && candidate.matches.phase === settlement.phase,
-  );
-  // Status-specific candidates outrank role/phase generics regardless of declaration order.
-  if (rolePhaseMatched.length > 0) {
-    if (settlement.status !== undefined) {
-      const statusSpecific = rolePhaseMatched.find(
-        (candidate) =>
-          candidate.matches?.statuses !== undefined &&
-          candidate.matches.statuses.includes(settlement.status!),
-      );
-      if (statusSpecific !== undefined) {
-        return { candidate: statusSpecific, matchedToSettlement: true };
-      }
-    }
-    const rolePhaseGeneric = rolePhaseMatched.find(
-      (candidate) => candidate.matches?.statuses === undefined,
-    );
-    if (rolePhaseGeneric !== undefined) {
-      return { candidate: rolePhaseGeneric, matchedToSettlement: true };
-    }
-    return undefined;
-  }
-  // v1 direction-only / broken matches: absent match metadata must not drop a usable next.
-  // Not settlement-keyed → caller may run one stale-context rebind.
-  const unbound = usable.find((candidate) => candidate.matches === undefined);
-  if (unbound === undefined) return undefined;
-  return { candidate: unbound, matchedToSettlement: false };
 }
 
 export function formatNavigatorReport(report: NavigatorReport): string {
@@ -418,49 +287,34 @@ export function formatNavigatorReport(report: NavigatorReport): string {
   if (report.disposition === "arrival") {
     return [...playbookFailure, ...(report.arrivalMessage ? [report.arrivalMessage] : [])].join("\n");
   }
-  return [
-    ...playbookFailure,
-    ...(report.route === undefined ? [] : [`路线：${routeText(report.route)}`]),
-    ...(report.next === undefined ? [] : [`下一步：${targetText(report.next)}`]),
-    ...(report.reason === undefined || report.reason.trim() === "" ? [] : [`理由：${report.reason}`]),
-    ...(report.command === undefined || report.command.trim() === "" ? [] : [`命令：${report.command}`]),
-  ].join("\n");
+  // advice — prose as-is
+  return [...playbookFailure, ...(report.prose ? [report.prose] : [])].join("\n");
 }
 
+/** Advice essentials for the one mandatory last-ak_*_output extraction. */
 export type SettlementNavigation = {
-  disposition: "recommendation";
-  route?: NavigatorRouteTarget[];
-  next: NavigatorRouteTarget;
-  reason?: string;
-  command?: string;
+  disposition: "advice";
+  prose: string;
 };
 
-/** Recommendation essentials for the one mandatory last-ak_*_output extraction. */
 export function settlementNavigationFromEvent(event: NavigatorEvent): SettlementNavigation | undefined {
-  if (event.disposition !== "recommendation") return undefined;
-  if (event.next === undefined) return undefined;
-  return {
-    disposition: "recommendation",
-    ...(event.route === undefined ? {} : { route: event.route }),
-    next: event.next,
-    ...(event.reason === undefined ? {} : { reason: event.reason }),
-    ...(event.command === undefined ? {} : { command: event.command }),
-  };
+  if (event.disposition !== "advice") return undefined;
+  if (typeof event.prose !== "string" || event.prose.trim() === "") return undefined;
+  return { disposition: "advice", prose: event.prose };
 }
 
 export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
-  let preparation: Promise<NavigatorCandidate[]> | undefined;
+  let preparation: Promise<string | undefined> | undefined;
   let sessionReady: Promise<NavigatorPreparationSession> | undefined;
   let session: NavigatorPreparationSession | undefined;
   let subjectKey = options.subjectKey;
   let subject = options.subject;
   let authority = options.authority;
   let contextError = options.contextError;
-  let candidates: NavigatorCandidate[] | undefined;
+  let preparedProse: string | undefined;
   // Shared lifecycle owns the principal when supplied; otherwise mint once per attendance.
   const invocationPrincipal = options.invocationId ?? mintNavigatorInvocationId();
   let activeInvocationId: string | undefined = invocationPrincipal;
-  let previousRoute: NavigatorRouteTarget[] | undefined;
   let outputSink: ((value: PrepareOutput) => void) | undefined;
   let settlementTail: Promise<void> = Promise.resolve();
   let settlementFailure: unknown;
@@ -496,14 +350,12 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     };
   };
   let routePlaybookSettlement: Promise<void> | undefined;
-  /** Settlement-bound prepare only; cleared at the start of each prepare body. */
-  let prepareBoundSettlement: NavigatorSettlement | undefined;
-  const prepare = async (): Promise<NavigatorCandidate[]> => {
+  const prepare = async (): Promise<string | undefined> => {
     // Exact principal is owned by shared lifecycle (or one mint per attendance).
     // Model/tool/advice paths cannot override it; role-session persistence is
     // pi.appendEntry at lifecycle start — not optional sessionManager probing.
-    const boundSettlement = prepareBoundSettlement;
-    prepareBoundSettlement = undefined;
+    // #959: no settlement-bound rebind; prepare is one-shot prose advice.
+    const boundSettlement: NavigatorSettlement | undefined = undefined;
     // Each prepare owns the no-receipt flag; a later settlement-bound rebind must
     // not inherit a speculative no-receipt outcome.
     preparationNoReceipt = false;
@@ -579,18 +431,15 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       let output: PrepareOutput | undefined;
       let prepareBatchRejected = false;
       outputSink = (value) => {
-        // #836: extra prepare calls append; they do not void the first batch.
+        // #836: extra prepare calls keep the first prose; later calls append as more prose.
         if (output === undefined) {
           output = value;
           return;
         }
-        const prior = output.candidates;
-        const next = value.candidates;
-        const merged = [
-          ...(Array.isArray(prior) ? prior : prior === undefined ? [] : [prior]),
-          ...(Array.isArray(next) ? next : next === undefined ? [] : [next]),
-        ];
-        output = { ...value, candidates: merged };
+        const prior = normalizePrepareProse(output) ?? "";
+        const next = normalizePrepareProse(value) ?? "";
+        const merged = [prior, next].filter((part) => part.trim() !== "").join("\n\n");
+        output = { prose: merged };
       };
       const tool = createNavigatorPrepareTool((value) => { outputSink?.(value); });
       if (session === undefined) {
@@ -632,9 +481,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const activeSession = session;
       if (activeSession === undefined) throw new Error("Navigator session was not created");
       const prior = activeSession.entries().filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === ROUTE_ENTRY && exactRecord(entry.data) && entry.data.subjectKey === subjectKey).at(-1)?.data;
-      if (exactRecord(prior) && Array.isArray(prior.route) && prior.route.every((target) => targetIsValid(target))) {
-        previousRoute = prior.route.map((target) => ({ role: target.role as NavigatorTargetRole, phase: target.phase as NavigatorPhase }));
-      }
       const publicSettlementHistory = activeSession.entries()
         .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data))
         .map((entry) => entry.data as NavigatorSettlementFact);
@@ -712,8 +558,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
             const facts = delivery.facts({ runPointer: activeSession.recordPointer(), attemptPointer: invocationId });
             activeSession.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
             preparationNoReceipt = true;
-            candidates = [];
-            return candidates;
+            preparedProse = undefined;
+            return undefined;
           }
         } catch (error) {
           throw error instanceof NavigatorUnavailableError ? error : navigatorUnavailableError("transport", error);
@@ -734,8 +580,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           const cause = providerFailure?.cause ?? source;
           throw navigatorUnavailableError(source, errorMessage, cause);
         }
-        candidates = normalizePrepareOutput(output);
-        return candidates;
+        preparedProse = normalizePrepareProse(output);
+        return preparedProse;
       } finally {
         outputSink = undefined;
       }
@@ -747,7 +593,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       if (next.subjectKey !== subjectKey && session !== undefined) {
         const previous = session;
         session = undefined;
-        previousRoute = undefined;
         closing = previous.dispose();
       }
       subjectKey = next.subjectKey;
@@ -835,47 +680,22 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       } else {
         try {
           if (sessionReady !== undefined) await sessionReady;
-          let prepared = await preparation;
-          session?.appendEntry(SETTLEMENT_ENTRY, { invocationId, subjectKey, role: settlement.role, phase: settlement.phase, kind: settlement.kind, ...(settlement.status === undefined ? {} : { status: settlement.status }) });
-          let selected = selectNavigatorCandidate(prepared, settlement);
-          // Speculative prepare runs before this terminal exists and may treat prior
-          // history as decisive. When selection provenance says matches did not key
-          // this candidate to the settlement, rebind once with currentSettlement.
-          // Stale-context repair only — reachable without any next.role legality
-          // table. After selection (speculative or rebound), advice is passed
-          // through as-is (ADR 0010 / ADR 0061: caller may ignore).
-          if (selected?.candidate.next !== undefined && !selected.matchedToSettlement) {
-            if (disposed) return;
-            prepareBoundSettlement = settlement;
-            prepared = await prepare();
-            if (disposed) return;
-            selected = selectNavigatorCandidate(prepared, settlement);
-          }
-          // Budget exhaustion is affirmative typed no-advice; malformed submitted
-          // advice remains the existing unavailable path.
-          const selectedCandidate = selected?.candidate;
-          if (selectedCandidate?.next === undefined && preparationNoReceipt) {
-            report = { disposition: "no-advice" };
-          } else if (selectedCandidate?.next === undefined) {
-            throw new Error("Navigator prepared no machine-usable next direction");
+          const prose = await preparation;
+          session?.appendEntry(SETTLEMENT_ENTRY, {
+            invocationId,
+            subjectKey,
+            role: settlement.role,
+            phase: settlement.phase,
+            kind: settlement.kind,
+            ...(settlement.status === undefined ? {} : { status: settlement.status }),
+          });
+          // #959: present prose as-is. No candidate ranking, no next.role gate,
+          // no stale-context rebind. Empty/no-receipt → affirmative no-advice.
+          // Unavailable is reserved for host/process/context failure only.
+          if (typeof prose === "string" && prose.trim() !== "") {
+            report = { disposition: "advice", prose };
           } else {
-          const selectedRoute = selectedCandidate.route;
-          const routeChanged = selectedRoute !== undefined && !routeEqual(previousRoute, selectedRoute);
-          const command =
-            typeof selectedCandidate.command === "string" && selectedCandidate.command.trim() !== ""
-              ? selectedCandidate.command
-              : renderPublicAkRoleCommand(selectedCandidate.next);
-          report = {
-            disposition: "recommendation",
-            ...(routeChanged ? { route: selectedRoute } : {}),
-            next: selectedCandidate.next,
-            ...(selectedCandidate.reason === undefined ? {} : { reason: selectedCandidate.reason }),
-            ...(command === undefined ? {} : { command }),
-          };
-          if (selectedRoute !== undefined) {
-            previousRoute = selectedRoute;
-            session?.appendEntry(ROUTE_ENTRY, { invocationId, subjectKey, route: selectedRoute });
-          }
+            report = { disposition: "no-advice" };
           }
         // Contract: README.md#Navigator-attendance — Navigator failures become typed unavailable without invalidating the role Receipt; retain the original cause in the unavailable report.
         } catch (error) {
@@ -896,10 +716,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         role: options.role,
         phase: options.phase,
         subjectKey,
-        ...(report.route === undefined ? {} : { route: report.route }),
-        ...(report.next === undefined ? {} : { next: report.next }),
-        ...(report.reason === undefined ? {} : { reason: report.reason }),
-        ...(report.command === undefined ? {} : { command: report.command }),
+        ...(report.prose === undefined ? {} : { prose: report.prose }),
         ...(report.unavailableReason === undefined ? {} : { unavailableReason: report.unavailableReason }),
         ...(report.unavailableSource === undefined ? {} : { unavailableSource: report.unavailableSource }),
         ...(report.unavailableCause === undefined ? {} : { unavailableCause: report.unavailableCause }),
@@ -907,7 +724,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         ...(report.arrivalMessage === undefined ? {} : { arrivalMessage: report.arrivalMessage }),
       };
       // Dispose during post-role grace must ignore late completion (ADR 0052 / #106 / #675).
-      // Every settled disposition (recommendation | no-advice | unavailable | arrival) is affirmative.
+      // Every settled disposition (advice | no-advice | unavailable | arrival) is affirmative.
       // Only the disposed bit is typed authority to drop — never match free-text Error.message.
       if (disposed) return;
       try {
@@ -919,7 +736,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       }
       preparation = undefined;
       sessionReady = undefined;
-      candidates = undefined;
+      preparedProse = undefined;
       preparationFailure = undefined;
       preparationNoReceipt = false;
       routePlaybookSettlement = undefined;

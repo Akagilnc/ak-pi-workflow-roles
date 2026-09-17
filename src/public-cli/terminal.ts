@@ -5,11 +5,6 @@
  * Free-text cells are JSON-string encoded so legitimate newlines/tabs cannot forge
  * extra rows or shift column boundaries (note / fix.summary / decision question / reason).
  */
-import {
-  isPublicCallableRole,
-  renderPublicAkRoleCommand,
-} from "./command-renderer.ts";
-import type { NavigatorPhase } from "../navigator-attendance.ts";
 import type { NoReceiptLifecycleFacts } from "../receipt-delivery-policy.ts";
 import type { ControlledFailureCause } from "../host-contracts.ts";
 
@@ -102,12 +97,9 @@ export function exitCodeForTerminalOutcome(
 
 export type TerminalNavigatorFact =
   | {
-      disposition: "recommendation";
-      next: { role: string; phase: NavigatorPhase };
-      reason: string;
-      /** Present only when role/phase is sufficient for a truthful public command. */
-      command?: string;
-      route?: ReadonlyArray<{ role: string; phase: NavigatorPhase }>;
+      /** #959: navigator speaks prose; code does not parse or rank the advice. */
+      disposition: "advice";
+      prose: string;
       advisoryDiagnostic?: string;
     }
   | {
@@ -209,28 +201,16 @@ export type TerminalResult = {
 );
 
 /**
- * Build a recommendation navigator fact. Model command is kept when present;
- * registry render is fallback only. Unknown seats stay recommendations (#836 B4.1).
+ * Build an advice navigator fact (#959). Prose is presented as submitted;
+ * code does not parse route/next or judge usability.
  */
-export function recommendationNavigatorFact(input: {
-  next: { role: string; phase: NavigatorPhase };
-  reason: string;
-  route?: ReadonlyArray<{ role: string; phase: NavigatorPhase }>;
+export function adviceNavigatorFact(input: {
+  prose: string;
   advisoryDiagnostic?: string;
-  modelCommand?: string;
 }): TerminalNavigatorFact {
-  const command =
-    typeof input.modelCommand === "string" && input.modelCommand.trim() !== ""
-      ? input.modelCommand
-      : isPublicCallableRole(input.next.role)
-        ? renderPublicAkRoleCommand(input.next)
-        : undefined;
   return {
-    disposition: "recommendation",
-    next: input.next,
-    reason: input.reason,
-    ...(command === undefined ? {} : { command }),
-    ...(input.route === undefined ? {} : { route: input.route }),
+    disposition: "advice",
+    prose: input.prose,
     ...(input.advisoryDiagnostic === undefined ? {} : { advisoryDiagnostic: input.advisoryDiagnostic }),
   };
 }
@@ -270,14 +250,9 @@ export function formatTerminalResult(result: TerminalResult): string {
   if (result.navigator.advisoryDiagnostic !== undefined) {
     lines.push(`navigator-advisory\t${encodeTerminalField(result.navigator.advisoryDiagnostic)}`);
   }
-  if (result.navigator.disposition === "recommendation") {
-    lines.push(
-      `next\t${result.navigator.next.role}\t${result.navigator.next.phase ?? "none"}`,
-    );
-    lines.push(`reason\t${encodeTerminalField(result.navigator.reason)}`);
-    if (result.navigator.command !== undefined) {
-      lines.push(`command\t${encodeTerminalField(result.navigator.command)}`);
-    }
+  if (result.navigator.disposition === "advice") {
+    // #959: present navigator prose as-is — no next/reason/command parsing.
+    lines.push(`prose\t${encodeTerminalField(result.navigator.prose)}`);
   } else if (result.navigator.disposition === "unavailable") {
     lines.push(
       `unavailable\t${result.navigator.source}\t${encodeTerminalField(result.navigator.reason)}`,

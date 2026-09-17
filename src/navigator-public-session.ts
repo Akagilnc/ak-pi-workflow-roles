@@ -110,22 +110,25 @@ export function createNativeNavigatorSessionFactory(): NavigatorSessionFactory {
             return;
           }
           if (outcome.kind !== "accepted") {
-            // Non-accepted kinds (e.g. audit_escalation): no route advice this turn.
+            // Non-accepted kinds (e.g. audit_escalation): no prose advice this turn.
             // Not a shape-unusable judgment on the navigator reply (#757).
             return;
           }
+          // #959: present navigator words as prose. No candidates/next parsing.
+          const { navigatorProseFromUnknown } = await import("./package-contracts/navigator-output.ts");
+          const proseParts: string[] = [];
           for (const payload of outcome.payloads ?? []) {
-            if (typeof payload !== "object" || payload === null || Array.isArray(payload)) continue;
-            const candidates = (payload as { candidates?: unknown }).candidates;
-            if (!Array.isArray(candidates)) continue;
-            await tool.execute(
-              "navigator-public-prepare",
-              { candidates },
-              undefined,
-              undefined,
-              context as never,
-            );
+            const prose = navigatorProseFromUnknown(payload);
+            if (prose !== undefined) proseParts.push(prose);
           }
+          if (proseParts.length === 0) return;
+          await tool.execute(
+            "navigator-public-prepare",
+            { prose: proseParts.join("\n\n") },
+            undefined,
+            undefined,
+            context as never,
+          );
         } catch (error) {
           if (error instanceof NavigatorUnavailableError) throw error;
           const fact = navigatorProviderFailureFromError(error);

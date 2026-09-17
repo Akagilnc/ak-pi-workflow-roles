@@ -398,8 +398,11 @@ function codexMcpConfigArgs(
 export function codexTurnArgs(options: {
   /** Absolute path for `-c model_instructions_file=…`. */
   readonly systemPromptPath: string;
-  /** Absolute path for `--output-schema` (closed transport schema). */
-  readonly outputSchemaPath: string;
+  /**
+   * Absolute path for `--output-schema` (closed transport schema).
+   * Optional: omit for prose-exit seats (#959 navigator) so agent_message stays free text.
+   */
+  readonly outputSchemaPath?: string;
   readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
   readonly model?: string;
   readonly effort?: string;
@@ -441,7 +444,9 @@ export function codexTurnArgs(options: {
   }
 
   args.push("-c", `model_instructions_file=${codexTomlString(options.systemPromptPath)}`);
-  args.push("--output-schema", options.outputSchemaPath);
+  if (options.outputSchemaPath !== undefined) {
+    args.push("--output-schema", options.outputSchemaPath);
+  }
   args.push(...codexMcpConfigArgs(options.mcpServers));
 
   if (options.model !== undefined && options.model !== "") {

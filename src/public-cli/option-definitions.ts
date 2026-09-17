@@ -1280,7 +1280,7 @@ const ROLE_COMMAND_HELP = {
   },
   navigator: {
     command: "navigator",
-    summary: "Direct Navigator (游奕使) route advice: ordered next-role candidates.",
+    summary: "Direct Navigator (游奕使) free-form prose route advice.",
     usage: ["ak-role navigator [options] [instruction]"],
     examples: [
       'ak-role navigator "刚完成 coder apply 收敛，下一步？"',

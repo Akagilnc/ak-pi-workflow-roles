@@ -1,8 +1,8 @@
 /**
- * Shared fixtures for Navigator attendance coverage (#420 整改拆分).
- * Extracted verbatim from test/contract/navigator-attendance.test.ts — no behavior change.
+ * Shared fixtures for Navigator attendance coverage (#420 / #959).
+ * #959: navigator speaks prose — fixtures submit free-form advice, not candidates.
  */
-import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorCandidate, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
+import { createNavigatorAttendance, NAVIGATOR_PREPARE_TOOL_NAME, type NavigatorPreparationSession } from "../../src/navigator-attendance.ts";
 import { RECEIPT_DELIVERY_TURN_LIMIT, type NoReceiptLifecycleFacts } from "../../src/receipt-delivery-policy.ts";
 
 export function context(home?: string) {
@@ -16,20 +16,22 @@ export function context(home?: string) {
   } as never;
 }
 
-export function candidate(overrides: Partial<NavigatorCandidate> = {}) {
-  const base: NavigatorCandidate = {
-    id: "small-fix",
-    matches: { role: "coder", phase: "apply" as const, kind: "accepted" as const, statuses: ["completed", "refused"] },
-    route: [{ role: "coder" as const, phase: "apply" as const }, { role: "reviewer" as const, phase: null }, { role: "judge" as const, phase: null }],
-    next: { role: "reviewer" as const, phase: null },
-    reason: "The implementation is ready for an independent review.",
-  };
+/** Prose advice batch for prepare tool.execute. */
+export function proseAdvice(prose = "下一步送 reviewer 独立审阅实现。"): { prose: string } {
+  return { prose };
+}
+
+/**
+ * @deprecated #959 candidate shape retired — kept as alias that maps to prose so
+ * older test call sites that still pass candidate-like objects via execute get
+ * a prose body (navigatorProseFromUnknown stringifies free-form objects).
+ */
+export function candidate(overrides: Record<string, unknown> = {}) {
+  if (typeof overrides.prose === "string") return { prose: overrides.prose };
+  if (typeof overrides.reason === "string") return { prose: overrides.reason };
   return {
-    candidates: [{
-      ...base,
-      ...overrides,
-      matches: { ...base.matches!, ...(overrides.matches ?? {}) },
-    }],
+    prose: "The implementation is ready for an independent review.",
+    ...overrides,
   };
 }
 
@@ -126,32 +128,15 @@ export async function attendance(
 }
 
 /**
- * Complete settle. Unmatched speculative advice triggers one settlement-bound rebind
- * (stale-context repair, not next.role legality). Answer that rebind with the same batch
- * when the harness opens a second prompt; matched advice completes without it.
+ * Complete settle. #959: no settlement-bound rebind — prose advice settles once.
+ * rebindBatch is ignored (kept for call-site compatibility during migration).
  */
 export async function settleAnsweringRebind(
   nav: { settle(settlement: unknown): Promise<void> },
   harness: ReturnType<typeof sessionHarness>,
   settlement: unknown,
-  rebindBatch: unknown,
-  rebindToolCallId = "settlement-rebind",
+  _rebindBatch?: unknown,
+  _rebindToolCallId = "settlement-rebind",
 ): Promise<void> {
-  const promptsBefore = harness.prompts();
-  let settled = false;
-  const settling = nav.settle(settlement).finally(() => { settled = true; });
-  // Poll until settle finishes or a settlement-bound rebind opens another prompt.
-  while (!settled && harness.prompts() <= promptsBefore) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
-  if (!settled) {
-    while (harness.tool() === undefined && !settled) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-    }
-    if (!settled) {
-      await harness.tool().execute(rebindToolCallId, rebindBatch as never, undefined, undefined, {} as never);
-      harness.release();
-    }
-  }
-  await settling;
+  await nav.settle(settlement);
 }
