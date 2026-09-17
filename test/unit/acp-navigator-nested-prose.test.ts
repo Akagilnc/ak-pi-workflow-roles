@@ -1,6 +1,6 @@
 /**
- * #959: ACP standard nested session/update must reach navigator prose ingest.
- * Real entry = createAcpRoleTurnHost; nested shape matches host-session-acp-write-fail fixture.
+ * #959: ACP session/update agent speech reaches navigator prose ingest.
+ * Real entry = createAcpRoleTurnHost. Nested shape matches host-session-acp-write-fail.
  */
 import assert from "node:assert/strict";
 import { join } from "node:path";
@@ -12,156 +12,102 @@ import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigato
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 
-const NESTED_PROSE = "下一步送 reviewer 独立审阅";
+const CASES = [
+  {
+    name: "nested agent_message_chunk",
+    params: {
+      sessionId: "acp-nav-sess",
+      update: {
+        sessionUpdate: "agent_message_chunk",
+        content: { type: "text", text: "下一步送 reviewer 独立审阅" },
+      },
+    },
+    expected: "下一步送 reviewer 独立审阅",
+  },
+  {
+    name: "flat agent_message",
+    params: {
+      sessionId: "acp-flat-sess",
+      sessionUpdate: "agent_message",
+      content: { type: "text", text: "flat prose" },
+    },
+    expected: "flat prose",
+  },
+] as const;
 
-function baseRequest(runDirectory: string, home: string): RoleTurnRequest {
-  return {
-    principal: fixturePrincipal(join(runDirectory, "session")),
-    activation: { role: "navigator" },
-    methods: [],
-    continuation: { kind: "initial", prompt: "route?" },
-    cwd: home,
-    home,
-    agentDir: join(runDirectory, "agent"),
-    runDirectory,
-  };
+async function runNavigatorProseIngest(
+  params: Readonly<Record<string, unknown>>,
+): Promise<unknown> {
+  const ledger = createTempPackageHomeLedger({
+    prefix: "ak-959-acp-prose-",
+    runName: "run@navigator",
+  });
+  try {
+    const handlers: Array<(method: string, params: Readonly<Record<string, unknown>>) => void> = [];
+    let ingested: unknown;
+    const connection: AcpConnection = {
+      async request(method) {
+        if (method === "initialize") return { protocolVersion: 1 };
+        if (method === "session/new") return { sessionId: "acp-sess" };
+        if (method === "session/prompt") {
+          for (const handler of handlers) handler("session/update", params);
+          return { stopReason: "end_turn" };
+        }
+        if (method === "session/close") return {};
+        return {};
+      },
+      notify() {},
+      onNotification(handler) {
+        handlers.push(handler);
+      },
+      async close() {},
+    };
+    const request: RoleTurnRequest = {
+      principal: fixturePrincipal(join(ledger.runDirectory, "session")),
+      activation: { role: "navigator" },
+      methods: [],
+      continuation: { kind: "initial", prompt: "route?" },
+      cwd: ledger.home,
+      home: ledger.home,
+      agentDir: join(ledger.runDirectory, "agent"),
+      runDirectory: ledger.runDirectory,
+    };
+    const host = createAcpRoleTurnHost({
+      hostName: "grok-build",
+      modelPassing: "argv",
+      boundResume: "session/new",
+      sessionIdentity: {
+        async load() {
+          return undefined;
+        },
+        async bind() {},
+        resolveSessionFile: () => ledger.sessionFile,
+      },
+      connect: async () => connection,
+      prepare: async () => ({
+        mcpServers: [{ name: "ak-probe", type: "stdio" }],
+        systemPrompt: { body: "navigator", materials: [] },
+        prompt: "route?",
+        jsonSchema: { type: "object" },
+        terminatingToolName: NAVIGATOR_OUTPUT_TOOL_NAME,
+        async ingestStructuredOutput(value) {
+          ingested = value;
+        },
+        async closeRound() {
+          return { accepted: true as const };
+        },
+      }),
+    });
+    const result = await host.executeTurn(request);
+    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+    return ingested;
+  } finally {
+    ledger.dispose();
+  }
 }
 
-test("ACP nested agent_message_chunk reaches navigator prose ingest", async () => {
-  const ledger = createTempPackageHomeLedger({
-    prefix: "ak-959-acp-nested-prose-",
-    runName: "run@navigator",
+for (const sample of CASES) {
+  test(`ACP ${sample.name} reaches navigator prose ingest`, async () => {
+    assert.deepEqual(await runNavigatorProseIngest(sample.params), { prose: sample.expected });
   });
-  try {
-    const notificationHandlers: Array<(method: string, params: Readonly<Record<string, unknown>>) => void> = [];
-    let ingested: unknown;
-
-    const connection: AcpConnection = {
-      async request(method) {
-        if (method === "initialize") return { protocolVersion: 1 };
-        if (method === "session/new") return { sessionId: "acp-nav-sess" };
-        if (method === "session/prompt") {
-          for (const handler of notificationHandlers) {
-            // Standard ACP shape (same nest as host-session-acp-write-fail.test.ts).
-            handler("session/update", {
-              sessionId: "acp-nav-sess",
-              update: {
-                sessionUpdate: "agent_message_chunk",
-                content: { type: "text", text: NESTED_PROSE },
-              },
-            });
-          }
-          return { stopReason: "end_turn" };
-        }
-        if (method === "session/close") return {};
-        return {};
-      },
-      notify() {},
-      onNotification(handler) {
-        notificationHandlers.push(handler);
-      },
-      async close() {},
-    };
-
-    const host = createAcpRoleTurnHost({
-      hostName: "grok-build",
-      modelPassing: "argv",
-      boundResume: "session/new",
-      sessionIdentity: {
-        async load() {
-          return undefined;
-        },
-        async bind() {},
-        resolveSessionFile: () => ledger.sessionFile,
-      },
-      connect: async () => connection,
-      prepare: async () => ({
-        mcpServers: [{ name: "ak-probe", type: "stdio" }],
-        systemPrompt: { body: "navigator", materials: [] },
-        prompt: "route?",
-        jsonSchema: { type: "object" },
-        terminatingToolName: NAVIGATOR_OUTPUT_TOOL_NAME,
-        async ingestStructuredOutput(value) {
-          ingested = value;
-        },
-        async closeRound() {
-          return { accepted: true as const };
-        },
-      }),
-    });
-
-    const result = await host.executeTurn(baseRequest(ledger.runDirectory, ledger.home));
-    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
-    assert.deepEqual(ingested, { prose: NESTED_PROSE });
-  } finally {
-    ledger.dispose();
-  }
-});
-
-test("ACP flat sessionUpdate agent_message still reaches navigator prose ingest", async () => {
-  const ledger = createTempPackageHomeLedger({
-    prefix: "ak-959-acp-flat-prose-",
-    runName: "run@navigator",
-  });
-  try {
-    const notificationHandlers: Array<(method: string, params: Readonly<Record<string, unknown>>) => void> = [];
-    let ingested: unknown;
-
-    const connection: AcpConnection = {
-      async request(method) {
-        if (method === "initialize") return { protocolVersion: 1 };
-        if (method === "session/new") return { sessionId: "acp-flat-sess" };
-        if (method === "session/prompt") {
-          for (const handler of notificationHandlers) {
-            handler("session/update", {
-              sessionId: "acp-flat-sess",
-              sessionUpdate: "agent_message",
-              content: { type: "text", text: "flat prose" },
-            });
-          }
-          return { stopReason: "end_turn" };
-        }
-        if (method === "session/close") return {};
-        return {};
-      },
-      notify() {},
-      onNotification(handler) {
-        notificationHandlers.push(handler);
-      },
-      async close() {},
-    };
-
-    const host = createAcpRoleTurnHost({
-      hostName: "grok-build",
-      modelPassing: "argv",
-      boundResume: "session/new",
-      sessionIdentity: {
-        async load() {
-          return undefined;
-        },
-        async bind() {},
-        resolveSessionFile: () => ledger.sessionFile,
-      },
-      connect: async () => connection,
-      prepare: async () => ({
-        mcpServers: [{ name: "ak-probe", type: "stdio" }],
-        systemPrompt: { body: "navigator", materials: [] },
-        prompt: "route?",
-        jsonSchema: { type: "object" },
-        terminatingToolName: NAVIGATOR_OUTPUT_TOOL_NAME,
-        async ingestStructuredOutput(value) {
-          ingested = value;
-        },
-        async closeRound() {
-          return { accepted: true as const };
-        },
-      }),
-    });
-
-    const result = await host.executeTurn(baseRequest(ledger.runDirectory, ledger.home));
-    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
-    assert.deepEqual(ingested, { prose: "flat prose" });
-  } finally {
-    ledger.dispose();
-  }
-});
+}

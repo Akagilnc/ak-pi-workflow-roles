@@ -781,8 +781,13 @@ export function explicitInternalKnownFailureClassificationInput(
   };
 }
 
-/** Post-role Navigator delivery grace (Issue #11 / #101 / #106 / #159). */
-export const NAVIGATOR_POST_ROLE_GRACE_MS = 10_000;
+/**
+ * Post-role Navigator delivery grace (Issue #11 / #101 / #106 / #159 / #959).
+ * After #959 unique advice is one nested public navigator summon (full host turn),
+ * not an in-process prepare. 10s covered help-boot only; nested host rounds need
+ * a host-turn budget so parent terminal can still present sealed prose.
+ */
+export const NAVIGATOR_POST_ROLE_GRACE_MS = 60_000;
 
 type SessionMessage = {
   role?: string;

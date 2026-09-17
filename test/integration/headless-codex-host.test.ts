@@ -203,6 +203,55 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
   }
 });
 
+test("#959 missing host binary stays activation spawn-failed with real path", async () => {
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-959-missing-bin-", runName: "run@codex" });
+  try {
+    const description = lookupHeadlessHostDescription("codex");
+    assert.ok(description);
+    // Temp path only — never the machine install. Real entry createHeadlessRoleTurnHost.
+    const missingBin = join(ledger.runDirectory, "no-such-codex-binary");
+    const host = createHeadlessRoleTurnHost({
+      description,
+      hostName: "codex",
+      binary: missingBin,
+      sessionIdentity: {
+        async load() { return undefined; },
+        async bind() {},
+        resolveSessionFile: () => join(ledger.runDirectory, "session", "session.jsonl"),
+      },
+      prepare: async () => ({
+        mcpServers: [],
+        systemPrompt: { body: "system", materials: [] },
+        prompt: "probe",
+        jsonSchema: { type: "object" },
+        terminatingToolName: "ak_navigator_output",
+        async ingestStructuredOutput() {},
+        async closeRound() { return { accepted: true as const }; },
+      }),
+    });
+    const result = await host.executeTurn({
+      principal: fixturePrincipal(join(ledger.runDirectory, "session")),
+      activation: { role: "navigator" },
+      methods: [],
+      continuation: { kind: "initial", prompt: "probe" },
+      model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
+      cwd: ledger.runDirectory,
+      home: ledger.home,
+      agentDir: join(ledger.runDirectory, "agent"),
+      runDirectory: ledger.runDirectory,
+    });
+    assert.equal(result.knownFailure?.cause, "activation", JSON.stringify(result));
+    assert.equal(result.knownFailure?.identity?.code, "spawn-failed");
+    assert.equal(result.knownFailure?.identity?.name, "HeadlessSpawnFailure");
+    const diagnostic = result.knownFailure?.diagnostic ?? "";
+    assert.ok(diagnostic.includes("ENOENT") || diagnostic.includes(missingBin), diagnostic);
+    const details = result.knownFailure?.details as { binary?: string } | undefined;
+    assert.equal(details?.binary, missingBin);
+  } finally {
+    ledger.dispose();
+  }
+});
+
 test("headless stdin delivery error cannot settle valid output as success", async () => {
   const ledger = createTempPackageHomeLedger({ prefix: "ak-headless-epipe-", runName: "run@codex" });
   const fakeBin = join(ledger.runDirectory, "fake-codex-epipe");
