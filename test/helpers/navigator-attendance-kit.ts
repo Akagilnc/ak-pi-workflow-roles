@@ -51,6 +51,7 @@ export function sessionHarness() {
         providerFailure = { source: "transport", cause: "transport" };
         throw new Error(transport);
       }
+      // Executor runs sync: park flag is visible before prompt() yields to the caller.
       await new Promise<void>((resolve) => { releasePrompt = resolve; });
     },
     appendEntry(_type, data) { entries.push({ type: "custom", customType: _type, data }); },
@@ -68,7 +69,13 @@ export function sessionHarness() {
   return {
     factory: async ({ tool: nextTool }: { tool: any }) => { tool = nextTool; return session; },
     tool: () => tool,
-    release: () => releasePrompt?.(),
+    /** True while prompt() is parked on the release gate (not merely counted). */
+    isPromptParked: () => releasePrompt !== undefined,
+    release: () => {
+      const release = releasePrompt;
+      releasePrompt = undefined;
+      release?.();
+    },
     prompts: () => prompts,
     rejectPrepare(...reasons: string[]) { rejectedPrepareReasons.push(...reasons); },
     failTransport(...reasons: string[]) { transportFailures.push(...reasons); },
@@ -126,12 +133,24 @@ async function waitForEventLoop(condition: () => boolean): Promise<void> {
  * setImmediate budget that loses the race with createSession deadlocks:
  * settle waits for the parked prompt, the helper waits for settle's feed prompt
  * (#959 CI: navigator-attendance{,-seams,-routes} file timeouts).
+ *
+ * Gate state, not cumulative prompt count: if the early prompt is already
+ * parked, prompts() == before and waiting for prompts() > before self-locks
+ * (release is after the wait). Wait for isPromptParked (or a finished
+ * non-parking prompt) then release only when parked.
  */
 async function releaseEarlyReadyWait(
   harness: ReturnType<typeof sessionHarness>,
 ): Promise<void> {
   const before = harness.prompts();
-  await waitForEventLoop(() => harness.prompts() > before);
+  await waitForEventLoop(
+    () => harness.isPromptParked() || harness.prompts() > before,
+  );
+  if (!harness.isPromptParked()) {
+    // Rejected/transport/no-receipt path finished the prompt without parking.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    return;
+  }
   harness.release();
   // Prompt continuation finishes the early turn on the next macrotask.
   await new Promise<void>((resolve) => setImmediate(resolve));
