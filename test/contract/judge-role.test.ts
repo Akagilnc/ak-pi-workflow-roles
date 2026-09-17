@@ -58,6 +58,8 @@ import {
   createRoleRuntimeExtension,
   type JudgeVerdict,
 } from "../../src/role-runtime.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
+import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { tryHomeFromAkRolesPath } from "../../src/activation-ledger-topology.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
@@ -943,6 +945,110 @@ test("after_provider_response production handler writes typed 429 into resumable
       presented.split(terminal.resume.command).join("").includes(runId),
       false,
     );
+  });
+});
+
+test("#959 navigator agent_end prose exit seals without typed delivery prompt", async () => {
+  // Production agent_end handler is the real entry: prose → sealed; empty → no_receipt;
+  // never ak-receipt-delivery-request / typed 催交 for navigator.
+  await withActivationHome({ prefix: "ak-navigator-prose-exit-" }, async ({ home }) => {
+    const runId = "run-nav-prose-exit";
+    const runDirectory = join(home, ".ak-roles", "books", basename(home), "runs", `${runId}@navigator`);
+    const sessionDirectory = join(runDirectory, "session");
+    mkdirSync(sessionDirectory, { recursive: true });
+
+    const sentMessages: Array<{ customType: string; content: string }> = [];
+    const harness = extensionHarness("navigator");
+    (harness.pi as { sendMessage?: (message: { customType: string; content: string }) => void }).sendMessage = (message) => {
+      sentMessages.push({ customType: message.customType, content: message.content });
+    };
+    installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
+      loadJudgeSoul: async () => "judge",
+      loadNavigatorSoul: async () => "route judgment",
+    });
+
+    const previous = process.env.AK_ROLE_RUN_DIR;
+    process.env.AK_ROLE_RUN_DIR = runDirectory;
+    try {
+      // Session principal under this run so seal/ledger home resolve from sessionParent.
+      const sessionManager = SessionManager.create(home, sessionDirectory);
+      const ctx = {
+        abort: () => {},
+        cwd: home,
+        sessionManager,
+      } as unknown as ExtensionContext;
+      await harness.handlers.get("session_start")?.({}, ctx);
+      assert.ok(harness.tools.has(NAVIGATOR_OUTPUT_TOOL_NAME), "navigator tool registers on admission");
+
+      const agentEnd = harness.handlers.get("agent_end");
+      assert.ok(agentEnd, "production agent_end handler must be registered");
+
+      // 1) Prose-only assistant message → sealed via navigator-prose-exit, no typed 催交.
+      await agentEnd(
+        {
+          messages: [{
+            role: "assistant",
+            content: [{ type: "text", text: "下一步送 reviewer 独立审阅" }],
+            stopReason: "stop",
+          }],
+        },
+        ctx,
+      );
+      const rows = await readRecordedSubmissionRows(home, runId, {
+        home,
+        sessionParent: join(sessionDirectory, "session.jsonl"),
+      });
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0]?.kind, "accepted");
+      assert.equal(rows[0]?.role, "navigator");
+      assert.deepEqual(rows[0]?.accepted, { prose: "下一步送 reviewer 独立审阅" });
+      assert.ok(
+        typeof rows[0]?.toolCallId === "string" && rows[0]!.toolCallId!.startsWith("navigator-prose-exit:"),
+        "prose exit must seal under navigator-prose-exit toolCallId",
+      );
+      assert.equal(
+        harness.appendedEntries.some((entry) => entry.customType === "ak-receipt-delivery-request"),
+        false,
+        "navigator prose exit must not queue typed delivery request",
+      );
+      assert.equal(sentMessages.length, 0, "navigator prose exit must not send typed 催交");
+      // Closure rides sessionManager.appendCustomEntry (ledger projectClosure), not envelope appendEntry.
+      const sessionEntries = sessionManager.getEntries?.() ?? [];
+      assert.ok(
+        sessionEntries.some(
+          (entry: { type?: string; customType?: string }) =>
+            entry.type === "custom" && entry.customType === "ak-role-submission-closure",
+        ),
+        "prose exit must project submission closure onto the session",
+      );
+
+      // Fresh turn: no prose and no tool → no_receipt, still no typed 催交.
+      await harness.handlers.get("session_start")?.({}, ctx);
+      sentMessages.length = 0;
+      harness.appendedEntries.length = 0;
+      await agentEnd(
+        {
+          messages: [{
+            role: "assistant",
+            content: [{ type: "toolCall", id: "t1", name: "read", arguments: {} }],
+            stopReason: "toolUse",
+          }],
+        },
+        ctx,
+      );
+      assert.ok(
+        harness.appendedEntries.some((entry) => entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE),
+        "navigator with neither tool receipt nor prose must record no_receipt",
+      );
+      assert.equal(
+        harness.appendedEntries.some((entry) => entry.customType === "ak-receipt-delivery-request"),
+        false,
+      );
+      assert.equal(sentMessages.length, 0);
+    } finally {
+      if (previous === undefined) delete process.env.AK_ROLE_RUN_DIR;
+      else process.env.AK_ROLE_RUN_DIR = previous;
+    }
   });
 });
 

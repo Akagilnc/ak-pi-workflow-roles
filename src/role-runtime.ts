@@ -1621,10 +1621,14 @@ export function createRoleRuntimeExtension(
           return;
         }
         // Attended with neither tool nor prose → honest no_receipt (not typed 催交).
+        // Exhaust delivery budget without sending the typed prompt so facts() stays lawful.
         if (!noReceiptRecorded) {
           const runPointer = runDirectoryFromHostContext(ctx);
           if (runPointer !== undefined) {
             noReceiptRecorded = true;
+            while (receiptDelivery.nextAction() === "request-delivery") {
+              receiptDelivery.recordDeliveryRequest();
+            }
             const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
             envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
             try {
