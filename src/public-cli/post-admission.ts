@@ -237,8 +237,9 @@ export type PostAdmissionEnv = {
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
   /**
-   * Ephemeral host-turn cwd for dual-lens sandbox execution (#946). Admission
-   * and durable projectRoot stay on the caller project; resume ignores this.
+   * Ephemeral host-turn cwd for Reviewer fresh-copy execution (#946 统一新副本).
+   * Admission and durable projectRoot stay on the caller project; the host turn
+   * (initial and resume) runs in this sandbox when present.
    */
   executionCwd?: string;
 };

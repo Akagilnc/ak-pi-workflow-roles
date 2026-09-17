@@ -104,8 +104,8 @@ export type PublicSummonRequest = {
   /** Caller correlation id for nested leg ledger (ADR 0010 / #924). */
   readonly correlationId?: string;
   /**
-   * Ephemeral host-turn cwd override (#946 dual-lens sandbox). Admission keeps
-   * the public --project / cwd identity; only the initial turn uses this path.
+   * Ephemeral host-turn cwd override (#946 fresh-copy sandbox). Admission keeps
+   * the public --project / cwd identity; the host turn runs under this path.
    */
   readonly executionCwd?: string;
   /**
@@ -615,6 +615,94 @@ function withReviewerLens(
   return [...argv.slice(0, separator), "--lens", lens, ...argv.slice(separator)];
 }
 
+/** Caller project may be a repo subdirectory; sandboxes keep that relative path. */
+async function resolveReviewerWorktreeRoots(projectRoot: string): Promise<{
+  readonly callerProjectRoot: string;
+  readonly sourceProjectRoot: string;
+  readonly projectRelative: string;
+}> {
+  const callerProjectRoot = await realpath(projectRoot);
+  const sourceProjectRoot = await realpath((await execFileAsync(
+    "git",
+    ["rev-parse", "--show-toplevel"],
+    { cwd: callerProjectRoot },
+  )).stdout.trim());
+  const callerRelative = relative(sourceProjectRoot, callerProjectRoot);
+  const projectRelative =
+    callerRelative === ""
+    || callerRelative === "."
+    || callerRelative.startsWith(`..${sep}`)
+    || callerRelative === ".."
+      ? ""
+      : callerRelative;
+  return { callerProjectRoot, sourceProjectRoot, projectRelative };
+}
+
+function reviewerSandboxPath(worktreeAxis: string, projectRelative: string): string {
+  return projectRelative === "" ? worktreeAxis : join(worktreeAxis, projectRelative);
+}
+
+/**
+ * One ephemeral detached worktree at the source tree's current HEAD.
+ * Always removed after `run` settles; delete failure is diagnostic only (#946 10a).
+ * Shared by explicit `--lens` and any Reviewer resume. Dual-lens batch mints its
+ * own pair so both legs share one PRE_HEAD snapshot — it does not call this.
+ */
+export async function withEphemeralReviewerWorktree<T>(options: {
+  readonly projectRoot: string;
+  readonly run: (executionCwd: string) => Promise<T>;
+  readonly onCleanupDiagnostic?: (diagnostic: string) => void;
+}): Promise<T> {
+  const { sourceProjectRoot, projectRelative } = await resolveReviewerWorktreeRoots(
+    options.projectRoot,
+  );
+  const { stdout: headStdout } = await execFileAsync(
+    "git",
+    ["rev-parse", "--verify", "HEAD^{commit}"],
+    { cwd: sourceProjectRoot },
+  );
+  const targetCommit = headStdout.trim();
+  const root = await mkdtemp(join(tmpdir(), "ak-reviewer-sandbox-"));
+  const worktreeRoot = join(root, "work");
+  let created = false;
+  try {
+    await execFileAsync("git", ["worktree", "add", "--detach", worktreeRoot, targetCommit], {
+      cwd: sourceProjectRoot,
+    });
+    created = true;
+    // Preserve caller subdirectory even when absent from the pinned commit.
+    if (projectRelative !== "") {
+      await mkdir(reviewerSandboxPath(worktreeRoot, projectRelative), { recursive: true });
+    }
+    return await options.run(reviewerSandboxPath(worktreeRoot, projectRelative));
+  } finally {
+    if (created) {
+      const cleanupErrors: unknown[] = [];
+      try {
+        await execFileAsync("git", ["worktree", "remove", worktreeRoot], {
+          cwd: sourceProjectRoot,
+        });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      try {
+        await rm(root, { recursive: true, force: true });
+      } catch (error) {
+        cleanupErrors.push(error);
+      }
+      if (cleanupErrors.length > 0) {
+        options.onCleanupDiagnostic?.([
+          "reviewer worktree cleanup failed",
+          ...cleanupErrors.map((error) =>
+            error instanceof Error ? error.message : String(error)),
+        ].join("\n"));
+      }
+    } else {
+      await rm(root, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+}
+
 /**
  * Default Reviewer call: two explicit single-axis public legs in independent
  * ephemeral detached worktrees, started as one parallel batch. Each leg reuses
@@ -668,7 +756,6 @@ export async function summonParallelReviewerLenses(options: {
   // Caller project may be a repo subdirectory; child sandboxes keep that relative path.
   // Every pre-dispatch target check failure keeps the existing dual-child batch surface.
   let sourceProjectRoot: string;
-  let callerProjectRoot: string;
   let projectRelative: string;
   let targetCommit: string;
   const statusArgs = [
@@ -680,20 +767,9 @@ export async function summonParallelReviewerLenses(options: {
     ":(top,exclude).claude/worktrees/**",
   ] as const;
   try {
-    callerProjectRoot = await realpath(options.projectRoot);
-    sourceProjectRoot = await realpath((await execFileAsync(
-      "git",
-      ["rev-parse", "--show-toplevel"],
-      { cwd: callerProjectRoot },
-    )).stdout.trim());
-    const callerRelative = relative(sourceProjectRoot, callerProjectRoot);
-    projectRelative =
-      callerRelative === ""
-      || callerRelative === "."
-      || callerRelative.startsWith(`..${sep}`)
-      || callerRelative === ".."
-        ? ""
-        : callerRelative;
+    const roots = await resolveReviewerWorktreeRoots(options.projectRoot);
+    sourceProjectRoot = roots.sourceProjectRoot;
+    projectRelative = roots.projectRelative;
     const { stdout: statusStdout } = await execFileAsync("git", statusArgs, {
       cwd: sourceProjectRoot,
     });
@@ -721,8 +797,6 @@ export async function summonParallelReviewerLenses(options: {
   } catch (error) {
     return dualFailure(error);
   }
-  const childProjectPath = (worktreeAxis: string): string =>
-    projectRelative === "" ? worktreeAxis : join(worktreeAxis, projectRelative);
   const root = await mkdtemp(join(tmpdir(), "ak-reviewer-lenses-"));
   const completenessRoot = join(root, "completeness");
   const correctnessRoot = join(root, "correctness");
@@ -739,7 +813,7 @@ export async function summonParallelReviewerLenses(options: {
       created.add(path);
       // Preserve caller subdirectory even when it is not present in the pinned commit.
       if (projectRelative !== "") {
-        await mkdir(childProjectPath(path), { recursive: true });
+        await mkdir(reviewerSandboxPath(path, projectRelative), { recursive: true });
       }
     }),
   );
@@ -759,7 +833,7 @@ export async function summonParallelReviewerLenses(options: {
       // Single-axis public entry as-is: caller's argv + only --lens, under the
       // same cwd the omitted-lens call used. Durable projectRoot admits from
       // that argv/cwd pair. Ephemeral worktree is executionCwd only (#946).
-      const sandbox = childProjectPath(worktreeAxis);
+      const sandbox = reviewerSandboxPath(worktreeAxis, projectRelative);
       return summonPublicRole({
         role: "reviewer",
         argv: withReviewerLens(options.argv, lens),

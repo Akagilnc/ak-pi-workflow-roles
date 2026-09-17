@@ -40,8 +40,8 @@ export type RoleTurnRequestProjectionOptions = {
   stationChild?: boolean;
   /**
    * Optional host-turn cwd override. Durable admitted projectRoot stays the
-   * identity source; dual-lens batch uses this only for the ephemeral worktree
-   * sandbox on the initial leg (#946).
+   * identity source; Reviewer fresh-copy sandboxes (explicit --lens, dual-lens
+   * legs, resume) inject the ephemeral worktree here (#946 统一新副本).
    */
   cwd?: string;
 };

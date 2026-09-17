@@ -972,9 +972,14 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
 
     let captured: string[] | undefined;
     let capturedStdin: string | undefined;
+    let turnCwd: string | undefined;
     const { io, stdout } = captureIo();
     const result = await runAkRole([
       "reviewer", "--model", "test/caller-seat:high",
@@ -991,6 +996,9 @@ test("explicit single-lens projects admitted lens and optional caller provenance
       roleTurnHost: reviewerHost(async (args, options) => {
         captured = [...args];
         capturedStdin = options.stdin;
+        turnCwd = options.cwd;
+        // Explicit --lens also runs in a fresh copy (#946 统一新副本).
+        assert.notEqual(realpathSync(options.cwd), realpathSync(project));
         // Deliberate receipt/lens mismatch must still land (仓级第 0 条).
         return lawfulChildTurn(args, {
           lens: "completeness",
@@ -1001,6 +1009,14 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     });
 
     assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
+    assert.equal(typeof turnCwd, "string");
+    assert.equal(
+      execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      }),
+      worktreeListBefore,
+    );
     assert.equal(captured!.includes("--ak-review-task"), false);
     assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
     const okDialogue = readUserDialogueStdin(capturedStdin ?? "");
@@ -1297,9 +1313,14 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     assert.equal(admitted.lens, "correctness");
     assert.equal(realpathSync(String(admitted.projectRoot)), realpathSync(project));
 
+    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
+    let resumeCwd: string | undefined;
     const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
@@ -1318,7 +1339,9 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         const resumeDialogue = readUserDialogueStdin(resumeStdin ?? "");
         assert.equal(resumeDialogue, "[ak-role:resume-continue]");
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
-        assert.equal(realpathSync(options.cwd), realpathSync(project));
+        // Resume runs in a fresh copy of the source tree at resume time (#946 10a).
+        assert.notEqual(realpathSync(options.cwd), realpathSync(project));
+        resumeCwd = options.cwd;
         return lawfulChildTurn(args, {
           lens: "correctness",
           includeSkillExpansion: true,
@@ -1327,6 +1350,15 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       }),
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "reviewer resume failed");
+    assert.equal(typeof resumeCwd, "string");
+    // Fresh copy is gone after resume returns.
+    assert.equal(
+      execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      }),
+      worktreeListBefore,
+    );
     assert.equal(Array.isArray(resumeArgs), true);
     assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
@@ -1429,7 +1461,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
     assert.equal(admitted.baseRevision, "HEAD~1");
     assert.equal(admitted.lens, "completeness");
 
-    // Resume reviews the caller's current project — no old worktree required.
+    // Resume: fresh copy of source tree at resume time; old batch worktree not required (#946 10a).
     const { io: resumeIo, stdout: resumeStdout } = captureIo();
     let resumeCwd: string | undefined;
     const resumed = await runAkRole(
@@ -1442,6 +1474,9 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
         io: resumeIo,
         roleTurnHost: reviewerHost(async (args, options) => {
           resumeCwd = options.cwd;
+          // Sandbox keeps the caller subdirectory layout under a new worktree root.
+          assert.equal(options.cwd.endsWith(join("nested", "leaf")), true);
+          assert.notEqual(realpathSync(options.cwd), callerProjectRoot);
           return lawfulChildTurn(args, {
             lens: "completeness",
             toolCallId: "subdir-resume",
@@ -1451,7 +1486,13 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
     );
     assert.equal(resumed.exitCode, 0, resumeStdout.join(""));
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(realpathSync(resumeCwd!), callerProjectRoot);
+    assert.equal(typeof resumeCwd, "string");
+    // Resume sandbox is deleted after the call; no ownership residue.
+    const worktreeListAfterResume = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+    assert.equal(worktreeListAfterResume, worktreeListBefore);
   });
 });
 
