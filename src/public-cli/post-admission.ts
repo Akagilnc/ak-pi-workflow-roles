@@ -581,6 +581,7 @@ export async function dispatchPostAdmissionTurn<
   const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
     if (afterDispatchApplied) return result;
     afterDispatchApplied = true;
+    let outcome: DispatchOutcome = result;
     try {
       // #858: an unbound seat may assert its ticket on the existing receipt.
       // Read the original accepted payload; do not rewrite it, infer from prose,
@@ -605,7 +606,6 @@ export async function dispatchPostAdmissionTurn<
         if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
       }
       if (adapters.afterDispatch !== undefined) await adapters.afterDispatch(admitted, lease);
-      return result;
     } catch (error) {
       const primaryFailure =
         result.terminal !== undefined
@@ -617,27 +617,45 @@ export async function dispatchPostAdmissionTurn<
           `afterDispatch failed beside primary terminal (best-effort continue): ${describeErrorIdentity(error)}`,
           io,
         );
-        return result;
+      } else {
+        outcome = {
+          ...(await presentControlledFailure(
+            admitted,
+            withEngineDetourInvocationScope({
+              timedOut: false,
+              code: null,
+              stderr: "",
+              thrown: error,
+            }, request.invocationScopeId),
+            adapters,
+            env.principalAuthority,
+            io,
+            persistRunState,
+          )) as { exitCode: number; admitted: A; terminal: T },
+          ...(result.turnDispatched === true ? { turnDispatched: true as const } : {}),
+          ...(result.skipAutoResume === true ? { skipAutoResume: true as const } : {}),
+          ...deferredPersist,
+        };
       }
-      return {
-        ...(await presentControlledFailure(
-          admitted,
-          withEngineDetourInvocationScope({
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-          }, request.invocationScopeId),
-          adapters,
-          env.principalAuthority,
-          io,
-          persistRunState,
-        )) as { exitCode: number; admitted: A; terminal: T },
-        ...(result.turnDispatched === true ? { turnDispatched: true as const } : {}),
-        ...(result.skipAutoResume === true ? { skipAutoResume: true as const } : {}),
-        ...deferredPersist,
-      };
     }
+    // Single retained-Reviewer worktree ownership seam (#946): every sealed
+    // final path (accepted / no_receipt / non-continuable failure) reclaims the
+    // detached child. resume-bearing terminals keep the worktree for manual
+    // continuation. Missing ownership file is a no-op; cleanup failure must
+    // never re-settle an already sealed Terminal.
+    if (outcome.terminal !== undefined && outcome.terminal.resume === undefined) {
+      try {
+        await cleanupReviewerWorktreeOwnership(admitted.runDirectory, admitted.projectRoot);
+      } catch (error) {
+        await recordBestEffortPostDispatchDiagnostic(
+          admitted,
+          env,
+          `reviewer worktree cleanup failed after sealed terminal (best-effort continue): ${describeErrorIdentity(error)}`,
+          io,
+        );
+      }
+    }
+    return outcome;
   };
   try {
     const missingCredential = missingCredentialPreDispatchFailure(
@@ -1014,7 +1032,6 @@ export async function dispatchPostAdmissionTurn<
       if (persistRunState) {
         try {
           await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
-          await cleanupReviewerWorktreeOwnership(admitted.runDirectory, admitted.projectRoot);
         } catch (error) {
           // #836: `settledOutcome.terminal` already carries recorded
           // submissions (attachRecordedSubmissions above). A real run-state
@@ -1026,6 +1043,8 @@ export async function dispatchPostAdmissionTurn<
           // at all. skipRunStateWrite: the write that just threw is the same
           // write presentControlledFailure would otherwise retry — don't
           // call a known-failing operation twice.
+          // Worktree cleanup is NOT in this try: it runs in finishAfterTurn
+          // after the sealed terminal is fixed, and must never re-settle it.
           const failed = await settleAfterTurnStarted(
           admitted,
           withEngineDetourInvocationScope({

@@ -42,7 +42,11 @@ import {
   trySettleReviewerTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import { formatTerminalResult, type TerminalResult } from "./terminal.ts";
+import {
+  formatTerminalResult,
+  isLawfulTypedTerminalOutcome,
+  type TerminalResult,
+} from "./terminal.ts";
 import {
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
@@ -190,15 +194,19 @@ export async function runPublicReviewer(
       ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
       packageRoot: env.packageRoot,
       ...(env.signal === undefined ? {} : { signal: env.signal }),
+      ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
       roleTurnHost: env.roleTurnHost,
       ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
     });
     const terminals = [children.completeness.terminal, children.correctness.terminal]
       .filter((terminal): terminal is TerminalResult => terminal !== undefined);
+    // ADR 0052 / terminal.ts: lawful typed child terminals (accepted / no_receipt /
+    // audit_escalation) are not batch failures. Child exitCode remains the live
+    // surface for seal/infrastructure overlays that keep the original Terminal.
     const failed = [children.completeness, children.correctness].some((child) =>
-      child.exitCode !== 0 || child.terminal === undefined
-      || child.terminal.roleOutcome.kind === "failure"
-      || child.terminal.roleOutcome.kind === "no_receipt");
+      child.exitCode !== 0
+      || child.terminal === undefined
+      || !isLawfulTypedTerminalOutcome(child.terminal.roleOutcome));
     const terminal: TerminalResult = {
       batch: "reviewer",
       roleOutcome: failed
@@ -206,7 +214,10 @@ export async function runPublicReviewer(
             kind: "failure",
             role: "reviewer",
             diagnostic: "Reviewer batch child failure",
-            decisiveFacts: { failedChildren: 2 - terminals.filter((item) => item.roleOutcome.kind === "accepted").length },
+            decisiveFacts: {
+              failedChildren: 2 - terminals.filter((item) =>
+                isLawfulTypedTerminalOutcome(item.roleOutcome)).length,
+            },
             payloads: terminals,
           }
         : { kind: "accepted", role: "reviewer", payloads: terminals },

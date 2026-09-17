@@ -742,18 +742,26 @@ export async function summonParallelReviewerLenses(options: {
     };
   }
   const resumableWorktrees = new Set<string>();
+  const ownershipFailures: unknown[] = [];
   for (const [lens, projectRoot] of [
     ["completeness", completenessRoot],
     ["correctness", correctnessRoot],
   ] as const) {
     const result = results[lens];
     if (result.terminal?.resume === undefined || result.runDirectory === undefined) continue;
-    await recordReviewerWorktreeOwnership(result.runDirectory, {
-      sourceProjectRoot: options.projectRoot,
-      worktreeRoot: root,
-      projectRoot,
-    });
-    resumableWorktrees.add(projectRoot);
+    try {
+      await recordReviewerWorktreeOwnership(result.runDirectory, {
+        sourceProjectRoot: options.projectRoot,
+        worktreeRoot: root,
+        projectRoot,
+      });
+      resumableWorktrees.add(projectRoot);
+    } catch (error) {
+      // Keep the sealed resume terminal and the worktree; losing either would
+      // destroy a lawful 429 continuation. Diagnostic rides beside the result.
+      ownershipFailures.push(error);
+      resumableWorktrees.add(projectRoot);
+    }
   }
   const cleanup = await Promise.allSettled(
     [...created]
@@ -768,22 +776,24 @@ export async function summonParallelReviewerLenses(options: {
     cleanupFailures.push(...rootCleanup.flatMap((result) =>
       result.status === "rejected" ? [result.reason] : []));
   }
-  if (cleanupFailures.length > 0) {
+  const lifecycleFailures = [...ownershipFailures, ...cleanupFailures];
+  if (lifecycleFailures.length > 0) {
+    // Present the real cleanup/ownership diagnostic without re-settling an
+    // already sealed child Terminal or flipping its lawful exitCode.
     const diagnostic = [
-      "parallel reviewer worktree cleanup failed",
-      ...cleanupFailures.map((failure) =>
+      "parallel reviewer worktree lifecycle failed",
+      ...lifecycleFailures.map((failure) =>
         failure instanceof Error ? failure.message : String(failure)),
     ].join("\n");
-    const withCleanupFailure = (result: PublicSummonResult): PublicSummonResult => ({
+    const withLifecycleDiagnostic = (result: PublicSummonResult): PublicSummonResult => ({
       ...result,
-      exitCode: 1,
       stderr: [result.stderr, diagnostic].filter(
         (text): text is string => typeof text === "string" && text !== "",
       ).join("\n"),
     });
     results = {
-      completeness: withCleanupFailure(results.completeness),
-      correctness: withCleanupFailure(results.correctness),
+      completeness: withLifecycleDiagnostic(results.completeness),
+      correctness: withLifecycleDiagnostic(results.correctness),
     };
   }
   return results;
