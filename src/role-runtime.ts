@@ -1322,10 +1322,9 @@ export function createRoleRuntimeExtension(
       if (settlement === undefined || attendance === undefined) return;
       const workContext = navigatorWorkContext;
       const pending = (async () => {
-        if (settlement.kind !== "accepted") {
-          await attendance.settle(settlement);
-          return;
-        }
+        // ADR 0052 / #959: every settlement that starts a post-role feed host round
+        // (accepted, human_decision, role_infrastructure_failure) shares one grace
+        // and the same honest unavailable projection — no unbounded parallel branch.
         const settlePromise = attendance.settle(settlement);
         // Attach catch immediately so a late rejection after grace timeout cannot
         // surface as unhandledRejection / stale-ctx after session dispose (#675).
@@ -1718,8 +1717,8 @@ export function createRoleRuntimeExtension(
           process.exitCode = 1;
         }
       }
-      // Flush any still-pending affirmative attendance before teardown. Accepted
-      // grace-timeout paths normally emit on agent_settled; abort can skip that hook.
+      // Flush any still-pending affirmative attendance before teardown.
+      // Grace-timeout paths normally emit on agent_settled; abort can skip that hook.
       const presentation = pendingNavigatorPresentation;
       pendingNavigatorPresentation = undefined;
       if (presentation !== undefined) {
