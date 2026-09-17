@@ -11,13 +11,16 @@ import {
   selectResumeContinuationPrompt,
 } from "../../src/public-cli/run-lifecycle.ts";
 
-test("auto-resume without message or engine material keeps a non-empty transport prompt", () => {
+test("auto-resume without message or engine material keeps a non-empty Chinese neutral prompt", () => {
   assert.equal(selectResumeContinuationPrompt(), RESUME_TRANSPORT_ENVELOPE);
   assert.equal(
     buildResumeContinuationPrompt({ packageRoot: "/unused-when-no-engine" }),
     RESUME_TRANSPORT_ENVELOPE,
   );
   assert.notEqual(selectResumeContinuationPrompt().trim(), "");
+  // ADR 0073: machine text into the role view must be Chinese and neutral.
+  assert.match(RESUME_TRANSPORT_ENVELOPE, /[\u4e00-\u9fff]/);
+  assert.equal(RESUME_TRANSPORT_ENVELOPE.includes("[ak-role:"), false);
 });
 
 test("caller message still wins verbatim when supplied", () => {

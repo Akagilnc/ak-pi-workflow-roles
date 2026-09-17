@@ -30,6 +30,7 @@ import {
   readTypedHttp429Observation,
   recordTypedProviderHttpStatus,
   renderResumeCommand,
+  RESUME_TRANSPORT_ENVELOPE,
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
@@ -2437,8 +2438,8 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       const expectedBody =
         c.role === "reviewer"
           ? (c.message === undefined
-            ? "[ak-role:resume-continue]"
-            : `[ak-role:resume-continue]\n\n${c.message}`)
+            ? RESUME_TRANSPORT_ENVELOPE
+            : `${RESUME_TRANSPORT_ENVELOPE}\n\n${c.message}`)
           : c.role === "merger"
             ? (rawPrompt.length === 0
               ? "/skill:resolving-merge-conflicts"

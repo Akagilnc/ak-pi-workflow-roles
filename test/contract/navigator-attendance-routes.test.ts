@@ -1,9 +1,11 @@
 // #420 整改拆分：路线记忆与重绑家族 — #959 删候选排名/重绑后只保留仍有效契约
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
+  createNavigatorAttendance,
   formatNavigatorReport,
   settlementNavigationFromEvent,
   writeNavigatorModelSetting,
@@ -14,6 +16,7 @@ import {
   subjectPath,
 } from "../../src/navigator-attendance.ts";
 import {
+  context,
   sessionHarness,
   attendance,
   proseAdvice,
@@ -114,6 +117,197 @@ test("work subjects remain stable and isolate ad hoc work", async () => {
   const ledgerSession = "/custom/home/.ak-roles/books/repo/issues/28/runs/judge@src/session";
   assert.equal(subjectPath(ledgerSession, "/repo"), "/repo/.ak/work");
   assert.equal(subjectPath("", "/repo"), "/repo/.ak/work");
+  assert.equal(subjectPath(ledgerSession, issue), issue);
+  // Any `.ak-roles/books/...` tree is ledger topology (ADR 0048 / #604), not work identity —
+  // even a mislocated tree under a repo root derives subject from cwd, never the ledger path.
+  assert.equal(subjectPath("/repo/.ak-roles/books/repo/issues/28/runs/judge@src/session", "/repo"), "/repo/.ak/work");
+
+  await withTempRoot("ak-nav-physical-", async (home) => {
+    const { realpathSync } = await import("node:fs");
+    const physicalIssue = resolve(home, ".ak/work/issues/28");
+    const session = resolve(home, ".ak-roles/books/h/runs/judge-navigator/session");
+    await mkdir(physicalIssue, { recursive: true });
+    await mkdir(session, { recursive: true });
+    assert.equal(subjectPath(session, physicalIssue), physicalIssue);
+    assert.equal(subjectPath(realpathSync(session), physicalIssue), physicalIssue);
+  });
+
+  assert.equal(navigatorSubjectKey(adHocRoot, `work subject: ${adHocRoot}`, "placeholder"), adHocRoot);
+  const legitimate = `work subject: ${adHocRoot} with real task bytes`;
+  const hashed = navigatorSubjectKey(adHocRoot, legitimate, "role_input");
+  assert.equal(hashed, `${adHocRoot}#${createHash("sha256").update(legitimate.trim().replace(/\s+/g, " ")).digest("hex").slice(0, 32)}`);
+  assert.equal(navigatorSubjectKey(adHocRoot, "placeholder subject for work", "placeholder"), adHocRoot);
+  assert.notEqual(navigatorSubjectKey(adHocRoot, "placeholder subject for work", "user_prompt"), adHocRoot);
+});
+
+test("dispose during pending createSession drains the created session without prompt or assignment", async () => {
+  await withTempRoot("navigator-dispose-race-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    let releaseCreate!: () => void;
+    const createGate = new Promise<void>((resolveGate) => { releaseCreate = resolveGate; });
+    let markCreateStarted!: () => void;
+    const createStarted = new Promise<void>((resolveStarted) => { markCreateStarted = resolveStarted; });
+    let markSessionDisposed!: () => void;
+    const sessionDisposed = new Promise<void>((resolveDisposed) => { markSessionDisposed = resolveDisposed; });
+    let disposeCalls = 0;
+    let promptCalls = 0;
+    let setModelCalls = 0;
+    const events: any[] = [];
+    const nav = createNavigatorAttendance({
+      context: context(root),
+      role: "coder",
+      phase: "apply",
+      subjectKey: "/repo/.ak/work/issues/28",
+      subject: "Fix issue 28",
+      authority: "owner decision",
+      loadSoul: async () => "route judgment",
+      loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
+      modelSettingPath: setting,
+      createSession: async () => {
+        markCreateStarted();
+        await createGate;
+        return {
+          async prompt() { promptCalls += 1; },
+          appendEntry() {},
+          entries: () => [],
+          async setModel() { setModelCalls += 1; },
+          getThinkingLevel: () => "off",
+          recordPointer: () => "/fixture/navigator-record",
+          dispose() { disposeCalls += 1; markSessionDisposed(); },
+        };
+      },
+      onEvent: async (event) => { events.push(event); },
+    });
+    nav.prepare();
+    await createStarted;
+    await nav.dispose();
+    releaseCreate();
+    await sessionDisposed;
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(promptCalls, 0, "disposed attendance must not prompt");
+    assert.equal(setModelCalls, 0, "disposed attendance must not configure the late session");
+    assert.equal(disposeCalls, 1, "created session must be disposed exactly once");
+    assert.equal(events.some((event) => event.disposition === "advice"), false);
+  });
+});
+
+test("attendance dispose settles session close rejection on the caller", async () => {
+  await withTempRoot("navigator-attendance-close-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    let releasePrompt: (() => void) | undefined;
+    try {
+      const setting = join(root, "model.json");
+      await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+      const closeBoom = new Error("session close failed");
+      let promptStarted!: () => void;
+      const prompted = new Promise<void>((resolvePrompted) => { promptStarted = resolvePrompted; });
+      const heldPrompt = new Promise<void>((resolveHeld) => { releasePrompt = resolveHeld; });
+      const nav = createNavigatorAttendance({
+        context: context(root),
+        role: "coder",
+        phase: "apply",
+        subjectKey: "/repo/.ak/work/issues/28",
+        subject: "Fix issue 28",
+        authority: "owner decision",
+        loadSoul: async () => "route judgment",
+        loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
+        modelSettingPath: setting,
+        createSession: async () => ({
+          async prompt() {
+            promptStarted();
+            await heldPrompt;
+          },
+          appendEntry() {},
+          entries: () => [],
+          async setModel() {},
+          getThinkingLevel: () => "off" as const,
+          recordPointer: () => "/fixture/navigator-record",
+          dispose() { return Promise.reject(closeBoom); },
+        }),
+        onEvent: async () => {},
+      });
+      nav.prepare();
+      await prompted;
+      await assert.rejects(
+        () => Promise.resolve(nav.dispose()),
+        (error: unknown) => error === closeBoom,
+      );
+    } finally {
+      releasePrompt?.();
+    }
+  });
+});
+
+test("resumed setModel session failures preserve typed source and cause", async () => {
+  await withTempRoot("navigator-resumed-cause-", async (root) => {
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const setting = join(root, "model.json");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    const events: any[] = [];
+    let setModelCalls = 0;
+    let created = false;
+    const nav = createNavigatorAttendance({
+      context: context(root),
+      role: "judge",
+      phase: null,
+      subjectKey: "/repo/.ak/work/issues/28",
+      subject: "task",
+      authority: "authority",
+      loadSoul: async () => "route judgment",
+      loadRoleHelp: async () => "help",
+      modelSettingPath: setting,
+      createSession: async ({ tool }) => {
+        created = true;
+        return {
+          async prompt() {
+            await tool.execute(
+              "prepare",
+              proseAdvice("resume path — 送 reviewer"),
+              undefined,
+              undefined,
+              {} as never,
+            );
+          },
+          appendEntry() {},
+          entries: () => [],
+          async setModel() {
+            setModelCalls += 1;
+            if (setModelCalls > 1) {
+              throw new Error("setModel blew up with untyped wording");
+            }
+          },
+          getThinkingLevel: () => "off",
+          recordPointer: () => "/fixture/navigator-record",
+          dispose() {},
+        };
+      },
+      onEvent: async (event) => { events.push(event); },
+    });
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
+    assert.equal(created, true);
+    assert.equal(events[0]?.disposition, "advice");
+    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+    nav.prepare();
+    await nav.settle({ kind: "accepted", role: "judge", phase: null, status: "converged" });
+    assert.equal(events[1]?.disposition, "unavailable");
+    assert.equal(events[1]?.unavailableSource, "session");
+    assert.equal(events[1]?.unavailableCause, "session");
+  });
 });
 
 test("#959 free-form prose without next is advice, not unavailable", async () => {

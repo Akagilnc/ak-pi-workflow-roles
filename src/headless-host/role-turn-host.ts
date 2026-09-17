@@ -39,10 +39,7 @@ import {
   isPlainObject,
   type HeadlessHostDescription,
 } from "./description.ts";
-import {
-  NAVIGATOR_OUTPUT_TOOL_NAME,
-  projectLawfulNavigatorOutput,
-} from "../package-contracts/navigator-output.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../package-contracts/navigator-output.ts";
 
 export type HeadlessRoleTurnHostConfig = Readonly<{
   description: HeadlessHostDescription;
@@ -664,26 +661,22 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               });
             }
 
+            // #959: navigator prose exit — final agent_message is presented as-is.
+            // Do not JSON.parse or project fields; the whole text is the receipt body.
+            if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
+              await prepared.ingestStructuredOutput({ prose: observation.finalMessage });
+              return { status: "delivered", stderr: spawned.stderr };
+            }
             let receipt: unknown;
             try {
               receipt = JSON.parse(observation.finalMessage);
             } catch {
-              // #959: navigator prose exit — free-text agent_message is the receipt.
-              if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
-                receipt = { prose: observation.finalMessage };
-              } else {
-                return terminalFromSpawned(spawned, {
-                  cause: "output",
-                  identity: { name: "HeadlessEmptyOutput", code: "unparseable-final-message" },
-                  diagnostic: "codex final agent_message was not JSON",
-                  details: { sessionId, exitCode: spawned.code },
-                });
-              }
-            }
-            // Navigator may still emit JSON; project any shape into prose vehicle.
-            if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
-              const projected = projectLawfulNavigatorOutput(receipt);
-              receipt = projected ?? { prose: observation.finalMessage };
+              return terminalFromSpawned(spawned, {
+                cause: "output",
+                identity: { name: "HeadlessEmptyOutput", code: "unparseable-final-message" },
+                diagnostic: "codex final agent_message was not JSON",
+                details: { sessionId, exitCode: spawned.code },
+              });
             }
             await prepared.ingestStructuredOutput(receipt);
             return { status: "delivered", stderr: spawned.stderr };

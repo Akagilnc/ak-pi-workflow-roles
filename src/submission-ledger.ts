@@ -518,6 +518,52 @@ async function restoreState(cwd: string, runId: string, scope: SubmissionLedgerR
 }
 
 /**
+ * #959: seal one accepted submission without a model tool call.
+ * Same ledger row shape as the terminating-tool wrap. Used when a prose-exit
+ * seat (navigator) harvests the final assistant text as the receipt.
+ */
+export async function sealAcceptedSubmission(options: {
+  readonly context: HostContext;
+  readonly role: TerminalRoleName;
+  readonly accepted: unknown;
+  readonly toolCallId: string;
+  readonly home?: string;
+}): Promise<void> {
+  const runId = runIdentity(options.context);
+  const attemptId = attemptIdentity(options.context, runId);
+  const sessionParent = (() => {
+    const runDirectory = runDirectoryFromHostContext(options.context);
+    if (runDirectory !== undefined) return join(runDirectory, "session", "session.jsonl");
+    const sessionFile = options.context.sessionManager.getSessionFile?.();
+    if (typeof sessionFile === "string" && sessionFile.length > 0) return sessionFile;
+    const sessionDir = options.context.sessionManager.getSessionDir?.();
+    if (typeof sessionDir === "string" && sessionDir.length > 0) {
+      return join(sessionDir, "session.jsonl");
+    }
+    return undefined;
+  })();
+  const home =
+    options.home
+    ?? (sessionParent !== undefined ? tryHomeFromAkRolesPath(sessionParent) : undefined);
+  sitianReport({
+    level: "event",
+    kind: "sealed",
+    subject: { runId, attemptId },
+    payload: {
+      type: "sealed",
+      attemptId,
+      toolCallId: options.toolCallId,
+      role: options.role,
+      accepted: options.accepted,
+    },
+    source: "role-runtime",
+    cwd: options.context.cwd,
+    ...(home !== undefined ? { home } : {}),
+    ...(sessionParent === undefined ? {} : { sessionParent }),
+  });
+}
+
+/**
  * Submission ledger host — record only (#836).
  * Each terminating submission is appended with the role's original payload.
  * No sole-final, no seal barrier, no context.abort(), no details rewrite.

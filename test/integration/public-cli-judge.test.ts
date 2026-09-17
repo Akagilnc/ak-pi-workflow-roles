@@ -493,6 +493,27 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
     },
   ]);
   assert.equal(badDisposition.disposition, "unavailable");
+
+  // #959: historical recommendation with only next must stay advice, not no-advice.
+  const legacyNextOnly = extractNavigatorFact([
+    invocationPrincipal,
+    judgeTerminal,
+    {
+      type: "custom_message",
+      customType: "ak-navigator-attendance",
+      message: {
+        details: {
+          ...correlated,
+          disposition: "recommendation",
+          next: { role: "reviewer", phase: null },
+        },
+      },
+    },
+  ]);
+  assert.equal(legacyNextOnly.disposition, "advice");
+  if (legacyNextOnly.disposition === "advice") {
+    assert.ok(legacyNextOnly.prose.includes("reviewer"));
+  }
 });
 
 test("extractNavigatorFact keeps minimal invocationId provenance and post-terminal order", async () => {

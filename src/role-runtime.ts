@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -12,7 +13,7 @@ import {
 
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
-import { createSubmissionLedgerHost } from "./submission-ledger.ts";
+import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
 import { createCollectorLedger } from "./collector-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
@@ -1225,6 +1226,28 @@ export function createCountersignRoleRuntime(
   );
 }
 
+/**
+ * #959: last assistant text parts as navigator prose exit.
+ * Tool-call-only messages yield undefined — those already ride the tool path.
+ */
+function lastAssistantProse(
+  messages: readonly { role: string; content?: readonly { type: string; text?: string }[] }[],
+): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
+    const texts: string[] = [];
+    for (const part of message.content) {
+      if (part.type === "text" && typeof part.text === "string" && part.text.length > 0) {
+        texts.push(part.text);
+      }
+    }
+    if (texts.length === 0) continue;
+    return texts.join("");
+  }
+  return undefined;
+}
+
 export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (envelopeHost: RoleEnvelopeHost) => void {
@@ -1568,13 +1591,53 @@ export function createRoleRuntimeExtension(
     // already decided no queued continuation will run, so a triggerTurn there is
     // too late for print/json sessions. `agent_end` is the last production seam
     // whose queued next turn is consumed before settlement.
-    roleHost.on("agent_end", (event, ctx) => {
+    roleHost.on("agent_end", async (event, ctx) => {
       const lastMessage = event.messages.at(-1);
       if (lastMessage?.role === "assistant"
         && (lastMessage.stopReason === "error" || lastMessage.stopReason === "aborted")) {
         // Abort after an already-recorded receipt must not un-accept or催交.
         if (receiptDelivery.nextAction() !== "accepted") {
           receiptDelivery.stopForInfrastructure();
+        }
+        return;
+      }
+      const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
+      // #959: navigator prose exit — final assistant text is the receipt.
+      // No typed-tool 催交; no JSON required. Tool path still wins when already accepted.
+      if (role === "navigator" && receiptDelivery.nextAction() !== "accepted") {
+        const prose = lastAssistantProse(event.messages);
+        if (prose !== undefined && prose.trim() !== "") {
+          const accepted = { prose };
+          await sealAcceptedSubmission({
+            context: ctx,
+            role: "navigator",
+            accepted,
+            toolCallId: `navigator-prose-exit:${randomUUID()}`,
+          });
+          await projectClosedSubmission(
+            { role: "navigator", kind: "accepted", accepted },
+            ctx,
+          );
+          return;
+        }
+        // Attended with neither tool nor prose → honest no_receipt (not typed 催交).
+        if (!noReceiptRecorded) {
+          const runPointer = runDirectoryFromHostContext(ctx);
+          if (runPointer !== undefined) {
+            noReceiptRecorded = true;
+            const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
+            envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
+            try {
+              sitianReport({
+                level: "event",
+                kind: "no-receipt-lifecycle",
+                cwd: ctx.cwd,
+                sessionParent: ctx.sessionManager.getSessionFile(),
+                payload: facts,
+                source: "role-runtime",
+              });
+            } catch {}
+          }
         }
         return;
       }

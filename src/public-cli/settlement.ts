@@ -1954,20 +1954,33 @@ function parseNavigatorAttendanceDetails(
   const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string"
     ? { advisoryDiagnostic: details.routePlaybookReadFailure }
     : {};
-  // #959: advice prose is presented as-is. Legacy "recommendation" with next/reason
-  // is projected into prose so historical sessions still render without shape gates.
+  // #959: advice prose is presented as-is. Legacy "recommendation" with next/reason/
+  // command is projected into prose so historical sessions still render — never wash
+  // a real recommendation into no-advice when any advice body is recoverable.
   if (disposition === "advice" || disposition === "recommendation") {
     let prose: string | undefined;
     if (typeof details.prose === "string" && details.prose.trim() !== "") {
       prose = details.prose;
-    } else if (typeof details.reason === "string" && details.reason.trim() !== "") {
-      // Legacy recommendation shape — reason was the human-facing advice body.
+    } else {
       const next = isRecord(details.next) && typeof details.next.role === "string"
         ? details.next.role
         : undefined;
-      prose = next === undefined ? details.reason : `${details.reason}（下一步：${next}）`;
-    } else if (typeof details.command === "string" && details.command.trim() !== "") {
-      prose = details.command;
+      const reason = typeof details.reason === "string" && details.reason.trim() !== ""
+        ? details.reason
+        : undefined;
+      const command = typeof details.command === "string" && details.command.trim() !== ""
+        ? details.command
+        : undefined;
+      if (reason !== undefined && next !== undefined) {
+        prose = `${reason}（下一步：${next}）`;
+      } else if (reason !== undefined) {
+        prose = reason;
+      } else if (next !== undefined) {
+        // Historical recommendation with only typed next — still real advice.
+        prose = `下一步：${next}`;
+      } else if (command !== undefined) {
+        prose = command;
+      }
     }
     if (prose === undefined || prose.trim() === "") {
       // Attended but empty body is affirmative no-advice, not unavailable (#959).

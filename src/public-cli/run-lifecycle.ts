@@ -127,8 +127,12 @@ export type RoleRunRecord = {
   readonly resumable?: TypedHttp429Observation;
 };
 
-/** Package-owned turn trigger for resume. Not caller instruction and not semantic task content. */
-export const RESUME_TRANSPORT_ENVELOPE = "[ak-role:resume-continue]" as const;
+/**
+ * Package-owned turn trigger for resume when the caller supplies no message.
+ * Chinese + neutral (ADR 0073): no scope, no conclusion, no judgment guidance.
+ * Non-empty so hosts that reject empty stdin (codex) still receive a prompt (#959).
+ */
+export const RESUME_TRANSPORT_ENVELOPE = "继续。" as const;
 
 /** Public manual resume request after the unique CLI parser owns runId + optional message. */
 export type PublicResumeRequest = {
@@ -170,18 +174,14 @@ export type SameTicketSummonsMaterials = {
 
 /**
  * Unique continuation-prompt selector for manual/auto engine-axis resume
- * (#471 / #600 / #736). Message present → those bytes; absent → engine pointers only.
- * #836: no transport-token prompt, no line-by-line 重新读 rewrite.
+ * (#471 / #600 / #736 / #959). Message present → those bytes; absent → Chinese
+ * neutral non-empty envelope (ADR 0073) plus optional engine pointers.
+ * Caller message (including blank) still wins verbatim when supplied.
  */
 export function selectResumeContinuationPrompt(
   message?: string,
   engineMaterial?: EngineSessionMaterial,
 ): string {
-  // #959: auto-resume without a caller message must still hand the host a
-  // non-empty prompt. Codex rejects empty stdin (`No prompt provided via stdin.`);
-  // the package-owned transport envelope is the same non-semantic trigger
-  // reviewer / station-child resume already use. Caller message (including
-  // blank) still wins verbatim when supplied.
   const lines = message !== undefined ? [message] : [RESUME_TRANSPORT_ENVELOPE];
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
