@@ -113,17 +113,28 @@ export async function attendance(
   });
 }
 
-/** Release the current in-flight prompt gate (early ready-wait has no final advice body). */
-async function releaseInFlightPrompt(harness: ReturnType<typeof sessionHarness>): Promise<void> {
+/** Yield until the event-loop condition holds. No fixed spin budget — those race createSession under load. */
+async function waitForEventLoop(condition: () => boolean): Promise<void> {
+  while (!condition()) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+/**
+ * Release the early ready-wait prompt gate.
+ * Early prepare parks on harness.release; settle awaits that prepare. A fixed
+ * setImmediate budget that loses the race with createSession deadlocks:
+ * settle waits for the parked prompt, the helper waits for settle's feed prompt
+ * (#959 CI: navigator-attendance{,-seams,-routes} file timeouts).
+ */
+async function releaseEarlyReadyWait(
+  harness: ReturnType<typeof sessionHarness>,
+): Promise<void> {
   const before = harness.prompts();
-  // Prompt may already be parked on the release gate.
-  for (let i = 0; i < 20 && harness.prompts() < before + 1; i += 1) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
+  await waitForEventLoop(() => harness.prompts() > before);
   harness.release();
-  for (let i = 0; i < 40; i += 1) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
+  // Prompt continuation finishes the early turn on the next macrotask.
+  await new Promise<void>((resolve) => setImmediate(resolve));
 }
 
 /**
@@ -137,27 +148,15 @@ export async function settleWithAdvice(
   body: unknown = proseAdvice(),
   toolCallId = "prepare",
 ): Promise<void> {
-  // Finish early ready-wait if prepare() already opened a host prompt.
-  if (nav.isPreparing() || harness.prompts() > 0) {
-    const before = harness.prompts();
-    await releaseInFlightPrompt(harness);
-    // If prepare had not yet opened a prompt, settle path will open the feed prompt alone.
-    if (harness.prompts() === before && nav.isPreparing()) {
-      // Wait until early prompt exists, then release.
-      for (let i = 0; i < 50 && harness.prompts() === before; i += 1) {
-        await new Promise<void>((resolve) => setImmediate(resolve));
-      }
-      harness.release();
-      for (let i = 0; i < 40; i += 1) {
-        await new Promise<void>((resolve) => setImmediate(resolve));
-      }
-    }
+  // Finish early ready-wait only when prepare() is in flight. Do not key off
+  // cumulative prompt count — prior settles leave prompts() > 0 and would hang
+  // waiting for a prompt that never opens.
+  if (nav.isPreparing()) {
+    await releaseEarlyReadyWait(harness);
   }
   const targetPrompts = harness.prompts() + 1;
   const waiting = nav.settle(settlement as never);
-  while (harness.prompts() < targetPrompts || harness.tool() === undefined) {
-    await new Promise<void>((resolve) => setImmediate(resolve));
-  }
+  await waitForEventLoop(() => harness.prompts() >= targetPrompts && harness.tool() !== undefined);
   await harness.tool().execute(toolCallId, body as never, undefined, undefined, {} as never);
   harness.release();
   await waiting;

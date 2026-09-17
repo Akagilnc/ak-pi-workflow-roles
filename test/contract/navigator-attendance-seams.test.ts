@@ -1095,6 +1095,7 @@ test("#959 role_infrastructure_failure settlement feed shares post-role grace", 
       );
     });
   } finally {
+    t.mock.timers.reset();
     if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previousRunDir;
   }
