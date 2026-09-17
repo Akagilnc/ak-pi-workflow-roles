@@ -174,6 +174,16 @@ export function roleResultPayloads(outcome: TerminalRoleOutcome): readonly unkno
 
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
+  /** Default Reviewer parent: original child Terminals, keyed by frozen axis. */
+  reviewerChildren?: Readonly<{
+    completeness?: TerminalResult;
+    correctness?: TerminalResult;
+  }>;
+  /** Per-axis summons facts retained even when no child Terminal exists. */
+  reviewerChildOutcomes?: Readonly<{
+    completeness: { exitCode: number; stderr?: string };
+    correctness: { exitCode: number; stderr?: string };
+  }>;
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
   /**
@@ -193,9 +203,17 @@ export type TerminalResult = {
       /** Resumable failure: run ID appears only inside resume.command. */
       resume: TerminalResume;
       runId?: undefined;
+      batch?: undefined;
     }
   | {
       runId: string;
+      resume?: undefined;
+      batch?: undefined;
+    }
+  | {
+      /** Deterministic public batch projection; no parent Role run exists. */
+      batch: "reviewer";
+      runId?: undefined;
       resume?: undefined;
     }
 );
@@ -276,6 +294,15 @@ export function formatTerminalResult(result: TerminalResult): string {
       lines.push(
         `gate-round\t${round.roundIndex}\t${round.dispatch.kind}\t${round.dispatch.officer}\t${reason}\t${round.officer.seat}\t${encodeTerminalField(round.officer.status)}\t${encodeTerminalField(JSON.stringify(round.officer.findings))}`,
       );
+    }
+  }
+  if (result.reviewerChildOutcomes !== undefined) {
+    for (const axis of ["completeness", "correctness"] as const) {
+      const child = result.reviewerChildOutcomes[axis];
+      lines.push(`reviewer-child\t${axis}\t${child.exitCode}`);
+      if (child.stderr !== undefined && child.stderr !== "") {
+        lines.push(`reviewer-child-diagnostic\t${axis}\t${encodeTerminalField(child.stderr)}`);
+      }
     }
   }
   if (result.resume !== undefined) {

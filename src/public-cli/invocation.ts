@@ -239,14 +239,14 @@ export type AdmittedNotaryInvocation = AdmittedRoleInvocationBase & {
   readonly sourceRun: NotarySourceRunLocator;
 };
 
-/** Public Reviewer single-lens token; no default and no `all` (caller-selected parent run). */
+/** Durable single-axis Reviewer lens. Parallel default is parse-only omission, never admitted. */
 export type ReviewerLens = "completeness" | "correctness";
 
 export type AdmittedReviewerInvocation = AdmittedRoleInvocationBase & {
   readonly role: "reviewer";
   /** Required fixed base revision for the pinned review target (ADR 0037). */
   readonly baseRevision: string;
-  /** Required single lens; frozen at admission and reused on resume. */
+  /** Frozen single-axis shape for an ordinary Reviewer run; reused on resume. */
   readonly lens: ReviewerLens;
   /**
    * Required durable authority references/URLs frozen at admission.
@@ -929,8 +929,11 @@ export type ParseReviewerArgvResult = {
   attachmentPaths: string[];
   /** Required fixed base revision for the pinned review target. */
   baseRevision: string;
-  /** Required single lens; no default. */
-  lens: ReviewerLens;
+  /**
+   * Explicit single-axis override. Omitted public `--lens` is the internal
+   * parallel two-axis branch mark only — never persisted on an admitted run.
+   */
+  lens?: ReviewerLens;
   /** Repeatable durable authority references/URLs (exact order preserved; at least one). */
   authorityRefs: string[];
   project?: string;
@@ -1048,7 +1051,7 @@ export function isReviewerLens(value: unknown): value is ReviewerLens {
   return value === "completeness" || value === "correctness";
 }
 
-/** Public --lens enum; sole owner for parse + fresh admission. */
+/** Admitted single-axis lens enum; public `--lens all` and bare omission are not admitted values. */
 export function requireReviewerLens(value: string | undefined): ReviewerLens {
   const trimmed = (value ?? "").trim();
   if (!isReviewerLens(trimmed)) {
@@ -3073,7 +3076,7 @@ export function parseReviewerArgv(
         continue;
       }
       if (taken.def.id === "lens") {
-        // Empty and other non-enum values share one message — do not borrow path helper.
+        // Public override is single-axis only; omission stays undefined for the parallel branch.
         lens = requireReviewerLens(taken.value);
         continue;
       }
@@ -3090,13 +3093,13 @@ export function parseReviewerArgv(
     positional.push(token);
   }
 
-  // Unconditional required (--base/--lens/--authority-ref) from typed table (#342).
+  // Base and authority are required; omitted lens selects the parallel two-axis mode.
   options.assertRequired();
   return {
     instruction: positional.join(" "),
     attachmentPaths,
     baseRevision: baseRevision!,
-    lens: lens!,
+    ...(lens === undefined ? {} : { lens }),
     authorityRefs,
     ...(project === undefined ? {} : { project }),
   };
@@ -3110,12 +3113,13 @@ export type AdmitReviewerInvocationOptions = {
   instruction: string;
   attachmentPaths: readonly string[];
   baseRevision: string;
-  /** Required single lens; frozen unchanged at admission. */
+  /** Explicit single-axis shape, frozen unchanged at admission and resume. */
   lens: ReviewerLens;
   /** Required durable authority references/URLs; frozen unchanged at admission. */
   authorityRefs: readonly string[];
   project?: string;
   createRunId?: () => string;
+  correlationId?: string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
 };
@@ -3175,6 +3179,9 @@ export async function admitReviewerInvocation(
     baseRevision,
     lens,
     authorityRefs: [...authorityRefs],
+    ...(options.correlationId === undefined
+      ? {}
+      : { correlationId: options.correlationId }),
     attachments: attachments.map((a) => ({
       provenancePath: a.provenancePath,
       frozenPath: a.frozenPath,
@@ -3204,6 +3211,9 @@ export async function admitReviewerInvocation(
     baseRevision,
     lens,
     authorityRefs,
+    ...(options.correlationId === undefined
+      ? {}
+      : { correlationId: options.correlationId }),
   };
 }
 

@@ -89,8 +89,9 @@ ak-role judge --model <provider/model[:thinking]> --attach ./findings.md --attac
 ak-role coder --model <provider/model[:thinking]> plan "Propose the first implementation plan."
 ak-role coder --model <provider/model[:thinking]> apply --attach ./plan.md "Implement the approved slice."
 
-# reviewer — fixed-target single-lens review (completeness|correctness); completed ≠ approved, read the findings
-ak-role reviewer --model <provider/model[:thinking]> --base main --lens completeness --authority-ref docs/adr/0001-roles-grow-by-demand.md "Review the branch."
+# reviewer — fixed-target parallel completeness + correctness review; completed ≠ approved, read the findings
+ak-role reviewer --model <provider/model[:thinking]> --base main --authority-ref docs/adr/0001-roles-grow-by-demand.md "Review the branch."
+# optional single-lens override
 ak-role reviewer --model <provider/model[:thinking]> --base main --lens correctness --authority-ref CLAUDE.md
 
 # collector — GitHub PR review evidence (bind target, read handbook/field activity, trigger as needed, wait window, return materials)

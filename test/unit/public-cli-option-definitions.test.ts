@@ -128,7 +128,6 @@ test("unconditional required: table required:true is the sole missing-option gat
     "notary/source-run",
     "reviewer/authority-ref",
     "reviewer/base",
-    "reviewer/lens",
   ]);
   assert.throws(() => parseReviewerArgv(["task"]), isUsage);
   // #676 D1: collector --pr is optional at parse; ambiguity rejects at admission.

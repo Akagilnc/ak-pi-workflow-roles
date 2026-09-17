@@ -157,7 +157,7 @@ const REVIEWER_TRANSPORT_FLAGS = Object.freeze([
   Object.freeze({
     name: "ak-review-lens",
     definition: Object.freeze({
-      description: "Caller-selected single review lens: completeness or correctness",
+      description: "Single review lens: completeness or correctness",
       type: "string" as const,
     }),
   }),
@@ -442,7 +442,7 @@ type ActivationRuntime = {
   };
   /** Envelope decodes Reviewer transport flags inside the activation stage. */
   decodeReviewerAdmitted(): ReviewerAdmittedInputs;
-  /** Envelope stores live parent activation for agent_start prompt assembly. */
+  /** Envelope stores live Reviewer activation for agent_start prompt assembly. */
   bindReviewerParent(activation: ReviewerActivation): void;
   collector: {
     activate(context: HostContext, event: { reason: string }): Promise<void>;

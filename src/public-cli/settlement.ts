@@ -3643,7 +3643,6 @@ export async function trySettleReviewerTerminalResult(
   return settleLawfulReviewerTerminalResult(admitted, authority, options, scope);
 }
 
-
 /**
  * Observe forced Merger resolving-merge-conflicts Skill expansions from the session.
  * Expansion evidence is package-path only; ambient home locations never count.
