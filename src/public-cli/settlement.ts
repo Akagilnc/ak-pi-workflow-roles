@@ -4,7 +4,7 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
-import { appendFile, lstat, mkdir, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
+import { appendFile, lstat, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
@@ -842,6 +842,16 @@ function isMissingPathError(error: unknown): boolean {
     error instanceof Error &&
     "code" in error &&
     (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
+/** Face clear only: path not enterable as a face (ENOENT or file mid-path). */
+function isAbsentFacePathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    ((error as { code?: unknown }).code === "ENOENT" ||
+      (error as { code?: unknown }).code === "ENOTDIR")
   );
 }
 
@@ -2331,42 +2341,44 @@ async function removeFaceIfPresent(path: string): Promise<void> {
   try {
     await rm(path, { recursive: true, force: true });
   } catch (error) {
-    // force:true already ignores ENOENT; any throw here is a real clear failure.
-    if (isMissingPathError(error)) return;
+    // force:true already ignores ENOENT; ENOTDIR = face path not enterable
+    // (artifacts-as-file mid-path) — same absent-face semantics as the reader.
+    // Other errno stay loud (失败诚实).
+    if (isAbsentFacePathError(error)) return;
     throw error;
   }
 }
 
 /**
  * #953: artifact face reflects the current terminal only.
- * Success drops every seam-owned prior error face; failure drops prior report;
- * no_receipt (empty) drops every face the terminal reader would adopt for this run
- * (conventional report/error/audit-incomplete, fixed fallbacks, seam-owned unique).
- * Does not publish a no_receipt-shaped public artifact; non-terminal materials stay.
- * Face names may be directory collision plants — remove recursively.
- * Unique ownership is the reader true source (listSeamOwnedUniqueErrorFacePaths):
+ * Reader contract owns the full adoptable set (conventional trio + fixed
+ * fallbacks + seam-owned unique). Each current retains only its own
+ * conventional face when about to republish; every other seam-owned face
+ * clears — report / error / empty share one method (no per-branch face list).
+ * empty retains nothing; does not publish a no_receipt-shaped public artifact.
+ * Non-terminal materials stay. Face names may be directory collision plants —
+ * remove recursively. Unique ownership is listSeamOwnedUniqueErrorFacePaths:
  * parent runs/ faces clear only when body.runId binds; unparseable runId → none.
- * Delete failures other than missing target stay loud (失败诚实).
+ * Path absence (ENOENT/ENOTDIR) is silent; other delete failures stay loud.
  */
 export async function clearOppositeTerminalArtifactFace(
   runDirectory: string,
   current: "report" | "error" | "empty",
 ): Promise<void> {
   const artifactsDir = roleRunArtifactsDirectory(runDirectory);
-  if (current === "error") {
-    await removeFaceIfPresent(join(artifactsDir, "report.json"));
-    return;
+  // Retain only the conventional face this current will (re)publish, if any.
+  const retainConventional =
+    current === "report"
+      ? "report.json"
+      : current === "error"
+        ? "error.json"
+        : null;
+  for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
+    if (file === retainConventional) continue;
+    await removeFaceIfPresent(join(artifactsDir, file));
   }
-  if (current === "empty") {
-    // no_receipt empty face: every conventional terminal file the reader scans first.
-    for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-      await removeFaceIfPresent(join(artifactsDir, file));
-    }
-  } else {
-    // Success: clear conventional error face only among the conventional trio.
-    await removeFaceIfPresent(join(artifactsDir, "error.json"));
-  }
-  // report + empty: fixed failure fallbacks + unique faces this seam owns.
+  // Fixed fallbacks + unique are never the retained face of a fresh current:
+  // subsequent publish writes the new durable path after this clear.
   for (const relative of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
     await removeFaceIfPresent(join(runDirectory, relative));
   }

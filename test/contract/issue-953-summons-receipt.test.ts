@@ -101,10 +101,15 @@ test("#953 success artifact face drops prior error faces; failure face drops pri
       "error.dddddddd-eeee-4fff-8000-111111111111.json",
     );
 
-    // Prior failure faces: conventional + settlement fallback + unique (same-run + parent).
+    // Prior failure faces: conventional + audit-incomplete + settlement fallback + unique.
     await writeFile(
       join(artifactsDir, "error.json"),
       `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "old boom" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(artifactsDir, "audit-incomplete.json"),
+      `${JSON.stringify({ kind: "audit-incomplete", role: "judge", runId: "01a0-953" })}\n`,
       "utf8",
     );
     await writeFile(
@@ -157,6 +162,11 @@ test("#953 success artifact face drops prior error faces; failure face drops pri
       () => access(join(artifactsDir, "error.json")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
+    // Success current must drop audit-incomplete (reader-adoptable prior face).
+    await assert.rejects(
+      () => access(join(artifactsDir, "audit-incomplete.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
     await assert.rejects(
       () => access(join(artifactsDir, "error.settlement.json")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
@@ -180,7 +190,29 @@ test("#953 success artifact face drops prior error faces; failure face drops pri
     );
     await access(siblingParentUnique);
 
-    // Success then failure: report must not remain as the face.
+    // Replant full prior success + stale failure faces before the failure current.
+    await writeFile(
+      join(artifactsDir, "audit-incomplete.json"),
+      `${JSON.stringify({ kind: "audit-incomplete", role: "judge", runId: "01a0-953" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(artifactsDir, "error.settlement.json"),
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "stale settlement" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(runDirectory, "error.settlement.json"),
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "stale run-dir" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      ownArtifactUnique,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "stale unique" })}\n`,
+      "utf8",
+    );
+
+    // Success then failure: report and every other prior face must not remain.
     await publishFailureArtifacts(
       admitted,
       { diagnostic: "new boom", cause: "provider" },
@@ -195,6 +227,28 @@ test("#953 success artifact face drops prior error faces; failure face drops pri
       () => access(join(artifactsDir, "report.json")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
+    await assert.rejects(
+      () => access(join(artifactsDir, "audit-incomplete.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(join(artifactsDir, "error.settlement.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(join(runDirectory, "error.settlement.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(ownArtifactUnique),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    // Reader must adopt this failure face, not a stale prior.
+    const afterFailure = await readRunTerminalArtifact(runDirectory);
+    assert.equal(afterFailure.status, "present");
+    if (afterFailure.status === "present") {
+      assert.equal(afterFailure.body.diagnostic, "new boom");
+    }
   });
 });
 
@@ -247,6 +301,193 @@ test("#953 success clears directory-planted error face and settlement fallback",
       () => access(join(artifactsDir, "error.settlement.json")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
+  });
+});
+
+test("#953 clearOpposite report/error/empty share reader-contract face set", async () => {
+  await withTempHome(async (home) => {
+    const runsParent = join(home, ".ak-roles", "books", "proj", "unbound", "runs");
+    async function plantFullFaceSet(runId: string): Promise<{
+      runDirectory: string;
+      artifactsDir: string;
+      ownArtifactUnique: string;
+      ownRunUnique: string;
+      ownParentUnique: string;
+      siblingParentUnique: string;
+    }> {
+      const runDirectory = join(runsParent, `${runId}@judge`);
+      const artifactsDir = join(runDirectory, "artifacts");
+      await mkdir(artifactsDir, { recursive: true });
+      const ownArtifactUnique = join(
+        artifactsDir,
+        "error.aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.json",
+      );
+      const ownRunUnique = join(
+        runDirectory,
+        "error.bbbbbbbb-cccc-4ddd-8eee-ffffffffffff.json",
+      );
+      // UUID-shaped names only — reader unique-face regex is the ownership gate.
+      const ownParentUnique = join(
+        runsParent,
+        "error.cccccccc-dddd-4eee-8fff-000000000000.json",
+      );
+      const siblingParentUnique = join(
+        runsParent,
+        "error.dddddddd-eeee-4fff-8000-111111111111.json",
+      );
+      const face = (diagnostic: string) =>
+        `${JSON.stringify({ kind: "error", role: "judge", runId, diagnostic })}\n`;
+      await writeFile(
+        join(artifactsDir, "report.json"),
+        `${JSON.stringify({ kind: "report", role: "judge", runId, outcome: { kind: "accepted" } })}\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(artifactsDir, "error.json"),
+        face("conventional"),
+        "utf8",
+      );
+      await writeFile(
+        join(artifactsDir, "audit-incomplete.json"),
+        `${JSON.stringify({ kind: "audit-incomplete", role: "judge", runId })}\n`,
+        "utf8",
+      );
+      await writeFile(join(artifactsDir, "error.settlement.json"), face("settlement"), "utf8");
+      await writeFile(join(runDirectory, "error.settlement.json"), face("run-dir"), "utf8");
+      await writeFile(ownArtifactUnique, face("artifact unique"), "utf8");
+      await writeFile(ownRunUnique, face("run unique"), "utf8");
+      await writeFile(ownParentUnique, face("parent unique"), "utf8");
+      await writeFile(
+        siblingParentUnique,
+        `${JSON.stringify({ kind: "error", role: "judge", runId: "someone-else", diagnostic: "sibling" })}\n`,
+        "utf8",
+      );
+      return {
+        runDirectory,
+        artifactsDir,
+        ownArtifactUnique,
+        ownRunUnique,
+        ownParentUnique,
+        siblingParentUnique,
+      };
+    }
+
+    async function assertGone(path: string): Promise<void> {
+      await assert.rejects(
+        () => access(path),
+        (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+      );
+    }
+
+    // report retains report.json only among reader-adoptable faces.
+    {
+      const planted = await plantFullFaceSet("01a0-clr-report");
+      await clearOppositeTerminalArtifactFace(planted.runDirectory, "report");
+      await access(join(planted.artifactsDir, "report.json"));
+      await assertGone(join(planted.artifactsDir, "error.json"));
+      await assertGone(join(planted.artifactsDir, "audit-incomplete.json"));
+      await assertGone(join(planted.artifactsDir, "error.settlement.json"));
+      await assertGone(join(planted.runDirectory, "error.settlement.json"));
+      await assertGone(planted.ownArtifactUnique);
+      await assertGone(planted.ownRunUnique);
+      await assertGone(planted.ownParentUnique);
+      await access(planted.siblingParentUnique);
+    }
+
+    // error retains error.json only; prior report/audit/fallbacks/unique go.
+    {
+      const planted = await plantFullFaceSet("01a0-clr-error");
+      await clearOppositeTerminalArtifactFace(planted.runDirectory, "error");
+      await access(join(planted.artifactsDir, "error.json"));
+      await assertGone(join(planted.artifactsDir, "report.json"));
+      await assertGone(join(planted.artifactsDir, "audit-incomplete.json"));
+      await assertGone(join(planted.artifactsDir, "error.settlement.json"));
+      await assertGone(join(planted.runDirectory, "error.settlement.json"));
+      await assertGone(planted.ownArtifactUnique);
+      await assertGone(planted.ownRunUnique);
+      await assertGone(planted.ownParentUnique);
+      await access(planted.siblingParentUnique);
+    }
+
+    // empty retains nothing reader-adoptable.
+    {
+      const planted = await plantFullFaceSet("01a0-clr-empty");
+      await clearOppositeTerminalArtifactFace(planted.runDirectory, "empty");
+      await assertGone(join(planted.artifactsDir, "report.json"));
+      await assertGone(join(planted.artifactsDir, "error.json"));
+      await assertGone(join(planted.artifactsDir, "audit-incomplete.json"));
+      await assertGone(join(planted.artifactsDir, "error.settlement.json"));
+      await assertGone(join(planted.runDirectory, "error.settlement.json"));
+      await assertGone(planted.ownArtifactUnique);
+      await assertGone(planted.ownRunUnique);
+      await assertGone(planted.ownParentUnique);
+      await access(planted.siblingParentUnique);
+      const read = await readRunTerminalArtifact(planted.runDirectory);
+      assert.equal(read.status, "absent");
+    }
+  });
+});
+
+test("#953 artifacts-as-file ENOTDIR does not strand failure durable fallback or no_receipt", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      "proj",
+      "unbound",
+      "runs",
+      "01a0-953-enotdir@judge",
+    );
+    const sessionDirectory = join(runDirectory, "session");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
+    // artifacts name occupied as a plain file — nested face paths yield ENOTDIR.
+    await writeFile(join(runDirectory, "artifacts"), "not-a-directory\n", "utf8");
+    // Stale run-dir fallback the reader would adopt if clear/publish aborts.
+    await writeFile(
+      join(runDirectory, "error.settlement.json"),
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-enotdir", diagnostic: "stale fallback" })}\n`,
+      "utf8",
+    );
+
+    const admitted = fixtureJudgeAdmitted({
+      runId: "01a0-953-enotdir",
+      runDirectory,
+      projectRoot: join(home, "proj"),
+      bookKey: "proj",
+    });
+    const authority = piDurablePrincipalAuthority;
+
+    // Clear itself must not throw ENOTDIR through the file-shaped artifacts path.
+    await clearOppositeTerminalArtifactFace(runDirectory, "error");
+    await clearOppositeTerminalArtifactFace(runDirectory, "report");
+    await clearOppositeTerminalArtifactFace(runDirectory, "empty");
+
+    // Failure publish must reach durable fallback (run-dir), not abort at clear.
+    const refs = await publishFailureArtifacts(
+      admitted,
+      { diagnostic: "enotdir boom", cause: "provider" },
+      authority,
+    );
+    assert.ok(refs.some((ref) => ref.kind === "error"));
+    const afterFailure = await readRunTerminalArtifact(runDirectory);
+    assert.equal(afterFailure.status, "present");
+    if (afterFailure.status === "present") {
+      assert.equal(afterFailure.body.diagnostic, "enotdir boom");
+    }
+
+    // no_receipt settlement must also survive artifacts-as-file clear.
+    await writeFile(
+      join(runDirectory, "error.settlement.json"),
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-enotdir", diagnostic: "again stale" })}\n`,
+      "utf8",
+    );
+    const hostEnded = await settleHostEndedNoReceipt(admitted, authority);
+    assert.equal(hostEnded.roleOutcome.kind, "no_receipt");
+    assert.deepEqual(hostEnded.artifacts, []);
+    const afterEmpty = await readRunTerminalArtifact(runDirectory);
+    assert.equal(afterEmpty.status, "absent");
   });
 });
 

@@ -4,7 +4,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -24,6 +24,16 @@ import {
 
 // #107 公开入口——Error Artifact 耐久性与 provider 身份家族（#420 整改拆分第二片）。
 
+/**
+ * Occupy a face path as a directory write barrier. Resume-safe: a prior
+ * settlement may have cleared a directory plant and written a file at the same
+ * path (#953 face refresh); replace any existing face before replanting.
+ */
+async function plantDirectoryFace(path: string): Promise<void> {
+  await rm(path, { recursive: true, force: true });
+  await mkdir(path, { recursive: true });
+}
+
 // Error Artifact durable-fallback depth matrix (#420 整改并一)：单碰撞与耗尽三名
 // 同根「发布碰撞 → 耐久回退保原因」，收成一条两深度场景案。
 test("Error Artifact publication collisions retain original cause via durable fallback at both depths", async () => {
@@ -33,7 +43,7 @@ test("Error Artifact publication collisions retain original cause via durable fa
       runId: "run-error-artifact-collision-001",
       plant: async (runDir: string) => {
         // Primary Error Artifact path occupied as a directory → writeFile EISDIR.
-        await mkdir(join(runDir, "artifacts", "error.json"), { recursive: true });
+        await plantDirectoryFace(join(runDir, "artifacts", "error.json"));
       },
     },
     {
@@ -42,9 +52,9 @@ test("Error Artifact publication collisions retain original cause via durable fa
       plant: async (runDir: string) => {
         // Occupy every fixed preferred Error Artifact candidate as a directory.
         // Settlement must not escape to outer catch with only the last EISDIR.
-        await mkdir(join(runDir, "artifacts", "error.json"), { recursive: true });
-        await mkdir(join(runDir, "artifacts", "error.settlement.json"), { recursive: true });
-        await mkdir(join(runDir, "error.settlement.json"), { recursive: true });
+        await plantDirectoryFace(join(runDir, "artifacts", "error.json"));
+        await plantDirectoryFace(join(runDir, "artifacts", "error.settlement.json"));
+        await plantDirectoryFace(join(runDir, "error.settlement.json"));
       },
     },
   ] as const;
