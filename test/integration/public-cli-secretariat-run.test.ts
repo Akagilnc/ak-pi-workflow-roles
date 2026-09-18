@@ -8,10 +8,17 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import { createAcpRoleTurnHost, type AcpConnection } from "../../src/acp-host/role-turn-host.ts";
+import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
+import {
+  lookupHeadlessHostDescription,
+  lookupHostDescription,
+} from "../../src/host-descriptions.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import {
@@ -29,10 +36,8 @@ import {
   findRunDirectoryById,
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
-import {
-  createDefaultGateOfficerSummon,
-  requireGatekeeperPass,
-} from "../../src/gatekeeper-pass-envelope.ts";
+import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import {
   createCountersignRoleRuntime,
   createDiaristRoleRuntime,
@@ -44,6 +49,9 @@ import {
   recordAuditEscalationSubmission,
   sealAcceptedSubmission,
 } from "../helpers/submission-ledger-fixture.ts";
+import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
+import { connect } from "node:net";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -310,8 +318,9 @@ function nestedCountersignHost(input: {
 /**
  * Activate real secretariat runtime; default summon → summonPublicRole.
  * hostAdapters only — never inject summonCountersign (G3).
- * #969: optional `submissionGateHost` (codex/claude/grok-build) arms the shared
- * submission gate on converged output instead of the pi mid-turn summon tool.
+ * #969: optional `submissionGateHost` (codex/claude/grok-build) drives the
+ * production prepareRoleEnvelope.requireGatekeeperPass path (no harness
+ * reimplementation of the envelope summon closure).
  */
 function secretariatHostDrivingRealTools(input: {
   packageRoot: string;
@@ -328,15 +337,90 @@ function secretariatHostDrivingRealTools(input: {
   /** #969 non-pi host key — arms secretariat_verdict gate on output. */
   submissionGateHost?: "codex" | "claude" | "grok-build";
 }): RoleTurnHost {
+  // #969 non-pi: production envelope wiring (home/packageRoot/hostAdapters).
+  // Gate entry observed via nested countersignRequests — no harness
+  // reimplementation of requireGatekeeperPass / createDefaultGateOfficerSummon.
+  if (input.submissionGateHost !== undefined) {
+    // Always track nested summons so gate entry is observable without a custom
+    // requireGatekeeperPass push (tests may omit countersignRequests).
+    const nestRequests = input.countersignRequests ?? [];
+    const nestedTracked = nestedCountersignHost({
+      packageRoot: input.packageRoot,
+      sequence: input.countersignSequence,
+      gateCalls: input.gateCalls,
+      ...(input.diaristRunDirectories === undefined
+        ? {}
+        : { diaristRunDirectories: input.diaristRunDirectories }),
+      countersignRequests: nestRequests,
+    });
+    const nestAdapters = [adapter("pi", nestedTracked)];
+    return {
+      async executeTurn(request: RoleTurnRequest) {
+        if (request.activation.role !== "secretariat") {
+          return nestedTracked.executeTurn(request);
+        }
+        const socketDir = await mkdtemp(join(tmpdir(), "ak-969-sec-env-"));
+        const coords = piDurablePrincipalAuthority.decode(request.principal);
+        const prepared = await prepareRoleEnvelope({
+          request: {
+            ...request,
+            host: input.submissionGateHost,
+          },
+          dependencies: {
+            ...createRoleRuntimeDependencies(input.packageRoot),
+            hostAdapters: nestAdapters,
+          },
+          socketPath: join(socketDir, "mcp.sock"),
+          listTerminatingToolOnMcp: false,
+          sessionFile: coords.sessionFile,
+        });
+        try {
+          let nestBaseline = nestRequests.length;
+          for (const step of input.steps) {
+            assert.equal(
+              step.kind,
+              "output",
+              "non-pi submission gate path has no mid-turn summon steps",
+            );
+            // Production ingest → beforeAccept → envelope.requireGatekeeperPass.
+            await prepared.ingestStructuredOutput(step.details);
+            const closed = await prepared.closeRound();
+            const nestNow = nestRequests.length;
+            if (nestNow > nestBaseline) {
+              // Each nested 给事中 summon proves one secretariat_verdict entry.
+              for (let i = nestBaseline; i < nestNow; i += 1) {
+                input.gateCalls.push({ kind: "secretariat_verdict" });
+              }
+              nestBaseline = nestNow;
+            }
+            if (!closed.accepted && "retry" in closed && closed.retry !== undefined) {
+              // bounce: next output step re-submits. Do not seal this round.
+              continue;
+            }
+            // Ledger seal + durable custom entries ride the production envelope;
+            // no parallel sitian/session write from this harness.
+          }
+          return { code: 0, stderr: "", timedOut: false };
+        } finally {
+          await prepared.dispose?.();
+        }
+      },
+    };
+  }
+
+  // pi mid-turn summon path — no submission-gate envelope reimplementation.
   const nested = nestedCountersignHost({
     packageRoot: input.packageRoot,
     sequence: input.countersignSequence,
     gateCalls: input.gateCalls,
-    ...(input.diaristRunDirectories === undefined ? {} : { diaristRunDirectories: input.diaristRunDirectories }),
-    ...(input.countersignRequests === undefined ? {} : { countersignRequests: input.countersignRequests }),
+    ...(input.diaristRunDirectories === undefined
+      ? {}
+      : { diaristRunDirectories: input.diaristRunDirectories }),
+    ...(input.countersignRequests === undefined
+      ? {}
+      : { countersignRequests: input.countersignRequests }),
   });
   const hostAdapters = [adapter("pi", nested)];
-
   return {
     async executeTurn(request: RoleTurnRequest) {
       if (request.activation.role !== "secretariat") {
@@ -384,40 +468,12 @@ function secretariatHostDrivingRealTools(input: {
         getFlag() {
           return undefined;
         },
-        async requireGatekeeperPass(options: {
-          context: HostContext;
-          subject: { kind: string };
-          signal?: AbortSignal;
-          hostActions: typeof hostActions;
-          toolCallId: string;
-          submission?: unknown;
-        }) {
+        // Nested 符宝郎内闸 on countersign only — pi path never arms secretariat_verdict.
+        async requireGatekeeperPass(options: { subject: { kind: string } }) {
           input.gateCalls.push({ kind: options.subject.kind });
-          if (options.subject.kind !== "secretariat_verdict") {
-            // Nested 符宝郎内闸 on countersign stays a structured pass record.
-            return;
-          }
-          // #969: real shared envelope — summons 给事中 via default officer summon.
-          await requireGatekeeperPass({
-            context: options.context,
-            subject: options.subject as never,
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
-            hostActions: options.hostActions,
-            toolCallId: options.toolCallId,
-            ...(options.submission === undefined ? {} : { submission: options.submission }),
-            summonOfficer: createDefaultGateOfficerSummon({
-              cwd: request.cwd,
-              home: input.home,
-              packageRoot: input.packageRoot,
-              roleTurnHost: nested,
-              hostAdapters: [adapter("pi", nested)],
-            }),
-          });
         },
       } as unknown as RoleHost;
 
-      // Production default path: no summonCountersign inject.
-      // #969: hostActions arm the non-pi submission gate when submissionGateHost is set.
       await createSecretariatRoleRuntime(
         roleHost,
         {
@@ -441,10 +497,6 @@ function secretariatHostDrivingRealTools(input: {
         mode: "json",
         model: undefined,
         runDirectory: request.runDirectory,
-        // #969: non-pi submission gate keys off HostContext.host.
-        ...(input.submissionGateHost === undefined
-          ? {}
-          : { host: input.submissionGateHost }),
         sessionManager: {
           getSessionFile: () =>
             piDurablePrincipalAuthority.decode(request.principal).sessionFile,
@@ -454,20 +506,6 @@ function secretariatHostDrivingRealTools(input: {
           getEntries: () => [],
           getLeafEntry: () => undefined,
           getLeafId: () => null,
-          // #969: envelope-equivalent durable custom entry (headless/ACP path).
-          appendCustomEntry(customType: string, data?: unknown) {
-            const coords = piDurablePrincipalAuthority.decode(request.principal);
-            mkdirSync(coords.sessionDirectory, { recursive: true });
-            appendFileSync(
-              coords.sessionFile,
-              `${JSON.stringify({
-                type: "custom",
-                customType,
-                data,
-              })}\n`,
-              "utf8",
-            );
-          },
         },
         abort() {},
       } as HostContext;
@@ -503,7 +541,6 @@ function secretariatHostDrivingRealTools(input: {
             ctx,
           );
         } catch (error) {
-          // #969 bounce: 给事中封驳 → correctable non-pass; next output step re-submits.
           if (error instanceof GatekeeperDecisionError && error.result.status === "bounce") {
             continue;
           }
@@ -513,7 +550,6 @@ function secretariatHostDrivingRealTools(input: {
         const coords = piDurablePrincipalAuthority.decode(request.principal);
         await mkdir(coords.sessionDirectory, { recursive: true });
         const sealedDetails = result.details ?? step.details;
-        // Append — must not wipe #969 gate-escalate custom entries already booked.
         appendFileSync(
           coords.sessionFile,
           `${JSON.stringify({
@@ -940,10 +976,14 @@ test("#969 non-pi converged → shared gate summons 给事中 → bounce → res
     assert.equal(result.exitCode, 0, capture.stderr.join(""));
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
+    // #836: bounce attempt + pass both recorded (调几次记几次); production envelope
+    // ledger presents every original payload — not harness-only final seal.
     assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
       "converged",
+      "converged",
     ]);
-    const facts = objectPayloads(result.terminal.roleOutcome)[0] as {
+    const payloads = objectPayloads(result.terminal.roleOutcome);
+    const facts = payloads[payloads.length - 1] as {
       secretariatStatus: string;
       ticketNumber?: number;
     };
@@ -1099,6 +1139,75 @@ test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
   });
 });
 
+test("#969 omitted receipt ticketNumber still hands parent board identity to 给事中", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "01a0sec969-omit-7000-8000-000000000004";
+    const capture = captureIo();
+    const gateCalls: Array<{ kind: string }> = [];
+    const countersignRequests: RoleTurnRequest[] = [];
+    const host = secretariatHostDrivingRealTools({
+      packageRoot,
+      home,
+      gateCalls,
+      countersignRequests,
+      submissionGateHost: "codex",
+      countersignSequence: [
+        { details: { countersignStatus: "converged", note: "署" } },
+      ],
+      // Legal omit of optional ticketNumber — parent board binding is the identity.
+      steps: [
+        {
+          kind: "output",
+          details: { secretariatStatus: "converged" },
+        },
+      ],
+    });
+    const result = await runAkRole(
+      [
+        "secretariat",
+        "--model",
+        "test/caller-seat:high",
+        "--project",
+        project,
+        "整理 #924 票面并送庭。",
+      ],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: capture.io,
+        createRunId: () => runId,
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+      },
+    );
+    assert.equal(result.exitCode, 0, capture.stderr.join(""));
+    assert.ok(result.terminal);
+    assert.equal(result.terminal.roleOutcome.kind, "accepted");
+    assert.ok(
+      gateCalls.some((c) => c.kind === "secretariat_verdict"),
+      "omitted ticketNumber must still enter secretariat_verdict gate",
+    );
+    assert.ok(
+      countersignRequests.length >= 1,
+      "gate must summon countersign under parent board identity",
+    );
+    // Parent 起居郎 bound #924 before the turn; handoff must carry it even when
+    // the converged receipt omits ticketNumber.
+    assert.ok(
+      countersignRequests.some(
+        (r) => (r.activation as { ticketNumber?: number }).ticketNumber === 924,
+      ),
+      `给事中 must bind under parent ticket #924, got ${JSON.stringify(
+        countersignRequests.map((r) => r.activation),
+      )}`,
+    );
+  });
+});
+
 /** Distinct court attempt ids from ledger subject.attemptId (not row count). */
 async function distinctCourtAttemptIds(input: {
   cwd: string;
@@ -1126,4 +1235,227 @@ async function distinctCourtAttemptIds(input: {
     }
   }
   return ids;
+}
+
+/**
+ * #969 shortest adapter convergence boundary.
+ * Real headless (codex/claude) / ACP (grok-build) adapter → prepareRoleEnvelope
+ * production requireGatekeeperPass. Nested 给事中 reuses nestedCountersignHost so
+ * the envelope summon closure is bitten without copying the full gate flow.
+ */
+async function adapterBoundaryCase(input: {
+  hostName: "codex" | "claude" | "grok-build";
+  receipt: Record<string, unknown>;
+}): Promise<{ gateEntered: boolean }> {
+  return withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    // Must sit under home/.ak-roles so homeFromRunDirectory / nested summons resolve.
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      "test-book",
+      "unbound",
+      "runs",
+      "01a0adp969-0000-7000-8000-000000000001@secretariat",
+    );
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    await writeFile(
+      join(runDirectory, "admitted-request.json"),
+      `${JSON.stringify({
+        ticketNumber: 924,
+        projectRoot: project,
+        runId: "01a0adp969-0000-7000-8000-000000000001",
+        role: "secretariat",
+      })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(runDirectory, "invocation.json"),
+      `${JSON.stringify({ ticketNumber: 924, role: "secretariat" })}\n`,
+      "utf8",
+    );
+
+    const gateCalls: Array<{ kind: string }> = [];
+    const countersignRequests: RoleTurnRequest[] = [];
+    const nest = nestedCountersignHost({
+      packageRoot,
+      sequence: [{ details: { countersignStatus: "converged", note: "署" } }],
+      gateCalls,
+      countersignRequests,
+    });
+    const nestAdapters = [adapter("pi", nest)];
+    const socketDir = await mkdtemp(join(tmpdir(), "ak-969-adp-sock-"));
+    const sessionFile = join(runDirectory, "session", "session.jsonl");
+    const request: RoleTurnRequest = {
+      principal: fixturePrincipal(join(runDirectory, "session")),
+      activation: { role: "secretariat" },
+      methods: [],
+      continuation: { kind: "initial", prompt: "整理 #924" },
+      model: { provider: "test", model: "caller-seat", thinking: "high" },
+      cwd: project,
+      home,
+      agentDir: join(home, "agent"),
+      runDirectory,
+      host: input.hostName,
+    };
+
+    const prepare = () =>
+      prepareRoleEnvelope({
+        request,
+        dependencies: {
+          ...createRoleRuntimeDependencies(packageRoot),
+          hostAdapters: nestAdapters,
+        },
+        socketPath: join(socketDir, "mcp.sock"),
+        listTerminatingToolOnMcp: input.hostName === "grok-build",
+        sessionFile,
+      });
+
+    if (input.hostName === "grok-build") {
+      const description = lookupHostDescription("grok-build");
+      assert.ok(description);
+      let mcpSocket: string | undefined;
+      let mcpToken: string | undefined;
+      const connection: AcpConnection = {
+        async request(method, params) {
+          if (method === "initialize") return { protocolVersion: 1 };
+          if (method === "session/new" || method === "session/load") {
+            const servers =
+              (params as {
+                mcpServers?: Array<{ env?: Array<{ name: string; value: string }> }>;
+              })?.mcpServers ?? [];
+            const envRows = servers[0]?.env ?? [];
+            mcpSocket = envRows.find((e) => e.name === "AK_ACP_MCP_SOCKET")?.value;
+            mcpToken = envRows.find((e) => e.name === "AK_ACP_MCP_TOKEN")?.value;
+            return { sessionId: "acp-969-sess" };
+          }
+          if (method === "session/prompt") {
+            assert.ok(mcpSocket && mcpToken, "MCP socket/token required");
+            await new Promise<void>((resolve, reject) => {
+              const sock = connect(mcpSocket!);
+              let buf = "";
+              sock.setEncoding("utf8");
+              sock.on("data", (chunk) => {
+                buf += chunk;
+                if (buf.includes("\n")) {
+                  sock.destroy();
+                  resolve();
+                }
+              });
+              sock.on("error", reject);
+              sock.on("connect", () => {
+                sock.write(
+                  `${JSON.stringify({
+                    id: 1,
+                    token: mcpToken,
+                    method: "tools/call",
+                    params: {
+                      name: SECRETARIAT_OUTPUT_TOOL_NAME,
+                      arguments: input.receipt,
+                    },
+                  })}\n`,
+                );
+              });
+            });
+            return { stopReason: "end_turn" };
+          }
+          if (method === "session/close") return {};
+          return {};
+        },
+        notify() {},
+        onNotification() {},
+        async close() {},
+      };
+      const host = createAcpRoleTurnHost({
+        hostName: "grok-build",
+        modelPassing: "argv",
+        boundResume: "session/new",
+        sessionIdentity: createSessionIdentityAuthority(
+          piDurablePrincipalAuthority,
+          description.sessionBindingFile,
+        ),
+        connect: async () => connection,
+        prepare,
+      });
+      const result = await host.executeTurn(request);
+      assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+      return { gateEntered: countersignRequests.length > 0 };
+    }
+
+    const description = lookupHeadlessHostDescription(input.hostName);
+    assert.ok(description);
+    const fakeBin = join(home, `fake-${input.hostName}`);
+    if (input.hostName === "codex") {
+      await writeFile(
+        fakeBin,
+        `#!/usr/bin/env node
+const receipt = ${JSON.stringify(JSON.stringify(input.receipt))};
+process.stdout.write([
+  JSON.stringify({ type: "thread.started", thread_id: "t-969" }),
+  JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: receipt } }),
+  JSON.stringify({ type: "turn.completed" }),
+].join("\\n") + "\\n");
+`,
+        "utf8",
+      );
+    } else {
+      await writeFile(
+        fakeBin,
+        `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({
+  type: "result",
+  session_id: "claude-969",
+  structured_output: ${JSON.stringify(input.receipt)},
+}) + "\\n");
+`,
+        "utf8",
+      );
+    }
+    await chmod(fakeBin, 0o755);
+    const host = createHeadlessRoleTurnHost({
+      description,
+      hostName: input.hostName,
+      binary: fakeBin,
+      sessionIdentity: createSessionIdentityAuthority(
+        piDurablePrincipalAuthority,
+        description.sessionBindingFile,
+      ),
+      prepare,
+    });
+    const result = await host.executeTurn(request);
+    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+    return { gateEntered: countersignRequests.length > 0 };
+  });
+}
+
+for (const hostName of ["codex", "claude", "grok-build"] as const) {
+  test(`#969 adapter boundary ${hostName}: converged enters gate`, async () => {
+    const { gateEntered } = await adapterBoundaryCase({
+      hostName,
+      receipt: { secretariatStatus: "converged", ticketNumber: 924 },
+    });
+    assert.equal(
+      gateEntered,
+      true,
+      `${hostName} converged must summon 给事中 via production envelope`,
+    );
+  });
+
+  test(`#969 adapter boundary ${hostName}: escalate skips gate`, async () => {
+    const { gateEntered } = await adapterBoundaryCase({
+      hostName,
+      receipt: {
+        secretariatStatus: "escalate",
+        decisionGate: { question: "q", options: ["a"] },
+      },
+    });
+    assert.equal(
+      gateEntered,
+      false,
+      `${hostName} escalate must not summon 给事中`,
+    );
+  });
 }

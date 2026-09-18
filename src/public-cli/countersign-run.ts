@@ -98,6 +98,12 @@ export type CountersignRunEnv = PostAdmissionEnv & {
    * content when reviewReask is absent. Binding stays ticket / argv instruction.
    */
   gateReviewInstruction?: string;
+  /**
+   * #969 gate path: parent run durable board ticket handoff. Same-ticket resume
+   * key and identity 起居郎 bind under this key — never re-derived from receipt
+   * ticketNumber (optional / omit-able payload field).
+   */
+  boundTicketNumber?: number;
 };
 
 /** Project admitted invocation onto the host-neutral turn request. */
@@ -480,6 +486,10 @@ export async function runPublicCountersign(
                 instruction: parsed.instruction,
                 projectRoot: admitted.projectRoot,
                 failureLabel: "unbound summons",
+                // #969: parent durable ticket is the resume/bind key (ADR 0079).
+                ...(env.boundTicketNumber === undefined
+                  ? {}
+                  : { boundTicketNumber: env.boundTicketNumber }),
               },
               env,
               io,
@@ -538,13 +548,23 @@ export async function runPublicCountersign(
           }
 
           // Missing lawful 起居郎 terminal is not countersign body failure: leave
-          // unbound and continue (true-unbound face). Escalate / typed failure above;
-          // bound refresh still fails honest via runCountersignCourtDiaristStation.
+          // unbound and continue (true-unbound face) — unless parent gate handoff
+          // already carries the durable board ticket (#969). Escalate / typed
+          // failure above; bound refresh still fails honest via station.
           if (outcome.identity.kind === "ticket") {
-            const assertedTicket = outcome.identity.ticketNumber;
-            typedTicket = assertedTicket;
+            // #969: parent durable handoff wins over 起居郎 re-assert when both
+            // present (receipt/assert mismatch → parent resume key).
+            typedTicket = isSafePositiveTicketNumber(env.boundTicketNumber)
+              ? env.boundTicketNumber
+              : outcome.identity.ticketNumber;
             // #871: identity may hand a co-review set; absent field defaults to [main].
             typedCourtTicketNumbers = outcome.identity.courtTicketNumbers;
+          } else if (isSafePositiveTicketNumber(env.boundTicketNumber)) {
+            // Parent board handoff present; 起居郎 returned true-unbound — still
+            // resume/bind under the parent key (omitted receipt ticketNumber path).
+            typedTicket = env.boundTicketNumber;
+          }
+          if (typedTicket !== undefined) {
             // #969/#879: gate re-ask / parent submission body share summons.instruction
             // (reask wins; argv instruction remains the 起居郎 identity face above).
             const resumeInstruction =

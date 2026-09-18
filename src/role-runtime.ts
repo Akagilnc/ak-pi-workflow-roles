@@ -554,6 +554,13 @@ type NavigatorAttendanceDependency = Omit<NavigatorAttendance, "knownRoutePlaybo
 export type RoleRuntimeDependencies = {
   /** Package root for packaged engine-note resolution (#879). */
   packageRoot?: string;
+  /**
+   * Composition-root adapter table for nested gate officer summons (#969).
+   * Production leaves unset (default pi + packaged externals). Tests inject
+   * faux nested hosts so prepareRoleEnvelope.requireGatekeeperPass is bitten
+   * without reimplementing the envelope summon closure.
+   */
+  hostAdapters?: readonly import("./public-cli/role-turn-host-resolution.ts").NamedRoleTurnHostAdapter[];
   /** Non-identity opening materials delivered in the ordinary role brief. */
   loadRoleReferenceMaterials?(role: PackagedRole): Promise<string>;
   loadJudgeSoul(): Promise<string>;
@@ -1960,6 +1967,9 @@ export function createRoleRuntimeExtension(
       ...(dependencies.packageRoot === undefined
         ? {}
         : { packageRoot: dependencies.packageRoot }),
+      ...(dependencies.hostAdapters === undefined
+        ? {}
+        : { hostAdapters: dependencies.hostAdapters }),
     }, hostActions);
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },

@@ -249,10 +249,14 @@ export async function prepareRoleEnvelope(options: {
         toolCallId: gateOptions.toolCallId,
         ...(gateOptions.submission === undefined ? {} : { submission: gateOptions.submission }),
         // #969: package root + home reach nested 给事中/符宝郎 summons.
+        // hostAdapters (when set on deps) forward nested seat selection — production unset.
         summonOfficer: createDefaultGateOfficerSummon({
           cwd: gateOptions.context.cwd ?? request.cwd,
           home: request.home,
           ...(packageRoot === undefined ? {} : { packageRoot }),
+          ...(options.dependencies.hostAdapters === undefined
+            ? {}
+            : { hostAdapters: options.dependencies.hostAdapters }),
         }),
       });
     },

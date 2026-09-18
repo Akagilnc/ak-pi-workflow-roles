@@ -1124,7 +1124,9 @@ export async function summonGateOfficer(options: {
   if (options.officer === "countersign") {
     // #969: Secretariat submission gate → 给事中.
     // Dialogue / identity instruction = parent typed payload 原话 (ADR 0079) or reask;
-    // no code-authored summons prose (#924). Ticket handoff from submission when present.
+    // no code-authored summons prose (#924). Ticket identity = parent run durable
+    // board binding only (readBoardTicketNumber) — receipt ticketNumber is payload
+    // content, never the sole identity source; parent true-unbound stays unbound.
     // correlationId only on this officer — notary/auditor/inspector stay untouched.
     const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
     const correlationId = runIdFromRunDirectory(options.sourceRunDirectory);
@@ -1133,13 +1135,8 @@ export async function summonGateOfficer(options: {
         `countersign gate summon requires parent runId from sourceRunDirectory: ${options.sourceRunDirectory}`,
       );
     }
-    const ticketNumber = (() => {
-      if (options.submission === null || typeof options.submission !== "object" || Array.isArray(options.submission)) {
-        return undefined;
-      }
-      const value = (options.submission as { ticketNumber?: unknown }).ticketNumber;
-      return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
-    })();
+    const { readBoardTicketNumber } = await import("./run-ticket-number.ts");
+    const parentTicket = await readBoardTicketNumber(options.sourceRunDirectory);
     // Argv instruction = reask or parent payload bytes only (never a fabricated line).
     const instruction = options.reask ?? gateReviewInstruction ?? "";
     return summonPublicRole({
@@ -1147,7 +1144,7 @@ export async function summonGateOfficer(options: {
       argv: ["--project", options.cwd, "--", instruction],
       ...common,
       correlationId,
-      ...(ticketNumber === undefined ? {} : { boundTicketNumber: ticketNumber }),
+      ...(parentTicket === undefined ? {} : { boundTicketNumber: parentTicket }),
     });
   }
   // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath lookup key).
