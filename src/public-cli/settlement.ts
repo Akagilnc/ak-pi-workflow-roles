@@ -4,7 +4,7 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
-import { appendFile, lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { appendFile, lstat, mkdir, readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
@@ -2315,6 +2315,29 @@ async function extractNavigatorFactFromAdmittedSession(
   }
 }
 
+/**
+ * #953: conventional artifact face reflects the current terminal only.
+ * Success drops prior error.json; failure drops prior report.json.
+ * Does not touch unique/fallback faces — those stay durability recovery paths.
+ */
+export async function clearOppositeTerminalArtifactFace(
+  runDirectory: string,
+  current: "report" | "error",
+): Promise<void> {
+  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
+  const opposite = current === "report" ? "error.json" : "report.json";
+  await unlink(join(artifactsDir, opposite)).catch(() => undefined);
+}
+
+async function ensureTerminalArtifactFace(
+  runDirectory: string,
+  current: "report" | "error",
+): Promise<string> {
+  const artifactsDir = await ensureRunArtifactsDir(runDirectory);
+  await clearOppositeTerminalArtifactFace(runDirectory, current);
+  return artifactsDir;
+}
+
 export async function publishJudgeArtifacts(
   admitted: AdmittedJudgeInvocation,
   roleOutcome: TerminalRoleOutcome,
@@ -2323,7 +2346,7 @@ export async function publishJudgeArtifacts(
   // #419: history first — report/evidence stay last-write-wins views only
   // because every attempt's complete result has already been appended.
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -2378,7 +2401,7 @@ export async function publishCoderArtifacts(
   } = {},
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -2647,7 +2670,7 @@ export async function publishFixerArtifacts(
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -2773,7 +2796,7 @@ export async function publishCollectorArtifacts(
   coordinates: DurablePrincipalCoordinates,
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -2951,7 +2974,7 @@ export async function publishDoctorArtifacts(
   } = {},
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -3106,6 +3129,79 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
   return 0;
 }
 
+/**
+ * Shared success artifact face for filed seats that settle via sealed ledger
+ * (#953): write report/evidence and drop any prior error.json.
+ */
+async function publishSeatAcceptedArtifacts(
+  admitted: {
+    readonly role: TerminalRoleName;
+    readonly runId: string;
+    readonly runDirectory: string;
+    readonly admittedRequestPath: string;
+    readonly attachments: readonly {
+      readonly provenancePath: string;
+      readonly frozenPath: string;
+      readonly sha256: string;
+      readonly byteLength: number;
+    }[];
+  },
+  roleOutcome: TerminalRoleOutcome,
+  coordinates: DurablePrincipalCoordinates,
+): Promise<TerminalArtifactRef[]> {
+  await appendRunAttemptHistory(
+    {
+      role: admitted.role,
+      runId: admitted.runId,
+      sessionFile: coordinates.sessionFile,
+    },
+    roleOutcome,
+  );
+  const artifactsDir = await ensureTerminalArtifactFace(
+    admitted.runDirectory,
+    "report",
+  );
+  const reportPath = join(artifactsDir, "report.json");
+  const evidencePath = join(artifactsDir, "evidence.json");
+  await writeFile(
+    reportPath,
+    `${JSON.stringify(
+      {
+        role: admitted.role,
+        runId: admitted.runId,
+        outcome: roleOutcome,
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  await writeFile(
+    evidencePath,
+    `${JSON.stringify(
+      {
+        runId: admitted.runId,
+        sessionDirectory: coordinates.sessionDirectory,
+        sessionFile: coordinates.sessionFile,
+        admittedRequestPath: admitted.admittedRequestPath,
+        attachments: admitted.attachments.map((a) => ({
+          provenancePath: a.provenancePath,
+          frozenPath: a.frozenPath,
+          sha256: a.sha256,
+          byteLength: a.byteLength,
+        })),
+      },
+      null,
+      2,
+    )}\n`,
+    "utf8",
+  );
+  return [
+    { kind: "report", path: reportPath },
+    { kind: "evidence", path: evidencePath },
+  ];
+}
+
 async function settleLawfulSeatAcceptedTerminalResult(
   admitted:
     | AdmittedNotaryInvocation
@@ -3162,12 +3258,17 @@ async function settleLawfulSeatAcceptedTerminalResult(
   const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
   if (roleOutcome !== undefined && (thisAttemptHasSeatSuccess || residual === undefined)) {
     const navigator = extractNavigatorFact(entries);
+    const artifacts = await publishSeatAcceptedArtifacts(
+      admitted,
+      roleOutcome,
+      coordinates,
+    );
     return withSubmissions(
       await withOptionalGateProjection(
         {
           roleOutcome,
           navigator,
-          artifacts: [],
+          artifacts,
           runId: admitted.runId,
         },
         sessionDirectory,
@@ -3510,7 +3611,7 @@ export async function publishReviewerArtifacts(
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -3684,7 +3785,7 @@ export async function publishMergerArtifacts(
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -3962,6 +4063,8 @@ export async function publishFailureArtifacts(
   const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
     admitted.runDirectory,
   );
+  // #953: failure face must not leave a prior success report as the durable view.
+  await clearOppositeTerminalArtifactFace(admitted.runDirectory, "error");
   const priorIssues: PublicationAttempt[] =
     baseAttempt === undefined ? [] : [baseAttempt];
   // #419: each attempt's complete failure result joins the appended history

@@ -31,6 +31,7 @@ import {
 } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import { projectCourtTicketNumbers } from "../diarist-contracts.ts";
+import { readableGateItem } from "../readable-gate-item.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import {
   admitCountersignInvocation,
@@ -123,12 +124,51 @@ export type CourtDiaristIdentity =
       readonly courtTicketNumbers?: readonly number[];
     }
   | { readonly kind: "unbound" }
-  | { readonly kind: "escalate" };
+  | {
+      readonly kind: "escalate";
+      /** Honest diagnostic from diarist escalate payload (#953) — never invent 认不出. */
+      readonly diagnostic: string;
+    };
 
 export type CourtDiaristInvocationResult = {
   readonly identity: CourtDiaristIdentity;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isEscalatePayload(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  return (
+    payload.status === "escalate" || payload.countersignStatus === "escalate"
+  );
+}
+
+/**
+ * Parent diagnostic for court-diarist escalate (#953 / 失败诚实).
+ * Relays the diarist escalate payload via readableGateItem — never invents
+ * "cannot identify court target" when the payload already carries other facts
+ * (e.g. ticketNumber present with a different reason).
+ */
+export function courtDiaristEscalateDiagnostic(
+  roleOutcome: TerminalRoleOutcome | undefined,
+): string {
+  const payloads =
+    roleOutcome !== undefined &&
+    (roleOutcome.kind === "accepted" ||
+      roleOutcome.kind === "audit_escalation" ||
+      roleOutcome.kind === "failure")
+      ? (roleOutcome.payloads ?? [])
+      : [];
+  let latest: unknown;
+  for (const payload of payloads) {
+    if (isEscalatePayload(payload)) latest = payload;
+  }
+  if (latest === undefined) return "court diarist station escalated";
+  return `court diarist station escalated: ${readableGateItem(latest)}`;
+}
 
 /** Env slice shared by court diarist identity summons (countersign / secretariat). */
 export type CourtDiaristSummonEnv = Pick<
@@ -200,18 +240,7 @@ function courtDiaristEscalated(
   if (roleOutcome === undefined) return false;
   if (roleOutcome.kind === "audit_escalation") return true;
   if (roleOutcome.kind !== "accepted") return false;
-  return (roleOutcome.payloads ?? []).some((payload) => {
-    if (
-      typeof payload !== "object" ||
-      payload === null ||
-      Array.isArray(payload)
-    )
-      return false;
-    const record = payload as Record<string, unknown>;
-    return (
-      record.status === "escalate" || record.countersignStatus === "escalate"
-    );
-  });
+  return (roleOutcome.payloads ?? []).some(isEscalatePayload);
 }
 
 /**
@@ -280,7 +309,10 @@ export async function invokeCourtDiarist(
   // payload bodies stay on roleOutcome — never rewritten into a sole identity reason.
   if (courtDiaristEscalated(roleOutcome)) {
     return {
-      identity: { kind: "escalate" },
+      identity: {
+        kind: "escalate",
+        diagnostic: courtDiaristEscalateDiagnostic(roleOutcome),
+      },
     };
   }
 
@@ -374,9 +406,7 @@ export async function runCountersignCourtDiaristStation(
     );
 
     if (outcome.identity.kind === "escalate") {
-      throw new StationChildExhaustedError(
-        "court diarist station escalated (cannot identify court target)",
-      );
+      throw new StationChildExhaustedError(outcome.identity.diagnostic);
     }
     if (outcome.failedWithoutEscalate !== undefined) {
       throw new StationChildExhaustedError(
@@ -489,6 +519,7 @@ export async function runPublicCountersign(
 
           if (outcome.identity.kind === "escalate") {
             // 御批: 识别不了就上抛 — materialize and settle this countersign run.
+            // Diagnostic relays diarist escalate payload facts (#953).
             await materializeAdmission();
             await markRunAdmitted(admitted, env.principalAuthority);
             return await presentControlledFailure(
@@ -497,9 +528,7 @@ export async function runPublicCountersign(
                 timedOut: false,
                 code: null,
                 stderr: "",
-                thrown: new Error(
-                  "court diarist station escalated (cannot identify court target)",
-                ),
+                thrown: new Error(outcome.identity.diagnostic),
               },
               countersignAdapters(),
               env.principalAuthority,

@@ -316,16 +316,29 @@ export function formatTerminalResult(result: TerminalResult): string {
   }
   // Role-result block: original payloads, newest first for humans (#961).
   // Typed payloads/submissions stay ledger order; only this presentation reverses.
-  const payloads =
-    result.roleOutcome.kind === "accepted" || result.roleOutcome.kind === "audit_escalation"
-      ? result.roleOutcome.payloads ?? result.submissions ?? []
-      : result.roleOutcome.kind === "failure"
+  // #953: failure coexists with recorded history (#836) but must not present prior
+  // receipts under the this-turn `submission` label — use recorded-submission.
+  if (result.roleOutcome.kind === "failure") {
+    const recorded =
+      result.roleOutcome.payloads ?? result.submissions ?? [];
+    for (let i = recorded.length - 1; i >= 0; i -= 1) {
+      const payload = recorded[i]!;
+      const rendered =
+        typeof payload === "string" ? payload : JSON.stringify(payload);
+      lines.push(`recorded-submission\t${encodeTerminalField(rendered)}`);
+    }
+  } else {
+    const payloads =
+      result.roleOutcome.kind === "accepted" ||
+      result.roleOutcome.kind === "audit_escalation"
         ? result.roleOutcome.payloads ?? result.submissions ?? []
         : result.submissions ?? [];
-  for (let i = payloads.length - 1; i >= 0; i -= 1) {
-    const payload = payloads[i]!;
-    const rendered = typeof payload === "string" ? payload : JSON.stringify(payload);
-    lines.push(`submission\t${encodeTerminalField(rendered)}`);
+    for (let i = payloads.length - 1; i >= 0; i -= 1) {
+      const payload = payloads[i]!;
+      const rendered =
+        typeof payload === "string" ? payload : JSON.stringify(payload);
+      lines.push(`submission\t${encodeTerminalField(rendered)}`);
+    }
   }
   return `${lines.join("\n")}\n`;
 }

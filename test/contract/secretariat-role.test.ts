@@ -269,30 +269,65 @@ test("projectSecretariatSummonResult keeps typed terminal kinds (gatekeeper prec
   assert.equal(noTerminal.stderr, "died");
 });
 
-test("summon tool content text tracks outcome kind (not always 已送达)", async () => {
-  const { tools } = await activateSecretariat({
+test("#953 summon parent-visible content is receipt/lifecycle via readableGateItem, not fixed phrases", async () => {
+  const receipt = {
+    countersignStatus: "continue",
+    findings: [{ article: "a", reason: "r" }],
+  };
+  const { tools: okTools } = await activateSecretariat({
+    summonCountersign: async () => ({
+      exitCode: 0,
+      runDirectory: "/home/books/x/runs/01child@countersign",
+      terminal: {
+        roleOutcome: {
+          kind: "accepted",
+          role: "countersign",
+          payloads: [receipt],
+        },
+      } as never,
+    }),
+  });
+  const accepted = await okTools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
+    "summon-ok",
+    { instruction: "裁：#953" },
+    undefined,
+    undefined,
+    ctx,
+  );
+  const acceptedText = (accepted.content as Array<{ text: string }>)[0]?.text ?? "";
+  // Parent-visible text must carry actionable typed facts (receipt + runId + outcomeKind).
+  assert.match(acceptedText, /"outcomeKind":"accepted"/);
+  assert.match(acceptedText, /"runId":"01child"/);
+  assert.match(acceptedText, /"countersignStatus":"continue"/);
+  assert.equal(acceptedText.includes("给事中回执已送达中书省"), false);
+  // Structured nested fields must not collapse to [object Object].
+  assert.equal(acceptedText.includes("[object Object]"), false);
+  assert.match(acceptedText, /"article":"a"/);
+
+  const { tools: failTools } = await activateSecretariat({
     summonCountersign: async () => ({
       exitCode: 1,
+      runDirectory: "/home/books/x/runs/01fail@countersign",
       terminal: {
         roleOutcome: {
           kind: "failure",
           role: "countersign",
-          diagnostic: "x",
+          diagnostic: "provider boom",
           decisiveFacts: {},
         },
       } as never,
     }),
   });
-  const result = await tools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
+  const failed = await failTools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
     "summon-fail",
-    { instruction: "裁：#924" },
+    { instruction: "裁：#953" },
     undefined,
     undefined,
     ctx,
   );
-  assert.equal(
-    (result.content as Array<{ text: string }>)[0]?.text,
-    "给事中传召失败",
-  );
-  assert.equal((result.details as { outcomeKind: string }).outcomeKind, "failure");
+  const failedText = (failed.content as Array<{ text: string }>)[0]?.text ?? "";
+  assert.match(failedText, /"outcomeKind":"failure"/);
+  assert.match(failedText, /provider boom/);
+  assert.equal(failedText.includes("给事中传召失败"), false);
+  assert.equal((failed.details as { outcomeKind: string }).outcomeKind, "failure");
 });
