@@ -477,6 +477,7 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
       const deadRun = "01a0ghost0-dead-7000-8000-0000000000a1";
       const liveRun = "01a0ghost0-live-7000-8000-0000000000a2";
       const noLeaseRun = "01a0ghost0-nole-7000-8000-0000000000a3";
+      const badLockRun = "01a0ghost0-badl-7000-8000-0000000000a4";
 
       async function seedGhost(input: {
         readonly runId: string;
@@ -542,6 +543,12 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
         state: "admitted",
         lock: null,
       });
+      await seedGhost({
+        runId: badLockRun,
+        role: "judge",
+        state: "admitted",
+        lock: "not-a-pid",
+      });
 
       await withProcessCwd(repo, async () => {
         const first = captureIo();
@@ -568,6 +575,12 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
           runId: noLeaseRun,
           runState: "admitted",
           leaseCheck: { kind: "no-lease" },
+        });
+        // #855 怎么验 #4: unparseable lock → unverifiable, not holder-dead.
+        assert.deepEqual(byId.get(badLockRun), {
+          runId: badLockRun,
+          runState: "admitted",
+          leaseCheck: { kind: "unverifiable", reason: "unparseable" },
         });
 
         // Cache-hit path must still refresh ghostLegs (page exists after first call).
