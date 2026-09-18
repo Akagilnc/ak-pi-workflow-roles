@@ -464,3 +464,136 @@ test("analyst cohort book:N splits on the last colon so root:<path>:N parses", (
     issueNumber: 181,
   });
 });
+
+/**
+ * #855: ghost legs on the public analyst face (整簿/按票).
+ * Cache-hit still refreshes ghostLegs; disk run-state stays untouched.
+ */
+test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease", async () => {
+  await withBusinessRepo(async (repo) => {
+    await withTempRoot("analyst-855-ghost-home-", async (home) => {
+      const bookKey = basename(repo);
+      const ticket = 855;
+      const deadRun = "01a0ghost0-dead-7000-8000-0000000000a1";
+      const liveRun = "01a0ghost0-live-7000-8000-0000000000a2";
+      const noLeaseRun = "01a0ghost0-nole-7000-8000-0000000000a3";
+
+      async function seedGhost(input: {
+        readonly runId: string;
+        readonly role: string;
+        readonly state: "admitted" | "running";
+        readonly lock?: string | null;
+      }): Promise<string> {
+        const runDir = join(
+          home,
+          ".ak-roles",
+          "books",
+          bookKey,
+          String(ticket),
+          "runs",
+          `${input.runId}@${input.role}`,
+        );
+        await mkdir(join(runDir, "session"), { recursive: true });
+        await writeFile(
+          join(runDir, "run-state.json"),
+          `${JSON.stringify({
+            runId: input.runId,
+            role: input.role,
+            state: input.state,
+            bookKey,
+            projectRoot: repo,
+            runDirectory: runDir,
+            admittedRequestPath: join(runDir, "admitted-request.json"),
+            sessionDirectory: join(runDir, "session"),
+            sessionFile: join(runDir, "session", "session.jsonl"),
+          }, null, 2)}\n`,
+        );
+        await writeFile(
+          join(runDir, "invocation.json"),
+          `${JSON.stringify({
+            role: input.role,
+            runId: input.runId,
+            bookKey,
+            projectRoot: repo,
+            ticketNumber: ticket,
+          }, null, 2)}\n`,
+        );
+        if (input.lock !== undefined && input.lock !== null) {
+          await writeFile(join(runDir, "writer.lock"), input.lock, "utf8");
+        }
+        return runDir;
+      }
+
+      const deadDir = await seedGhost({
+        runId: deadRun,
+        role: "judge",
+        state: "running",
+        lock: "999999999",
+      });
+      await seedGhost({
+        runId: liveRun,
+        role: "judge",
+        state: "running",
+        lock: String(process.pid),
+      });
+      await seedGhost({
+        runId: noLeaseRun,
+        role: "countersign",
+        state: "admitted",
+        lock: null,
+      });
+
+      await withProcessCwd(repo, async () => {
+        const first = captureIo();
+        const firstResult = await runAkRole(
+          ["analyst", "--ticket", String(ticket)],
+          { packageRoot, home, io: first.io },
+        );
+        assert.equal(firstResult.exitCode, 0, first.stderr.join(""));
+        const firstBody = JSON.parse(first.stdout.join("")) as {
+          ghostLegs: readonly {
+            runId: string;
+            role: string;
+            runState: string;
+            leaseCheck: { kind: string; pid?: number; reason?: string };
+          }[];
+        };
+        const byId = new Map(firstBody.ghostLegs.map((g) => [g.runId, g]));
+        assert.equal(byId.has(liveRun), false, "live holder must not be listed");
+        assert.deepEqual(byId.get(deadRun), {
+          runId: deadRun,
+          role: "judge",
+          runState: "running",
+          leaseCheck: { kind: "holder-dead", pid: 999999999 },
+        });
+        assert.deepEqual(byId.get(noLeaseRun), {
+          runId: noLeaseRun,
+          role: "countersign",
+          runState: "admitted",
+          leaseCheck: { kind: "no-lease" },
+        });
+
+        // Cache-hit path must still refresh ghostLegs (page exists after first call).
+        const second = captureIo();
+        const secondResult = await runAkRole(
+          ["analyst", "--ticket", String(ticket)],
+          { packageRoot, home, io: second.io },
+        );
+        assert.equal(secondResult.exitCode, 0, second.stderr.join(""));
+        const secondBody = JSON.parse(second.stdout.join("")) as {
+          ghostLegs: readonly { runId: string }[];
+        };
+        assert.deepEqual(
+          secondBody.ghostLegs.map((g) => g.runId).sort(),
+          firstBody.ghostLegs.map((g) => g.runId).sort(),
+        );
+
+        // Package does not settle or delete for the caller.
+        assert.equal(
+          JSON.parse(await readFile(join(deadDir, "run-state.json"), "utf8")).state,
+          "running",
+        );
+      });
+    });
+  });
+});
