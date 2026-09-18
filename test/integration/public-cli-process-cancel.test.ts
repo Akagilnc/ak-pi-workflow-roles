@@ -117,6 +117,7 @@ test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name an
           diagnostic?: string;
           runState?: string;
           runDirectory?: string;
+          turnCount?: number;
         };
         assert.notEqual(result.exitCode, 0, `${signalName}: settled exitCode`);
         assert.ok(
@@ -124,6 +125,12 @@ test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name an
           `${signalName}: diagnostic must name the signal; got ${result.diagnostic}`,
         );
         assert.equal(result.runState, "terminal", `${signalName}: run-state must be terminal`);
+        // #855 p1: cancel must not auto-resume-re-dispatch (principal forced available).
+        assert.equal(
+          result.turnCount,
+          1,
+          `${signalName}: executeTurn must run once after cancel, got ${result.turnCount}`,
+        );
 
         // Host child must be gone (graceful SIGTERM path).
         await new Promise((r) => setTimeout(r, 50));

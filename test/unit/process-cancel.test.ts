@@ -1,10 +1,12 @@
 /**
  * #855 process-cancel: catchable signals abort once; name is retained for settlement.
+ * Install scope is role-turn commands only (analyst/roles/config keep default termination).
  */
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 
+import { commandNeedsProcessCancel } from "../../src/public-cli/cli.ts";
 import {
   installProcessCancelHandlers,
   processCancelDiagnostic,
@@ -35,4 +37,17 @@ test("processCancelSignalName ignores unrelated abort reasons", () => {
   controller.abort(new Error("nested parent"));
   assert.equal(processCancelSignalName(controller.signal), undefined);
   assert.equal(processCancelSignalName(undefined), undefined);
+});
+
+test("commandNeedsProcessCancel is true only for role-turn commands", () => {
+  assert.equal(commandNeedsProcessCancel(["judge", "x"]), true);
+  assert.equal(commandNeedsProcessCancel(["--model", "p/m", "fixer", "x"]), true);
+  assert.equal(commandNeedsProcessCancel(["resume", "01a0"]), true);
+  assert.equal(commandNeedsProcessCancel(["new", "judge", "x"]), true);
+  assert.equal(commandNeedsProcessCancel(["analyst", "--ticket", "1"]), false);
+  assert.equal(commandNeedsProcessCancel(["roles"]), false);
+  assert.equal(commandNeedsProcessCancel(["config", "show"]), false);
+  assert.equal(commandNeedsProcessCancel(["help"]), false);
+  assert.equal(commandNeedsProcessCancel(["--help"]), false);
+  assert.equal(commandNeedsProcessCancel([]), false);
 });

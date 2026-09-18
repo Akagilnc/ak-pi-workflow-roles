@@ -90,6 +90,7 @@ import {
 import {
   processCancelDiagnostic,
   processCancelSignalName,
+  type CatchableProcessSignal,
 } from "./process-cancel.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import {
@@ -122,6 +123,131 @@ import {
   runWithAutoResumeLoop,
   TurnDispatchedFailure,
 } from "./auto-resume.ts";
+
+/** #855: process-cancel settlement never re-enters auto-resume. */
+function withProcessCancelSkipAutoResume<T extends object>(
+  result: T,
+  signal: AbortSignal | undefined,
+): T & { skipAutoResume?: true } {
+  if (processCancelSignalName(signal) === undefined) {
+    return result as T & { skipAutoResume?: true };
+  }
+  return { ...result, skipAutoResume: true as const };
+}
+
+/**
+ * #855: turn already started, then a catchable process signal arrived before
+ * lawful seal — settle as named cancel failure and skip auto-resume.
+ */
+async function settleProcessCancelAfterTurn<A extends AdmittedRoleInvocation, T extends TerminalResult>(input: {
+  admitted: A;
+  cancelName: CatchableProcessSignal;
+  result: RoleTurnResult;
+  adapters: PostAdmissionAdapters<A, T>;
+  env: PostAdmissionEnv;
+  io: CliIo;
+  persistRunState: boolean;
+  deferredPersist: { needsPersist?: true } | Record<string, never>;
+  invocationScopeId: string | undefined;
+}): Promise<{
+  exitCode: number;
+  admitted: A;
+  terminal?: T;
+  skipAutoResume?: true;
+  turnDispatched?: true;
+  needsPersist?: true;
+}> {
+  const failed = await settleAfterTurnStarted(
+    input.admitted,
+    withEngineDetourInvocationScope(
+      {
+        timedOut: input.result.timedOut,
+        code: input.result.code,
+        stderr: input.result.stderr,
+        knownDiagnostic: processCancelDiagnostic(input.cancelName),
+      },
+      input.invocationScopeId,
+    ),
+    input.adapters,
+    input.env.principalAuthority,
+    input.io,
+    input.persistRunState,
+  );
+  return {
+    ...failed,
+    turnDispatched: true as const,
+    skipAutoResume: true as const,
+    ...input.deferredPersist,
+  };
+}
+
+/**
+ * #855: finish a would-be lawful outcome; if cancel arrives during afterDispatch,
+ * fold to named cancel failure instead of accepted/no_receipt.
+ */
+async function finishLawfulAfterTurn<A extends AdmittedRoleInvocation, T extends TerminalResult>(input: {
+  settledOutcome: {
+    exitCode: number;
+    admitted: A;
+    terminal: T;
+    turnDispatched: true;
+  };
+  deferredPersist: { needsPersist?: true } | Record<string, never>;
+  finishAfterTurn: (result: {
+    exitCode: number;
+    admitted: A;
+    terminal?: T;
+    skipAutoResume?: true;
+    turnDispatched?: true;
+    needsPersist?: true;
+  }) => Promise<{
+    exitCode: number;
+    admitted: A;
+    terminal?: T;
+    skipAutoResume?: true;
+    turnDispatched?: true;
+    needsPersist?: true;
+  }>;
+  admitted: A;
+  result: RoleTurnResult;
+  adapters: PostAdmissionAdapters<A, T>;
+  env: PostAdmissionEnv;
+  io: CliIo;
+  persistRunState: boolean;
+  invocationScopeId: string | undefined;
+}): Promise<{
+  exitCode: number;
+  admitted: A;
+  terminal?: T;
+  skipAutoResume?: true;
+  turnDispatched?: true;
+  needsPersist?: true;
+}> {
+  const finished = await input.finishAfterTurn({
+    ...input.settledOutcome,
+    ...input.deferredPersist,
+  });
+  const lateCancel = processCancelSignalName(input.env.signal);
+  if (
+    lateCancel === undefined
+    || finished.terminal === undefined
+    || !isLawfulTypedTerminalOutcome(finished.terminal.roleOutcome)
+  ) {
+    return finished;
+  }
+  // afterDispatch already ran; correct presentation only (run-state stays terminal).
+  return await settleProcessCancelAfterTurn({
+    admitted: input.admitted,
+    cancelName: lateCancel,
+    result: input.result,
+    adapters: input.adapters,
+    env: input.env,
+    io: input.io,
+    persistRunState: input.persistRunState,
+    deferredPersist: input.deferredPersist,
+    invocationScopeId: input.invocationScopeId,
+  });
+}
 
 /**
  * Nested station-child role already finished its own call-local loop.
@@ -809,7 +935,12 @@ export async function dispatchPostAdmissionTurn<
         io,
         persistRunState,
       );
-      return await finishAfterTurn({ ...settled, turnDispatched: true as const, ...deferredPersist });
+      return await finishAfterTurn(
+        withProcessCancelSkipAutoResume(
+          { ...settled, turnDispatched: true as const, ...deferredPersist },
+          env.signal,
+        ),
+      );
     }
 
     // `result.stderr` stays live in memory for the real classification below
@@ -969,12 +1100,16 @@ export async function dispatchPostAdmissionTurn<
       // where a bare nonzero exit / resolution failure must not be outranked
       // by someone else's earlier success (#836 r12 class 2).
       const staleAcceptanceOutranksRealFailure = !settledIsFreshThisAttempt && hostSignalFailed;
+      // #855: re-read cancel after trySettle/attach awaits — a signal in this
+      // window must not land as lawful accepted.
+      const cancelAfterSettle = processCancelSignalName(env.signal);
       if (
         settled !== undefined
         && shouldPresent(settled)
         && !directHostFailureSignal
         && !staleAcceptanceOutranksRealFailure
         && stderrLogWriteFailure === undefined
+        && cancelAfterSettle === undefined
       ) {
         // This court sealed — drop open-court pointer (bare resume no longer continues it).
         if (
@@ -1027,6 +1162,24 @@ export async function dispatchPostAdmissionTurn<
       return await finishAfterTurn({ ...settledFailure, turnDispatched: true as const, ...deferredPersist });
     }
     if (settledOutcome !== undefined) {
+      // #855: final cancel re-read before lawful seal — settlement window may
+      // have received SIGTERM/SIGINT/SIGHUP after the earlier snapshot.
+      const lateCancel = processCancelSignalName(env.signal);
+      if (lateCancel !== undefined) {
+        return await finishAfterTurn(
+          await settleProcessCancelAfterTurn({
+            admitted,
+            cancelName: lateCancel,
+            result,
+            adapters,
+            env,
+            io,
+            persistRunState,
+            deferredPersist,
+            invocationScopeId: request.invocationScopeId,
+          }),
+        );
+      }
       if (persistRunState) {
         try {
           await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
@@ -1055,12 +1208,28 @@ export async function dispatchPostAdmissionTurn<
             io,
             persistRunState,
           );
-          return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
+          return await finishAfterTurn(
+            withProcessCancelSkipAutoResume(
+              { ...failed, turnDispatched: true as const, ...deferredPersist },
+              env.signal,
+            ),
+          );
         }
       }
       // Lawful persist + present is the caller's stop seam (auto-resume loop /
       // manual resume), not this retried host-turn function.
-      return await finishAfterTurn({ ...settledOutcome, ...deferredPersist });
+      return await finishLawfulAfterTurn({
+        settledOutcome,
+        deferredPersist,
+        finishAfterTurn,
+        admitted,
+        result,
+        adapters,
+        env,
+        io,
+        persistRunState,
+        invocationScopeId: request.invocationScopeId,
+      });
     }
 
     // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
@@ -1100,7 +1269,12 @@ export async function dispatchPostAdmissionTurn<
         io,
         persistRunState,
       );
-      return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
+      return await finishAfterTurn(
+        withProcessCancelSkipAutoResume(
+          { ...failed, turnDispatched: true as const, ...deferredPersist },
+          env.signal,
+        ),
+      );
     }
 
     // Nothing else was wrong, but the durable stderr mirror itself failed to
@@ -1128,6 +1302,23 @@ export async function dispatchPostAdmissionTurn<
       await settleHostEndedNoReceipt(admitted, env.principalAuthority, courtScope) as T,
       courtScope,
     );
+    // #855: cancel during no_receipt settlement window is not lawful success.
+    const noReceiptCancel = processCancelSignalName(env.signal);
+    if (noReceiptCancel !== undefined) {
+      return await finishAfterTurn(
+        await settleProcessCancelAfterTurn({
+          admitted,
+          cancelName: noReceiptCancel,
+          result,
+          adapters,
+          env,
+          io,
+          persistRunState,
+          deferredPersist,
+          invocationScopeId: request.invocationScopeId,
+        }),
+      );
+    }
     if (persistRunState) {
       try {
         await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
@@ -1151,15 +1342,30 @@ export async function dispatchPostAdmissionTurn<
           io,
           persistRunState,
         );
-        return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
+        return await finishAfterTurn(
+          withProcessCancelSkipAutoResume(
+            { ...failed, turnDispatched: true as const, ...deferredPersist },
+            env.signal,
+          ),
+        );
       }
     }
-    return await finishAfterTurn({
-      exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),
+    return await finishLawfulAfterTurn({
+      settledOutcome: {
+        exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),
+        admitted,
+        terminal: noReceipt,
+        turnDispatched: true as const,
+      },
+      deferredPersist,
+      finishAfterTurn,
       admitted,
-      terminal: noReceipt,
-      turnDispatched: true as const,
-      ...deferredPersist,
+      result,
+      adapters,
+      env,
+      io,
+      persistRunState,
+      invocationScopeId: request.invocationScopeId,
     });
   } finally {
     try {
@@ -1526,6 +1732,7 @@ export async function runPostAdmissionSeatResume<
         io: input.io,
         sessionAppender: env.sessionAppender,
         autoResumeLimit: env.autoResumeLimit,
+        ...(env.signal === undefined ? {} : { signal: env.signal }),
         buildInitialPayload: (): StationChildAttempt => ({ resumeTurn: false }),
         buildResumePayload: (): StationChildAttempt => ({ resumeTurn: true }),
         // Same as public manual resume: prior-court sealed acceptance is not a
@@ -1692,6 +1899,7 @@ export async function runPostAdmissionResumable<
     io,
     sessionAppender: env.sessionAppender,
     autoResumeLimit: env.autoResumeLimit,
+    ...(env.signal === undefined ? {} : { signal: env.signal }),
     buildInitialPayload: buildScopedInitial,
     buildResumePayload: buildScopedResume,
     dispatch: async (request, lease, _isFirst, attemptIo) => {

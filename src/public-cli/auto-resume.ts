@@ -32,6 +32,7 @@ import {
   type RunWriterLease,
 } from "./run-lifecycle.ts";
 import { parseAutoResumeLimit } from "./config.ts";
+import { processCancelSignalName } from "./process-cancel.ts";
 import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifactRef, type TerminalResult, type TerminalRoleName } from "./terminal.ts";
 import {
   attachRecordedSubmissions,
@@ -473,6 +474,11 @@ export async function runWithAutoResumeLoop<
    * before the first dispatch instead of silently bypassing the ceiling comparison.
    */
   autoResumeLimit?: number | undefined;
+  /**
+   * #855: process-cancel signal. Once aborted by a catchable process signal,
+   * the loop must not dispatch another turn or spawn another child.
+   */
+  signal?: AbortSignal;
   buildInitialPayload: () => TPayload;
   buildResumePayload: () => TPayload;
   dispatch: (payload: TPayload, lease: RunWriterLease, isFirst: boolean, attemptIo: CliIo) => Promise<T>;
@@ -578,11 +584,20 @@ export async function runWithAutoResumeLoop<
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
+      // #855: process cancel — stop even if dispatch forgot skipAutoResume.
+      if (processCancelSignalName(options.signal) !== undefined) {
+        if (terminal !== undefined) presentTerminal(terminal, options.io);
+        return result;
+      }
     }
 
     if (result !== undefined) {
       const terminal = (result as { terminal?: TerminalResult }).terminal;
       if (autoResumeAttempts >= limit) {
+        if (terminal !== undefined) presentTerminal(terminal, options.io);
+        return result;
+      }
+      if (processCancelSignalName(options.signal) !== undefined) {
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
@@ -605,6 +620,28 @@ export async function runWithAutoResumeLoop<
             errorFiles: retainedErrorFiles,
             autoResumeAttempts,
             endReason: "auto-resume budget exhausted",
+            everyAttemptThrew,
+          }),
+          options.io,
+        );
+        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+        presentTerminal(terminal, options.io);
+        return {
+          exitCode: 1,
+          terminal,
+        } as T;
+      }
+      // #855: process cancel on the throw path — do not re-dispatch.
+      if (processCancelSignalName(options.signal) !== undefined) {
+        const terminal = await attachDispatchExceptionTerminal(
+          options.admitted,
+          dispatchExceptionFailureTerminal({
+            role: options.admitted.role,
+            runId: options.admitted.runId,
+            causeError: lastThrownError,
+            errorFiles: retainedErrorFiles,
+            autoResumeAttempts,
+            endReason: "process cancel before further resume",
             everyAttemptThrew,
           }),
           options.io,

@@ -1174,6 +1174,20 @@ async function runConfigCommand(
   throw new CliUsageError(`unknown config subcommand: ${args[0]}`);
 }
 
+/**
+ * #855: process-cancel handlers only for commands that run a role turn
+ * (callable roles / resume / new). analyst/roles/config/help keep Node's
+ * default SIGINT/SIGTERM termination — installing handlers would swallow Ctrl+C.
+ */
+export function commandNeedsProcessCancel(argv: readonly string[]): boolean {
+  const parsed = parseArgv(argv);
+  if (parsed.help || parsed.command === undefined || parsed.command === "help") {
+    return false;
+  }
+  if (parsed.command === "resume" || parsed.command === "new") return true;
+  return isPublicCallableRole(parsed.command);
+}
+
 export async function runAkRole(
   argv: readonly string[],
   env: CliEnv,

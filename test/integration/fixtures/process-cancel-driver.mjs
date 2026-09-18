@@ -30,9 +30,16 @@ const { piDurablePrincipalAuthority } = await import(
 
 const processCancel = installProcessCancelHandlers();
 
-/** Hang until parent abort; spawn a real child and SIGTERM it on cancel (host contract). */
+/** Count turns so the parent can assert cancel does not auto-resume-re-dispatch. */
+let turnCount = 0;
+
+/**
+ * Hang until parent abort; spawn a real child and SIGTERM it on cancel (host contract).
+ * Principal is forced available so a missing skipAutoResume would re-dispatch (#855 p1).
+ */
 const hangingHost = {
   async executeTurn(request) {
+    turnCount += 1;
     const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
       stdio: "ignore",
     });
@@ -45,6 +52,7 @@ const hangingHost = {
 
     await new Promise((resolve) => {
       let settled = false;
+      let graceTimer;
       const finish = () => {
         if (settled) return;
         settled = true;
@@ -53,9 +61,13 @@ const hangingHost = {
         } catch {
           /* already exiting */
         }
-        child.once("close", () => resolve(undefined));
-        // If close never fires, still settle after a short grace.
-        setTimeout(() => resolve(undefined), 2000);
+        const done = () => {
+          if (graceTimer !== undefined) clearTimeout(graceTimer);
+          resolve(undefined);
+        };
+        child.once("close", done);
+        // If close never fires, still settle after a short grace — clear on close.
+        graceTimer = setTimeout(done, 2000);
       };
       if (request.signal?.aborted === true) finish();
       else request.signal?.addEventListener("abort", finish, { once: true });
@@ -66,6 +78,14 @@ const hangingHost = {
       stderr: "",
       timedOut: false,
     };
+  },
+};
+
+/** Always-available principal so auto-resume would retry without cancel skip. */
+const principalAuthority = {
+  ...piDurablePrincipalAuthority,
+  async isAvailable() {
+    return true;
   },
 };
 
@@ -81,7 +101,7 @@ try {
       packageRoot,
       home,
       cwd: project,
-      principalAuthority: piDurablePrincipalAuthority,
+      principalAuthority,
       credentials: { "openai-codex": true, xai: true },
       createRunId: () => runId,
       signal: processCancel.signal,
@@ -132,7 +152,7 @@ try {
   await mkdir(home, { recursive: true });
   await writeFile(
     resultFile,
-    `${JSON.stringify({ exitCode, diagnostic, runState, runDirectory }, null, 2)}\n`,
+    `${JSON.stringify({ exitCode, diagnostic, runState, runDirectory, turnCount }, null, 2)}\n`,
     "utf8",
   );
   process.exitCode = exitCode;
