@@ -15,15 +15,16 @@ import type { TerminalResult } from "./public-cli/terminal.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 
-/** Gate review officers — 台院 / 符宝郎 / 审刑院 (#753 / #756). */
-export type GateOfficer = "inspector" | "notary" | "auditor";
+/** Gate review officers — 台院 / 符宝郎 / 审刑院 / 给事中 (#753 / #756 / #969). */
+export type GateOfficer = "inspector" | "notary" | "auditor" | "countersign";
 
 /** Officer routing only — content is self-fetched via the shared run-dossier tool (#632). */
 export type GatekeeperSubject =
   | { readonly kind: "worker_completion" }
   | { readonly kind: "judge_draft" }
   | { readonly kind: "judge_compliance" }
-  | { readonly kind: "countersign_verdict" };
+  | { readonly kind: "countersign_verdict" }
+  | { readonly kind: "secretariat_verdict" };
 
 /**
  * Gate projection for the review queue (#753 / #750).
@@ -64,13 +65,15 @@ export type GatekeeperNonPassResult = Extract<
 function gateSeatLabel(stage: GateOfficer): string {
   if (stage === "inspector") return "台院";
   if (stage === "auditor") return "审刑院";
+  if (stage === "countersign") return "给事中";
   return "符宝郎";
 }
 
-/** Subject kind → review officer (#753 countersign/notary, #756 judge/auditor + worker/inspector). */
+/** Subject kind → review officer (#753 countersign/notary, #756 judge/auditor + worker/inspector, #969 secretariat/countersign). */
 export function gateOfficerForSubject(subject: GatekeeperSubject): GateOfficer {
   if (subject.kind === "worker_completion") return "inspector";
   if (subject.kind === "judge_compliance") return "auditor";
+  if (subject.kind === "secretariat_verdict") return "countersign";
   return "notary";
 }
 
@@ -183,6 +186,14 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
  * `fallbackStatus` is the terminal outcome.status when the receipt body has no status key
  * (keeps missing-args sentinel intact as the receipt).
  */
+/** Map 给事中 countersignStatus onto the shared gate queue words (#969). */
+function gateStatusFromCountersign(status: string): string | undefined {
+  if (status === "converged") return "pass";
+  if (status === "continue") return "bounce";
+  if (status === "escalate") return "escalate";
+  return undefined;
+}
+
 function projectOfficerDecision(
   officer: GateOfficer,
   decision: unknown,
@@ -190,9 +201,16 @@ function projectOfficerDecision(
 ): GatekeeperResult {
   const receipt = retainedReceipt(decision);
   const record = readRecord(decision);
-  const status =
+  const rawStatus =
     (record !== undefined && typeof record.status === "string" ? record.status : undefined)
+    ?? (record !== undefined && typeof record.countersignStatus === "string"
+      ? record.countersignStatus
+      : undefined)
     ?? fallbackStatus;
+  const status =
+    officer === "countersign" && typeof rawStatus === "string"
+      ? (gateStatusFromCountersign(rawStatus) ?? rawStatus)
+      : rawStatus;
   if (status === "pass") {
     return { status: "pass", officer, receipt };
   }

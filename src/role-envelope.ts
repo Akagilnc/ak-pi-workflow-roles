@@ -9,7 +9,10 @@ import {
   ENGINE_MODEL_FLAG_NAME,
   normalizeEngineName,
 } from "./engine-detour.ts";
-import { requireGatekeeperPass } from "./gatekeeper-pass-envelope.ts";
+import {
+  createDefaultGateOfficerSummon,
+  requireGatekeeperPass,
+} from "./gatekeeper-pass-envelope.ts";
 import type {
   HostContext,
   HostEventRegistration,
@@ -229,18 +232,28 @@ export async function prepareRoleEnvelope(options: {
     // seat remains reachable through MCP.
     setActiveTools(names) { preferredTools = [...names]; },
     getActiveTools() { return [...preferredTools]; },
-    async requireGatekeeperPass(options) {
+    async requireGatekeeperPass(gateOptions) {
+      const packageRoot =
+        typeof options.dependencies.packageRoot === "string"
+          ? options.dependencies.packageRoot
+          : undefined;
       await requireGatekeeperPass({
-        context: options.context,
-        subject: options.subject,
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
+        context: gateOptions.context,
+        subject: gateOptions.subject,
+        ...(gateOptions.signal === undefined ? {} : { signal: gateOptions.signal }),
         hostActions: {
           failInfrastructure: (error, _context, toolCallId) =>
-            options.hostActions.failInfrastructure(error, options.context, toolCallId),
-          bindSubmissionNonPass: options.hostActions.bindSubmissionNonPass,
+            gateOptions.hostActions.failInfrastructure(error, gateOptions.context, toolCallId),
+          bindSubmissionNonPass: gateOptions.hostActions.bindSubmissionNonPass,
         },
-        toolCallId: options.toolCallId,
-        ...(options.submission === undefined ? {} : { submission: options.submission }),
+        toolCallId: gateOptions.toolCallId,
+        ...(gateOptions.submission === undefined ? {} : { submission: gateOptions.submission }),
+        // #969: package root + home reach nested 给事中/符宝郎 summons.
+        summonOfficer: createDefaultGateOfficerSummon({
+          cwd: gateOptions.context.cwd ?? request.cwd,
+          home: request.home,
+          ...(packageRoot === undefined ? {} : { packageRoot }),
+        }),
       });
     },
     on(...registration: HostEventRegistration) {

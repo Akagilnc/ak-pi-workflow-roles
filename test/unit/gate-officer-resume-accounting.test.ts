@@ -256,3 +256,77 @@ test("#879 promptWithPriorNativePaths: station-child officer omits paths; others
     "officer with stationChild false must append priorNativePaths",
   );
 });
+
+test("#969 secretariat_verdict routes to countersign and maps countersignStatus",
+  async () => {
+    const cases = [
+      { countersignStatus: "converged", expected: "pass" as const },
+      { countersignStatus: "continue", expected: "bounce" as const },
+      { countersignStatus: "escalate", expected: "escalate" as const },
+    ];
+    for (const item of cases) {
+      const projected = await projectGatekeeperRun({
+        context: {
+          cwd: process.cwd(),
+          sessionManager: { getSessionFile: () => "/tmp/unused" },
+        } as never,
+        subject: { kind: "secretariat_verdict" },
+        runDirectory: "/tmp/parent-secretariat",
+        submission: { secretariatStatus: "converged", ticketNumber: 969 },
+        summonOfficer: async (officer, _source, _signal, _reask, submission) => {
+          assert.equal(officer, "countersign");
+          assert.deepEqual(submission, {
+            secretariatStatus: "converged",
+            ticketNumber: 969,
+          });
+          return {
+            exitCode: 0,
+            terminal: {
+              roleOutcome: {
+                kind: "accepted",
+                role: "countersign",
+                payloads: [{ countersignStatus: item.countersignStatus }],
+              },
+              navigator: { disposition: "no-advice" },
+              artifacts: [],
+              runId: "countersign-run",
+            },
+          };
+        },
+      });
+      assert.equal(projected.officer, "countersign");
+      assert.equal(
+        projected.result.status,
+        item.expected,
+        `countersignStatus=${item.countersignStatus}`,
+      );
+    }
+  },
+);
+
+test("#969 secretariat_verdict unreadable countersignStatus needs_reask",
+  async () => {
+    const projected = await projectGatekeeperRun({
+      context: {
+        cwd: process.cwd(),
+        sessionManager: { getSessionFile: () => "/tmp/unused" },
+      } as never,
+      subject: { kind: "secretariat_verdict" },
+      runDirectory: "/tmp/parent-secretariat",
+      summonOfficer: async () => ({
+        exitCode: 0,
+        terminal: {
+          roleOutcome: {
+            kind: "accepted",
+            role: "countersign",
+            payloads: [{ countersignStatus: "maybe" }],
+          },
+          navigator: { disposition: "no-advice" },
+          artifacts: [],
+          runId: "countersign-run",
+        },
+      }),
+    });
+    assert.equal(projected.result.status, "needs_reask");
+  },
+);

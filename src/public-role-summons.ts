@@ -1040,9 +1040,9 @@ export async function summonParallelReviewerLenses(options: {
   return results;
 }
 
-/** Gate officer summons: notary/auditor via --source-run; inspector via pointer instruction. */
+/** Gate officer summons: notary/auditor via --source-run; inspector via pointer; countersign via ticket (#969). */
 export async function summonGateOfficer(options: {
-  readonly officer: "inspector" | "notary" | "auditor";
+  readonly officer: "inspector" | "notary" | "auditor" | "countersign";
   readonly sourceRunDirectory: string;
   readonly cwd: string;
   readonly home?: string;
@@ -1052,14 +1052,14 @@ export async function summonGateOfficer(options: {
   readonly signal?: AbortSignal;
   /**
    * Plain-language re-ask when the prior officer reply was not three-state (#753 / #756).
-   * All three officers: reviewReask → same-ticket resume summons.instruction.
+   * Officers: reviewReask → same-ticket resume summons.instruction.
    * Never concatenated into argv (inspector parentRunPath is the pure 卷宗指针).
    */
   readonly reask?: string;
   /**
    * In-flight parent 交卷 body (tool-call arguments). Relayed verbatim as officer
    * dialogue content when reask is absent (#879). Binding pointer stays on
-   * --source-run / 卷宗指针 argv — never a content substitute.
+   * --source-run / 卷宗指针 / ticket argv — never a content substitute.
    */
   readonly submission?: unknown;
   /** Pi-adapter inject — forwarded to summonPublicRole (not a parent-host override). */
@@ -1083,6 +1083,15 @@ export async function summonGateOfficer(options: {
     const { readableGateItem } = await import("./readable-gate-item.ts");
     gateReviewInstruction = readableGateItem(options.submission);
   }
+  // Parent correlation for nested countersign ledger (ADR 0010 / #924 / #969).
+  const correlationId = await (async () => {
+    const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
+    try {
+      return runIdFromRunDirectory(options.sourceRunDirectory);
+    } catch {
+      return undefined;
+    }
+  })();
   const common = {
     cwd: options.cwd,
     ...(home === undefined ? {} : { home }),
@@ -1096,6 +1105,7 @@ export async function summonGateOfficer(options: {
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
     ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+    ...(correlationId === undefined ? {} : { correlationId }),
   } as const;
   if (options.officer === "notary") {
     // #753/#879: reask or verbatim body rides summons.instruction / first-mint prompt.
@@ -1119,6 +1129,27 @@ export async function summonGateOfficer(options: {
         `卷宗指针：${options.sourceRunDirectory}`,
       ],
       ...common,
+    });
+  }
+  if (options.officer === "countersign") {
+    // #969: Secretariat submission gate → 给事中. Ticket bind from submission when present;
+    // argv carries a ticket-bearing instruction for 起居郎; body/reask ride env.
+    const ticketNumber = (() => {
+      if (options.submission === null || typeof options.submission !== "object" || Array.isArray(options.submission)) {
+        return undefined;
+      }
+      const value = (options.submission as { ticketNumber?: unknown }).ticketNumber;
+      return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
+    })();
+    const instruction =
+      ticketNumber === undefined
+        ? "裁：候选票稿送庭。"
+        : `裁：#${ticketNumber} 候选票稿送庭。`;
+    return summonPublicRole({
+      role: "countersign",
+      argv: ["--project", options.cwd, "--", instruction],
+      ...common,
+      ...(ticketNumber === undefined ? {} : { boundTicketNumber: ticketNumber }),
     });
   }
   // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath lookup key).

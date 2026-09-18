@@ -1000,17 +1000,73 @@ const COUNTERSIGN_STATUS_REASK =
   "countersignStatus 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
 
 /**
+ * #969 authorized non-pi hosts: Secretariat converged is a candidate ticket —
+ * AK-side submission gate summons 给事中. pi keeps mid-turn summon tool only.
+ */
+const SECRETARIAT_SUBMISSION_GATE_HOSTS = new Set(["codex", "claude", "grok-build"]);
+
+/** Secretariat status words the non-pi submission gate reads (#969). */
+const SECRETARIAT_QUEUE_STATUSES = new Set(["converged", "escalate"]);
+
+/**
+ * Plain-language re-ask when non-pi secretariatStatus is not a known queue word.
+ * Back to secretariat itself — 给事中 is not summoned (#969 / ADR 0055).
+ */
+const SECRETARIAT_STATUS_REASK =
+  "secretariatStatus 不是 converged、escalate 之一。请重新交卷，status 写明其一。" as const;
+
+/**
  * #924 Secretariat on the shared filed-officer envelope + non-terminating
  * summon-countersign tool (auditor dossier extension pattern).
  * Nested countersign lifecycle stays on summonPublicRole (ADR 0018).
- * #924 / 第 0 条: output tool records the receipt as submitted — no status
+ * #924 / 第 0 条 (pi): output tool records the receipt as submitted — no status
  * shape/value reject or reask; legality is content-layer / downstream.
+ * #969 (codex/claude/grok-build): converged arms 既有交卷闸 → 给事中; escalate
+ * skips the gate; other values reask secretariat (ADR 0055).
  */
 export function createSecretariatRoleRuntime(
   roleHost: RoleHost,
   dependencies: SecretariatRuntimeDependencies,
+  hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
 ) {
   let parentInstruction = "";
+  // #969: non-pi submission gate only — pi mid-turn summon path stays untouched.
+  const beforeAccept: FiledOfficerBeforeAccept | undefined =
+    hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
+      ? async ({ toolCallId, parameters, signal, ctx }) => {
+          const host =
+            typeof ctx.host === "string" && ctx.host.trim() !== ""
+              ? ctx.host.trim()
+              : undefined;
+          if (host === undefined || !SECRETARIAT_SUBMISSION_GATE_HOSTS.has(host)) {
+            return undefined;
+          }
+          const record =
+            parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
+              ? (parameters as Record<string, unknown>)
+              : undefined;
+          const status =
+            record !== undefined && typeof record.secretariatStatus === "string"
+              ? record.secretariatStatus
+              : undefined;
+          if (status === undefined || !SECRETARIAT_QUEUE_STATUSES.has(status)) {
+            throw new ParentQueueReaskError(SECRETARIAT_STATUS_REASK);
+          }
+          if (status === "escalate") {
+            // Parent escalate → throw to caller as-is; 给事中 does not attend (#969).
+            return undefined;
+          }
+          await roleHost.requireGatekeeperPass!({
+            context: ctx,
+            subject: { kind: "secretariat_verdict" },
+            ...(signal === undefined ? {} : { signal }),
+            hostActions,
+            toolCallId,
+            // #879: this-turn typed payload — identity-bound at submit site.
+            submission: parameters,
+          });
+        }
+      : undefined;
   const base = createFiledOfficerRuntime(
     roleHost,
     {
@@ -1018,6 +1074,7 @@ export function createSecretariatRoleRuntime(
       tool: SECRETARIAT_OUTPUT_TOOL_SPEC,
       acceptedText: SECRETARIAT_ACCEPTED_TEXT,
       soulTag: "secretariat",
+      ...(beforeAccept === undefined ? {} : { beforeAccept }),
     },
     dependencies,
   );
@@ -1858,7 +1915,7 @@ export function createRoleRuntimeExtension(
       ...(dependencies.packageRoot === undefined
         ? {}
         : { packageRoot: dependencies.packageRoot }),
-    });
+    }, hostActions);
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
       async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },

@@ -337,7 +337,12 @@ type HostEventHandler<K extends keyof HostEventMap> = (event: HostEventMap[K], c
 export type HostEventRegistration = { [K in keyof HostEventMap]: [event: K, handler: HostEventHandler<K>] }[keyof HostEventMap];
 
 type HostGatekeeperSubject = {
-  readonly kind: "worker_completion" | "judge_draft" | "judge_compliance" | "countersign_verdict";
+  readonly kind:
+    | "worker_completion"
+    | "judge_draft"
+    | "judge_compliance"
+    | "countersign_verdict"
+    | "secretariat_verdict";
 };
 /** Gatekeeper non-pass faces returned to parent (#836 includes transport_failure; never kill leg). */
 type HostGatekeeperNonPass = { readonly status: "bounce" | "escalate" | "no_receipt" | "transport_failure" } & Record<string, unknown>;

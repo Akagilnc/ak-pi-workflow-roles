@@ -9,7 +9,7 @@
  *   bounce | escalate → raw officer receipt as tool result back to parent
  *   not three-state → resume officer with plain-language re-ask (no round cap)
  *   transport / no_receipt → present honestly
- * Three pairs: countersign↔notary, judge↔auditor, worker↔inspector.
+ * Four pairs: countersign↔notary, judge↔auditor, worker↔inspector, secretariat↔countersign (#969).
  * Code does not judge content, map next-step for parent, or label unreadable/unusable.
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -37,6 +37,8 @@ export function createDefaultGateOfficerSummon(options: {
   readonly home?: string;
   readonly packageRoot?: string;
   readonly roleTurnHost?: RoleTurnHost;
+  /** Composition-root adapters for nested court stations (tests / #969). */
+  readonly hostAdapters?: readonly import("./public-cli/role-turn-host-resolution.ts").NamedRoleTurnHostAdapter[];
   readonly createRunId?: () => string;
 }): GateOfficerSummon {
   return async (officer, sourceRunDirectory, signal, reask, submission) => {
@@ -51,6 +53,7 @@ export function createDefaultGateOfficerSummon(options: {
       ...(options.home === undefined ? {} : { home: options.home }),
       ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
       ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+      ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
       ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
     });
   };
