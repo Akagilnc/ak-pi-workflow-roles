@@ -553,7 +553,6 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
         const firstBody = JSON.parse(first.stdout.join("")) as {
           ghostLegs: readonly {
             runId: string;
-            role: string;
             runState: string;
             leaseCheck: { kind: string; pid?: number; reason?: string };
           }[];
@@ -562,13 +561,11 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
         assert.equal(byId.has(liveRun), false, "live holder must not be listed");
         assert.deepEqual(byId.get(deadRun), {
           runId: deadRun,
-          role: "judge",
           runState: "running",
           leaseCheck: { kind: "holder-dead", pid: 999999999 },
         });
         assert.deepEqual(byId.get(noLeaseRun), {
           runId: noLeaseRun,
-          role: "countersign",
           runState: "admitted",
           leaseCheck: { kind: "no-lease" },
         });

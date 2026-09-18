@@ -99,7 +99,6 @@ export type AnalystGhostLeaseCheck =
 
 export type AnalystGhostLeg = {
   readonly runId: string;
-  readonly role: string;
   readonly runState: "admitted" | "running";
   readonly leaseCheck: AnalystGhostLeaseCheck;
 };
@@ -128,7 +127,6 @@ function ghostLeaseCheckFromAutopsy(
  */
 async function classifyGhostCandidate(input: {
   readonly runId: string;
-  readonly role: string;
   readonly runState: "admitted" | "running";
   readonly runDirectory: string;
 }): Promise<
@@ -142,7 +140,6 @@ async function classifyGhostCandidate(input: {
     kind: "ghost",
     leg: {
       runId: input.runId,
-      role: input.role,
       runState: input.runState,
       leaseCheck,
     },
@@ -512,7 +509,6 @@ async function classifyScopedRun(input: {
         // #855: only a live writer-lease holder counts as in-flight.
         const ghost = await classifyGhostCandidate({
           runId: input.runId,
-          role: input.role,
           runState: lifecycle,
           runDirectory: input.runDirectory,
         });

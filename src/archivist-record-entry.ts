@@ -1,7 +1,7 @@
 /**
  * 司天台唯一 Pi session 记录落盘入口（ADR 0065）。
  * 调用方只声明自己是谁的什么；落点由候簿拓扑算出，签名不含任何落点/路径参数。
- * 「谁调了谁」复用 Pi parentSession + ADR 0047 correlation，不新增 caller 字段。
+ * 「谁调了谁」复用 Pi parentSession，不新增 caller 字段（#855 两面对账 correlation 键已删）。
  */
 import {
   closeSync,

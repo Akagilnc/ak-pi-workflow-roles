@@ -470,9 +470,6 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
       ) {
         env.AK_ROLE_AUDITOR_SUBJECT = process.env.AK_ROLE_AUDITOR_SUBJECT;
       }
-      if (request.correlationId !== undefined && request.correlationId.trim() !== "") {
-        env.AK_CORRELATION_ID = request.correlationId;
-      }
       if (
         config.recordLaunchedRolePackageIdentity !== undefined &&
         config.observeLaunchedRolePackageIdentity !== undefined

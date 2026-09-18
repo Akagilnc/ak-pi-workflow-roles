@@ -1078,8 +1078,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     assert.match(prompt, /attachments\/00-note\.txt/);
     assert.equal(prompt.includes(attachment), false);
 
-    // ADR 0049 host correlation channel: optional env id reaches the child when present.
-    assert.equal(capturedEnv?.AK_CORRELATION_ID, "corr-106-unit");
     assert.equal(
       typeof capturedEnv?.AK_ROLE_RUN_DIR === "string" &&
         capturedEnv.AK_ROLE_RUN_DIR.includes("run-cli-judge-001@judge"),

@@ -332,7 +332,6 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args, options) => {
-          assert.equal(options.env.AK_CORRELATION_ID, "corr-doctor-113");
           const casePath = args[args.indexOf("--ak-doctor-case") + 1]!;
           const patient = await loadDoctorCase(casePath);
           candidateCost = patient.cost;
