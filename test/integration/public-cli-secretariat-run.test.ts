@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -453,6 +454,20 @@ function secretariatHostDrivingRealTools(input: {
           getEntries: () => [],
           getLeafEntry: () => undefined,
           getLeafId: () => null,
+          // #969: envelope-equivalent durable custom entry (headless/ACP path).
+          appendCustomEntry(customType: string, data?: unknown) {
+            const coords = piDurablePrincipalAuthority.decode(request.principal);
+            mkdirSync(coords.sessionDirectory, { recursive: true });
+            appendFileSync(
+              coords.sessionFile,
+              `${JSON.stringify({
+                type: "custom",
+                customType,
+                data,
+              })}\n`,
+              "utf8",
+            );
+          },
         },
         abort() {},
       } as HostContext;
@@ -498,7 +513,8 @@ function secretariatHostDrivingRealTools(input: {
         const coords = piDurablePrincipalAuthority.decode(request.principal);
         await mkdir(coords.sessionDirectory, { recursive: true });
         const sealedDetails = result.details ?? step.details;
-        await writeFile(
+        // Append — must not wipe #969 gate-escalate custom entries already booked.
+        appendFileSync(
           coords.sessionFile,
           `${JSON.stringify({
             type: "message",

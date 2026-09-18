@@ -94,6 +94,7 @@ import {
   DIARIST_OUTPUT_TOOL_NAME,
 } from "../diarist-contracts.ts";
 import {
+  SECRETARIAT_GATE_ESCALATE_ENTRY_TYPE,
   SECRETARIAT_OUTPUT_TOOL_NAME,
 } from "../secretariat-contracts.ts";
 import {
@@ -3335,23 +3336,27 @@ export async function trySettleDiaristTerminalResult(
 
 /**
  * #969 seat projection: when 给事中上呈 ends the parent, public payloads are the
- * officer receipt on the tool-result face — ledger accepted stays LLM params (#836).
+ * officer receipt booked as a durable custom entry (envelope-safe) — ledger
+ * accepted stays LLM params (#836). Never scan toolResult rows: those are
+ * memory-only on headless/ACP (#617/#959).
  */
 function countersignEscalateReceiptFromEntries(
-  entries: readonly { message?: { role?: string; toolName?: string; details?: unknown } }[],
+  entries: readonly {
+    type?: string;
+    customType?: string;
+    data?: unknown;
+  }[],
 ): unknown | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const message = entries[index]?.message;
-    if (message?.role !== "toolResult") continue;
-    if (message.toolName !== SECRETARIAT_OUTPUT_TOOL_NAME) continue;
-    const details = message.details;
-    if (!isAuditEscalationResult(details)) continue;
-    const audit =
-      typeof details.audit === "object" && details.audit !== null && !Array.isArray(details.audit)
-        ? (details.audit as Record<string, unknown>)
+    const entry = entries[index];
+    if (entry?.type !== "custom") continue;
+    if (entry.customType !== SECRETARIAT_GATE_ESCALATE_ENTRY_TYPE) continue;
+    const data =
+      entry.data !== null && typeof entry.data === "object" && !Array.isArray(entry.data)
+        ? (entry.data as Record<string, unknown>)
         : undefined;
-    if (audit?.officer !== "countersign") continue;
-    if (details.receipt !== undefined) return details.receipt;
+    if (data?.officer !== "countersign") continue;
+    if (data.receipt !== undefined) return data.receipt;
   }
   return undefined;
 }

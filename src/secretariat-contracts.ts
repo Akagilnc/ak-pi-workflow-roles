@@ -11,6 +11,12 @@ export const SECRETARIAT_OUTPUT_TOOL_NAME = "ak_secretariat_output";
 export const SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME =
   "ak_secretariat_summon_countersign";
 export const SECRETARIAT_ACCEPTED_TEXT = "中书省回执已接受";
+/**
+ * #969 durable custom entry: 给事中上呈 receipt for seat settlement projection.
+ * Envelope persists custom entries (not toolResult rows) — headless/ACP safe.
+ */
+export const SECRETARIAT_GATE_ESCALATE_ENTRY_TYPE =
+  "ak-secretariat-gate-escalate" as const;
 
 export type SecretariatVerdict =
   | {

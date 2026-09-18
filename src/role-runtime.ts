@@ -1086,6 +1086,15 @@ export function createSecretariatRoleRuntime(
                 receipt !== null && typeof receipt === "object" && !Array.isArray(receipt)
                   ? (receipt as Record<string, unknown>)
                   : undefined;
+              // Durable on every host: envelope persists custom entries only
+              // (toolResult rows are memory-only on headless/ACP — #617/#959).
+              const { SECRETARIAT_GATE_ESCALATE_ENTRY_TYPE } = await import(
+                "./secretariat-contracts.ts",
+              );
+              ctx.sessionManager.appendCustomEntry?.(SECRETARIAT_GATE_ESCALATE_ENTRY_TYPE, {
+                officer: "countersign",
+                receipt,
+              });
               const { buildAuditEscalationResult } = await import("./audit-escalation.ts");
               return buildAuditEscalationResult(
                 {
