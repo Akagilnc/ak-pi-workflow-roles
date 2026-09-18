@@ -138,6 +138,7 @@ import type {
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
 import {
   listSeamOwnedUniqueErrorFacePaths,
+  RUN_TERMINAL_ARTIFACT_FILES,
   RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS,
 } from "../run-terminal-artifacts.ts";
 import {
@@ -312,6 +313,7 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
 /**
  * Host ended with no recorded submission — lawful no_receipt (exit 0).
  * Does not invent an output failure for an empty ledger.
+ * #953: empty public terminal face — clear every reader-adoptable prior face.
  */
 export async function settleHostEndedNoReceipt(
   admitted: AdmittedRoleInvocation,
@@ -326,6 +328,7 @@ export async function settleHostEndedNoReceipt(
     attemptPointer: `current:${admitted.runDirectory}`,
   });
   const coordinates = coordinatesFromAdmitted(authority, admitted);
+  await clearOppositeTerminalArtifactFace(admitted.runDirectory, "empty");
   return withOptionalGateProjection(
     {
       roleOutcome: {
@@ -2336,7 +2339,10 @@ async function removeFaceIfPresent(path: string): Promise<void> {
 
 /**
  * #953: artifact face reflects the current terminal only.
- * Success drops every seam-owned prior error face; failure drops prior report.
+ * Success drops every seam-owned prior error face; failure drops prior report;
+ * no_receipt (empty) drops every face the terminal reader would adopt for this run
+ * (conventional report/error/audit-incomplete, fixed fallbacks, seam-owned unique).
+ * Does not publish a no_receipt-shaped public artifact; non-terminal materials stay.
  * Face names may be directory collision plants — remove recursively.
  * Unique ownership is the reader true source (listSeamOwnedUniqueErrorFacePaths):
  * parent runs/ faces clear only when body.runId binds; unparseable runId → none.
@@ -2344,15 +2350,23 @@ async function removeFaceIfPresent(path: string): Promise<void> {
  */
 export async function clearOppositeTerminalArtifactFace(
   runDirectory: string,
-  current: "report" | "error",
+  current: "report" | "error" | "empty",
 ): Promise<void> {
   const artifactsDir = roleRunArtifactsDirectory(runDirectory);
   if (current === "error") {
     await removeFaceIfPresent(join(artifactsDir, "report.json"));
     return;
   }
-  // Success: clear conventional error + fixed fallbacks + unique faces this seam owns.
-  await removeFaceIfPresent(join(artifactsDir, "error.json"));
+  if (current === "empty") {
+    // no_receipt empty face: every conventional terminal file the reader scans first.
+    for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
+      await removeFaceIfPresent(join(artifactsDir, file));
+    }
+  } else {
+    // Success: clear conventional error face only among the conventional trio.
+    await removeFaceIfPresent(join(artifactsDir, "error.json"));
+  }
+  // report + empty: fixed failure fallbacks + unique faces this seam owns.
   for (const relative of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
     await removeFaceIfPresent(join(runDirectory, relative));
   }
@@ -4233,6 +4247,8 @@ export async function settleFailureTerminalResult(
               }
             }
             // #478: no_receipt is still a public Terminal — project accepted gate facts.
+            // #953: empty public terminal face — clear every reader-adoptable prior face.
+            await clearOppositeTerminalArtifactFace(admitted.runDirectory, "empty");
             return withOptionalGateProjection(
               {
                 roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },

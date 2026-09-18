@@ -15,7 +15,14 @@ import {
   clearOppositeTerminalArtifactFace,
   publishFailureArtifacts,
   publishJudgeArtifacts,
+  settleFailureTerminalResult,
+  settleHostEndedNoReceipt,
 } from "../../src/public-cli/settlement.ts";
+import {
+  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+  RECEIPT_DELIVERY_TURN_LIMIT,
+} from "../../src/receipt-delivery-policy.ts";
+import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { withTempHome } from "../helpers/failure-settlement-kit.ts";
 
@@ -272,5 +279,191 @@ test("#953 unparseable run dir does not wipe parent unique faces (reader ownersh
     // runIdFromRunDirectory undefined → presentUniqueFallbackBoundToRun false → parent untouched.
     await access(siblingPath);
     await access(claimedPath);
+  });
+});
+
+test("#953 no_receipt empty face drops every reader-adoptable prior terminal face", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      "proj",
+      "unbound",
+      "runs",
+      "01a0-953-noreceipt@judge",
+    );
+    const sessionDirectory = join(runDirectory, "session");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
+    const admitted = fixtureJudgeAdmitted({
+      runId: "01a0-953-noreceipt",
+      runDirectory,
+      projectRoot: join(home, "proj"),
+      bookKey: "proj",
+    });
+    const authority = piDurablePrincipalAuthority;
+    const artifactsDir = join(runDirectory, "artifacts");
+    const runsParent = join(runDirectory, "..");
+    await mkdir(artifactsDir, { recursive: true });
+
+    const ownArtifactUnique = join(
+      artifactsDir,
+      "error.aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.json",
+    );
+    const ownRunUnique = join(
+      runDirectory,
+      "error.bbbbbbbb-cccc-4ddd-8eee-ffffffffffff.json",
+    );
+    const ownParentUnique = join(
+      runsParent,
+      "error.cccccccc-dddd-4eee-8fff-000000000000.json",
+    );
+    const siblingParentUnique = join(
+      runsParent,
+      "error.dddddddd-eeee-4fff-8000-111111111111.json",
+    );
+    const unboundParentUnique = join(
+      runsParent,
+      "error.eeeeeeee-ffff-4000-8000-222222222222.json",
+    );
+    const evidencePath = join(artifactsDir, "evidence.json");
+
+    // Prior faces the terminal reader would adopt, plus non-terminal evidence.
+    await writeFile(
+      join(artifactsDir, "report.json"),
+      `${JSON.stringify({ kind: "report", role: "judge", runId: "01a0-953-noreceipt", outcome: { kind: "accepted" } })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(artifactsDir, "error.json"),
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-noreceipt", diagnostic: "old boom" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(artifactsDir, "audit-incomplete.json"),
+      `${JSON.stringify({ kind: "audit-incomplete", role: "judge", runId: "01a0-953-noreceipt" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(artifactsDir, "error.settlement.json"),
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-noreceipt", diagnostic: "settlement boom" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(runDirectory, "error.settlement.json"),
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-noreceipt", diagnostic: "run-dir boom" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      ownArtifactUnique,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-noreceipt", diagnostic: "own artifact unique" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      ownRunUnique,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-noreceipt", diagnostic: "own run unique" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      ownParentUnique,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-noreceipt", diagnostic: "own parent unique" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      siblingParentUnique,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "someone-else", diagnostic: "sibling parent unique" })}\n`,
+      "utf8",
+    );
+    // Unparseable body cannot prove runId binding — must remain.
+    await writeFile(unboundParentUnique, "{not-json", "utf8");
+    await writeFile(
+      evidencePath,
+      `${JSON.stringify({ runId: "01a0-953-noreceipt", note: "non-terminal" })}\n`,
+      "utf8",
+    );
+
+    const hostEnded = await settleHostEndedNoReceipt(admitted, authority);
+    assert.equal(hostEnded.roleOutcome.kind, "no_receipt");
+    assert.deepEqual(hostEnded.artifacts, []);
+
+    const afterHost = await readRunTerminalArtifact(runDirectory);
+    assert.equal(afterHost.status, "absent");
+
+    await assert.rejects(
+      () => access(join(artifactsDir, "report.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(join(artifactsDir, "error.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(join(artifactsDir, "audit-incomplete.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(join(artifactsDir, "error.settlement.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(join(runDirectory, "error.settlement.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(ownArtifactUnique),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(ownRunUnique),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(ownParentUnique),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    // Sibling + unbound parent unique stay; evidence non-terminal stays.
+    await access(siblingParentUnique);
+    await access(unboundParentUnique);
+    await access(evidencePath);
+
+    // Replant prior success face; lifecycle no_receipt path must also empty the face.
+    await writeFile(
+      join(artifactsDir, "report.json"),
+      `${JSON.stringify({ kind: "report", role: "judge", runId: "01a0-953-noreceipt", outcome: { kind: "accepted" } })}\n`,
+      "utf8",
+    );
+    const lifecycleFacts = {
+      terminalToolCalled: false,
+      rejectedReceipts: [] as const,
+      deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
+      sessionCompletion: "settled-without-accepted-receipt",
+      acceptedReceipt: false,
+      runPointer: runDirectory,
+      attemptPointer: `current:${runDirectory}`,
+    };
+    await writeFile(
+      join(sessionDirectory, "session.jsonl"),
+      `${JSON.stringify({
+        type: "message",
+        message: { role: "user", content: "resume" },
+      })}\n${JSON.stringify({
+        type: "custom",
+        customType: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+        data: lifecycleFacts,
+      })}\n`,
+      "utf8",
+    );
+
+    const viaFailurePath = await settleFailureTerminalResult(
+      admitted,
+      { diagnostic: "output empty", cause: "output" },
+      authority,
+    );
+    assert.equal(viaFailurePath.roleOutcome.kind, "no_receipt");
+    assert.deepEqual(viaFailurePath.artifacts, []);
+    const afterLifecycle = await readRunTerminalArtifact(runDirectory);
+    assert.equal(afterLifecycle.status, "absent");
+    await access(evidencePath);
   });
 });
