@@ -88,10 +88,13 @@ test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name an
         );
 
         child.kill(signalName);
+        let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
         const exit = await Promise.race([
-          closed,
-          new Promise<never>((_, reject) =>
-            setTimeout(
+          closed.finally(() => {
+            if (timeoutHandle !== undefined) clearTimeout(timeoutHandle);
+          }),
+          new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(
               () =>
                 reject(
                   new Error(
@@ -100,8 +103,8 @@ test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name an
                   ),
                 ),
               20_000,
-            ),
-          ),
+            );
+          }),
         ]);
 
         // Public process must not present as normal success.
@@ -140,9 +143,14 @@ test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name an
           } catch {
             /* already gone */
           }
+          let graceTimer: ReturnType<typeof setTimeout> | undefined;
           await Promise.race([
-            closed.catch(() => undefined),
-            new Promise((r) => setTimeout(r, 2_000)),
+            closed.catch(() => undefined).finally(() => {
+              if (graceTimer !== undefined) clearTimeout(graceTimer);
+            }),
+            new Promise<void>((r) => {
+              graceTimer = setTimeout(r, 2_000);
+            }),
           ]);
         }
         if (hostChildPid !== undefined) {
