@@ -404,8 +404,18 @@ async function classifyScopedRun(input: {
   readonly role: string;
   readonly runDirectory: string;
 }): Promise<
-  | { readonly kind: "readable"; readonly facts: AnalystReadableRunFacts }
-  | { readonly kind: "unreadable"; readonly entry: AnalystUnreadableRun }
+  | {
+      readonly kind: "readable";
+      readonly facts: AnalystReadableRunFacts;
+      /** #855: present terminal still lists ghost when lease cannot prove live. */
+      readonly ghostLeg?: AnalystGhostLeg;
+    }
+  | {
+      readonly kind: "unreadable";
+      readonly entry: AnalystUnreadableRun;
+      /** #855: unreadable terminal still lists ghost when lease cannot prove live. */
+      readonly ghostLeg?: AnalystGhostLeg;
+    }
   | { readonly kind: "live" }
   | { readonly kind: "ghost"; readonly leg: AnalystGhostLeg }
 > {
@@ -496,23 +506,30 @@ async function classifyScopedRun(input: {
 
   // 3) typed terminal artifact — absence is no-receipt only for terminal runs.
   // Live admitted/running/resumable runs (existing run-state) are not dead legs.
+  // #855: writer-lease ghost check is independent of terminal artifact status.
+  // present → still emit metrics; unreadable → still enter missingSources;
+  // admitted|running + non-live lease → still list in ghostLegs (ticket #4).
+  const lifecycle = await readExistingRunLifecycleState(input.runDirectory);
+  let ghostLeg: AnalystGhostLeg | undefined;
+  if (lifecycle === "admitted" || lifecycle === "running") {
+    const ghost = await classifyGhostCandidate({
+      runId: input.runId,
+      runState: lifecycle,
+      runDirectory: input.runDirectory,
+    });
+    if (ghost.kind === "ghost") ghostLeg = ghost.leg;
+  }
+
   try {
     const artifact = await readRunTerminalArtifact(input.runDirectory);
     if (artifact.status === "unreadable") {
       missingSources.push("terminal-artifact");
       reasons.push(`${artifact.file}: ${artifact.reason}`);
     } else if (artifact.status === "absent") {
-      const lifecycle = await readExistingRunLifecycleState(input.runDirectory);
-      if (
-        lifecycle === "admitted" || lifecycle === "running"
-      ) {
-        // #855: only a live writer-lease holder counts as in-flight.
-        const ghost = await classifyGhostCandidate({
-          runId: input.runId,
-          runState: lifecycle,
-          runDirectory: input.runDirectory,
-        });
-        return ghost;
+      if (lifecycle === "admitted" || lifecycle === "running") {
+        // No terminal yet: ghost report only, or live in-flight omit.
+        if (ghostLeg !== undefined) return { kind: "ghost", leg: ghostLeg };
+        return { kind: "live" };
       }
       if (lifecycle !== undefined && LIVE_RUN_STATES.has(lifecycle)) {
         return { kind: "live" };
@@ -552,6 +569,7 @@ async function classifyScopedRun(input: {
         firstFrameAt,
         lastFrameAt,
       },
+      ...(ghostLeg !== undefined ? { ghostLeg } : {}),
     };
   }
 
@@ -583,6 +601,7 @@ async function classifyScopedRun(input: {
         firstFrameAt: { status: "present", at: frameSpan.startedAt },
         lastFrameAt: { status: "present", at: frameSpan.endedAt },
       },
+      ...(ghostLeg !== undefined ? { ghostLeg } : {}),
     };
   }
 
@@ -598,6 +617,7 @@ async function classifyScopedRun(input: {
       models,
       gateCycles,
     },
+    ...(ghostLeg !== undefined ? { ghostLeg } : {}),
   };
 }
 
@@ -712,11 +732,19 @@ export async function scanAnalystIssueRuns(input: {
         role: parsed.role,
         runDirectory,
       });
-      if (classified.kind === "readable") runs.push(classified.facts);
-      else if (classified.kind === "unreadable") unreadable.push(classified.entry);
-      else if (classified.kind === "ghost") ghostLegs.push(classified.leg);
+      if (classified.kind === "readable") {
+        runs.push(classified.facts);
+        if (classified.ghostLeg !== undefined) ghostLegs.push(classified.ghostLeg);
+      } else if (classified.kind === "unreadable") {
+        unreadable.push(classified.entry);
+        if (classified.ghostLeg !== undefined) ghostLegs.push(classified.ghostLeg);
+      } else if (classified.kind === "ghost") {
+        ghostLegs.push(classified.leg);
+      }
       // live in-flight runs are omitted from legs and unreadable (not failure/death).
       // #855 ghost legs are reported separately — not counted as in-flight.
+      // Lease check is independent of terminal artifact: present/unreadable may
+      // still carry a ghostLeg alongside metrics or missingSources.
     }
   }
 

@@ -478,12 +478,17 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
       const liveRun = "01a0ghost0-live-7000-8000-0000000000a2";
       const noLeaseRun = "01a0ghost0-nole-7000-8000-0000000000a3";
       const badLockRun = "01a0ghost0-badl-7000-8000-0000000000a4";
+      // Crash window after settle wrote terminal but before markRunTerminal.
+      const presentTerminalRun = "01a0ghost0-pres-7000-8000-0000000000a5";
+      const unreadableTerminalRun = "01a0ghost0-unrd-7000-8000-0000000000a6";
 
       async function seedGhost(input: {
         readonly runId: string;
         readonly role: string;
         readonly state: "admitted" | "running";
         readonly lock?: string | null;
+        /** Independent of lease: present metrics path / unreadable missingSources. */
+        readonly terminal?: "present" | "unreadable";
       }): Promise<string> {
         const runDir = join(
           home,
@@ -522,6 +527,33 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
         if (input.lock !== undefined && input.lock !== null) {
           await writeFile(join(runDir, "writer.lock"), input.lock, "utf8");
         }
+        if (input.terminal !== undefined) {
+          await mkdir(join(runDir, "artifacts"), { recursive: true });
+          // Session face so present-terminal can still emit readable metrics.
+          await writeFile(join(runDir, "session", "session.jsonl"), SESSION_JSONL);
+          if (input.terminal === "present") {
+            await writeFile(
+              join(runDir, "artifacts", "report.json"),
+              `${JSON.stringify({
+                role: input.role,
+                runId: input.runId,
+                phase: "apply",
+                outcome: {
+                  kind: "accepted",
+                  role: input.role,
+                  status: "completed",
+                  decisiveFacts: {},
+                },
+              }, null, 2)}\n`,
+            );
+          } else {
+            await writeFile(
+              join(runDir, "artifacts", "report.json"),
+              "not-json{",
+              "utf8",
+            );
+          }
+        }
         return runDir;
       }
 
@@ -548,6 +580,20 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
         role: "judge",
         state: "admitted",
         lock: "not-a-pid",
+      });
+      await seedGhost({
+        runId: presentTerminalRun,
+        role: "judge",
+        state: "running",
+        lock: "999999998",
+        terminal: "present",
+      });
+      await seedGhost({
+        runId: unreadableTerminalRun,
+        role: "fixer",
+        state: "admitted",
+        lock: "999999997",
+        terminal: "unreadable",
       });
 
       await withProcessCwd(repo, async () => {
@@ -581,6 +627,17 @@ test("analyst public CLI --ticket lists ghostLegs from run-state + writer lease"
           runId: badLockRun,
           runState: "admitted",
           leaseCheck: { kind: "unverifiable", reason: "unparseable" },
+        });
+        // Lease check independent of terminal artifact status (settle→markRunTerminal window).
+        assert.deepEqual(byId.get(presentTerminalRun), {
+          runId: presentTerminalRun,
+          runState: "running",
+          leaseCheck: { kind: "holder-dead", pid: 999999998 },
+        });
+        assert.deepEqual(byId.get(unreadableTerminalRun), {
+          runId: unreadableTerminalRun,
+          runState: "admitted",
+          leaseCheck: { kind: "holder-dead", pid: 999999997 },
         });
 
         // Cache-hit path must still refresh ghostLegs (page exists after first call).
