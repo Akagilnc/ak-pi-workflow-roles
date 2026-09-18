@@ -700,16 +700,11 @@ export function createSubmissionLedgerHost(
           }
           // #836: ledger authority is the LLM tool-call params as-is (角色原话), never result.details.
           // Machine facts on result.details stay on the tool-result face returned to the model.
-          // #969 exception: live audit-escalation projection may carry officer receipt
-          // (给事中上呈原话) as the public accepted face when parent ends without rewrite.
           if (isAuditEscalationProjection(result.details) || isAuditEscalationProjection(params)) {
-            const live = isAuditEscalationProjection(result.details) ? result.details : undefined;
-            const accepted =
-              live !== undefined && live.receipt !== undefined ? live.receipt : params;
             const closed: ClosedSubmission = {
               role,
               kind: "audit_escalation",
-              accepted,
+              accepted: params,
             };
             append({
               type: "outcome",
@@ -717,7 +712,7 @@ export function createSubmissionLedgerHost(
               toolCallId,
               outcome: "audit-escalation",
               role,
-              accepted,
+              accepted: params,
             });
             await projectClosure(closed, context);
             return result;

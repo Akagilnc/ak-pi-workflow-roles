@@ -3333,15 +3333,51 @@ export async function trySettleDiaristTerminalResult(
   return settleLawfulDiaristTerminalResult(admitted, authority, scope);
 }
 
+/**
+ * #969 seat projection: when 给事中上呈 ends the parent, public payloads are the
+ * officer receipt on the tool-result face — ledger accepted stays LLM params (#836).
+ */
+function countersignEscalateReceiptFromEntries(
+  entries: readonly { message?: { role?: string; toolName?: string; details?: unknown } }[],
+): unknown | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const message = entries[index]?.message;
+    if (message?.role !== "toolResult") continue;
+    if (message.toolName !== SECRETARIAT_OUTPUT_TOOL_NAME) continue;
+    const details = message.details;
+    if (!isAuditEscalationResult(details)) continue;
+    const audit =
+      typeof details.audit === "object" && details.audit !== null && !Array.isArray(details.audit)
+        ? (details.audit as Record<string, unknown>)
+        : undefined;
+    if (audit?.officer !== "countersign") continue;
+    if (details.receipt !== undefined) return details.receipt;
+  }
+  return undefined;
+}
+
 async function settleLawfulSecretariatTerminalResult(
   admitted: AdmittedSecretariatInvocation,
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+  const settled = await settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "secretariat",
     toolName: SECRETARIAT_OUTPUT_TOOL_NAME,
   }, scope);
+  if (settled === undefined) return undefined;
+  if (settled.roleOutcome.kind !== "audit_escalation") return settled;
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
+  const receipt = countersignEscalateReceiptFromEntries(entries);
+  if (receipt === undefined) return settled;
+  return {
+    ...settled,
+    roleOutcome: {
+      ...settled.roleOutcome,
+      payloads: [receipt],
+    },
+  };
 }
 
 /** Try to settle a lawful Secretariat Terminal; undefined only for genuine absence. */
