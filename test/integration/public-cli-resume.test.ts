@@ -681,8 +681,15 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
     assert.ok(await hasRecordedSubmission(project, runId, home), "recorded accepted payload must survive publication failure");
 
-    // #833: manual resume is pass-through even after sealed + publication miss.
-    // Host is reached; no re-seal keeps the prior sealed projection readable.
+    // #953: failure face switch removes the report.json directory plant — opposite face must not linger.
+    const reportPath = join(runDirectory, "artifacts", "report.json");
+    await assert.rejects(
+      () => stat(reportPath),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+
+    // #833 / #672 US6: bare resume reaches host; with the plant already cleared by
+    // failure-face switch, settlement rebuilds public report from sealed facts.
     let resumeDispatches = 0;
     const passthroughHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
@@ -697,26 +704,6 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         };
       },
     });
-    const { io: resumeIo } = captureIo();
-    await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-      packageRoot,
-      home,
-      cwd: project,
-      credentials: { "openai-codex": true, xai: true },
-      io: resumeIo,
-      roleTurnHost: passthroughHost,
-    });
-    assert.equal(resumeDispatches, 1, "sealed bare resume must reach the host");
-    assert.ok(
-      await hasRecordedSubmission(project, runId, home),
-      "recorded accepted payload must remain readable after manual resume",
-    );
-
-    // #672 US6: clear the test-planted report.json directory fault, then manual
-    // resume still reaches the host and rebuilds the public report from sealed facts.
-    const reportPath = join(runDirectory, "artifacts", "report.json");
-    assert.equal((await stat(reportPath)).isDirectory(), true);
-    await rm(reportPath, { recursive: true, force: true });
     const { io: rebuildIo } = captureIo();
     const rebuilt = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
@@ -726,7 +713,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       io: rebuildIo,
       roleTurnHost: passthroughHost,
     });
-    assert.equal(resumeDispatches, 2, "cleared publication fault resume still reaches host");
+    assert.equal(resumeDispatches, 1, "sealed bare resume must reach the host");
     assert.equal(rebuilt.exitCode, 0);
     assert.ok(rebuilt.terminal);
     assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
@@ -740,7 +727,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     }
     // #836: seal no longer blocks redispatch; rebuilt accepted terminal is the proof.
     const reportStat = await stat(reportPath);
-    assert.equal(reportStat.isFile(), true, "cleared fault must rebuild report.json as a file");
+    assert.equal(reportStat.isFile(), true, "resume must rebuild report.json as a file");
     const reportBody = JSON.parse(await readFile(reportPath, "utf8")) as {
       role?: string;
       runId?: string;

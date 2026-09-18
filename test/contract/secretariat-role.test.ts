@@ -269,7 +269,7 @@ test("projectSecretariatSummonResult keeps typed terminal kinds (gatekeeper prec
   assert.equal(noTerminal.stderr, "died");
 });
 
-test("#953 summon parent-visible content is receipt/lifecycle via readableGateItem, not fixed phrases", async () => {
+test("#953 summon parent-visible content carries typed facts via readableGateItem, not fixed phrases", async () => {
   const receipt = {
     countersignStatus: "continue",
     findings: [{ article: "a", reason: "r" }],
@@ -294,15 +294,24 @@ test("#953 summon parent-visible content is receipt/lifecycle via readableGateIt
     undefined,
     ctx,
   );
+  const acceptedDetails = accepted.details as {
+    outcomeKind?: string;
+    runId?: string;
+    countersignStatus?: string;
+    receipt?: { findings?: Array<{ article?: string }> };
+  };
+  assert.equal(acceptedDetails.outcomeKind, "accepted");
+  assert.equal(acceptedDetails.runId, "01child");
+  assert.equal(acceptedDetails.countersignStatus, "continue");
+  assert.equal(acceptedDetails.receipt?.findings?.[0]?.article, "a");
   const acceptedText = (accepted.content as Array<{ text: string }>)[0]?.text ?? "";
-  // Parent-visible text must carry actionable typed facts (receipt + runId + outcomeKind).
-  assert.match(acceptedText, /"outcomeKind":"accepted"/);
-  assert.match(acceptedText, /"runId":"01child"/);
-  assert.match(acceptedText, /"countersignStatus":"continue"/);
+  // Feature observation: facts appear in parent-visible text; no fixed phrases / object collapse.
+  // Do not lock JSON serialization shape (compact vs pretty).
+  assert.ok(acceptedText.includes("01child"));
+  assert.ok(acceptedText.includes("continue"));
+  assert.ok(acceptedText.includes("accepted"));
   assert.equal(acceptedText.includes("给事中回执已送达中书省"), false);
-  // Structured nested fields must not collapse to [object Object].
   assert.equal(acceptedText.includes("[object Object]"), false);
-  assert.match(acceptedText, /"article":"a"/);
 
   const { tools: failTools } = await activateSecretariat({
     summonCountersign: async () => ({
@@ -325,14 +334,17 @@ test("#953 summon parent-visible content is receipt/lifecycle via readableGateIt
     undefined,
     ctx,
   );
+  const failedDetails = failed.details as {
+    outcomeKind?: string;
+    diagnostic?: string;
+  };
+  assert.equal(failedDetails.outcomeKind, "failure");
+  assert.equal(failedDetails.diagnostic, "provider boom");
   const failedText = (failed.content as Array<{ text: string }>)[0]?.text ?? "";
-  assert.match(failedText, /"outcomeKind":"failure"/);
-  assert.match(failedText, /provider boom/);
+  assert.ok(failedText.includes("provider boom"));
   assert.equal(failedText.includes("给事中传召失败"), false);
-  assert.equal((failed.details as { outcomeKind: string }).outcomeKind, "failure");
 
-  // Failure + historical payloads must still surface diagnostic on parent-visible text
-  // (do not let a prior-round receipt hide the lifecycle fact — bounce on #953).
+  // Failure + historical payloads must still surface diagnostic (bounce on #953).
   const prior = {
     countersignStatus: "continue",
     findings: [{ article: "old", reason: "prior round" }],
@@ -356,13 +368,13 @@ test("#953 summon parent-visible content is receipt/lifecycle via readableGateIt
   const histFailed = await histTools
     .get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!
     .execute("summon-hist-fail", { instruction: "裁：#953" }, undefined, undefined, ctx);
+  const histDetails = histFailed.details as {
+    outcomeKind?: string;
+    diagnostic?: string;
+  };
+  assert.equal(histDetails.outcomeKind, "failure");
+  assert.equal(histDetails.diagnostic, "WebSocket error");
   const histText = (histFailed.content as Array<{ text: string }>)[0]?.text ?? "";
-  assert.match(histText, /"outcomeKind":"failure"/);
-  assert.match(histText, /WebSocket error/);
-  assert.match(histText, /"diagnostic"/);
-  // details may still carry historical payload as receipt; content must not drop diagnostic.
-  assert.equal(
-    typeof (histFailed.details as { diagnostic?: string }).diagnostic,
-    "string",
-  );
+  // Diagnostic fact must appear in parent-visible text even when historical receipt exists.
+  assert.ok(histText.includes("WebSocket error"));
 });

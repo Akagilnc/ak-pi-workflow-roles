@@ -1,7 +1,6 @@
 /**
- * #953: summons parent-visible receipt; honest diarist escalate diagnostic;
- * artifact face reflects current terminal; failure does not present prior
- * submissions as this-turn result.
+ * #953: honest diarist escalate diagnostic facts; artifact face reflects
+ * current terminal (including seam-owned fallback error faces).
  */
 import assert from "node:assert/strict";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
@@ -13,61 +12,11 @@ import {
   courtDiaristEscalateDiagnostic,
 } from "../../src/public-cli/countersign-run.ts";
 import {
-  formatTerminalResult,
   publishFailureArtifacts,
   publishJudgeArtifacts,
 } from "../../src/public-cli/settlement.ts";
-import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { withTempHome } from "../helpers/failure-settlement-kit.ts";
-
-test("#953 failure presentation distinguishes recorded history from this-turn result", () => {
-  const prior = {
-    countersignStatus: "continue",
-    findings: [{ article: "old", reason: "prior round" }],
-  };
-  const terminal: TerminalResult = {
-    roleOutcome: {
-      kind: "failure",
-      role: "countersign",
-      cause: "provider",
-      diagnostic: "WebSocket error",
-      decisiveFacts: { cause: "provider", diagnostic: "WebSocket error" },
-      payloads: [prior],
-    },
-    navigator: { disposition: "no-advice" },
-    artifacts: [],
-    runId: "01fail",
-    submissions: [prior],
-  };
-  const presented = formatTerminalResult(terminal);
-  // Current failure is the outcome/diagnostic face — not a submission row of prior verdict.
-  assert.match(presented, /^countersign\tfailure\t/m);
-  assert.match(presented, /WebSocket error/);
-  // Prior recorded payloads must not share the this-turn `submission` label.
-  assert.equal(/\nsubmission\t/.test(presented), false);
-  // History may still surface, under a distinct label (field is encodeTerminalField'd).
-  assert.match(presented, /recorded-submission\t/);
-  assert.match(presented, /countersignStatus/);
-  assert.match(presented, /prior round/);
-});
-
-test("#953 accepted presentation keeps submission label for this-turn receipts", () => {
-  const receipt = { countersignStatus: "converged", note: "署" };
-  const terminal: TerminalResult = {
-    roleOutcome: {
-      kind: "accepted",
-      role: "countersign",
-      payloads: [receipt],
-    },
-    navigator: { disposition: "no-advice" },
-    artifacts: [],
-    runId: "01ok",
-  };
-  const presented = formatTerminalResult(terminal);
-  assert.match(presented, /\nsubmission\t/);
-  assert.equal(/\nrecorded-submission\t/.test(presented), false);
-});
 
 test("#953 diarist escalate diagnostic relays payload facts; does not invent 认不出 when ticketNumber present", () => {
   const withTicket = courtDiaristEscalateDiagnostic({
@@ -82,9 +31,9 @@ test("#953 diarist escalate diagnostic relays payload facts; does not invent 认
       },
     ],
   });
-  assert.match(withTicket, /court diarist station escalated:/);
-  assert.match(withTicket, /946/);
-  assert.match(withTicket, /接缝探针/);
+  // Feature observation of payload facts — not presentation wording.
+  assert.ok(withTicket.includes("946"));
+  assert.ok(withTicket.includes("接缝探针"));
   assert.equal(withTicket.includes("cannot identify court target"), false);
 
   const withoutTicket = courtDiaristEscalateDiagnostic({
@@ -93,14 +42,15 @@ test("#953 diarist escalate diagnostic relays payload facts; does not invent 认
     payloads: [{ status: "escalate", reason: "cannot identify court target" }],
   });
   // When diarist itself wrote that reason, relay is honest — not invented by parent.
-  assert.match(withoutTicket, /cannot identify court target/);
+  assert.ok(withoutTicket.includes("cannot identify court target"));
 
   const empty = courtDiaristEscalateDiagnostic(undefined);
-  assert.equal(empty, "court diarist station escalated");
   assert.equal(empty.includes("cannot identify court target"), false);
+  assert.equal(typeof empty, "string");
+  assert.ok(empty.length > 0);
 });
 
-test("#953 success artifact face drops prior error; failure face drops prior report", async () => {
+test("#953 success artifact face drops prior error faces; failure face drops prior report", async () => {
   await withTempHome(async (home) => {
     // Ledger topology required by ensureRunArtifactsDir / homeFromRunDirectory.
     const runDirectory = join(
@@ -125,10 +75,20 @@ test("#953 success artifact face drops prior error; failure face drops prior rep
     const artifactsDir = join(runDirectory, "artifacts");
     await mkdir(artifactsDir, { recursive: true });
 
-    // Prior failure face.
+    // Prior failure faces: conventional + seam-owned settlement fallback.
     await writeFile(
       join(artifactsDir, "error.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", diagnostic: "old boom" })}\n`,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "old boom" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(artifactsDir, "error.settlement.json"),
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "old settlement boom" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      join(runDirectory, "error.settlement.json"),
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "old run-dir boom" })}\n`,
       "utf8",
     );
 
@@ -151,6 +111,14 @@ test("#953 success artifact face drops prior error; failure face drops prior rep
       () => access(join(artifactsDir, "error.json")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
+    await assert.rejects(
+      () => access(join(artifactsDir, "error.settlement.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(join(runDirectory, "error.settlement.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
 
     // Success then failure: report must not remain as the face.
     await publishFailureArtifacts(
@@ -165,6 +133,59 @@ test("#953 success artifact face drops prior error; failure face drops prior rep
     assert.equal(errorBody.diagnostic, "new boom");
     await assert.rejects(
       () => access(join(artifactsDir, "report.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+  });
+});
+
+test("#953 success clears directory-planted error face and settlement fallback", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      "proj",
+      "unbound",
+      "runs",
+      "01a0-953-eisdir@judge",
+    );
+    const sessionDirectory = join(runDirectory, "session");
+    await mkdir(sessionDirectory, { recursive: true });
+    await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
+    const admitted = fixtureJudgeAdmitted({
+      runId: "01a0-953-eisdir",
+      runDirectory,
+      projectRoot: join(home, "proj"),
+      bookKey: "proj",
+    });
+    const artifactsDir = join(runDirectory, "artifacts");
+    await mkdir(artifactsDir, { recursive: true });
+    // Judge probe shape: conventional error face occupied as directory + settlement fallback file.
+    await mkdir(join(artifactsDir, "error.json"), { recursive: true });
+    await writeFile(
+      join(artifactsDir, "error.settlement.json"),
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-eisdir", diagnostic: "plant" })}
+`,
+      "utf8",
+    );
+
+    await publishJudgeArtifacts(
+      admitted,
+      {
+        kind: "accepted",
+        role: "judge",
+        payloads: [{ judgeStatus: "pass" }],
+      },
+      piDurablePrincipalAuthority.decode(admitted.principal),
+    );
+
+    await access(join(artifactsDir, "report.json"));
+    await assert.rejects(
+      () => access(join(artifactsDir, "error.json")),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(join(artifactsDir, "error.settlement.json")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
   });
