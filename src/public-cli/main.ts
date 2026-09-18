@@ -35,5 +35,22 @@ process.env.AK_ROLE_PACKAGE_ROOT = packageRoot;
 ensureHostPiRuntimeResolvable(packageRoot);
 
 const { runAkRole } = await import("./cli.ts");
-const result = await runAkRole(process.argv.slice(2), { packageRoot });
-process.exitCode = result.exitCode;
+const { installProcessCancelHandlers } = await import("./process-cancel.ts");
+
+// #855: catchable signals abort the shared controller so the active run can
+// settle as non-success with the signal name; hosts get graceful child stop.
+const processCancel = installProcessCancelHandlers();
+try {
+  const result = await runAkRole(process.argv.slice(2), {
+    packageRoot,
+    signal: processCancel.signal,
+  });
+  // Signal termination is never a successful public exit, even if a seat
+  // somehow returned zero before settlement folded the abort.
+  process.exitCode =
+    processCancel.receivedSignal() !== undefined && result.exitCode === 0
+      ? 1
+      : result.exitCode;
+} finally {
+  processCancel.dispose();
+}

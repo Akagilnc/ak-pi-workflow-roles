@@ -87,6 +87,10 @@ import {
   type TypedProviderHttpObservation,
   type WriterLeaseDiagnosticKind,
 } from "./run-lifecycle.ts";
+import {
+  processCancelDiagnostic,
+  processCancelSignalName,
+} from "./process-cancel.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import {
   attemptProducedFreshSubmission,
@@ -788,13 +792,17 @@ export async function dispatchPostAdmissionTurn<
     try {
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
+      const processCancelName = processCancelSignalName(env.signal);
       const settled = await settleAfterTurnStarted(
           admitted,
           withEngineDetourInvocationScope({
           timedOut: false,
           code: null,
           stderr: "",
-          thrown: error,
+          thrown:
+            processCancelName === undefined
+              ? error
+              : new Error(processCancelDiagnostic(processCancelName), { cause: error }),
         }, request.invocationScopeId),
         adapters,
         env.principalAuthority,
@@ -917,11 +925,13 @@ export async function dispatchPostAdmissionTurn<
       // retroactively invalidate an acceptance that already sealed this turn
       // — a resolved 429 observed earlier in the same session is exactly
       // that.
+      const processCancelName = processCancelSignalName(env.signal);
       const directHostFailureSignal =
         result.timedOut
         || result.knownFailure !== undefined
         || runnerKnownFailure !== undefined
-        || credentialFailure !== undefined;
+        || credentialFailure !== undefined
+        || processCancelName !== undefined;
       hostSignalFailed =
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
@@ -1056,6 +1066,7 @@ export async function dispatchPostAdmissionTurn<
     // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
     if (hostSignalFailed) {
       const resolutionInput = controlledFailureInputFromResolution(resolution!);
+      const processCancelName = processCancelSignalName(env.signal);
       const stderrLogWriteDetails =
         stderrLogWriteFailure === undefined
           ? undefined
@@ -1067,6 +1078,9 @@ export async function dispatchPostAdmissionTurn<
           code: result.code,
           stderr: result.stderr,
           ...resolutionInput,
+          ...(processCancelName === undefined
+            ? {}
+            : { knownDiagnostic: processCancelDiagnostic(processCancelName) }),
           // Secondary fact only — never the cause. Rides on whichever channel
           // classification actually reads (knownFailure.details owns it when
           // a knownFailure exists; the top-level knownDetails otherwise).

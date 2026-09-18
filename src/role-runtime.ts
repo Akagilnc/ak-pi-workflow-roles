@@ -17,20 +17,10 @@ import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission
 import { createCollectorLedger } from "./collector-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
+import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
 import {
-  homeFromRunDirectory,
-  resolveActivationLedgerHomeForPath,
-} from "./activation-ledger-topology.ts";
-import {
-  appendAcceptedActivationToBook,
-  buildAcceptedActivationFact,
-  correlationIdentityFromEnv,
   durableSessionPointer,
-  resolveActivationLedgerHome,
   resolveBookKeyFromGit,
-  type AcceptedActivationFact,
-  type ActivationCorrelationIdentity,
-  type ActivationSessionPointer,
 } from "./activation-ledger.ts";
 import { writeStderrJsonlRecord } from "./stderr-jsonl.ts";
 import {
@@ -301,43 +291,18 @@ export {
 export { activationTraceRecordSchema, namedActivationCause } from "./activation-trace.ts";
 export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-trace.ts";
 export {
-  ACCEPTED_ACTIVATION_EVENT,
-  ACCEPTED_ACTIVATION_FACT_KEYS,
   ActivationGitRepositoryRequiredError,
   ActivationLedgerError,
   ActivationSessionFileMissingError,
   activationBookDirectory,
-  activationWaitingLedgerPath,
-  appendAcceptedActivationFact,
-  appendAcceptedActivationToBook,
-  buildAcceptedActivationFact,
-  correlationIdentityFromEnv,
   durableSessionPointer,
   resolveActivationLedgerHome,
   resolveBookKeyFromGit,
-  serializeAcceptedActivationFact,
 } from "./activation-ledger.ts";
 export type {
-  AcceptedActivationFact,
-  AcceptedActivationFactInput,
-  AcceptedActivationFactKey,
-  ActivationCorrelationIdentity,
   ActivationSessionManager,
   ActivationSessionPointer,
 } from "./activation-ledger.ts";
-export {
-  DISPATCH_STUB_EVENT,
-  buildDispatchStubFact,
-  reconcileInvocation,
-} from "./activation-reconciliation.ts";
-export type {
-  DispatchPointer,
-  DispatchStubFact,
-  DispatchStubFactInput,
-  ProcessLivenessFact,
-  ReconciliationOutcome,
-  ReconciliationSubject,
-} from "./activation-reconciliation.ts";
 export {
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
   TOOL_EXECUTION_UPDATE_THROTTLE_MS,
@@ -2195,11 +2160,9 @@ export function createRoleRuntimeExtension(
         // Production topology only (ADR 0048/0049): no test-only ledger hooks.
         // Admit durable session file first so lifecycle getEntries/appendEntry are truthful:
         // deferred SM materialization must not wipe an in-memory principal marker.
-        const bookKey = resolveBookKeyFromGit(ctx.cwd);
-        const correlation = correlationIdentityFromEnv();
-        const sessionFile = ctx.sessionManager.getSessionFile?.() || ctx.sessionManager.getSessionDir?.();
-        const ledgerHome = resolveActivationLedgerHomeForPath(sessionFile);
-        const session = durableSessionPointer(ctx.sessionManager);
+        // #855: two-face waiting.jsonl write removed — fail-closed book-key + session only.
+        resolveBookKeyFromGit(ctx.cwd);
+        durableSessionPointer(ctx.sessionManager);
 
         // Station children (court diarist, inner-gate summons) omit navigator sidecar (#840).
         // Top-level public entry legs still attend automatically.
@@ -2314,16 +2277,6 @@ export function createRoleRuntimeExtension(
           if (entry.role === "coder") coder.armSubmissionGate(ctx.cwd, ctx.sessionManager);
           else fixer.armSubmissionGate(ctx.cwd, ctx.sessionManager);
         }
-        appendAcceptedActivationToBook({
-          ledgerHome,
-          fact: buildAcceptedActivationFact({
-            role: entry.role,
-            observedAt: clock(),
-            bookKey,
-            session,
-            correlation,
-          }),
-        });
         admitted = true;
       } catch (error) {
         failInfrastructure(error, ctx);

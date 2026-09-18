@@ -22,6 +22,7 @@ import {
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import { listBookRunDirectories } from "./role-run-placement.ts";
+import { autopsyWriterLock } from "./public-cli/run-lifecycle.ts";
 import { readRunTicketNumber } from "./run-ticket-number.ts";
 import {
   extractSessionModelSequence,
@@ -85,6 +86,67 @@ async function readExistingRunLifecycleState(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * #855 lease check projection for ghost legs — index facts only (ADR 0049).
+ * Does not rename autopsy verdicts into stronger claims than observed.
+ */
+export type AnalystGhostLeaseCheck =
+  | { readonly kind: "holder-dead"; readonly pid: number }
+  | { readonly kind: "no-lease" }
+  | { readonly kind: "unverifiable"; readonly reason: "unreadable" | "unparseable" };
+
+export type AnalystGhostLeg = {
+  readonly runId: string;
+  readonly role: string;
+  readonly runState: "admitted" | "running";
+  readonly leaseCheck: AnalystGhostLeaseCheck;
+};
+
+function ghostLeaseCheckFromAutopsy(
+  autopsy: Awaited<ReturnType<typeof autopsyWriterLock>>,
+): AnalystGhostLeaseCheck | undefined {
+  switch (autopsy.verdict) {
+    case "alive":
+      return undefined;
+    case "dead":
+      return { kind: "holder-dead", pid: autopsy.pid };
+    case "absent":
+      return { kind: "no-lease" };
+    case "unknown":
+      return {
+        kind: "unverifiable",
+        reason: autopsy.reason === "unreadable" ? "unreadable" : "unparseable",
+      };
+  }
+}
+
+/**
+ * Classify one admitted|running run against writer lease liveness (#855).
+ * Alive holder → still in-flight (omit). Otherwise → ghost report fact only.
+ */
+async function classifyGhostCandidate(input: {
+  readonly runId: string;
+  readonly role: string;
+  readonly runState: "admitted" | "running";
+  readonly runDirectory: string;
+}): Promise<
+  | { readonly kind: "live" }
+  | { readonly kind: "ghost"; readonly leg: AnalystGhostLeg }
+> {
+  const autopsy = await autopsyWriterLock(join(input.runDirectory, "writer.lock"));
+  const leaseCheck = ghostLeaseCheckFromAutopsy(autopsy);
+  if (leaseCheck === undefined) return { kind: "live" };
+  return {
+    kind: "ghost",
+    leg: {
+      runId: input.runId,
+      role: input.role,
+      runState: input.runState,
+      leaseCheck,
+    },
+  };
 }
 
 function parseRunDirectoryName(
@@ -335,6 +397,8 @@ export type AnalystScopedRunScan = {
   readonly unreadable: readonly AnalystUnreadableRun[];
   /** C4: typed-ticket admits whose projectRoot mechanical key conflicted. */
   readonly scopeConflicts: readonly AnalystScopeConflict[];
+  /** #855: admitted|running runs whose writer lease cannot prove a live holder. */
+  readonly ghostLegs: readonly AnalystGhostLeg[];
 };
 
 async function classifyScopedRun(input: {
@@ -346,6 +410,7 @@ async function classifyScopedRun(input: {
   | { readonly kind: "readable"; readonly facts: AnalystReadableRunFacts }
   | { readonly kind: "unreadable"; readonly entry: AnalystUnreadableRun }
   | { readonly kind: "live" }
+  | { readonly kind: "ghost"; readonly leg: AnalystGhostLeg }
 > {
   const missingSources: AnalystMissingSource[] = [];
   const reasons: string[] = [];
@@ -441,6 +506,18 @@ async function classifyScopedRun(input: {
       reasons.push(`${artifact.file}: ${artifact.reason}`);
     } else if (artifact.status === "absent") {
       const lifecycle = await readExistingRunLifecycleState(input.runDirectory);
+      if (
+        lifecycle === "admitted" || lifecycle === "running"
+      ) {
+        // #855: only a live writer-lease holder counts as in-flight.
+        const ghost = await classifyGhostCandidate({
+          runId: input.runId,
+          role: input.role,
+          runState: lifecycle,
+          runDirectory: input.runDirectory,
+        });
+        return ghost;
+      }
       if (lifecycle !== undefined && LIVE_RUN_STATES.has(lifecycle)) {
         return { kind: "live" };
       }
@@ -588,11 +665,12 @@ export async function scanAnalystIssueRuns(input: {
   }
 
   if (bookNames.length === 0) {
-    return { runs: [], unreadable: [], scopeConflicts: [] };
+    return { runs: [], unreadable: [], scopeConflicts: [], ghostLegs: [] };
   }
 
   const runs: AnalystReadableRunFacts[] = [];
   const unreadable: AnalystUnreadableRun[] = [];
+  const ghostLegs: AnalystGhostLeg[] = [];
   // scopeConflicts retained on the scan face for page envelope compat; book×ticket
   // scope no longer emits projectRoot dual-key conflicts on the CLI path.
   const scopeConflicts: AnalystScopeConflict[] = [];
@@ -640,7 +718,9 @@ export async function scanAnalystIssueRuns(input: {
       });
       if (classified.kind === "readable") runs.push(classified.facts);
       else if (classified.kind === "unreadable") unreadable.push(classified.entry);
+      else if (classified.kind === "ghost") ghostLegs.push(classified.leg);
       // live in-flight runs are omitted from legs and unreadable (not failure/death).
+      // #855 ghost legs are reported separately — not counted as in-flight.
     }
   }
 
@@ -648,5 +728,6 @@ export async function scanAnalystIssueRuns(input: {
     runs,
     unreadable,
     scopeConflicts,
+    ghostLegs,
   };
 }

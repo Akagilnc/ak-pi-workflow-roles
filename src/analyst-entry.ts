@@ -22,9 +22,12 @@ import {
 } from "./analyst-cohort.ts";
 import {
   scanAnalystIssueRuns,
+  type AnalystGhostLeg,
   type AnalystReadableRunFacts,
   type AnalystScopedRunScan,
 } from "./analyst-ledger.ts";
+
+export type { AnalystGhostLeg, AnalystGhostLeaseCheck } from "./analyst-ledger.ts";
 import {
   mergeAnalystLibraryIndexRows,
   rowFromIssueMetricsPage,
@@ -173,6 +176,11 @@ export type AnalystIssueModeResult = {
   readonly mode: "issue";
   readonly page: AnalystIssueMetricsPage;
   readonly pagePath: string;
+  /**
+   * #855 live observation: admitted|running runs whose writer lease cannot prove
+   * a live holder. Fresh each query — never cached on the metrics page.
+   */
+  readonly ghostLegs: readonly AnalystGhostLeg[];
 };
 
 export type AnalystSweepModeResult = {
@@ -264,7 +272,16 @@ export async function readOrComputeAnalystIssuePage(
     const raw = await readFile(pagePath, "utf8");
     const page = JSON.parse(raw) as AnalystIssueMetricsPage;
     if (cachedPageMatchesRequestedScope(page, { bookKey, ...input })) {
-      return { mode: "issue", page, pagePath };
+      // #855 ghost legs are live observations — always fresh, never from the page cache.
+      const ghostScan = await scanAnalystIssueRuns({
+        bookKey,
+        ...(issueNumber === undefined ? {} : { ticketNumber: issueNumber }),
+        ...(options?.scanProjectRoot === undefined
+          ? {}
+          : { projectRoot: options.scanProjectRoot }),
+        ...(options?.home === undefined ? {} : { home: options.home }),
+      });
+      return { mode: "issue", page, pagePath, ghostLegs: ghostScan.ghostLegs };
     }
     // Existing page is for a different / absent ticket scope — same kernel recompute.
   } catch (error) {
@@ -364,7 +381,7 @@ async function runAnalystIssueMode(
     ]);
   }
 
-  return { mode: "issue", page, pagePath };
+  return { mode: "issue", page, pagePath, ghostLegs: scan.ghostLegs };
 }
 
 async function runAnalystSweepMode(

@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
-import {
-  chmodSync,
-  mkdirSync,
-} from "node:fs";
+import { mkdirSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import test, { afterEach } from "node:test";
@@ -19,13 +16,11 @@ import {
   activationExtensionContext,
   machineLedgerHome,
   persistActivationSessionFile,
-  readAcceptedActivationFacts,
   seedGitRepository,
   withActivationHome,
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-import { withPrimaryAwareCleanup } from "../helpers/primary-aware-cleanup.ts";
 
 const originalExitCode = process.exitCode;
 afterEach(() => { process.exitCode = originalExitCode; });
@@ -137,7 +132,6 @@ test("non-git cwd and durable session rejection classes fail before model dispat
       return true;
     });
     assert.equal(soulLoads, 0, "activation stage must not run before book-key resolution");
-    assert.equal(readAcceptedActivationFacts(home, bookKey).length, 0);
     assert.equal(aborts, 1);
     assert.equal(process.exitCode, 1);
 
@@ -151,7 +145,6 @@ test("non-git cwd and durable session rejection classes fail before model dispat
       process.exitCode = undefined;
       aborts = 0;
       soulLoads = 0;
-      const beforeFacts = readAcceptedActivationFacts(home, bookKey).length;
       const { handlers: roleHandlers } = captureExtensionHandlers(
         (pi) => createPiRoleRuntimeExtension(judgeDeps())(pi),
         { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
@@ -172,7 +165,6 @@ test("non-git cwd and durable session rejection classes fail before model dispat
         },
       );
       assert.equal(soulLoads, 0, `${label}: activation stage must not run`);
-      assert.equal(readAcceptedActivationFacts(home, bookKey).length, beforeFacts, `${label}: zero facts`);
       assert.equal(aborts, 1, `${label}: abort once`);
       assert.equal(process.exitCode, 1, `${label}: nonzero exit`);
     }
@@ -209,60 +201,6 @@ test("non-git cwd and durable session rejection classes fail before model dispat
     // Symlink escape is no longer an activation rejection class (ADR 0065 / #221):
     // record-placement enforcement moved to createRecordSession. An existing regular
     // file principal is admitted even when realpath leaves the book.
-  });
-});
-
-test("append failure preserves original cause and aborts nonzero", async () => {
-  // Topology probe: book-dir chmod errno path is clearer at the handler seam than full Pi bind.
-  await withActivationHome({ prefix: "ak-act-append-" }, async ({ home }) => {
-    process.exitCode = undefined;
-    const bookKey = activationBookKeyFor(home);
-    // Persist the durable session principal, then lock the book dir so O_APPEND fails.
-    const sessionFile = persistActivationSessionFile({ home, bookKey, cwd: home });
-    const bookDir = join(machineLedgerHome(home), "books", bookKey);
-    chmodSync(bookDir, 0o555);
-    let aborts = 0;
-    await withPrimaryAwareCleanup(
-      async () => {
-        const { handlers } = captureExtensionHandlers(
-          (pi) => createPiRoleRuntimeExtension({
-            loadJudgeSoul: async () => "LAW",
-            activationTraceWriter: () => {},
-          })(pi),
-          { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
-        );
-        const ctx = activationExtensionContext({
-          cwd: home,
-          home,
-          bookKey,
-          sessionFile,
-          abort() { aborts++; },
-        });
-        await assert.rejects(async () => handlers.get("session_start")?.[0]?.({ reason: "startup" }, ctx), (error: unknown) => {
-          assert.ok(error instanceof Error);
-          const codes: string[] = [];
-          let current: unknown = error;
-          const seen = new Set<unknown>();
-          while (current !== null && typeof current === "object" && !seen.has(current)) {
-            seen.add(current);
-            if ("code" in current && typeof (current as { code: unknown }).code === "string") {
-              codes.push((current as { code: string }).code);
-            }
-            current = "cause" in current ? (current as { cause: unknown }).cause : undefined;
-          }
-          assert.ok(
-            codes.includes("EACCES") || codes.includes("EPERM"),
-            `append failure must retain typed errno cause, got codes=${codes.join(",") || "none"}`,
-          );
-          return true;
-        });
-        assert.equal(aborts, 1);
-        assert.equal(process.exitCode, 1);
-      },
-      async () => {
-        chmodSync(bookDir, 0o755);
-      },
-    );
   });
 });
 
@@ -324,7 +262,6 @@ test("shared role runtime registers tool observation only after admitted activat
     const sessionStart = handlers.get("session_start")?.[0];
     assert.ok(sessionStart);
     await sessionStart({ reason: "startup" }, activationExtensionContext({ cwd: home, home }));
-    assert.equal(readAcceptedActivationFacts(home, activationBookKeyFor(home)).length, 1);
 
     await startHandler({ toolCallId: "post", toolName: "bash" }, activationExtensionContext({ cwd: home, home }));
     await updateHandler({ toolCallId: "post", toolName: "bash", partialResult: { content: [] } }, activationExtensionContext({ cwd: home, home }));

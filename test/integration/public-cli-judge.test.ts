@@ -290,15 +290,11 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
     );
     assert.equal(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, join(admitted.runDirectory, "session"));
     await access(admitted.admittedRequestPath);
-    // Unbound admit writes no waiting.jsonl; when present it must never hold request content.
-    const waitingPath = join(home, ".ak-roles", "books", bookKey, "waiting.jsonl");
-    try {
-      const waiting = await readFile(waitingPath, "utf8");
-      assert.equal(waiting.includes("review the attachment"), false);
-      assert.equal(waiting.includes("admitted-bytes-v1"), false);
-    } catch (error) {
-      assert.equal((error as NodeJS.ErrnoException).code, "ENOENT");
-    }
+    // #855: two-face waiting.jsonl deleted — admit must not create it.
+    await assert.rejects(
+      () => readFile(join(home, ".ak-roles", "books", bookKey, "waiting.jsonl"), "utf8"),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
   });
 });
 

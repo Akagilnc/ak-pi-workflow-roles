@@ -91,11 +91,6 @@ export function activationBookDirectory(ledgerHome: string, bookKey: string): st
   return join(ledgerHome, "books", bookKey);
 }
 
-/** Append-only waiting ledger path for one book. */
-export function activationWaitingLedgerPath(ledgerHome: string, bookKey: string): string {
-  return join(activationBookDirectory(ledgerHome, bookKey), "waiting.jsonl");
-}
-
 /** True when candidate resolves strictly inside root (boundary-safe; not a string-prefix check). */
 export function pathContainedIn(root: string, candidate: string): boolean {
   const rel = relative(root, candidate);
@@ -323,7 +318,7 @@ export function ensureRealDirectoryTree(root: string, targetDir: string): string
 
 /**
  * Reject a pre-existing ledger-file symlink before open/write follows it.
- * A computed book may only append to its own regular waiting.jsonl — any symlink,
+ * A computed book path may only write its own regular file — any symlink,
  * including a target still inside the machine ledger home (cross-book redirect),
  * violates ADR 0048 partition identity. Missing paths are admitted (O_CREAT).
  */

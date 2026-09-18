@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer, type IncomingHttpHeaders, type Server } from "node:http";
 import {
   copyFile,
@@ -44,10 +44,8 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import {
-  activationWaitingLedgerPath,
   resolveActivationLedgerHome,
   resolveBookKeyFromGit,
-  type AcceptedActivationFact,
 } from "../../src/activation-ledger.ts";
 import { INTERNAL_ROLE_ENTRYPOINT_RELATIVE as PACKAGE_INTERNAL_ROLE_ENTRYPOINT } from "../../src/public-cli/registry.ts";
 
@@ -474,16 +472,6 @@ export function activationExtensionContext(input: {
       getHeader: () => null,
     },
   } as unknown as ExtensionContext;
-}
-
-/** Read accepted-activation facts from the sole machine home for one book. */
-export function readAcceptedActivationFacts(home: string, bookKey: string): AcceptedActivationFact[] {
-  const path = activationWaitingLedgerPath(machineLedgerHome(home), bookKey);
-  if (!existsSync(path)) return [];
-  return readFileSync(path, "utf8")
-    .split("\n")
-    .filter(Boolean)
-    .map((line) => JSON.parse(line) as AcceptedActivationFact);
 }
 
 /**
