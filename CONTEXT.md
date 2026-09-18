@@ -2,7 +2,7 @@
 
 > 只放术语,零实现细节。决策的为什么在 `docs/adr/`。
 
-- **角色(Role)**:有明确职掌、受门禁约束、以交卷物为法定出口的**车间内**治理单元（默认 typed；游奕使按陛下原话以散文为出口，[#959](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/959)）。角色只管一次调用的内政。按派单权分两品级:**寺监级**不派发 worker、不含编排拓扑;**省部级**可在自己一次调用的内政之内作为 caller 派发正经角色调用,其每腿全程入册、correlation 标 caller。两品级只是法律分类,不建通用品级 runtime、权限继承机制,不为后续省部级席位预造框架。**实现不限于 LLM**:确定性机制同样可以是角色(如司天第一期,[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md) 不设 LLM 角色)。soul 与工具门禁是 LLM 角色的形态,不是角色的定义。
+- **角色(Role)**:有明确职掌、受门禁约束、以交卷物为法定出口的**车间内**治理单元（默认 typed；游奕使按陛下原话以散文为出口，[#959](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/959)）。角色只管一次调用的内政。按派单权分两品级:**寺监级**不派发 worker、不含编排拓扑;**省部级**可在自己一次调用的内政之内作为 caller 派发正经角色调用,其每腿全程入册。两品级只是法律分类,不建通用品级 runtime、权限继承机制,不为后续省部级席位预造框架。**实现不限于 LLM**:确定性机制同样可以是角色(如司天第一期,[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md) 不设 LLM 角色)。soul 与工具门禁是 LLM 角色的形态,不是角色的定义。
 - **Soul**:LLM 角色的身份与不可约判断原则,经系统提示注入。分两层:**通用层**(本包内,零业务词)与**业务 overlay**(宿主项目附加)。审刑院与门下省的共享执法准绳另立法典(`souls/audit-law.md`、`souls/quality-law.md`)；票面公用准绳见《票面法》(`souls/ticket-law.md`，#924);审刑院法典参审四席=大理寺/御史台主会话+两审计席(太医线不动)([#470](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/470) 御批四)。确定性角色无 soul。
 - **角色方法 Skill(Role method Skill)**:供一个角色执行具体任务方法的包版本化材料；Soul 持有不可约职责与判断原则，Skill 持有可替换的方法步骤。强制 Skill 是包的运行依赖，不是用户 home 目录的隐含前提。
 - **角色门禁(Role gating)**:车间内的机械限制——对 LLM 角色是工具集收窄与工具调用拦截,对确定性角色是其自身的能力边界。区别于 soul 的文本约束:门禁是拦得住的,不靠自觉。
@@ -50,7 +50,7 @@ _Avoid_:门下省（那是省名）。
 - **终局结果(Terminal result)**:公开角色 CLI 对一次已受理调用交付的完整结果，汇合角色结算、Navigator 出席事实与声明的 artifacts；session 结束仍无已接受回执时,可汇合当前 run/attempt 绑定的 typed 无回执生命周期记录（`acceptedReceipt=false`）,由调用者裁断；该记录不是回执。过程事件与 session 记录不是终局结果。
 - **角色运行(Role run)**:一次已受理角色调用的持久执行身份，连接其调用请求、Pi session 与终局结果，并可在用户改选模型后继续同一现场。
 - **候簿(Ledger book)**:包所有的机器级记录之家,按主仓分簿(键=git common dir 宿主目录的 basename)。它是记录落点的唯一真源;消费者仓零侵入——记录不写进被服务的仓库。_Avoid_:家册、账本目录、工作区记录。
-- **司天台(Archivist)**:记录的所有者。两件职掌——**如实记录**(记录的落点由它决定,不由写入方各自选)与**生成高阶数据**(从记录派生可消费的结论,双面对账是其第一期实例)。确定性机制,非 LLM 角色。_Avoid_:Recorder、Docket、遥测。
+- **司天台(Archivist)**:记录的所有者。两件职掌——**如实记录**(记录的落点由它决定,不由写入方各自选)与**生成高阶数据**(从记录派生可消费的结论;分析席由太史承担)。确定性机制,非 LLM 角色。_Avoid_:Recorder、Docket、遥测。
 - **太史(Analyst)**:司天台的分析席。只读司天台记录、生成高阶数据(首例:耗时榜单——腿墙钟总榜＋单腿动作榜,耗时两桶归因——模型等待与工具执行两桶互斥、加和≡腿墙钟,返工作为正交透镜另计,角色成功率);确定性机制,非 LLM 角色,可单独调用;指标居基础记录同家下的独立目录。建设排在二期记录工程后。规范见 [ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)。_Avoid_:遥测、metrics-service、Telemetry。
 - **Artifact reference**:终局结果中声明的本地材料引用，用于打开完整报告、证据或错误详情；它补充内联核心结论，不替代结论。
 - **引擎（Engine）**: 角色劳动的执行后端。默认=角色 session 在 pi 内自跑；可经**外包**把最重的推理段交给本地 CLI（cc/codex/cursor/kimi 等），内容交回同一 session 提交——治理面（票庭/soul/typed 交卷/审刑院/案卷）永远在 pi，一套逻辑。引擎选择与模型同法，唯一真源=池令（ADR 0069）。

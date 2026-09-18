@@ -18,25 +18,15 @@ import { pathToFileURL } from "node:url";
 import { fauxProvider } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionError } from "@earendil-works/pi-coding-agent";
 import {
-  ACCEPTED_ACTIVATION_EVENT,
   ActivationGitRepositoryRequiredError,
-  ActivationLedgerError,
-  activationWaitingLedgerPath,
-  appendAcceptedActivationFact,
-  buildAcceptedActivationFact,
   durableSessionPointer,
   resolveActivationLedgerHome,
   resolveBookKeyFromGit,
-  type AcceptedActivationFact,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
 import { type ActivationTraceRecord } from "../../src/activation-trace.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
-import {
-  buildDispatchStubFact,
-  reconcileInvocation,
-} from "../../src/activation-reconciliation.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { TERMINATING_TOOL_NAMES } from "../../src/package-contracts/terminating-tools.ts";
 import {
@@ -49,7 +39,6 @@ import {
   machineLedgerHome,
   packageRoot,
   persistActivationSessionFile,
-  readAcceptedActivationFacts,
   withActivationHome,
 } from "../helpers/pi-test-harness.ts";
 import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktree-temp.ts";
@@ -329,205 +318,31 @@ test("git spawn infrastructure failures retain identity and do not masquerade as
     });
 });
 
-// #685: host legs culled — inventory/admission 计数/拒绝矩阵、8+8 O_APPEND、16-worker
-// mkdir race、malformed Fixer 子进程、observation emit、Reviewer expansion 均未结
-// (docs/research/issue-685-c3-deleted-contract-handoff.md §I). Symlink escape
-// matrix below stays as deterministic call-input negative without multi-worker spawn.
-
-// Symlink escape matrix (#420 整改并一)：四条同根同形「ledger append 拒绝符号链接
-// 逃逸且不写出界」——root home 链、跨簿 waiting.jsonl、跨簿目录、books 组件——
-// 收成一条四向量表。ADR 0065 的 principal 不做卷宗放置检查断言随迁保留。
-test("ledger append rejects every symlink escape vector without writing outside", async () => {
-  // Vector 1: pre-existing root symlink escape.
-  await withActivationHome({ prefix: "ak-act-root-symlink-" }, async ({ home }) => {
-    const bookKey = activationBookKeyFor(home);
-    const ledgerHome = machineLedgerHome(home);
-    const outside = join(home, "consumer-repo-ledger");
-    mkdirSync(outside, { recursive: true });
-    // Configured machine home itself is a symlink into a consumer path.
-    symlinkSync(outside, ledgerHome);
-
-    assert.throws(
-      () => appendAcceptedActivationFact(
-        join(ledgerHome, "books", bookKey, "waiting.jsonl"),
-        buildAcceptedActivationFact({
-          role: "judge",
-          observedAt: "2025-01-01T00:00:00.000Z",
-          bookKey,
-          session: { kind: "session-file", path: join(home, "s.jsonl") },
-          correlation: { kind: "absent" },
-        }),
-        { ledgerHome },
-      ),
-      (error: unknown) => {
-        assert.ok(error instanceof ActivationLedgerError);
-        assert.equal(error.code, "AK_ACTIVATION_LEDGER");
-        return true;
-      },
-    );
-    assert.equal(existsSync(join(outside, "books", bookKey, "waiting.jsonl")), false);
-    assert.equal(existsSync(join(outside, "books")), false);
-  });
-
-  // Vector 2: cross-book waiting.jsonl symlink.
-  await withActivationHome({ prefix: "ak-act-cross-book-symlink-" }, async ({ home }) => {
-    const sourceBook = activationBookKeyFor(home);
-    const targetBook = `${sourceBook}-other`;
-    const ledgerHome = machineLedgerHome(home);
-    const sourceLedger = join(ledgerHome, "books", sourceBook, "waiting.jsonl");
-    const targetLedger = join(ledgerHome, "books", targetBook, "waiting.jsonl");
-    mkdirSync(dirname(sourceLedger), { recursive: true });
-    mkdirSync(dirname(targetLedger), { recursive: true });
-    writeFileSync(targetLedger, "");
-    // Waiting path for the computed book redirects into another book still inside the home.
-    symlinkSync(targetLedger, sourceLedger);
-
-    assert.throws(
-      () => appendAcceptedActivationFact(
-        sourceLedger,
-        buildAcceptedActivationFact({
-          role: "judge",
-          observedAt: "2025-01-01T00:00:00.000Z",
-          bookKey: sourceBook,
-          session: { kind: "session-file", path: join(home, "s.jsonl") },
-          correlation: { kind: "absent" },
-        }),
-        { ledgerHome },
-      ),
-      (error: unknown) => {
-        assert.ok(error instanceof ActivationLedgerError);
-        assert.equal(error.code, "AK_ACTIVATION_LEDGER");
-        return true;
-      },
-    );
-    assert.equal(readFileSync(targetLedger, "utf8"), "");
-  });
-
-  // Vector 3: cross-book directory symlink.
-  await withActivationHome({ prefix: "ak-act-cross-book-dir-symlink-" }, async ({ home }) => {
-    const sourceBook = activationBookKeyFor(home);
-    const targetBook = `${sourceBook}-other`;
-    const ledgerHome = machineLedgerHome(home);
-    const booksDir = join(ledgerHome, "books");
-    const sourceDir = join(booksDir, sourceBook);
-    const targetDir = join(booksDir, targetBook);
-    const targetLedger = join(targetDir, "waiting.jsonl");
-    mkdirSync(targetDir, { recursive: true });
-    writeFileSync(targetLedger, "");
-    // Computed basename book partition aliases another book still inside the home.
-    symlinkSync(targetDir, sourceDir);
-
-    assert.throws(
-      () => appendAcceptedActivationFact(
-        join(sourceDir, "waiting.jsonl"),
-        buildAcceptedActivationFact({
-          role: "judge",
-          observedAt: "2025-01-01T00:00:00.000Z",
-          bookKey: sourceBook,
-          session: { kind: "session-file", path: join(home, "s.jsonl") },
-          correlation: { kind: "absent" },
-        }),
-        { ledgerHome },
-      ),
-      (error: unknown) => {
-        assert.ok(error instanceof ActivationLedgerError);
-        assert.equal(error.code, "AK_ACTIVATION_LEDGER");
-        return true;
-      },
-    );
-    assert.equal(readFileSync(targetLedger, "utf8"), "");
-  });
-
-  // Vector 4: books component symlink escaping the machine home + ADR 0065
-  // principal-admits half (activation no longer polices record placement).
+// #855: waiting.jsonl append + symlink-escape matrix deleted with two-face reconciliation.
+// ADR 0065 principal admission (activation does not police record placement) stays.
+test("durable session principal admits escaped realpath without placement lock", async () => {
   await withActivationHome({ prefix: "ak-act-symlink-" }, async ({ home }) => {
     const bookKey = activationBookKeyFor(home);
     const ledgerHome = machineLedgerHome(home);
-    const outside = join(home, "outside-ledger");
-    mkdirSync(outside, { recursive: true });
-
-    // Pre-existing books component symlink that escapes the machine home.
-    mkdirSync(ledgerHome, { recursive: true });
-    symlinkSync(outside, join(ledgerHome, "books"));
-    assert.throws(
-      () => appendAcceptedActivationFact(
-        join(ledgerHome, "books", bookKey, "waiting.jsonl"),
-        buildAcceptedActivationFact({
-          role: "judge",
-          observedAt: "2025-01-01T00:00:00.000Z",
-          bookKey,
-          session: { kind: "session-file", path: join(home, "s.jsonl") },
-          correlation: { kind: "absent" },
-        }),
-        { ledgerHome },
-      ),
-      (error: unknown) => error instanceof Error,
-    );
-    assert.equal(existsSync(join(outside, bookKey, "waiting.jsonl")), false);
-
-    // Session path lexically under book but final realpath escapes.
-    // ADR 0065 / #221: activation no longer polices record placement — admit the
-    // existing regular-file principal; archivist createRecordSession owns that lock.
-    rmSync(join(ledgerHome, "books"), { force: true });
     const sessionFile = persistActivationSessionFile({ home, bookKey, cwd: home });
     const realSession = resolve(sessionFile);
-    // Replace runs dir with symlink to consumer path holding a decoy file.
     const bookDir = join(ledgerHome, "books", bookKey);
     const runsDir = join(bookDir, "runs");
     const decoyDir = join(home, "decoy-runs", "activation", "default");
     mkdirSync(dirname(decoyDir), { recursive: true });
-    // Move real tree aside then link.
     rmSync(runsDir, { recursive: true, force: true });
     mkdirSync(decoyDir, { recursive: true });
     const decoyFile = join(decoyDir, "session.jsonl");
-    writeFileSync(decoyFile, `${JSON.stringify({ type: "session", version: 3, id: "decoy", timestamp: "2025-01-01T00:00:00.000Z", cwd: home })}\n`);
-    symlinkSync(join(home, "decoy-runs"), runsDir);
-    const pointer = durableSessionPointer(
-      { getSessionFile: () => join(runsDir, "activation", "default", "session.jsonl") },
+    writeFileSync(
+      decoyFile,
+      `${JSON.stringify({ type: "session", version: 3, id: "decoy", timestamp: "2025-01-01T00:00:00.000Z", cwd: home })}\n`,
     );
+    symlinkSync(join(home, "decoy-runs"), runsDir);
+    const pointer = durableSessionPointer({
+      getSessionFile: () => join(runsDir, "activation", "default", "session.jsonl"),
+    });
     assert.equal(pointer.kind, "session-file");
     assert.equal(pointer.path, realpathSync(decoyFile));
     assert.notEqual(realSession, decoyFile);
-  });
-});
-
-/**
- * #631 / ADR 0038: relative ledgerHome must fail closed before any FS side effect.
- * Unit keeps pure path/error shape; this is the single real-I/O tracer that the
- * target under an owned temp cwd was never created.
- */
-test("relative ledgerHome fails closed before any filesystem side effect", async () => {
-  await withTempRoot("ak-ledger-rel-home-", async (root) => {
-    const previousCwd = process.cwd();
-    try {
-      process.chdir(root);
-      const relativeLedgerHome = "relative-ledger-home";
-      const target = join(root, relativeLedgerHome);
-      assert.equal(isAbsolute(relativeLedgerHome), false);
-      assert.equal(existsSync(target), false);
-      assert.throws(
-        () => appendAcceptedActivationFact(
-          join(relativeLedgerHome, "books", "b", "waiting.jsonl"),
-          buildAcceptedActivationFact({
-            role: "judge",
-            observedAt: "2025-01-01T00:00:00.000Z",
-            bookKey: "b",
-            session: { kind: "session-file", path: "/s/x.jsonl" },
-            correlation: { kind: "absent" },
-          }),
-          { ledgerHome: relativeLedgerHome },
-        ),
-        (error: unknown) => {
-          assert.ok(error instanceof ActivationLedgerError);
-          assert.equal(error.code, "AK_ACTIVATION_LEDGER");
-          return true;
-        },
-      );
-      // Owned temp path: relative home must not materialize under cwd=root.
-      assert.equal(existsSync(target), false);
-      assert.equal(existsSync(join(target, "books")), false);
-    } finally {
-      process.chdir(previousCwd);
-    }
   });
 });

@@ -1,21 +1,14 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
-// #420 整改移档（自 test/integration/activation-envelope-contract.test.ts 与
-// test/integration/activation-reconciliation.test.ts）：纯进程内模块逻辑按性质
-// 归位快档；stdin-parked 真子进程条仍留 integration。契约断言一字不减。
-// #631: drop real temp-root scaffolding — relative-home reject is pure path math.
+// #855: two-face waiting/reconcile tests deleted with the mechanism.
+// Observation-face and pure ledger-home path math remain.
 import assert from "node:assert/strict";
-import { isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import test from "node:test";
 import { Value } from "typebox/value";
 
 import {
-  ACCEPTED_ACTIVATION_EVENT,
   ActivationLedgerError,
-  appendAcceptedActivationFact,
-  buildAcceptedActivationFact,
-  correlationIdentityFromEnv,
   resolveActivationLedgerHome,
-  serializeAcceptedActivationFact,
   TOOL_EXECUTION_UPDATE_HEARTBEAT,
   TOOL_EXECUTION_UPDATE_THROTTLE_MS,
   createToolExecutionObservationFace,
@@ -24,56 +17,9 @@ import {
   toolExecutionObservationRecordSchema,
   writeActivationTraceRecord,
   writeToolExecutionObservationRecord,
-  type AcceptedActivationFact,
   type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
 import { activationTraceRecordSchema } from "../../src/activation-trace.ts";
-import {
-  DISPATCH_STUB_EVENT,
-  buildDispatchStubFact,
-  reconcileInvocation,
-  type DispatchStubFact,
-  type ReconciliationOutcome,
-} from "../../src/activation-reconciliation.ts";
-
-test("accepted-activation fact is closed at the typed API and omits injected content keys", async () => {
-  const closed: AcceptedActivationFact = {
-    event: ACCEPTED_ACTIVATION_EVENT,
-    role: "judge",
-    observedAt: "2025-01-01T00:00:00.000Z",
-    bookKey: "demo",
-    session: { kind: "session-file", path: "/home/session.jsonl" },
-    correlation: { kind: "caller", id: "c1" },
-  };
-  const injectedExtraKeys = ["prompt", "transcript", "argv", "excerpt", "content"] as const;
-  const smuggled = {
-    ...closed,
-    prompt: "PROMPT_SECRET_BYTES",
-    transcript: "transcript-body",
-    argv: ["--ak-role", "judge"],
-    excerpt: "excerpt-text",
-    content: "nope",
-  } as AcceptedActivationFact & Record<string, unknown>;
-  // Closed at the typed construction API via descriptor-driven projection.
-  assert.deepEqual(buildAcceptedActivationFact(smuggled), closed);
-
-  // Serialized projection retains typed descriptor exclusion of injected content keys.
-  // Exact key-set spelling/order is owned by the production descriptor + compile-time proof — not asserted here.
-  const parsed = JSON.parse(serializeAcceptedActivationFact(smuggled)) as Record<string, unknown>;
-  for (const key of injectedExtraKeys) {
-    assert.equal(Object.hasOwn(parsed, key), false, `descriptor projection must omit injected ${key}`);
-  }
-  assert.deepEqual(correlationIdentityFromEnv({}), { kind: "absent" });
-  assert.deepEqual(correlationIdentityFromEnv({ AK_CORRELATION_ID: "" }), { kind: "absent" });
-  assert.deepEqual(correlationIdentityFromEnv({ AK_CORRELATION_ID: "   " }), { kind: "absent" });
-  assert.deepEqual(correlationIdentityFromEnv({ AK_CORRELATION_ID: "\t\n" }), { kind: "absent" });
-  assert.deepEqual(correlationIdentityFromEnv({ AK_CORRELATION_ID: "abc" }), { kind: "caller", id: "abc" });
-  // Non-blank caller value is preserved verbatim (including surrounding whitespace).
-  assert.deepEqual(
-    correlationIdentityFromEnv({ AK_CORRELATION_ID: "  keep-me  " }),
-    { kind: "caller", id: "  keep-me  " },
-  );
-});
 
 test("resolved ledger home rejects relative process home (pure path math)", () => {
   for (const relativeHome of [".", "relative-home", ""] as const) {
@@ -87,141 +33,10 @@ test("resolved ledger home rejects relative process home (pure path math)", () =
     );
   }
 
-  // Prefix string only — resolveActivationLedgerHome is pure path math, no mkdir.
   const absoluteHome = worktreeTempPrefix("ak-ledger-abs-home");
   const ledgerHome = resolveActivationLedgerHome(absoluteHome);
   assert.equal(isAbsolute(ledgerHome), true);
   assert.equal(ledgerHome, resolve(absoluteHome, ".ak-roles"));
-
-  // append + no-side-effect on real I/O: test/integration/activation-envelope-contract.test.ts (#631).
-  const relativeLedgerHome = "relative-ledger-home";
-  assert.equal(isAbsolute(relativeLedgerHome), false);
-  assert.throws(
-    () => appendAcceptedActivationFact(
-      join(relativeLedgerHome, "books", "b", "waiting.jsonl"),
-      buildAcceptedActivationFact({
-        role: "judge",
-        observedAt: "2025-01-01T00:00:00.000Z",
-        bookKey: "b",
-        session: { kind: "session-file", path: "/s/x.jsonl" },
-        correlation: { kind: "absent" },
-      }),
-      { ledgerHome: relativeLedgerHome },
-    ),
-    (error: unknown) => {
-      assert.ok(error instanceof ActivationLedgerError);
-      assert.equal(error.code, "AK_ACTIVATION_LEDGER");
-      return true;
-    },
-  );
-});
-
-function dispatchStub(input: {
-  correlationId: string;
-  bookKey: string;
-  observedAt?: string;
-  pid?: number;
-}): DispatchStubFact {
-  return buildDispatchStubFact({
-    correlation: { kind: "caller", id: input.correlationId },
-    bookKey: input.bookKey,
-    observedAt: input.observedAt ?? "2025-06-01T12:00:00.000Z",
-    dispatch: { kind: "process", pid: input.pid ?? 1 },
-  });
-}
-
-function activationFact(input: {
-  correlationId: string | "absent";
-  bookKey: string;
-  role?: string;
-  sessionPath?: string;
-  observedAt?: string;
-}): AcceptedActivationFact {
-  return buildAcceptedActivationFact({
-    role: input.role ?? "judge",
-    observedAt: input.observedAt ?? "2025-06-01T12:00:01.000Z",
-    bookKey: input.bookKey,
-    session: { kind: "session-file", path: input.sessionPath ?? "/tmp/session.jsonl" },
-    correlation: input.correlationId === "absent"
-      ? { kind: "absent" }
-      : { kind: "caller", id: input.correlationId },
-  });
-}
-
-test("dispatch stub fact is closed at the typed API and omits injected content keys", () => {
-  const closed: DispatchStubFact = {
-    event: DISPATCH_STUB_EVENT,
-    observedAt: "2025-06-01T12:00:00.000Z",
-    bookKey: "book-a",
-    dispatch: { kind: "process", pid: 42 },
-    correlation: { kind: "caller", id: "c-keys" },
-  };
-  const smuggled = {
-    ...closed,
-    prompt: "PROMPT_SECRET_BYTES",
-    transcript: "transcript-body",
-    argv: ["pi", "--ak-role", "judge"],
-    excerpt: "excerpt-text",
-    content: "nope",
-  } as DispatchStubFact & Record<string, unknown>;
-  assert.deepEqual(buildDispatchStubFact(smuggled), closed);
-});
-
-test("normal dispatch + accepted activation reconciles as matched", () => {
-  const bookKey = "ak-roles-128";
-  const correlationId = "corr-matched-1";
-  const outcome = reconcileInvocation({
-    dispatch: dispatchStub({ correlationId, bookKey }),
-    activation: activationFact({ correlationId, bookKey }),
-    process: { state: "alive" },
-  });
-  assert.deepEqual(outcome, {
-    kind: "matched",
-    correlationId,
-    bookKey,
-  } satisfies ReconciliationOutcome);
-});
-
-test("activation without a matching dispatch stub is activation-without-dispatch", () => {
-  const bookKey = "ak-roles-128";
-
-  // Caller correlation present but no stub at all.
-  assert.deepEqual(
-    reconcileInvocation({
-      activation: activationFact({ correlationId: "orphan-1", bookKey }),
-    }),
-    {
-      kind: "activation-without-dispatch",
-      correlationId: "orphan-1",
-      bookKey,
-    } satisfies ReconciliationOutcome,
-  );
-
-  // Typed absent identity (no pre-assigned correlation) — mechanical anomaly.
-  assert.deepEqual(
-    reconcileInvocation({
-      activation: activationFact({ correlationId: "absent", bookKey }),
-    }),
-    {
-      kind: "activation-without-dispatch",
-      correlationId: undefined,
-      bookKey,
-    } satisfies ReconciliationOutcome,
-  );
-
-  // Stub exists but book/correlation do not join — still no matching stub.
-  assert.deepEqual(
-    reconcileInvocation({
-      dispatch: dispatchStub({ correlationId: "other", bookKey: "other-book" }),
-      activation: activationFact({ correlationId: "orphan-2", bookKey }),
-      process: { state: "alive" },
-    }),
-    {
-      kind: "activation-without-dispatch",
-      correlationId: "orphan-2",
-      bookKey,
-    } satisfies ReconciliationOutcome,
-  );
 });
 
 function assertRetryingJsonlWriter(input: {
@@ -362,7 +177,6 @@ test("observation face emits start/end always, throttles producing updates per t
 });
 
 test("observation face rejects throttleMs override at the typed call site and ignores it at runtime", async () => {
-  // Typed surface has no throttleMs — excess key must not type-check.
   const faceOptions = {
     role: () => "fixer" as string | undefined,
     admitted: () => true,
@@ -375,7 +189,6 @@ test("observation face rejects throttleMs override at the typed call site and ig
   const throttleMsOnFaceOptions: HasThrottleMs = false;
   assert.equal(throttleMsOnFaceOptions, false);
 
-  // Runtime: smuggled throttleMs: 0 must not disable the 30s coalesce.
   const records: ToolExecutionObservationRecord[] = [];
   let mono = 0;
   const face = createToolExecutionObservationFace({
@@ -391,7 +204,7 @@ test("observation face rejects throttleMs override at the typed call site and ig
     toolName: "bash",
     partialResult: { content: [{ type: "text", text: "first" }] },
   });
-  mono = 10_000; // < TOOL_EXECUTION_UPDATE_THROTTLE_MS
+  mono = 10_000;
   await face.onUpdate({
     toolCallId: "t",
     toolName: "bash",
@@ -420,6 +233,5 @@ test("production observation mono clock is monotonic and not wall-clock Date.now
   for (let i = 1; i < samples.length; i++) {
     assert.ok(samples[i]! >= samples[i - 1]!, `monoNow must not go backwards: ${samples[i - 1]} -> ${samples[i]}`);
   }
-  // Date.now is epoch ms (~1e12); performance.now is process-relative ms (far smaller in tests).
   assert.ok(samples[0]! < 1e11, `production monoNow must not default to wall-clock Date.now; got ${samples[0]}`);
 });

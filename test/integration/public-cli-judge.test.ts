@@ -290,15 +290,11 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
     );
     assert.equal(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, join(admitted.runDirectory, "session"));
     await access(admitted.admittedRequestPath);
-    // Unbound admit writes no waiting.jsonl; when present it must never hold request content.
-    const waitingPath = join(home, ".ak-roles", "books", bookKey, "waiting.jsonl");
-    try {
-      const waiting = await readFile(waitingPath, "utf8");
-      assert.equal(waiting.includes("review the attachment"), false);
-      assert.equal(waiting.includes("admitted-bytes-v1"), false);
-    } catch (error) {
-      assert.equal((error as NodeJS.ErrnoException).code, "ENOENT");
-    }
+    // #855: two-face waiting.jsonl deleted — admit must not create it.
+    await assert.rejects(
+      () => readFile(join(home, ".ak-roles", "books", bookKey, "waiting.jsonl"), "utf8"),
+      (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
   });
 });
 
@@ -1082,8 +1078,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     assert.match(prompt, /attachments\/00-note\.txt/);
     assert.equal(prompt.includes(attachment), false);
 
-    // ADR 0049 host correlation channel: optional env id reaches the child when present.
-    assert.equal(capturedEnv?.AK_CORRELATION_ID, "corr-106-unit");
     assert.equal(
       typeof capturedEnv?.AK_ROLE_RUN_DIR === "string" &&
         capturedEnv.AK_ROLE_RUN_DIR.includes("run-cli-judge-001@judge"),

@@ -305,6 +305,11 @@ export type CliEnv = {
    * skip same-ticket auto-resume. Not a public flag — the verb is the choice.
    */
   freshSummons?: true;
+  /**
+   * #855: process-level cancel (SIGTERM/SIGINT/SIGHUP). Nested turns receive
+   * the same signal so hosts can gracefully stop children.
+   */
+  signal?: AbortSignal;
 };
 
 
@@ -413,6 +418,7 @@ function createRoleEnvironment(
       ? {}
       : { autoResumeLimit: options.config.autoResumeLimit }),
     ...(env.freshSummons === true ? { freshSummons: true as const } : {}),
+    ...(env.signal === undefined ? {} : { signal: env.signal }),
   };
 }
 
@@ -1166,6 +1172,30 @@ async function runConfigCommand(
   }
 
   throw new CliUsageError(`unknown config subcommand: ${args[0]}`);
+}
+
+/**
+ * #855: process-cancel handlers only for commands that run a role turn
+ * (callable roles / resume / new). analyst/roles/config/help keep Node's
+ * default SIGINT/SIGTERM termination — installing handlers would swallow Ctrl+C.
+ */
+export function commandNeedsProcessCancel(argv: readonly string[]): boolean {
+  // Decision-time parse must not escape the CLI usage boundary. Malformed
+  // global flags throw CliUsageError here; return false and let runAkRole
+  // present the same structured usage reject (exit 2). Handlers are moot
+  // when parse fails — install-or-not has no subsequent effect.
+  let parsed: ParsedGlobal;
+  try {
+    parsed = parseArgv(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) return false;
+    throw error;
+  }
+  if (parsed.help || parsed.command === undefined || parsed.command === "help") {
+    return false;
+  }
+  if (parsed.command === "resume" || parsed.command === "new") return true;
+  return isPublicCallableRole(parsed.command);
 }
 
 export async function runAkRole(

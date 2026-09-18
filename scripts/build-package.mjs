@@ -19,7 +19,6 @@ const entries = [
   "pi/in-process-session",
   "activation-ledger-git",
   "activation-ledger-topology",
-  "activation-reconciliation",
   "archivist-record-entry",
   // Pure subject nest topology — static import of archivist-record-entry;
   // cold discovery without SessionManager (#636). Keep listed while that

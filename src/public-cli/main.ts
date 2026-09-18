@@ -34,6 +34,28 @@ process.env.AK_ROLE_PACKAGE_ROOT = packageRoot;
 // The host-provided runtime must be resolvable before the CLI module graph loads it.
 ensureHostPiRuntimeResolvable(packageRoot);
 
-const { runAkRole } = await import("./cli.ts");
-const result = await runAkRole(process.argv.slice(2), { packageRoot });
-process.exitCode = result.exitCode;
+const { runAkRole, commandNeedsProcessCancel } = await import("./cli.ts");
+const { installProcessCancelHandlers } = await import("./process-cancel.ts");
+
+// #855: catchable signals only for role-turn commands. analyst/roles/config/help
+// keep Node default termination — global handlers would swallow Ctrl+C.
+const argv = process.argv.slice(2);
+const processCancel = commandNeedsProcessCancel(argv)
+  ? installProcessCancelHandlers()
+  : undefined;
+try {
+  const result = await runAkRole(argv, {
+    packageRoot,
+    ...(processCancel === undefined ? {} : { signal: processCancel.signal }),
+  });
+  // Signal termination is never a successful public exit, even if a seat
+  // somehow returned zero before settlement folded the abort.
+  process.exitCode =
+    processCancel !== undefined &&
+    processCancel.receivedSignal() !== undefined &&
+    result.exitCode === 0
+      ? 1
+      : result.exitCode;
+} finally {
+  processCancel?.dispose();
+}

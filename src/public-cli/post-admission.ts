@@ -87,6 +87,11 @@ import {
   type TypedProviderHttpObservation,
   type WriterLeaseDiagnosticKind,
 } from "./run-lifecycle.ts";
+import {
+  processCancelDiagnostic,
+  processCancelSignalName,
+  type CatchableProcessSignal,
+} from "./process-cancel.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
 import {
   attemptProducedFreshSubmission,
@@ -118,6 +123,63 @@ import {
   runWithAutoResumeLoop,
   TurnDispatchedFailure,
 } from "./auto-resume.ts";
+
+/** #855: process-cancel settlement never re-enters auto-resume. */
+function withProcessCancelSkipAutoResume<T extends object>(
+  result: T,
+  signal: AbortSignal | undefined,
+): T & { skipAutoResume?: true } {
+  if (processCancelSignalName(signal) === undefined) {
+    return result as T & { skipAutoResume?: true };
+  }
+  return { ...result, skipAutoResume: true as const };
+}
+
+/**
+ * #855: turn already started, then a catchable process signal arrived before
+ * lawful seal — settle as named cancel failure and skip auto-resume.
+ */
+async function settleProcessCancelAfterTurn<A extends AdmittedRoleInvocation, T extends TerminalResult>(input: {
+  admitted: A;
+  cancelName: CatchableProcessSignal;
+  result: RoleTurnResult;
+  adapters: PostAdmissionAdapters<A, T>;
+  env: PostAdmissionEnv;
+  io: CliIo;
+  persistRunState: boolean;
+  deferredPersist: { needsPersist?: true } | Record<string, never>;
+  invocationScopeId: string | undefined;
+}): Promise<{
+  exitCode: number;
+  admitted: A;
+  terminal?: T;
+  skipAutoResume?: true;
+  turnDispatched?: true;
+  needsPersist?: true;
+}> {
+  const failed = await settleAfterTurnStarted(
+    input.admitted,
+    withEngineDetourInvocationScope(
+      {
+        timedOut: input.result.timedOut,
+        code: input.result.code,
+        stderr: input.result.stderr,
+        knownDiagnostic: processCancelDiagnostic(input.cancelName),
+      },
+      input.invocationScopeId,
+    ),
+    input.adapters,
+    input.env.principalAuthority,
+    input.io,
+    input.persistRunState,
+  );
+  return {
+    ...failed,
+    turnDispatched: true as const,
+    skipAutoResume: true as const,
+    ...input.deferredPersist,
+  };
+}
 
 /**
  * Nested station-child role already finished its own call-local loop.
@@ -587,6 +649,38 @@ export async function dispatchPostAdmissionTurn<
   const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
     if (afterDispatchApplied) return result;
     afterDispatchApplied = true;
+    // #855: re-read cancel before afterDispatch finalization — never present
+    // lawful success after a catchable process signal. skipRunStateWrite: run-state
+    // may already be terminal from a prior lawful persist; do not reopen as resumable.
+    const cancelBeforeFinish = processCancelSignalName(env.signal);
+    if (
+      cancelBeforeFinish !== undefined &&
+      result.terminal !== undefined &&
+      isLawfulTypedTerminalOutcome(result.terminal.roleOutcome)
+    ) {
+      result = {
+        ...(await settleAfterTurnStarted(
+          admitted,
+          withEngineDetourInvocationScope(
+            {
+              timedOut: false,
+              code: null,
+              stderr: "",
+              knownDiagnostic: processCancelDiagnostic(cancelBeforeFinish),
+              skipRunStateWrite: true,
+            },
+            request.invocationScopeId,
+          ),
+          adapters,
+          env.principalAuthority,
+          io,
+          persistRunState,
+        )),
+        turnDispatched: true as const,
+        skipAutoResume: true as const,
+        ...deferredPersist,
+      };
+    }
     try {
       // #858: an unbound seat may assert its ticket on the existing receipt.
       // Read the original accepted payload; do not rewrite it, infer from prose,
@@ -788,20 +882,29 @@ export async function dispatchPostAdmissionTurn<
     try {
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
+      const processCancelName = processCancelSignalName(env.signal);
       const settled = await settleAfterTurnStarted(
           admitted,
           withEngineDetourInvocationScope({
           timedOut: false,
           code: null,
           stderr: "",
-          thrown: error,
+          thrown:
+            processCancelName === undefined
+              ? error
+              : new Error(processCancelDiagnostic(processCancelName), { cause: error }),
         }, request.invocationScopeId),
         adapters,
         env.principalAuthority,
         io,
         persistRunState,
       );
-      return await finishAfterTurn({ ...settled, turnDispatched: true as const, ...deferredPersist });
+      return await finishAfterTurn(
+        withProcessCancelSkipAutoResume(
+          { ...settled, turnDispatched: true as const, ...deferredPersist },
+          env.signal,
+        ),
+      );
     }
 
     // `result.stderr` stays live in memory for the real classification below
@@ -917,11 +1020,13 @@ export async function dispatchPostAdmissionTurn<
       // retroactively invalidate an acceptance that already sealed this turn
       // — a resolved 429 observed earlier in the same session is exactly
       // that.
+      const processCancelName = processCancelSignalName(env.signal);
       const directHostFailureSignal =
         result.timedOut
         || result.knownFailure !== undefined
         || runnerKnownFailure !== undefined
-        || credentialFailure !== undefined;
+        || credentialFailure !== undefined
+        || processCancelName !== undefined;
       hostSignalFailed =
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
@@ -959,12 +1064,16 @@ export async function dispatchPostAdmissionTurn<
       // where a bare nonzero exit / resolution failure must not be outranked
       // by someone else's earlier success (#836 r12 class 2).
       const staleAcceptanceOutranksRealFailure = !settledIsFreshThisAttempt && hostSignalFailed;
+      // #855: re-read cancel after trySettle/attach awaits — a signal in this
+      // window must not land as lawful accepted.
+      const cancelAfterSettle = processCancelSignalName(env.signal);
       if (
         settled !== undefined
         && shouldPresent(settled)
         && !directHostFailureSignal
         && !staleAcceptanceOutranksRealFailure
         && stderrLogWriteFailure === undefined
+        && cancelAfterSettle === undefined
       ) {
         // This court sealed — drop open-court pointer (bare resume no longer continues it).
         if (
@@ -1017,6 +1126,24 @@ export async function dispatchPostAdmissionTurn<
       return await finishAfterTurn({ ...settledFailure, turnDispatched: true as const, ...deferredPersist });
     }
     if (settledOutcome !== undefined) {
+      // #855: final cancel re-read before lawful seal — settlement window may
+      // have received SIGTERM/SIGINT/SIGHUP after the earlier snapshot.
+      const lateCancel = processCancelSignalName(env.signal);
+      if (lateCancel !== undefined) {
+        return await finishAfterTurn(
+          await settleProcessCancelAfterTurn({
+            admitted,
+            cancelName: lateCancel,
+            result,
+            adapters,
+            env,
+            io,
+            persistRunState,
+            deferredPersist,
+            invocationScopeId: request.invocationScopeId,
+          }),
+        );
+      }
       if (persistRunState) {
         try {
           await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
@@ -1045,17 +1172,24 @@ export async function dispatchPostAdmissionTurn<
             io,
             persistRunState,
           );
-          return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
+          return await finishAfterTurn(
+            withProcessCancelSkipAutoResume(
+              { ...failed, turnDispatched: true as const, ...deferredPersist },
+              env.signal,
+            ),
+          );
         }
       }
       // Lawful persist + present is the caller's stop seam (auto-resume loop /
       // manual resume), not this retried host-turn function.
+      // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
       return await finishAfterTurn({ ...settledOutcome, ...deferredPersist });
     }
 
     // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
     if (hostSignalFailed) {
       const resolutionInput = controlledFailureInputFromResolution(resolution!);
+      const processCancelName = processCancelSignalName(env.signal);
       const stderrLogWriteDetails =
         stderrLogWriteFailure === undefined
           ? undefined
@@ -1067,6 +1201,9 @@ export async function dispatchPostAdmissionTurn<
           code: result.code,
           stderr: result.stderr,
           ...resolutionInput,
+          ...(processCancelName === undefined
+            ? {}
+            : { knownDiagnostic: processCancelDiagnostic(processCancelName) }),
           // Secondary fact only — never the cause. Rides on whichever channel
           // classification actually reads (knownFailure.details owns it when
           // a knownFailure exists; the top-level knownDetails otherwise).
@@ -1086,7 +1223,12 @@ export async function dispatchPostAdmissionTurn<
         io,
         persistRunState,
       );
-      return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
+      return await finishAfterTurn(
+        withProcessCancelSkipAutoResume(
+          { ...failed, turnDispatched: true as const, ...deferredPersist },
+          env.signal,
+        ),
+      );
     }
 
     // Nothing else was wrong, but the durable stderr mirror itself failed to
@@ -1114,6 +1256,23 @@ export async function dispatchPostAdmissionTurn<
       await settleHostEndedNoReceipt(admitted, env.principalAuthority, courtScope) as T,
       courtScope,
     );
+    // #855: cancel during no_receipt settlement window is not lawful success.
+    const noReceiptCancel = processCancelSignalName(env.signal);
+    if (noReceiptCancel !== undefined) {
+      return await finishAfterTurn(
+        await settleProcessCancelAfterTurn({
+          admitted,
+          cancelName: noReceiptCancel,
+          result,
+          adapters,
+          env,
+          io,
+          persistRunState,
+          deferredPersist,
+          invocationScopeId: request.invocationScopeId,
+        }),
+      );
+    }
     if (persistRunState) {
       try {
         await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
@@ -1137,9 +1296,15 @@ export async function dispatchPostAdmissionTurn<
           io,
           persistRunState,
         );
-        return await finishAfterTurn({ ...failed, turnDispatched: true as const, ...deferredPersist });
+        return await finishAfterTurn(
+          withProcessCancelSkipAutoResume(
+            { ...failed, turnDispatched: true as const, ...deferredPersist },
+            env.signal,
+          ),
+        );
       }
     }
+    // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
     return await finishAfterTurn({
       exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),
       admitted,
@@ -1512,6 +1677,7 @@ export async function runPostAdmissionSeatResume<
         io: input.io,
         sessionAppender: env.sessionAppender,
         autoResumeLimit: env.autoResumeLimit,
+        ...(env.signal === undefined ? {} : { signal: env.signal }),
         buildInitialPayload: (): StationChildAttempt => ({ resumeTurn: false }),
         buildResumePayload: (): StationChildAttempt => ({ resumeTurn: true }),
         // Same as public manual resume: prior-court sealed acceptance is not a
@@ -1678,6 +1844,7 @@ export async function runPostAdmissionResumable<
     io,
     sessionAppender: env.sessionAppender,
     autoResumeLimit: env.autoResumeLimit,
+    ...(env.signal === undefined ? {} : { signal: env.signal }),
     buildInitialPayload: buildScopedInitial,
     buildResumePayload: buildScopedResume,
     dispatch: async (request, lease, _isFirst, attemptIo) => {
