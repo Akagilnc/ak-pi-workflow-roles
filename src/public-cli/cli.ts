@@ -1180,7 +1180,17 @@ async function runConfigCommand(
  * default SIGINT/SIGTERM termination — installing handlers would swallow Ctrl+C.
  */
 export function commandNeedsProcessCancel(argv: readonly string[]): boolean {
-  const parsed = parseArgv(argv);
+  // Decision-time parse must not escape the CLI usage boundary. Malformed
+  // global flags throw CliUsageError here; return false and let runAkRole
+  // present the same structured usage reject (exit 2). Handlers are moot
+  // when parse fails — install-or-not has no subsequent effect.
+  let parsed: ParsedGlobal;
+  try {
+    parsed = parseArgv(argv);
+  } catch (error) {
+    if (error instanceof CliUsageError) return false;
+    throw error;
+  }
   if (parsed.help || parsed.command === undefined || parsed.command === "help") {
     return false;
   }
