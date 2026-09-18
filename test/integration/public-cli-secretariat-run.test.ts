@@ -56,6 +56,7 @@ import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
+  TRUE_UNBOUND_DIARIST_DETAILS,
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -131,8 +132,10 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-/** Court diarist asserts #924 through real accept hook (typed ticket bind). */
-function courtDiaristFor924(): LegacyFauxPiRunner {
+/** Court diarist details through real accept hook (typed ticket bind or true-unbound). */
+function courtDiaristWithDetails(
+  details: Record<string, unknown>,
+): LegacyFauxPiRunner {
   return async (args, options) => {
     let registered:
       | {
@@ -164,8 +167,8 @@ function courtDiaristFor924(): LegacyFauxPiRunner {
     const runDir = options.env.AK_ROLE_RUN_DIR ?? "";
     const sessionFile = argvFlagValue(args, "--session") ?? "";
     const result = await registered.execute(
-      "call_diarist_924",
-      { status: "completed", ticketNumber: 924, sessions: [] as const },
+      "call_diarist",
+      details,
       undefined,
       undefined,
       {
@@ -186,13 +189,26 @@ function courtDiaristFor924(): LegacyFauxPiRunner {
     return scriptedTerminatingToolSession({
       role: "diarist",
       toolName: registered.name,
-      details: result.details ?? {
-        status: "completed",
-        ticketNumber: 924,
-        sessions: [] as const,
-      },
+      details: result.details ?? details,
     })(args, options);
   };
+}
+
+/** Court diarist asserts #924 through real accept hook (typed ticket bind). */
+function courtDiaristFor924(): LegacyFauxPiRunner {
+  return courtDiaristWithDetails({
+    status: "completed",
+    ticketNumber: 924,
+    sessions: [] as const,
+  });
+}
+
+/**
+ * True-unbound court diarist — does not independently mint a ticket.
+ * Used when parent board handoff must be the sole identity source (#969).
+ */
+function courtDiaristUnbound(): LegacyFauxPiRunner {
+  return courtDiaristWithDetails({ ...TRUE_UNBOUND_DIARIST_DETAILS });
 }
 
 /**
@@ -205,13 +221,16 @@ function nestedCountersignHost(input: {
   gateCalls: Array<{ kind: string }>;
   diaristRunDirectories?: string[];
   countersignRequests?: RoleTurnRequest[];
+  /** Override nested 起居郎 (default asserts #924). Omit-ticket cases pass unbound. */
+  diaristRunner?: LegacyFauxPiRunner;
 }): RoleTurnHost {
   let call = 0;
+  const diarist = input.diaristRunner ?? courtDiaristFor924();
   const piRunner: LegacyFauxPiRunner = async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
     if (role === "diarist") {
       input.diaristRunDirectories?.push(options.env.AK_ROLE_RUN_DIR ?? "");
-      return courtDiaristFor924()(args, options);
+      return diarist(args, options);
     }
     if (role === "countersign") {
       const step = input.sequence[call] ?? input.sequence.at(-1)!;
@@ -336,7 +355,28 @@ function secretariatHostDrivingRealTools(input: {
   onSummonDetails?: (details: Record<string, unknown>) => void;
   /** #969 non-pi host key — arms secretariat_verdict gate on output. */
   submissionGateHost?: "codex" | "claude" | "grok-build";
+  /**
+   * Nested 给事中 identity 起居郎 override. Parent secretariat identity still
+   * uses #924; omit-ticket cases pass unbound so parent board handoff is the
+   * sole identity source under test.
+   */
+  nestedDiaristRunner?: LegacyFauxPiRunner;
 }): RoleTurnHost {
+  // Parent identity 起居郎 always asserts #924 so the secretariat board is bound
+  // before the gate; nested 给事中 identity may be overridden (unbound).
+  const parentDiaristHost = roleTurnHostFromLegacyPiRunner({
+    packageRoot: input.packageRoot,
+    principalAuthority: piDurablePrincipalAuthority,
+    piRunner: async (args, options) => {
+      const role = argvFlagValue(args, "--ak-role");
+      if (role === "diarist") {
+        input.diaristRunDirectories?.push(options.env.AK_ROLE_RUN_DIR ?? "");
+        return courtDiaristFor924()(args, options);
+      }
+      throw new Error(`parent diarist host unexpected role: ${role}`);
+    },
+  });
+
   // #969 non-pi: production envelope wiring (home/packageRoot/hostAdapters).
   // Gate entry observed via nested countersignRequests — no harness
   // reimplementation of requireGatekeeperPass / createDefaultGateOfficerSummon.
@@ -352,10 +392,17 @@ function secretariatHostDrivingRealTools(input: {
         ? {}
         : { diaristRunDirectories: input.diaristRunDirectories }),
       countersignRequests: nestRequests,
+      ...(input.nestedDiaristRunner === undefined
+        ? {}
+        : { diaristRunner: input.nestedDiaristRunner }),
     });
     const nestAdapters = [adapter("pi", nestedTracked)];
     return {
       async executeTurn(request: RoleTurnRequest) {
+        // Parent 起居郎 binds the secretariat board; nested 给事中 uses nestAdapters.
+        if (request.activation.role === "diarist") {
+          return parentDiaristHost.executeTurn(request);
+        }
         if (request.activation.role !== "secretariat") {
           return nestedTracked.executeTurn(request);
         }
@@ -1154,6 +1201,8 @@ test("#969 omitted receipt ticketNumber still hands parent board identity to 给
       gateCalls,
       countersignRequests,
       submissionGateHost: "codex",
+      // Nested 起居郎 must not mint 924 — parent board handoff is the sole source.
+      nestedDiaristRunner: courtDiaristUnbound(),
       countersignSequence: [
         { details: { countersignStatus: "converged", note: "署" } },
       ],
