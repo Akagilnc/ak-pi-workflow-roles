@@ -1092,10 +1092,13 @@ export function createSecretariatRoleRuntime(
                   : { packageRoot: dependencies.packageRoot }),
               });
           const details = projectSecretariatSummonResult(summoned);
-          // #953 / #775: parent-visible text = receipt verbatim (+ runId/outcomeKind).
-          // Failure / no_receipt / no_terminal → lifecycle facts as submitted on details.
-          // Never invent fixed summary phrases that hide the child receipt.
+          // #953 / #775: parent-visible text = receipt verbatim (+ runId/outcomeKind)
+          // only on accepted / audit_escalation. Failure / no_receipt / no_terminal
+          // always serialize full details so diagnostic/lifecycle facts are not
+          // hidden behind a historical payload that projection may label receipt.
           const contentSource =
+            (details.outcomeKind === "accepted" ||
+              details.outcomeKind === "audit_escalation") &&
             details.receipt !== undefined
               ? {
                   outcomeKind: details.outcomeKind,

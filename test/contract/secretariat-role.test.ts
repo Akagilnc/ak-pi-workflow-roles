@@ -330,4 +330,39 @@ test("#953 summon parent-visible content is receipt/lifecycle via readableGateIt
   assert.match(failedText, /provider boom/);
   assert.equal(failedText.includes("给事中传召失败"), false);
   assert.equal((failed.details as { outcomeKind: string }).outcomeKind, "failure");
+
+  // Failure + historical payloads must still surface diagnostic on parent-visible text
+  // (do not let a prior-round receipt hide the lifecycle fact — bounce on #953).
+  const prior = {
+    countersignStatus: "continue",
+    findings: [{ article: "old", reason: "prior round" }],
+  };
+  const { tools: histTools } = await activateSecretariat({
+    summonCountersign: async () => ({
+      exitCode: 1,
+      runDirectory: "/home/books/x/runs/01a0a92e@countersign",
+      terminal: {
+        roleOutcome: {
+          kind: "failure",
+          role: "countersign",
+          diagnostic: "WebSocket error",
+          cause: "provider",
+          decisiveFacts: {},
+          payloads: [prior],
+        },
+      } as never,
+    }),
+  });
+  const histFailed = await histTools
+    .get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!
+    .execute("summon-hist-fail", { instruction: "裁：#953" }, undefined, undefined, ctx);
+  const histText = (histFailed.content as Array<{ text: string }>)[0]?.text ?? "";
+  assert.match(histText, /"outcomeKind":"failure"/);
+  assert.match(histText, /WebSocket error/);
+  assert.match(histText, /"diagnostic"/);
+  // details may still carry historical payload as receipt; content must not drop diagnostic.
+  assert.equal(
+    typeof (histFailed.details as { diagnostic?: string }).diagnostic,
+    "string",
+  );
 });
