@@ -78,13 +78,31 @@ test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name an
         child.once("close", (code, sig) => resolve({ code, signal: sig }));
       });
 
+      let hostChildPid: number | undefined;
       try {
         await waitForFile(readyFile);
-        const hostChildPid = Number.parseInt(await readFile(childPidFile, "utf8"), 10);
-        assert.ok(Number.isSafeInteger(hostChildPid) && hostChildPid > 0, `${signalName}: host child pid`);
+        hostChildPid = Number.parseInt(await readFile(childPidFile, "utf8"), 10);
+        assert.ok(
+          Number.isSafeInteger(hostChildPid) && hostChildPid > 0,
+          `${signalName}: host child pid`,
+        );
 
         child.kill(signalName);
-        const exit = await closed;
+        const exit = await Promise.race([
+          closed,
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () =>
+                reject(
+                  new Error(
+                    `${signalName}: driver did not exit after signal within 20s; ` +
+                      `pid=${child.pid} hostChild=${hostChildPid} stderr=${stderr.slice(-500)}`,
+                  ),
+                ),
+              20_000,
+            ),
+          ),
+        ]);
 
         // Public process must not present as normal success.
         assert.notEqual(exit.code, 0, `${signalName}: exit code must be non-zero; stderr=${stderr}`);
@@ -114,9 +132,25 @@ test("public entry: SIGTERM/SIGINT/SIGHUP settle non-success with signal name an
         }
         assert.equal(hostChildAlive, false, `${signalName}: host child must exit`);
       } finally {
+        // Failure path: graceful SIGTERM only (never SIGKILL). Wait briefly; if still
+        // alive, leave the scene and let the test failure diagnostic name the pids.
         if (child.exitCode === null && child.signalCode === null) {
-          child.kill("SIGKILL");
-          await closed.catch(() => undefined);
+          try {
+            child.kill("SIGTERM");
+          } catch {
+            /* already gone */
+          }
+          await Promise.race([
+            closed.catch(() => undefined),
+            new Promise((r) => setTimeout(r, 2_000)),
+          ]);
+        }
+        if (hostChildPid !== undefined) {
+          try {
+            process.kill(hostChildPid, "SIGTERM");
+          } catch {
+            /* ESRCH = already gone */
+          }
         }
       }
       void stdout;
