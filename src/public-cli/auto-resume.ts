@@ -597,10 +597,6 @@ export async function runWithAutoResumeLoop<
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
-      if (processCancelSignalName(options.signal) !== undefined) {
-        if (terminal !== undefined) presentTerminal(terminal, options.io);
-        return result;
-      }
       if (
         result.turnDispatched === true
         && !(await isPrincipalAvailable(options.admitted.principal))
@@ -631,8 +627,9 @@ export async function runWithAutoResumeLoop<
           terminal,
         } as T;
       }
-      // #855: process cancel on the throw path — do not re-dispatch.
-      if (processCancelSignalName(options.signal) !== undefined) {
+      // #855: process cancel on the throw path — do not re-dispatch; name the signal.
+      const cancelName = processCancelSignalName(options.signal);
+      if (cancelName !== undefined) {
         const terminal = await attachDispatchExceptionTerminal(
           options.admitted,
           dispatchExceptionFailureTerminal({
@@ -641,7 +638,7 @@ export async function runWithAutoResumeLoop<
             causeError: lastThrownError,
             errorFiles: retainedErrorFiles,
             autoResumeAttempts,
-            endReason: "process cancel before further resume",
+            endReason: `ak-role terminated by ${cancelName}`,
             everyAttemptThrew,
           }),
           options.io,

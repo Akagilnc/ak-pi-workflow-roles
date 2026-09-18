@@ -182,74 +182,6 @@ async function settleProcessCancelAfterTurn<A extends AdmittedRoleInvocation, T 
 }
 
 /**
- * #855: finish a would-be lawful outcome; if cancel arrives during afterDispatch,
- * fold to named cancel failure instead of accepted/no_receipt.
- */
-async function finishLawfulAfterTurn<A extends AdmittedRoleInvocation, T extends TerminalResult>(input: {
-  settledOutcome: {
-    exitCode: number;
-    admitted: A;
-    terminal: T;
-    turnDispatched: true;
-  };
-  deferredPersist: { needsPersist?: true } | Record<string, never>;
-  finishAfterTurn: (result: {
-    exitCode: number;
-    admitted: A;
-    terminal?: T;
-    skipAutoResume?: true;
-    turnDispatched?: true;
-    needsPersist?: true;
-  }) => Promise<{
-    exitCode: number;
-    admitted: A;
-    terminal?: T;
-    skipAutoResume?: true;
-    turnDispatched?: true;
-    needsPersist?: true;
-  }>;
-  admitted: A;
-  result: RoleTurnResult;
-  adapters: PostAdmissionAdapters<A, T>;
-  env: PostAdmissionEnv;
-  io: CliIo;
-  persistRunState: boolean;
-  invocationScopeId: string | undefined;
-}): Promise<{
-  exitCode: number;
-  admitted: A;
-  terminal?: T;
-  skipAutoResume?: true;
-  turnDispatched?: true;
-  needsPersist?: true;
-}> {
-  const finished = await input.finishAfterTurn({
-    ...input.settledOutcome,
-    ...input.deferredPersist,
-  });
-  const lateCancel = processCancelSignalName(input.env.signal);
-  if (
-    lateCancel === undefined
-    || finished.terminal === undefined
-    || !isLawfulTypedTerminalOutcome(finished.terminal.roleOutcome)
-  ) {
-    return finished;
-  }
-  // afterDispatch already ran; correct presentation only (run-state stays terminal).
-  return await settleProcessCancelAfterTurn({
-    admitted: input.admitted,
-    cancelName: lateCancel,
-    result: input.result,
-    adapters: input.adapters,
-    env: input.env,
-    io: input.io,
-    persistRunState: input.persistRunState,
-    deferredPersist: input.deferredPersist,
-    invocationScopeId: input.invocationScopeId,
-  });
-}
-
-/**
  * Nested station-child role already finished its own call-local loop.
  * Parent records that failure once and must not auto-resume into a re-summon
  * (#840 父子不层叠). Other beforeDispatch failures keep the shared #416 budget.
@@ -717,6 +649,38 @@ export async function dispatchPostAdmissionTurn<
   const finishAfterTurn = async (result: DispatchOutcome): Promise<DispatchOutcome> => {
     if (afterDispatchApplied) return result;
     afterDispatchApplied = true;
+    // #855: re-read cancel before afterDispatch finalization — never present
+    // lawful success after a catchable process signal. skipRunStateWrite: run-state
+    // may already be terminal from a prior lawful persist; do not reopen as resumable.
+    const cancelBeforeFinish = processCancelSignalName(env.signal);
+    if (
+      cancelBeforeFinish !== undefined &&
+      result.terminal !== undefined &&
+      isLawfulTypedTerminalOutcome(result.terminal.roleOutcome)
+    ) {
+      result = {
+        ...(await settleAfterTurnStarted(
+          admitted,
+          withEngineDetourInvocationScope(
+            {
+              timedOut: false,
+              code: null,
+              stderr: "",
+              knownDiagnostic: processCancelDiagnostic(cancelBeforeFinish),
+              skipRunStateWrite: true,
+            },
+            request.invocationScopeId,
+          ),
+          adapters,
+          env.principalAuthority,
+          io,
+          persistRunState,
+        )),
+        turnDispatched: true as const,
+        skipAutoResume: true as const,
+        ...deferredPersist,
+      };
+    }
     try {
       // #858: an unbound seat may assert its ticket on the existing receipt.
       // Read the original accepted payload; do not rewrite it, infer from prose,
@@ -1218,18 +1182,8 @@ export async function dispatchPostAdmissionTurn<
       }
       // Lawful persist + present is the caller's stop seam (auto-resume loop /
       // manual resume), not this retried host-turn function.
-      return await finishLawfulAfterTurn({
-        settledOutcome,
-        deferredPersist,
-        finishAfterTurn,
-        admitted,
-        result,
-        adapters,
-        env,
-        io,
-        persistRunState,
-        invocationScopeId: request.invocationScopeId,
-      });
+      // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
+      return await finishAfterTurn({ ...settledOutcome, ...deferredPersist });
     }
 
     // Host/runner true failure coexists with already-recorded payloads — never wash as accepted.
@@ -1350,22 +1304,13 @@ export async function dispatchPostAdmissionTurn<
         );
       }
     }
-    return await finishLawfulAfterTurn({
-      settledOutcome: {
-        exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),
-        admitted,
-        terminal: noReceipt,
-        turnDispatched: true as const,
-      },
-      deferredPersist,
-      finishAfterTurn,
+    // #855 cancel re-read lives in finishAfterTurn (before afterDispatch).
+    return await finishAfterTurn({
+      exitCode: exitCodeForTerminalOutcome(noReceipt.roleOutcome),
       admitted,
-      result,
-      adapters,
-      env,
-      io,
-      persistRunState,
-      invocationScopeId: request.invocationScopeId,
+      terminal: noReceipt,
+      turnDispatched: true as const,
+      ...deferredPersist,
     });
   } finally {
     try {
