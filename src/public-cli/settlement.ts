@@ -137,9 +137,8 @@ import type {
 } from "../host-contracts.ts";
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
 import {
-  isUniqueErrorFallbackName,
+  listSeamOwnedUniqueErrorFacePaths,
   RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS,
-  runIdFromRunDirectory,
 } from "../run-terminal-artifacts.ts";
 import {
   ensureRunArtifactsDir,
@@ -2336,56 +2335,11 @@ async function removeFaceIfPresent(path: string): Promise<void> {
 }
 
 /**
- * Drop unique error.<uuid>.json faces under dirs.
- * When expectedRunId is set (shared parent runs/), only faces bound to that runId.
- */
-async function removeUniqueErrorFallbacks(
-  directories: readonly string[],
-  expectedRunId: string | undefined,
-): Promise<void> {
-  for (const dir of directories) {
-    let names: string[];
-    try {
-      names = await readdir(dir);
-    } catch (error) {
-      if (isMissingPathError(error)) continue;
-      throw error;
-    }
-    for (const name of names) {
-      if (!isUniqueErrorFallbackName(name)) continue;
-      const path = join(dir, name);
-      if (expectedRunId !== undefined) {
-        let raw: string;
-        try {
-          raw = await readFile(path, "utf8");
-        } catch (error) {
-          if (isMissingPathError(error)) continue;
-          throw error;
-        }
-        let body: unknown;
-        try {
-          body = JSON.parse(raw);
-        } catch {
-          // Unreadable — cannot prove ownership; leave in place.
-          continue;
-        }
-        if (
-          typeof body !== "object"
-          || body === null
-          || (body as { runId?: unknown }).runId !== expectedRunId
-        ) {
-          continue;
-        }
-      }
-      await removeFaceIfPresent(path);
-    }
-  }
-}
-
-/**
  * #953: artifact face reflects the current terminal only.
  * Success drops every seam-owned prior error face; failure drops prior report.
  * Face names may be directory collision plants — remove recursively.
+ * Unique ownership is the reader true source (listSeamOwnedUniqueErrorFacePaths):
+ * parent runs/ faces clear only when body.runId binds; unparseable runId → none.
  * Delete failures other than missing target stay loud (失败诚实).
  */
 export async function clearOppositeTerminalArtifactFace(
@@ -2402,11 +2356,9 @@ export async function clearOppositeTerminalArtifactFace(
   for (const relative of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
     await removeFaceIfPresent(join(runDirectory, relative));
   }
-  await removeUniqueErrorFallbacks([artifactsDir, runDirectory], undefined);
-  await removeUniqueErrorFallbacks(
-    [dirname(runDirectory)],
-    runIdFromRunDirectory(runDirectory),
-  );
+  for (const path of await listSeamOwnedUniqueErrorFacePaths(runDirectory)) {
+    await removeFaceIfPresent(path);
+  }
 }
 
 async function ensureTerminalArtifactFace(

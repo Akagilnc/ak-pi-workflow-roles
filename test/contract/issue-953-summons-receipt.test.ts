@@ -12,6 +12,7 @@ import {
   courtDiaristEscalateDiagnostic,
 } from "../../src/public-cli/countersign-run.ts";
 import {
+  clearOppositeTerminalArtifactFace,
   publishFailureArtifacts,
   publishJudgeArtifacts,
 } from "../../src/public-cli/settlement.ts";
@@ -73,9 +74,27 @@ test("#953 success artifact face drops prior error faces; failure face drops pri
     });
     const authority = piDurablePrincipalAuthority;
     const artifactsDir = join(runDirectory, "artifacts");
+    const runsParent = join(runDirectory, "..");
     await mkdir(artifactsDir, { recursive: true });
 
-    // Prior failure faces: conventional + seam-owned settlement fallback.
+    const ownArtifactUnique = join(
+      artifactsDir,
+      "error.aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.json",
+    );
+    const ownRunUnique = join(
+      runDirectory,
+      "error.bbbbbbbb-cccc-4ddd-8eee-ffffffffffff.json",
+    );
+    const ownParentUnique = join(
+      runsParent,
+      "error.cccccccc-dddd-4eee-8fff-000000000000.json",
+    );
+    const siblingParentUnique = join(
+      runsParent,
+      "error.dddddddd-eeee-4fff-8000-111111111111.json",
+    );
+
+    // Prior failure faces: conventional + settlement fallback + unique (same-run + parent).
     await writeFile(
       join(artifactsDir, "error.json"),
       `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "old boom" })}\n`,
@@ -89,6 +108,26 @@ test("#953 success artifact face drops prior error faces; failure face drops pri
     await writeFile(
       join(runDirectory, "error.settlement.json"),
       `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "old run-dir boom" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      ownArtifactUnique,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "own artifact unique" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      ownRunUnique,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "own run unique" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      ownParentUnique,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "own parent unique" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      siblingParentUnique,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "someone-else", diagnostic: "sibling parent unique" })}\n`,
       "utf8",
     );
 
@@ -119,6 +158,20 @@ test("#953 success artifact face drops prior error faces; failure face drops pri
       () => access(join(runDirectory, "error.settlement.json")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
+    // Seam-owned unique faces cleared; sibling parent unique left (reader ownership).
+    await assert.rejects(
+      () => access(ownArtifactUnique),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(ownRunUnique),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await assert.rejects(
+      () => access(ownParentUnique),
+      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
+    );
+    await access(siblingParentUnique);
 
     // Success then failure: report must not remain as the face.
     await publishFailureArtifacts(
@@ -164,8 +217,7 @@ test("#953 success clears directory-planted error face and settlement fallback",
     await mkdir(join(artifactsDir, "error.json"), { recursive: true });
     await writeFile(
       join(artifactsDir, "error.settlement.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-eisdir", diagnostic: "plant" })}
-`,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-eisdir", diagnostic: "plant" })}\n`,
       "utf8",
     );
 
@@ -188,5 +240,37 @@ test("#953 success clears directory-planted error face and settlement fallback",
       () => access(join(artifactsDir, "error.settlement.json")),
       (error: NodeJS.ErrnoException) => error.code === "ENOENT",
     );
+  });
+});
+
+test("#953 unparseable run dir does not wipe parent unique faces (reader ownership)", async () => {
+  await withTempHome(async (home) => {
+    const runsParent = join(home, ".ak-roles", "books", "proj", "unbound", "runs");
+    const badRun = join(runsParent, "not-a-role-run");
+    await mkdir(badRun, { recursive: true });
+    const siblingPath = join(
+      runsParent,
+      "error.ffffffff-1111-4222-8333-444444444444.json",
+    );
+    const claimedPath = join(
+      runsParent,
+      "error.eeeeeeee-dddd-4ccc-8bbb-aaaaaaaaaaaa.json",
+    );
+    await writeFile(
+      siblingPath,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "someone-else", diagnostic: "sibling" })}\n`,
+      "utf8",
+    );
+    await writeFile(
+      claimedPath,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "not-a-role-run", diagnostic: "claimed" })}\n`,
+      "utf8",
+    );
+
+    await clearOppositeTerminalArtifactFace(badRun, "report");
+
+    // runIdFromRunDirectory undefined → presentUniqueFallbackBoundToRun false → parent untouched.
+    await access(siblingPath);
+    await access(claimedPath);
   });
 });

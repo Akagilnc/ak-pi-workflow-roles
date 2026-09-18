@@ -170,13 +170,38 @@ export function runIdFromRunDirectory(runDirectory: string): string | undefined 
  * Shared parent-directory unique fallback may be adopted only when the
  * publisher-owned body.runId equals this run directory's runId. Same-run
  * artifactsDir / runDirectory candidates keep path ownership and skip this.
+ * expectedRunId undefined (unparseable run dir) → never bound.
  */
-function presentUniqueFallbackBoundToRun(
+export function presentUniqueFallbackBoundToRun(
   body: Record<string, unknown>,
   expectedRunId: string | undefined,
 ): boolean {
   if (expectedRunId === undefined) return false;
   return typeof body.runId === "string" && body.runId === expectedRunId;
+}
+
+/**
+ * Unique error.<uuid>.json faces this run owns and may clear on success face switch.
+ * Ownership matches readRunTerminalArtifact:
+ * - same-run dirs (artifacts/, runDir): path ownership — all unique names
+ * - parent runs/: only body.runId-bound faces; unparseable runId or unreadable body → none
+ */
+export async function listSeamOwnedUniqueErrorFacePaths(
+  runDirectory: string,
+): Promise<readonly string[]> {
+  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
+  const owned: string[] = await listUniqueErrorFallbackPaths([
+    artifactsDir,
+    runDirectory,
+  ]);
+  const expectedRunId = runIdFromRunDirectory(runDirectory);
+  for (const path of await listUniqueErrorFallbackPaths([dirname(runDirectory)])) {
+    const read = await readTerminalArtifactAtPath(path, "error.json");
+    if (read === undefined || read.status !== "present") continue;
+    if (!presentUniqueFallbackBoundToRun(read.body, expectedRunId)) continue;
+    owned.push(path);
+  }
+  return owned;
 }
 
 /**
