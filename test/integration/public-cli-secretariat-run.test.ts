@@ -29,10 +29,20 @@ import {
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
+  createDefaultGateOfficerSummon,
+  requireGatekeeperPass,
+} from "../../src/gatekeeper-pass-envelope.ts";
+import {
   createCountersignRoleRuntime,
   createDiaristRoleRuntime,
   createSecretariatRoleRuntime,
+  GatekeeperDecisionError,
 } from "../../src/role-runtime.ts";
+import { isAuditEscalationProjection } from "../../src/audit-escalation.ts";
+import {
+  recordAuditEscalationSubmission,
+  sealAcceptedSubmission,
+} from "../helpers/submission-ledger-fixture.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -45,7 +55,6 @@ import {
   objectPayloads,
   payloadStatusSequence,
 } from "../helpers/terminal-payload.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { MAIN_ROLE_SESSION_MATERIALS } from "../../src/session-opening-materials.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import {
@@ -377,18 +386,32 @@ function secretariatHostDrivingRealTools(input: {
         async requireGatekeeperPass(options: {
           context: HostContext;
           subject: { kind: string };
+          signal?: AbortSignal;
+          hostActions: typeof hostActions;
+          toolCallId: string;
           submission?: unknown;
         }) {
-          // #969 adapter entry boundary only — record subject + payload identity.
-          // Shared gate queue/status map: test/unit/gate-officer-resume-accounting.test.ts
-          // Mid-turn pi summon through-line: existing tests above.
           input.gateCalls.push({ kind: options.subject.kind });
-          if (options.subject.kind === "secretariat_verdict") {
-            assert.ok(
-              options.submission !== undefined,
-              "secretariat_verdict gate must carry this-turn submission",
-            );
+          if (options.subject.kind !== "secretariat_verdict") {
+            // Nested 符宝郎内闸 on countersign stays a structured pass record.
+            return;
           }
+          // #969: real shared envelope — summons 给事中 via default officer summon.
+          await requireGatekeeperPass({
+            context: options.context,
+            subject: options.subject as never,
+            ...(options.signal === undefined ? {} : { signal: options.signal }),
+            hostActions: options.hostActions,
+            toolCallId: options.toolCallId,
+            ...(options.submission === undefined ? {} : { submission: options.submission }),
+            summonOfficer: createDefaultGateOfficerSummon({
+              cwd: request.cwd,
+              home: input.home,
+              packageRoot: input.packageRoot,
+              roleTurnHost: nested,
+              hostAdapters: [adapter("pi", nested)],
+            }),
+          });
         },
       } as unknown as RoleHost;
 
@@ -455,16 +478,26 @@ function secretariatHostDrivingRealTools(input: {
         }
         const tool = tools.get(SECRETARIAT_OUTPUT_TOOL_NAME);
         assert.ok(tool, "output tool missing after activate");
-        const result = await tool.execute(
-          "call_secretariat_out",
-          step.details,
-          undefined,
-          undefined,
-          ctx,
-        );
+        let result: { details?: unknown; terminate?: boolean };
+        try {
+          result = await tool.execute(
+            "call_secretariat_out",
+            step.details,
+            undefined,
+            undefined,
+            ctx,
+          );
+        } catch (error) {
+          // #969 bounce: 给事中封驳 → correctable non-pass; next output step re-submits.
+          if (error instanceof GatekeeperDecisionError && error.result.status === "bounce") {
+            continue;
+          }
+          throw error;
+        }
         assert.equal(result.terminate, true);
         const coords = piDurablePrincipalAuthority.decode(request.principal);
         await mkdir(coords.sessionDirectory, { recursive: true });
+        const sealedDetails = result.details ?? step.details;
         await writeFile(
           coords.sessionFile,
           `${JSON.stringify({
@@ -474,23 +507,35 @@ function secretariatHostDrivingRealTools(input: {
               toolCallId: "call_secretariat_out",
               toolName: SECRETARIAT_OUTPUT_TOOL_NAME,
               isError: false,
-              details: result.details ?? step.details,
+              details: sealedDetails,
             },
           })}\n`,
           "utf8",
         );
-        await sealAcceptedSubmission({
-          cwd: request.cwd,
-          home: request.home,
-          runId: parentRunId,
-          runDirectory: request.runDirectory,
-          role: "secretariat",
-          details: result.details ?? step.details,
-          toolCallId: "call_secretariat_out",
-          ...(request.courtAttemptId === undefined
-            ? {}
-            : { courtAttemptId: request.courtAttemptId }),
-        });
+        if (isAuditEscalationProjection(sealedDetails)) {
+          await recordAuditEscalationSubmission({
+            cwd: request.cwd,
+            home: request.home,
+            runId: parentRunId,
+            runDirectory: request.runDirectory,
+            role: "secretariat",
+            details: sealedDetails,
+            toolCallId: "call_secretariat_out",
+          });
+        } else {
+          await sealAcceptedSubmission({
+            cwd: request.cwd,
+            home: request.home,
+            runId: parentRunId,
+            runDirectory: request.runDirectory,
+            role: "secretariat",
+            details: sealedDetails,
+            toolCallId: "call_secretariat_out",
+            ...(request.courtAttemptId === undefined
+              ? {}
+              : { courtAttemptId: request.courtAttemptId }),
+          });
+        }
       }
 
       return { code: 0, stderr: "", timedOut: false };
@@ -821,7 +866,7 @@ test("public secretariat escalate branch: countersign escalate → secretariat e
   });
 });
 
-test("#969 non-pi converged enters shared gate at public entry (codex boundary)", async () => {
+test("#969 non-pi converged → shared gate summons 给事中 → bounce → resubmit → 署", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -829,17 +874,31 @@ test("#969 non-pi converged enters shared gate at public entry (codex boundary)"
     const runId = "01a0sec969-gate-7000-8000-000000000001";
     const capture = captureIo();
     const gateCalls: Array<{ kind: string }> = [];
+    const countersignRequests: RoleTurnRequest[] = [];
     const host = secretariatHostDrivingRealTools({
       packageRoot,
       home,
       gateCalls,
+      countersignRequests,
       submissionGateHost: "codex",
-      countersignSequence: [],
-      // No mid-turn summon — headless path is output-only.
+      countersignSequence: [
+        {
+          details: {
+            countersignStatus: "continue",
+            fix: { summary: "删伪 authority" },
+          },
+        },
+        { details: { countersignStatus: "converged", note: "署" } },
+      ],
+      // Headless path: output only — no mid-turn summon tool.
       steps: [
         {
           kind: "output",
           details: { secretariatStatus: "converged", ticketNumber: 924 },
+        },
+        {
+          kind: "output",
+          details: { secretariatStatus: "converged", ticketNumber: 924, note: "已按封驳改" },
         },
       ],
     });
@@ -874,14 +933,95 @@ test("#969 non-pi converged enters shared gate at public entry (codex boundary)"
     };
     assert.equal(facts.secretariatStatus, "converged");
     assert.equal(facts.ticketNumber, 924);
-    assert.deepEqual(
-      gateCalls.filter((c) => c.kind === "secretariat_verdict"),
-      [{ kind: "secretariat_verdict" }],
+    // Shared gate entered twice (bounce then pass); nested 符宝郎 on 给事中.
+    assert.equal(
+      gateCalls.filter((c) => c.kind === "secretariat_verdict").length,
+      2,
+      `secretariat_verdict entries: ${JSON.stringify(gateCalls)}`,
+    );
+    assert.ok(
+      gateCalls.some((c) => c.kind === "countersign_verdict"),
+      `expected nested countersign_verdict, got ${JSON.stringify(gateCalls)}`,
+    );
+    assert.ok(
+      countersignRequests.length >= 1,
+      "gate must summon countersign",
+    );
+    // Same-ticket resume on second 给事中 leg.
+    assert.ok(
+      countersignRequests.some((r) => r.continuation.kind === "resume"),
+      "封驳后给事中 must resume same ticket",
     );
   });
 });
 
-test("#969 non-pi escalate skips 给事中 gate (reuse escalate fixture)", async () => {
+test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "01a0sec969-cse-7000-8000-000000000003";
+    const capture = captureIo();
+    const gateCalls: Array<{ kind: string }> = [];
+    const host = secretariatHostDrivingRealTools({
+      packageRoot,
+      home,
+      gateCalls,
+      submissionGateHost: "codex",
+      countersignSequence: [
+        {
+          details: {
+            countersignStatus: "escalate",
+            decisionGate: {
+              question: "票面争议上呈？",
+              options: ["再议", "准"],
+            },
+          },
+        },
+      ],
+      steps: [
+        {
+          kind: "output",
+          details: { secretariatStatus: "converged", ticketNumber: 924 },
+        },
+      ],
+    });
+    const result = await runAkRole(
+      [
+        "secretariat",
+        "--model",
+        "test/caller-seat:high",
+        "--project",
+        project,
+        "整理 #924 票面并送庭。",
+      ],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: capture.io,
+        createRunId: () => runId,
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+      },
+    );
+    assert.equal(result.exitCode, 0, capture.stderr.join(""));
+    assert.ok(result.terminal);
+    assert.equal(result.terminal.roleOutcome.kind, "audit_escalation");
+    const facts = objectPayloads(result.terminal.roleOutcome)[0] as {
+      countersignStatus?: string;
+      decisionGate?: { question?: string };
+    };
+    assert.equal(facts.countersignStatus, "escalate");
+    assert.equal(facts.decisionGate?.question, "票面争议上呈？");
+    assert.ok(
+      gateCalls.some((c) => c.kind === "secretariat_verdict"),
+      "must enter secretariat_verdict before 给事中 escalate",
+    );
+  });
+});
+
+test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });

@@ -271,7 +271,7 @@ test("#969 secretariat_verdict routes to countersign and maps countersignStatus"
           sessionManager: { getSessionFile: () => "/tmp/unused" },
         } as never,
         subject: { kind: "secretariat_verdict" },
-        runDirectory: "/tmp/parent-secretariat",
+        runDirectory: "/tmp/runs/01parent@secretariat",
         submission: { secretariatStatus: "converged", ticketNumber: 969 },
         summonOfficer: async (officer, _source, _signal, _reask, submission) => {
           assert.equal(officer, "countersign");
@@ -312,7 +312,7 @@ test("#969 secretariat_verdict unreadable countersignStatus needs_reask",
         sessionManager: { getSessionFile: () => "/tmp/unused" },
       } as never,
       subject: { kind: "secretariat_verdict" },
-      runDirectory: "/tmp/parent-secretariat",
+      runDirectory: "/tmp/runs/01parent@secretariat",
       summonOfficer: async () => ({
         exitCode: 0,
         terminal: {
@@ -328,5 +328,152 @@ test("#969 secretariat_verdict unreadable countersignStatus needs_reask",
       }),
     });
     assert.equal(projected.result.status, "needs_reask");
+  },
+);
+
+test("#969 host trigger boundary: codex/claude/grok-build arm gate; pi does not",
+  async () => {
+    const { createSecretariatRoleRuntime } = await import("../../src/role-runtime.ts");
+    const { SECRETARIAT_OUTPUT_TOOL_NAME } = await import("../../src/secretariat-contracts.ts");
+    const { ParentQueueReaskError } = await import("../../src/submission-errors.ts");
+
+    async function arm(host: string | undefined) {
+      const gateCalls: string[] = [];
+      const tools = new Map<string, { execute: Function }>();
+      const roleHost = {
+        registerTool(tool: { name: string; execute: Function }) {
+          tools.set(tool.name, tool);
+        },
+        on() {},
+        getAllTools: () => [...tools.keys()].map((name) => ({ name })),
+        setActiveTools() {},
+        getActiveTools: () => [...tools.keys()],
+        getFlag() { return undefined; },
+        async requireGatekeeperPass(options: { subject: { kind: string } }) {
+          gateCalls.push(options.subject.kind);
+        },
+      };
+      await createSecretariatRoleRuntime(
+        roleHost as never,
+        { loadSoul: async () => "中书省" },
+        {
+          failInfrastructure(): never { throw new Error("fail"); },
+          bindSubmissionNonPass() {},
+        },
+      ).activate();
+      const ctx = {
+        cwd: "/tmp",
+        mode: "json",
+        model: undefined,
+        sessionManager: {} as never,
+        runDirectory: "/tmp/run",
+        ...(host === undefined ? {} : { host }),
+        abort() {},
+      };
+      await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+        "c",
+        { secretariatStatus: "converged", ticketNumber: 969 },
+        undefined,
+        undefined,
+        ctx,
+      );
+      return gateCalls;
+    }
+
+    for (const host of ["codex", "claude", "grok-build"] as const) {
+      assert.deepEqual(await arm(host), ["secretariat_verdict"], host);
+    }
+    assert.deepEqual(await arm("pi"), []);
+    assert.deepEqual(await arm(undefined), []);
+
+    // Unknown status on non-pi reasks parent (ADR 0055).
+    const tools = new Map<string, { execute: Function }>();
+    const roleHost = {
+      registerTool(tool: { name: string; execute: Function }) {
+        tools.set(tool.name, tool);
+      },
+      on() {},
+      getAllTools: () => [...tools.keys()].map((name) => ({ name })),
+      setActiveTools() {},
+      getActiveTools: () => [...tools.keys()],
+      getFlag() { return undefined; },
+      async requireGatekeeperPass() {
+        throw new Error("gate must not run");
+      },
+    };
+    await createSecretariatRoleRuntime(
+      roleHost as never,
+      { loadSoul: async () => "中书省" },
+      {
+        failInfrastructure(): never { throw new Error("fail"); },
+        bindSubmissionNonPass() {},
+      },
+    ).activate();
+    await assert.rejects(
+      () =>
+        tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+          "bad",
+          { secretariatStatus: "unexpected" },
+          undefined,
+          undefined,
+          {
+            cwd: "/tmp",
+            mode: "json",
+            model: undefined,
+            sessionManager: {} as never,
+            host: "codex",
+            abort() {},
+          },
+        ),
+      (error: unknown) => error instanceof ParentQueueReaskError,
+    );
+  },
+);
+
+test("#969 secretariat_verdict escalate throws without bindSubmissionNonPass (end-parent)",
+  async () => {
+    const { requireGatekeeperPass } = await import("../../src/gatekeeper-pass-envelope.ts");
+    const { GatekeeperDecisionError } = await import("../../src/gatekeeper-role.ts");
+    const nonPass: unknown[] = [];
+    const receipt = {
+      countersignStatus: "escalate",
+      decisionGate: { question: "q", options: ["a"] },
+    };
+    await assert.rejects(
+      () =>
+        requireGatekeeperPass({
+          context: {
+            cwd: process.cwd(),
+            sessionManager: { getSessionFile: () => "/tmp/unused" },
+          } as never,
+          subject: { kind: "secretariat_verdict" },
+          toolCallId: "t1",
+          hostActions: {
+            failInfrastructure(): never {
+              throw new Error("infra");
+            },
+            bindSubmissionNonPass(_id, result) {
+              nonPass.push(result);
+            },
+          },
+          summonOfficer: async () => ({
+            exitCode: 0,
+            terminal: {
+              roleOutcome: {
+                kind: "accepted",
+                role: "countersign",
+                payloads: [receipt],
+              },
+              navigator: { disposition: "no-advice" },
+              artifacts: [],
+              runId: "countersign-run",
+            },
+          }),
+        }),
+      (error: unknown) =>
+        error instanceof GatekeeperDecisionError
+        && error.result.status === "escalate",
+    );
+    assert.equal(nonPass.length, 0, "escalate must not arm parent retry bind");
   },
 );

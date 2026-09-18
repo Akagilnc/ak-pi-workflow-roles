@@ -38,7 +38,7 @@ export type AuditEscalationToolResult = {
 
 export type OfficerAuditEscalationDecision = {
   readonly status: "escalate";
-  readonly officer?: "inspector" | "notary";
+  readonly officer?: "inspector" | "notary" | "countersign";
   readonly reason?: unknown;
   readonly findings?: unknown;
   readonly conflicts?: unknown;

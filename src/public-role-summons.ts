@@ -1083,15 +1083,6 @@ export async function summonGateOfficer(options: {
     const { readableGateItem } = await import("./readable-gate-item.ts");
     gateReviewInstruction = readableGateItem(options.submission);
   }
-  // Parent correlation for nested countersign ledger (ADR 0010 / #924 / #969).
-  const correlationId = await (async () => {
-    const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
-    try {
-      return runIdFromRunDirectory(options.sourceRunDirectory);
-    } catch {
-      return undefined;
-    }
-  })();
   const common = {
     cwd: options.cwd,
     ...(home === undefined ? {} : { home }),
@@ -1105,7 +1096,6 @@ export async function summonGateOfficer(options: {
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
     ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-    ...(correlationId === undefined ? {} : { correlationId }),
   } as const;
   if (options.officer === "notary") {
     // #753/#879: reask or verbatim body rides summons.instruction / first-mint prompt.
@@ -1132,8 +1122,17 @@ export async function summonGateOfficer(options: {
     });
   }
   if (options.officer === "countersign") {
-    // #969: Secretariat submission gate → 给事中. Ticket bind from submission when present;
-    // argv carries a ticket-bearing instruction for 起居郎; body/reask ride env.
+    // #969: Secretariat submission gate → 给事中.
+    // Dialogue / identity instruction = parent typed payload 原话 (ADR 0079) or reask;
+    // no code-authored summons prose (#924). Ticket handoff from submission when present.
+    // correlationId only on this officer — notary/auditor/inspector stay untouched.
+    const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
+    const correlationId = runIdFromRunDirectory(options.sourceRunDirectory);
+    if (correlationId === undefined || correlationId.trim() === "") {
+      throw new Error(
+        `countersign gate summon requires parent runId from sourceRunDirectory: ${options.sourceRunDirectory}`,
+      );
+    }
     const ticketNumber = (() => {
       if (options.submission === null || typeof options.submission !== "object" || Array.isArray(options.submission)) {
         return undefined;
@@ -1141,14 +1140,13 @@ export async function summonGateOfficer(options: {
       const value = (options.submission as { ticketNumber?: unknown }).ticketNumber;
       return typeof value === "number" && Number.isSafeInteger(value) && value > 0 ? value : undefined;
     })();
-    const instruction =
-      ticketNumber === undefined
-        ? "裁：候选票稿送庭。"
-        : `裁：#${ticketNumber} 候选票稿送庭。`;
+    // Argv instruction = reask or parent payload bytes only (never a fabricated line).
+    const instruction = options.reask ?? gateReviewInstruction ?? "";
     return summonPublicRole({
       role: "countersign",
       argv: ["--project", options.cwd, "--", instruction],
       ...common,
+      correlationId,
       ...(ticketNumber === undefined ? {} : { boundTicketNumber: ticketNumber }),
     });
   }

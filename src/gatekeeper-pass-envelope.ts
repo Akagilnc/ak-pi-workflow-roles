@@ -155,6 +155,14 @@ export async function requireGatekeeperPass(options: {
       });
       options.hostActions.failInfrastructure(failure, options.context, options.toolCallId);
     }
+    // #969: 给事中上呈 ends the secretariat parent — no bind/retry (不回中书省擅改).
+    // Parent beforeAccept converts this into audit_escalation with the officer receipt.
+    if (
+      gatekeeper.status === "escalate"
+      && options.subject.kind === "secretariat_verdict"
+    ) {
+      throw new GatekeeperDecisionError(gatekeeper);
+    }
     // bounce | escalate | no_receipt: parent stands and may resubmit. Not a run abort.
     options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
     throw new GatekeeperDecisionError(gatekeeper);

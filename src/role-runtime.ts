@@ -314,15 +314,23 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
+import {
+  NOTARY_OUTPUT_TOOL,
+  INSPECTOR_OUTPUT_TOOL,
+  GatekeeperDecisionError,
+  createGatekeeperOutputTool,
+  runGatekeeper,
+  gateOfficerForSubject,
+} from "./gatekeeper-role.ts";
 export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
   createGatekeeperOutputTool,
   runGatekeeper,
-} from "./gatekeeper-role.ts";
+  gateOfficerForSubject,
+};
 export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
-export { gateOfficerForSubject } from "./gatekeeper-role.ts";
 import { ParentQueueReaskError } from "./submission-errors.ts";
 
 export {
@@ -1056,15 +1064,43 @@ export function createSecretariatRoleRuntime(
             // Parent escalate → throw to caller as-is; 给事中 does not attend (#969).
             return undefined;
           }
-          await roleHost.requireGatekeeperPass!({
-            context: ctx,
-            subject: { kind: "secretariat_verdict" },
-            ...(signal === undefined ? {} : { signal }),
-            hostActions,
-            toolCallId,
-            // #879: this-turn typed payload — identity-bound at submit site.
-            submission: parameters,
-          });
+          try {
+            await roleHost.requireGatekeeperPass!({
+              context: ctx,
+              subject: { kind: "secretariat_verdict" },
+              ...(signal === undefined ? {} : { signal }),
+              hostActions,
+              toolCallId,
+              // #879: this-turn typed payload — identity-bound at submit site.
+              submission: parameters,
+            });
+            return undefined;
+          } catch (error) {
+            // #969: 给事中上呈 ends parent with officer receipt (no retry / 不擅改).
+            if (
+              error instanceof GatekeeperDecisionError
+              && error.result.status === "escalate"
+            ) {
+              const receipt = error.result.receipt;
+              const receiptRecord =
+                receipt !== null && typeof receipt === "object" && !Array.isArray(receipt)
+                  ? (receipt as Record<string, unknown>)
+                  : undefined;
+              const { buildAuditEscalationResult } = await import("./audit-escalation.ts");
+              return buildAuditEscalationResult(
+                {
+                  status: "escalate",
+                  officer: "countersign",
+                  ...(receiptRecord !== undefined
+                    && Object.prototype.hasOwnProperty.call(receiptRecord, "decisionGate")
+                    ? { decisionGate: receiptRecord.decisionGate }
+                    : {}),
+                },
+                receipt,
+              );
+            }
+            throw error;
+          }
         }
       : undefined;
   const base = createFiledOfficerRuntime(
