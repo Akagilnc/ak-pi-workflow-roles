@@ -54,6 +54,16 @@ ak-role config set-auto-resume-limit 3
 
 **Host axis (invocation-insensible after default):** `--host` is a global public option on every callable role and on `resume`. Resolution is invocation `--host` → persistent seat host (`config set-host`) → package default (`pi`). After `config set-host <seat> <name>`, the same command face used with Pi runs that seat on the named host with zero extra flags and zero caller-side changes; bare `resume` follows the same table. Public callable roles and their institutional sub-legs (soul audit, doctor audit) share the in-process institutional session seam; Reviewer method Skill delivery is Pi-native `/skill:ak-cross-m-review` today — non-Pi host-native loader remains OPEN ([#922](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/922)).
 
+**Recommended hosts (token saving, [#971](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/971)):** long legs are capped by each host's own auto-compaction; the threshold lives in that host's own config. This package neither writes those files nor adds a compaction mechanism of its own.
+
+| Seat | Recommended host | Where that host's compaction threshold lives |
+| --- | --- | --- |
+| judge, countersign | `codex` | `~/.codex/config.toml`: `model_auto_compact_token_limit` |
+| coder, fixer | `grok-build` | `~/.grok/config.toml`: `[model."<id>"] auto_compact_threshold_percent` |
+| all other seats | `pi` (package default) | `~/.pi/agent/settings.json`: `compaction.reserveTokens` (trigger = model window − this value; needs pi ≥ 0.85.1) |
+
+Set a seat with `ak-role config set-host <seat> <host>`; use `--host` for a one-off.
+
 **Host providers (#788):** seat rows keep one provider name. Owner edits `~/.ak-roles/host-providers.json` (`{ "hermes": { "xai": "xai-oauth" } }`); code only reads it. Missing table entries ask the host directory (hermes this ticket): unique match wins, zero or many fail loud. Priority is table > unique > fail — no package discretion. `config show` prints the table as written.
 
 **Forced method skills (#922):** Pi uses `--skill`. Claude uses `--plugin-dir` and its native slash command when a role binds exactly one Skill; its current print harness cannot issue multiple slash commands for one turn, so multi-Skill roles such as Fixer have no forced-method call on Claude. Codex discovers the packaged methods through its documented project `.agents/skills` catalog, which is created only when absent and then left in place; existing entries are never replaced, and Codex receives every official `$skill-name` invocation. Hermes ACP and Grok ACP cannot force a Skill call through their current harness interfaces. These gaps are documentation only: the package does not invent an adapter, capability probe, typed failure, catalog, or operator prerequisite for them. The package never changes host trust or configuration.
