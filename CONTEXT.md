@@ -61,11 +61,11 @@ _Avoid_:遥测、metrics-service、Telemetry。
 - **三态判词**:`converged` / `continue` / `escalate`（给事中票庭：署／封驳／上呈）。见 ADR 0074。
 - **裁类循环（Class-repair loop）**：由判词类字段、回执对账键、圈界参数三份合同自然组成的修理循环。见 ADR 0015。
 - **Merger（校书郎）**：保全双方已授权意图并完成一次普通双亲 merge commit 的角色。见 README 校书郎；ADR 0027。
-- **尚书省（Marshal）**：审→判→修 质量收敛环的省部级驱动角色。canonical 键 `marshal`。见 ADR 0051、0053；README。
+- **尚书省（Marshal）**：审→判→修 质量收敛环的省部级驱动角色。canonical 键 `marshal`。见 ADR 0051；README。
 - **Doctor(太医署)**:读保留 Pi session 案例、产出单案过程成本诊断并开方的举证角色。见 ADR 0012、0013、0017。
 - **工厂(Factory)**:车间整体（角色、闸、法、包模板、流程站点）。太医署的唯一病人。见 ADR 0013。
 - **大扫除(Factory cleanup)**:按最小完整责任边界删除无收益机制及其专属格式、适配、测试和文档。见 ADR 0036、0045。
-- **落地周期(Issue-to-merge lead time)**:从首个获授权处理 issue 的角色调用起,到 merge 进入目标分支为止的端到端时长。见 ADR 0053。
+- **落地周期(Issue-to-merge lead time)**:首 run 起点至 now／关票的端到端时长。见 issue #136。
 - **方子(Prescription)**:太医署的 finding 加处置建议。见 ADR 0012、0013。
 - **真咬人(Real bite)**:闸最近真拦下东西的证据。见 ADR 0012。
 - **过程成本报告(Process-cost report)**:由保留 runs 中 Pi session 字节可重算的单案过程成本诊断。见 ADR 0017。
