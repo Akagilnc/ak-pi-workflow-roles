@@ -4,7 +4,7 @@
  * helpers are not mechanical contracts (验收 5 / quality-law).
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -13,7 +13,12 @@ import {
   publishFailureArtifacts,
   publishJudgeArtifacts,
   settleHostEndedNoReceipt,
+  withSubmissions,
 } from "../../src/public-cli/settlement.ts";
+import {
+  coalesceSubmissionRows,
+  type TerminalResult,
+} from "../../src/public-cli/terminal.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { withTempHome } from "../helpers/failure-settlement-kit.ts";
@@ -96,14 +101,45 @@ test("#953 reader adopts current failure after success; success after failure", 
   });
 });
 
+test("#953 empty failure payloads do not shadow recorded submissions", () => {
+  const history = [{ judgeStatus: "continue" }] as const;
+  assert.deepEqual(coalesceSubmissionRows([], history), [...history]);
+  assert.deepEqual(coalesceSubmissionRows(undefined, history), [...history]);
+  assert.deepEqual(
+    coalesceSubmissionRows([{ judgeStatus: "pass" }], history),
+    [{ judgeStatus: "pass" }],
+  );
+
+  const failureTerminal: TerminalResult = {
+    roleOutcome: {
+      kind: "failure",
+      role: "judge",
+      diagnostic: "boom",
+      cause: "provider",
+      payloads: [],
+      decisiveFacts: { diagnostic: "boom", cause: "provider" },
+    },
+    navigator: { disposition: "no-advice" },
+    artifacts: [],
+    runId: "01a0-953-empty-payloads",
+  };
+  const attached = withSubmissions(failureTerminal, history);
+  assert.equal(attached.roleOutcome.kind, "failure");
+  if (attached.roleOutcome.kind === "failure") {
+    assert.deepEqual(attached.roleOutcome.payloads, [...history]);
+  }
+  assert.deepEqual(attached.submissions, [...history]);
+});
+
 test("#953 clear-fail leaves residual success face but reader still adopts current failure", async () => {
   await withTempHome(async (home) => {
     const { runDirectory, artifactsDir, admitted } = await seedJudgeRun(
       home,
       "01a0-953-shadow",
     );
+    const residualReportPath = join(artifactsDir, "report.json");
     await writeFile(
-      join(artifactsDir, "report.json"),
+      residualReportPath,
       `${JSON.stringify({
         role: "judge",
         runId: "01a0-953-shadow",
@@ -123,6 +159,15 @@ test("#953 clear-fail leaves residual success face but reader still adopts curre
         piDurablePrincipalAuthority,
       );
       assert.ok(refs.some((ref) => ref.kind === "error"));
+      // Prove the clear seam actually failed: prior success face must remain.
+      await access(residualReportPath);
+      const residual = JSON.parse(
+        await readFile(residualReportPath, "utf8"),
+      ) as {
+        outcome?: { kind?: string; payloads?: ReadonlyArray<{ judgeStatus?: string }> };
+      };
+      assert.equal(residual.outcome?.kind, "accepted");
+      assert.equal(residual.outcome?.payloads?.[0]?.judgeStatus, "continue");
       const read = await readRunTerminalArtifact(runDirectory);
       assert.equal(read.status, "present");
       if (read.status === "present") {

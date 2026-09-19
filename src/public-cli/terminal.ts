@@ -172,6 +172,19 @@ export function roleResultPayloads(outcome: TerminalRoleOutcome): readonly unkno
   return [];
 }
 
+/**
+ * Prefer non-empty payloads; an empty array must not shadow top-level submissions
+ * (#953 / #836 — failure history coexists with the current failure face).
+ */
+export function coalesceSubmissionRows(
+  payloads: readonly unknown[] | undefined,
+  submissions: readonly unknown[] | undefined,
+): readonly unknown[] {
+  if (payloads !== undefined && payloads.length > 0) return payloads;
+  if (submissions !== undefined && submissions.length > 0) return submissions;
+  return payloads ?? submissions ?? [];
+}
+
 export type TerminalResult = {
   roleOutcome: TerminalRoleOutcome;
   /** Default Reviewer parent: original child Terminals, keyed by frozen axis. */
@@ -318,9 +331,12 @@ export function formatTerminalResult(result: TerminalResult): string {
   // Typed payloads/submissions stay ledger order; only this presentation reverses.
   // #953: failure coexists with recorded history (#836) but must not present prior
   // receipts under the this-turn `submission` label — use recorded-submission.
+  // Empty payloads must not shadow non-empty top-level submissions.
   if (result.roleOutcome.kind === "failure") {
-    const recorded =
-      result.roleOutcome.payloads ?? result.submissions ?? [];
+    const recorded = coalesceSubmissionRows(
+      result.roleOutcome.payloads,
+      result.submissions,
+    );
     for (let i = recorded.length - 1; i >= 0; i -= 1) {
       const payload = recorded[i]!;
       const rendered =
@@ -331,7 +347,7 @@ export function formatTerminalResult(result: TerminalResult): string {
     const payloads =
       result.roleOutcome.kind === "accepted" ||
       result.roleOutcome.kind === "audit_escalation"
-        ? result.roleOutcome.payloads ?? result.submissions ?? []
+        ? coalesceSubmissionRows(result.roleOutcome.payloads, result.submissions)
         : result.submissions ?? [];
     for (let i = payloads.length - 1; i >= 0; i -= 1) {
       const payload = payloads[i]!;

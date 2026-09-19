@@ -11,7 +11,10 @@ import {
   gatekeeperOutputSchema,
 } from "./package-contracts/gatekeeper-output.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
-import type { TerminalResult } from "./public-cli/terminal.ts";
+import {
+  coalesceSubmissionRows,
+  type TerminalResult,
+} from "./public-cli/terminal.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 
@@ -223,7 +226,9 @@ function thisCourtOfficerPayloads(terminal: TerminalResult | undefined): readonl
 /** Failure/transport channel may still surface every recorded payload beside the failure (#836 A.3). */
 function officerFailurePayloads(terminal: TerminalResult | undefined): readonly unknown[] {
   const outcome = terminal?.roleOutcome;
-  if (outcome?.kind === "failure") return outcome.payloads ?? terminal?.submissions ?? [];
+  if (outcome?.kind === "failure") {
+    return coalesceSubmissionRows(outcome.payloads, terminal?.submissions);
+  }
   return terminal?.submissions ?? [];
 }
 

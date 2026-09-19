@@ -5,6 +5,7 @@ import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { OFFICER_CONCLUSION_REASK } from "./gatekeeper-role.ts";
+import { coalesceSubmissionRows } from "./public-cli/terminal.ts";
 
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
 /**
@@ -149,7 +150,10 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "failure") {
-    const rows = outcome.payloads ?? summoned.terminal?.submissions ?? [];
+    const rows = coalesceSubmissionRows(
+      outcome.payloads,
+      summoned.terminal?.submissions,
+    );
     return {
       status: "transport_failure",
       diagnostic: outcome.diagnostic,
@@ -159,7 +163,10 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "accepted") {
-    const rows = outcome.payloads ?? summoned.terminal?.submissions ?? [];
+    const rows = coalesceSubmissionRows(
+      outcome.payloads,
+      summoned.terminal?.submissions,
+    );
     if (rows.length === 0) {
       return readComplianceCandidate({}, usage);
     }

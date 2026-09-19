@@ -284,13 +284,17 @@ export function withSubmissions<T extends TerminalResult>(
   if (submissions.length === 0) return terminal;
   const roleOutcome = terminal.roleOutcome;
   // #879 keeps an already scoped this-court result; #881 full run history is
-  // presented independently on terminal.submissions. Only fill a missing result payload.
+  // presented independently on terminal.submissions. Only fill a missing /
+  // empty result payload — empty array must not shadow history (#953).
   const withPayloads =
-    roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation"
-      ? { ...roleOutcome, payloads: (roleOutcome.payloads ?? []).length > 0 ? roleOutcome.payloads : submissions }
-      : roleOutcome.kind === "failure"
-        ? { ...roleOutcome, payloads: roleOutcome.payloads ?? submissions }
-        : roleOutcome;
+    roleOutcome.kind === "accepted" ||
+    roleOutcome.kind === "audit_escalation" ||
+    roleOutcome.kind === "failure"
+      ? {
+          ...roleOutcome,
+          payloads: coalesceSubmissionRows(roleOutcome.payloads, submissions),
+        }
+      : roleOutcome;
   return { ...terminal, roleOutcome: withPayloads, submissions };
 }
 
@@ -363,6 +367,7 @@ function coordinatesFromAdmitted(
   return authority.decode(admitted.principal);
 }
 import {
+  coalesceSubmissionRows,
   exitCodeForTerminalOutcome,
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
