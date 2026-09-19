@@ -15,8 +15,10 @@ import {
   formatFailureStderrDiagnostic,
   publishFailureArtifacts,
   publishJudgeArtifacts,
+  settleFailureTerminalResult,
   settleHostEndedNoReceipt,
 } from "../../src/public-cli/settlement.ts";
+import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -844,6 +846,107 @@ test(
             "accepted",
           );
         }
+      } finally {
+        await chmod(artifactsDir, 0o755);
+      }
+    });
+  },
+);
+
+/**
+ * #953: output-failure → no_receipt conversion must not wash clear I/O failures
+ * into the original diagnostic. Valid lifecycle + residual success + EACCES on
+ * clear must keep the real errno (settleFailureTerminalResult conversion path).
+ */
+test(
+  "#953 settleFailureTerminalResult clear-fail keeps real errno; does not wash to output failure",
+  { skip: runningAsRoot && "chmod 0555 does not block root unlink" },
+  async () => {
+    await withTempHome(async (home) => {
+      const runId = "01a0-953-noreceipt-clearfail";
+      const runDirectory = join(
+        home,
+        ".ak-roles",
+        "books",
+        "proj",
+        "unbound",
+        "runs",
+        `${runId}@judge`,
+      );
+      const sessionDirectory = join(runDirectory, "session");
+      const sessionFile = join(sessionDirectory, "session.jsonl");
+      const artifactsDir = join(runDirectory, "artifacts");
+      await mkdir(sessionDirectory, { recursive: true });
+      await mkdir(artifactsDir, { recursive: true });
+      await writeFile(
+        sessionFile,
+        `${JSON.stringify({
+          type: "message",
+          message: { role: "user", content: [{ type: "text", text: "go" }] },
+        })}\n${JSON.stringify({
+          type: "custom",
+          customType: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
+          data: {
+            terminalToolCalled: false,
+            rejectedReceipts: [],
+            deliveryTurns: 2,
+            sessionCompletion: "settled-without-accepted-receipt",
+            runPointer: runDirectory,
+            attemptPointer: `current:${runDirectory}`,
+            acceptedReceipt: false,
+          },
+        })}\n`,
+        "utf8",
+      );
+      const residualReportPath = join(artifactsDir, "report.json");
+      await writeFile(
+        residualReportPath,
+        `${JSON.stringify({
+          role: "judge",
+          runId,
+          outcome: {
+            kind: "accepted",
+            role: "judge",
+            payloads: [{ judgeStatus: "continue" }],
+          },
+        })}\n`,
+        "utf8",
+      );
+      const admitted = fixtureJudgeAdmitted({
+        runId,
+        runDirectory,
+        projectRoot: join(home, "proj"),
+        bookKey: "proj",
+      });
+      const originalDiagnostic = "ORIGINAL OUTPUT FAILURE";
+      await chmod(artifactsDir, 0o555);
+      try {
+        await assert.rejects(
+          () =>
+            settleFailureTerminalResult(
+              admitted,
+              { cause: "output", diagnostic: originalDiagnostic },
+              piDurablePrincipalAuthority,
+            ),
+          (error: unknown) => {
+            assert.ok(error instanceof Error);
+            const code = (error as NodeJS.ErrnoException).code;
+            assert.ok(
+              code === "EACCES" || code === "EPERM",
+              `expected EACCES/EPERM, got ${String(code)}`,
+            );
+            assert.notEqual(
+              error.message,
+              originalDiagnostic,
+              "must not wash clear failure into the original output diagnostic",
+            );
+            return true;
+          },
+        );
+        // Settlement did not complete as washed failure/no_receipt — residual
+        // success face may still exist on disk, but must not be published as a
+        // settled current terminal under the original diagnostic.
+        await access(residualReportPath);
       } finally {
         await chmod(artifactsDir, 0o755);
       }

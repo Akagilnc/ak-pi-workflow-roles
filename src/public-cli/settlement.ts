@@ -2374,7 +2374,7 @@ async function removeFaceIfPresent(path: string): Promise<void> {
  * parent runs/ faces clear only when body.runId binds; unparseable runId → none.
  * Path absence (ENOENT/ENOTDIR) is silent; other delete failures stay loud.
  */
-export async function clearOppositeTerminalArtifactFace(
+async function clearOppositeTerminalArtifactFace(
   runDirectory: string,
 ): Promise<void> {
   const artifactsDir = roleRunArtifactsDirectory(runDirectory);
@@ -4205,37 +4205,52 @@ export async function settleFailureTerminalResult(
         entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
       const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
       if (raw !== undefined) {
+        // Catch only covers lifecycle-byte parse. Clear / navigator / gate I/O
+        // after a valid parse must keep their real failure identity (#953).
+        let facts: NoReceiptLifecycleFacts | undefined;
         try {
-          const facts = parseNoReceiptLifecycleFacts(raw);
-          if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
-            let decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
-            // #676 D1/J3: project durable bind-target rejection onto public no_receipt facts.
-            if (admitted.role === "collector") {
-              const bindRejection = extractCollectorTargetBindRejection(entries.slice(attemptStart));
-              if (bindRejection !== undefined) {
-                decisiveFacts = {
-                  ...facts,
-                  targetBindRejected: true,
-                  targetBindDiagnostic: bindRejection.diagnostic,
-                  ...(bindRejection.code === undefined ? {} : { targetBindCode: bindRejection.code }),
-                };
-              }
+          facts = parseNoReceiptLifecycleFacts(raw);
+        } catch {
+          /* malformed lifecycle bytes remain the existing nonzero output failure */
+        }
+        if (
+          facts !== undefined &&
+          facts.runPointer === admitted.runDirectory &&
+          facts.attemptPointer === `current:${admitted.runDirectory}`
+        ) {
+          let decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
+          // #676 D1/J3: project durable bind-target rejection onto public no_receipt facts.
+          if (admitted.role === "collector") {
+            const bindRejection = extractCollectorTargetBindRejection(entries.slice(attemptStart));
+            if (bindRejection !== undefined) {
+              decisiveFacts = {
+                ...facts,
+                targetBindRejected: true,
+                targetBindDiagnostic: bindRejection.diagnostic,
+                ...(bindRejection.code === undefined ? {} : { targetBindCode: bindRejection.code }),
+              };
             }
-            // #478: no_receipt is still a public Terminal — project accepted gate facts.
-            // #953: empty public terminal face — clear every reader-adoptable prior face.
-            await clearOppositeTerminalArtifactFace(admitted.runDirectory);
-            return withOptionalGateProjection(
-              {
-                roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },
-                navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
-                artifacts: [],
-                runId: admitted.runId,
-              },
-              sessionDirectory,
-              detourGateContext(admitted, options),
-            );
           }
-        } catch { /* malformed lifecycle bytes remain the existing nonzero output failure */ }
+          // #478: no_receipt is still a public Terminal — project accepted gate facts.
+          // #953: empty public terminal face — clear every reader-adoptable prior face.
+          await clearOppositeTerminalArtifactFace(admitted.runDirectory);
+          return withOptionalGateProjection(
+            {
+              roleOutcome: {
+                kind: "no_receipt",
+                role: admitted.role,
+                status: "no-accepted-receipt",
+                ...facts,
+                decisiveFacts,
+              },
+              navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
+              artifacts: [],
+              runId: admitted.runId,
+            },
+            sessionDirectory,
+            detourGateContext(admitted, options),
+          );
+        }
       }
     }
   }
