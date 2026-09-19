@@ -20,6 +20,30 @@ import {
 } from "../prepared-role-turn.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
 
+/** #971: authorized host for usage + auto_compact ledgering only. */
+const GROK_BUILD_HOST = "grok-build";
+
+/** #971: grok-build prompt result carries host usage under `_meta.usage`. */
+function acpPromptResultHasUsage(result: Readonly<Record<string, unknown>>): boolean {
+  const meta = result._meta;
+  if (typeof meta !== "object" || meta === null || Array.isArray(meta)) return false;
+  return Object.prototype.hasOwnProperty.call(meta, "usage");
+}
+
+/**
+ * #971: ledger only the authorized vendor compaction notice on grok-build.
+ * Other `_x.ai/*` notifications stay out of host-session records.
+ */
+function isAcpAutoCompactCompletedNotification(
+  method: string,
+  params: Readonly<Record<string, unknown>>,
+): boolean {
+  if (method !== "_x.ai/session_notification") return false;
+  const update = params.update;
+  if (typeof update !== "object" || update === null || Array.isArray(update)) return false;
+  return (update as { sessionUpdate?: unknown }).sessionUpdate === "auto_compact_completed";
+}
+
 /**
  * #959: collect free-form agent text from ACP session/update stream.
  * Used only when the navigator seat spoke prose without calling the output tool.
@@ -294,9 +318,16 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       // (resume / set_model load would otherwise prepend prior turns as "this turn" prose).
       const agentProseChunks: string[] = [];
       let collectAgentProse = false;
+      // #971: usage + auto_compact are grok-build-only; same ACP adapter serves Hermes too.
+      const ledgerGrokBuildObservability = config.hostName === GROK_BUILD_HOST;
       connection.onNotification?.((method, params) => {
-        if (method !== "session/update" || hostSessionRecordFailure !== undefined) return;
-        if (collectAgentProse) {
+        if (hostSessionRecordFailure !== undefined) return;
+        const isSessionUpdate = method === "session/update";
+        const isAutoCompact = ledgerGrokBuildObservability
+          && isAcpAutoCompactCompletedNotification(method, params);
+        // #971: session/update stays; auto_compact_completed is the only vendor notice.
+        if (!isSessionUpdate && !isAutoCompact) return;
+        if (isSessionUpdate && collectAgentProse) {
           const chunk = acpAgentTextChunk(params);
           if (chunk !== undefined) agentProseChunks.push(chunk);
         }
@@ -409,6 +440,24 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               throw error;
             }
             collectAgentProse = false;
+            // #971: per-round grok-build usage is on the prompt JSON-RPC result, not a notice.
+            if (ledgerGrokBuildObservability && acpPromptResultHasUsage(result)) {
+              try {
+                reportHostSessionEvent({
+                  host: config.hostName,
+                  cwd: request.cwd,
+                  sessionParent,
+                  source: "acp-host",
+                  event: { method: "session/prompt", result },
+                });
+              } catch (error) {
+                noteHostSessionRecordFailure(error);
+                return { status: "terminal", result: hostSessionRecordResult() };
+              }
+            }
+            if (hostSessionRecordFailure !== undefined) {
+              return { status: "terminal", result: hostSessionRecordResult() };
+            }
             if (result.stopReason === "refusal") {
               agentProseChunks.length = 0;
               return {
