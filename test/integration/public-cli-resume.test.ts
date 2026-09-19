@@ -89,12 +89,26 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-/** Shared plant: seal accepted judge output, then block report.json publication (EISDIR). */
-function sealedPublicationBlockedHost(note: string): {
+/**
+ * Shared plant: seal accepted judge output, optionally block report publication.
+ * #953 clears conventional faces (including directory plants) before rewrite,
+ * so report.json-as-directory no longer reaches writeFile. When blocking,
+ * lock artifacts/ to 0o555 — clear is a no-op on absent faces; writeFile EACCES.
+ * Throw/ledger poison cases pass blockReportPublication:false so their own
+ * EISDIR identity stays decisive.
+ */
+function sealedPublicationBlockedHost(
+  note: string,
+  options: { readonly blockReportPublication?: boolean } = {},
+): {
   host: RoleTurnHost;
   dispatches: () => number;
+  /** Best-effort restore so temp trees and resume rebuilds can write again. */
+  restoreArtifactsWritable: () => Promise<void>;
 } {
+  const blockReportPublication = options.blockReportPublication !== false;
   let dispatches = 0;
+  const lockedArtifactsDirs = new Set<string>();
   const host = roleTurnHostFromLegacyPiRunner({
     packageRoot,
     principalAuthority: piDurablePrincipalAuthority,
@@ -102,7 +116,12 @@ function sealedPublicationBlockedHost(note: string): {
       dispatches += 1;
       const sessionDir = args[args.indexOf("--session-dir") + 1]!;
       const runDir = join(sessionDir, "..");
-      await mkdir(join(runDir, "artifacts", "report.json"), { recursive: true });
+      if (blockReportPublication) {
+        const artifactsDir = join(runDir, "artifacts");
+        await mkdir(artifactsDir, { recursive: true });
+        await chmod(artifactsDir, 0o555);
+        lockedArtifactsDirs.add(artifactsDir);
+      }
       await mkdir(sessionDir, { recursive: true });
       await observeTyped429ViaProductionHandler({
         runDirectory: runDir,
@@ -136,7 +155,19 @@ function sealedPublicationBlockedHost(note: string): {
       };
     },
   });
-  return { host, dispatches: () => dispatches };
+  return {
+    host,
+    dispatches: () => dispatches,
+    restoreArtifactsWritable: async () => {
+      for (const dir of lockedArtifactsDirs) {
+        try {
+          await chmod(dir, 0o755);
+        } catch {
+          // cleanup best-effort
+        }
+      }
+    },
+  };
 }
 
 
@@ -639,266 +670,62 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
     seedGitProject(project);
     const runId = "run-lawful-publish-fail-001";
     const { io } = captureIo();
-    const { host, dispatches } = sealedPublicationBlockedHost(
+    const { host, dispatches, restoreArtifactsWritable } = sealedPublicationBlockedHost(
       "lawful despite later publication failure",
     );
 
-    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then publish fails under 429"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId,
-        io,
-        roleTurnHost: host,
-      },
-    );
-
-    assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
-    // #665: principal available + typed 429 → resume hint (统一出).
-    assertRunIdOnlyInResumeCommand(result.terminal!, runId);
-    assert.equal(result.terminal!.roleOutcome.kind, "failure");
-    if (result.terminal!.roleOutcome.kind === "failure") {
-      // Publication errno retained; hint presence must not wash failure cause into provider-429.
-      assert.equal(result.terminal!.roleOutcome.cause, undefined);
-      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
-    }
-    // #836: seal no longer blocks redispatch; auto-resume budget still bounds attempts.
-    // Publication failure under 429 is non-lawful → retries until budget (default 2 resumes → 3 dispatches).
-    assert.equal(dispatches(), 3, "auto-resume budget must exhaust without seal block");
-    assert.equal(result.terminal!.autoResumeCount, 2);
-    const bookKey = resolveBookKeyFromGit(project);
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound", "runs",
-      `${runId}@judge`,
-    );
-    assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
-    assert.ok(await hasRecordedSubmission(project, runId, home), "recorded accepted payload must survive publication failure");
-
-    // #833: manual resume is pass-through even after sealed + publication miss.
-    // Host is reached; no re-seal keeps the prior sealed projection readable.
-    let resumeDispatches = 0;
-    const passthroughHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args) => {
-        resumeDispatches += 1;
-        return {
-          code: 0,
-          stderr: "",
-          timedOut: false,
-          args: [...args],
-        };
-      },
-    });
-    const { io: resumeIo } = captureIo();
-    await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-      packageRoot,
-      home,
-      cwd: project,
-      credentials: { "openai-codex": true, xai: true },
-      io: resumeIo,
-      roleTurnHost: passthroughHost,
-    });
-    assert.equal(resumeDispatches, 1, "sealed bare resume must reach the host");
-    assert.ok(
-      await hasRecordedSubmission(project, runId, home),
-      "recorded accepted payload must remain readable after manual resume",
-    );
-
-    // #672 US6: clear the test-planted report.json directory fault, then manual
-    // resume still reaches the host and rebuilds the public report from sealed facts.
-    const reportPath = join(runDirectory, "artifacts", "report.json");
-    assert.equal((await stat(reportPath)).isDirectory(), true);
-    await rm(reportPath, { recursive: true, force: true });
-    const { io: rebuildIo } = captureIo();
-    const rebuilt = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-      packageRoot,
-      home,
-      cwd: project,
-      credentials: { "openai-codex": true, xai: true },
-      io: rebuildIo,
-      roleTurnHost: passthroughHost,
-    });
-    assert.equal(resumeDispatches, 2, "cleared publication fault resume still reaches host");
-    assert.equal(rebuilt.exitCode, 0);
-    assert.ok(rebuilt.terminal);
-    assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
-    if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
-      assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
-      assert.deepEqual(payloadStatusSequence(rebuilt.terminal!.roleOutcome), ["converged"]);
-      assert.equal(
-        (objectPayloads(rebuilt.terminal!.roleOutcome)[0] ?? {}).note,
-        "lawful despite later publication failure",
-      );
-    }
-    // #836: seal no longer blocks redispatch; rebuilt accepted terminal is the proof.
-    const reportStat = await stat(reportPath);
-    assert.equal(reportStat.isFile(), true, "cleared fault must rebuild report.json as a file");
-    const reportBody = JSON.parse(await readFile(reportPath, "utf8")) as {
-      role?: string;
-      runId?: string;
-      outcome?: { kind?: string; role?: string; payloads?: readonly unknown[] };
-    };
-    assert.equal(reportBody.role, "judge");
-    assert.equal(reportBody.runId, runId);
-    assert.equal(reportBody.outcome?.kind, "accepted");
-    assert.equal(reportBody.outcome?.role, "judge");
-    assert.equal(
-      (reportBody.outcome?.payloads?.at(-1) as { note?: string } | undefined)?.note,
-      "lawful despite later publication failure",
-    );
-    assert.ok(
-      rebuilt.terminal!.artifacts.some((a) => a.kind === "report" && a.path === reportPath),
-      "rebuilt terminal must reference the public report artifact",
-    );
-    assert.ok(
-      await hasRecordedSubmission(project, runId, home),
-      "recorded accepted payload must remain after report rebuild",
-    );
-  });
-
-  // Direct throw after seal: settle/present rejects out of dispatch; sealed stop
-  // must still consult ledger before any auto-resume redispatch (#648).
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "run-lawful-publish-throw-001";
-    const { io } = captureIo();
-    const { host: inner, dispatches } = sealedPublicationBlockedHost(
-      "lawful then dispatch throws after seal",
-    );
-
-    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then throw after seal under 429"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId,
-        io,
-        roleTurnHost: {
-          executeTurn: async (request) => {
-            const out = await inner.executeTurn(request);
-            const statePath = join(request.runDirectory, "run-state.json");
-            await rm(statePath, { force: true });
-            await mkdir(statePath);
-            return out;
-          },
+    try {
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then publish fails under 429"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => runId,
+          io,
+          roleTurnHost: host,
         },
-      },
-    );
-
-    // #836: seal no longer blocks; non-lawful throw path records then fails.
-    // The deferred run-state persist this settlement defers hits the same
-    // poisoned run-state.json again — a second genuine infra failure. #836
-    // r13 class 2: it must settle loudly and stop the loop immediately
-    // (autoResumeCount 0), not retry through it silently to budget
-    // exhaustion (the pre-r13 value here was 2).
-    assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.roleOutcome.kind, "failure");
-    assert.equal(dispatches(), 1);
-    assert.equal(result.terminal!.autoResumeCount, 0);
-    assert.ok(
-      await hasRecordedSubmission(project, runId, home),
-      "recorded accepted payload must survive direct throw after record",
-    );
-    if (result.terminal!.roleOutcome.kind === "failure") {
-      assert.equal(
-        result.terminal!.roleOutcome.diagnostic.includes("sealed accepted"),
-        false,
       );
-      assert.equal(typeof result.terminal!.roleOutcome.diagnostic, "string");
-      assert.ok(result.terminal!.roleOutcome.diagnostic.length > 0);
-      // The reported cause is the deferred persist write's own real failure
-      // (EISDIR on the still-poisoned run-state.json) — structured field,
-      // proof this settled through the real authority rather than being
-      // traced only to the loop's no-op attempt io and discarded.
-      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
-      // #836 r13 class 2 / verdict A3: the failure terminal itself — not
-      // just the ledger — must carry the already-recorded payload beside
-      // the host failure (terminal.ts's failure outcome `payloads` field).
-      assert.ok(Array.isArray(result.terminal!.roleOutcome.payloads));
-      assert.ok(
-        result.terminal!.roleOutcome.payloads!.some(
-          (payload) =>
-            typeof payload === "object"
-            && payload !== null
-            && (payload as { note?: unknown }).note === "lawful then dispatch throws after seal",
-        ),
-        "failure terminal must carry the sealed payload alongside the deferred-persist failure",
-      );
-    }
-  });
 
-  // Failing ledger authority: read errors must preserve true cause and fail closed —
-  // never wash into "unsealed" and redispatch (#648).
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "run-lawful-publish-ledger-fail-001";
-    const { io } = captureIo();
-    const { host: inner, dispatches } = sealedPublicationBlockedHost(
-      "lawful then ledger authority fails",
-    );
-
-    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then ledger read fails under 429"],
-      {
-        packageRoot,
+      assert.equal(result.exitCode, 1);
+      assert.ok(result.terminal);
+      // #665: principal available + typed 429 → resume hint (统一出).
+      assertRunIdOnlyInResumeCommand(result.terminal!, runId);
+      assert.equal(result.terminal!.roleOutcome.kind, "failure");
+      if (result.terminal!.roleOutcome.kind === "failure") {
+        // Publication errno retained; hint presence must not wash failure cause into provider-429.
+        assert.equal(result.terminal!.roleOutcome.cause, undefined);
+        assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EACCES");
+      }
+      // #836: seal no longer blocks redispatch; auto-resume budget still bounds attempts.
+      // Publication failure under 429 is non-lawful → retries until budget (default 2 resumes → 3 dispatches).
+      assert.equal(dispatches(), 3, "auto-resume budget must exhaust without seal block");
+      assert.equal(result.terminal!.autoResumeCount, 2);
+      const bookKey = resolveBookKeyFromGit(project);
+      const runDirectory = join(
         home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        createRunId: () => runId,
-        io,
-        roleTurnHost: {
-          executeTurn: async (request) => {
-            const out = await inner.executeTurn(request);
-            // Poison the same ledger volume settlement reads.
-            const ledgerFile = join(request.runDirectory, "session", "submission-ledger", "records.jsonl");
-            await rm(ledgerFile, { force: true });
-            await mkdir(ledgerFile, { recursive: true });
-            await assert.rejects(
-              () => readRecordedSubmissions(project, runId, home),
-              (error: NodeJS.ErrnoException) => error.code === "EISDIR",
-            );
-            return out;
-          },
-        },
-      },
-    );
-    // #836: authority-failed seal block deleted — non-lawful failure still exhausts budget.
-    assert.equal(dispatches(), 3, "auto-resume budget must exhaust without authority block");
-    assert.equal(result.exitCode, 1);
-    assert.ok(result.terminal);
-    assert.equal(result.terminal!.autoResumeCount, 2);
-    const outcome = result.terminal!.roleOutcome;
-    assert.equal(outcome.kind, "failure");
-    if (outcome.kind === "failure") {
-      assert.equal(outcome.decisiveFacts.errorCode, "EISDIR");
-      assert.equal(typeof outcome.diagnostic, "string");
-      assert.ok(String(outcome.diagnostic).length > 0);
-    }
+        ".ak-roles",
+        "books",
+        bookKey,
+        "unbound", "runs",
+        `${runId}@judge`,
+      );
+      assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "resumable");
+      assert.ok(await hasRecordedSubmission(project, runId, home), "recorded accepted payload must survive publication failure");
 
-    // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
-    // Settlement after the turn still fails closed on the ledger authority error.
-    let resumeDispatches = 0;
-    const { io: resumeIo } = captureIo();
-    const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-      packageRoot,
-      home,
-      cwd: project,
-      credentials: { "openai-codex": true, xai: true },
-      io: resumeIo,
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+      // Publication never wrote a success report face under the locked artifacts/.
+      const reportPath = join(runDirectory, "artifacts", "report.json");
+      await assert.rejects(
+        () => stat(reportPath),
+        (error: NodeJS.ErrnoException) => error.code === "ENOENT" || error.code === "EACCES",
+      );
+
+      // Unlock so bare resume can rebuild the public report from sealed facts.
+      await restoreArtifactsWritable();
+
+      // #833 / #672 US6: bare resume reaches host; settlement rebuilds public report.
+      let resumeDispatches = 0;
+      const passthroughHost = roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async (args) => {
@@ -910,17 +737,228 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
             args: [...args],
           };
         },
-      }),
-    });
-    assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
-    assert.equal(resumeResult.exitCode, 1);
-    // Settlement may fail closed on poisoned ledger; host reach is the #833 contract.
-    if (resumeResult.terminal !== undefined) {
-      const resumeOutcome = resumeResult.terminal.roleOutcome;
-      assert.equal(resumeOutcome.kind, "failure");
-      if (resumeOutcome.kind === "failure") {
-        assert.equal(resumeOutcome.decisiveFacts.errorCode, "EISDIR");
+      });
+      const { io: rebuildIo } = captureIo();
+      const rebuilt = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io: rebuildIo,
+        roleTurnHost: passthroughHost,
+      });
+      assert.equal(resumeDispatches, 1, "sealed bare resume must reach the host");
+      assert.equal(rebuilt.exitCode, 0);
+      assert.ok(rebuilt.terminal);
+      assert.equal(rebuilt.terminal!.roleOutcome.kind, "accepted");
+      if (rebuilt.terminal!.roleOutcome.kind === "accepted") {
+        assert.equal(rebuilt.terminal!.roleOutcome.role, "judge");
+        assert.deepEqual(payloadStatusSequence(rebuilt.terminal!.roleOutcome), ["converged"]);
+        assert.equal(
+          (objectPayloads(rebuilt.terminal!.roleOutcome)[0] ?? {}).note,
+          "lawful despite later publication failure",
+        );
       }
+      // #836: seal no longer blocks redispatch; rebuilt accepted terminal is the proof.
+      const reportStat = await stat(reportPath);
+      assert.equal(reportStat.isFile(), true, "resume must rebuild report.json as a file");
+      const reportBody = JSON.parse(await readFile(reportPath, "utf8")) as {
+        role?: string;
+        runId?: string;
+        outcome?: { kind?: string; role?: string; payloads?: readonly unknown[] };
+      };
+      assert.equal(reportBody.role, "judge");
+      assert.equal(reportBody.runId, runId);
+      assert.equal(reportBody.outcome?.kind, "accepted");
+      assert.equal(reportBody.outcome?.role, "judge");
+      assert.equal(
+        (reportBody.outcome?.payloads?.at(-1) as { note?: string } | undefined)?.note,
+        "lawful despite later publication failure",
+      );
+      assert.ok(
+        rebuilt.terminal!.artifacts.some((a) => a.kind === "report" && a.path === reportPath),
+        "rebuilt terminal must reference the public report artifact",
+      );
+      assert.ok(
+        await hasRecordedSubmission(project, runId, home),
+        "recorded accepted payload must remain after report rebuild",
+      );
+    } finally {
+      await restoreArtifactsWritable();
+    }
+  });
+
+  // Direct throw after seal: settle/present rejects out of dispatch; sealed stop
+  // must still consult ledger before any auto-resume redispatch (#648).
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-lawful-publish-throw-001";
+    const { io } = captureIo();
+    const { host: inner, dispatches, restoreArtifactsWritable } = sealedPublicationBlockedHost(
+      "lawful then dispatch throws after seal",
+      { blockReportPublication: false },
+    );
+
+    try {
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then throw after seal under 429"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => runId,
+          io,
+          roleTurnHost: {
+            executeTurn: async (request) => {
+              const out = await inner.executeTurn(request);
+              const statePath = join(request.runDirectory, "run-state.json");
+              await rm(statePath, { force: true });
+              await mkdir(statePath);
+              return out;
+            },
+          },
+        },
+      );
+
+      // #836: seal no longer blocks; non-lawful throw path records then fails.
+      // The deferred run-state persist this settlement defers hits the same
+      // poisoned run-state.json again — a second genuine infra failure. #836
+      // r13 class 2: it must settle loudly and stop the loop immediately
+      // (autoResumeCount 0), not retry through it silently to budget
+      // exhaustion (the pre-r13 value here was 2).
+      assert.equal(result.exitCode, 1);
+      assert.ok(result.terminal);
+      assert.equal(result.terminal!.roleOutcome.kind, "failure");
+      assert.equal(dispatches(), 1);
+      assert.equal(result.terminal!.autoResumeCount, 0);
+      assert.ok(
+        await hasRecordedSubmission(project, runId, home),
+        "recorded accepted payload must survive direct throw after record",
+      );
+      if (result.terminal!.roleOutcome.kind === "failure") {
+        assert.equal(
+          result.terminal!.roleOutcome.diagnostic.includes("sealed accepted"),
+          false,
+        );
+        assert.equal(typeof result.terminal!.roleOutcome.diagnostic, "string");
+        assert.ok(result.terminal!.roleOutcome.diagnostic.length > 0);
+        // The reported cause is the deferred persist write's own real failure
+        // (EISDIR on the still-poisoned run-state.json) — structured field,
+        // proof this settled through the real authority rather than being
+        // traced only to the loop's no-op attempt io and discarded.
+        assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+        // #836 A.3 / #953: failure terminal carries already-recorded payload on
+        // the historical submissions carrier — not as current failure.payloads.
+        assert.ok(Array.isArray(result.terminal!.submissions));
+        assert.ok(
+          result.terminal!.submissions!.some(
+            (payload) =>
+              typeof payload === "object"
+              && payload !== null
+              && (payload as { note?: unknown }).note === "lawful then dispatch throws after seal",
+          ),
+          "failure terminal must carry the sealed payload on submissions beside the deferred-persist failure",
+        );
+        assert.equal(
+          result.terminal!.roleOutcome.payloads === undefined
+            || result.terminal!.roleOutcome.payloads.length === 0,
+          true,
+        );
+      }
+    } finally {
+      await restoreArtifactsWritable();
+    }
+  });
+
+  // Failing ledger authority: read errors must preserve true cause and fail closed —
+  // never wash into "unsealed" and redispatch (#648).
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-lawful-publish-ledger-fail-001";
+    const { io } = captureIo();
+    const { host: inner, dispatches, restoreArtifactsWritable } = sealedPublicationBlockedHost(
+      "lawful then ledger authority fails",
+      { blockReportPublication: false },
+    );
+
+    try {
+      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then ledger read fails under 429"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          createRunId: () => runId,
+          io,
+          roleTurnHost: {
+            executeTurn: async (request) => {
+              const out = await inner.executeTurn(request);
+              // Poison the same ledger volume settlement reads.
+              const ledgerFile = join(request.runDirectory, "session", "submission-ledger", "records.jsonl");
+              await rm(ledgerFile, { force: true });
+              await mkdir(ledgerFile, { recursive: true });
+              await assert.rejects(
+                () => readRecordedSubmissions(project, runId, home),
+                (error: NodeJS.ErrnoException) => error.code === "EISDIR",
+              );
+              return out;
+            },
+          },
+        },
+      );
+      // #836: authority-failed seal block deleted — non-lawful failure still exhausts budget.
+      assert.equal(dispatches(), 3, "auto-resume budget must exhaust without authority block");
+      assert.equal(result.exitCode, 1);
+      assert.ok(result.terminal);
+      assert.equal(result.terminal!.autoResumeCount, 2);
+      const outcome = result.terminal!.roleOutcome;
+      assert.equal(outcome.kind, "failure");
+      if (outcome.kind === "failure") {
+        assert.equal(outcome.decisiveFacts.errorCode, "EISDIR");
+        assert.equal(typeof outcome.diagnostic, "string");
+        assert.ok(String(outcome.diagnostic).length > 0);
+      }
+
+      // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
+      // Settlement after the turn still fails closed on the ledger authority error.
+      let resumeDispatches = 0;
+      const { io: resumeIo } = captureIo();
+      const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io: resumeIo,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            resumeDispatches += 1;
+            return {
+              code: 0,
+              stderr: "",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        }),
+      });
+      assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
+      assert.equal(resumeResult.exitCode, 1);
+      // Settlement may fail closed on poisoned ledger; host reach is the #833 contract.
+      if (resumeResult.terminal !== undefined) {
+        const resumeOutcome = resumeResult.terminal.roleOutcome;
+        assert.equal(resumeOutcome.kind, "failure");
+        if (resumeOutcome.kind === "failure") {
+          assert.equal(resumeOutcome.decisiveFacts.errorCode, "EISDIR");
+        }
+      }
+    } finally {
+      await restoreArtifactsWritable();
     }
   });
 

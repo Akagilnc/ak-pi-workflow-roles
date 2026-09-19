@@ -139,15 +139,14 @@ export async function runPublicSecretariat(
   );
 
   if (outcome.identity.kind === "escalate") {
+    // Diagnostic relays diarist escalate payload facts (#953) — never invent 认不出.
     return await presentControlledFailure(
       admitted,
       {
         timedOut: false,
         code: null,
         stderr: "",
-        thrown: new Error(
-          "court diarist station escalated (cannot identify court target)",
-        ),
+        thrown: new Error(outcome.identity.diagnostic),
       },
       secretariatAdapters(),
       env.principalAuthority,

@@ -4,7 +4,7 @@
  * Controlled failures and audit human decisions settle here without washing causes.
  */
 import { randomUUID } from "node:crypto";
-import { appendFile, lstat, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { appendFile, lstat, readFile, readdir, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import {
@@ -138,6 +138,11 @@ import type {
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
+import {
+  listSeamOwnedUniqueErrorFacePaths,
+  RUN_TERMINAL_ARTIFACT_FILES,
+  RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS,
+} from "../run-terminal-artifacts.ts";
 import {
   ensureRunArtifactsDir,
   homeFromRunDirectory,
@@ -280,14 +285,21 @@ export function withSubmissions<T extends TerminalResult>(
 ): T {
   if (submissions.length === 0) return terminal;
   const roleOutcome = terminal.roleOutcome;
-  // #879 keeps an already scoped this-court result; #881 full run history is
-  // presented independently on terminal.submissions. Only fill a missing result payload.
+  // #881 / #836: full run history always lands on terminal.submissions.
+  // #879: accepted/audit_escalation may still fill a missing this-court
+  // payloads face from that history. #953: failure must not — prior receipts
+  // stay on the historical carrier only, never as the current failure's
+  // ordinary payloads/receipt face.
+  if (roleOutcome.kind === "failure") {
+    return { ...terminal, submissions };
+  }
   const withPayloads =
     roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation"
-      ? { ...roleOutcome, payloads: (roleOutcome.payloads ?? []).length > 0 ? roleOutcome.payloads : submissions }
-      : roleOutcome.kind === "failure"
-        ? { ...roleOutcome, payloads: roleOutcome.payloads ?? submissions }
-        : roleOutcome;
+      ? {
+          ...roleOutcome,
+          payloads: coalesceSubmissionRows(roleOutcome.payloads, submissions),
+        }
+      : roleOutcome;
   return { ...terminal, roleOutcome: withPayloads, submissions };
 }
 
@@ -310,6 +322,7 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
 /**
  * Host ended with no recorded submission — lawful no_receipt (exit 0).
  * Does not invent an output failure for an empty ledger.
+ * #953: empty public terminal face — clear every reader-adoptable prior face.
  */
 export async function settleHostEndedNoReceipt(
   admitted: AdmittedRoleInvocation,
@@ -324,6 +337,7 @@ export async function settleHostEndedNoReceipt(
     attemptPointer: `current:${admitted.runDirectory}`,
   });
   const coordinates = coordinatesFromAdmitted(authority, admitted);
+  await clearOppositeTerminalArtifactFace(admitted.runDirectory);
   return withOptionalGateProjection(
     {
       roleOutcome: {
@@ -358,6 +372,7 @@ function coordinatesFromAdmitted(
   return authority.decode(admitted.principal);
 }
 import {
+  coalesceSubmissionRows,
   exitCodeForTerminalOutcome,
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
@@ -837,6 +852,16 @@ function isMissingPathError(error: unknown): boolean {
     error instanceof Error &&
     "code" in error &&
     (error as { code?: unknown }).code === "ENOENT"
+  );
+}
+
+/** Face clear only: path not enterable as a face (ENOENT or file mid-path). */
+function isAbsentFacePathError(error: unknown): boolean {
+  return (
+    error instanceof Error &&
+    "code" in error &&
+    ((error as { code?: unknown }).code === "ENOENT" ||
+      (error as { code?: unknown }).code === "ENOTDIR")
   );
 }
 
@@ -2317,54 +2342,147 @@ async function extractNavigatorFactFromAdmittedSession(
   }
 }
 
-export async function publishJudgeArtifacts(
-  admitted: AdmittedJudgeInvocation,
+/**
+ * Remove one face path (file or directory collision plant).
+ * Only missing target is silent — other errno stay loud (失败诚实).
+ * recursive: publication may have occupied a face name as a directory (EISDIR plant).
+ */
+async function removeFaceIfPresent(path: string): Promise<void> {
+  try {
+    await rm(path, { recursive: true, force: true });
+  } catch (error) {
+    // force:true already ignores ENOENT; ENOTDIR = face path not enterable
+    // (artifacts-as-file mid-path) — same absent-face semantics as the reader.
+    // Other errno stay loud (失败诚实).
+    if (isAbsentFacePathError(error)) return;
+    throw error;
+  }
+}
+
+/**
+ * #953: artifact face reflects the current terminal only.
+ * Reader contract owns the full adoptable set (conventional trio + fixed
+ * fallbacks + seam-owned unique). Clear every seam-owned face before the
+ * new current publishes — including the conventional name about to be
+ * rewritten. Retaining that name left directory collision plants in place
+ * (supported publish input); writer then fell back while the reader stopped
+ * at EISDIR on the stale conventional path and never adopted the fallback.
+ * report / error / empty share one method (no per-branch face list).
+ * empty publishes nothing; does not create a no_receipt-shaped public artifact.
+ * Non-terminal materials stay. Face names may be directory collision plants —
+ * remove recursively. Unique ownership is listSeamOwnedUniqueErrorFacePaths:
+ * parent runs/ faces clear only when body.runId binds; unparseable runId → none.
+ * Path absence (ENOENT/ENOTDIR) is silent; other delete failures stay loud.
+ */
+async function clearOppositeTerminalArtifactFace(
+  runDirectory: string,
+): Promise<void> {
+  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
+  for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
+    await removeFaceIfPresent(join(artifactsDir, file));
+  }
+  // Fixed fallbacks + unique clear too; subsequent publish writes the new
+  // durable path after this clear (conventional first when writable).
+  for (const relative of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
+    await removeFaceIfPresent(join(runDirectory, relative));
+  }
+  for (const path of await listSeamOwnedUniqueErrorFacePaths(runDirectory)) {
+    await removeFaceIfPresent(path);
+  }
+}
+
+async function ensureTerminalArtifactFace(
+  runDirectory: string,
+): Promise<string> {
+  const artifactsDir = await ensureRunArtifactsDir(runDirectory);
+  await clearOppositeTerminalArtifactFace(runDirectory);
+  return artifactsDir;
+}
+
+type AcceptedArtifactAttachment = {
+  readonly provenancePath: string;
+  readonly frozenPath: string;
+  readonly sha256: string;
+  readonly byteLength: number;
+};
+
+function acceptedArtifactAttachmentRefs(
+  attachments: readonly AcceptedArtifactAttachment[],
+): AcceptedArtifactAttachment[] {
+  return attachments.map((a) => ({
+    provenancePath: a.provenancePath,
+    frozenPath: a.frozenPath,
+    sha256: a.sha256,
+    byteLength: a.byteLength,
+  }));
+}
+
+/**
+ * Sole success-terminal artifact publisher (#953): append attempt history,
+ * refresh the public terminal face, write report/evidence, return refs.
+ * Seat-specific structured fields stay in callers; do not fork this flow.
+ */
+async function publishAcceptedTerminalArtifacts(
+  admitted: {
+    readonly role: TerminalRoleName;
+    readonly runId: string;
+    readonly runDirectory: string;
+  },
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
+  bodies: {
+    readonly report: Record<string, unknown>;
+    readonly evidence: Record<string, unknown>;
+  },
 ): Promise<TerminalArtifactRef[]> {
   // #419: history first — report/evidence stay last-write-wins views only
   // because every attempt's complete result has already been appended.
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
+  await appendRunAttemptHistory(
+    {
+      role: admitted.role,
+      runId: admitted.runId,
+      sessionFile: coordinates.sessionFile,
+    },
+    roleOutcome,
+  );
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
     reportPath,
-    `${JSON.stringify(
-      {
-        role: "judge",
-        runId: admitted.runId,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
+    `${JSON.stringify(bodies.report, null, 2)}\n`,
     "utf8",
   );
   await writeFile(
     evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-      },
-      null,
-      2,
-    )}\n`,
+    `${JSON.stringify(bodies.evidence, null, 2)}\n`,
     "utf8",
   );
   return [
     { kind: "report", path: reportPath },
     { kind: "evidence", path: evidencePath },
   ];
+}
+
+export async function publishJudgeArtifacts(
+  admitted: AdmittedJudgeInvocation,
+  roleOutcome: TerminalRoleOutcome,
+  coordinates: DurablePrincipalCoordinates,
+): Promise<TerminalArtifactRef[]> {
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "judge",
+      runId: admitted.runId,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+    },
+  });
 }
 
 /**
@@ -2379,54 +2497,27 @@ export async function publishCoderArtifacts(
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: "coder",
-        runId: admitted.runId,
-        phase: admitted.phase,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        role: "coder",
-        phase: admitted.phase,
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        taskPath: admitted.taskPath,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-        ...(options.methodProvenance === undefined
-          ? {}
-          : { methodProvenance: options.methodProvenance }),
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "coder",
+      runId: admitted.runId,
+      phase: admitted.phase,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      role: "coder",
+      phase: admitted.phase,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      taskPath: admitted.taskPath,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+      ...(options.methodProvenance === undefined
+        ? {}
+        : { methodProvenance: options.methodProvenance }),
+    },
+  });
 }
 
 /** Lawful Coder accepted outcome extracted from session (shared success interface). */
@@ -2648,59 +2739,32 @@ export async function publishFixerArtifacts(
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
   },
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: "fixer",
-        runId: admitted.runId,
-        phase: admitted.phase,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        role: "fixer",
-        phase: admitted.phase,
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        packetPath: admitted.packetPath,
-        ...(admitted.prerequisitesPath === undefined
-          ? {}
-          : { prerequisitesPath: admitted.prerequisitesPath }),
-        prerequisites: admitted.prerequisites,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-        methodProvenance: options.methodProvenance,
-        // Optional diagnosis: availability is package-bound; invocation only when observed.
-        methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
-        methodInvocations: options.methodInvocations ?? [],
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "fixer",
+      runId: admitted.runId,
+      phase: admitted.phase,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      role: "fixer",
+      phase: admitted.phase,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      packetPath: admitted.packetPath,
+      ...(admitted.prerequisitesPath === undefined
+        ? {}
+        : { prerequisitesPath: admitted.prerequisitesPath }),
+      prerequisites: admitted.prerequisites,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+      methodProvenance: options.methodProvenance,
+      // Optional diagnosis: availability is package-bound; invocation only when observed.
+      methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
+      methodInvocations: options.methodInvocations ?? [],
+    },
+  });
 }
 
 /** Lawful Fixer accepted outcome extracted from session (no LLM auditor after #242). */
@@ -2774,51 +2838,24 @@ export async function publishCollectorArtifacts(
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: "collector",
-        runId: admitted.runId,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        role: "collector",
-        ...(admitted.prNumber === undefined ? {} : { prNumber: admitted.prNumber }),
-        repository: admitted.repository.canonical,
-        manifestDigest: admitted.manifestDigest,
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "collector",
+      runId: admitted.runId,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      role: "collector",
+      ...(admitted.prNumber === undefined ? {} : { prNumber: admitted.prNumber }),
+      repository: admitted.repository.canonical,
+      manifestDigest: admitted.manifestDigest,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+    },
+  });
 }
 
 /** Lawful Collector accepted outcome extracted from session. */
@@ -2952,53 +2989,28 @@ export async function publishDoctorArtifacts(
     readonly auditNoReceipt?: unknown;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: "doctor",
-        runId: admitted.runId,
-        outcome: roleOutcome,
-        ...(options.cost === undefined ? {} : { cost: options.cost }),
-        ...(options.auditNoReceipt === undefined ? {} : { auditNoReceipt: options.auditNoReceipt }),
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        role: "doctor",
-        issueNumber: admitted.issueNumber,
-        caseRunsPath: admitted.caseRunsPath,
-        caseIdentity: admitted.caseIdentity,
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "doctor",
+      runId: admitted.runId,
+      outcome: roleOutcome,
+      ...(options.cost === undefined ? {} : { cost: options.cost }),
+      ...(options.auditNoReceipt === undefined
+        ? {}
+        : { auditNoReceipt: options.auditNoReceipt }),
+    },
+    evidence: {
+      runId: admitted.runId,
+      role: "doctor",
+      issueNumber: admitted.issueNumber,
+      caseRunsPath: admitted.caseRunsPath,
+      caseIdentity: admitted.caseIdentity,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+    },
+  });
 }
 
 /** Lawful Doctor accepted/refused/audit_escalation outcome extracted from session. */
@@ -3108,6 +3120,36 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
   return 0;
 }
 
+/**
+ * Filed-seat success face via the sole accepted publisher (#953).
+ */
+async function publishSeatAcceptedArtifacts(
+  admitted: {
+    readonly role: TerminalRoleName;
+    readonly runId: string;
+    readonly runDirectory: string;
+    readonly admittedRequestPath: string;
+    readonly attachments: readonly AcceptedArtifactAttachment[];
+  },
+  roleOutcome: TerminalRoleOutcome,
+  coordinates: DurablePrincipalCoordinates,
+): Promise<TerminalArtifactRef[]> {
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: admitted.role,
+      runId: admitted.runId,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+    },
+  });
+}
+
 async function settleLawfulSeatAcceptedTerminalResult(
   admitted:
     | AdmittedNotaryInvocation
@@ -3164,12 +3206,17 @@ async function settleLawfulSeatAcceptedTerminalResult(
   const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
   if (roleOutcome !== undefined && (thisAttemptHasSeatSuccess || residual === undefined)) {
     const navigator = extractNavigatorFact(entries);
+    const artifacts = await publishSeatAcceptedArtifacts(
+      admitted,
+      roleOutcome,
+      coordinates,
+    );
     return withSubmissions(
       await withOptionalGateProjection(
         {
           roleOutcome,
           navigator,
-          artifacts: [],
+          artifacts,
           runId: admitted.runId,
         },
         sessionDirectory,
@@ -3625,58 +3672,31 @@ export async function publishReviewerArtifacts(
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
   },
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: "reviewer",
-        runId: admitted.runId,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        role: "reviewer",
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        baseRevision: admitted.baseRevision,
-        lens: admitted.lens,
-        authorityRefs: [...admitted.authorityRefs],
-        ...(admitted.instructionEmpty
-          ? {}
-          : { callerProvenance: admitted.instruction }),
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-        methodProvenance: options.methodProvenance,
-        // Forced package method: availability is package-bound; expansion only when observed.
-        methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
-        methodInvocations: options.methodInvocations ?? [],
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "reviewer",
+      runId: admitted.runId,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      role: "reviewer",
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      baseRevision: admitted.baseRevision,
+      lens: admitted.lens,
+      authorityRefs: [...admitted.authorityRefs],
+      ...(admitted.instructionEmpty
+        ? {}
+        : { callerProvenance: admitted.instruction }),
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+      methodProvenance: options.methodProvenance,
+      // Forced package method: availability is package-bound; expansion only when observed.
+      methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
+      methodInvocations: options.methodInvocations ?? [],
+    },
+  });
 }
 
 /** Lawful Reviewer accepted outcome extracted from session (no LLM auditor after #495 S6). */
@@ -3799,53 +3819,26 @@ export async function publishMergerArtifacts(
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
   },
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureRunArtifactsDir(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: "merger",
-        runId: admitted.runId,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        role: "merger",
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        mergerInputPath: admitted.mergerInputPath,
-        derived: admitted.derived,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-        methodProvenance: options.methodProvenance,
-        methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
-        methodInvocations: options.methodInvocations ?? [],
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "merger",
+      runId: admitted.runId,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      role: "merger",
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      mergerInputPath: admitted.mergerInputPath,
+      derived: admitted.derived,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+      methodProvenance: options.methodProvenance,
+      methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
+      methodInvocations: options.methodInvocations ?? [],
+    },
+  });
 }
 
 /** Lawful Merger accepted outcome extracted from session (shared success interface). */
@@ -4080,6 +4073,21 @@ export async function publishFailureArtifacts(
   );
   const priorIssues: PublicationAttempt[] =
     baseAttempt === undefined ? [] : [baseAttempt];
+  // #953: failure face must not leave a prior success report as the durable view.
+  // Clear failure must not strand the original controlled failure outside
+  // settlement — same as history failure below, it rides publicationIssues
+  // and unique fallback still places the durable error (locked artifacts/ +
+  // prior face must not abort publishFailureArtifacts).
+  try {
+    await clearOppositeTerminalArtifactFace(admitted.runDirectory);
+  } catch (error) {
+    priorIssues.push(
+      publicationAttemptFromError(
+        roleRunArtifactsDirectory(admitted.runDirectory),
+        error,
+      ),
+    );
+  }
   // #419: each attempt's complete failure result joins the appended history
   // before any fixed-name artifact view is rewritten. History failure must not
   // strand the original controlled failure outside settlement — it rides
@@ -4197,35 +4205,52 @@ export async function settleFailureTerminalResult(
         entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
       const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
       if (raw !== undefined) {
+        // Catch only covers lifecycle-byte parse. Clear / navigator / gate I/O
+        // after a valid parse must keep their real failure identity (#953).
+        let facts: NoReceiptLifecycleFacts | undefined;
         try {
-          const facts = parseNoReceiptLifecycleFacts(raw);
-          if (facts.runPointer === admitted.runDirectory && facts.attemptPointer === `current:${admitted.runDirectory}`) {
-            let decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
-            // #676 D1/J3: project durable bind-target rejection onto public no_receipt facts.
-            if (admitted.role === "collector") {
-              const bindRejection = extractCollectorTargetBindRejection(entries.slice(attemptStart));
-              if (bindRejection !== undefined) {
-                decisiveFacts = {
-                  ...facts,
-                  targetBindRejected: true,
-                  targetBindDiagnostic: bindRejection.diagnostic,
-                  ...(bindRejection.code === undefined ? {} : { targetBindCode: bindRejection.code }),
-                };
-              }
+          facts = parseNoReceiptLifecycleFacts(raw);
+        } catch {
+          /* malformed lifecycle bytes remain the existing nonzero output failure */
+        }
+        if (
+          facts !== undefined &&
+          facts.runPointer === admitted.runDirectory &&
+          facts.attemptPointer === `current:${admitted.runDirectory}`
+        ) {
+          let decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
+          // #676 D1/J3: project durable bind-target rejection onto public no_receipt facts.
+          if (admitted.role === "collector") {
+            const bindRejection = extractCollectorTargetBindRejection(entries.slice(attemptStart));
+            if (bindRejection !== undefined) {
+              decisiveFacts = {
+                ...facts,
+                targetBindRejected: true,
+                targetBindDiagnostic: bindRejection.diagnostic,
+                ...(bindRejection.code === undefined ? {} : { targetBindCode: bindRejection.code }),
+              };
             }
-            // #478: no_receipt is still a public Terminal — project accepted gate facts.
-            return withOptionalGateProjection(
-              {
-                roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },
-                navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
-                artifacts: [],
-                runId: admitted.runId,
-              },
-              sessionDirectory,
-              detourGateContext(admitted, options),
-            );
           }
-        } catch { /* malformed lifecycle bytes remain the existing nonzero output failure */ }
+          // #478: no_receipt is still a public Terminal — project accepted gate facts.
+          // #953: empty public terminal face — clear every reader-adoptable prior face.
+          await clearOppositeTerminalArtifactFace(admitted.runDirectory);
+          return withOptionalGateProjection(
+            {
+              roleOutcome: {
+                kind: "no_receipt",
+                role: admitted.role,
+                status: "no-accepted-receipt",
+                ...facts,
+                decisiveFacts,
+              },
+              navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
+              artifacts: [],
+              runId: admitted.runId,
+            },
+            sessionDirectory,
+            detourGateContext(admitted, options),
+          );
+        }
       }
     }
   }

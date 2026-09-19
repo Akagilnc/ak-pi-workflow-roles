@@ -260,20 +260,20 @@ function projectOfficerDecision(
  */
 function thisCourtOfficerPayloads(terminal: TerminalResult | undefined): readonly unknown[] {
   const outcome = terminal?.roleOutcome;
+  // This-court identity only from accepted/audit_escalation settlement payloads
+  // (#879). Failure history is not this-court (#953) — it rides submissions.
   if (outcome !== undefined && (outcome.kind === "accepted" || outcome.kind === "audit_escalation")) {
     if (outcome.payloads !== undefined && outcome.payloads.length > 0) return outcome.payloads;
-  }
-  if (outcome?.kind === "failure" && outcome.payloads !== undefined && outcome.payloads.length > 0) {
-    return outcome.payloads;
   }
   // No sole-row identity guess: undivided submissions are not this-court (#879).
   return [];
 }
 
-/** Failure/transport channel may still surface every recorded payload beside the failure (#836 A.3). */
+/**
+ * Failure/transport channel surfaces recorded history beside the failure
+ * (#836 A.3) via the historical carrier only (#953 — not failure.payloads).
+ */
 function officerFailurePayloads(terminal: TerminalResult | undefined): readonly unknown[] {
-  const outcome = terminal?.roleOutcome;
-  if (outcome?.kind === "failure") return outcome.payloads ?? terminal?.submissions ?? [];
   return terminal?.submissions ?? [];
 }
 

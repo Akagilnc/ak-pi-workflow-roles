@@ -1301,12 +1301,23 @@ test("public countersign path: summons text alone never mints a ticket without �
 
 /**
  * Multi-role faux pi: diarist envelope when --ak-role diarist, else countersign.
- * ticketAssertion: positive N = 本庭对象; null = true-unbound; "escalate" = 认不出.
+ * ticketAssertion: positive N = 本庭对象; null = true-unbound; "escalate" = 认不出;
+ * or escalate object (may carry ticketNumber / other receipt facts — #953).
  * courtTicketNumbers: #871 optional typed co-review set on identity turns only.
  * Bound refresh (`整理 #N 的本案依据。`) asserts ticket N so each member volume is real.
  */
+type CourtDiaristTicketAssertion =
+  | number
+  | null
+  | "escalate"
+  | {
+      readonly status: "escalate";
+      readonly reason: string;
+      readonly ticketNumber?: number;
+    };
+
 function courtPipelinePiRunner(
-  ticketAssertion: number | null | "escalate" = 582,
+  ticketAssertion: CourtDiaristTicketAssertion = 582,
   countersignDetails: unknown = {
     countersignStatus: "converged",
     note: "署",
@@ -1348,6 +1359,14 @@ function courtPipelinePiRunner(
         const boundTicket =
           ticketDirMatch !== null ? Number(ticketDirMatch[1]) : undefined;
         // 起居郎 LLM asserts the court target; envelope binds typed key (#771 / #779).
+        const escalateParams =
+          typeof ticketAssertion === "object" &&
+          ticketAssertion !== null &&
+          ticketAssertion.status === "escalate"
+            ? ticketAssertion
+            : ticketAssertion === "escalate"
+              ? { status: "escalate" as const, reason: "cannot identify court target" }
+              : undefined;
         const params =
           boundTicket !== undefined
             ? {
@@ -1355,13 +1374,13 @@ function courtPipelinePiRunner(
                 ticketNumber: boundTicket,
                 sessions: [] as const,
               }
-            : ticketAssertion === "escalate"
-              ? { status: "escalate" as const, reason: "cannot identify court target" }
+            : escalateParams !== undefined
+              ? escalateParams
               : ticketAssertion === null
                 ? { status: "completed" as const, ticketNumber: null, sessions: [] as const }
                 : {
                     status: "completed" as const,
-                    ticketNumber: ticketAssertion,
+                    ticketNumber: ticketAssertion as number,
                     sessions: [] as const,
                     ...(courtTicketNumbers === undefined
                       ? {}

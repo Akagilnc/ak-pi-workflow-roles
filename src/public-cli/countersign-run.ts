@@ -31,6 +31,7 @@ import {
 } from "../package-resources/engine-material.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import { projectCourtTicketNumbers } from "../diarist-contracts.ts";
+import { readableGateItem } from "../readable-gate-item.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import {
   admitCountersignInvocation,
@@ -139,12 +140,73 @@ export type CourtDiaristIdentity =
       readonly courtTicketNumbers?: readonly number[];
     }
   | { readonly kind: "unbound" }
-  | { readonly kind: "escalate" };
+  | {
+      readonly kind: "escalate";
+      /** Honest diagnostic from diarist escalate payload (#953) — never invent 认不出. */
+      readonly diagnostic: string;
+    };
 
 export type CourtDiaristInvocationResult = {
   readonly identity: CourtDiaristIdentity;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isEscalatePayload(payload: unknown): boolean {
+  if (!isRecord(payload)) return false;
+  return (
+    payload.status === "escalate" || payload.countersignStatus === "escalate"
+  );
+}
+
+/**
+ * Rows a parent may read from a nested diarist terminal (#836 / #953).
+ * Accepted/audit use role result payloads; failure history is submissions only.
+ */
+function courtDiaristPayloadRows(
+  roleOutcome: TerminalRoleOutcome | undefined,
+  submissions: readonly unknown[] | undefined,
+): readonly unknown[] {
+  if (roleOutcome === undefined) return submissions ?? [];
+  if (roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation") {
+    return roleOutcome.payloads ?? [];
+  }
+  if (roleOutcome.kind === "failure") return submissions ?? [];
+  return [];
+}
+
+/**
+ * Parent diagnostic for court-diarist escalate (#953 / 失败诚实 / 传话).
+ * Relays diarist escalate payload(s) via readableGateItem — never invents
+ * "cannot identify court target" when a payload already carries other facts
+ * (e.g. ticketNumber present with a different reason).
+ *
+ * Multiple escalate payloads remain reachable after the run (ADR 0003/0041;
+ * no courtAttempt sole-filter on diarist). Same law as secretariat parent face:
+ * every escalate receipt as-is, last = currentConclusion.
+ */
+function courtDiaristEscalateDiagnostic(
+  roleOutcome: TerminalRoleOutcome | undefined,
+  submissions?: readonly unknown[],
+): string {
+  const payloads = courtDiaristPayloadRows(roleOutcome, submissions);
+  const escalatePayloads: unknown[] = [];
+  for (const payload of payloads) {
+    if (isEscalatePayload(payload)) escalatePayloads.push(payload);
+  }
+  if (escalatePayloads.length === 0) return "court diarist station escalated";
+  // Single escalate: prior carrier (payload body only) — no shape churn.
+  if (escalatePayloads.length === 1) {
+    return `court diarist station escalated: ${readableGateItem(escalatePayloads[0])}`;
+  }
+  return `court diarist station escalated: ${readableGateItem({
+    receipts: escalatePayloads,
+    currentConclusion: escalatePayloads[escalatePayloads.length - 1],
+  })}`;
+}
 
 /** Env slice shared by court diarist identity summons (countersign / secretariat). */
 export type CourtDiaristSummonEnv = Pick<
@@ -171,14 +233,10 @@ export type CourtDiaristSummonEnv = Pick<
 function courtTicketNumbersFromOutcome(
   roleOutcome: TerminalRoleOutcome | undefined,
   principalTicket: number,
+  submissions?: readonly unknown[],
 ): readonly number[] | undefined {
   if (roleOutcome === undefined) return undefined;
-  const payloads =
-    roleOutcome.kind === "accepted" ||
-    roleOutcome.kind === "audit_escalation" ||
-    roleOutcome.kind === "failure"
-      ? (roleOutcome.payloads ?? [])
-      : [];
+  const payloads = courtDiaristPayloadRows(roleOutcome, submissions);
   let latest: readonly number[] | undefined;
   for (const payload of payloads) {
     if (
@@ -216,18 +274,7 @@ function courtDiaristEscalated(
   if (roleOutcome === undefined) return false;
   if (roleOutcome.kind === "audit_escalation") return true;
   if (roleOutcome.kind !== "accepted") return false;
-  return (roleOutcome.payloads ?? []).some((payload) => {
-    if (
-      typeof payload !== "object" ||
-      payload === null ||
-      Array.isArray(payload)
-    )
-      return false;
-    const record = payload as Record<string, unknown>;
-    return (
-      record.status === "escalate" || record.countersignStatus === "escalate"
-    );
-  });
+  return (roleOutcome.payloads ?? []).some(isEscalatePayload);
 }
 
 /**
@@ -292,11 +339,15 @@ export async function invokeCourtDiarist(
   });
 
   const roleOutcome = result.terminal?.roleOutcome;
+  const submissions = result.terminal?.submissions;
   // Escalate routing is a boolean over the preserved sequence (#881). Reasons and
   // payload bodies stay on roleOutcome — never rewritten into a sole identity reason.
   if (courtDiaristEscalated(roleOutcome)) {
     return {
-      identity: { kind: "escalate" },
+      identity: {
+        kind: "escalate",
+        diagnostic: courtDiaristEscalateDiagnostic(roleOutcome, submissions),
+      },
     };
   }
 
@@ -319,6 +370,7 @@ export async function invokeCourtDiarist(
     const courtTicketNumbers = courtTicketNumbersFromOutcome(
       roleOutcome,
       asserted,
+      submissions,
     );
     return {
       identity: {
@@ -390,9 +442,7 @@ export async function runCountersignCourtDiaristStation(
     );
 
     if (outcome.identity.kind === "escalate") {
-      throw new StationChildExhaustedError(
-        "court diarist station escalated (cannot identify court target)",
-      );
+      throw new StationChildExhaustedError(outcome.identity.diagnostic);
     }
     if (outcome.failedWithoutEscalate !== undefined) {
       throw new StationChildExhaustedError(
@@ -509,6 +559,7 @@ export async function runPublicCountersign(
 
           if (outcome.identity.kind === "escalate") {
             // 御批: 识别不了就上抛 — materialize and settle this countersign run.
+            // Diagnostic relays diarist escalate payload facts (#953).
             await materializeAdmission();
             await markRunAdmitted(admitted, env.principalAuthority);
             return await presentControlledFailure(
@@ -517,9 +568,7 @@ export async function runPublicCountersign(
                 timedOut: false,
                 code: null,
                 stderr: "",
-                thrown: new Error(
-                  "court diarist station escalated (cannot identify court target)",
-                ),
+                thrown: new Error(outcome.identity.diagnostic),
               },
               countersignAdapters(),
               env.principalAuthority,

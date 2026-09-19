@@ -128,6 +128,8 @@ function latestObjectPayload(
  * Project nested countersign PublicSummonResult onto tool details.
  * Authority: keep typed terminal kind + payloads/diagnostic intact (gatekeeper
  * projectOfficerTerminal precedent / ADR 0052 / 失败诚实). No content gate.
+ * Parent-visible text uses this details object via readableGateItem directly
+ * (#953 — no second isomorphic projection).
  */
 export function projectSecretariatSummonResult(
   summoned: PublicSummonResult,
@@ -178,7 +180,11 @@ export function projectSecretariatSummonResult(
   }
 
   if (roleOutcome.kind === "failure") {
-    const payloads = Array.isArray(roleOutcome.payloads) ? roleOutcome.payloads : undefined;
+    // #953: current failure face is diagnostic/cause/decisiveFacts only.
+    // Historical receipts ride terminal.submissions — never as receipt/payloads.
+    const submissions = Array.isArray(terminal?.submissions)
+      ? terminal.submissions
+      : undefined;
     return {
       ...base,
       outcomeKind: "failure",
@@ -187,10 +193,9 @@ export function projectSecretariatSummonResult(
       ...(roleOutcome.decisiveFacts === undefined
         ? {}
         : { decisiveFacts: roleOutcome.decisiveFacts }),
-      ...(payloads === undefined ? {} : { payloads }),
-      ...(latestObjectPayload(payloads) === undefined
+      ...(submissions === undefined || submissions.length === 0
         ? {}
-        : { receipt: latestObjectPayload(payloads) }),
+        : { submissions }),
     };
   }
 

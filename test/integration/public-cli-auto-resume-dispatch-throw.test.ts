@@ -145,7 +145,12 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     assert.equal(filesFromFacts.length,3);
     assert.deepEqual([...filesFromFacts].sort(),files.map((f)=>join(artifactsDir,f)).sort());
     assert.equal(terminal.artifacts.filter((a)=>a.kind==="error").length,3);
-    assert.deepEqual(terminal.roleOutcome.payloads,[sealedParams,bounceParams]);
+    // #953: history stays on submissions; failure.payloads is not the history face.
+    assert.equal(
+      terminal.roleOutcome.payloads === undefined
+        || terminal.roleOutcome.payloads.length === 0,
+      true,
+    );
     assert.deepEqual(terminal.submissions,[sealedParams,bounceParams]);
 
     // Same real entry: principal-unavailable exception terminal also attaches ledger sequence.
@@ -167,7 +172,11 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     assert.equal(unavailableTerminal.roleOutcome.kind,"failure");
     if(unavailableTerminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
     assert.match(unavailableTerminal.roleOutcome.diagnostic,/session principal unavailable before further resume/);
-    assert.deepEqual(unavailableTerminal.roleOutcome.payloads,[sealedParams,bounceParams]);
+    assert.equal(
+      unavailableTerminal.roleOutcome.payloads === undefined
+        || unavailableTerminal.roleOutcome.payloads.length === 0,
+      true,
+    );
     assert.deepEqual(unavailableTerminal.submissions,[sealedParams,bounceParams]);
   });
 });

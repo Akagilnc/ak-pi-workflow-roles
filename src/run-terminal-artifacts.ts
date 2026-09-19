@@ -170,6 +170,7 @@ export function runIdFromRunDirectory(runDirectory: string): string | undefined 
  * Shared parent-directory unique fallback may be adopted only when the
  * publisher-owned body.runId equals this run directory's runId. Same-run
  * artifactsDir / runDirectory candidates keep path ownership and skip this.
+ * expectedRunId undefined (unparseable run dir) → never bound.
  */
 function presentUniqueFallbackBoundToRun(
   body: Record<string, unknown>,
@@ -180,51 +181,103 @@ function presentUniqueFallbackBoundToRun(
 }
 
 /**
- * Read the first present typed terminal artifact for a run directory.
- * Order:
+ * Sole authority for seam-owned unique error.<uuid>.json candidates.
+ * Used by both clearOpposite (settlement) and readRunTerminalArtifact — do not
+ * re-enumerate the same-run / parent unique set elsewhere.
+ * Ownership:
+ * - same-run dirs (artifacts/, runDir): path ownership — all unique names
+ * - parent runs/: only body.runId-bound faces; unparseable runId or unreadable body → none
+ */
+export async function listSeamOwnedUniqueErrorFacePaths(
+  runDirectory: string,
+): Promise<readonly string[]> {
+  const artifactsDir = roleRunArtifactsDirectory(runDirectory);
+  const owned: string[] = await listUniqueErrorFallbackPaths([
+    artifactsDir,
+    runDirectory,
+  ]);
+  const expectedRunId = runIdFromRunDirectory(runDirectory);
+  for (const path of await listUniqueErrorFallbackPaths([dirname(runDirectory)])) {
+    const read = await readTerminalArtifactAtPath(path, "error.json");
+    if (read === undefined || read.status !== "present") continue;
+    if (!presentUniqueFallbackBoundToRun(read.body, expectedRunId)) continue;
+    owned.push(path);
+  }
+  return owned;
+}
+
+type PresentOrUnreadable = Exclude<RunTerminalArtifactRead, { status: "absent" }>;
+
+/**
+ * Publish contract (#953): only failure publish continues after clearOpposite
+ * failure, so a multi-class residue (residual report/audit beside a new error
+ * face) means the current settlement is failure. Prefer failure-class faces
+ * over success/audit — never filesystem mtime (copy/restore/utimes can lie).
+ */
+function failureClassRank(file: RunTerminalArtifactFile): number {
+  return file === "error.json" ? 1 : 0;
+}
+
+/**
+ * Read the current typed terminal artifact for a run directory.
+ *
+ * Candidate set (publisher-owned faces only):
  * 1) conventional artifacts/{report,error,audit-incomplete}.json
  * 2) publisher fixed failure fallbacks (error.settlement.json faces)
- * 3) publisher unique error.<uuid>.json fallbacks under same-run dirs
- * 4) shared parent-directory unique fallbacks bound by body.runId
+ * 3) seam-owned unique error.<uuid>.json via listSeamOwnedUniqueErrorFacePaths
+ *    (same-run path ownership + parent body.runId binding — shared with clear)
  *
- * Absence of every known durable face is a valid no-receipt state (not unreadable).
- * A present file that cannot be parsed as a usable typed JSON object is unreadable.
+ * Invariant: when more than one present face remains (e.g. clearOpposite failed
+ * during failure publish and a fallback was settled beside a residual report),
+ * adopt failure-class over success/audit by the publish contract — not mtime.
+ * Same-class ties keep candidate enumeration order (conventional before
+ * fallbacks before unique).
+ *
+ * Unreadable faces never outrank a present face. Parent unique unreadable
+ * files never enter the shared enumerator (cannot prove run identity).
+ * Absence of every known durable face is a valid no-receipt state.
  */
 export async function readRunTerminalArtifact(
   runDirectory: string,
 ): Promise<RunTerminalArtifactRead> {
   const artifactsDir = roleRunArtifactsDirectory(runDirectory);
-  for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    const path = join(artifactsDir, file);
-    const read = await readTerminalArtifactAtPath(path, file);
-    if (read !== undefined) return read;
-  }
+  const present: Array<Extract<PresentOrUnreadable, { status: "present" }>> = [];
+  const unreadable: Array<Extract<PresentOrUnreadable, { status: "unreadable" }>> =
+    [];
 
-  // Publisher settled a durable failure outside the conventional error.json name.
-  for (const relative of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    const path = join(runDirectory, relative);
-    const read = await readTerminalArtifactAtPath(path, "error.json");
-    if (read !== undefined) return read;
-  }
-
-  // Same-run unique faces: path ownership is the run itself — no cross-run risk.
-  for (const path of await listUniqueErrorFallbackPaths([artifactsDir, runDirectory])) {
-    const read = await readTerminalArtifactAtPath(path, "error.json");
-    if (read !== undefined) return read;
-  }
-
-  // Shared parent (runs/) unique faces: require publisher runId binding.
-  const expectedRunId = runIdFromRunDirectory(runDirectory);
-  for (const path of await listUniqueErrorFallbackPaths([dirname(runDirectory)])) {
-    const read = await readTerminalArtifactAtPath(path, "error.json");
-    if (read === undefined) continue;
+  const consider = (read: RunTerminalArtifactRead | undefined): void => {
+    if (read === undefined || read.status === "absent") return;
     if (read.status === "present") {
-      if (!presentUniqueFallbackBoundToRun(read.body, expectedRunId)) continue;
-      return read;
+      present.push(read);
+      return;
     }
-    // Unreadable parent unique file cannot prove run identity — do not adopt.
+    unreadable.push(read);
+  };
+
+  for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
+    consider(await readTerminalArtifactAtPath(join(artifactsDir, file), file));
   }
 
+  for (const relative of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
+    consider(
+      await readTerminalArtifactAtPath(join(runDirectory, relative), "error.json"),
+    );
+  }
+
+  // Unique same-run + parent-bound faces: one enumerator shared with clear.
+  for (const path of await listSeamOwnedUniqueErrorFacePaths(runDirectory)) {
+    consider(await readTerminalArtifactAtPath(path, "error.json"));
+  }
+
+  if (present.length > 0) {
+    present.sort(
+      (a, b) => failureClassRank(b.file) - failureClassRank(a.file),
+    );
+    return present[0]!;
+  }
+  if (unreadable.length > 0) {
+    return unreadable[0]!;
+  }
   return { status: "absent" };
 }
 

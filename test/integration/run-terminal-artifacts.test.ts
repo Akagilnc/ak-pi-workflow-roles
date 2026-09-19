@@ -1,11 +1,12 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Reader face for publisher durable terminal artifacts.
  * T10: parent-directory unique error.<uuid>.json must bind body.runId to the
  * requested run directory — sibling fallbacks must not cross-adopt.
+ * #953 failure-over-success currentness is covered at the publish/read seam in
+ * public-cli-failure-artifacts.test.ts — do not parallel-prove it here.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";

@@ -37,6 +37,7 @@ import {
 } from "./engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
+import { readableGateItem } from "./readable-gate-item.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
@@ -1226,18 +1227,15 @@ export function createSecretariatRoleRuntime(
                   : { packageRoot: dependencies.packageRoot }),
               });
           const details = projectSecretariatSummonResult(summoned);
-          const outcomeKind =
-            typeof details.outcomeKind === "string" ? details.outcomeKind : "unknown";
-          const contentText =
-            outcomeKind === "accepted" || outcomeKind === "audit_escalation"
-              ? "给事中回执已送达中书省"
-              : outcomeKind === "failure"
-                ? "给事中传召失败"
-                : outcomeKind === "no_receipt"
-                  ? "给事中无回执"
-                  : "给事中传召未得终局";
+          // #953 / #775: parent-visible text from typed details via readableGateItem
+          // sole source — payloads + receipt (latest) already carry 传话 facts.
           return {
-            content: [{ type: "text" as const, text: contentText }],
+            content: [
+              {
+                type: "text" as const,
+                text: readableGateItem(details),
+              },
+            ],
             details,
           };
         },
