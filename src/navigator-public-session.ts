@@ -98,6 +98,8 @@ export type NavigatorPublicSummon = (options: {
   readonly cwd: string;
   readonly home?: string;
   readonly resumeRunId?: string;
+  /** Parent cancellation for the nested attendance summon (#675 / #959). */
+  readonly signal?: AbortSignal;
 }) => Promise<PublicSummonResult>;
 
 export function createNativeNavigatorSessionFactory(deps?: {
@@ -129,6 +131,8 @@ export function createNativeNavigatorSessionFactory(deps?: {
     let noReceipt: NoReceiptLifecycleFacts | undefined;
     let disposed = false;
     let inFlightPrompt: Promise<unknown> | undefined;
+    // Session-scoped cancel: dispose aborts nested summon so parent court can close (#959 reopen).
+    const sessionAbort = new AbortController();
     /** In-factory host run id for CLI resume; durable pointer also lives on the nest. */
     let hostRunId = readNavigatorHostRunPointer(sessionManager.getEntries() as readonly unknown[]);
 
@@ -154,6 +158,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
             role: "navigator" as const,
             argv: [text] as const,
             cwd: context.cwd,
+            signal: sessionAbort.signal,
             ...(summonHome === undefined ? {} : { home: summonHome }),
           };
 
@@ -169,6 +174,9 @@ export function createNativeNavigatorSessionFactory(deps?: {
             hostRunId = undefined;
             summoned = await summon(baseSummon);
           }
+
+          // Dispose/abort won the race: do not present late nested prose onto a closed court.
+          if (disposed || sessionAbort.signal.aborted) return;
 
           const outcome = summoned.terminal?.roleOutcome;
           if (outcome === undefined) {
@@ -230,6 +238,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
             context as never,
           );
         } catch (error) {
+          if (disposed || sessionAbort.signal.aborted) return;
           if (error instanceof NavigatorUnavailableError) throw error;
           const fact = navigatorProviderFailureFromError(error);
           // Catch path is the public-summon seam (source transport); untyped cause stays unknown.
@@ -277,8 +286,17 @@ export function createNativeNavigatorSessionFactory(deps?: {
       recordPointer: () => sessionManager.getSessionDir(),
       dispose: async () => {
         disposed = true;
+        // Abort nested summon (#675 signal); do not await it — parent session_shutdown
+        // used to block here until the nest finished, defeating post-role grace (#959 reopen).
+        if (!sessionAbort.signal.aborted) {
+          sessionAbort.abort(navigatorUnavailableError(
+            "session",
+            new Error("Navigator attendance was disposed"),
+          ));
+        }
         const pending = inFlightPrompt;
-        if (pending !== undefined) await pending.catch(() => undefined);
+        inFlightPrompt = undefined;
+        if (pending !== undefined) void pending.catch(() => undefined);
       },
     };
   };

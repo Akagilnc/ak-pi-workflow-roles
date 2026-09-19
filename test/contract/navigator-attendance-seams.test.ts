@@ -1093,6 +1093,15 @@ test("#959 role_infrastructure_failure settlement feed shares post-role grace", 
         (presentation.details as { unavailableReason?: string } | undefined)?.unavailableReason,
         "Navigator exceeded post-role delivery grace",
       );
+
+      // #959 reopen: parent terminalization runs session_shutdown after grace; it must
+      // not re-block the court on nested attendance teardown.
+      const shutdownStarted = Date.now();
+      await handlers.get("session_shutdown")?.({}, ctx);
+      assert.ok(
+        Date.now() - shutdownStarted < 500,
+        "session_shutdown after grace must not hang on navigator dispose",
+      );
     });
   } finally {
     t.mock.timers.reset();

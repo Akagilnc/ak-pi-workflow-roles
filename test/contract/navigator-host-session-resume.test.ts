@@ -16,7 +16,7 @@ import {
 } from "../../src/navigator-public-session.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { seedGitRepository, waitForEventLoopCondition } from "../helpers/pi-test-harness.ts";
 
 test("runId is derived from navigator run directory basename", () => {
   assert.equal(runIdFromNavigatorDirectory("/book/runs/01abc@navigator"), "01abc");
@@ -269,5 +269,74 @@ test("#959 typed non-resumable preflight allows one fresh mint", async () => {
     assert.equal(calls, 2, "non-resumable preflight → single fresh mint");
     assert.equal(readNavigatorHostRunPointer(session.entries() as readonly unknown[]), "01navminted");
     await session.dispose();
+  });
+});
+
+test("#959 dispose aborts hung nest and returns without awaiting it", async () => {
+  // Reopen symptom: post-role grace projected unavailable, but parent session_shutdown
+  // awaited attendance.dispose → public-session dispose awaited in-flight summon.
+  await withTempRoot("navigator-dispose-abort-", async (root) => {
+    seedGitRepository(root);
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+
+    let seenSignal: AbortSignal | undefined;
+    let summonStarted = false;
+    const summon = async (options: {
+      readonly role: "navigator";
+      readonly argv: readonly string[];
+      readonly cwd: string;
+      readonly home?: string;
+      readonly resumeRunId?: string;
+      readonly signal?: AbortSignal;
+    }): Promise<PublicSummonResult> => {
+      seenSignal = options.signal;
+      summonStarted = true;
+      await new Promise<void>(() => {
+        /* hung nested host turn — never settles */
+      });
+      return { exitCode: 1 };
+    };
+
+    const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@reviewer");
+    await mkdir(join(parentRun, "session"), { recursive: true });
+
+    const session = await createNativeNavigatorSessionFactory({
+      summonPublicRole: summon,
+      hostRunResumable: async () => false,
+    })({
+      context: {
+        cwd: root,
+        runDirectory: parentRun,
+        sessionManager: undefined,
+      } as never,
+      subject: "/work/subject-dispose-abort",
+      tool: {
+        name: "ak_navigator_prepare",
+        async execute() {
+          return { content: [{ type: "text", text: "ok" }], details: {} };
+        },
+      } as never,
+    });
+
+    const promptPromise = session.prompt("settlement-feed");
+    void promptPromise.catch(() => undefined);
+    await waitForEventLoopCondition(() => summonStarted, {
+      label: "hung nest summon must start",
+      timeoutMs: 1_000,
+    });
+    assert.ok(seenSignal, "summon must receive a cancel signal");
+    assert.equal(seenSignal.aborted, false, "signal stays live until dispose");
+
+    const started = Date.now();
+    await session.dispose();
+    assert.ok(
+      Date.now() - started < 500,
+      "dispose must not await the hung nest (过时不候 / #959 reopen)",
+    );
+    assert.equal(seenSignal.aborted, true, "dispose must abort the nested summon signal");
   });
 });
