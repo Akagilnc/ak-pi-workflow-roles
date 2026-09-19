@@ -1215,7 +1215,7 @@ test("#959 post-role grace aborts hung nest; session_shutdown does not re-block"
           "Navigator exceeded post-role delivery grace",
         );
 
-        // Mutation proof: awaiting dispose() would wait on the same hung closing promise.
+        // Hung closing must not block shutdown (awaiting dispose would hang).
         let shutdownDone = false;
         const shutdown = Promise.resolve(handlers.get("session_shutdown")?.({}, ctx)).then(
           () => {

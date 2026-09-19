@@ -3,17 +3,22 @@ import test from "node:test";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
+  createNativeNavigatorSessionFactory,
   createNavigatorAttendance,
   navigatorProviderFailureFromError,
   parseNavigatorModelSetting,
   navigatorProviderFailureFromPublicTerminal,
 } from "../../src/navigator-attendance.ts";
+import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
+import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
+import { extractNavigatorFact } from "../../src/public-cli/settlement.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import {
   context,
   proseAdvice,
@@ -21,6 +26,7 @@ import {
   attendance,
   settleWithAdvice,
 } from "../helpers/navigator-attendance-kit.ts";
+import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 test("Navigator early prepare from parent start; settle feeds result for output", async () => {
@@ -311,16 +317,141 @@ test("a session that settled without a receipt is not re-summoned for delivery",
   });
 });
 
-test("Navigator session creation failures become unavailable without rejecting settlement", async () => {
-  await withTempRoot("navigator-unavailable-", async (root) => {
-    await mkdir(join(root, ".ak-roles"), { recursive: true });
-    await writeFile(
-      join(root, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-    );
-    const setting = join(root, "model.json");
-    await writeFile(setting, JSON.stringify({ model: "provider/model" }));
-    for (const diagnostic of ["provider auth down", "session open failed with different wording"]) {
+test("#959 missing host binary diagnostic reaches terminal.navigator.reason", async () => {
+  // 怎么验#2: real missing binary → public failure diagnostic → attendance unavailable →
+  // extractNavigatorFact reason. One chain; no hand-written diagnostic string.
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-959-nav-bin-", runName: "run@codex" });
+  try {
+    const description = lookupHeadlessHostDescription("codex");
+    assert.ok(description);
+    const missingBin = join(ledger.runDirectory, "no-such-codex-binary");
+    const host = createHeadlessRoleTurnHost({
+      description,
+      hostName: "codex",
+      binary: missingBin,
+      sessionIdentity: {
+        async load() { return undefined; },
+        async bind() {},
+        resolveSessionFile: () => join(ledger.runDirectory, "session", "session.jsonl"),
+      },
+      prepare: async () => ({
+        mcpServers: [],
+        systemPrompt: { body: "system", materials: [] },
+        prompt: "probe",
+        jsonSchema: { type: "object" },
+        terminatingToolName: "ak_navigator_output",
+        async ingestStructuredOutput() {},
+        async closeRound() { return { accepted: true as const }; },
+      }),
+    });
+    const hostResult = await host.executeTurn({
+      principal: fixturePrincipal(join(ledger.runDirectory, "session")),
+      activation: { role: "navigator" },
+      methods: [],
+      continuation: { kind: "initial", prompt: "probe" },
+      model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
+      cwd: ledger.runDirectory,
+      home: ledger.home,
+      agentDir: join(ledger.runDirectory, "agent"),
+      runDirectory: ledger.runDirectory,
+    });
+    assert.equal(hostResult.knownFailure?.identity?.code, "spawn-failed");
+    const diagnostic = hostResult.knownFailure?.diagnostic ?? "";
+    assert.ok(diagnostic.includes("ENOENT") || diagnostic.includes(missingBin), diagnostic);
+
+    await withTempRoot("navigator-unavailable-chain-", async (root) => {
+      await mkdir(join(root, ".ak-roles"), { recursive: true });
+      await writeFile(
+        join(root, ".ak-roles", "public-cli.json"),
+        `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+      );
+      const setting = join(root, "model.json");
+      await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+      const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
+      await mkdir(join(parentRun, "session"), { recursive: true });
+      const nestDir = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navmiss@navigator");
+      await mkdir(join(nestDir, "session"), { recursive: true });
+
+      const events: any[] = [];
+      const nav = createNavigatorAttendance({
+        // No stub sessionManager: native factory books archivist nest from runDirectory
+        // (same HostContext shape as navigator-host-session-resume).
+        context: { cwd: root, home: root, runDirectory: parentRun } as never,
+        role: "coder",
+        phase: "apply",
+        subjectKey: "/repo/.ak/work/issues/28",
+        subject: "Fix issue 28",
+        authority: "owner decision",
+        loadSoul: async () => "route judgment",
+        loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
+        modelSettingPath: setting,
+        // Production native session: public failure terminal carries the host diagnostic.
+        createSession: createNativeNavigatorSessionFactory({
+          summonPublicRole: async () => ({
+            exitCode: 1,
+            runDirectory: nestDir,
+            terminal: {
+              roleOutcome: {
+                kind: "failure",
+                role: "navigator",
+                cause: "activation",
+                diagnostic,
+                decisiveFacts: {},
+              },
+            },
+          } as never),
+        }),
+        onEvent: async (event) => { events.push(event); },
+      });
+      nav.prepare();
+      await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      assert.equal(events.length, 1);
+      assert.equal(events[0].disposition, "unavailable");
+      assert.equal(events[0].unavailableReason, diagnostic);
+
+      const invocationId = events[0].invocationId as string;
+      const terminalNavigator = extractNavigatorFact([
+        {
+          type: "custom",
+          customType: "ak-navigator-invocation",
+          data: {
+            invocationId,
+            role: "coder",
+            phase: "apply",
+            subjectKey: "/repo/.ak/work/issues/28",
+          },
+        },
+        {
+          type: "message",
+          message: {
+            role: "toolResult",
+            toolName: FIXER_OUTPUT_TOOL_NAME,
+            isError: false,
+            details: { status: "completed" },
+          },
+        },
+        {
+          type: "custom_message",
+          customType: "ak-navigator-attendance",
+          message: { details: events[0] },
+        },
+      ] as never);
+      assert.equal(terminalNavigator.disposition, "unavailable");
+      if (terminalNavigator.disposition === "unavailable") {
+        assert.equal(terminalNavigator.reason, diagnostic);
+      }
+    });
+
+    // Session-create throw still keeps the exact diagnostic (session source).
+    await withTempRoot("navigator-unavailable-session-", async (root) => {
+      await mkdir(join(root, ".ak-roles"), { recursive: true });
+      await writeFile(
+        join(root, ".ak-roles", "public-cli.json"),
+        `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+      );
+      const setting = join(root, "model.json");
+      await writeFile(setting, JSON.stringify({ model: "provider/model" }));
+      const sessionDiagnostic = "session open failed with different wording";
       const events: any[] = [];
       const nav = createNavigatorAttendance({
         context: context(root),
@@ -332,18 +463,18 @@ test("Navigator session creation failures become unavailable without rejecting s
         loadSoul: async () => "route judgment",
         loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
         modelSettingPath: setting,
-        createSession: async () => { throw new Error(diagnostic); },
-        onEvent: async (event) => { events.push(event); } });
+        createSession: async () => { throw new Error(sessionDiagnostic); },
+        onEvent: async (event) => { events.push(event); },
+      });
       nav.prepare();
       await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
-      assert.equal(events.length, 1);
-      assert.equal(events[0].disposition, "unavailable");
-      assert.equal(events[0].unavailableSource, "session");
-      assert.equal(events[0].unavailableCause, "session");
-      // #959 怎么验#2: unavailable keeps the host/session diagnostic as the real reason.
-      assert.equal(events[0].unavailableReason, diagnostic);
-    }
-  });
+      assert.equal(events[0]?.disposition, "unavailable");
+      assert.equal(events[0]?.unavailableSource, "session");
+      assert.equal(events[0]?.unavailableReason, sessionDiagnostic);
+    });
+  } finally {
+    ledger.dispose();
+  }
 });
 
 test("Navigator accepts only the audit-owned in-memory projection across all four seats", () => {
