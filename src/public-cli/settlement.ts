@@ -285,13 +285,16 @@ export function withSubmissions<T extends TerminalResult>(
 ): T {
   if (submissions.length === 0) return terminal;
   const roleOutcome = terminal.roleOutcome;
-  // #879 keeps an already scoped this-court result; #881 full run history is
-  // presented independently on terminal.submissions. Only fill a missing /
-  // empty result payload — empty array must not shadow history (#953).
+  // #881 / #836: full run history always lands on terminal.submissions.
+  // #879: accepted/audit_escalation may still fill a missing this-court
+  // payloads face from that history. #953: failure must not — prior receipts
+  // stay on the historical carrier only, never as the current failure's
+  // ordinary payloads/receipt face.
+  if (roleOutcome.kind === "failure") {
+    return { ...terminal, submissions };
+  }
   const withPayloads =
-    roleOutcome.kind === "accepted" ||
-    roleOutcome.kind === "audit_escalation" ||
-    roleOutcome.kind === "failure"
+    roleOutcome.kind === "accepted" || roleOutcome.kind === "audit_escalation"
       ? {
           ...roleOutcome,
           payloads: coalesceSubmissionRows(roleOutcome.payloads, submissions),

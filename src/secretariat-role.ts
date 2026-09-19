@@ -180,7 +180,11 @@ export function projectSecretariatSummonResult(
   }
 
   if (roleOutcome.kind === "failure") {
-    const payloads = Array.isArray(roleOutcome.payloads) ? roleOutcome.payloads : undefined;
+    // #953: current failure face is diagnostic/cause/decisiveFacts only.
+    // Historical receipts ride terminal.submissions — never as receipt/payloads.
+    const submissions = Array.isArray(terminal?.submissions)
+      ? terminal.submissions
+      : undefined;
     return {
       ...base,
       outcomeKind: "failure",
@@ -189,10 +193,9 @@ export function projectSecretariatSummonResult(
       ...(roleOutcome.decisiveFacts === undefined
         ? {}
         : { decisiveFacts: roleOutcome.decisiveFacts }),
-      ...(payloads === undefined ? {} : { payloads }),
-      ...(latestObjectPayload(payloads) === undefined
+      ...(submissions === undefined || submissions.length === 0
         ? {}
-        : { receipt: latestObjectPayload(payloads) }),
+        : { submissions }),
     };
   }
 

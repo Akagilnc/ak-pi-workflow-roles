@@ -150,10 +150,9 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     };
   }
   if (outcome.kind === "failure") {
-    const rows = coalesceSubmissionRows(
-      outcome.payloads,
-      summoned.terminal?.submissions,
-    );
+    // #953: history stays on the historical carrier; do not read failure.payloads
+    // as if they were the current failure result (#836 A.3 beside-channel).
+    const rows = summoned.terminal?.submissions ?? [];
     return {
       status: "transport_failure",
       diagnostic: outcome.diagnostic,

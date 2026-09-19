@@ -667,11 +667,16 @@ test("terminal persistence failure through public entry propagates loudly with n
       identityCode: "EISDIR",
     });
     assert.equal(terminal.roleOutcome.role, "doctor");
-    // #836 A.3: the already-recorded Doctor payload rides beside the real
-    // persistence failure — never dropped by the controlled-failure path.
+    // #836 A.3 / #953: already-recorded Doctor payload rides on the historical
+    // submissions carrier beside the real persistence failure — not as the
+    // current failure's ordinary payloads face.
     assert.deepEqual(terminal.submissions, [recordedDetails]);
     if (terminal.roleOutcome.kind === "failure") {
-      assert.deepEqual(terminal.roleOutcome.payloads, [recordedDetails]);
+      assert.equal(
+        terminal.roleOutcome.payloads === undefined
+          || terminal.roleOutcome.payloads.length === 0,
+        true,
+      );
     }
   });
 });

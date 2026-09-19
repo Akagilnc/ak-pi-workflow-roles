@@ -282,13 +282,14 @@ test("secretariat summon tool delivers typed parent facts for each terminal kind
             diagnostic: "nested boom",
             cause: "provider",
             decisiveFacts: { cause: "provider" },
-            payloads: [
-              {
-                countersignStatus: "continue",
-                findings: [{ article: "old", reason: "prior" }],
-              },
-            ],
           },
+          // #953: history on submissions carrier — not failure.payloads/receipt.
+          submissions: [
+            {
+              countersignStatus: "continue",
+              findings: [{ article: "old", reason: "prior" }],
+            },
+          ],
         } as never,
       },
       expect: {
@@ -297,10 +298,14 @@ test("secretariat summon tool delivers typed parent facts for each terminal kind
         detailsCheck: (details) => {
           assert.equal(details.diagnostic, "nested boom");
           assert.equal(details.cause, "provider");
-          assert.deepEqual(details.receipt, {
-            countersignStatus: "continue",
-            findings: [{ article: "old", reason: "prior" }],
-          });
+          assert.equal(details.receipt, undefined);
+          assert.equal(details.payloads, undefined);
+          assert.deepEqual(details.submissions, [
+            {
+              countersignStatus: "continue",
+              findings: [{ article: "old", reason: "prior" }],
+            },
+          ]);
         },
       },
     },

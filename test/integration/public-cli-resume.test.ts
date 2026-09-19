@@ -849,18 +849,22 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
         // proof this settled through the real authority rather than being
         // traced only to the loop's no-op attempt io and discarded.
         assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
-        // #836 r13 class 2 / verdict A3: the failure terminal itself — not
-        // just the ledger — must carry the already-recorded payload beside
-        // the host failure (terminal.ts's failure outcome `payloads` field).
-        assert.ok(Array.isArray(result.terminal!.roleOutcome.payloads));
+        // #836 A.3 / #953: failure terminal carries already-recorded payload on
+        // the historical submissions carrier — not as current failure.payloads.
+        assert.ok(Array.isArray(result.terminal!.submissions));
         assert.ok(
-          result.terminal!.roleOutcome.payloads!.some(
+          result.terminal!.submissions!.some(
             (payload) =>
               typeof payload === "object"
               && payload !== null
               && (payload as { note?: unknown }).note === "lawful then dispatch throws after seal",
           ),
-          "failure terminal must carry the sealed payload alongside the deferred-persist failure",
+          "failure terminal must carry the sealed payload on submissions beside the deferred-persist failure",
+        );
+        assert.equal(
+          result.terminal!.roleOutcome.payloads === undefined
+            || result.terminal!.roleOutcome.payloads.length === 0,
+          true,
         );
       }
     } finally {

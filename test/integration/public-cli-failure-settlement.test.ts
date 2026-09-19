@@ -858,8 +858,12 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
     });
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind !== "failure") throw new Error("expected failure");
-    // Host failure stays failure; both original params ride beside it exactly once.
-    assert.deepEqual(terminal.roleOutcome.payloads, [bounceParams, infraParams]);
+    // Host failure stays failure; both original params ride on submissions (#953).
+    assert.equal(
+      terminal.roleOutcome.payloads === undefined
+        || terminal.roleOutcome.payloads.length === 0,
+      true,
+    );
     assert.deepEqual(terminal.submissions, [bounceParams, infraParams]);
     assert.equal(result.exitCode, 1);
   });

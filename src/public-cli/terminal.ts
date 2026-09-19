@@ -78,7 +78,11 @@ export type TerminalRoleOutcome =
       /** Original diagnostic identity retained for the caller. */
       diagnostic: string;
       decisiveFacts: Readonly<Record<string, unknown>>;
-      /** Already-recorded original payloads, coexist with host failure (#836 A3). */
+      /**
+       * Optional current-failure payloads (rare intentional face, e.g. reviewer
+       * child terminals). Run history does not live here — #836 / #953 keep it
+       * on TerminalResult.submissions so receivers can tell it from this failure.
+       */
       payloads?: readonly unknown[];
     };
 
@@ -165,7 +169,11 @@ export type TerminalGateFact = {
  * auto-resumes occurred during this single LLM call; it is not persisted to
  * run-state.json and does not participate in limit decisions.
  */
-/** Original payloads on a terminal — role result for accepted/audit; coexist on failure. */
+/**
+ * Current-result payloads on a terminal — accepted/audit role result, or a
+ * rare intentional failure face. Run history is TerminalResult.submissions
+ * (#836 / #953), not this helper.
+ */
 export function roleResultPayloads(outcome: TerminalRoleOutcome): readonly unknown[] {
   if (outcome.kind === "accepted" || outcome.kind === "audit_escalation") return outcome.payloads ?? [];
   if (outcome.kind === "failure") return outcome.payloads ?? [];
@@ -173,8 +181,9 @@ export function roleResultPayloads(outcome: TerminalRoleOutcome): readonly unkno
 }
 
 /**
- * Prefer non-empty payloads; an empty array must not shadow top-level submissions
- * (#953 / #836 — failure history coexists with the current failure face).
+ * Prefer non-empty current-result payloads; an empty array must not shadow
+ * top-level submissions (#953 / #836). Callers that need failure history must
+ * read TerminalResult.submissions directly — do not coalesce into failure.payloads.
  */
 export function coalesceSubmissionRows(
   payloads: readonly unknown[] | undefined,
@@ -200,8 +209,9 @@ export type TerminalResult = {
   navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
   /**
-   * Mirror of recorded original payloads (same bytes as roleOutcome.payloads).
-   * Kept so officer/compliance readers share one array with the role-result block.
+   * Run-scoped recorded submission history (#836). For accepted/audit this often
+   * mirrors roleOutcome.payloads; for failure it is the sole historical carrier
+   * (#953 — not copied onto failure.payloads).
    */
   submissions?: readonly unknown[];
   /**
@@ -329,14 +339,10 @@ export function formatTerminalResult(result: TerminalResult): string {
   }
   // Role-result block: original payloads, newest first for humans (#961).
   // Typed payloads/submissions stay ledger order; only this presentation reverses.
-  // #953: failure coexists with recorded history (#836) but must not present prior
-  // receipts under the this-turn `submission` label — use recorded-submission.
-  // Empty payloads must not shadow non-empty top-level submissions.
+  // #953: failure history is the top-level submissions carrier (#836) — present
+  // as recorded-submission, never as this-turn submission/receipt.
   if (result.roleOutcome.kind === "failure") {
-    const recorded = coalesceSubmissionRows(
-      result.roleOutcome.payloads,
-      result.submissions,
-    );
+    const recorded = result.submissions ?? [];
     for (let i = recorded.length - 1; i >= 0; i -= 1) {
       const payload = recorded[i]!;
       const rendered =
