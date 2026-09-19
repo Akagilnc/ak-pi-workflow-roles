@@ -147,10 +147,14 @@ function isEscalatePayload(payload: unknown): boolean {
 }
 
 /**
- * Parent diagnostic for court-diarist escalate (#953 / 失败诚实).
- * Relays the diarist escalate payload via readableGateItem — never invents
- * "cannot identify court target" when the payload already carries other facts
+ * Parent diagnostic for court-diarist escalate (#953 / 失败诚实 / 传话).
+ * Relays diarist escalate payload(s) via readableGateItem — never invents
+ * "cannot identify court target" when a payload already carries other facts
  * (e.g. ticketNumber present with a different reason).
+ *
+ * Multiple escalate payloads remain reachable on roleOutcome.payloads after the
+ * run (ADR 0003/0041; no courtAttempt sole-filter on diarist). Same law as
+ * secretariat parent face: every escalate receipt as-is, last = currentConclusion.
  */
 export function courtDiaristEscalateDiagnostic(
   roleOutcome: TerminalRoleOutcome | undefined,
@@ -162,12 +166,19 @@ export function courtDiaristEscalateDiagnostic(
       roleOutcome.kind === "failure")
       ? (roleOutcome.payloads ?? [])
       : [];
-  let latest: unknown;
+  const escalatePayloads: unknown[] = [];
   for (const payload of payloads) {
-    if (isEscalatePayload(payload)) latest = payload;
+    if (isEscalatePayload(payload)) escalatePayloads.push(payload);
   }
-  if (latest === undefined) return "court diarist station escalated";
-  return `court diarist station escalated: ${readableGateItem(latest)}`;
+  if (escalatePayloads.length === 0) return "court diarist station escalated";
+  // Single escalate: prior carrier (payload body only) — no shape churn.
+  if (escalatePayloads.length === 1) {
+    return `court diarist station escalated: ${readableGateItem(escalatePayloads[0])}`;
+  }
+  return `court diarist station escalated: ${readableGateItem({
+    receipts: escalatePayloads,
+    currentConclusion: escalatePayloads[escalatePayloads.length - 1],
+  })}`;
 }
 
 /** Env slice shared by court diarist identity summons (countersign / secretariat). */

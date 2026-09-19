@@ -125,6 +125,36 @@ function latestObjectPayload(
 }
 
 /**
+ * Parent-visible content source for nested countersign summon (#953 / 传话).
+ *
+ * accepted / audit_escalation: every recorded receipt as-is, last marked
+ * `currentConclusion` (陛下 A / owner uuid 7401d16e). Failure / no_receipt /
+ * no_terminal: full details so diagnostic and lifecycle facts stay visible.
+ * Presentation carrier only — does not legislate details shape.
+ */
+export function secretariatSummonParentContentSource(
+  details: Record<string, unknown>,
+): unknown {
+  const outcomeKind = details.outcomeKind;
+  if (
+    (outcomeKind === "accepted" || outcomeKind === "audit_escalation") &&
+    details.receipt !== undefined
+  ) {
+    const payloads = Array.isArray(details.payloads) ? details.payloads : undefined;
+    return {
+      outcomeKind,
+      ...(typeof details.runId === "string" ? { runId: details.runId } : {}),
+      // All recorded receipts verbatim (single-receipt path keeps the one row).
+      ...(payloads !== undefined && payloads.length > 0
+        ? { receipts: payloads }
+        : {}),
+      currentConclusion: details.receipt,
+    };
+  }
+  return details;
+}
+
+/**
  * Project nested countersign PublicSummonResult onto tool details.
  * Authority: keep typed terminal kind + payloads/diagnostic intact (gatekeeper
  * projectOfficerTerminal precedent / ADR 0052 / 失败诚实). No content gate.

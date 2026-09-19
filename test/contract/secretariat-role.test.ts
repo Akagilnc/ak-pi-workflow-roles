@@ -8,6 +8,7 @@ import {
   SECRETARIAT_OUTPUT_TOOL_NAME,
   SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
   projectSecretariatSummonResult,
+  secretariatSummonParentContentSource,
 } from "../../src/secretariat-role.ts";
 import { createSecretariatRoleRuntime } from "../../src/role-runtime.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
@@ -377,4 +378,135 @@ test("#953 summon parent-visible content carries typed facts via readableGateIte
   const histText = (histFailed.content as Array<{ text: string }>)[0]?.text ?? "";
   // Diagnostic fact must appear in parent-visible text even when historical receipt exists.
   assert.ok(histText.includes("WebSocket error"));
+});
+
+test("#953 parent content source carries every recorded receipt; last is currentConclusion", () => {
+  const bounce = {
+    countersignStatus: "continue",
+    fix: { summary: "先封驳" },
+  };
+  const seal = {
+    countersignStatus: "converged",
+    note: "后改署",
+  };
+  const multi = projectSecretariatSummonResult({
+    exitCode: 0,
+    runDirectory: "/r/01multi@countersign",
+    terminal: {
+      roleOutcome: {
+        kind: "accepted",
+        role: "countersign",
+        payloads: [bounce, seal],
+      },
+    } as never,
+  });
+  const face = secretariatSummonParentContentSource(multi) as {
+    outcomeKind?: string;
+    runId?: string;
+    receipts?: unknown[];
+    currentConclusion?: { countersignStatus?: string; note?: string };
+  };
+  // Typed fields — not presentation wording.
+  assert.equal(face.outcomeKind, "accepted");
+  assert.equal(face.runId, "01multi");
+  assert.deepEqual(face.receipts, [bounce, seal]);
+  assert.equal(face.currentConclusion?.countersignStatus, "converged");
+  assert.equal(face.currentConclusion?.note, "后改署");
+
+  // Single-receipt path keeps facts (no degradation).
+  const one = projectSecretariatSummonResult({
+    exitCode: 0,
+    runDirectory: "/r/01one@countersign",
+    terminal: {
+      roleOutcome: {
+        kind: "accepted",
+        role: "countersign",
+        payloads: [seal],
+      },
+    } as never,
+  });
+  const oneFace = secretariatSummonParentContentSource(one) as {
+    receipts?: unknown[];
+    currentConclusion?: { countersignStatus?: string };
+  };
+  assert.deepEqual(oneFace.receipts, [seal]);
+  assert.equal(oneFace.currentConclusion?.countersignStatus, "converged");
+
+  // audit_escalation same law.
+  const esc = projectSecretariatSummonResult({
+    exitCode: 0,
+    runDirectory: "/r/01esc@countersign",
+    terminal: {
+      roleOutcome: {
+        kind: "audit_escalation",
+        role: "countersign",
+        status: "audit_escalation",
+        payloads: [bounce, { countersignStatus: "escalate", decisionGate: { question: "q" } }],
+      },
+    } as never,
+  });
+  const escFace = secretariatSummonParentContentSource(esc) as {
+    outcomeKind?: string;
+    receipts?: unknown[];
+    currentConclusion?: { countersignStatus?: string };
+  };
+  assert.equal(escFace.outcomeKind, "audit_escalation");
+  assert.equal(escFace.receipts?.length, 2);
+  assert.equal(escFace.currentConclusion?.countersignStatus, "escalate");
+
+  // Failure still full details (diagnostic path unchanged).
+  const fail = projectSecretariatSummonResult({
+    exitCode: 1,
+    runDirectory: "/r/01f@countersign",
+    terminal: {
+      roleOutcome: {
+        kind: "failure",
+        role: "countersign",
+        diagnostic: "boom",
+        payloads: [bounce],
+      },
+    } as never,
+  });
+  assert.equal(secretariatSummonParentContentSource(fail), fail);
+});
+
+test("#953 multi-receipt summon parent-visible text keeps prior and conclusion facts", async () => {
+  const bounce = {
+    countersignStatus: "continue",
+    fix: { summary: "MARKER-BOUNCE-ROUND" },
+  };
+  const seal = {
+    countersignStatus: "converged",
+    note: "MARKER-SEAL-ROUND",
+  };
+  const { tools } = await activateSecretariat({
+    summonCountersign: async () => ({
+      exitCode: 0,
+      runDirectory: "/home/books/x/runs/01a0multi@countersign",
+      terminal: {
+        roleOutcome: {
+          kind: "accepted",
+          role: "countersign",
+          payloads: [bounce, seal],
+        },
+      } as never,
+    }),
+  });
+  const result = await tools
+    .get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!
+    .execute("summon-multi", { instruction: "裁：#953 multi" }, undefined, undefined, ctx);
+  const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
+  // Both receipts' typed facts reach parent face; conclusion markers present.
+  assert.ok(text.includes("MARKER-BOUNCE-ROUND"));
+  assert.ok(text.includes("MARKER-SEAL-ROUND"));
+  assert.ok(text.includes("01a0multi"));
+  assert.ok(text.includes("accepted"));
+  // Parse only to assert typed keys — not lock serialization pretty-print.
+  const parsed = JSON.parse(text) as {
+    receipts?: unknown[];
+    currentConclusion?: { note?: string };
+  };
+  assert.equal(Array.isArray(parsed.receipts), true);
+  assert.equal(parsed.receipts?.length, 2);
+  assert.equal(parsed.currentConclusion?.note, "MARKER-SEAL-ROUND");
 });

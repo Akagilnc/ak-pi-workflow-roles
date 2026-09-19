@@ -56,6 +56,34 @@ test("#953 diarist escalate diagnostic relays payload facts; does not invent 认
   assert.equal(empty.includes("cannot identify court target"), false);
   assert.equal(typeof empty, "string");
   assert.ok(empty.length > 0);
+
+  // Multiple escalate payloads remain on roleOutcome after the run — all relayed;
+  // last marked currentConclusion (same 传话 law as secretariat parent face).
+  const multi = courtDiaristEscalateDiagnostic({
+    kind: "accepted",
+    role: "diarist",
+    payloads: [
+      { status: "escalate", reason: "MARKER-FIRST-ESCALATE", sessions: [] },
+      {
+        status: "escalate",
+        ticketNumber: 953,
+        reason: "MARKER-LAST-ESCALATE",
+        sessions: [],
+      },
+    ],
+  });
+  assert.ok(multi.includes("MARKER-FIRST-ESCALATE"));
+  assert.ok(multi.includes("MARKER-LAST-ESCALATE"));
+  assert.ok(multi.includes("953"));
+  const multiPayload = multi.slice(multi.indexOf("{"));
+  const multiParsed = JSON.parse(multiPayload) as {
+    receipts?: unknown[];
+    currentConclusion?: { reason?: string; ticketNumber?: number };
+  };
+  assert.equal(Array.isArray(multiParsed.receipts), true);
+  assert.equal(multiParsed.receipts?.length, 2);
+  assert.equal(multiParsed.currentConclusion?.reason, "MARKER-LAST-ESCALATE");
+  assert.equal(multiParsed.currentConclusion?.ticketNumber, 953);
 });
 
 test("#953 success artifact face drops prior error faces; failure face drops prior report", async () => {

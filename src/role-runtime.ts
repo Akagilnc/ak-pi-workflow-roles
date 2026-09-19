@@ -81,6 +81,7 @@ import {
   SECRETARIAT_OUTPUT_TOOL_SPEC,
   SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_SPEC,
   projectSecretariatSummonResult,
+  secretariatSummonParentContentSource,
   type SecretariatRuntimeDependencies,
   type SecretariatSummonCountersignParameters,
 } from "./secretariat-role.ts";
@@ -1092,27 +1093,16 @@ export function createSecretariatRoleRuntime(
                   : { packageRoot: dependencies.packageRoot }),
               });
           const details = projectSecretariatSummonResult(summoned);
-          // #953 / #775: parent-visible text = receipt verbatim (+ runId/outcomeKind)
-          // only on accepted / audit_escalation. Failure / no_receipt / no_terminal
-          // always serialize full details so diagnostic/lifecycle facts are not
-          // hidden behind a historical payload that projection may label receipt.
-          const contentSource =
-            (details.outcomeKind === "accepted" ||
-              details.outcomeKind === "audit_escalation") &&
-            details.receipt !== undefined
-              ? {
-                  outcomeKind: details.outcomeKind,
-                  ...(typeof details.runId === "string"
-                    ? { runId: details.runId }
-                    : {}),
-                  receipt: details.receipt,
-                }
-              : details;
+          // #953 / #775: parent-visible text via secretariat projection sole source.
+          // accepted/audit_escalation → all receipts + currentConclusion; other kinds
+          // keep full details so diagnostic is not hidden behind a prior receipt.
           return {
             content: [
               {
                 type: "text" as const,
-                text: readableGateItem(contentSource),
+                text: readableGateItem(
+                  secretariatSummonParentContentSource(details),
+                ),
               },
             ],
             details,
