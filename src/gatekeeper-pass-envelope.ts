@@ -17,7 +17,7 @@ import { bookDirectOfficerRunPointer } from "./archivist-record-entry.ts";
 import type { HostContext, RoleTurnHost } from "./host-contracts.ts";
 import {
   GatekeeperDecisionError,
-  OFFICER_CONCLUSION_REASK,
+  officerConclusionReask,
   projectGatekeeperRun,
   type GatekeeperPassHostActions,
   type GatekeeperResult,
@@ -165,7 +165,7 @@ export async function requireGatekeeperPass(options: {
       };
     }
     if (gatekeeper.status === "needs_reask") {
-      reask = OFFICER_CONCLUSION_REASK;
+      reask = officerConclusionReask(projected.officer);
       continue;
     }
     if (gatekeeper.status === "transport_failure") {

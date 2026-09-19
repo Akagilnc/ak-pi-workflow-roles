@@ -19,8 +19,6 @@ export const SECRETARIAT_ACCEPTED_TEXT = "中书省回执已接受";
  */
 export const SECRETARIAT_GATE_OFFICER_ENTRY_TYPE =
   "ak-secretariat-gate-officer" as const;
-/** @deprecated alias — same bytes as SECRETARIAT_GATE_OFFICER_ENTRY_TYPE */
-export const SECRETARIAT_GATE_ESCALATE_ENTRY_TYPE = SECRETARIAT_GATE_OFFICER_ENTRY_TYPE;
 
 /** Decisive-facts key for nested 给事中 terminal on public Secretariat settlement. */
 export const SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY = "countersignTerminal" as const;

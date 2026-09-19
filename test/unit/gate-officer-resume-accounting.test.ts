@@ -318,28 +318,106 @@ test("#969 secretariat_verdict routes to countersign and maps countersignStatus"
 
 test("#969 secretariat_verdict unreadable countersignStatus needs_reask",
   async () => {
-    const projected = await projectGatekeeperRun({
+    // Shared-word disguise / field conflict / unmapped / missing on the existing
+    // mapping fixture — never fall back to generic status (#969 / ADR 0055).
+    const cases: ReadonlyArray<{
+      label: string;
+      payload: Record<string, unknown>;
+      expected: "needs_reask" | "bounce";
+    }> = [
+      {
+        label: "shared-word disguise status=pass only",
+        payload: { status: "pass" },
+        expected: "needs_reask",
+      },
+      {
+        label: "field conflict: only countersignStatus maps (continue→bounce)",
+        payload: { status: "pass", countersignStatus: "continue" },
+        expected: "bounce",
+      },
+      {
+        label: "unmapped countersignStatus",
+        payload: { countersignStatus: "maybe" },
+        expected: "needs_reask",
+      },
+      {
+        label: "missing discriminator",
+        payload: { note: "no status field" },
+        expected: "needs_reask",
+      },
+    ];
+    for (const item of cases) {
+      const projected = await projectGatekeeperRun({
+        context: {
+          cwd: process.cwd(),
+          sessionManager: { getSessionFile: () => "/tmp/unused" },
+        } as never,
+        subject: { kind: "secretariat_verdict" },
+        runDirectory: "/tmp/runs/01parent@secretariat",
+        summonOfficer: async () => ({
+          exitCode: 0,
+          terminal: {
+            roleOutcome: {
+              kind: "accepted",
+              role: "countersign",
+              payloads: [item.payload],
+            },
+            navigator: { disposition: "no-advice" },
+            artifacts: [],
+            runId: "countersign-run",
+          },
+        }),
+      });
+      assert.equal(projected.result.status, item.expected, item.label);
+    }
+
+    // Envelope reask must name countersignStatus three-state words, not pass/bounce.
+    const { requireGatekeeperPass } = await import("../../src/gatekeeper-pass-envelope.ts");
+    const { COUNTERSIGN_CONCLUSION_REASK } = await import("../../src/gatekeeper-role.ts");
+    const reasks: Array<string | undefined> = [];
+    let round = 0;
+    await requireGatekeeperPass({
       context: {
         cwd: process.cwd(),
         sessionManager: { getSessionFile: () => "/tmp/unused" },
       } as never,
       subject: { kind: "secretariat_verdict" },
-      runDirectory: "/tmp/runs/01parent@secretariat",
-      summonOfficer: async () => ({
-        exitCode: 0,
-        terminal: {
-          roleOutcome: {
-            kind: "accepted",
-            role: "countersign",
-            payloads: [{ countersignStatus: "maybe" }],
-          },
-          navigator: { disposition: "no-advice" },
-          artifacts: [],
-          runId: "countersign-run",
+      toolCallId: "t-reask",
+      hostActions: {
+        failInfrastructure(): never {
+          throw new Error("infra");
         },
-      }),
+        bindSubmissionNonPass() {
+          throw new Error("reask must not bind non-pass");
+        },
+      },
+      summonOfficer: async (_o, _s, _sig, reask) => {
+        reasks.push(reask);
+        round += 1;
+        const payload =
+          round === 1
+            ? { status: "pass" }
+            : { countersignStatus: "converged", note: "署 after reask" };
+        return {
+          exitCode: 0,
+          runDirectory: "/tmp/runs/01a0cs969-reask-7000-8000-000000000001@countersign",
+          terminal: {
+            roleOutcome: {
+              kind: "accepted",
+              role: "countersign",
+              payloads: [payload],
+            },
+            navigator: { disposition: "no-advice" },
+            artifacts: [],
+            runId: "01a0cs969-reask-7000-8000-000000000001",
+          },
+        };
+      },
     });
-    assert.equal(projected.result.status, "needs_reask");
+    assert.equal(reasks[0], undefined, "first summon has no reask");
+    assert.equal(reasks[1], COUNTERSIGN_CONCLUSION_REASK);
+    assert.match(reasks[1] ?? "", /converged、continue、escalate/);
+    assert.doesNotMatch(reasks[1] ?? "", /pass、bounce/);
   },
 );
 
@@ -494,8 +572,9 @@ test("#969 secretariat_verdict escalate throws without bindSubmissionNonPass (en
     );
     assert.equal(nonPass.length, 0, "escalate must not arm parent retry bind");
     assert.ok(thrown instanceof GatekeeperDecisionError);
+    assert.equal(thrown.result.status, "escalate");
     assert.equal(
-      thrown.result.runId,
+      thrown.result.status === "escalate" ? thrown.result.runId : undefined,
       "01a0cs969-esc-7000-8000-000000000099",
       "escalate result must carry nested runId",
     );

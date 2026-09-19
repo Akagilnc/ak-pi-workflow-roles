@@ -381,6 +381,8 @@ function secretariatHostDrivingRealTools(input: {
   // Gate entry observed via nested countersignRequests — no harness
   // reimplementation of requireGatekeeperPass / createDefaultGateOfficerSummon.
   if (input.submissionGateHost !== undefined) {
+    // Capture narrowed host for the closure (exactOptionalPropertyTypes).
+    const submissionGateHost = input.submissionGateHost;
     // Always track nested summons so gate entry is observable without a custom
     // requireGatekeeperPass push (tests may omit countersignRequests).
     const nestRequests = input.countersignRequests ?? [];
@@ -411,7 +413,7 @@ function secretariatHostDrivingRealTools(input: {
         const prepared = await prepareRoleEnvelope({
           request: {
             ...request,
-            host: input.submissionGateHost,
+            host: submissionGateHost,
           },
           dependencies: {
             ...createRoleRuntimeDependencies(input.packageRoot),

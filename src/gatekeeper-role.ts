@@ -220,16 +220,29 @@ function projectOfficerDecision(
 ): GatekeeperResult {
   const receipt = retainedReceipt(decision);
   const record = readRecord(decision);
-  const rawStatus =
-    (record !== undefined && typeof record.status === "string" ? record.status : undefined)
-    ?? (record !== undefined && typeof record.countersignStatus === "string"
-      ? record.countersignStatus
-      : undefined)
-    ?? fallbackStatus;
+  // 给事中: only countersignStatus, strict three-word map; never generic status,
+  // never unmapped raw word, never fallbackStatus (#969 / ADR 0040/0055).
+  if (officer === "countersign") {
+    const countersignStatus =
+      record !== undefined && typeof record.countersignStatus === "string"
+        ? record.countersignStatus
+        : undefined;
+    const status =
+      typeof countersignStatus === "string"
+        ? gateStatusFromCountersign(countersignStatus)
+        : undefined;
+    if (status === "pass") {
+      return { status: "pass", officer, receipt };
+    }
+    if (status === "bounce" || status === "escalate") {
+      return { status, officer, receipt };
+    }
+    return { status: "needs_reask", officer, receipt };
+  }
+  // inspector / notary / auditor: shared gate words on generic status.
   const status =
-    officer === "countersign" && typeof rawStatus === "string"
-      ? (gateStatusFromCountersign(rawStatus) ?? rawStatus)
-      : rawStatus;
+    (record !== undefined && typeof record.status === "string" ? record.status : undefined)
+    ?? fallbackStatus;
   if (status === "pass") {
     return { status: "pass", officer, receipt };
   }
@@ -392,9 +405,20 @@ export type GatekeeperProjection = {
 /**
  * Plain-language re-ask when the officer conclusion is not pass|bounce|escalate.
  * Not a packaged engine handbook line (#755 exception for 读不出三态).
+ * inspector / notary / auditor keep shared gate words; 给事中 uses own three-state
+ * field and words so reask does not invite non-contract values (#969 / ADR 0055).
  */
 export const OFFICER_CONCLUSION_REASK =
   "上次交卷的结论不是 pass、bounce、escalate 三态之一。请重新输出，结论字段写明其一；打回或上呈的话就是给对方看的原文。" as const;
+
+/** 给事中 re-ask: countersignStatus converged|continue|escalate only (#969). */
+export const COUNTERSIGN_CONCLUSION_REASK =
+  "上次交卷的 countersignStatus 不是 converged、continue、escalate 三态之一。请重新输出，countersignStatus 写明其一；封驳或上呈的话就是给对方看的原文。" as const;
+
+/** Pick the re-ask line for the officer under review. */
+export function officerConclusionReask(officer: GateOfficer): string {
+  return officer === "countersign" ? COUNTERSIGN_CONCLUSION_REASK : OFFICER_CONCLUSION_REASK;
+}
 
 /**
  * Summon (via injected seam) + project. Default summonGateOfficer drive lives
