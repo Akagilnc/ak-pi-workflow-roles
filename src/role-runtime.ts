@@ -315,15 +315,23 @@ export {
   writeToolExecutionObservationRecord,
 } from "./tool-execution-observation.ts";
 export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
+import {
+  NOTARY_OUTPUT_TOOL,
+  INSPECTOR_OUTPUT_TOOL,
+  GatekeeperDecisionError,
+  createGatekeeperOutputTool,
+  runGatekeeper,
+  gateOfficerForSubject,
+} from "./gatekeeper-role.ts";
 export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
   createGatekeeperOutputTool,
   runGatekeeper,
-} from "./gatekeeper-role.ts";
+  gateOfficerForSubject,
+};
 export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
-export { gateOfficerForSubject } from "./gatekeeper-role.ts";
 import { ParentQueueReaskError } from "./submission-errors.ts";
 
 export {
@@ -547,6 +555,13 @@ type NavigatorAttendanceDependency = Omit<NavigatorAttendance, "knownRoutePlaybo
 export type RoleRuntimeDependencies = {
   /** Package root for packaged engine-note resolution (#879). */
   packageRoot?: string;
+  /**
+   * Composition-root adapter table for nested gate officer summons (#969).
+   * Production leaves unset (default pi + packaged externals). Tests inject
+   * faux nested hosts so prepareRoleEnvelope.requireGatekeeperPass is bitten
+   * without reimplementing the envelope summon closure.
+   */
+  hostAdapters?: readonly import("./public-cli/role-turn-host-resolution.ts").NamedRoleTurnHostAdapter[];
   /** Non-identity opening materials delivered in the ordinary role brief. */
   loadRoleReferenceMaterials?(role: PackagedRole): Promise<string>;
   loadJudgeSoul(): Promise<string>;
@@ -1001,17 +1016,136 @@ const COUNTERSIGN_STATUS_REASK =
   "countersignStatus 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
 
 /**
+ * #969 authorized non-pi hosts: Secretariat converged is a candidate ticket —
+ * AK-side submission gate summons 给事中. pi keeps mid-turn summon tool only.
+ */
+const SECRETARIAT_SUBMISSION_GATE_HOSTS = new Set(["codex", "claude", "grok-build"]);
+
+/** Secretariat status words the non-pi submission gate reads (#969). */
+const SECRETARIAT_QUEUE_STATUSES = new Set(["converged", "escalate"]);
+
+/**
+ * Plain-language re-ask when non-pi secretariatStatus is not a known queue word.
+ * Back to secretariat itself — 给事中 is not summoned (#969 / ADR 0055).
+ */
+const SECRETARIAT_STATUS_REASK =
+  "secretariatStatus 不是 converged、escalate 之一。请重新交卷，status 写明其一。" as const;
+
+/**
  * #924 Secretariat on the shared filed-officer envelope + non-terminating
  * summon-countersign tool (auditor dossier extension pattern).
  * Nested countersign lifecycle stays on summonPublicRole (ADR 0018).
- * #924 / 第 0 条: output tool records the receipt as submitted — no status
+ * #924 / 第 0 条 (pi): output tool records the receipt as submitted — no status
  * shape/value reject or reask; legality is content-layer / downstream.
+ * #969 (codex/claude/grok-build): converged arms 既有交卷闸 → 给事中; escalate
+ * skips the gate; other values reask secretariat (ADR 0055).
  */
 export function createSecretariatRoleRuntime(
   roleHost: RoleHost,
   dependencies: SecretariatRuntimeDependencies,
+  hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
 ) {
   let parentInstruction = "";
+  // #969: non-pi submission gate only — pi mid-turn summon path stays untouched.
+  const beforeAccept: FiledOfficerBeforeAccept | undefined =
+    hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
+      ? async ({ toolCallId, parameters, signal, ctx }) => {
+          const host =
+            typeof ctx.host === "string" && ctx.host.trim() !== ""
+              ? ctx.host.trim()
+              : undefined;
+          if (host === undefined || !SECRETARIAT_SUBMISSION_GATE_HOSTS.has(host)) {
+            return undefined;
+          }
+          const record =
+            parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
+              ? (parameters as Record<string, unknown>)
+              : undefined;
+          const status =
+            record !== undefined && typeof record.secretariatStatus === "string"
+              ? record.secretariatStatus
+              : undefined;
+          if (status === undefined || !SECRETARIAT_QUEUE_STATUSES.has(status)) {
+            throw new ParentQueueReaskError(SECRETARIAT_STATUS_REASK);
+          }
+          if (status === "escalate") {
+            // Parent escalate → throw to caller as-is; 给事中 does not attend (#969).
+            return undefined;
+          }
+          try {
+            const pass = await roleHost.requireGatekeeperPass!({
+              context: ctx,
+              subject: { kind: "secretariat_verdict" },
+              ...(signal === undefined ? {} : { signal }),
+              hostActions,
+              toolCallId,
+              // #879: this-turn typed payload — identity-bound at submit site.
+              submission: parameters,
+            });
+            // #969: book 给事中 署 snapshot for seat settlement projection (receipt + runId).
+            // Ledger accepted stays LLM params (#836); public terminal reads this entry.
+            if (
+              pass !== undefined
+              && pass !== null
+              && typeof pass === "object"
+              && "receipt" in pass
+            ) {
+              const {
+                SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
+              } = await import("./secretariat-contracts.ts");
+              const runId =
+                typeof pass.runId === "string" && pass.runId.trim() !== ""
+                  ? pass.runId
+                  : undefined;
+              ctx.sessionManager.appendCustomEntry?.(SECRETARIAT_GATE_OFFICER_ENTRY_TYPE, {
+                officer: "countersign",
+                receipt: pass.receipt,
+                ...(runId === undefined ? {} : { runId }),
+              });
+            }
+            return undefined;
+          } catch (error) {
+            // #969: 给事中上呈 ends parent with officer receipt (no retry / 不擅改).
+            if (
+              error instanceof GatekeeperDecisionError
+              && error.result.status === "escalate"
+            ) {
+              const receipt = error.result.receipt;
+              const receiptRecord =
+                receipt !== null && typeof receipt === "object" && !Array.isArray(receipt)
+                  ? (receipt as Record<string, unknown>)
+                  : undefined;
+              const runId =
+                typeof error.result.runId === "string" && error.result.runId.trim() !== ""
+                  ? error.result.runId
+                  : undefined;
+              // Durable on every host: envelope persists custom entries only
+              // (toolResult rows are memory-only on headless/ACP — #617/#959).
+              const {
+                SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
+              } = await import("./secretariat-contracts.ts");
+              ctx.sessionManager.appendCustomEntry?.(SECRETARIAT_GATE_OFFICER_ENTRY_TYPE, {
+                officer: "countersign",
+                receipt,
+                ...(runId === undefined ? {} : { runId }),
+              });
+              const { buildAuditEscalationResult } = await import("./audit-escalation.ts");
+              return buildAuditEscalationResult(
+                {
+                  status: "escalate",
+                  officer: "countersign",
+                  ...(receiptRecord !== undefined
+                    && Object.prototype.hasOwnProperty.call(receiptRecord, "decisionGate")
+                    ? { decisionGate: receiptRecord.decisionGate }
+                    : {}),
+                },
+                receipt,
+              );
+            }
+            throw error;
+          }
+        }
+      : undefined;
   const base = createFiledOfficerRuntime(
     roleHost,
     {
@@ -1019,6 +1153,7 @@ export function createSecretariatRoleRuntime(
       tool: SECRETARIAT_OUTPUT_TOOL_SPEC,
       acceptedText: SECRETARIAT_ACCEPTED_TEXT,
       soulTag: "secretariat",
+      ...(beforeAccept === undefined ? {} : { beforeAccept }),
     },
     dependencies,
   );
@@ -1856,7 +1991,10 @@ export function createRoleRuntimeExtension(
       ...(dependencies.packageRoot === undefined
         ? {}
         : { packageRoot: dependencies.packageRoot }),
-    });
+      ...(dependencies.hostAdapters === undefined
+        ? {}
+        : { hostAdapters: dependencies.hostAdapters }),
+    }, hostActions);
     const merger = createMergerRoleRuntime(roleHost, {
       async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
       async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },

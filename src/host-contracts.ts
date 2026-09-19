@@ -337,7 +337,12 @@ type HostEventHandler<K extends keyof HostEventMap> = (event: HostEventMap[K], c
 export type HostEventRegistration = { [K in keyof HostEventMap]: [event: K, handler: HostEventHandler<K>] }[keyof HostEventMap];
 
 type HostGatekeeperSubject = {
-  readonly kind: "worker_completion" | "judge_draft" | "judge_compliance" | "countersign_verdict";
+  readonly kind:
+    | "worker_completion"
+    | "judge_draft"
+    | "judge_compliance"
+    | "countersign_verdict"
+    | "secretariat_verdict";
 };
 /** Gatekeeper non-pass faces returned to parent (#836 includes transport_failure; never kill leg). */
 type HostGatekeeperNonPass = { readonly status: "bounce" | "escalate" | "no_receipt" | "transport_failure" } & Record<string, unknown>;
@@ -388,7 +393,22 @@ export interface RoleHost {
   getAllTools(): Array<{ name: string; sourceInfo?: { path?: string } }>;
   setActiveTools(names: string[]): void;
   getActiveTools(): string[];
-  requireGatekeeperPass?(options: { context: HostContext; subject: HostGatekeeperSubject; signal?: AbortSignal; hostActions: HostGatekeeperActions; toolCallId: string; submission?: unknown }): Promise<void>;
+  /**
+   * Shared gate envelope. On pass may return officer snapshot (receipt + nested
+   * runId) for seat public-terminal projection (#969); callers may ignore it.
+   */
+  requireGatekeeperPass?(options: {
+    context: HostContext;
+    subject: HostGatekeeperSubject;
+    signal?: AbortSignal;
+    hostActions: HostGatekeeperActions;
+    toolCallId: string;
+    submission?: unknown;
+  }): Promise<void | {
+    readonly officer: string;
+    readonly receipt: unknown;
+    readonly runId?: string;
+  }>;
   on(event: "before_agent_start", handler: HostEventHandler<"before_agent_start">): void;
   on(event: "input", handler: HostEventHandler<"input">): void;
   on(event: "tool_call", handler: HostEventHandler<"tool_call">): void;

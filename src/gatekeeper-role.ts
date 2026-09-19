@@ -15,30 +15,49 @@ import {
   coalesceSubmissionRows,
   type TerminalResult,
 } from "./public-cli/terminal.ts";
+import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 
-/** Gate review officers — 台院 / 符宝郎 / 审刑院 (#753 / #756). */
-export type GateOfficer = "inspector" | "notary" | "auditor";
+/** Gate review officers — 台院 / 符宝郎 / 审刑院 / 给事中 (#753 / #756 / #969). */
+export type GateOfficer = "inspector" | "notary" | "auditor" | "countersign";
 
 /** Officer routing only — content is self-fetched via the shared run-dossier tool (#632). */
 export type GatekeeperSubject =
   | { readonly kind: "worker_completion" }
   | { readonly kind: "judge_draft" }
   | { readonly kind: "judge_compliance" }
-  | { readonly kind: "countersign_verdict" };
+  | { readonly kind: "countersign_verdict" }
+  | { readonly kind: "secretariat_verdict" };
 
 /**
  * Gate projection for the review queue (#753 / #750).
  * Code only reads the conclusion field for queueing. Officer words ride as
  * `receipt` unchanged — no findings rewrite, no unreadable/unusable label,
  * no next-step selection for the parent.
+ * `runId` is the nested officer run id when known (summoned.runDirectory /
+ * terminal.runId) — public terminal projection consumes it (#969).
  */
 export type GatekeeperResult =
-  | { readonly status: "pass"; readonly officer: GateOfficer; readonly receipt: unknown }
+  | {
+      readonly status: "pass";
+      readonly officer: GateOfficer;
+      readonly receipt: unknown;
+      readonly runId?: string;
+    }
   /** bounce | escalate: both return the officer receipt to the parent (#753 / #756). */
-  | { readonly status: "bounce"; readonly officer: GateOfficer; readonly receipt: unknown }
-  | { readonly status: "escalate"; readonly officer: GateOfficer; readonly receipt: unknown }
+  | {
+      readonly status: "bounce";
+      readonly officer: GateOfficer;
+      readonly receipt: unknown;
+      readonly runId?: string;
+    }
+  | {
+      readonly status: "escalate";
+      readonly officer: GateOfficer;
+      readonly receipt: unknown;
+      readonly runId?: string;
+    }
   | {
       /**
        * Accepted reply whose conclusion is not pass|bounce|escalate.
@@ -48,6 +67,7 @@ export type GatekeeperResult =
       readonly status: "needs_reask";
       readonly officer: GateOfficer;
       readonly receipt: unknown;
+      readonly runId?: string;
     }
   | { readonly status: "no_receipt"; readonly stage: GateOfficer; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
   | {
@@ -67,13 +87,15 @@ export type GatekeeperNonPassResult = Extract<
 function gateSeatLabel(stage: GateOfficer): string {
   if (stage === "inspector") return "台院";
   if (stage === "auditor") return "审刑院";
+  if (stage === "countersign") return "给事中";
   return "符宝郎";
 }
 
-/** Subject kind → review officer (#753 countersign/notary, #756 judge/auditor + worker/inspector). */
+/** Subject kind → review officer (#753 countersign/notary, #756 judge/auditor + worker/inspector, #969 secretariat/countersign). */
 export function gateOfficerForSubject(subject: GatekeeperSubject): GateOfficer {
   if (subject.kind === "worker_completion") return "inspector";
   if (subject.kind === "judge_compliance") return "auditor";
+  if (subject.kind === "secretariat_verdict") return "countersign";
   return "notary";
 }
 
@@ -186,6 +208,14 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
  * `fallbackStatus` is the terminal outcome.status when the receipt body has no status key
  * (keeps missing-args sentinel intact as the receipt).
  */
+/** Map 给事中 countersignStatus onto the shared gate queue words (#969). */
+function gateStatusFromCountersign(status: string): string | undefined {
+  if (status === "converged") return "pass";
+  if (status === "continue") return "bounce";
+  if (status === "escalate") return "escalate";
+  return undefined;
+}
+
 function projectOfficerDecision(
   officer: GateOfficer,
   decision: unknown,
@@ -193,6 +223,26 @@ function projectOfficerDecision(
 ): GatekeeperResult {
   const receipt = retainedReceipt(decision);
   const record = readRecord(decision);
+  // 给事中: only countersignStatus, strict three-word map; never generic status,
+  // never unmapped raw word, never fallbackStatus (#969 / ADR 0040/0055).
+  if (officer === "countersign") {
+    const countersignStatus =
+      record !== undefined && typeof record.countersignStatus === "string"
+        ? record.countersignStatus
+        : undefined;
+    const status =
+      typeof countersignStatus === "string"
+        ? gateStatusFromCountersign(countersignStatus)
+        : undefined;
+    if (status === "pass") {
+      return { status: "pass", officer, receipt };
+    }
+    if (status === "bounce" || status === "escalate") {
+      return { status, officer, receipt };
+    }
+    return { status: "needs_reask", officer, receipt };
+  }
+  // inspector / notary / auditor: shared gate words on generic status.
   const status =
     (record !== undefined && typeof record.status === "string" ? record.status : undefined)
     ?? fallbackStatus;
@@ -245,6 +295,41 @@ function projectOfficerPayloads(
   return projectOfficerDecision(officer, payloads[payloads.length - 1], fallbackStatus);
 }
 
+/** Nested officer runId from summoned.runDirectory, else terminal.runId (#969). */
+export function officerRunIdFromSummoned(summoned: PublicSummonResult): string | undefined {
+  if (typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== "") {
+    const fromDir = runIdFromRunDirectory(summoned.runDirectory);
+    if (fromDir !== undefined) return fromDir;
+  }
+  const terminal = summoned.terminal;
+  if (
+    terminal !== undefined
+    && typeof terminal.runId === "string"
+    && terminal.runId.trim() !== ""
+  ) {
+    return terminal.runId;
+  }
+  return undefined;
+}
+
+function withOfficerRunId(
+  result: GatekeeperResult,
+  summoned: PublicSummonResult,
+): GatekeeperResult {
+  if (
+    result.status !== "pass"
+    && result.status !== "bounce"
+    && result.status !== "escalate"
+    && result.status !== "needs_reask"
+  ) {
+    return result;
+  }
+  if (typeof result.runId === "string" && result.runId.trim() !== "") return result;
+  const runId = officerRunIdFromSummoned(summoned);
+  if (runId === undefined) return result;
+  return { ...result, runId };
+}
+
 function projectOfficerTerminal(
   officer: GateOfficer,
   summoned: PublicSummonResult,
@@ -284,25 +369,34 @@ function projectOfficerTerminal(
     };
   }
   if (outcome.kind === "audit_escalation") {
-    return {
-      status: "escalate",
-      officer,
-      // This-court receipt only (#879) — historical rows remain on terminal.submissions.
-      receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
-    };
+    return withOfficerRunId(
+      {
+        status: "escalate",
+        officer,
+        // This-court receipt only (#879) — historical rows remain on terminal.submissions.
+        receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
+      },
+      summoned,
+    );
   }
   if (outcome.kind === "accepted") {
     // outcome.status is the fixture/compat leaf: production settlement leaves
     // it undefined once payloads are recorded, so this only matters when a
     // caller still supplies status without any recorded payload (#836 hang).
-    return projectOfficerPayloads(officer, thisCourt, outcome.status);
+    return withOfficerRunId(
+      projectOfficerPayloads(officer, thisCourt, outcome.status),
+      summoned,
+    );
   }
-  return {
-    status: "needs_reask",
-    officer,
-    // This-court receipt only (#879).
-    receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
-  };
+  return withOfficerRunId(
+    {
+      status: "needs_reask",
+      officer,
+      // This-court receipt only (#879).
+      receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
+    },
+    summoned,
+  );
 }
 
 /** Projection carrier for the shared submit envelope (ADR 0018). No lifecycle book here. */
@@ -316,9 +410,20 @@ export type GatekeeperProjection = {
 /**
  * Plain-language re-ask when the officer conclusion is not pass|bounce|escalate.
  * Not a packaged engine handbook line (#755 exception for 读不出三态).
+ * inspector / notary / auditor keep shared gate words; 给事中 uses own three-state
+ * field and words so reask does not invite non-contract values (#969 / ADR 0055).
  */
 export const OFFICER_CONCLUSION_REASK =
   "上次交卷的结论不是 pass、bounce、escalate 三态之一。请重新输出，结论字段写明其一；打回或上呈的话就是给对方看的原文。" as const;
+
+/** 给事中 re-ask: countersignStatus converged|continue|escalate only (#969). */
+export const COUNTERSIGN_CONCLUSION_REASK =
+  "上次交卷的 countersignStatus 不是 converged、continue、escalate 三态之一。请重新输出，countersignStatus 写明其一；封驳或上呈的话就是给对方看的原文。" as const;
+
+/** Pick the re-ask line for the officer under review. */
+export function officerConclusionReask(officer: GateOfficer): string {
+  return officer === "countersign" ? COUNTERSIGN_CONCLUSION_REASK : OFFICER_CONCLUSION_REASK;
+}
 
 /**
  * Summon (via injected seam) + project. Default summonGateOfficer drive lives
