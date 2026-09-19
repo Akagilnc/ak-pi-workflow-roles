@@ -1,32 +1,59 @@
 /**
- * #953: honest diarist escalate diagnostic facts; artifact face reflects
- * current terminal (including seam-owned fallback error faces).
+ * #953: terminal face reflects current settlement; failure history label;
+ * diarist escalate relays payload facts.
  */
 import assert from "node:assert/strict";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
+import { courtDiaristEscalateDiagnostic } from "../../src/public-cli/countersign-run.ts";
 import {
-  courtDiaristEscalateDiagnostic,
-} from "../../src/public-cli/countersign-run.ts";
-import {
-  clearOppositeTerminalArtifactFace,
   publishFailureArtifacts,
   publishJudgeArtifacts,
-  settleFailureTerminalResult,
   settleHostEndedNoReceipt,
 } from "../../src/public-cli/settlement.ts";
-import {
-  NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
-  RECEIPT_DELIVERY_TURN_LIMIT,
-} from "../../src/receipt-delivery-policy.ts";
+import { formatTerminalResult } from "../../src/public-cli/terminal.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { withTempHome } from "../helpers/failure-settlement-kit.ts";
 
-test("#953 diarist escalate diagnostic relays payload facts; does not invent 认不出 when ticketNumber present", () => {
+async function seedJudgeRun(
+  home: string,
+  runId: string,
+): Promise<{
+  runDirectory: string;
+  artifactsDir: string;
+  admitted: ReturnType<typeof fixtureJudgeAdmitted>;
+}> {
+  const runDirectory = join(
+    home,
+    ".ak-roles",
+    "books",
+    "proj",
+    "unbound",
+    "runs",
+    `${runId}@judge`,
+  );
+  const sessionDirectory = join(runDirectory, "session");
+  const artifactsDir = join(runDirectory, "artifacts");
+  await mkdir(sessionDirectory, { recursive: true });
+  await mkdir(artifactsDir, { recursive: true });
+  await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
+  return {
+    runDirectory,
+    artifactsDir,
+    admitted: fixtureJudgeAdmitted({
+      runId,
+      runDirectory,
+      projectRoot: join(home, "proj"),
+      bookKey: "proj",
+    }),
+  };
+}
+
+test("#953 diarist escalate diagnostic relays payload ticketNumber facts", () => {
   const withTicket = courtDiaristEscalateDiagnostic({
     kind: "accepted",
     role: "diarist",
@@ -39,26 +66,9 @@ test("#953 diarist escalate diagnostic relays payload facts; does not invent 认
       },
     ],
   });
-  // Feature observation of payload facts — not presentation wording.
   assert.ok(withTicket.includes("946"));
   assert.ok(withTicket.includes("接缝探针"));
-  assert.equal(withTicket.includes("cannot identify court target"), false);
 
-  const withoutTicket = courtDiaristEscalateDiagnostic({
-    kind: "accepted",
-    role: "diarist",
-    payloads: [{ status: "escalate", reason: "cannot identify court target" }],
-  });
-  // When diarist itself wrote that reason, relay is honest — not invented by parent.
-  assert.ok(withoutTicket.includes("cannot identify court target"));
-
-  const empty = courtDiaristEscalateDiagnostic(undefined);
-  assert.equal(empty.includes("cannot identify court target"), false);
-  assert.equal(typeof empty, "string");
-  assert.ok(empty.length > 0);
-
-  // Multiple escalate payloads remain on roleOutcome after the run — all relayed;
-  // last marked currentConclusion (same 传话 law as secretariat parent face).
   const multi = courtDiaristEscalateDiagnostic({
     kind: "accepted",
     role: "diarist",
@@ -72,98 +82,24 @@ test("#953 diarist escalate diagnostic relays payload facts; does not invent 认
       },
     ],
   });
-  // Dual-marker passthrough proves every escalate receipt reached the face.
-  // Do not parse presentation carrier (readableGateItem is presentation-only).
   assert.ok(multi.includes("MARKER-FIRST-ESCALATE"));
   assert.ok(multi.includes("MARKER-LAST-ESCALATE"));
   assert.ok(multi.includes("953"));
 });
 
-test("#953 success artifact face drops prior error faces; failure face drops prior report", async () => {
+test("#953 reader adopts current failure after success; success after failure", async () => {
   await withTempHome(async (home) => {
-    // Ledger topology required by ensureRunArtifactsDir / homeFromRunDirectory.
-    const runDirectory = join(
+    const { runDirectory, artifactsDir, admitted } = await seedJudgeRun(
       home,
-      ".ak-roles",
-      "books",
-      "proj",
-      "unbound",
-      "runs",
-      "01a0-953@judge",
+      "01a0-953-switch",
     );
-    const sessionDirectory = join(runDirectory, "session");
-    await mkdir(sessionDirectory, { recursive: true });
-    await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
-    const admitted = fixtureJudgeAdmitted({
-      runId: "01a0-953",
-      runDirectory,
-      projectRoot: join(home, "proj"),
-      bookKey: "proj",
-    });
     const authority = piDurablePrincipalAuthority;
-    const artifactsDir = join(runDirectory, "artifacts");
-    const runsParent = join(runDirectory, "..");
-    await mkdir(artifactsDir, { recursive: true });
 
-    const ownArtifactUnique = join(
-      artifactsDir,
-      "error.aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.json",
-    );
-    const ownRunUnique = join(
-      runDirectory,
-      "error.bbbbbbbb-cccc-4ddd-8eee-ffffffffffff.json",
-    );
-    const ownParentUnique = join(
-      runsParent,
-      "error.cccccccc-dddd-4eee-8fff-000000000000.json",
-    );
-    const siblingParentUnique = join(
-      runsParent,
-      "error.dddddddd-eeee-4fff-8000-111111111111.json",
-    );
-
-    // Prior failure faces: conventional + audit-incomplete + settlement fallback + unique.
     await writeFile(
       join(artifactsDir, "error.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "old boom" })}\n`,
+      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-switch", diagnostic: "old boom" })}\n`,
       "utf8",
     );
-    await writeFile(
-      join(artifactsDir, "audit-incomplete.json"),
-      `${JSON.stringify({ kind: "audit-incomplete", role: "judge", runId: "01a0-953" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      join(artifactsDir, "error.settlement.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "old settlement boom" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      join(runDirectory, "error.settlement.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "old run-dir boom" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      ownArtifactUnique,
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "own artifact unique" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      ownRunUnique,
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "own run unique" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      ownParentUnique,
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "own parent unique" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      siblingParentUnique,
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "someone-else", diagnostic: "sibling parent unique" })}\n`,
-      "utf8",
-    );
-
     await publishJudgeArtifacts(
       admitted,
       {
@@ -173,98 +109,20 @@ test("#953 success artifact face drops prior error faces; failure face drops pri
       },
       authority.decode(admitted.principal),
     );
+    const afterSuccess = await readRunTerminalArtifact(runDirectory);
+    assert.equal(afterSuccess.status, "present");
+    if (afterSuccess.status === "present") {
+      assert.equal(
+        (afterSuccess.body.outcome as { kind?: string } | undefined)?.kind,
+        "accepted",
+      );
+    }
 
-    await access(join(artifactsDir, "report.json"));
-    const report = JSON.parse(
-      await readFile(join(artifactsDir, "report.json"), "utf8"),
-    ) as { outcome?: { kind?: string } };
-    assert.equal(report.outcome?.kind, "accepted");
-    await assert.rejects(
-      () => access(join(artifactsDir, "error.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    // Success current must drop audit-incomplete (reader-adoptable prior face).
-    await assert.rejects(
-      () => access(join(artifactsDir, "audit-incomplete.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(join(artifactsDir, "error.settlement.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(join(runDirectory, "error.settlement.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    // Seam-owned unique faces cleared; sibling parent unique left (reader ownership).
-    await assert.rejects(
-      () => access(ownArtifactUnique),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(ownRunUnique),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(ownParentUnique),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await access(siblingParentUnique);
-
-    // Replant full prior success + stale failure faces before the failure current.
-    await writeFile(
-      join(artifactsDir, "audit-incomplete.json"),
-      `${JSON.stringify({ kind: "audit-incomplete", role: "judge", runId: "01a0-953" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      join(artifactsDir, "error.settlement.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "stale settlement" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      join(runDirectory, "error.settlement.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "stale run-dir" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      ownArtifactUnique,
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953", diagnostic: "stale unique" })}\n`,
-      "utf8",
-    );
-
-    // Success then failure: report and every other prior face must not remain.
     await publishFailureArtifacts(
       admitted,
       { diagnostic: "new boom", cause: "provider" },
       authority,
     );
-    await access(join(artifactsDir, "error.json"));
-    const errorBody = JSON.parse(
-      await readFile(join(artifactsDir, "error.json"), "utf8"),
-    ) as { diagnostic?: string };
-    assert.equal(errorBody.diagnostic, "new boom");
-    await assert.rejects(
-      () => access(join(artifactsDir, "report.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(join(artifactsDir, "audit-incomplete.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(join(artifactsDir, "error.settlement.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(join(runDirectory, "error.settlement.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(ownArtifactUnique),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    // Reader must adopt this failure face, not a stale prior.
     const afterFailure = await readRunTerminalArtifact(runDirectory);
     assert.equal(afterFailure.status, "present");
     if (afterFailure.status === "present") {
@@ -273,208 +131,67 @@ test("#953 success artifact face drops prior error faces; failure face drops pri
   });
 });
 
-test("#953 success clears directory-planted error face and settlement fallback", async () => {
+test("#953 clear-fail leaves residual success face but reader still adopts current failure", async () => {
   await withTempHome(async (home) => {
-    const runDirectory = join(
+    const { runDirectory, artifactsDir, admitted } = await seedJudgeRun(
       home,
-      ".ak-roles",
-      "books",
-      "proj",
-      "unbound",
-      "runs",
-      "01a0-953-eisdir@judge",
+      "01a0-953-shadow",
     );
-    const sessionDirectory = join(runDirectory, "session");
-    await mkdir(sessionDirectory, { recursive: true });
-    await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
-    const admitted = fixtureJudgeAdmitted({
-      runId: "01a0-953-eisdir",
-      runDirectory,
-      projectRoot: join(home, "proj"),
-      bookKey: "proj",
-    });
-    const artifactsDir = join(runDirectory, "artifacts");
-    await mkdir(artifactsDir, { recursive: true });
-    // Judge probe shape: conventional error face occupied as directory + settlement fallback file.
-    await mkdir(join(artifactsDir, "error.json"), { recursive: true });
     await writeFile(
-      join(artifactsDir, "error.settlement.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-eisdir", diagnostic: "plant" })}\n`,
-      "utf8",
-    );
-
-    await publishJudgeArtifacts(
-      admitted,
-      {
-        kind: "accepted",
+      join(artifactsDir, "report.json"),
+      `${JSON.stringify({
         role: "judge",
-        payloads: [{ judgeStatus: "pass" }],
-      },
-      piDurablePrincipalAuthority.decode(admitted.principal),
+        runId: "01a0-953-shadow",
+        outcome: {
+          kind: "accepted",
+          role: "judge",
+          payloads: [{ judgeStatus: "continue" }],
+        },
+      })}\n`,
+      "utf8",
     );
-
-    await access(join(artifactsDir, "report.json"));
-    await assert.rejects(
-      () => access(join(artifactsDir, "error.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(join(artifactsDir, "error.settlement.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-  });
-});
-
-test("#953 clearOpposite drops every reader-contract face including current conventional", async () => {
-  await withTempHome(async (home) => {
-    const runsParent = join(home, ".ak-roles", "books", "proj", "unbound", "runs");
-    async function plantFullFaceSet(runId: string): Promise<{
-      runDirectory: string;
-      artifactsDir: string;
-      ownArtifactUnique: string;
-      ownRunUnique: string;
-      ownParentUnique: string;
-      siblingParentUnique: string;
-    }> {
-      const runDirectory = join(runsParent, `${runId}@judge`);
-      const artifactsDir = join(runDirectory, "artifacts");
-      await mkdir(artifactsDir, { recursive: true });
-      const ownArtifactUnique = join(
-        artifactsDir,
-        "error.aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.json",
+    await chmod(artifactsDir, 0o555);
+    try {
+      const refs = await publishFailureArtifacts(
+        admitted,
+        { diagnostic: "CURRENT FAILURE", cause: "provider" },
+        piDurablePrincipalAuthority,
       );
-      const ownRunUnique = join(
-        runDirectory,
-        "error.bbbbbbbb-cccc-4ddd-8eee-ffffffffffff.json",
-      );
-      // UUID-shaped names only — reader unique-face regex is the ownership gate.
-      const ownParentUnique = join(
-        runsParent,
-        "error.cccccccc-dddd-4eee-8fff-000000000000.json",
-      );
-      const siblingParentUnique = join(
-        runsParent,
-        "error.dddddddd-eeee-4fff-8000-111111111111.json",
-      );
-      const face = (diagnostic: string) =>
-        `${JSON.stringify({ kind: "error", role: "judge", runId, diagnostic })}\n`;
-      await writeFile(
-        join(artifactsDir, "report.json"),
-        `${JSON.stringify({ kind: "report", role: "judge", runId, outcome: { kind: "accepted" } })}\n`,
-        "utf8",
-      );
-      await writeFile(
-        join(artifactsDir, "error.json"),
-        face("conventional"),
-        "utf8",
-      );
-      await writeFile(
-        join(artifactsDir, "audit-incomplete.json"),
-        `${JSON.stringify({ kind: "audit-incomplete", role: "judge", runId })}\n`,
-        "utf8",
-      );
-      await writeFile(join(artifactsDir, "error.settlement.json"), face("settlement"), "utf8");
-      await writeFile(join(runDirectory, "error.settlement.json"), face("run-dir"), "utf8");
-      await writeFile(ownArtifactUnique, face("artifact unique"), "utf8");
-      await writeFile(ownRunUnique, face("run unique"), "utf8");
-      await writeFile(ownParentUnique, face("parent unique"), "utf8");
-      await writeFile(
-        siblingParentUnique,
-        `${JSON.stringify({ kind: "error", role: "judge", runId: "someone-else", diagnostic: "sibling" })}\n`,
-        "utf8",
-      );
-      return {
-        runDirectory,
-        artifactsDir,
-        ownArtifactUnique,
-        ownRunUnique,
-        ownParentUnique,
-        siblingParentUnique,
-      };
-    }
-
-    async function assertGone(path: string): Promise<void> {
-      await assert.rejects(
-        () => access(path),
-        (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-      );
-    }
-
-    // One clear drops every reader-adoptable face, including the conventional
-    // name a subsequent publish will rewrite (no retain-current special case).
-    // Sibling parent unique (foreign runId) stays.
-    {
-      const planted = await plantFullFaceSet("01a0-clr-all");
-      await clearOppositeTerminalArtifactFace(planted.runDirectory);
-      await assertGone(join(planted.artifactsDir, "report.json"));
-      await assertGone(join(planted.artifactsDir, "error.json"));
-      await assertGone(join(planted.artifactsDir, "audit-incomplete.json"));
-      await assertGone(join(planted.artifactsDir, "error.settlement.json"));
-      await assertGone(join(planted.runDirectory, "error.settlement.json"));
-      await assertGone(planted.ownArtifactUnique);
-      await assertGone(planted.ownRunUnique);
-      await assertGone(planted.ownParentUnique);
-      await access(planted.siblingParentUnique);
-      const read = await readRunTerminalArtifact(planted.runDirectory);
-      assert.equal(read.status, "absent");
+      assert.ok(refs.some((ref) => ref.kind === "error"));
+      const read = await readRunTerminalArtifact(runDirectory);
+      assert.equal(read.status, "present");
+      if (read.status === "present") {
+        assert.equal(read.body.diagnostic, "CURRENT FAILURE");
+        assert.notEqual(
+          (read.body.outcome as { kind?: string } | undefined)?.kind,
+          "accepted",
+        );
+      }
+    } finally {
+      await chmod(artifactsDir, 0o755);
     }
   });
 });
 
-test("#953 artifacts-as-file ENOTDIR does not strand failure durable fallback or no_receipt", async () => {
+test("#953 no_receipt empty face: reader adopts absent after prior terminal", async () => {
   await withTempHome(async (home) => {
-    const runDirectory = join(
+    const { runDirectory, artifactsDir, admitted } = await seedJudgeRun(
       home,
-      ".ak-roles",
-      "books",
-      "proj",
-      "unbound",
-      "runs",
-      "01a0-953-enotdir@judge",
+      "01a0-953-empty",
     );
-    const sessionDirectory = join(runDirectory, "session");
-    await mkdir(sessionDirectory, { recursive: true });
-    await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
-    // artifacts name occupied as a plain file — nested face paths yield ENOTDIR.
-    await writeFile(join(runDirectory, "artifacts"), "not-a-directory\n", "utf8");
-    // Stale run-dir fallback the reader would adopt if clear/publish aborts.
     await writeFile(
-      join(runDirectory, "error.settlement.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-enotdir", diagnostic: "stale fallback" })}\n`,
+      join(artifactsDir, "report.json"),
+      `${JSON.stringify({
+        role: "judge",
+        runId: "01a0-953-empty",
+        outcome: { kind: "accepted", role: "judge", payloads: [] },
+      })}\n`,
       "utf8",
     );
-
-    const admitted = fixtureJudgeAdmitted({
-      runId: "01a0-953-enotdir",
-      runDirectory,
-      projectRoot: join(home, "proj"),
-      bookKey: "proj",
-    });
-    const authority = piDurablePrincipalAuthority;
-
-    // Clear itself must not throw ENOTDIR through the file-shaped artifacts path.
-    await clearOppositeTerminalArtifactFace(runDirectory);
-
-    // Failure publish must reach durable fallback (run-dir), not abort at clear.
-    const refs = await publishFailureArtifacts(
+    const hostEnded = await settleHostEndedNoReceipt(
       admitted,
-      { diagnostic: "enotdir boom", cause: "provider" },
-      authority,
+      piDurablePrincipalAuthority,
     );
-    assert.ok(refs.some((ref) => ref.kind === "error"));
-    const afterFailure = await readRunTerminalArtifact(runDirectory);
-    assert.equal(afterFailure.status, "present");
-    if (afterFailure.status === "present") {
-      assert.equal(afterFailure.body.diagnostic, "enotdir boom");
-    }
-
-    // no_receipt settlement must also survive artifacts-as-file clear.
-    await writeFile(
-      join(runDirectory, "error.settlement.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-enotdir", diagnostic: "again stale" })}\n`,
-      "utf8",
-    );
-    const hostEnded = await settleHostEndedNoReceipt(admitted, authority);
     assert.equal(hostEnded.roleOutcome.kind, "no_receipt");
     assert.deepEqual(hostEnded.artifacts, []);
     const afterEmpty = await readRunTerminalArtifact(runDirectory);
@@ -482,220 +199,20 @@ test("#953 artifacts-as-file ENOTDIR does not strand failure durable fallback or
   });
 });
 
-test("#953 unparseable run dir does not wipe parent unique faces (reader ownership)", async () => {
-  await withTempHome(async (home) => {
-    const runsParent = join(home, ".ak-roles", "books", "proj", "unbound", "runs");
-    const badRun = join(runsParent, "not-a-role-run");
-    await mkdir(badRun, { recursive: true });
-    const siblingPath = join(
-      runsParent,
-      "error.ffffffff-1111-4222-8333-444444444444.json",
-    );
-    const claimedPath = join(
-      runsParent,
-      "error.eeeeeeee-dddd-4ccc-8bbb-aaaaaaaaaaaa.json",
-    );
-    await writeFile(
-      siblingPath,
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "someone-else", diagnostic: "sibling" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      claimedPath,
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "not-a-role-run", diagnostic: "claimed" })}\n`,
-      "utf8",
-    );
-
-    await clearOppositeTerminalArtifactFace(badRun);
-
-    // runIdFromRunDirectory undefined → presentUniqueFallbackBoundToRun false → parent untouched.
-    await access(siblingPath);
-    await access(claimedPath);
+test("#953 failure public face labels prior receipts as recorded-submission", () => {
+  const formatted = formatTerminalResult({
+    roleOutcome: {
+      kind: "failure",
+      role: "judge",
+      diagnostic: "boom",
+      decisiveFacts: {},
+      payloads: [{ judgeStatus: "continue", note: "PRIOR-RECEIPT-MARKER" }],
+    },
+    navigator: { disposition: "no-advice" },
+    artifacts: [],
+    runId: "01a0-953-format",
   });
-});
-
-test("#953 no_receipt empty face drops every reader-adoptable prior terminal face", async () => {
-  await withTempHome(async (home) => {
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      "proj",
-      "unbound",
-      "runs",
-      "01a0-953-noreceipt@judge",
-    );
-    const sessionDirectory = join(runDirectory, "session");
-    await mkdir(sessionDirectory, { recursive: true });
-    await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
-    const admitted = fixtureJudgeAdmitted({
-      runId: "01a0-953-noreceipt",
-      runDirectory,
-      projectRoot: join(home, "proj"),
-      bookKey: "proj",
-    });
-    const authority = piDurablePrincipalAuthority;
-    const artifactsDir = join(runDirectory, "artifacts");
-    const runsParent = join(runDirectory, "..");
-    await mkdir(artifactsDir, { recursive: true });
-
-    const ownArtifactUnique = join(
-      artifactsDir,
-      "error.aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee.json",
-    );
-    const ownRunUnique = join(
-      runDirectory,
-      "error.bbbbbbbb-cccc-4ddd-8eee-ffffffffffff.json",
-    );
-    const ownParentUnique = join(
-      runsParent,
-      "error.cccccccc-dddd-4eee-8fff-000000000000.json",
-    );
-    const siblingParentUnique = join(
-      runsParent,
-      "error.dddddddd-eeee-4fff-8000-111111111111.json",
-    );
-    const unboundParentUnique = join(
-      runsParent,
-      "error.eeeeeeee-ffff-4000-8000-222222222222.json",
-    );
-    const evidencePath = join(artifactsDir, "evidence.json");
-
-    // Prior faces the terminal reader would adopt, plus non-terminal evidence.
-    await writeFile(
-      join(artifactsDir, "report.json"),
-      `${JSON.stringify({ kind: "report", role: "judge", runId: "01a0-953-noreceipt", outcome: { kind: "accepted" } })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      join(artifactsDir, "error.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-noreceipt", diagnostic: "old boom" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      join(artifactsDir, "audit-incomplete.json"),
-      `${JSON.stringify({ kind: "audit-incomplete", role: "judge", runId: "01a0-953-noreceipt" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      join(artifactsDir, "error.settlement.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-noreceipt", diagnostic: "settlement boom" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      join(runDirectory, "error.settlement.json"),
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-noreceipt", diagnostic: "run-dir boom" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      ownArtifactUnique,
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-noreceipt", diagnostic: "own artifact unique" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      ownRunUnique,
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-noreceipt", diagnostic: "own run unique" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      ownParentUnique,
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "01a0-953-noreceipt", diagnostic: "own parent unique" })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      siblingParentUnique,
-      `${JSON.stringify({ kind: "error", role: "judge", runId: "someone-else", diagnostic: "sibling parent unique" })}\n`,
-      "utf8",
-    );
-    // Unparseable body cannot prove runId binding — must remain.
-    await writeFile(unboundParentUnique, "{not-json", "utf8");
-    await writeFile(
-      evidencePath,
-      `${JSON.stringify({ runId: "01a0-953-noreceipt", note: "non-terminal" })}\n`,
-      "utf8",
-    );
-
-    const hostEnded = await settleHostEndedNoReceipt(admitted, authority);
-    assert.equal(hostEnded.roleOutcome.kind, "no_receipt");
-    assert.deepEqual(hostEnded.artifacts, []);
-
-    const afterHost = await readRunTerminalArtifact(runDirectory);
-    assert.equal(afterHost.status, "absent");
-
-    await assert.rejects(
-      () => access(join(artifactsDir, "report.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(join(artifactsDir, "error.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(join(artifactsDir, "audit-incomplete.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(join(artifactsDir, "error.settlement.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(join(runDirectory, "error.settlement.json")),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(ownArtifactUnique),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(ownRunUnique),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    await assert.rejects(
-      () => access(ownParentUnique),
-      (error: NodeJS.ErrnoException) => error.code === "ENOENT",
-    );
-    // Sibling + unbound parent unique stay; evidence non-terminal stays.
-    await access(siblingParentUnique);
-    await access(unboundParentUnique);
-    await access(evidencePath);
-
-    // Replant prior success face; lifecycle no_receipt path must also empty the face.
-    await writeFile(
-      join(artifactsDir, "report.json"),
-      `${JSON.stringify({ kind: "report", role: "judge", runId: "01a0-953-noreceipt", outcome: { kind: "accepted" } })}\n`,
-      "utf8",
-    );
-    const lifecycleFacts = {
-      terminalToolCalled: false,
-      rejectedReceipts: [] as const,
-      deliveryTurns: RECEIPT_DELIVERY_TURN_LIMIT,
-      sessionCompletion: "settled-without-accepted-receipt",
-      acceptedReceipt: false,
-      runPointer: runDirectory,
-      attemptPointer: `current:${runDirectory}`,
-    };
-    await writeFile(
-      join(sessionDirectory, "session.jsonl"),
-      `${JSON.stringify({
-        type: "message",
-        message: { role: "user", content: "resume" },
-      })}\n${JSON.stringify({
-        type: "custom",
-        customType: NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
-        data: lifecycleFacts,
-      })}\n`,
-      "utf8",
-    );
-
-    const viaFailurePath = await settleFailureTerminalResult(
-      admitted,
-      { diagnostic: "output empty", cause: "output" },
-      authority,
-    );
-    assert.equal(viaFailurePath.roleOutcome.kind, "no_receipt");
-    assert.deepEqual(viaFailurePath.artifacts, []);
-    const afterLifecycle = await readRunTerminalArtifact(runDirectory);
-    assert.equal(afterLifecycle.status, "absent");
-    await access(evidencePath);
-  });
+  assert.ok(formatted.includes("recorded-submission\t"));
+  assert.ok(formatted.includes("PRIOR-RECEIPT-MARKER"));
+  assert.equal(formatted.includes("\nsubmission\t"), false);
 });

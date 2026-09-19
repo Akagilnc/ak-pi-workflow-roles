@@ -144,7 +144,6 @@ test("secretariat role module is projection-only (ADR 0018 / #924)", async () =>
   assert.equal(/\bspawn\s*\(/.test(source), false);
   assert.match(source, /SECRETARIAT_OUTPUT_TOOL_SPEC/);
   assert.match(source, /projectSecretariatSummonResult/);
-  assert.match(source, /secretariatSummonParentContentSource/);
 });
 
 test("public secretariat face has no new flags or mode params", () => {

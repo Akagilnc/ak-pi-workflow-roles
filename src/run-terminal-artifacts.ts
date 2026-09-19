@@ -6,7 +6,7 @@
  * readability — it does not re-derive role outcomes or invent a second
  * candidate algorithm.
  */
-import { readdir, readFile } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { roleRunArtifactsDirectory } from "./role-run-placement.ts";
@@ -204,52 +204,101 @@ export async function listSeamOwnedUniqueErrorFacePaths(
   return owned;
 }
 
+type PresentOrUnreadable = Exclude<RunTerminalArtifactRead, { status: "absent" }>;
+
+async function faceMtimeMs(path: string): Promise<number> {
+  try {
+    return (await stat(path)).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
 /**
- * Read the first present typed terminal artifact for a run directory.
- * Order:
+ * Failure-class faces outrank success/audit on equal mtime so a just-written
+ * failure fallback is not tied with a residual report from a failed clear.
+ */
+function failureClassRank(file: RunTerminalArtifactFile): number {
+  return file === "error.json" ? 1 : 0;
+}
+
+/**
+ * Read the current typed terminal artifact for a run directory.
+ *
+ * Candidate set (publisher-owned faces only):
  * 1) conventional artifacts/{report,error,audit-incomplete}.json
  * 2) publisher fixed failure fallbacks (error.settlement.json faces)
  * 3) publisher unique error.<uuid>.json fallbacks under same-run dirs
  * 4) shared parent-directory unique fallbacks bound by body.runId
  *
- * Absence of every known durable face is a valid no-receipt state (not unreadable).
- * A present file that cannot be parsed as a usable typed JSON object is unreadable.
+ * Invariant: when more than one present face remains (e.g. clearOpposite failed
+ * during failure publish and a fallback was settled beside a residual report),
+ * adopt the newest present face by mtime — not a fixed name order that would
+ * hide the current failure behind an uncleared success face (#953).
+ *
+ * Unreadable faces never outrank a present face. Parent unique unreadable
+ * files still cannot prove run identity and are ignored.
+ * Absence of every known durable face is a valid no-receipt state.
  */
 export async function readRunTerminalArtifact(
   runDirectory: string,
 ): Promise<RunTerminalArtifactRead> {
   const artifactsDir = roleRunArtifactsDirectory(runDirectory);
+  const present: Array<Extract<PresentOrUnreadable, { status: "present" }> & { mtimeMs: number }> =
+    [];
+  const unreadable: Array<
+    Extract<PresentOrUnreadable, { status: "unreadable" }> & { mtimeMs: number }
+  > = [];
+
+  const consider = async (read: RunTerminalArtifactRead | undefined): Promise<void> => {
+    if (read === undefined || read.status === "absent") return;
+    const mtimeMs = await faceMtimeMs(read.path);
+    if (read.status === "present") {
+      present.push({ ...read, mtimeMs });
+      return;
+    }
+    unreadable.push({ ...read, mtimeMs });
+  };
+
   for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    const path = join(artifactsDir, file);
-    const read = await readTerminalArtifactAtPath(path, file);
-    if (read !== undefined) return read;
+    await consider(await readTerminalArtifactAtPath(join(artifactsDir, file), file));
   }
 
-  // Publisher settled a durable failure outside the conventional error.json name.
   for (const relative of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    const path = join(runDirectory, relative);
-    const read = await readTerminalArtifactAtPath(path, "error.json");
-    if (read !== undefined) return read;
+    await consider(
+      await readTerminalArtifactAtPath(join(runDirectory, relative), "error.json"),
+    );
   }
 
-  // Same-run unique faces: path ownership is the run itself — no cross-run risk.
   for (const path of await listUniqueErrorFallbackPaths([artifactsDir, runDirectory])) {
-    const read = await readTerminalArtifactAtPath(path, "error.json");
-    if (read !== undefined) return read;
+    await consider(await readTerminalArtifactAtPath(path, "error.json"));
   }
 
-  // Shared parent (runs/) unique faces: require publisher runId binding.
   const expectedRunId = runIdFromRunDirectory(runDirectory);
   for (const path of await listUniqueErrorFallbackPaths([dirname(runDirectory)])) {
     const read = await readTerminalArtifactAtPath(path, "error.json");
     if (read === undefined) continue;
     if (read.status === "present") {
       if (!presentUniqueFallbackBoundToRun(read.body, expectedRunId)) continue;
-      return read;
+      await consider(read);
+      continue;
     }
     // Unreadable parent unique file cannot prove run identity — do not adopt.
   }
 
+  if (present.length > 0) {
+    present.sort(
+      (a, b) =>
+        b.mtimeMs - a.mtimeMs ||
+        failureClassRank(b.file) - failureClassRank(a.file),
+    );
+    const { mtimeMs: _mtimeMs, ...winner } = present[0]!;
+    return winner;
+  }
+  if (unreadable.length > 0) {
+    const { mtimeMs: _mtimeMs, ...first } = unreadable[0]!;
+    return first;
+  }
   return { status: "absent" };
 }
 
