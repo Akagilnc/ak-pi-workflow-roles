@@ -2389,54 +2389,90 @@ async function ensureTerminalArtifactFace(
   return artifactsDir;
 }
 
-export async function publishJudgeArtifacts(
-  admitted: AdmittedJudgeInvocation,
+type AcceptedArtifactAttachment = {
+  readonly provenancePath: string;
+  readonly frozenPath: string;
+  readonly sha256: string;
+  readonly byteLength: number;
+};
+
+function acceptedArtifactAttachmentRefs(
+  attachments: readonly AcceptedArtifactAttachment[],
+): AcceptedArtifactAttachment[] {
+  return attachments.map((a) => ({
+    provenancePath: a.provenancePath,
+    frozenPath: a.frozenPath,
+    sha256: a.sha256,
+    byteLength: a.byteLength,
+  }));
+}
+
+/**
+ * Sole success-terminal artifact publisher (#953): append attempt history,
+ * refresh the public terminal face, write report/evidence, return refs.
+ * Seat-specific structured fields stay in callers; do not fork this flow.
+ */
+async function publishAcceptedTerminalArtifacts(
+  admitted: {
+    readonly role: TerminalRoleName;
+    readonly runId: string;
+    readonly runDirectory: string;
+  },
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
+  bodies: {
+    readonly report: Record<string, unknown>;
+    readonly evidence: Record<string, unknown>;
+  },
 ): Promise<TerminalArtifactRef[]> {
   // #419: history first — report/evidence stay last-write-wins views only
   // because every attempt's complete result has already been appended.
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
+  await appendRunAttemptHistory(
+    {
+      role: admitted.role,
+      runId: admitted.runId,
+      sessionFile: coordinates.sessionFile,
+    },
+    roleOutcome,
+  );
   const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
     reportPath,
-    `${JSON.stringify(
-      {
-        role: "judge",
-        runId: admitted.runId,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
+    `${JSON.stringify(bodies.report, null, 2)}\n`,
     "utf8",
   );
   await writeFile(
     evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-      },
-      null,
-      2,
-    )}\n`,
+    `${JSON.stringify(bodies.evidence, null, 2)}\n`,
     "utf8",
   );
   return [
     { kind: "report", path: reportPath },
     { kind: "evidence", path: evidencePath },
   ];
+}
+
+export async function publishJudgeArtifacts(
+  admitted: AdmittedJudgeInvocation,
+  roleOutcome: TerminalRoleOutcome,
+  coordinates: DurablePrincipalCoordinates,
+): Promise<TerminalArtifactRef[]> {
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "judge",
+      runId: admitted.runId,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+    },
+  });
 }
 
 /**
@@ -2451,54 +2487,27 @@ export async function publishCoderArtifacts(
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: "coder",
-        runId: admitted.runId,
-        phase: admitted.phase,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        role: "coder",
-        phase: admitted.phase,
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        taskPath: admitted.taskPath,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-        ...(options.methodProvenance === undefined
-          ? {}
-          : { methodProvenance: options.methodProvenance }),
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "coder",
+      runId: admitted.runId,
+      phase: admitted.phase,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      role: "coder",
+      phase: admitted.phase,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      taskPath: admitted.taskPath,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+      ...(options.methodProvenance === undefined
+        ? {}
+        : { methodProvenance: options.methodProvenance }),
+    },
+  });
 }
 
 /** Lawful Coder accepted outcome extracted from session (shared success interface). */
@@ -2720,59 +2729,32 @@ export async function publishFixerArtifacts(
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
   },
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: "fixer",
-        runId: admitted.runId,
-        phase: admitted.phase,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        role: "fixer",
-        phase: admitted.phase,
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        packetPath: admitted.packetPath,
-        ...(admitted.prerequisitesPath === undefined
-          ? {}
-          : { prerequisitesPath: admitted.prerequisitesPath }),
-        prerequisites: admitted.prerequisites,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-        methodProvenance: options.methodProvenance,
-        // Optional diagnosis: availability is package-bound; invocation only when observed.
-        methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
-        methodInvocations: options.methodInvocations ?? [],
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "fixer",
+      runId: admitted.runId,
+      phase: admitted.phase,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      role: "fixer",
+      phase: admitted.phase,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      packetPath: admitted.packetPath,
+      ...(admitted.prerequisitesPath === undefined
+        ? {}
+        : { prerequisitesPath: admitted.prerequisitesPath }),
+      prerequisites: admitted.prerequisites,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+      methodProvenance: options.methodProvenance,
+      // Optional diagnosis: availability is package-bound; invocation only when observed.
+      methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
+      methodInvocations: options.methodInvocations ?? [],
+    },
+  });
 }
 
 /** Lawful Fixer accepted outcome extracted from session (no LLM auditor after #242). */
@@ -2846,51 +2828,24 @@ export async function publishCollectorArtifacts(
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: "collector",
-        runId: admitted.runId,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        role: "collector",
-        ...(admitted.prNumber === undefined ? {} : { prNumber: admitted.prNumber }),
-        repository: admitted.repository.canonical,
-        manifestDigest: admitted.manifestDigest,
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "collector",
+      runId: admitted.runId,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      role: "collector",
+      ...(admitted.prNumber === undefined ? {} : { prNumber: admitted.prNumber }),
+      repository: admitted.repository.canonical,
+      manifestDigest: admitted.manifestDigest,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+    },
+  });
 }
 
 /** Lawful Collector accepted outcome extracted from session. */
@@ -3024,53 +2979,28 @@ export async function publishDoctorArtifacts(
     readonly auditNoReceipt?: unknown;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: "doctor",
-        runId: admitted.runId,
-        outcome: roleOutcome,
-        ...(options.cost === undefined ? {} : { cost: options.cost }),
-        ...(options.auditNoReceipt === undefined ? {} : { auditNoReceipt: options.auditNoReceipt }),
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        role: "doctor",
-        issueNumber: admitted.issueNumber,
-        caseRunsPath: admitted.caseRunsPath,
-        caseIdentity: admitted.caseIdentity,
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "doctor",
+      runId: admitted.runId,
+      outcome: roleOutcome,
+      ...(options.cost === undefined ? {} : { cost: options.cost }),
+      ...(options.auditNoReceipt === undefined
+        ? {}
+        : { auditNoReceipt: options.auditNoReceipt }),
+    },
+    evidence: {
+      runId: admitted.runId,
+      role: "doctor",
+      issueNumber: admitted.issueNumber,
+      caseRunsPath: admitted.caseRunsPath,
+      caseIdentity: admitted.caseIdentity,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+    },
+  });
 }
 
 /** Lawful Doctor accepted/refused/audit_escalation outcome extracted from session. */
@@ -3181,8 +3111,7 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
 }
 
 /**
- * Shared success artifact face for filed seats that settle via sealed ledger
- * (#953): write report/evidence and drop any prior error.json.
+ * Filed-seat success face via the sole accepted publisher (#953).
  */
 async function publishSeatAcceptedArtifacts(
   admitted: {
@@ -3190,64 +3119,25 @@ async function publishSeatAcceptedArtifacts(
     readonly runId: string;
     readonly runDirectory: string;
     readonly admittedRequestPath: string;
-    readonly attachments: readonly {
-      readonly provenancePath: string;
-      readonly frozenPath: string;
-      readonly sha256: string;
-      readonly byteLength: number;
-    }[];
+    readonly attachments: readonly AcceptedArtifactAttachment[];
   },
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory(
-    {
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
       role: admitted.role,
       runId: admitted.runId,
-      sessionFile: coordinates.sessionFile,
+      outcome: roleOutcome,
     },
-    roleOutcome,
-  );
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: admitted.role,
-        runId: admitted.runId,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+    evidence: {
+      runId: admitted.runId,
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+    },
+  });
 }
 
 async function settleLawfulSeatAcceptedTerminalResult(
@@ -3658,58 +3548,31 @@ export async function publishReviewerArtifacts(
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
   },
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: "reviewer",
-        runId: admitted.runId,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        role: "reviewer",
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        baseRevision: admitted.baseRevision,
-        lens: admitted.lens,
-        authorityRefs: [...admitted.authorityRefs],
-        ...(admitted.instructionEmpty
-          ? {}
-          : { callerProvenance: admitted.instruction }),
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-        methodProvenance: options.methodProvenance,
-        // Forced package method: availability is package-bound; expansion only when observed.
-        methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
-        methodInvocations: options.methodInvocations ?? [],
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "reviewer",
+      runId: admitted.runId,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      role: "reviewer",
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      baseRevision: admitted.baseRevision,
+      lens: admitted.lens,
+      authorityRefs: [...admitted.authorityRefs],
+      ...(admitted.instructionEmpty
+        ? {}
+        : { callerProvenance: admitted.instruction }),
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+      methodProvenance: options.methodProvenance,
+      // Forced package method: availability is package-bound; expansion only when observed.
+      methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
+      methodInvocations: options.methodInvocations ?? [],
+    },
+  });
 }
 
 /** Lawful Reviewer accepted outcome extracted from session (no LLM auditor after #495 S6). */
@@ -3832,53 +3695,26 @@ export async function publishMergerArtifacts(
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
   },
 ): Promise<TerminalArtifactRef[]> {
-  await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
-  const reportPath = join(artifactsDir, "report.json");
-  const evidencePath = join(artifactsDir, "evidence.json");
-  await writeFile(
-    reportPath,
-    `${JSON.stringify(
-      {
-        role: "merger",
-        runId: admitted.runId,
-        outcome: roleOutcome,
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  await writeFile(
-    evidencePath,
-    `${JSON.stringify(
-      {
-        runId: admitted.runId,
-        role: "merger",
-        sessionDirectory: coordinates.sessionDirectory,
-        sessionFile: coordinates.sessionFile,
-        admittedRequestPath: admitted.admittedRequestPath,
-        mergerInputPath: admitted.mergerInputPath,
-        derived: admitted.derived,
-        attachments: admitted.attachments.map((a) => ({
-          provenancePath: a.provenancePath,
-          frozenPath: a.frozenPath,
-          sha256: a.sha256,
-          byteLength: a.byteLength,
-        })),
-        methodProvenance: options.methodProvenance,
-        methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
-        methodInvocations: options.methodInvocations ?? [],
-      },
-      null,
-      2,
-    )}\n`,
-    "utf8",
-  );
-  return [
-    { kind: "report", path: reportPath },
-    { kind: "evidence", path: evidencePath },
-  ];
+  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
+    report: {
+      role: "merger",
+      runId: admitted.runId,
+      outcome: roleOutcome,
+    },
+    evidence: {
+      runId: admitted.runId,
+      role: "merger",
+      sessionDirectory: coordinates.sessionDirectory,
+      sessionFile: coordinates.sessionFile,
+      admittedRequestPath: admitted.admittedRequestPath,
+      mergerInputPath: admitted.mergerInputPath,
+      derived: admitted.derived,
+      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+      methodProvenance: options.methodProvenance,
+      methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
+      methodInvocations: options.methodInvocations ?? [],
+    },
+  });
 }
 
 /** Lawful Merger accepted outcome extracted from session (shared success interface). */

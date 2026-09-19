@@ -244,6 +244,67 @@ test("projectSecretariatSummonResult keeps typed terminal kinds (gatekeeper prec
   assert.deepEqual(failure.payloads, [{ partial: true }]);
   assert.equal(failure.countersignStatus, undefined);
 
+  // #953: failure with prior recorded payloads keeps diagnostic + full payloads.
+  const histFailure = projectSecretariatSummonResult({
+    exitCode: 1,
+    runDirectory: "/r/01hist@countersign",
+    terminal: {
+      roleOutcome: {
+        kind: "failure",
+        role: "countersign",
+        diagnostic: "provider boom",
+        cause: "provider",
+        decisiveFacts: {},
+        payloads: [
+          {
+            countersignStatus: "continue",
+            findings: [{ article: "old", reason: "prior round" }],
+          },
+        ],
+      },
+    } as never,
+  });
+  assert.equal(histFailure.outcomeKind, "failure");
+  assert.equal(histFailure.diagnostic, "provider boom");
+  assert.equal(histFailure.cause, "provider");
+  assert.deepEqual(histFailure.payloads, [
+    {
+      countersignStatus: "continue",
+      findings: [{ article: "old", reason: "prior round" }],
+    },
+  ]);
+  assert.deepEqual(histFailure.receipt, {
+    countersignStatus: "continue",
+    findings: [{ article: "old", reason: "prior round" }],
+  });
+
+  // #953: multi-receipt accepted keeps every payload; receipt is the latest.
+  const multi = projectSecretariatSummonResult({
+    exitCode: 0,
+    runDirectory: "/r/01multi@countersign",
+    terminal: {
+      roleOutcome: {
+        kind: "accepted",
+        role: "countersign",
+        payloads: [
+          { countersignStatus: "continue", fix: { summary: "bounce" } },
+          { countersignStatus: "converged", note: "seal" },
+        ],
+      },
+    } as never,
+  });
+  assert.equal(multi.outcomeKind, "accepted");
+  assert.equal(multi.runId, "01multi");
+  assert.equal(multi.countersignStatus, "converged");
+  assert.deepEqual(multi.payloads, [
+    { countersignStatus: "continue", fix: { summary: "bounce" } },
+    { countersignStatus: "converged", note: "seal" },
+  ]);
+  assert.deepEqual(multi.receipt, {
+    countersignStatus: "converged",
+    note: "seal",
+  });
+
   const noReceipt = projectSecretariatSummonResult({
     exitCode: 0,
     stderr: "quiet",
@@ -267,154 +328,4 @@ test("projectSecretariatSummonResult keeps typed terminal kinds (gatekeeper prec
   assert.equal(noTerminal.outcomeKind, "no_terminal");
   assert.equal(noTerminal.exitCode, 1);
   assert.equal(noTerminal.stderr, "died");
-});
-
-test("#953 summon parent-visible content carries typed facts via readableGateItem, not fixed phrases", async () => {
-  const receipt = {
-    countersignStatus: "continue",
-    findings: [{ article: "a", reason: "r" }],
-  };
-  const { tools: okTools } = await activateSecretariat({
-    summonCountersign: async () => ({
-      exitCode: 0,
-      runDirectory: "/home/books/x/runs/01child@countersign",
-      terminal: {
-        roleOutcome: {
-          kind: "accepted",
-          role: "countersign",
-          payloads: [receipt],
-        },
-      } as never,
-    }),
-  });
-  const accepted = await okTools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
-    "summon-ok",
-    { instruction: "裁：#953" },
-    undefined,
-    undefined,
-    ctx,
-  );
-  const acceptedDetails = accepted.details as {
-    outcomeKind?: string;
-    runId?: string;
-    countersignStatus?: string;
-    receipt?: { findings?: Array<{ article?: string }> };
-  };
-  assert.equal(acceptedDetails.outcomeKind, "accepted");
-  assert.equal(acceptedDetails.runId, "01child");
-  assert.equal(acceptedDetails.countersignStatus, "continue");
-  assert.equal(acceptedDetails.receipt?.findings?.[0]?.article, "a");
-  const acceptedText = (accepted.content as Array<{ text: string }>)[0]?.text ?? "";
-  // Feature observation: facts appear in parent-visible text; no fixed phrases / object collapse.
-  // Do not lock JSON serialization shape (compact vs pretty).
-  assert.ok(acceptedText.includes("01child"));
-  assert.ok(acceptedText.includes("continue"));
-  assert.ok(acceptedText.includes("accepted"));
-  assert.equal(acceptedText.includes("给事中回执已送达中书省"), false);
-  assert.equal(acceptedText.includes("[object Object]"), false);
-
-  const { tools: failTools } = await activateSecretariat({
-    summonCountersign: async () => ({
-      exitCode: 1,
-      runDirectory: "/home/books/x/runs/01fail@countersign",
-      terminal: {
-        roleOutcome: {
-          kind: "failure",
-          role: "countersign",
-          diagnostic: "provider boom",
-          decisiveFacts: {},
-        },
-      } as never,
-    }),
-  });
-  const failed = await failTools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
-    "summon-fail",
-    { instruction: "裁：#953" },
-    undefined,
-    undefined,
-    ctx,
-  );
-  const failedDetails = failed.details as {
-    outcomeKind?: string;
-    diagnostic?: string;
-  };
-  assert.equal(failedDetails.outcomeKind, "failure");
-  assert.equal(failedDetails.diagnostic, "provider boom");
-  const failedText = (failed.content as Array<{ text: string }>)[0]?.text ?? "";
-  assert.ok(failedText.includes("provider boom"));
-  assert.equal(failedText.includes("给事中传召失败"), false);
-
-  // Failure + historical payloads must still surface diagnostic (bounce on #953).
-  const prior = {
-    countersignStatus: "continue",
-    findings: [{ article: "old", reason: "prior round" }],
-  };
-  const { tools: histTools } = await activateSecretariat({
-    summonCountersign: async () => ({
-      exitCode: 1,
-      runDirectory: "/home/books/x/runs/01a0a92e@countersign",
-      terminal: {
-        roleOutcome: {
-          kind: "failure",
-          role: "countersign",
-          diagnostic: "WebSocket error",
-          cause: "provider",
-          decisiveFacts: {},
-          payloads: [prior],
-        },
-      } as never,
-    }),
-  });
-  const histFailed = await histTools
-    .get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!
-    .execute("summon-hist-fail", { instruction: "裁：#953" }, undefined, undefined, ctx);
-  const histDetails = histFailed.details as {
-    outcomeKind?: string;
-    diagnostic?: string;
-  };
-  assert.equal(histDetails.outcomeKind, "failure");
-  assert.equal(histDetails.diagnostic, "WebSocket error");
-  const histText = (histFailed.content as Array<{ text: string }>)[0]?.text ?? "";
-  // Diagnostic fact must appear in parent-visible text even when historical receipt exists.
-  assert.ok(histText.includes("WebSocket error"));
-});
-
-test("#953 multi-receipt summon parent-visible text keeps prior and conclusion facts", async () => {
-  const bounce = {
-    countersignStatus: "continue",
-    fix: { summary: "MARKER-BOUNCE-ROUND" },
-  };
-  const seal = {
-    countersignStatus: "converged",
-    note: "MARKER-SEAL-ROUND",
-  };
-  const { tools } = await activateSecretariat({
-    summonCountersign: async () => ({
-      exitCode: 0,
-      runDirectory: "/home/books/x/runs/01a0multi@countersign",
-      terminal: {
-        roleOutcome: {
-          kind: "accepted",
-          role: "countersign",
-          payloads: [bounce, seal],
-        },
-      } as never,
-    }),
-  });
-  const result = await tools
-    .get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!
-    .execute("summon-multi", { instruction: "裁：#953 multi" }, undefined, undefined, ctx);
-  const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
-  // Feature observation: both receipts' facts reach parent-visible text via details.
-  assert.ok(text.includes("MARKER-BOUNCE-ROUND"));
-  assert.ok(text.includes("MARKER-SEAL-ROUND"));
-  assert.ok(text.includes("01a0multi"));
-  assert.ok(text.includes("accepted"));
-  const details = result.details as {
-    payloads?: unknown[];
-    receipt?: { note?: string };
-  };
-  assert.equal(Array.isArray(details.payloads), true);
-  assert.equal(details.payloads?.length, 2);
-  assert.equal(details.receipt?.note, "MARKER-SEAL-ROUND");
 });

@@ -1,6 +1,7 @@
 /**
- * #953: terminal face reflects current settlement; failure history label;
- * diarist escalate relays payload facts.
+ * #953: terminal face reflects current settlement via real publish/settle entry
+ * and the shared terminal-artifact reader. Presentation labels and internal
+ * helpers are not mechanical contracts (验收 5 / quality-law).
  */
 import assert from "node:assert/strict";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
@@ -8,13 +9,11 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { courtDiaristEscalateDiagnostic } from "../../src/public-cli/countersign-run.ts";
 import {
   publishFailureArtifacts,
   publishJudgeArtifacts,
   settleHostEndedNoReceipt,
 } from "../../src/public-cli/settlement.ts";
-import { formatTerminalResult } from "../../src/public-cli/terminal.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { withTempHome } from "../helpers/failure-settlement-kit.ts";
@@ -52,40 +51,6 @@ async function seedJudgeRun(
     }),
   };
 }
-
-test("#953 diarist escalate diagnostic relays payload ticketNumber facts", () => {
-  const withTicket = courtDiaristEscalateDiagnostic({
-    kind: "accepted",
-    role: "diarist",
-    payloads: [
-      {
-        status: "escalate",
-        ticketNumber: 946,
-        reason: "接缝探针",
-        sessions: [],
-      },
-    ],
-  });
-  assert.ok(withTicket.includes("946"));
-  assert.ok(withTicket.includes("接缝探针"));
-
-  const multi = courtDiaristEscalateDiagnostic({
-    kind: "accepted",
-    role: "diarist",
-    payloads: [
-      { status: "escalate", reason: "MARKER-FIRST-ESCALATE", sessions: [] },
-      {
-        status: "escalate",
-        ticketNumber: 953,
-        reason: "MARKER-LAST-ESCALATE",
-        sessions: [],
-      },
-    ],
-  });
-  assert.ok(multi.includes("MARKER-FIRST-ESCALATE"));
-  assert.ok(multi.includes("MARKER-LAST-ESCALATE"));
-  assert.ok(multi.includes("953"));
-});
 
 test("#953 reader adopts current failure after success; success after failure", async () => {
   await withTempHome(async (home) => {
@@ -197,22 +162,4 @@ test("#953 no_receipt empty face: reader adopts absent after prior terminal", as
     const afterEmpty = await readRunTerminalArtifact(runDirectory);
     assert.equal(afterEmpty.status, "absent");
   });
-});
-
-test("#953 failure public face labels prior receipts as recorded-submission", () => {
-  const formatted = formatTerminalResult({
-    roleOutcome: {
-      kind: "failure",
-      role: "judge",
-      diagnostic: "boom",
-      decisiveFacts: {},
-      payloads: [{ judgeStatus: "continue", note: "PRIOR-RECEIPT-MARKER" }],
-    },
-    navigator: { disposition: "no-advice" },
-    artifacts: [],
-    runId: "01a0-953-format",
-  });
-  assert.ok(formatted.includes("recorded-submission\t"));
-  assert.ok(formatted.includes("PRIOR-RECEIPT-MARKER"));
-  assert.equal(formatted.includes("\nsubmission\t"), false);
 });
