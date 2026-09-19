@@ -1,5 +1,5 @@
 /** #922 / #980 host-native packaged method delivery. */
-import { access, lstat, mkdir, readdir, readlink, realpath, symlink } from "node:fs/promises";
+import { access, lstat, mkdir, readdir, readFile, readlink, realpath, symlink } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import type { MethodBinding } from "./host-contracts.ts";
 
@@ -41,32 +41,75 @@ export function applyCodexSkillInvocation(methods: readonly MethodBinding[], pro
   );
 }
 
-/** Names of method skills published under a catalog directory (each child SKILL.md). */
-async function methodSkillNames(catalogDir: string): Promise<ReadonlySet<string>> {
-  const names = new Set<string>();
-  let entries;
-  try {
-    entries = await readdir(catalogDir, { withFileTypes: true });
-  } catch {
-    return names;
-  }
+const isEnoent = (error: unknown): boolean =>
+  (error as NodeJS.ErrnoException).code === "ENOENT";
+
+/** Packaged method skill directory names (child has SKILL.md). I/O errors propagate. */
+async function packagedMethodSkillNames(packagedMethodsRealpath: string): Promise<readonly string[]> {
+  const entries = await readdir(packagedMethodsRealpath, { withFileTypes: true });
+  const names: string[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory() && !entry.isSymbolicLink()) continue;
     try {
-      await access(join(catalogDir, entry.name, "SKILL.md"));
-      names.add(entry.name);
-    } catch {
-      /* not a skill entry */
+      await access(join(packagedMethodsRealpath, entry.name, "SKILL.md"));
+    } catch (error) {
+      if (isEnoent(error)) continue;
+      throw error;
     }
+    names.push(entry.name);
   }
   return names;
 }
 
 /**
+ * Byte map of every regular file under a skill directory (relative path → bytes).
+ * Undefined when SKILL.md is missing. Other I/O errors propagate.
+ * Integrity only — no free-text parsing of Skill prose.
+ */
+async function skillFileBytes(skillDir: string): Promise<ReadonlyMap<string, Buffer> | undefined> {
+  try {
+    await access(join(skillDir, "SKILL.md"));
+  } catch (error) {
+    if (isEnoent(error)) return undefined;
+    throw error;
+  }
+  const files = new Map<string, Buffer>();
+  async function walk(dir: string, prefix: string): Promise<void> {
+    const entries = await readdir(dir, { withFileTypes: true });
+    for (const entry of entries) {
+      const rel = prefix === "" ? entry.name : `${prefix}/${entry.name}`;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        await walk(full, rel);
+        continue;
+      }
+      if (entry.isFile()) {
+        files.set(rel, await readFile(full));
+      }
+    }
+  }
+  await walk(skillDir, "");
+  return files;
+}
+
+/** True when catalog skill publishes every packaged skill file with identical bytes. */
+function publishesPackagedSkill(
+  required: ReadonlyMap<string, Buffer>,
+  available: ReadonlyMap<string, Buffer>,
+): boolean {
+  for (const [rel, bytes] of required) {
+    const other = available.get(rel);
+    if (other === undefined || !bytes.equals(other)) return false;
+  }
+  return true;
+}
+
+/**
  * Existing project catalog is usable when it already publishes every packaged
- * method skill. Path identity is sufficient but not required (#980): a complete
- * catalog at another realpath (e.g. this repo's committed worktree link) must
- * stay put. Incomplete, broken, or non-symlink entries remain true conflicts.
+ * method skill with identical file bytes. Path identity is sufficient but not
+ * required (#980): a worktree catalog at another realpath that still carries
+ * the packaged method bytes must stay put. Name-only / foreign / stale content
+ * remains a true conflict. Incomplete, broken, or non-symlink entries too.
  */
 async function isCompatibleMethodCatalog(
   link: string,
@@ -74,14 +117,27 @@ async function isCompatibleMethodCatalog(
 ): Promise<boolean> {
   const stat = await lstat(link);
   if (!stat.isSymbolicLink()) return false;
-  const resolved = await realpath(link).catch(() => undefined);
-  if (resolved === undefined) return false;
+  let resolved: string;
+  try {
+    resolved = await realpath(link);
+  } catch (error) {
+    if (isEnoent(error)) return false;
+    throw error;
+  }
   if (resolved === packagedMethodsRealpath) return true;
-  const required = await methodSkillNames(packagedMethodsRealpath);
-  if (required.size === 0) return false;
-  const available = await methodSkillNames(resolved);
-  for (const name of required) {
-    if (!available.has(name)) return false;
+  const names = await packagedMethodSkillNames(packagedMethodsRealpath);
+  if (names.length === 0) return false;
+  for (const name of names) {
+    const required = await skillFileBytes(join(packagedMethodsRealpath, name));
+    if (required === undefined) return false;
+    let available: ReadonlyMap<string, Buffer> | undefined;
+    try {
+      available = await skillFileBytes(join(resolved, name));
+    } catch (error) {
+      if (isEnoent(error)) return false;
+      throw error;
+    }
+    if (available === undefined || !publishesPackagedSkill(required, available)) return false;
   }
   return true;
 }
@@ -96,7 +152,7 @@ export async function installWorkspaceMethodSkills(cwd: string, packageRoot: str
     const detail = stat.isSymbolicLink() ? `symlink to ${await readlink(link)}` : "non-symlink entry";
     throw new Error(`workspace method catalog conflict at ${link}: ${detail}`);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    if (!isEnoent(error)) throw error;
   }
   await mkdir(dirname(link), { recursive: true });
   try {
