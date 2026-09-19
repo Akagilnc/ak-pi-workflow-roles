@@ -20,6 +20,9 @@ import {
 } from "../prepared-role-turn.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
 
+/** #971: authorized host for usage + auto_compact ledgering only. */
+const GROK_BUILD_HOST = "grok-build";
+
 /** #971: grok-build prompt result carries host usage under `_meta.usage`. */
 function acpPromptResultHasUsage(result: Readonly<Record<string, unknown>>): boolean {
   const meta = result._meta;
@@ -28,7 +31,7 @@ function acpPromptResultHasUsage(result: Readonly<Record<string, unknown>>): boo
 }
 
 /**
- * #971: ledger only the authorized vendor compaction notice.
+ * #971: ledger only the authorized vendor compaction notice on grok-build.
  * Other `_x.ai/*` notifications stay out of host-session records.
  */
 function isAcpAutoCompactCompletedNotification(
@@ -315,10 +318,13 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       // (resume / set_model load would otherwise prepend prior turns as "this turn" prose).
       const agentProseChunks: string[] = [];
       let collectAgentProse = false;
+      // #971: usage + auto_compact are grok-build-only; same ACP adapter serves Hermes too.
+      const ledgerGrokBuildObservability = config.hostName === GROK_BUILD_HOST;
       connection.onNotification?.((method, params) => {
         if (hostSessionRecordFailure !== undefined) return;
         const isSessionUpdate = method === "session/update";
-        const isAutoCompact = isAcpAutoCompactCompletedNotification(method, params);
+        const isAutoCompact = ledgerGrokBuildObservability
+          && isAcpAutoCompactCompletedNotification(method, params);
         // #971: session/update stays; auto_compact_completed is the only vendor notice.
         if (!isSessionUpdate && !isAutoCompact) return;
         if (isSessionUpdate && collectAgentProse) {
@@ -435,7 +441,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             }
             collectAgentProse = false;
             // #971: per-round grok-build usage is on the prompt JSON-RPC result, not a notice.
-            if (acpPromptResultHasUsage(result)) {
+            if (ledgerGrokBuildObservability && acpPromptResultHasUsage(result)) {
               try {
                 reportHostSessionEvent({
                   host: config.hostName,
