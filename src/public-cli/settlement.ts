@@ -4111,10 +4111,23 @@ export async function publishFailureArtifacts(
   const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
     admitted.runDirectory,
   );
-  // #953: failure face must not leave a prior success report as the durable view.
-  await clearOppositeTerminalArtifactFace(admitted.runDirectory);
   const priorIssues: PublicationAttempt[] =
     baseAttempt === undefined ? [] : [baseAttempt];
+  // #953: failure face must not leave a prior success report as the durable view.
+  // Clear failure must not strand the original controlled failure outside
+  // settlement — same as history failure below, it rides publicationIssues
+  // and unique fallback still places the durable error (locked artifacts/ +
+  // prior face must not abort publishFailureArtifacts).
+  try {
+    await clearOppositeTerminalArtifactFace(admitted.runDirectory);
+  } catch (error) {
+    priorIssues.push(
+      publicationAttemptFromError(
+        roleRunArtifactsDirectory(admitted.runDirectory),
+        error,
+      ),
+    );
+  }
   // #419: each attempt's complete failure result joins the appended history
   // before any fixed-name artifact view is rewritten. History failure must not
   // strand the original controlled failure outside settlement — it rides
