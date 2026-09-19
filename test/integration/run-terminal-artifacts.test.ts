@@ -1,11 +1,12 @@
-import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * Reader face for publisher durable terminal artifacts.
  * T10: parent-directory unique error.<uuid>.json must bind body.runId to the
  * requested run directory — sibling fallbacks must not cross-adopt.
+ * #953: multi-face currentness follows publish contract (failure over success),
+ * not filesystem mtime.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
@@ -104,5 +105,55 @@ test("parent-dir unique error fallback binds body.runId — sibling runs do not 
     assert.equal(sameRun.status, "present");
     if (sameRun.status !== "present") return;
     assert.equal(sameRun.path, sameRunPath);
+  });
+});
+
+test("#953 reader prefers failure face over residual success even when report mtime is newer", async () => {
+  await withTempRunsRoot(async (runsRoot) => {
+    const runId = "019ff000-9531-7000-8000-000000009531";
+    const runDirectory = join(runsRoot, `${runId}@judge`);
+    const artifactsDir = join(runDirectory, "artifacts");
+    await mkdir(artifactsDir, { recursive: true });
+
+    const reportPath = join(artifactsDir, "report.json");
+    await writeFile(
+      reportPath,
+      `${JSON.stringify({
+        role: "judge",
+        runId,
+        outcome: {
+          kind: "accepted",
+          role: "judge",
+          payloads: [{ judgeStatus: "continue" }],
+        },
+      })}\n`,
+      "utf8",
+    );
+    // Spoof a future mtime — must not outrank the current failure face.
+    const future = new Date("2100-01-01T00:00:00.000Z");
+    await utimes(reportPath, future, future);
+
+    const failurePath = join(runDirectory, "error.settlement.json");
+    await writeFile(
+      failurePath,
+      `${JSON.stringify({
+        kind: "error",
+        role: "judge",
+        runId,
+        diagnostic: "CURRENT FAILURE",
+        cause: "provider",
+      })}\n`,
+      "utf8",
+    );
+
+    const read = await readRunTerminalArtifact(runDirectory);
+    assert.equal(read.status, "present");
+    if (read.status !== "present") return;
+    assert.equal(read.path, failurePath);
+    assert.equal(read.body.diagnostic, "CURRENT FAILURE");
+    assert.notEqual(
+      (read.body.outcome as { kind?: string } | undefined)?.kind,
+      "accepted",
+    );
   });
 });

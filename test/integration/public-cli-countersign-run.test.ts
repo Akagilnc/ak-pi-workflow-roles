@@ -1301,12 +1301,23 @@ test("public countersign path: summons text alone never mints a ticket without �
 
 /**
  * Multi-role faux pi: diarist envelope when --ak-role diarist, else countersign.
- * ticketAssertion: positive N = 本庭对象; null = true-unbound; "escalate" = 认不出.
+ * ticketAssertion: positive N = 本庭对象; null = true-unbound; "escalate" = 认不出;
+ * or escalate object (may carry ticketNumber / other receipt facts — #953).
  * courtTicketNumbers: #871 optional typed co-review set on identity turns only.
  * Bound refresh (`整理 #N 的本案依据。`) asserts ticket N so each member volume is real.
  */
+type CourtDiaristTicketAssertion =
+  | number
+  | null
+  | "escalate"
+  | {
+      readonly status: "escalate";
+      readonly reason: string;
+      readonly ticketNumber?: number;
+    };
+
 function courtPipelinePiRunner(
-  ticketAssertion: number | null | "escalate" = 582,
+  ticketAssertion: CourtDiaristTicketAssertion = 582,
   countersignDetails: unknown = {
     countersignStatus: "converged",
     note: "署",
@@ -1348,6 +1359,14 @@ function courtPipelinePiRunner(
         const boundTicket =
           ticketDirMatch !== null ? Number(ticketDirMatch[1]) : undefined;
         // 起居郎 LLM asserts the court target; envelope binds typed key (#771 / #779).
+        const escalateParams =
+          typeof ticketAssertion === "object" &&
+          ticketAssertion !== null &&
+          ticketAssertion.status === "escalate"
+            ? ticketAssertion
+            : ticketAssertion === "escalate"
+              ? { status: "escalate" as const, reason: "cannot identify court target" }
+              : undefined;
         const params =
           boundTicket !== undefined
             ? {
@@ -1355,13 +1374,13 @@ function courtPipelinePiRunner(
                 ticketNumber: boundTicket,
                 sessions: [] as const,
               }
-            : ticketAssertion === "escalate"
-              ? { status: "escalate" as const, reason: "cannot identify court target" }
+            : escalateParams !== undefined
+              ? escalateParams
               : ticketAssertion === null
                 ? { status: "completed" as const, ticketNumber: null, sessions: [] as const }
                 : {
                     status: "completed" as const,
-                    ticketNumber: ticketAssertion,
+                    ticketNumber: ticketAssertion as number,
                     sessions: [] as const,
                     ...(courtTicketNumbers === undefined
                       ? {}
@@ -1891,6 +1910,65 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
     assert.equal(
       entries.some((entry) => entry.endsWith("@diarist")),
       true,
+    );
+  });
+});
+
+/**
+ * #953: real countersign parent-leg identity diarist escalate carrying ticketNumber.
+ * Parent diagnostic must relay the receipt facts (readableGateItem) — never invent
+ * the stock "cannot identify court target" label when other facts are present.
+ */
+test("#953 identity diarist escalate with ticketNumber relays receipt on parent diagnostic", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    const escalateReceipt = {
+      status: "escalate" as const,
+      ticketNumber: 953,
+      reason: "ambiguous co-review set",
+    };
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: courtPipelinePiRunner(escalateReceipt),
+    });
+    const { io, stderr } = captureIo();
+    const result = await runPublicCountersign(
+      ["裁：本庭对象是否 #953？"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000953e",
+      },
+      io,
+      parseCountersignArgv,
+    );
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    if (result.terminal?.roleOutcome.kind !== "failure") return;
+    const diagnostic = result.terminal.roleOutcome.diagnostic;
+    // Typed receipt facts survive on the parent face (not a sole invented phrase).
+    assert.ok(
+      diagnostic.includes("953"),
+      "parent diagnostic must carry ticketNumber from diarist escalate receipt",
+    );
+    assert.ok(
+      diagnostic.includes("ambiguous co-review set"),
+      "parent diagnostic must carry escalate reason from diarist receipt",
+    );
+    assert.equal(
+      diagnostic.includes("cannot identify court target"),
+      false,
+      "must not invent stock cannot-identify label when receipt already carries facts",
+    );
+    assert.ok(
+      stderr.some((line) => line.includes("953")),
+      "stderr diagnostic face must also relay ticketNumber",
     );
   });
 });

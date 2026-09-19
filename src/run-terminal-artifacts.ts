@@ -6,7 +6,7 @@
  * readability — it does not re-derive role outcomes or invent a second
  * candidate algorithm.
  */
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 
 import { roleRunArtifactsDirectory } from "./role-run-placement.ts";
@@ -206,17 +206,11 @@ export async function listSeamOwnedUniqueErrorFacePaths(
 
 type PresentOrUnreadable = Exclude<RunTerminalArtifactRead, { status: "absent" }>;
 
-async function faceMtimeMs(path: string): Promise<number> {
-  try {
-    return (await stat(path)).mtimeMs;
-  } catch {
-    return 0;
-  }
-}
-
 /**
- * Failure-class faces outrank success/audit on equal mtime so a just-written
- * failure fallback is not tied with a residual report from a failed clear.
+ * Publish contract (#953): only failure publish continues after clearOpposite
+ * failure, so a multi-class residue (residual report/audit beside a new error
+ * face) means the current settlement is failure. Prefer failure-class faces
+ * over success/audit — never filesystem mtime (copy/restore/utimes can lie).
  */
 function failureClassRank(file: RunTerminalArtifactFile): number {
   return file === "error.json" ? 1 : 0;
@@ -233,8 +227,9 @@ function failureClassRank(file: RunTerminalArtifactFile): number {
  *
  * Invariant: when more than one present face remains (e.g. clearOpposite failed
  * during failure publish and a fallback was settled beside a residual report),
- * adopt the newest present face by mtime — not a fixed name order that would
- * hide the current failure behind an uncleared success face (#953).
+ * adopt failure-class over success/audit by the publish contract — not mtime.
+ * Same-class ties keep candidate enumeration order (conventional before
+ * fallbacks before unique).
  *
  * Unreadable faces never outrank a present face. Parent unique unreadable
  * files still cannot prove run identity and are ignored.
@@ -244,34 +239,31 @@ export async function readRunTerminalArtifact(
   runDirectory: string,
 ): Promise<RunTerminalArtifactRead> {
   const artifactsDir = roleRunArtifactsDirectory(runDirectory);
-  const present: Array<Extract<PresentOrUnreadable, { status: "present" }> & { mtimeMs: number }> =
+  const present: Array<Extract<PresentOrUnreadable, { status: "present" }>> = [];
+  const unreadable: Array<Extract<PresentOrUnreadable, { status: "unreadable" }>> =
     [];
-  const unreadable: Array<
-    Extract<PresentOrUnreadable, { status: "unreadable" }> & { mtimeMs: number }
-  > = [];
 
-  const consider = async (read: RunTerminalArtifactRead | undefined): Promise<void> => {
+  const consider = (read: RunTerminalArtifactRead | undefined): void => {
     if (read === undefined || read.status === "absent") return;
-    const mtimeMs = await faceMtimeMs(read.path);
     if (read.status === "present") {
-      present.push({ ...read, mtimeMs });
+      present.push(read);
       return;
     }
-    unreadable.push({ ...read, mtimeMs });
+    unreadable.push(read);
   };
 
   for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    await consider(await readTerminalArtifactAtPath(join(artifactsDir, file), file));
+    consider(await readTerminalArtifactAtPath(join(artifactsDir, file), file));
   }
 
   for (const relative of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
-    await consider(
+    consider(
       await readTerminalArtifactAtPath(join(runDirectory, relative), "error.json"),
     );
   }
 
   for (const path of await listUniqueErrorFallbackPaths([artifactsDir, runDirectory])) {
-    await consider(await readTerminalArtifactAtPath(path, "error.json"));
+    consider(await readTerminalArtifactAtPath(path, "error.json"));
   }
 
   const expectedRunId = runIdFromRunDirectory(runDirectory);
@@ -280,7 +272,7 @@ export async function readRunTerminalArtifact(
     if (read === undefined) continue;
     if (read.status === "present") {
       if (!presentUniqueFallbackBoundToRun(read.body, expectedRunId)) continue;
-      await consider(read);
+      consider(read);
       continue;
     }
     // Unreadable parent unique file cannot prove run identity — do not adopt.
@@ -288,16 +280,12 @@ export async function readRunTerminalArtifact(
 
   if (present.length > 0) {
     present.sort(
-      (a, b) =>
-        b.mtimeMs - a.mtimeMs ||
-        failureClassRank(b.file) - failureClassRank(a.file),
+      (a, b) => failureClassRank(b.file) - failureClassRank(a.file),
     );
-    const { mtimeMs: _mtimeMs, ...winner } = present[0]!;
-    return winner;
+    return present[0]!;
   }
   if (unreadable.length > 0) {
-    const { mtimeMs: _mtimeMs, ...first } = unreadable[0]!;
-    return first;
+    return unreadable[0]!;
   }
   return { status: "absent" };
 }

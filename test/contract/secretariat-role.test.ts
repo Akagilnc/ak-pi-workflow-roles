@@ -11,6 +11,7 @@ import {
 } from "../../src/secretariat-role.ts";
 import { createSecretariatRoleRuntime } from "../../src/role-runtime.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
+import { readableGateItem } from "../../src/readable-gate-item.ts";
 
 type HostHarness = {
   readonly tools: Map<string, { name: string; execute: Function }>;
@@ -182,103 +183,212 @@ test("secretariat summon-countersign calls shared seam with parent correlation",
   assert.equal(details.runId, "01child");
 });
 
-test("projectSecretariatSummonResult keeps typed terminal kinds (gatekeeper precedent)", () => {
-  const accepted = projectSecretariatSummonResult({
-    exitCode: 0,
-    runDirectory: "/r/01a@countersign",
-    terminal: {
-      roleOutcome: {
-        kind: "accepted",
-        role: "countersign",
-        status: "continue",
-        payloads: [{ countersignStatus: "continue", fix: { summary: "x" } }],
-        decisiveFacts: { note: "accepted-facts" },
-      },
-    } as never,
-  });
-  assert.equal(accepted.outcomeKind, "accepted");
-  assert.equal(accepted.status, "continue");
-  assert.equal(accepted.countersignStatus, "continue");
-  assert.deepEqual(accepted.decisiveFacts, { note: "accepted-facts" });
-  assert.deepEqual(accepted.receipt, {
-    countersignStatus: "continue",
-    fix: { summary: "x" },
-  });
-
-  const escalation = projectSecretariatSummonResult({
-    exitCode: 0,
-    runDirectory: "/r/01b@countersign",
-    terminal: {
-      roleOutcome: {
-        kind: "audit_escalation",
-        role: "countersign",
-        status: "audit_escalation",
-        payloads: [{ countersignStatus: "escalate", decisionGate: { question: "q" } }],
-        decisiveFacts: { gate: "open" },
-      },
-    } as never,
-  });
-  assert.equal(escalation.outcomeKind, "audit_escalation");
-  assert.equal(escalation.status, "audit_escalation");
-  assert.equal(escalation.countersignStatus, "escalate");
-  assert.deepEqual(escalation.decisiveFacts, { gate: "open" });
-  assert.ok(escalation.receipt);
-
-  const failure = projectSecretariatSummonResult({
-    exitCode: 1,
-    runDirectory: "/r/01c@countersign",
-    terminal: {
-      roleOutcome: {
-        kind: "failure",
-        role: "countersign",
-        diagnostic: "nested boom",
-        cause: "output",
-        decisiveFacts: { cause: "output" },
-        payloads: [{ partial: true }],
-      },
-    } as never,
-  });
-  assert.equal(failure.outcomeKind, "failure");
-  assert.equal(failure.diagnostic, "nested boom");
-  assert.equal(failure.cause, "output");
-  assert.deepEqual(failure.payloads, [{ partial: true }]);
-  assert.equal(failure.countersignStatus, undefined);
-
-  // #953: failure with prior recorded payloads keeps diagnostic + full payloads.
-  const histFailure = projectSecretariatSummonResult({
-    exitCode: 1,
-    runDirectory: "/r/01hist@countersign",
-    terminal: {
-      roleOutcome: {
-        kind: "failure",
-        role: "countersign",
-        diagnostic: "provider boom",
-        cause: "provider",
-        decisiveFacts: {},
-        payloads: [
-          {
-            countersignStatus: "continue",
-            findings: [{ article: "old", reason: "prior round" }],
-          },
-        ],
-      },
-    } as never,
-  });
-  assert.equal(histFailure.outcomeKind, "failure");
-  assert.equal(histFailure.diagnostic, "provider boom");
-  assert.equal(histFailure.cause, "provider");
-  assert.deepEqual(histFailure.payloads, [
+/**
+ * #953: real ak_secretariat_summon_countersign execute entry — table over the
+ * six terminal kinds. Assert typed details + parent-visible content carries
+ * runId/outcomeKind/receipt-or-lifecycle facts via readableGateItem (no locked
+ * presentation phrases).
+ */
+test("secretariat summon tool delivers typed parent facts for each terminal kind", async () => {
+  const cases: ReadonlyArray<{
+    readonly label: string;
+    readonly summoned: PublicSummonResult;
+    readonly expect: {
+      readonly outcomeKind: string;
+      readonly runId?: string;
+      readonly contentMustInclude: readonly string[];
+      readonly detailsCheck?: (details: Record<string, unknown>) => void;
+    };
+  }> = [
     {
-      countersignStatus: "continue",
-      findings: [{ article: "old", reason: "prior round" }],
+      label: "continue",
+      summoned: {
+        exitCode: 0,
+        runDirectory: "/r/01cont@countersign",
+        terminal: {
+          roleOutcome: {
+            kind: "accepted",
+            role: "countersign",
+            status: "continue",
+            payloads: [{ countersignStatus: "continue", fix: { summary: "rework" } }],
+          },
+        } as never,
+      },
+      expect: {
+        outcomeKind: "accepted",
+        runId: "01cont",
+        contentMustInclude: ["01cont", "accepted", "continue"],
+        detailsCheck: (details) => {
+          assert.equal(details.countersignStatus, "continue");
+          assert.deepEqual(details.receipt, {
+            countersignStatus: "continue",
+            fix: { summary: "rework" },
+          });
+        },
+      },
     },
-  ]);
-  assert.deepEqual(histFailure.receipt, {
-    countersignStatus: "continue",
-    findings: [{ article: "old", reason: "prior round" }],
-  });
+    {
+      label: "converged",
+      summoned: {
+        exitCode: 0,
+        runDirectory: "/r/01conv@countersign",
+        terminal: {
+          roleOutcome: {
+            kind: "accepted",
+            role: "countersign",
+            payloads: [{ countersignStatus: "converged", note: "seal" }],
+          },
+        } as never,
+      },
+      expect: {
+        outcomeKind: "accepted",
+        runId: "01conv",
+        contentMustInclude: ["01conv", "accepted", "converged"],
+        detailsCheck: (details) => {
+          assert.equal(details.countersignStatus, "converged");
+        },
+      },
+    },
+    {
+      label: "escalate",
+      summoned: {
+        exitCode: 0,
+        runDirectory: "/r/01esc@countersign",
+        terminal: {
+          roleOutcome: {
+            kind: "audit_escalation",
+            role: "countersign",
+            status: "audit_escalation",
+            payloads: [
+              { countersignStatus: "escalate", decisionGate: { question: "split?" } },
+            ],
+            decisiveFacts: { gate: "open" },
+          },
+        } as never,
+      },
+      expect: {
+        outcomeKind: "audit_escalation",
+        runId: "01esc",
+        contentMustInclude: ["01esc", "audit_escalation", "escalate"],
+        detailsCheck: (details) => {
+          assert.equal(details.countersignStatus, "escalate");
+          assert.deepEqual(details.decisiveFacts, { gate: "open" });
+        },
+      },
+    },
+    {
+      label: "failure",
+      summoned: {
+        exitCode: 1,
+        runDirectory: "/r/01fail@countersign",
+        terminal: {
+          roleOutcome: {
+            kind: "failure",
+            role: "countersign",
+            diagnostic: "nested boom",
+            cause: "provider",
+            decisiveFacts: { cause: "provider" },
+            payloads: [
+              {
+                countersignStatus: "continue",
+                findings: [{ article: "old", reason: "prior" }],
+              },
+            ],
+          },
+        } as never,
+      },
+      expect: {
+        outcomeKind: "failure",
+        runId: "01fail",
+        contentMustInclude: ["01fail", "failure", "nested boom"],
+        detailsCheck: (details) => {
+          assert.equal(details.diagnostic, "nested boom");
+          assert.equal(details.cause, "provider");
+          assert.deepEqual(details.receipt, {
+            countersignStatus: "continue",
+            findings: [{ article: "old", reason: "prior" }],
+          });
+        },
+      },
+    },
+    {
+      label: "no_receipt",
+      summoned: {
+        exitCode: 0,
+        runDirectory: "/r/01norec@countersign",
+        stderr: "quiet",
+        terminal: {
+          roleOutcome: {
+            kind: "no_receipt",
+            role: "countersign",
+            status: "no-accepted-receipt",
+            decisiveFacts: { acceptedReceipt: false },
+          },
+        } as never,
+      },
+      expect: {
+        outcomeKind: "no_receipt",
+        runId: "01norec",
+        contentMustInclude: ["01norec", "no_receipt", "no-accepted-receipt"],
+        detailsCheck: (details) => {
+          assert.equal(details.status, "no-accepted-receipt");
+          assert.equal(details.stderr, "quiet");
+        },
+      },
+    },
+    {
+      label: "no_terminal",
+      summoned: {
+        exitCode: 1,
+        runDirectory: "/r/01noterm@countersign",
+        stderr: "died before terminal",
+      },
+      expect: {
+        outcomeKind: "no_terminal",
+        runId: "01noterm",
+        contentMustInclude: ["01noterm", "no_terminal", "died before terminal"],
+        detailsCheck: (details) => {
+          assert.equal(details.exitCode, 1);
+          assert.equal(details.stderr, "died before terminal");
+        },
+      },
+    },
+  ];
 
-  // #953: multi-receipt accepted keeps every payload; receipt is the latest.
+  for (const row of cases) {
+    const { tools } = await activateSecretariat({
+      summonCountersign: async () => row.summoned,
+    });
+    const result = await tools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
+      `summon-${row.label}`,
+      { instruction: `case ${row.label}` },
+      undefined,
+      undefined,
+      ctx,
+    );
+    const details = result.details as Record<string, unknown>;
+    assert.equal(details.outcomeKind, row.expect.outcomeKind, row.label);
+    if (row.expect.runId !== undefined) {
+      assert.equal(details.runId, row.expect.runId, row.label);
+    }
+    row.expect.detailsCheck?.(details);
+
+    const text = (result.content as ReadonlyArray<{ type: string; text: string }>)
+      .map((part) => part.text)
+      .join("\n");
+    // Parent-visible text is readableGateItem(details) — same object, not a
+    // second projection. Check semantic facts without locking phrase templates.
+    assert.equal(text, readableGateItem(details), row.label);
+    for (const needle of row.expect.contentMustInclude) {
+      assert.ok(
+        text.includes(needle),
+        `${row.label}: parent content must carry ${needle}`,
+      );
+    }
+  }
+});
+
+test("projectSecretariatSummonResult keeps multi-receipt latest as receipt", () => {
   const multi = projectSecretariatSummonResult({
     exitCode: 0,
     runDirectory: "/r/01multi@countersign",
@@ -304,28 +414,4 @@ test("projectSecretariatSummonResult keeps typed terminal kinds (gatekeeper prec
     countersignStatus: "converged",
     note: "seal",
   });
-
-  const noReceipt = projectSecretariatSummonResult({
-    exitCode: 0,
-    stderr: "quiet",
-    terminal: {
-      roleOutcome: {
-        kind: "no_receipt",
-        role: "countersign",
-        status: "no-accepted-receipt",
-        decisiveFacts: { acceptedReceipt: false },
-      },
-    } as never,
-  });
-  assert.equal(noReceipt.outcomeKind, "no_receipt");
-  assert.equal(noReceipt.status, "no-accepted-receipt");
-  assert.equal(noReceipt.stderr, "quiet");
-
-  const noTerminal = projectSecretariatSummonResult({
-    exitCode: 1,
-    stderr: "died",
-  });
-  assert.equal(noTerminal.outcomeKind, "no_terminal");
-  assert.equal(noTerminal.exitCode, 1);
-  assert.equal(noTerminal.stderr, "died");
 });
