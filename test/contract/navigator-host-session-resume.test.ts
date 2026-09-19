@@ -203,6 +203,100 @@ test("#959 non-resumable preflight mints once; resume transport failure does not
   });
 });
 
+test("#959 dispose during resume preflight must not start summon", async () => {
+  // Legal HostContext.signal absence. First prompt pins a host run; second blocks in
+  // hostRunResumable; dispose before release must close admission — summon never starts
+  // (ADR 0018 / #959 continue: preflight race, not only late side effects).
+  await withTempRoot("navigator-host-dispose-preflight-", async (root) => {
+    seedGitRepository(root);
+    const firstDir = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navpre1@navigator");
+    await mkdir(join(firstDir, "session"), { recursive: true });
+    const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
+    await mkdir(join(parentRun, "session"), { recursive: true });
+
+    let releasePreflight: (() => void) | undefined;
+    const preflightGate = new Promise<void>((resolve) => {
+      releasePreflight = resolve;
+    });
+    let preflightChecks = 0;
+    let summonCalls = 0;
+    let prepared = 0;
+    const summon = async (): Promise<PublicSummonResult> => {
+      summonCalls += 1;
+      return {
+        exitCode: 0,
+        runDirectory: firstDir,
+        terminal: {
+          roleOutcome: {
+            kind: "accepted",
+            payloads: [{ prose: `summon-${summonCalls}` }],
+          },
+        } as never,
+      };
+    };
+
+    const session = await createNativeNavigatorSessionFactory({
+      summonPublicRole: summon,
+      hostRunResumable: async () => {
+        preflightChecks += 1;
+        if (preflightChecks === 1) {
+          await preflightGate;
+          return true;
+        }
+        return false;
+      },
+    })({
+      context: {
+        cwd: root,
+        runDirectory: parentRun,
+        // No signal — legal HostContext; factory must still refuse post-dispose summon.
+      } as never,
+      subject: "/work/subject-dispose-preflight",
+      tool: {
+        name: "ak_navigator_prepare",
+        async execute() {
+          prepared += 1;
+          return { content: [{ type: "text", text: "ok" }], details: {} };
+        },
+      } as never,
+    });
+
+    await session.prompt("pin-host-run");
+    assert.equal(summonCalls, 1);
+    const pinned = readNavigatorHostRunPointer(session.entries() as readonly unknown[]);
+    assert.equal(pinned, "01navpre1");
+
+    const secondPrompt = session.prompt("blocked-in-preflight");
+    // Let the second prompt reach hostRunResumable before dispose.
+    for (let i = 0; i < 20 && preflightChecks < 1; i += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    assert.equal(preflightChecks, 1, "second prompt must enter resumable preflight");
+    assert.equal(summonCalls, 1, "summon must not start while preflight is gated");
+
+    await session.dispose();
+    releasePreflight?.();
+    await secondPrompt;
+
+    assert.equal(summonCalls, 1, "dispose during preflight must not start a new summon");
+    assert.equal(
+      readNavigatorHostRunPointer(session.entries() as readonly unknown[]),
+      pinned,
+      "blocked second prompt must not rewrite host-run pointer after dispose",
+    );
+    assert.equal(prepared, 1, "only the first live prompt may prepare");
+    assert.equal(
+      (session.entries() as readonly unknown[]).filter(
+        (entry) =>
+          typeof entry === "object"
+          && entry !== null
+          && (entry as { customType?: string }).customType === NAVIGATOR_HOST_RUN_POINTER_ENTRY,
+      ).length,
+      1,
+    );
+  });
+});
+
 test("#959 typed non-resumable preflight allows one fresh mint", async () => {
   await withTempRoot("navigator-host-resume-absent-", async (root) => {
     seedGitRepository(root);

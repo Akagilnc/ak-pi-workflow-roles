@@ -1417,6 +1417,43 @@ export function createRoleRuntimeExtension(
     // Public-run fetch observation (in-process-session statusAwareFetch face).
     let priorFetch: typeof globalThis.fetch | undefined;
     let fetchWrapped = false;
+    /** Envelope-owned: abort/teardown attendance without re-blocking the parent court (#959). */
+    const disposeNavigatorAttendanceNonBlocking = (
+      attendance: NavigatorAttendanceDependency | undefined,
+    ): void => {
+      if (attendance === undefined) return;
+      const recordDisposeFailure = (error: unknown): void => {
+        const diagnostic = error instanceof Error ? error.message : String(error);
+        try {
+          sitianReport({
+            level: "event",
+            kind: "navigator-dispose-failure",
+            cwd: navigatorCwd,
+            sessionParent: navigatorSessionParent,
+            payload: { diagnostic },
+            source: "role-runtime",
+          });
+        } catch (recordError) {
+          try {
+            envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
+              diagnostic,
+              recordFailure: recordError instanceof Error ? recordError.message : String(recordError),
+            });
+          } catch {
+            // Failure already diagnosed; recording must not create unhandled rejection (#959).
+          }
+        }
+      };
+      // Evaluate dispose inside try: Promise.resolve(dispose()) throws sync before .then attaches.
+      let pending: void | Promise<void>;
+      try {
+        pending = attendance.dispose();
+      } catch (error) {
+        recordDisposeFailure(error);
+        return;
+      }
+      void Promise.resolve(pending).then(undefined, recordDisposeFailure);
+    };
     const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined) => {
       const attendance = navigatorAttendance;
       if (settlement === undefined || attendance === undefined) return;
@@ -1455,28 +1492,7 @@ export function createRoleRuntimeExtension(
           pendingNavigatorPresentation = { event, report };
         }
         // 过时不候: do not await sidecar teardown — parent court must close.
-        // Dispose failure is recorded, not washed; it must not re-block the court.
-        void Promise.resolve(attendance.dispose()).then(
-          undefined,
-          (error) => {
-            const diagnostic = error instanceof Error ? error.message : String(error);
-            try {
-              sitianReport({
-                level: "event",
-                kind: "navigator-dispose-failure",
-                cwd: navigatorCwd,
-                sessionParent: navigatorSessionParent,
-                payload: { diagnostic },
-                source: "role-runtime",
-              });
-            } catch (recordError) {
-              envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
-                diagnostic,
-                recordFailure: recordError instanceof Error ? recordError.message : String(recordError),
-              });
-            }
-          },
-        );
+        disposeNavigatorAttendanceNonBlocking(attendance);
       })();
       pendingNavigatorSettlement = pending;
       await pending;
@@ -1833,9 +1849,12 @@ export function createRoleRuntimeExtension(
           // Teardown must not mask the original role failure cause.
         }
       }
-      await navigatorAttendance?.dispose();
+      // Same non-blocking dispose as post-role grace: awaiting here re-blocked the
+      // parent court for 43–270s after unavailable was already projected (#959 reopen).
+      const attendanceToDispose = navigatorAttendance;
       navigatorAttendance = undefined;
       pendingNavigatorSettlement = undefined;
+      disposeNavigatorAttendanceNonBlocking(attendanceToDispose);
       pendingInfrastructureFailures.clear();
       pendingSubmissionNonPassByToolCallId.clear();
       observationFace.reset();

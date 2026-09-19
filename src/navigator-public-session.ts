@@ -98,6 +98,8 @@ export type NavigatorPublicSummon = (options: {
   readonly cwd: string;
   readonly home?: string;
   readonly resumeRunId?: string;
+  /** Shared-lifecycle cancel forwarded from HostContext.signal (#675 / #959). */
+  readonly signal?: AbortSignal;
 }) => Promise<PublicSummonResult>;
 
 export function createNativeNavigatorSessionFactory(deps?: {
@@ -128,7 +130,6 @@ export function createNativeNavigatorSessionFactory(deps?: {
     let providerFailure: NavigatorProviderFailureFact | undefined;
     let noReceipt: NoReceiptLifecycleFacts | undefined;
     let disposed = false;
-    let inFlightPrompt: Promise<unknown> | undefined;
     /** In-factory host run id for CLI resume; durable pointer also lives on the nest. */
     let hostRunId = readNavigatorHostRunPointer(sessionManager.getEntries() as readonly unknown[]);
 
@@ -145,16 +146,21 @@ export function createNativeNavigatorSessionFactory(deps?: {
         }
         providerFailure = undefined;
         noReceipt = undefined;
-        const run = (async () => {
         try {
           const summonHome = await resolveNavigatorLedgerHome(context);
+          // Admission after every await: dispose during preflight must not start summon
+          // (ADR 0018 / #959 — legal HostContext may omit signal).
+          if (disposed) return;
           const resumeRunId = hostRunId;
 
+          // Call contract only: forward shared-lifecycle signal; do not own AbortController here
+          // (ADR 0018 / #959 — cancel ownership stays on the attendance/envelope seam).
           const baseSummon = {
             role: "navigator" as const,
             argv: [text] as const,
             cwd: context.cwd,
             ...(summonHome === undefined ? {} : { home: summonHome }),
+            ...(context.signal === undefined ? {} : { signal: context.signal }),
           };
 
           // Prefer host CLI resume so prior advice stays on the host session.
@@ -162,13 +168,22 @@ export function createNativeNavigatorSessionFactory(deps?: {
           const resumable = deps?.hostRunResumable ?? navigatorHostRunResumable;
           let summoned: PublicSummonResult;
           if (resumeRunId === undefined || summonHome === undefined) {
+            if (disposed) return;
             summoned = await summon(baseSummon);
-          } else if (await resumable(summonHome, resumeRunId)) {
-            summoned = await summon({ ...baseSummon, resumeRunId });
           } else {
-            hostRunId = undefined;
-            summoned = await summon(baseSummon);
+            const canResume = await resumable(summonHome, resumeRunId);
+            if (disposed) return;
+            if (canResume) {
+              summoned = await summon({ ...baseSummon, resumeRunId });
+            } else {
+              hostRunId = undefined;
+              summoned = await summon(baseSummon);
+            }
           }
+
+          // Dispose won the race (with or without HostContext.signal): no late pointer/prepare.
+          // Cancel ownership stays on attendance/envelope; this only closes side effects (#959).
+          if (disposed) return;
 
           const outcome = summoned.terminal?.roleOutcome;
           if (outcome === undefined) {
@@ -222,6 +237,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
             if (prose !== undefined) proseParts.push(prose);
           }
           if (proseParts.length === 0) return;
+          if (disposed) return;
           await tool.execute(
             "navigator-public-prepare",
             { prose: proseParts.join("\n\n") },
@@ -230,18 +246,13 @@ export function createNativeNavigatorSessionFactory(deps?: {
             context as never,
           );
         } catch (error) {
+          // Closed session: drain late nest errors without providerFailure side effects.
+          if (disposed) return;
           if (error instanceof NavigatorUnavailableError) throw error;
           const fact = navigatorProviderFailureFromError(error);
           // Catch path is the public-summon seam (source transport); untyped cause stays unknown.
           providerFailure = fact ?? { source: "transport", cause: "unknown" };
           throw navigatorUnavailableError(providerFailure.source, error, providerFailure.cause);
-        }
-        })();
-        inFlightPrompt = run;
-        try {
-          await run;
-        } finally {
-          if (inFlightPrompt === run) inFlightPrompt = undefined;
         }
       },
       providerFailure: () => providerFailure,
@@ -276,9 +287,9 @@ export function createNativeNavigatorSessionFactory(deps?: {
       getThinkingLevel: () => thinkingLevel,
       recordPointer: () => sessionManager.getSessionDir(),
       dispose: async () => {
+        // Marker only — nested cancel and non-blocking teardown are owned by
+        // navigator-attendance / role-runtime (ADR 0018 / #959).
         disposed = true;
-        const pending = inFlightPrompt;
-        if (pending !== undefined) await pending.catch(() => undefined);
       },
     };
   };

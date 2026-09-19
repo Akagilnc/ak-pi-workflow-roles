@@ -258,6 +258,7 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
     for (const seat of seats) {
       if (seat === "merger") await seedMergeProject(project);
       const captured: Array<string | undefined> = [];
+      const autoResumePrompts: string[] = [];
       let first = true;
       const { io } = captureIo();
       await runAkRole([...baseArgs(seat, project), "engine auto proof", "--engine", ENGINE], {
@@ -282,6 +283,8 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
             });
             return { code: 1, stderr: "quota", timedOut: false };
           }
+          // #959 怎么验#3: real-entry auto-resume continuation.prompt must be non-empty.
+          autoResumePrompts.push(request.continuation.prompt);
           // Second (auto-resume) dispatch: lawful accepted terminal.
           const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
           await seedTerminalSession({
@@ -302,6 +305,11 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
       assert.ok(
         captured.every((e) => e === ENGINE),
         `${seat}: every auto-resume typed request keeps effective engine`,
+      );
+      assert.ok(autoResumePrompts.length >= 1, `${seat}: auto-resume must supply continuation.prompt`);
+      assert.ok(
+        autoResumePrompts.every((prompt) => prompt.trim() !== ""),
+        `${seat}: auto-resume continuation.prompt must stay non-empty`,
       );
     }
   });

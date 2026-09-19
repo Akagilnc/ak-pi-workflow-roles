@@ -302,8 +302,21 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let preparationFailure: unknown;
   let routePlaybookReadFailure: string | undefined;
   let disposed = false;
+  /** In-flight session teardown; repeat dispose returns the same promise (#959 mutation proof). */
+  let closing: Promise<void> | undefined;
+  // Shared attendance seam owns nested summon cancel (ADR 0018 / #959).
+  // Role session factory only forwards HostContext.signal — never its own controller.
+  const nestCancel = new AbortController();
   /** One-shot live-help warm; consumed by the next prepare so later prepares reread live help. */
   let warmedHelp: Promise<Array<{ role: NavigatorTargetRole; help: string }>> | undefined;
+
+  const sessionHostContext = (): HostContext => {
+    const parentSignal = options.context.signal;
+    const signal = parentSignal === undefined
+      ? nestCancel.signal
+      : AbortSignal.any([nestCancel.signal, parentSignal]);
+    return { ...options.context, signal };
+  };
 
   const loadLiveHelp = async (): Promise<Array<{ role: NavigatorTargetRole; help: string }>> => {
     try {
@@ -408,7 +421,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         let created: NavigatorPreparationSession;
         try {
           created = await options.createSession({
-            context: options.context,
+            context: sessionHostContext(),
             subject: subjectKey,
             ...(options.modelSettingPath === undefined ? {} : { modelSettingPath: options.modelSettingPath }),
             tool,
@@ -660,12 +673,25 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     },
     dispose(): void | Promise<void> {
       disposed = true;
+      // Abort nested public summon via shared signal; callers may still await session
+      // close. Parent grace/shutdown must choose not to await (#959 reopen).
+      if (!nestCancel.signal.aborted) {
+        nestCancel.abort(navigatorUnavailableError(
+          "session",
+          new Error("Navigator attendance was disposed"),
+        ));
+      }
       // Leave sessionReady so an in-flight createSession observes disposed and drains exactly once.
       // Late settleOnce completion observes disposed and skips onEvent.
-      const current = session;
-      session = undefined;
       activeInvocationId = undefined;
-      return current?.dispose();
+      if (closing === undefined) {
+        const current = session;
+        session = undefined;
+        // Preserve rejection for non-blocking recordDisposeFailure; resolve void on success.
+        closing = Promise.resolve(current?.dispose()).then(() => undefined);
+      }
+      // Same in-flight teardown on repeat dispose — awaiting here re-blocks the parent court.
+      return closing;
     },
   };
 
