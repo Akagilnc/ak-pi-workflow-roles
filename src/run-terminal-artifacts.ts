@@ -181,8 +181,10 @@ function presentUniqueFallbackBoundToRun(
 }
 
 /**
- * Unique error.<uuid>.json faces this run owns and may clear on success face switch.
- * Ownership matches readRunTerminalArtifact:
+ * Sole authority for seam-owned unique error.<uuid>.json candidates.
+ * Used by both clearOpposite (settlement) and readRunTerminalArtifact — do not
+ * re-enumerate the same-run / parent unique set elsewhere.
+ * Ownership:
  * - same-run dirs (artifacts/, runDir): path ownership — all unique names
  * - parent runs/: only body.runId-bound faces; unparseable runId or unreadable body → none
  */
@@ -222,8 +224,8 @@ function failureClassRank(file: RunTerminalArtifactFile): number {
  * Candidate set (publisher-owned faces only):
  * 1) conventional artifacts/{report,error,audit-incomplete}.json
  * 2) publisher fixed failure fallbacks (error.settlement.json faces)
- * 3) publisher unique error.<uuid>.json fallbacks under same-run dirs
- * 4) shared parent-directory unique fallbacks bound by body.runId
+ * 3) seam-owned unique error.<uuid>.json via listSeamOwnedUniqueErrorFacePaths
+ *    (same-run path ownership + parent body.runId binding — shared with clear)
  *
  * Invariant: when more than one present face remains (e.g. clearOpposite failed
  * during failure publish and a fallback was settled beside a residual report),
@@ -232,7 +234,7 @@ function failureClassRank(file: RunTerminalArtifactFile): number {
  * fallbacks before unique).
  *
  * Unreadable faces never outrank a present face. Parent unique unreadable
- * files still cannot prove run identity and are ignored.
+ * files never enter the shared enumerator (cannot prove run identity).
  * Absence of every known durable face is a valid no-receipt state.
  */
 export async function readRunTerminalArtifact(
@@ -262,20 +264,9 @@ export async function readRunTerminalArtifact(
     );
   }
 
-  for (const path of await listUniqueErrorFallbackPaths([artifactsDir, runDirectory])) {
+  // Unique same-run + parent-bound faces: one enumerator shared with clear.
+  for (const path of await listSeamOwnedUniqueErrorFacePaths(runDirectory)) {
     consider(await readTerminalArtifactAtPath(path, "error.json"));
-  }
-
-  const expectedRunId = runIdFromRunDirectory(runDirectory);
-  for (const path of await listUniqueErrorFallbackPaths([dirname(runDirectory)])) {
-    const read = await readTerminalArtifactAtPath(path, "error.json");
-    if (read === undefined) continue;
-    if (read.status === "present") {
-      if (!presentUniqueFallbackBoundToRun(read.body, expectedRunId)) continue;
-      consider(read);
-      continue;
-    }
-    // Unreadable parent unique file cannot prove run identity — do not adopt.
   }
 
   if (present.length > 0) {
