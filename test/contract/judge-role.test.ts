@@ -416,18 +416,25 @@ function toolCallContext(
   return { sessionManager, abort } as unknown as ExtensionContext;
 }
 
-function passingOfficerSummon(officer: "inspector" | "notary" | "auditor"): PublicSummonResult {
+function passingOfficerSummon(
+  officer: "inspector" | "notary" | "auditor" | "countersign",
+): PublicSummonResult {
+  // #969: countersign officer pass face is countersignStatus=converged; others keep status=pass.
+  const payloads =
+    officer === "countersign"
+      ? [{ countersignStatus: "converged", findings: [] }]
+      : [{ status: "pass", findings: [] }];
   return {
     exitCode: 0,
     terminal: {
       roleOutcome: {
         kind: "accepted",
         role: officer,
-        status: "pass",
+        status: officer === "countersign" ? "converged" : "pass",
         // #836: officer receipt content rides recorded payloads, not decisiveFacts —
         // decisiveFacts stays a distinct, smaller machine-fact projection here.
-        payloads: [{ status: "pass", findings: [] }],
-        decisiveFacts: { status: "pass" },
+        payloads,
+        decisiveFacts: { status: officer === "countersign" ? "converged" : "pass" },
       },
       navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
       artifacts: [],
@@ -1646,10 +1653,12 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
     const toolCallId = "judge-gk-bounce";
     const bounceSubmission = { status: "bounce", findings };
     // #753: raw officer receipt only — no findings rewrite / disposition mapping.
+    // #969: officer projection also carries nested runId when known.
     const expected = {
       status: "bounce" as const,
       officer: "notary" as const,
       receipt: bounceSubmission,
+      runId: "test-gk-bounce",
     };
     const faux = fauxProvider({ provider: "gk-tool-result", api: "gk-tool-result" });
     const model = faux.getModel();

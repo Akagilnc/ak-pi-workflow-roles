@@ -11,6 +11,24 @@ export const SECRETARIAT_OUTPUT_TOOL_NAME = "ak_secretariat_output";
 export const SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME =
   "ak_secretariat_summon_countersign";
 export const SECRETARIAT_ACCEPTED_TEXT = "中书省回执已接受";
+/**
+ * #969 durable custom entry: 给事中 terminal (署|上呈) for seat settlement projection.
+ * Carries original receipt bytes + nested runId. Envelope persists custom entries
+ * (not toolResult rows) — headless/ACP safe. Single authority for public terminal
+ * officer projection (pass and escalate share this entry).
+ */
+export const SECRETARIAT_GATE_OFFICER_ENTRY_TYPE =
+  "ak-secretariat-gate-officer" as const;
+
+/** Decisive-facts key for nested 给事中 terminal on public Secretariat settlement. */
+export const SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY = "countersignTerminal" as const;
+
+export type SecretariatCountersignTerminalFact = {
+  /** Officer receipt original bytes — never rewritten. */
+  readonly receipt: unknown;
+  /** Nested 给事中 runId when known. */
+  readonly runId?: string;
+};
 
 export type SecretariatVerdict =
   | {

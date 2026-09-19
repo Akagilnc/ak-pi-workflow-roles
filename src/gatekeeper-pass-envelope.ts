@@ -7,9 +7,10 @@
  *   parent submit → summon officer → read conclusion field
  *   pass → accept end
  *   bounce | escalate → raw officer receipt as tool result back to parent
+ *     — except secretariat_verdict escalate: throw → parent audit_escalation, not raw receipt (#969)
  *   not three-state → resume officer with plain-language re-ask (no round cap)
  *   transport / no_receipt → present honestly
- * Three pairs: countersign↔notary, judge↔auditor, worker↔inspector.
+ * Four pairs: countersign↔notary, judge↔auditor, worker↔inspector, secretariat↔countersign (#969).
  * Code does not judge content, map next-step for parent, or label unreadable/unusable.
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -17,7 +18,7 @@ import { bookDirectOfficerRunPointer } from "./archivist-record-entry.ts";
 import type { HostContext, RoleTurnHost } from "./host-contracts.ts";
 import {
   GatekeeperDecisionError,
-  OFFICER_CONCLUSION_REASK,
+  officerConclusionReask,
   projectGatekeeperRun,
   type GatekeeperPassHostActions,
   type GatekeeperResult,
@@ -37,6 +38,8 @@ export function createDefaultGateOfficerSummon(options: {
   readonly home?: string;
   readonly packageRoot?: string;
   readonly roleTurnHost?: RoleTurnHost;
+  /** Composition-root adapters for nested court stations (tests / #969). */
+  readonly hostAdapters?: readonly import("./public-cli/role-turn-host-resolution.ts").NamedRoleTurnHostAdapter[];
   readonly createRunId?: () => string;
 }): GateOfficerSummon {
   return async (officer, sourceRunDirectory, signal, reask, submission) => {
@@ -51,6 +54,7 @@ export function createDefaultGateOfficerSummon(options: {
       ...(options.home === undefined ? {} : { home: options.home }),
       ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
       ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
+      ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
       ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
     });
   };
@@ -93,8 +97,20 @@ function bookDirectOfficerPointer(
 }
 
 /**
+ * Pass snapshot returned to the parent seat (#969).
+ * Carries officer receipt + nested runId so seat settlement can project the
+ * public terminal without a second authority.
+ */
+export type GatekeeperPassOutcome = {
+  readonly officer: GateOfficer;
+  readonly receipt: unknown;
+  readonly runId?: string;
+};
+
+/**
  * Shared envelope: project gate, book officer pointer, map onto host actions.
  * Review loop has no round cap (#753 no-round-cap).
+ * On pass, returns the officer snapshot (receipt + nested runId) for seat projection.
  */
 export async function requireGatekeeperPass(options: {
   readonly context: ExtensionContext | HostContext;
@@ -109,7 +125,7 @@ export async function requireGatekeeperPass(options: {
   readonly submission?: unknown;
   /** Lowest seam: same as runGatekeeper options.summonOfficer — offline tracers only. */
   readonly summonOfficer?: GateOfficerSummon;
-}): Promise<void> {
+}): Promise<GatekeeperPassOutcome | void> {
   let reask: string | undefined;
   // No round cap — end only on pass, bounce/escalate-to-parent, or real failure.
   const summonOfficer =
@@ -140,9 +156,17 @@ export async function requireGatekeeperPass(options: {
         options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
       }
     }
-    if (gatekeeper.status === "pass") return;
+    if (gatekeeper.status === "pass") {
+      return {
+        officer: projected.officer,
+        receipt: gatekeeper.receipt,
+        ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
+          ? { runId: gatekeeper.runId }
+          : {}),
+      };
+    }
     if (gatekeeper.status === "needs_reask") {
-      reask = OFFICER_CONCLUSION_REASK;
+      reask = officerConclusionReask(projected.officer);
       continue;
     }
     if (gatekeeper.status === "transport_failure") {
@@ -151,6 +175,14 @@ export async function requireGatekeeperPass(options: {
         ...(gatekeeper.submission === undefined ? {} : { submission: gatekeeper.submission }),
       });
       options.hostActions.failInfrastructure(failure, options.context, options.toolCallId);
+    }
+    // #969: 给事中上呈 ends the secretariat parent — no bind/retry (不回中书省擅改).
+    // Parent beforeAccept converts this into audit_escalation with the officer receipt.
+    if (
+      gatekeeper.status === "escalate"
+      && options.subject.kind === "secretariat_verdict"
+    ) {
+      throw new GatekeeperDecisionError(gatekeeper);
     }
     // bounce | escalate | no_receipt: parent stands and may resubmit. Not a run abort.
     options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);

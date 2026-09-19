@@ -1040,9 +1040,9 @@ export async function summonParallelReviewerLenses(options: {
   return results;
 }
 
-/** Gate officer summons: notary/auditor via --source-run; inspector via pointer instruction. */
+/** Gate officer summons: notary/auditor via --source-run; inspector via pointer; countersign via ticket (#969). */
 export async function summonGateOfficer(options: {
-  readonly officer: "inspector" | "notary" | "auditor";
+  readonly officer: "inspector" | "notary" | "auditor" | "countersign";
   readonly sourceRunDirectory: string;
   readonly cwd: string;
   readonly home?: string;
@@ -1052,14 +1052,14 @@ export async function summonGateOfficer(options: {
   readonly signal?: AbortSignal;
   /**
    * Plain-language re-ask when the prior officer reply was not three-state (#753 / #756).
-   * All three officers: reviewReask → same-ticket resume summons.instruction.
+   * Officers: reviewReask → same-ticket resume summons.instruction.
    * Never concatenated into argv (inspector parentRunPath is the pure 卷宗指针).
    */
   readonly reask?: string;
   /**
    * In-flight parent 交卷 body (tool-call arguments). Relayed verbatim as officer
    * dialogue content when reask is absent (#879). Binding pointer stays on
-   * --source-run / 卷宗指针 argv — never a content substitute.
+   * --source-run / 卷宗指针 / ticket argv — never a content substitute.
    */
   readonly submission?: unknown;
   /** Pi-adapter inject — forwarded to summonPublicRole (not a parent-host override). */
@@ -1119,6 +1119,32 @@ export async function summonGateOfficer(options: {
         `卷宗指针：${options.sourceRunDirectory}`,
       ],
       ...common,
+    });
+  }
+  if (options.officer === "countersign") {
+    // #969: Secretariat submission gate → 给事中.
+    // Dialogue / identity instruction = parent typed payload 原话 (ADR 0079) or reask;
+    // no code-authored summons prose (#924). Ticket identity = parent run durable
+    // board binding only (readBoardTicketNumber) — receipt ticketNumber is payload
+    // content, never the sole identity source; parent true-unbound stays unbound.
+    // correlationId only on this officer — notary/auditor/inspector stay untouched.
+    const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
+    const correlationId = runIdFromRunDirectory(options.sourceRunDirectory);
+    if (correlationId === undefined || correlationId.trim() === "") {
+      throw new Error(
+        `countersign gate summon requires parent runId from sourceRunDirectory: ${options.sourceRunDirectory}`,
+      );
+    }
+    const { readBoardTicketNumber } = await import("./run-ticket-number.ts");
+    const parentTicket = await readBoardTicketNumber(options.sourceRunDirectory);
+    // Argv instruction = reask or parent payload bytes only (never a fabricated line).
+    const instruction = options.reask ?? gateReviewInstruction ?? "";
+    return summonPublicRole({
+      role: "countersign",
+      argv: ["--project", options.cwd, "--", instruction],
+      ...common,
+      correlationId,
+      ...(parentTicket === undefined ? {} : { boundTicketNumber: parentTicket }),
     });
   }
   // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath lookup key).

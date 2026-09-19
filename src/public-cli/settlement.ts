@@ -94,6 +94,8 @@ import {
   DIARIST_OUTPUT_TOOL_NAME,
 } from "../diarist-contracts.ts";
 import {
+  SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
+  SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
   SECRETARIAT_OUTPUT_TOOL_NAME,
 } from "../secretariat-contracts.ts";
 import {
@@ -3333,15 +3335,129 @@ export async function trySettleDiaristTerminalResult(
   return settleLawfulDiaristTerminalResult(admitted, authority, scope);
 }
 
+/**
+ * #969 seat projection sole authority: 给事中 terminal (署|上呈) booked as a
+ * durable custom entry (envelope-safe) — ledger accepted stays LLM params (#836).
+ * Never scan toolResult rows: those are memory-only on headless/ACP (#617/#959).
+ * Receipt bytes stay original; nested runId rides beside them.
+ * Caller must only apply this when the terminal-defining submission actually
+ * produced the officer entry (gate-bound converged, or 给事中 audit_escalation).
+ */
+function countersignTerminalFromEntries(
+  entries: readonly {
+    type?: string;
+    customType?: string;
+    data?: unknown;
+  }[],
+): import("../secretariat-contracts.ts").SecretariatCountersignTerminalFact | undefined {
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index];
+    if (entry?.type !== "custom") continue;
+    if (entry.customType !== SECRETARIAT_GATE_OFFICER_ENTRY_TYPE) continue;
+    const data =
+      entry.data !== null && typeof entry.data === "object" && !Array.isArray(entry.data)
+        ? (entry.data as Record<string, unknown>)
+        : undefined;
+    if (data?.officer !== "countersign") continue;
+    if (data.receipt === undefined) continue;
+    const runId =
+      typeof data.runId === "string" && data.runId.trim() !== ""
+        ? data.runId
+        : undefined;
+    return {
+      receipt: data.receipt,
+      ...(runId === undefined ? {} : { runId }),
+    };
+  }
+  return undefined;
+}
+
+function withCountersignTerminalFact(
+  roleOutcome: Extract<
+    import("./terminal.ts").TerminalRoleOutcome,
+    { kind: "accepted" | "audit_escalation" }
+  >,
+  officer: import("../secretariat-contracts.ts").SecretariatCountersignTerminalFact,
+): typeof roleOutcome {
+  const prior =
+    roleOutcome.decisiveFacts !== undefined && isRecord(roleOutcome.decisiveFacts)
+      ? roleOutcome.decisiveFacts
+      : {};
+  return {
+    ...roleOutcome,
+    decisiveFacts: {
+      ...prior,
+      [SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY]: officer,
+    },
+  };
+}
+
+/**
+ * Terminal-defining secretariat submission owns officer projection.
+ * Last readable secretariatStatus on accepted payloads decides: only gate-bound
+ * converged projects a prior durable officer entry. Parent escalate bypasses the
+ * gate and must not inherit a stale pass entry from an earlier turn (#969).
+ */
+function acceptedSecretariatDefinesOfficerProjection(
+  roleOutcome: Extract<
+    import("./terminal.ts").TerminalRoleOutcome,
+    { kind: "accepted" }
+  >,
+): boolean {
+  const payloads = roleOutcome.payloads ?? [];
+  for (let index = payloads.length - 1; index >= 0; index -= 1) {
+    const payload = payloads[index];
+    if (!isRecord(payload)) continue;
+    const status = payload.secretariatStatus;
+    if (typeof status !== "string") continue;
+    return status === "converged";
+  }
+  return false;
+}
+
 async function settleLawfulSecretariatTerminalResult(
   admitted: AdmittedSecretariatInvocation,
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+  const settled = await settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: "secretariat",
     toolName: SECRETARIAT_OUTPUT_TOOL_NAME,
   }, scope);
+  if (settled === undefined) return undefined;
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
+  const officer = countersignTerminalFromEntries(entries);
+  if (officer === undefined) return settled;
+
+  // 给事中上呈: public payloads = officer receipt; runId + receipt fact beside.
+  // This kind is produced only when beforeAccept booked the officer entry.
+  if (settled.roleOutcome.kind === "audit_escalation") {
+    return {
+      ...settled,
+      roleOutcome: withCountersignTerminalFact(
+        {
+          ...settled.roleOutcome,
+          payloads: [officer.receipt],
+        },
+        officer,
+      ),
+    };
+  }
+
+  // Pass (署): keep 中书省 payloads; present 给事中 判词 + runId via decisiveFacts.
+  // Parent escalate accepted terminal must not project a stale prior pass entry.
+  if (settled.roleOutcome.kind === "accepted") {
+    if (!acceptedSecretariatDefinesOfficerProjection(settled.roleOutcome)) {
+      return settled;
+    }
+    return {
+      ...settled,
+      roleOutcome: withCountersignTerminalFact(settled.roleOutcome, officer),
+    };
+  }
+
+  return settled;
 }
 
 /** Try to settle a lawful Secretariat Terminal; undefined only for genuine absence. */
