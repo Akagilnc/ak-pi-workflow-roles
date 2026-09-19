@@ -496,17 +496,20 @@ test("#953 multi-receipt summon parent-visible text keeps prior and conclusion f
     .get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!
     .execute("summon-multi", { instruction: "裁：#953 multi" }, undefined, undefined, ctx);
   const text = (result.content as Array<{ text: string }>)[0]?.text ?? "";
-  // Both receipts' typed facts reach parent face; conclusion markers present.
+  // Feature observation: both receipts' facts reach parent-visible text.
+  // Do not parse presentation carrier (readableGateItem is presentation-only).
   assert.ok(text.includes("MARKER-BOUNCE-ROUND"));
   assert.ok(text.includes("MARKER-SEAL-ROUND"));
   assert.ok(text.includes("01a0multi"));
   assert.ok(text.includes("accepted"));
-  // Parse only to assert typed keys — not lock serialization pretty-print.
-  const parsed = JSON.parse(text) as {
+  // Structure on typed face (details → parent content source), not carrier text.
+  const face = secretariatSummonParentContentSource(
+    result.details as Record<string, unknown>,
+  ) as {
     receipts?: unknown[];
     currentConclusion?: { note?: string };
   };
-  assert.equal(Array.isArray(parsed.receipts), true);
-  assert.equal(parsed.receipts?.length, 2);
-  assert.equal(parsed.currentConclusion?.note, "MARKER-SEAL-ROUND");
+  assert.equal(Array.isArray(face.receipts), true);
+  assert.equal(face.receipts?.length, 2);
+  assert.equal(face.currentConclusion?.note, "MARKER-SEAL-ROUND");
 });
