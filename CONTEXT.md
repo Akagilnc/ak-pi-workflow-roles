@@ -12,7 +12,7 @@
 - **最小必需验证(Minimum-required validation)**:输入输出只验证必须有的。见 ADR 0025。
 - **形状校验(Shape validation)**:拒收理由**只涉数据排布**（在场/缺席、键拼写、基数、类型、跨字段组合）；一旦需引用外部可观察事实或世界规则,即非形状校验。见 ADR 0055；CLAUDE.md 第 0 条。
 - **记账位(Ledger slot)**:每份角色输出唯一精确 key 及取值域(如 `judgeStatus`),供落账与呈现。不是编排控制流。见 ADR 0010、0040、0057。
-- **承接者判据(Successor test)**:**阻塞项（现行规则唯一出处）**——删与留之争的可核验判据：**删掉之后,那一类失败还有没有人接?有人接,删就是正事;没人接,保留就是容错。**「容错」本身不可核验,承接者可以:去代码里看该失败类别的处理路径是否与既有机制相交。本判据不倒置 ADR 0036 的举证责任——举证仍在保留方,只是把「特别理由」钉成「指出无替代承接者」。**无承接者是保留的必要条件,不是充分条件**:仍须过护栏三问,且不得落入 ADR 0036 的失格类别。关联：ADR 0036；`souls/quality-law.md` 三问。
+- **承接者判据(Successor test)**:删与留之争的可核验判据。见 ADR 0084；关联 ADR 0036、`souls/quality-law.md` 三问。
 - **同类扫描(Class-wide scan)**:以会拒绝输入输出的同类行为为范围扫描全仓;清单 ID 只是不完全实例索引,不是施工白名单。见 ADR 0045。
 - **语义 JSON 校验(Semantic JSON validation)**:对 JSON 值的生产语义进行校验。见 ADR 0021。
 - **发布 Schema(Published schema)**:供包外机器消费者使用的机器可读契约投影。见 ADR 0022。
@@ -37,7 +37,7 @@ _Avoid_:门下省（那是省名）。
 - **评审腿(Review leg)**:公开 Reviewer 命令省略 `--lens` 时并行发起的 completeness／correctness 普通单轴 Reviewer run。见 ADR 0010。
 - **Soul 审刑院(Soul-compliance audit)**:独立实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」。见 ADR 0062。
 - **卷宗(Dossier)**:一次 run 在候簿里的全部既落账材料；卷宗即真源。
-- **先立卷后审卷**:**阻塞项（现行规则唯一出处）**——被审对象必先落账,审计只从账上读；手递手传料非法。缺卷或缺被审对象走既有非零故障通道（`missing-dossier` / `missing-subject`）,public CLI 无合法 Receipt。实现事实见 `src/dossier-resolution.ts`。
+- **先立卷后审卷**:被审对象须先落账、审计只从账上读的取证次序。见 ADR 0085。
 - **绑定(Binding)**:targetHead 一类对象同一性机械校验能力；现行为 deferred。见 ADR 0004、0027、0037。
 - **Navigator(游奕使)**:旁听包角色结算的独立领航席；建议下一包角色/phase，不裁决、不授权、不执行。见 ADR 0061。
 - **路书(Route playbook)**:游奕使用于专业判断的非约束参考路线。_Avoid_:默认工作流、路由表、自动编排规则。见 ADR 0061。
