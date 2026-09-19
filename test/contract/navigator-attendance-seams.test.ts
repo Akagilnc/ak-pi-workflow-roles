@@ -943,18 +943,33 @@ test("public navigator session takes a seat edit for the next summon instead of 
     const { seedGitRepository } = await import("../helpers/pi-test-harness.ts");
     await withPrimaryAwareCleanup(
       async () => {
-        // Durable nest placement is owned by the archivist factory tracer; this case
-        // only locks seat-edit-between-prepares. context.home keeps ledger hermetic.
+        // Ledger home derives from HostContext.runDirectory (#852) — never context.home.
+        // This case only locks seat-edit-between-prepares; nest must stay under the temp root.
         seedGitRepository(root);
         await savePublicCliConfig(
           { seats: { navigator: { provider: "provider", model: "one" } } },
           root,
         );
+        const parentRun = join(
+          root,
+          ".ak-roles",
+          "books",
+          basename(root),
+          "unbound",
+          "runs",
+          "parent@coder",
+        );
+        await mkdir(join(parentRun, "session"), { recursive: true });
         const session = await createNativeNavigatorSessionFactory()({
-          context: { cwd: root, home: root, sessionManager: undefined } as never,
+          context: { cwd: root, runDirectory: parentRun, sessionManager: undefined } as never,
           subject: "seat edit between prepares",
           tool: undefined as never,
         });
+        const nestDir = session.recordPointer?.() ?? "";
+        assert.ok(
+          nestDir.startsWith(join(root, ".ak-roles")),
+          `navigator nest must stay under temp ledger, got ${nestDir}`,
+        );
         // Every prompt is an independent public summon whose nested CLI reads the
         // live seat table (#675 验收② / #617 DK-3): a seat edit between prepares
         // applies on the next summon and never makes attendance unavailable.
