@@ -210,9 +210,7 @@ test("#959 dispose during resume preflight must not start summon", async () => {
   await withTempRoot("navigator-host-dispose-preflight-", async (root) => {
     seedGitRepository(root);
     const firstDir = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navpre1@navigator");
-    const secondDir = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navpre2@navigator");
     await mkdir(join(firstDir, "session"), { recursive: true });
-    await mkdir(join(secondDir, "session"), { recursive: true });
     const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
     await mkdir(join(parentRun, "session"), { recursive: true });
 
@@ -223,14 +221,11 @@ test("#959 dispose during resume preflight must not start summon", async () => {
     let preflightChecks = 0;
     let summonCalls = 0;
     let prepared = 0;
-    const summon = async (options: {
-      readonly resumeRunId?: string;
-    }): Promise<PublicSummonResult> => {
+    const summon = async (): Promise<PublicSummonResult> => {
       summonCalls += 1;
-      const runDirectory = options.resumeRunId === undefined ? firstDir : secondDir;
       return {
         exitCode: 0,
-        runDirectory,
+        runDirectory: firstDir,
         terminal: {
           roleOutcome: {
             kind: "accepted",

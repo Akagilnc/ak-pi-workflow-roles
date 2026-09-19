@@ -974,32 +974,21 @@ test("public navigator session takes a seat edit for the next summon instead of 
   });
 });
 
-/** Shared #959 infra envelope: hung nest summon + real session_start/tool_result/shutdown. */
+/** Sole #959 grace case: hung nest summon + real session_start/tool_result/shutdown. */
 async function withNavigatorInfraGraceEnvelope(
   options: {
     readonly prefix: string;
     readonly runName: string;
     readonly subject: string;
     readonly authority: string;
-    readonly appendEntry?: (customType: string, data?: unknown) => void;
-    readonly wrapAttendance?: (
-      attendance: ReturnType<typeof createNavigatorAttendance>,
-    ) => ReturnType<typeof createNavigatorAttendance>;
-    readonly wrapSession?: (
-      session: Awaited<ReturnType<ReturnType<typeof createNativeNavigatorSessionFactory>>>,
-    ) => Awaited<ReturnType<ReturnType<typeof createNativeNavigatorSessionFactory>>>;
   },
   run: (harness: {
-    readonly home: string;
-    readonly runDir: string;
     readonly handlers: Map<string, (event: unknown, ctx: unknown) => unknown>;
     readonly sent: Array<{ customType?: string; details?: unknown }>;
     readonly ctx: { cwd: string; sessionManager: unknown; abort(): void; runDirectory: string };
-    readonly sessionManager: { getSessionFile(): string | undefined };
     readonly seenSignal: () => AbortSignal | undefined;
     readonly summonStarted: () => boolean;
     readonly nestStopped: () => boolean;
-    readonly sessionDisposeFinished: () => boolean;
   }) => Promise<void>,
 ): Promise<void> {
   await withActivationHome({ prefix: options.prefix }, async ({ home }) => {
@@ -1021,7 +1010,6 @@ async function withNavigatorInfraGraceEnvelope(
     let seenSignal: AbortSignal | undefined;
     let summonStarted = false;
     let nestStopped = false;
-    let sessionDisposeFinished = false;
     const summon = async (summonOptions: {
       readonly role: "navigator";
       readonly argv: readonly string[];
@@ -1063,9 +1051,7 @@ async function withNavigatorInfraGraceEnvelope(
       getActiveTools() {
         return [];
       },
-      appendEntry(customType: string, data?: unknown) {
-        options.appendEntry?.(customType, data);
-      },
+      appendEntry() {},
     };
     const envelopeHost: RoleEnvelopeHost = {
       host: pi as RoleHost,
@@ -1086,8 +1072,8 @@ async function withNavigatorInfraGraceEnvelope(
         authority: options.authority,
         subjectProvenance: "placeholder" as const,
       }),
-      createNavigatorAttendance: (attendanceOptions) => {
-        const attendance = createNavigatorAttendance({
+      createNavigatorAttendance: (attendanceOptions) =>
+        createNavigatorAttendance({
           context: attendanceOptions.context,
           role: attendanceOptions.role,
           phase: attendanceOptions.phase,
@@ -1106,38 +1092,30 @@ async function withNavigatorInfraGraceEnvelope(
               summonPublicRole: summon,
               hostRunResumable: async () => false,
             })(sessionOptions);
-            const wrapped = options.wrapSession?.(created) ?? created;
-            const innerDispose = wrapped.dispose.bind(wrapped);
+            const innerDispose = created.dispose.bind(created);
             return {
-              ...wrapped,
+              ...created,
               dispose: async () => {
                 await innerDispose();
-                // Hang after real dispose work so awaiting teardown re-blocks the court.
+                // Hang after real dispose work so awaiting teardown would re-block the court.
                 await new Promise<void>(() => {});
-                sessionDisposeFinished = true;
               },
             };
           },
           onEvent: attendanceOptions.onEvent,
-        });
-        return options.wrapAttendance?.(attendance) ?? attendance;
-      },
+        }),
     })(envelopeHost);
 
     const { SessionManager } = await import("@earendil-works/pi-coding-agent");
     const sessionManager = SessionManager.create(home, join(runDir, "session"));
     const ctx = { cwd: home, sessionManager, abort() {}, runDirectory: runDir };
     await run({
-      home,
-      runDir,
       handlers,
       sent,
       ctx,
-      sessionManager,
       seenSignal: () => seenSignal,
       summonStarted: () => summonStarted,
       nestStopped: () => nestStopped,
-      sessionDisposeFinished: () => sessionDisposeFinished,
     });
   });
 }
@@ -1156,7 +1134,7 @@ test("#959 post-role grace aborts hung nest; session_shutdown does not re-block"
         subject: "infra grace subject",
         authority: "infra grace authority",
       },
-      async ({ handlers, sent, ctx, seenSignal, summonStarted, nestStopped, sessionDisposeFinished }) => {
+      async ({ handlers, sent, ctx, seenSignal, summonStarted, nestStopped }) => {
         await handlers.get("session_start")?.({}, ctx);
 
         const toolResult = handlers.get("tool_result");
@@ -1197,11 +1175,6 @@ test("#959 post-role grace aborts hung nest; session_shutdown does not re-block"
         });
         assert.equal(seenSignal()?.aborted, true, "grace dispose must abort nested summon signal");
         assert.equal(nestStopped(), true, "nested summon must observe abort and stop");
-        assert.equal(
-          sessionDisposeFinished(),
-          false,
-          "grace must not await hung session.dispose teardown",
-        );
 
         await handlers.get("agent_settled")?.({}, ctx);
         const presentation = sent.find((message) => message.customType === NAVIGATOR_EVENT_TYPE);
@@ -1224,7 +1197,6 @@ test("#959 post-role grace aborts hung nest; session_shutdown does not re-block"
         );
         await flushEventLoopTurns(5);
         assert.equal(shutdownDone, true, "session_shutdown must finish without awaiting teardown");
-        assert.equal(sessionDisposeFinished(), false, "teardown must still be pending after shutdown");
         await shutdown;
       },
     );
