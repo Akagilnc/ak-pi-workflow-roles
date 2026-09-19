@@ -1036,6 +1036,25 @@ test("#969 non-pi converged → shared gate summons 给事中 → bounce → res
     };
     assert.equal(facts.secretariatStatus, "converged");
     assert.equal(facts.ticketNumber, 924);
+    // #969: 公开终局呈现给事中判词与 runId（settlement 唯一权威）.
+    const countersignTerminal = result.terminal.roleOutcome.decisiveFacts
+      ?.countersignTerminal as
+      | { receipt?: unknown; runId?: string }
+      | undefined;
+    assert.ok(countersignTerminal, "accepted terminal must project countersignTerminal");
+    assert.deepEqual(countersignTerminal.receipt, {
+      countersignStatus: "converged",
+      note: "署",
+    });
+    assert.equal(
+      typeof countersignTerminal.runId,
+      "string",
+      "accepted terminal must carry nested 给事中 runId",
+    );
+    assert.ok(
+      (countersignTerminal.runId as string).length > 0,
+      "nested runId must be non-empty",
+    );
     // Shared gate entered twice (bounce then pass); nested 符宝郎 on 给事中.
     assert.equal(
       gateCalls.filter((c) => c.kind === "secretariat_verdict").length,
@@ -1117,6 +1136,28 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
     };
     assert.equal(facts.countersignStatus, "escalate");
     assert.equal(facts.decisionGate?.question, "票面争议上呈？");
+    // #969: 上呈终局呈现给事中判词（payloads）与 runId（decisiveFacts）.
+    const countersignTerminal = result.terminal.roleOutcome.decisiveFacts
+      ?.countersignTerminal as
+      | { receipt?: unknown; runId?: string }
+      | undefined;
+    assert.ok(countersignTerminal, "escalate terminal must project countersignTerminal");
+    assert.deepEqual(countersignTerminal.receipt, {
+      countersignStatus: "escalate",
+      decisionGate: {
+        question: "票面争议上呈？",
+        options: ["再议", "准"],
+      },
+    });
+    assert.equal(
+      typeof countersignTerminal.runId,
+      "string",
+      "escalate terminal must carry nested 给事中 runId",
+    );
+    assert.ok(
+      (countersignTerminal.runId as string).length > 0,
+      "nested runId must be non-empty",
+    );
     assert.ok(
       gateCalls.some((c) => c.kind === "secretariat_verdict"),
       "must enter secretariat_verdict before 给事中 escalate",

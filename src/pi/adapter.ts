@@ -92,7 +92,11 @@ function requirePiGatekeeperPass(options: {
   hostActions: HostGatekeeperActions;
   toolCallId: string;
   submission?: unknown;
-}): Promise<void> {
+}): Promise<void | {
+  readonly officer: string;
+  readonly receipt: unknown;
+  readonly runId?: string;
+}> {
   return requireGatekeeperPass({
     context: options.context,
     subject: options.subject,

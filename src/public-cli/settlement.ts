@@ -94,7 +94,8 @@ import {
   DIARIST_OUTPUT_TOOL_NAME,
 } from "../diarist-contracts.ts";
 import {
-  SECRETARIAT_GATE_ESCALATE_ENTRY_TYPE,
+  SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
+  SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
   SECRETARIAT_OUTPUT_TOOL_NAME,
 } from "../secretariat-contracts.ts";
 import {
@@ -3335,30 +3336,58 @@ export async function trySettleDiaristTerminalResult(
 }
 
 /**
- * #969 seat projection: when 给事中上呈 ends the parent, public payloads are the
- * officer receipt booked as a durable custom entry (envelope-safe) — ledger
- * accepted stays LLM params (#836). Never scan toolResult rows: those are
- * memory-only on headless/ACP (#617/#959).
+ * #969 seat projection sole authority: 给事中 terminal (署|上呈) booked as a
+ * durable custom entry (envelope-safe) — ledger accepted stays LLM params (#836).
+ * Never scan toolResult rows: those are memory-only on headless/ACP (#617/#959).
+ * Receipt bytes stay original; nested runId rides beside them.
  */
-function countersignEscalateReceiptFromEntries(
+function countersignTerminalFromEntries(
   entries: readonly {
     type?: string;
     customType?: string;
     data?: unknown;
   }[],
-): unknown | undefined {
+): import("../secretariat-contracts.ts").SecretariatCountersignTerminalFact | undefined {
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const entry = entries[index];
     if (entry?.type !== "custom") continue;
-    if (entry.customType !== SECRETARIAT_GATE_ESCALATE_ENTRY_TYPE) continue;
+    if (entry.customType !== SECRETARIAT_GATE_OFFICER_ENTRY_TYPE) continue;
     const data =
       entry.data !== null && typeof entry.data === "object" && !Array.isArray(entry.data)
         ? (entry.data as Record<string, unknown>)
         : undefined;
     if (data?.officer !== "countersign") continue;
-    if (data.receipt !== undefined) return data.receipt;
+    if (data.receipt === undefined) continue;
+    const runId =
+      typeof data.runId === "string" && data.runId.trim() !== ""
+        ? data.runId
+        : undefined;
+    return {
+      receipt: data.receipt,
+      ...(runId === undefined ? {} : { runId }),
+    };
   }
   return undefined;
+}
+
+function withCountersignTerminalFact(
+  roleOutcome: Extract<
+    import("./terminal.ts").TerminalRoleOutcome,
+    { kind: "accepted" | "audit_escalation" }
+  >,
+  officer: import("../secretariat-contracts.ts").SecretariatCountersignTerminalFact,
+): typeof roleOutcome {
+  const prior =
+    roleOutcome.decisiveFacts !== undefined && isRecord(roleOutcome.decisiveFacts)
+      ? roleOutcome.decisiveFacts
+      : {};
+  return {
+    ...roleOutcome,
+    decisiveFacts: {
+      ...prior,
+      [SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY]: officer,
+    },
+  };
 }
 
 async function settleLawfulSecretariatTerminalResult(
@@ -3371,18 +3400,34 @@ async function settleLawfulSecretariatTerminalResult(
     toolName: SECRETARIAT_OUTPUT_TOOL_NAME,
   }, scope);
   if (settled === undefined) return undefined;
-  if (settled.roleOutcome.kind !== "audit_escalation") return settled;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
-  const receipt = countersignEscalateReceiptFromEntries(entries);
-  if (receipt === undefined) return settled;
-  return {
-    ...settled,
-    roleOutcome: {
-      ...settled.roleOutcome,
-      payloads: [receipt],
-    },
-  };
+  const officer = countersignTerminalFromEntries(entries);
+  if (officer === undefined) return settled;
+
+  // Escalate: public payloads = officer receipt (existing); runId + receipt fact beside.
+  if (settled.roleOutcome.kind === "audit_escalation") {
+    return {
+      ...settled,
+      roleOutcome: withCountersignTerminalFact(
+        {
+          ...settled.roleOutcome,
+          payloads: [officer.receipt],
+        },
+        officer,
+      ),
+    };
+  }
+
+  // Pass (署): keep 中书省 payloads; present 给事中 判词 + runId via decisiveFacts.
+  if (settled.roleOutcome.kind === "accepted") {
+    return {
+      ...settled,
+      roleOutcome: withCountersignTerminalFact(settled.roleOutcome, officer),
+    };
+  }
+
+  return settled;
 }
 
 /** Try to settle a lawful Secretariat Terminal; undefined only for genuine absence. */

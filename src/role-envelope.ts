@@ -237,7 +237,7 @@ export async function prepareRoleEnvelope(options: {
         typeof options.dependencies.packageRoot === "string"
           ? options.dependencies.packageRoot
           : undefined;
-      await requireGatekeeperPass({
+      return requireGatekeeperPass({
         context: gateOptions.context,
         subject: gateOptions.subject,
         ...(gateOptions.signal === undefined ? {} : { signal: gateOptions.signal }),

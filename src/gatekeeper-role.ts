@@ -12,6 +12,7 @@ import {
 } from "./package-contracts/gatekeeper-output.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
+import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
 export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
 
@@ -31,12 +32,29 @@ export type GatekeeperSubject =
  * Code only reads the conclusion field for queueing. Officer words ride as
  * `receipt` unchanged — no findings rewrite, no unreadable/unusable label,
  * no next-step selection for the parent.
+ * `runId` is the nested officer run id when known (summoned.runDirectory /
+ * terminal.runId) — public terminal projection consumes it (#969).
  */
 export type GatekeeperResult =
-  | { readonly status: "pass"; readonly officer: GateOfficer; readonly receipt: unknown }
+  | {
+      readonly status: "pass";
+      readonly officer: GateOfficer;
+      readonly receipt: unknown;
+      readonly runId?: string;
+    }
   /** bounce | escalate: both return the officer receipt to the parent (#753 / #756). */
-  | { readonly status: "bounce"; readonly officer: GateOfficer; readonly receipt: unknown }
-  | { readonly status: "escalate"; readonly officer: GateOfficer; readonly receipt: unknown }
+  | {
+      readonly status: "bounce";
+      readonly officer: GateOfficer;
+      readonly receipt: unknown;
+      readonly runId?: string;
+    }
+  | {
+      readonly status: "escalate";
+      readonly officer: GateOfficer;
+      readonly receipt: unknown;
+      readonly runId?: string;
+    }
   | {
       /**
        * Accepted reply whose conclusion is not pass|bounce|escalate.
@@ -46,6 +64,7 @@ export type GatekeeperResult =
       readonly status: "needs_reask";
       readonly officer: GateOfficer;
       readonly receipt: unknown;
+      readonly runId?: string;
     }
   | { readonly status: "no_receipt"; readonly stage: GateOfficer; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
   | {
@@ -258,6 +277,41 @@ function projectOfficerPayloads(
   return projectOfficerDecision(officer, payloads[payloads.length - 1], fallbackStatus);
 }
 
+/** Nested officer runId from summoned.runDirectory, else terminal.runId (#969). */
+export function officerRunIdFromSummoned(summoned: PublicSummonResult): string | undefined {
+  if (typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== "") {
+    const fromDir = runIdFromRunDirectory(summoned.runDirectory);
+    if (fromDir !== undefined) return fromDir;
+  }
+  const terminal = summoned.terminal;
+  if (
+    terminal !== undefined
+    && typeof terminal.runId === "string"
+    && terminal.runId.trim() !== ""
+  ) {
+    return terminal.runId;
+  }
+  return undefined;
+}
+
+function withOfficerRunId(
+  result: GatekeeperResult,
+  summoned: PublicSummonResult,
+): GatekeeperResult {
+  if (
+    result.status !== "pass"
+    && result.status !== "bounce"
+    && result.status !== "escalate"
+    && result.status !== "needs_reask"
+  ) {
+    return result;
+  }
+  if (typeof result.runId === "string" && result.runId.trim() !== "") return result;
+  const runId = officerRunIdFromSummoned(summoned);
+  if (runId === undefined) return result;
+  return { ...result, runId };
+}
+
 function projectOfficerTerminal(
   officer: GateOfficer,
   summoned: PublicSummonResult,
@@ -297,25 +351,34 @@ function projectOfficerTerminal(
     };
   }
   if (outcome.kind === "audit_escalation") {
-    return {
-      status: "escalate",
-      officer,
-      // This-court receipt only (#879) — historical rows remain on terminal.submissions.
-      receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
-    };
+    return withOfficerRunId(
+      {
+        status: "escalate",
+        officer,
+        // This-court receipt only (#879) — historical rows remain on terminal.submissions.
+        receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
+      },
+      summoned,
+    );
   }
   if (outcome.kind === "accepted") {
     // outcome.status is the fixture/compat leaf: production settlement leaves
     // it undefined once payloads are recorded, so this only matters when a
     // caller still supplies status without any recorded payload (#836 hang).
-    return projectOfficerPayloads(officer, thisCourt, outcome.status);
+    return withOfficerRunId(
+      projectOfficerPayloads(officer, thisCourt, outcome.status),
+      summoned,
+    );
   }
-  return {
-    status: "needs_reask",
-    officer,
-    // This-court receipt only (#879).
-    receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
-  };
+  return withOfficerRunId(
+    {
+      status: "needs_reask",
+      officer,
+      // This-court receipt only (#879).
+      receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
+    },
+    summoned,
+  );
 }
 
 /** Projection carrier for the shared submit envelope (ADR 0018). No lifecycle book here. */

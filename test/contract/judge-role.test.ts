@@ -1653,10 +1653,12 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
     const toolCallId = "judge-gk-bounce";
     const bounceSubmission = { status: "bounce", findings };
     // #753: raw officer receipt only — no findings rewrite / disposition mapping.
+    // #969: officer projection also carries nested runId when known.
     const expected = {
       status: "bounce" as const,
       officer: "notary" as const,
       receipt: bounceSubmission,
+      runId: "test-gk-bounce",
     };
     const faux = fauxProvider({ provider: "gk-tool-result", api: "gk-tool-result" });
     const model = faux.getModel();

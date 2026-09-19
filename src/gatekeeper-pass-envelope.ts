@@ -96,8 +96,20 @@ function bookDirectOfficerPointer(
 }
 
 /**
+ * Pass snapshot returned to the parent seat (#969).
+ * Carries officer receipt + nested runId so seat settlement can project the
+ * public terminal without a second authority.
+ */
+export type GatekeeperPassOutcome = {
+  readonly officer: GateOfficer;
+  readonly receipt: unknown;
+  readonly runId?: string;
+};
+
+/**
  * Shared envelope: project gate, book officer pointer, map onto host actions.
  * Review loop has no round cap (#753 no-round-cap).
+ * On pass, returns the officer snapshot (receipt + nested runId) for seat projection.
  */
 export async function requireGatekeeperPass(options: {
   readonly context: ExtensionContext | HostContext;
@@ -112,7 +124,7 @@ export async function requireGatekeeperPass(options: {
   readonly submission?: unknown;
   /** Lowest seam: same as runGatekeeper options.summonOfficer — offline tracers only. */
   readonly summonOfficer?: GateOfficerSummon;
-}): Promise<void> {
+}): Promise<GatekeeperPassOutcome | void> {
   let reask: string | undefined;
   // No round cap — end only on pass, bounce/escalate-to-parent, or real failure.
   const summonOfficer =
@@ -143,7 +155,15 @@ export async function requireGatekeeperPass(options: {
         options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
       }
     }
-    if (gatekeeper.status === "pass") return;
+    if (gatekeeper.status === "pass") {
+      return {
+        officer: projected.officer,
+        receipt: gatekeeper.receipt,
+        ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
+          ? { runId: gatekeeper.runId }
+          : {}),
+      };
+    }
     if (gatekeeper.status === "needs_reask") {
       reask = OFFICER_CONCLUSION_REASK;
       continue;

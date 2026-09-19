@@ -1072,7 +1072,7 @@ export function createSecretariatRoleRuntime(
             return undefined;
           }
           try {
-            await roleHost.requireGatekeeperPass!({
+            const pass = await roleHost.requireGatekeeperPass!({
               context: ctx,
               subject: { kind: "secretariat_verdict" },
               ...(signal === undefined ? {} : { signal }),
@@ -1081,6 +1081,27 @@ export function createSecretariatRoleRuntime(
               // #879: this-turn typed payload — identity-bound at submit site.
               submission: parameters,
             });
+            // #969: book 给事中 署 snapshot for seat settlement projection (receipt + runId).
+            // Ledger accepted stays LLM params (#836); public terminal reads this entry.
+            if (
+              pass !== undefined
+              && pass !== null
+              && typeof pass === "object"
+              && "receipt" in pass
+            ) {
+              const {
+                SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
+              } = await import("./secretariat-contracts.ts");
+              const runId =
+                typeof pass.runId === "string" && pass.runId.trim() !== ""
+                  ? pass.runId
+                  : undefined;
+              ctx.sessionManager.appendCustomEntry?.(SECRETARIAT_GATE_OFFICER_ENTRY_TYPE, {
+                officer: "countersign",
+                receipt: pass.receipt,
+                ...(runId === undefined ? {} : { runId }),
+              });
+            }
             return undefined;
           } catch (error) {
             // #969: 给事中上呈 ends parent with officer receipt (no retry / 不擅改).
@@ -1093,14 +1114,19 @@ export function createSecretariatRoleRuntime(
                 receipt !== null && typeof receipt === "object" && !Array.isArray(receipt)
                   ? (receipt as Record<string, unknown>)
                   : undefined;
+              const runId =
+                typeof error.result.runId === "string" && error.result.runId.trim() !== ""
+                  ? error.result.runId
+                  : undefined;
               // Durable on every host: envelope persists custom entries only
               // (toolResult rows are memory-only on headless/ACP — #617/#959).
-              const { SECRETARIAT_GATE_ESCALATE_ENTRY_TYPE } = await import(
-                "./secretariat-contracts.ts",
-              );
-              ctx.sessionManager.appendCustomEntry?.(SECRETARIAT_GATE_ESCALATE_ENTRY_TYPE, {
+              const {
+                SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
+              } = await import("./secretariat-contracts.ts");
+              ctx.sessionManager.appendCustomEntry?.(SECRETARIAT_GATE_OFFICER_ENTRY_TYPE, {
                 officer: "countersign",
                 receipt,
+                ...(runId === undefined ? {} : { runId }),
               });
               const { buildAuditEscalationResult } = await import("./audit-escalation.ts");
               return buildAuditEscalationResult(
