@@ -974,22 +974,57 @@ test("public navigator session takes a seat edit for the next summon instead of 
   });
 });
 
-test("#959 role_infrastructure_failure settlement feed shares post-role grace", async (t) => {
-  // Real entry: admitted session_start → tool_result infrastructure settlement →
-  // settleNavigatorProjection. Never-completing settle must not hang the role;
-  // mock timers advance production 10s grace without wall-clock wait.
+test("#959 post-role grace aborts hung nest; session_shutdown does not re-block", async (t) => {
+  // Real shared entry: session_start → infrastructure settlement → attendance settle →
+  // public-session summon (listens to HostContext.signal) → grace dispose aborts nest →
+  // session_shutdown must return without awaiting nested teardown (#959 reopen).
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   try {
     await withActivationHome({ prefix: "ak-nav-infra-grace-" }, async ({ home }) => {
+      seedGitRepository(home);
+      await mkdir(join(home, ".ak-roles"), { recursive: true });
+      await writeFile(
+        join(home, ".ak-roles", "public-cli.json"),
+        `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+      );
+      const modelSettingPath = join(home, "navigator-model.json");
+      await writeFile(modelSettingPath, `${JSON.stringify({ model: "provider/model" })}\n`);
+
       const runDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-infra-grace");
       await mkdir(join(runDir, "session"), { recursive: true });
       process.env.AK_ROLE_RUN_DIR = runDir;
 
       const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
       const sent: Array<{ customType?: string; details?: unknown }> = [];
-      let disposeCalls = 0;
-      let settleCalls = 0;
+      let seenSignal: AbortSignal | undefined;
+      let summonStarted = false;
+      let nestStopped = false;
+      const summon = async (options: {
+        readonly role: "navigator";
+        readonly argv: readonly string[];
+        readonly cwd: string;
+        readonly home?: string;
+        readonly resumeRunId?: string;
+        readonly signal?: AbortSignal;
+      }) => {
+        seenSignal = options.signal;
+        summonStarted = true;
+        assert.ok(seenSignal, "shared attendance must forward cancel signal into summon");
+        await new Promise<void>((_resolve, reject) => {
+          const onAbort = () => {
+            nestStopped = true;
+            reject(seenSignal?.reason ?? new Error("navigator nest aborted"));
+          };
+          if (seenSignal!.aborted) {
+            onAbort();
+            return;
+          }
+          seenSignal!.addEventListener("abort", onAbort, { once: true });
+        });
+        return { exitCode: 1 };
+      };
+
       const pi = {
         registerFlag() {},
         getFlag(name: string) {
@@ -1020,31 +1055,36 @@ test("#959 role_infrastructure_failure settlement feed shares post-role grace", 
       createRoleRuntimeExtension({
         loadJudgeSoul: async () => "JUDGE LAW",
         loadNavigatorWorkContext: async () => ({
+          // Placeholder skips warm prepare on session_start so the hung nest is
+          // only the settlement-feed summon under post-role grace (#959).
           subjectKey: `${runDir}/work`,
           subject: "infra grace subject",
           authority: "infra grace authority",
-          subjectProvenance: "role_input" as const,
+          subjectProvenance: "placeholder" as const,
         }),
-        createNavigatorAttendance: () => ({
-          prepare() {},
-          setWorkContext() {},
-          warmHelp() {},
-          isPreparing: () => false,
-          settle: async () => {
-            settleCalls += 1;
-            await new Promise<void>(() => {
-              /* never settles — hung host feed round */
-            });
-          },
-          dispose() {
-            disposeCalls += 1;
-          },
+        createNavigatorAttendance: (options) => createNavigatorAttendance({
+          context: options.context,
+          role: options.role,
+          phase: options.phase,
+          subjectKey: options.subjectKey,
+          subject: options.subject,
+          authority: options.authority,
+          invocationId: options.invocationId,
+          ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
+          loadSoul: async () => "navigator soul",
+          loadRoleHelp: async () => "Usage: ak-role navigator --help",
+          modelSettingPath,
+          createSession: createNativeNavigatorSessionFactory({
+            summonPublicRole: summon,
+            hostRunResumable: async () => false,
+          }),
+          onEvent: options.onEvent,
         }),
       })(envelopeHost);
 
       const { SessionManager } = await import("@earendil-works/pi-coding-agent");
       const sessionManager = SessionManager.create(home, join(runDir, "session"));
-      const ctx = { cwd: home, sessionManager, abort() {} };
+      const ctx = { cwd: home, sessionManager, abort() {}, runDirectory: runDir };
       await handlers.get("session_start")?.({}, ctx);
 
       const toolResult = handlers.get("tool_result");
@@ -1071,16 +1111,20 @@ test("#959 role_infrastructure_failure settlement feed shares post-role grace", 
         },
       );
 
-      await flushEventLoopTurns(8);
-      assert.equal(settleCalls, 1, "settlement feed must start");
+      await waitForEventLoopCondition(() => summonStarted, {
+        label: "settlement feed must start nested public summon",
+        timeoutMs: 2_000,
+      });
       assert.equal(settled, false, "hung feed must still be inside grace");
+      assert.equal(seenSignal?.aborted, false, "nest stays live until grace dispose");
 
       t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);
-      await waitForEventLoopCondition(() => settled, {
-        label: "post-role grace must release hung infrastructure settlement",
-        timeoutMs: 500,
+      await waitForEventLoopCondition(() => settled && nestStopped, {
+        label: "post-role grace must release parent and abort nested summon",
+        timeoutMs: 1_000,
       });
-      assert.equal(disposeCalls >= 1, true, "grace timeout disposes late attendance");
+      assert.equal(seenSignal?.aborted, true, "grace dispose must abort nested summon signal");
+      assert.equal(nestStopped, true, "nested summon must observe abort and stop");
 
       await handlers.get("agent_settled")?.({}, ctx);
       const presentation = sent.find((message) => message.customType === NAVIGATOR_EVENT_TYPE);
@@ -1094,8 +1138,6 @@ test("#959 role_infrastructure_failure settlement feed shares post-role grace", 
         "Navigator exceeded post-role delivery grace",
       );
 
-      // #959 reopen: parent terminalization runs session_shutdown after grace; it must
-      // not re-block the court on nested attendance teardown.
       const shutdownStarted = Date.now();
       await handlers.get("session_shutdown")?.({}, ctx);
       assert.ok(
