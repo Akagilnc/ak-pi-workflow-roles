@@ -319,5 +319,3 @@ test("#969 secretariat_verdict routes to countersign and maps countersignStatus"
     }
   },
 );
-
-
