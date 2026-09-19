@@ -60,9 +60,9 @@ ak-role config set-auto-resume-limit 3
 | --- | --- | --- |
 | judge, countersign | `codex` | `~/.codex/config.toml`: `model_auto_compact_token_limit` |
 | coder, fixer | `grok-build` | `~/.grok/config.toml`: `[model."<id>"] auto_compact_threshold_percent` |
-| all other seats | `pi` (package default) | `~/.pi/agent/settings.json`: `compaction.reserveTokens` (trigger = model window − this value; needs pi ≥ 0.85.1) |
+| all other LLM seats (the analyst is deterministic and has no host) | `pi` (package default) | `~/.pi/agent/settings.json`: `compaction.reserveTokens` (trigger = model window − this value; needs pi ≥ 0.85.1) |
 
-Set a seat with `ak-role config set-host <seat> <host>`; use `--host` for a one-off.
+Set a seat with `ak-role config set-host <seat> <host>`; use `--host` for a one-off. Before moving a seat, make sure its model is one that host can run (for example `codex` only runs OpenAI-family models); otherwise set it first with `ak-role config set <seat> <provider/model[:thinking]>`.
 
 **Host providers (#788):** seat rows keep one provider name. Owner edits `~/.ak-roles/host-providers.json` (`{ "hermes": { "xai": "xai-oauth" } }`); code only reads it. Missing table entries ask the host directory (hermes this ticket): unique match wins, zero or many fail loud. Priority is table > unique > fail — no package discretion. `config show` prints the table as written.
 

@@ -60,9 +60,9 @@ ak-role config set-auto-resume-limit 3
 | --- | --- | --- |
 | 大理寺（judge）、给事中（countersign） | `codex` | `~/.codex/config.toml`：`model_auto_compact_token_limit` |
 | 将作监（coder）、修内司（fixer） | `grok-build` | `~/.grok/config.toml`：`[model."<id>"] auto_compact_threshold_percent` |
-| 其余席位 | `pi`（包默认） | `~/.pi/agent/settings.json`：`compaction.reserveTokens`（触发线＝模型窗口−该值；需 pi ≥ 0.85.1） |
+| 其余 LLM 席位（太史是确定性机制，无宿主） | `pi`（包默认） | `~/.pi/agent/settings.json`：`compaction.reserveTokens`（触发线＝模型窗口−该值；需 pi ≥ 0.85.1） |
 
-配席：`ak-role config set-host <seat> <host>`；单次改道仍用 `--host`。
+配席：`ak-role config set-host <seat> <host>`；单次改道仍用 `--host`。换宿主前先确认该席的 model 是该宿主跑得了的（例如 `codex` 只跑 OpenAI 系模型），否则先 `ak-role config set <seat> <provider/model[:thinking]>`。
 
 **宿主 provider 表（#788）：** 席位行只写一份 provider 名。owner 手改 `~/.ak-roles/host-providers.json`（形如 `{ "hermes": { "xai": "xai-oauth" } }`）；代码只读。表里没有的问宿主目录（本票 hermes）：唯一即用，零个或多个响亮失败。优先级：表 > 唯一 > 失败，代码无裁量。`config show` 原样打印该表。
 
