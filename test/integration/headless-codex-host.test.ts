@@ -243,13 +243,15 @@ test("#959 missing host binary stays activation spawn-failed with real path", as
     assert.equal(result.knownFailure?.cause, "activation", JSON.stringify(result));
     assert.equal(result.knownFailure?.identity?.code, "spawn-failed");
     assert.equal(result.knownFailure?.identity?.name, "HeadlessSpawnFailure");
-    const diagnostic = result.knownFailure?.diagnostic ?? "";
-    assert.ok(diagnostic.includes("ENOENT") || diagnostic.includes(missingBin), diagnostic);
     const details = result.knownFailure?.details as { binary?: string } | undefined;
     assert.equal(details?.binary, missingBin);
-    // Host-layer producer only; full chain to terminal.navigator.reason is
-    // asserted in navigator-attendance "#959 missing host binary diagnostic…".
-    assert.notEqual(diagnostic.trim(), "", "missing-binary diagnostic must stay non-empty");
+    // Host-layer producer only — structured identity + binary path; no free-text
+    // diagnostic matching. Full chain is navigator-attendance 怎么验#2.
+    assert.notEqual(
+      (result.knownFailure?.diagnostic ?? "").trim(),
+      "",
+      "missing-binary diagnostic must stay non-empty",
+    );
   } finally {
     ledger.dispose();
   }
