@@ -56,7 +56,7 @@ ak-role config set-auto-resume-limit 3
 
 **推荐宿主（省 token，[#971](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/971)）：** 长腿的上下文靠宿主自带的自动压缩封顶，阈值写在各宿主自己的配置里，本包不代写、不另造压缩机制。
 
-| 席位 | 推荐 host | 该宿主的压缩阈值配置 |
+| 席位 | 推荐 host | 该宿主的压缩阈值配置（默认路径；宿主自己的家目录覆盖照其约定） |
 | --- | --- | --- |
 | 大理寺（judge）、给事中（countersign） | `codex` | `~/.codex/config.toml`：`model_auto_compact_token_limit` |
 | 将作监（coder）、修内司（fixer） | `grok-build` | `~/.grok/config.toml`：`[model."<id>"] auto_compact_threshold_percent` |

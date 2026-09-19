@@ -56,7 +56,7 @@ ak-role config set-auto-resume-limit 3
 
 **Recommended hosts (token saving, [#971](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/971)):** long legs are capped by each host's own auto-compaction; the threshold lives in that host's own config. This package neither writes those files nor adds a compaction mechanism of its own.
 
-| Seat | Recommended host | Where that host's compaction threshold lives |
+| Seat | Recommended host | Where that host's compaction threshold lives (default path; each host's own home override applies) |
 | --- | --- | --- |
 | judge, countersign | `codex` | `~/.codex/config.toml`: `model_auto_compact_token_limit` |
 | coder, fixer | `grok-build` | `~/.grok/config.toml`: `[model."<id>"] auto_compact_threshold_percent` |
