@@ -1180,8 +1180,15 @@ test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
       home,
       gateCalls,
       submissionGateHost: "claude",
-      countersignSequence: [],
+      // Prior pass books a durable officer entry; parent escalate must not inherit it.
+      countersignSequence: [
+        { details: { countersignStatus: "converged", note: "先署" } },
+      ],
       steps: [
+        {
+          kind: "output",
+          details: { secretariatStatus: "converged", ticketNumber: 924 },
+        },
         {
           kind: "output",
           details: {
@@ -1215,7 +1222,9 @@ test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
     );
     assert.equal(result.exitCode, 0, capture.stderr.join(""));
     assert.ok(result.terminal);
-    const facts = objectPayloads(result.terminal.roleOutcome)[0] as {
+    assert.equal(result.terminal.roleOutcome.kind, "accepted");
+    const payloads = objectPayloads(result.terminal.roleOutcome);
+    const facts = payloads[payloads.length - 1] as {
       secretariatStatus: string;
       decisionGate?: { question?: string };
     };
@@ -1223,8 +1232,14 @@ test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
     assert.equal(facts.decisionGate?.question, "是否拆席？");
     assert.equal(
       gateCalls.filter((c) => c.kind === "secretariat_verdict").length,
-      0,
-      "escalate must not enter secretariat_verdict gate",
+      1,
+      "only prior converged enters secretariat_verdict; escalate skips",
+    );
+    // Stale prior 给事中署 must not project onto parent-escalate terminal.
+    assert.equal(
+      result.terminal.roleOutcome.decisiveFacts?.countersignTerminal,
+      undefined,
+      "parent escalate terminal must not project prior countersignTerminal",
     );
   });
 });

@@ -3340,6 +3340,8 @@ export async function trySettleDiaristTerminalResult(
  * durable custom entry (envelope-safe) — ledger accepted stays LLM params (#836).
  * Never scan toolResult rows: those are memory-only on headless/ACP (#617/#959).
  * Receipt bytes stay original; nested runId rides beside them.
+ * Caller must only apply this when the terminal-defining submission actually
+ * produced the officer entry (gate-bound converged, or 给事中 audit_escalation).
  */
 function countersignTerminalFromEntries(
   entries: readonly {
@@ -3390,6 +3392,29 @@ function withCountersignTerminalFact(
   };
 }
 
+/**
+ * Terminal-defining secretariat submission owns officer projection.
+ * Last readable secretariatStatus on accepted payloads decides: only gate-bound
+ * converged projects a prior durable officer entry. Parent escalate bypasses the
+ * gate and must not inherit a stale pass entry from an earlier turn (#969).
+ */
+function acceptedSecretariatDefinesOfficerProjection(
+  roleOutcome: Extract<
+    import("./terminal.ts").TerminalRoleOutcome,
+    { kind: "accepted" }
+  >,
+): boolean {
+  const payloads = roleOutcome.payloads ?? [];
+  for (let index = payloads.length - 1; index >= 0; index -= 1) {
+    const payload = payloads[index];
+    if (!isRecord(payload)) continue;
+    const status = payload.secretariatStatus;
+    if (typeof status !== "string") continue;
+    return status === "converged";
+  }
+  return false;
+}
+
 async function settleLawfulSecretariatTerminalResult(
   admitted: AdmittedSecretariatInvocation,
   authority: DurablePrincipalAuthority,
@@ -3405,7 +3430,8 @@ async function settleLawfulSecretariatTerminalResult(
   const officer = countersignTerminalFromEntries(entries);
   if (officer === undefined) return settled;
 
-  // Escalate: public payloads = officer receipt (existing); runId + receipt fact beside.
+  // 给事中上呈: public payloads = officer receipt; runId + receipt fact beside.
+  // This kind is produced only when beforeAccept booked the officer entry.
   if (settled.roleOutcome.kind === "audit_escalation") {
     return {
       ...settled,
@@ -3420,7 +3446,11 @@ async function settleLawfulSecretariatTerminalResult(
   }
 
   // Pass (署): keep 中书省 payloads; present 给事中 判词 + runId via decisiveFacts.
+  // Parent escalate accepted terminal must not project a stale prior pass entry.
   if (settled.roleOutcome.kind === "accepted") {
+    if (!acceptedSecretariatDefinesOfficerProjection(settled.roleOutcome)) {
+      return settled;
+    }
     return {
       ...settled,
       roleOutcome: withCountersignTerminalFact(settled.roleOutcome, officer),

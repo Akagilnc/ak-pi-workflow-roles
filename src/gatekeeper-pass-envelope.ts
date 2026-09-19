@@ -7,6 +7,7 @@
  *   parent submit → summon officer → read conclusion field
  *   pass → accept end
  *   bounce | escalate → raw officer receipt as tool result back to parent
+ *     — except secretariat_verdict escalate: throw → parent audit_escalation, not raw receipt (#969)
  *   not three-state → resume officer with plain-language re-ask (no round cap)
  *   transport / no_receipt → present honestly
  * Four pairs: countersign↔notary, judge↔auditor, worker↔inspector, secretariat↔countersign (#969).
