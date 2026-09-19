@@ -328,7 +328,7 @@ export async function settleHostEndedNoReceipt(
     attemptPointer: `current:${admitted.runDirectory}`,
   });
   const coordinates = coordinatesFromAdmitted(authority, admitted);
-  await clearOppositeTerminalArtifactFace(admitted.runDirectory, "empty");
+  await clearOppositeTerminalArtifactFace(admitted.runDirectory);
   return withOptionalGateProjection(
     {
       roleOutcome: {
@@ -2352,10 +2352,13 @@ async function removeFaceIfPresent(path: string): Promise<void> {
 /**
  * #953: artifact face reflects the current terminal only.
  * Reader contract owns the full adoptable set (conventional trio + fixed
- * fallbacks + seam-owned unique). Each current retains only its own
- * conventional face when about to republish; every other seam-owned face
- * clears — report / error / empty share one method (no per-branch face list).
- * empty retains nothing; does not publish a no_receipt-shaped public artifact.
+ * fallbacks + seam-owned unique). Clear every seam-owned face before the
+ * new current publishes — including the conventional name about to be
+ * rewritten. Retaining that name left directory collision plants in place
+ * (supported publish input); writer then fell back while the reader stopped
+ * at EISDIR on the stale conventional path and never adopted the fallback.
+ * report / error / empty share one method (no per-branch face list).
+ * empty publishes nothing; does not create a no_receipt-shaped public artifact.
  * Non-terminal materials stay. Face names may be directory collision plants —
  * remove recursively. Unique ownership is listSeamOwnedUniqueErrorFacePaths:
  * parent runs/ faces clear only when body.runId binds; unparseable runId → none.
@@ -2363,22 +2366,13 @@ async function removeFaceIfPresent(path: string): Promise<void> {
  */
 export async function clearOppositeTerminalArtifactFace(
   runDirectory: string,
-  current: "report" | "error" | "empty",
 ): Promise<void> {
   const artifactsDir = roleRunArtifactsDirectory(runDirectory);
-  // Retain only the conventional face this current will (re)publish, if any.
-  const retainConventional =
-    current === "report"
-      ? "report.json"
-      : current === "error"
-        ? "error.json"
-        : null;
   for (const file of RUN_TERMINAL_ARTIFACT_FILES) {
-    if (file === retainConventional) continue;
     await removeFaceIfPresent(join(artifactsDir, file));
   }
-  // Fixed fallbacks + unique are never the retained face of a fresh current:
-  // subsequent publish writes the new durable path after this clear.
+  // Fixed fallbacks + unique clear too; subsequent publish writes the new
+  // durable path after this clear (conventional first when writable).
   for (const relative of RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS) {
     await removeFaceIfPresent(join(runDirectory, relative));
   }
@@ -2389,10 +2383,9 @@ export async function clearOppositeTerminalArtifactFace(
 
 async function ensureTerminalArtifactFace(
   runDirectory: string,
-  current: "report" | "error",
 ): Promise<string> {
   const artifactsDir = await ensureRunArtifactsDir(runDirectory);
-  await clearOppositeTerminalArtifactFace(runDirectory, current);
+  await clearOppositeTerminalArtifactFace(runDirectory);
   return artifactsDir;
 }
 
@@ -2404,7 +2397,7 @@ export async function publishJudgeArtifacts(
   // #419: history first — report/evidence stay last-write-wins views only
   // because every attempt's complete result has already been appended.
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -2459,7 +2452,7 @@ export async function publishCoderArtifacts(
   } = {},
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -2728,7 +2721,7 @@ export async function publishFixerArtifacts(
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -2854,7 +2847,7 @@ export async function publishCollectorArtifacts(
   coordinates: DurablePrincipalCoordinates,
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -3032,7 +3025,7 @@ export async function publishDoctorArtifacts(
   } = {},
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -3215,10 +3208,7 @@ async function publishSeatAcceptedArtifacts(
     },
     roleOutcome,
   );
-  const artifactsDir = await ensureTerminalArtifactFace(
-    admitted.runDirectory,
-    "report",
-  );
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -3669,7 +3659,7 @@ export async function publishReviewerArtifacts(
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -3843,7 +3833,7 @@ export async function publishMergerArtifacts(
   },
 ): Promise<TerminalArtifactRef[]> {
   await appendRunAttemptHistory({ role: admitted.role, runId: admitted.runId, sessionFile: coordinates.sessionFile }, roleOutcome);
-  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory, "report");
+  const artifactsDir = await ensureTerminalArtifactFace(admitted.runDirectory);
   const reportPath = join(artifactsDir, "report.json");
   const evidencePath = join(artifactsDir, "evidence.json");
   await writeFile(
@@ -4122,7 +4112,7 @@ export async function publishFailureArtifacts(
     admitted.runDirectory,
   );
   // #953: failure face must not leave a prior success report as the durable view.
-  await clearOppositeTerminalArtifactFace(admitted.runDirectory, "error");
+  await clearOppositeTerminalArtifactFace(admitted.runDirectory);
   const priorIssues: PublicationAttempt[] =
     baseAttempt === undefined ? [] : [baseAttempt];
   // #419: each attempt's complete failure result joins the appended history
@@ -4260,7 +4250,7 @@ export async function settleFailureTerminalResult(
             }
             // #478: no_receipt is still a public Terminal — project accepted gate facts.
             // #953: empty public terminal face — clear every reader-adoptable prior face.
-            await clearOppositeTerminalArtifactFace(admitted.runDirectory, "empty");
+            await clearOppositeTerminalArtifactFace(admitted.runDirectory);
             return withOptionalGateProjection(
               {
                 roleOutcome: { kind: "no_receipt", role: admitted.role, status: "no-accepted-receipt", ...facts, decisiveFacts },

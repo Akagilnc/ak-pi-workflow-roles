@@ -13,6 +13,7 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { formatFailureStderrDiagnostic } from "../../src/public-cli/settlement.ts";
+import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   withTempHome,
@@ -34,15 +35,15 @@ async function plantDirectoryFace(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
 }
 
-// Error Artifact durable-fallback depth matrix (#420 整改并一)：单碰撞与耗尽三名
-// 同根「发布碰撞 → 耐久回退保原因」，收成一条两深度场景案。
-test("Error Artifact publication collisions retain original cause via durable fallback at both depths", async () => {
+// Error Artifact directory-face collision matrix (#420 并一；#953 清面后 reader 可见)：
+// 单碰撞与耗尽固定名同根「目录占位 → 发布前清面 → 耐久发布保原因，reader 见本次失败」。
+test("Error Artifact publication collisions retain original cause and reader-visible failure at both depths", async () => {
   const rows = [
     {
       label: "single primary collision",
       runId: "run-error-artifact-collision-001",
       plant: async (runDir: string) => {
-        // Primary Error Artifact path occupied as a directory → writeFile EISDIR.
+        // Primary Error Artifact path occupied as a directory → clear must remove it.
         await plantDirectoryFace(join(runDir, "artifacts", "error.json"));
       },
     },
@@ -51,7 +52,7 @@ test("Error Artifact publication collisions retain original cause via durable fa
       runId: "run-error-artifact-exhausted-001",
       plant: async (runDir: string) => {
         // Occupy every fixed preferred Error Artifact candidate as a directory.
-        // Settlement must not escape to outer catch with only the last EISDIR.
+        // Clear drops them all; publish must still settle a durable failure face.
         await plantDirectoryFace(join(runDir, "artifacts", "error.json"));
         await plantDirectoryFace(join(runDir, "artifacts", "error.settlement.json"));
         await plantDirectoryFace(join(runDir, "error.settlement.json"));
@@ -64,6 +65,7 @@ test("Error Artifact publication collisions retain original cause via durable fa
       await mkdir(project, { recursive: true });
       seedGitProject(project);
       const { io, stdout, stderr } = captureIo();
+      let runDir: string | undefined;
       const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, `activation then ${row.label}`],
         {
           packageRoot,
@@ -76,7 +78,7 @@ test("Error Artifact publication collisions retain original cause via durable fa
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            const runDir = join(sessionDir, "..");
+            runDir = join(sessionDir, "..");
             await row.plant(runDir);
             await mkdir(sessionDir, { recursive: true });
             await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -108,15 +110,17 @@ test("Error Artifact publication collisions retain original cause via durable fa
       const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
         cause: string;
         diagnostic: string;
-        publicationIssues?: Array<{ identity?: { code?: string | number } }>;
       };
       assert.equal(errorBody.cause, "activation", row.label);
       assert.equal(errorBody.diagnostic, "Error: original activation boom\n", row.label);
-      assert.ok(Array.isArray(errorBody.publicationIssues), row.label);
-      assert.ok(
-        errorBody.publicationIssues!.some((issue) => issue.identity?.code === "EISDIR"),
-        `${row.label}: durable fallback must retain the primary publication collision identity`,
-      );
+      // #953: public terminal face must reflect this failure, not stale directory EISDIR.
+      assert.ok(runDir !== undefined, row.label);
+      const read = await readRunTerminalArtifact(runDir!);
+      assert.equal(read.status, "present", row.label);
+      if (read.status === "present") {
+        assert.equal(read.body.cause, "activation", row.label);
+        assert.equal(read.body.diagnostic, "Error: original activation boom\n", row.label);
+      }
       // One complete Terminal — must not escape to outer raw catch with zero stdout.
       assert.equal(stdout.length, 1, row.label);
       assert.equal(result.terminal !== undefined, true, row.label);

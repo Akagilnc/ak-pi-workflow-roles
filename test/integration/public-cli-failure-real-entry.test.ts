@@ -238,14 +238,17 @@ test("public CLI multi-turn audit escalate covers audited seats", async () => {
 // Publication errno matrix: lawful session, then publication fails on a hostile
 // destination — the errno identity must survive, never washed into output absence.
 test("public report publication failures retain typed errno identity", async () => {
-  // EISDIR: report.json occupied as a directory. Audit-incomplete publication
-  // path was abolished (#475); error-artifact publication stays on failure channel.
+  // #953 clears conventional faces before rewrite, so report.json-as-directory no
+  // longer reaches writeFile. Lock artifacts/ instead — clear no-ops on absent
+  // faces; writeFile then EACCES. Audit-incomplete publication path abolished (#475).
   const rows = [
     {
-      label: "EISDIR on report publication",
-      // Converged session is lawful; report.json as a directory makes writeFile EISDIR.
+      label: "EACCES on report publication",
       plant: async (runDir: string) => {
-        await mkdir(join(runDir, "artifacts", "report.json"), { recursive: true });
+        const artifactsDir = join(runDir, "artifacts");
+        await mkdir(artifactsDir, { recursive: true });
+        await chmod(artifactsDir, 0o555);
+        return artifactsDir;
       },
       seedSession: async (sessionFile: string) => {
         await writeFile(
@@ -262,7 +265,7 @@ test("public report publication failures retain typed errno identity", async () 
           "utf8",
         );
       },
-      expectedCode: "EISDIR",
+      expectedCode: "EACCES",
     },
   ] as const;
   for (const row of rows) {
@@ -271,58 +274,69 @@ test("public report publication failures retain typed errno identity", async () 
       await mkdir(project, { recursive: true });
       seedGitProject(project);
       const { io, stdout, stderr } = captureIo();
-      const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then publish fails"],
-        {
-          packageRoot,
-          home,
-          cwd: project,
-          createRunId: () => "run-audit-artifact-errno-001",
-          io,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+      let lockedArtifactsDir: string | undefined;
+      try {
+        const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "lawful then publish fails"],
+          {
             packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            const runDir = join(sessionDir, "..");
-            await row.plant(runDir);
-            await mkdir(sessionDir, { recursive: true });
-            await row.seedSession(join(sessionDir, "session.jsonl"));
-            return {
-              code: 0,
-              stdout: "",
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-              sealedAcceptance: {
-                role: "judge" as const,
-                details: { judgeStatus: "converged" },
-              },
-            };
+            home,
+            cwd: project,
+            createRunId: () => "run-audit-artifact-errno-001",
+            io,
+            roleTurnHost: roleTurnHostFromLegacyPiRunner({
+              packageRoot,
+              principalAuthority: piDurablePrincipalAuthority,
+              piRunner: async (args) => {
+              const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+              const runDir = join(sessionDir, "..");
+              lockedArtifactsDir = await row.plant(runDir);
+              await mkdir(sessionDir, { recursive: true });
+              await row.seedSession(join(sessionDir, "session.jsonl"));
+              return {
+                code: 0,
+                stdout: "",
+                stderr: "",
+                timedOut: false,
+                args: [...args],
+                sealedAcceptance: {
+                  role: "judge" as const,
+                  details: { judgeStatus: "converged" },
+                },
+              };
+            },
+            }),
           },
-          }),
-        },
-      );
-      assert.equal(result.exitCode, 1, row.label);
-      assert.equal(stdout.length, 1, row.label);
-      assert.equal(stderr.length, 1, row.label);
-      assert.ok(result.terminal, row.label);
-      const outcome = result.terminal!.roleOutcome;
-      assert.equal(outcome.kind, "failure", row.label);
-      if (outcome.kind !== "failure") throw new Error("expected publication failure");
-      // Must not wash publication errno into generic output absence.
-      assert.equal(outcome.cause, undefined, row.label);
-      assert.notEqual(outcome.cause, "output", row.label);
-      assert.equal(outcome.decisiveFacts.errorCode, row.expectedCode, row.label);
-      const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
-      assert.ok(errorRef, row.label);
-      const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
-        cause: string;
-        identity?: { name?: string; code?: string | number };
-        diagnostic: string;
-      };
-      assert.equal(errorBody.cause, undefined, row.label);
-      assert.equal(errorBody.identity?.code, "EISDIR", row.label);
-      assert.ok(errorBody.diagnostic.length > 0, row.label);
+        );
+        assert.equal(result.exitCode, 1, row.label);
+        assert.equal(stdout.length, 1, row.label);
+        assert.equal(stderr.length, 1, row.label);
+        assert.ok(result.terminal, row.label);
+        const outcome = result.terminal!.roleOutcome;
+        assert.equal(outcome.kind, "failure", row.label);
+        if (outcome.kind !== "failure") throw new Error("expected publication failure");
+        // Must not wash publication errno into generic output absence.
+        assert.equal(outcome.cause, undefined, row.label);
+        assert.notEqual(outcome.cause, "output", row.label);
+        assert.equal(outcome.decisiveFacts.errorCode, row.expectedCode, row.label);
+        const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
+        assert.ok(errorRef, row.label);
+        const errorBody = JSON.parse(await readFile(errorRef!.path, "utf8")) as {
+          cause: string;
+          identity?: { name?: string; code?: string | number };
+          diagnostic: string;
+        };
+        assert.equal(errorBody.cause, undefined, row.label);
+        assert.equal(errorBody.identity?.code, row.expectedCode, row.label);
+        assert.ok(errorBody.diagnostic.length > 0, row.label);
+      } finally {
+        if (lockedArtifactsDir !== undefined) {
+          try {
+            await chmod(lockedArtifactsDir, 0o755);
+          } catch {
+            // cleanup best-effort
+          }
+        }
+      }
     });
   }
 });

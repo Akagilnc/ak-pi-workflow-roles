@@ -325,7 +325,7 @@ test("#953 success clears directory-planted error face and settlement fallback",
   });
 });
 
-test("#953 clearOpposite report/error/empty share reader-contract face set", async () => {
+test("#953 clearOpposite drops every reader-contract face including current conventional", async () => {
   await withTempHome(async (home) => {
     const runsParent = join(home, ".ak-roles", "books", "proj", "unbound", "runs");
     async function plantFullFaceSet(runId: string): Promise<{
@@ -400,40 +400,12 @@ test("#953 clearOpposite report/error/empty share reader-contract face set", asy
       );
     }
 
-    // report retains report.json only among reader-adoptable faces.
+    // One clear drops every reader-adoptable face, including the conventional
+    // name a subsequent publish will rewrite (no retain-current special case).
+    // Sibling parent unique (foreign runId) stays.
     {
-      const planted = await plantFullFaceSet("01a0-clr-report");
-      await clearOppositeTerminalArtifactFace(planted.runDirectory, "report");
-      await access(join(planted.artifactsDir, "report.json"));
-      await assertGone(join(planted.artifactsDir, "error.json"));
-      await assertGone(join(planted.artifactsDir, "audit-incomplete.json"));
-      await assertGone(join(planted.artifactsDir, "error.settlement.json"));
-      await assertGone(join(planted.runDirectory, "error.settlement.json"));
-      await assertGone(planted.ownArtifactUnique);
-      await assertGone(planted.ownRunUnique);
-      await assertGone(planted.ownParentUnique);
-      await access(planted.siblingParentUnique);
-    }
-
-    // error retains error.json only; prior report/audit/fallbacks/unique go.
-    {
-      const planted = await plantFullFaceSet("01a0-clr-error");
-      await clearOppositeTerminalArtifactFace(planted.runDirectory, "error");
-      await access(join(planted.artifactsDir, "error.json"));
-      await assertGone(join(planted.artifactsDir, "report.json"));
-      await assertGone(join(planted.artifactsDir, "audit-incomplete.json"));
-      await assertGone(join(planted.artifactsDir, "error.settlement.json"));
-      await assertGone(join(planted.runDirectory, "error.settlement.json"));
-      await assertGone(planted.ownArtifactUnique);
-      await assertGone(planted.ownRunUnique);
-      await assertGone(planted.ownParentUnique);
-      await access(planted.siblingParentUnique);
-    }
-
-    // empty retains nothing reader-adoptable.
-    {
-      const planted = await plantFullFaceSet("01a0-clr-empty");
-      await clearOppositeTerminalArtifactFace(planted.runDirectory, "empty");
+      const planted = await plantFullFaceSet("01a0-clr-all");
+      await clearOppositeTerminalArtifactFace(planted.runDirectory);
       await assertGone(join(planted.artifactsDir, "report.json"));
       await assertGone(join(planted.artifactsDir, "error.json"));
       await assertGone(join(planted.artifactsDir, "audit-incomplete.json"));
@@ -481,9 +453,7 @@ test("#953 artifacts-as-file ENOTDIR does not strand failure durable fallback or
     const authority = piDurablePrincipalAuthority;
 
     // Clear itself must not throw ENOTDIR through the file-shaped artifacts path.
-    await clearOppositeTerminalArtifactFace(runDirectory, "error");
-    await clearOppositeTerminalArtifactFace(runDirectory, "report");
-    await clearOppositeTerminalArtifactFace(runDirectory, "empty");
+    await clearOppositeTerminalArtifactFace(runDirectory);
 
     // Failure publish must reach durable fallback (run-dir), not abort at clear.
     const refs = await publishFailureArtifacts(
@@ -536,7 +506,7 @@ test("#953 unparseable run dir does not wipe parent unique faces (reader ownersh
       "utf8",
     );
 
-    await clearOppositeTerminalArtifactFace(badRun, "report");
+    await clearOppositeTerminalArtifactFace(badRun);
 
     // runIdFromRunDirectory undefined → presentUniqueFallbackBoundToRun false → parent untouched.
     await access(siblingPath);
