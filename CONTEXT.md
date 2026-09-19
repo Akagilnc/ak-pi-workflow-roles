@@ -2,72 +2,70 @@
 
 > 只放术语,零实现细节。决策的为什么在 `docs/adr/`。
 
-- **角色(Role)**:有明确职掌、受门禁约束、以交卷物为法定出口的**车间内**治理单元（默认 typed；游奕使按陛下原话以散文为出口，[#959](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/959)）。角色只管一次调用的内政。按派单权分两品级:**寺监级**不派发 worker、不含编排拓扑;**省部级**可在自己一次调用的内政之内作为 caller 派发正经角色调用,其每腿全程入册。两品级只是法律分类,不建通用品级 runtime、权限继承机制,不为后续省部级席位预造框架。**实现不限于 LLM**:确定性机制同样可以是角色(如司天第一期,[ADR 0047](docs/adr/0047-sitian-phase-one-mechanism-not-role.md) 不设 LLM 角色)。soul 与工具门禁是 LLM 角色的形态,不是角色的定义。
-- **Soul**:LLM 角色的身份与不可约判断原则,经系统提示注入。分两层:**通用层**(本包内,零业务词)与**业务 overlay**(宿主项目附加)。审刑院与门下省的共享执法准绳另立法典(`souls/audit-law.md`、`souls/quality-law.md`)；票面公用准绳见《票面法》(`souls/ticket-law.md`，#924);审刑院法典参审四席=大理寺/御史台主会话+两审计席(太医线不动)([#470](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/470) 御批四)。确定性角色无 soul。
-- **角色方法 Skill(Role method Skill)**:供一个角色执行具体任务方法的包版本化材料；Soul 持有不可约职责与判断原则，Skill 持有可替换的方法步骤。强制 Skill 是包的运行依赖，不是用户 home 目录的隐含前提。
-- **角色门禁(Role gating)**:车间内的机械限制——对 LLM 角色是工具集收窄与工具调用拦截,对确定性角色是其自身的能力边界。区别于 soul 的文本约束:门禁是拦得住的,不靠自觉。
-- **交卷工具(Submission tool)**:角色具名的 terminating 工具(`ak_<role>_output`)。**回执(Receipt)** = 其产物,是角色劳动成果的法定出口（默认 typed；游奕使按陛下原话以散文为出口，[#959](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/959)）。工具＝回执通道：handler 只记录回执与排队,不校验形状、不判内容、不丢字段([#750](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/750) / [#757](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/757))。无回执终局是生命周期对「未获接受回执」的 typed 事实陈述,不是回执,也不伪造角色劳动成果。并非每个角色都有交卷工具。
-- **审核席(Review seat)**:父席交卷后由代码排队传召的审核角色(给事中→符宝郎、判官→审刑院、将作监/修内司→台院)。代码只读结论字段(`pass`/`bounce`/`escalate`)以排队;对方说了什么原样递回父席;每次带传召的复审即新一庭,审核席照常交卷;读不出三态则 resume 说话者本人——代码不分类、不映射、不判「不可读/不可用/不合法」、不替对方终局、不替选下一步、不丢字段。传输/生命周期事实(进程死、无交卷、文件缺失)如实呈现;ADR 0066 typed 闸与 autoResumeLimit 保留。
-- **格式契约(Format contract)**:在一个具名输入、输出或持久化边界上,由真实生产路径执行、会改变接受或拒绝结果,并且有明确 owner 与 consumer 的格式不变式。同一契约的多种表达不是多个契约;重复真源、校验缺口、已删除或不可达的格式也不是契约。
-- **最小必需验证(Minimum-required validation)**:输入输出只验证必须有的;除此之外一概不管。
-- **形状校验(Shape validation)**:拒收理由**只涉数据的排布**——在场/缺席、键拼写、基数、类型、跨字段组合。一旦拒收理由需要引用**外部可观察事实或世界规则**(现场 Git 状态、字节重算、路径授权、对象同一性),即**非**形状校验。代码对角色输出的形状校验拒收权与中止权归零,见 CLAUDE.md 第 0 条。**该禁令只约束代码**——审刑院等 LLM 角色据此打回不在禁止之列,它们走既有重交通道、不掐局。
-- **记账位(Ledger slot)**:每份角色输出唯一一个精确 key 及取值域(如 `judgeStatus`),供落账、呈现与渲染分支。**不是编排控制流**——上一代编排器按三态派下一个 worker,本包无 runner,组合与顺序归调用者([ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md))。判定其有效性归 [ADR 0040](docs/adr/0040-keep-only-required-execution-discriminators.md);无效时不得中止本局。
-- **承接者判据(Successor test)**:删与留之争的可核验判据——**删掉之后,那一类失败还有没有人接?有人接,删就是正事;没人接,保留就是容错。**「容错」本身不可核验(任何多余机制都能自称容错),承接者可以:去代码里看该失败类别的处理路径是否与既有机制相交。本判据不倒置 [ADR 0036](docs/adr/0036-format-validation-defaults-to-delete.md) 的举证责任——举证仍在保留方,只是把「特别理由」的内容钉成「指出无替代承接者」。**无承接者是保留的必要条件,不是充分条件**:仍须过宿主全局宪法的护栏三问(出事概率、后果轻重、下游兜底),且不得落入 ADR 0036 的失格类别(看不见收益 / 仅统一写法 / **仅预防廉价且会响的失败**)。
-- **同类扫描(Class-wide scan)**:以会拒绝输入输出的同类行为为范围扫描全仓;清单 ID 与已知文件只是不完全实例和证据索引,不是施工白名单。施工后按同一类别重新扫描残余,保留项逐类说明特别理由。
-- **语义 JSON 校验(Semantic JSON validation)**:对 JSON 值的生产语义进行校验。规范见 [ADR 0021](docs/adr/0021-collector-manifest-validates-semantics-not-json-spelling.md)。
-- **发布 Schema(Published schema)**:供包外机器消费者使用的机器可读契约投影。规范见 [ADR 0022](docs/adr/0022-delete-unconsumed-collector-manifest-schema.md)。
-- **边界 Schema 真源(Boundary schema owner)**:定义单个工具输入或输出形状的唯一 Schema。规范见 [ADR 0023](docs/adr/0023-judge-and-merger-use-one-output-schema-owner.md)。
-- **模型自报(Model self-report)**:角色在回执中声明、但未由拥有该事实的生产接缝现场观察的值。自报可留在叙事报告供人参考,不得伪装成 commit、Git 状态、计时等机械事实或进入统计真源。
-- **Judge(大理寺)**:只判卷、不改码、不 commit 的裁决角色。canonical 名;`verify` 是上一代编排器的席位旧名,**历史别名,退役中**。票庭审读（开工前的方案听证）归给事中（[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)）;本席专事后判卷。
-- **Fixer(修内司)**:以 `plan`(只规划)或 `apply`(施工)阶段处理调用方提供的修理包；apply 按 finding 结算为完成或合法拒绝，混合结算称 `partially_completed`，不是未完进度；另有只表示本次调用未结清的 `unfinished` 交棒，定义见 README Fixer。
-- **Coder(将作监)**:以 `plan`/`apply` 两阶段完成首次实现或据理拒绝派单的角色。apply 绑定包内 canonical Matt TDD 方法 Skill（宿主调用能力与缺口以 README「强制方法 Skill」为唯一说明，ADR 0082 / #922）；自查三连证据留在 report 供调用方处置,两者都不进入 Soul。apply 可用 `unfinished` 携带非空 typed `remainingScope` 交出未结清范围；这是可续交棒而非失败,不豁免验收。Coder 回执不以新 commit 为无条件前提（ADR 0024）；`completed` 零 commit 仅触发防忘提醒闸一次（ADR 0066），`planned`/`refused`/`unfinished` 零 commit 合法。拒绝可零 commit 直接交调用方处置。
-- **未完终态(Unfinished)**:两个 worker 角色 apply 阶段的合法交卷状态，语义为**受阻求援**——仅当前置条件缺失或违宪导致本次调用无法完成时可用，回执必须说明理由；缺待拍决策/答复＝前置缺失的一种(2026-08-12 收窄与执法位见 ADR 0050 Amendment / #292)。它是**可续的交棒,不是失败,也不是验收结论**:既不表达基础设施故障(那走非零退出),也不豁免任何验收。规范见 [ADR 0050](docs/adr/0050-unfinished-terminal-state-reports-fact-not-diagnosis.md)。#72 的 #75/#76 两条施工腿均已装配。
-- **Reviewer(御史台)**:围绕一个固定目标形成独立、可追溯代码评审的寺监级角色;不派 worker、不修复、不发布、不路由、不作最终裁决。绑定包内 canonical `ak-cross-m-review` 方法 Skill（ADR 0082 / #922）；单次角色调用只执行一个冻结 lens。公开 Reviewer 命令省略 `--lens` 时由外层共享执行接缝并行发起 completeness 与 correctness 两条普通单轴 run，并把两份原始终局一起呈现（命令本身无父 run）；显式 `--lens completeness|correctness` 只跑该轴；回执只表达 `completed` 或 `refused`，amendments 轴为 completeness/correctness，不表达批准、合并或流转语义。
-- **Reviewer CMR**:保留给未来 AK CMR 跨模型 panel 的独立角色概念;当前未实现。Reviewer 使用 active model,不承诺跨模型多样性。
-- **门下省(Gate province)**:审署诏敕与质量保证的省部级席位。它是调用者可经公开入口单独传召的普通角色，不再由交卷闸主动传召；给事中（票庭）亦属本省，由调用者开工前传召。省不是纯分类词，也不是外层编排器。各官仍是独立角色，自己提交 typed 结果。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 与 [ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。
+- **角色(Role)**:有明确职掌、受门禁约束、以交卷物为法定出口的**车间内**治理单元。法律分类为**寺监级**与**省部级**。实现不限于 LLM。见 ADR 0010、0047、0051。
+- **Soul**:LLM 角色的身份与不可约判断原则,经系统提示注入。分**通用层**与**业务 overlay**。确定性角色无 soul。见 ADR 0005。
+- **角色方法 Skill(Role method Skill)**:供一个角色执行具体任务方法的包版本化材料；Soul 持判断原则，Skill 持可替换方法步骤。见 ADR 0032、0082。
+- **角色门禁(Role gating)**:车间内的机械限制（LLM：工具集收窄与调用拦截；确定性角色：自身能力边界）。区别于 soul 文本约束。见 ADR 0008。
+- **交卷工具(Submission tool)**:角色具名的 terminating 工具(`ak_<role>_output`)。**回执(Receipt)** = 其产物,角色劳动成果的法定出口。见 ADR 0003、0041。
+- **审核席(Review seat)**:父席交卷后按受审物传召的审核角色（如台院、符宝郎、审刑院）。见 ADR 0055、0079、0080。
+- **格式契约(Format contract)**:在具名输入、输出或持久化边界上,由真实生产路径执行、会改变接受或拒绝结果,且有明确 owner 与 consumer 的格式不变式。
+- **最小必需验证(Minimum-required validation)**:输入输出只验证必须有的。见 ADR 0025。
+- **形状校验(Shape validation)**:拒收理由**只涉数据排布**（在场/缺席、键拼写、基数、类型、跨字段组合）；一旦需引用外部可观察事实或世界规则,即非形状校验。见 ADR 0055；CLAUDE.md 第 0 条。
+- **记账位(Ledger slot)**:每份角色输出唯一精确 key 及取值域(如 `judgeStatus`),供落账与呈现。见 ADR 0010、0040、0057。
+- **承接者判据(Successor test)**:删与留之争的可核验判据。见 ADR 0084；关联 ADR 0036、`souls/quality-law.md` 三问。
+- **同类扫描(Class-wide scan)**:以会拒绝输入输出的同类行为为范围的全仓扫描。见 ADR 0045。
+- **语义 JSON 校验(Semantic JSON validation)**:对 JSON 值的生产语义进行校验。见 ADR 0021。
+- **发布 Schema(Published schema)**:供包外机器消费者使用的机器可读契约投影。见 ADR 0022。
+- **边界 Schema 真源(Boundary schema owner)**:定义单个工具输入或输出形状的唯一 Schema。见 ADR 0023。
+- **模型自报(Model self-report)**:角色在回执中声明、但未由拥有该事实的生产接缝现场观察的值。见 ADR 0024、0042。
+- **Judge(大理寺)**:只判卷、不改码、不 commit 的裁决角色。canonical 名。专事后判卷。见 README 大理寺；ADR 0074。
+- **Fixer(修内司)**:以 `plan`/`apply` 处理调用方修理包的角色。见 README Fixer；ADR 0015、0034、0050。
+- **Coder(将作监)**:以 `plan`/`apply` 完成首次实现或据理拒绝派单的角色。见 ADR 0032、0034、0050、0082。
+- **未完终态(Unfinished)**:worker apply 阶段合法交卷状态，语义为**受阻求援**。见 ADR 0050。
+- **Reviewer(御史台)**:围绕固定目标做独立、可追溯代码评审的寺监级角色。见 ADR 0010、0031、0032、0082。
+- **门下省(Gate province)**:审署诏敕与质量保证的省部级席位；各官仍是独立角色。见 ADR 0067、0074、0079。
 _Avoid_:把「门下省」当作通进司的公开角色名。
-- **中书省(Secretariat)**:改票的出令省；按公用《票面法》把调用者提供的草稿修成可送庭文书，并在一次调用内驱动给事中复审至署或上呈。暂不细分席位。
-- **给事中(Countersign)**:门下省下的**票庭审读官**。凡开工前的票面——派单、方案、处置案——先过给事中，裁决五问：①是否符合既定制度②授权是否真实（以起居录为据）③文书是否与原意一致④是否存在必须退回重议的问题⑤是否具备正式发布与执行资格。起居录由起居郎（独立角色，见「起居郎」词条）修；是否先跑起居郎归调用者（ADR 0010）。交卷闸出席符宝郎内闸。读码取证是本职；把实现细节过早堆上票面是失职；实质听证为传召取证之权，裁决落法度与事实，不落施工设计。三态判词映射：署（converged，放行开工）／封驳（continue，退回重议）／上呈（escalate）。非闸派——由调用者开工前传召。规范见 [ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。
-- **台院(Inspector)**:纠举推鞫官（原给事中，[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md) 分立；中文名由 #584 修订为台院，机器键不动）。审**复杂度**与**测试质量**；受审物是将作监/修内司的交卷产出；交卷闸按该受审物直接传召，不经门下省。形态比照审刑院硬闸（封驳＝当场打回重写交卷，不是本局失败）。机器键仍为 `inspector`，也可被外层调用者单独派发；挂靠御史台一案挂起。
-- **符宝郎(Document-fidelity auditor)**:门下省下的**独立**文书核验角色（寺监级）。首责唯一：**核实实际授权出处**——乱编乱扩、伪造或过度解释授权，无条件驳。行事两步：读该票起居录→以录核旨。引语真伪与票面对齐为其手段；受审物是大理寺拟判与给事中署章，交卷闸按这两类受审物直接传召，不经门下省。形态比照审刑院硬闸（封驳＝当场打回重写，不是本局失败），也可被单独派发。规范见 [ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0074](docs/adr/0074-gate-province-reorg-jishizhong-chaiyuan-split.md)、[ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。
-- **起居录(ticket-provenance)**:每票一份、每票一个文件的共同案卷，内容**仅限陛下与 runner 的对话**——两边的话完整记录；排除按来源不按正文：独立的工具事件、机器块、ADR 原件与票面不另采为条目，说话人自己写下的文字原样保留；帮助接手衙门理解当前方向并追溯原件；不同于一次运行的卷宗。现行制度见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)，案卷整理与随案递送设计见 [ADR 0081](docs/adr/0081-diarist-case-context-and-delivery.md)。
-- **起居郎(diarist)**:判断本庭对象是哪张票、本票对话起止于何处的记录者；正文与指针由机械从会话卷原样搬运，不由其誊写。不是设计批准者或施工指挥者。制度与本轮设计分别见 ADR 0075、ADR 0081。
-- **通进司(Collector)**:门下省下的收证衙门。单次调用内认票、阅读 bot 手册与现场活动、按需触发评审、在工作步骤开启可配置等待窗并收证，提交按机器身份分组的自包含回执;不评审、不裁决、不修复、不路由,也没有“轮数”概念。手册是角色工作记忆（通用＋仓库差异），不是代码状态规则。等待窗默认十分钟、使用方可配置，从 PR 创建成功或本轮触发阶段结束起算，不是从会话激活起算。v1 仅支持 `github.com`。canonical 键仍为 `collector`。
+- **中书省(Secretariat)**:改票的出令省；按《票面法》把草稿修成可送庭文书。见 README；souls/ticket-law.md。
+- **给事中(Countersign)**:门下省下的**票庭审读官**。见 ADR 0074、0075。
+- **左拾遗(Gleaner-left)**:门下省下合并前无锚定风闻官；只上弹章、不封驳不裁决。见 ADR 0067。
+- **台院(Inspector)**:纠举推鞫官；审**复杂度**与**测试质量**。机器键 `inspector`。见 ADR 0074。
+- **符宝郎(Document-fidelity auditor)**:门下省下独立文书核验角色。首责：**核实实际授权出处**。见 ADR 0067、0074、0075、0079。
+- **起居录(ticket-provenance)**:每票一份的共同案卷。不同于一次运行的卷宗。见 ADR 0075、0081。
+- **起居郎(diarist)**:判断本庭对象是哪张票、本票对话起止于何处的记录者。见 ADR 0075、0081。
+- **通进司(Collector)**:门下省下的收证衙门；不评审、不裁决、不修复、不路由。canonical 键 `collector`。见 ADR 0067。
 _Avoid_:门下省（那是省名）。
-- **评审腿(Review leg)**:公开 Reviewer 命令省略 `--lens` 时，共享执行接缝并行发起的 completeness／correctness 普通单轴 Reviewer run；命令本身不建立父 run，Reviewer 角色本体仍不派 worker。Collector 的可选请求不构成评审腿或身份期待。
-- **Soul 审刑院(Soul-compliance audit)**:独立的实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」；不再限于复核大理寺的程序或既给材料。大理寺审计开庭材料=工厂宪法+己 auditor Soul+审刑院法典(`souls/audit-law.md`)+quality-law;太医审计暂=工厂宪法+己 Soul(御批四)。御史台侧审刑院闸已退役(#495 S6 风闻奏事)。审计不可用时的处置规范见 [ADR 0055](docs/adr/0055-shape-validation-failure-must-not-abort-the-run.md),现行职掌见 [ADR 0062](docs/adr/0062-auditor-is-an-independent-substantive-role.md)。
-- **卷宗(Dossier)**:一次 run 在候簿记录之家里的全部既落账材料；卷宗即真源,无投影副本。定位靠机器注入的 typed 指针(`cwd` 与 `AK_ROLE_RUN_DIR`),禁 latest-run/mtime/全局扫描猜测。
-- **先立卷后审卷**:被审对象必先落账,审计只从账上读；手递手传料非法。缺卷或缺被审对象走既有非零故障通道(`missing-dossier` / `missing-subject` 真因落 error artifact),public CLI 无合法 Receipt。
-- **绑定(Binding)**:等待真实调用方拉动的未来机械校验能力。当前包既不提供 `targetHead` 绑定输入,也不提供对应的 fail-closed 绑定闸。
-- **Navigator(游奕使)**:由共享角色生命周期自动旁听包角色结算的独立领航席；依据工作 subject、controlling authority 与自己此前给过的建议，建议最低成本且安全的下一包角色/phase。不裁决、不授权、不执行，普通建议允许调用者偏离；角色推理、工具轨迹和施工细节不进入其上下文。
-- **路书(Route playbook)**:游奕使用于专业判断的一组非约束参考路线，按工作性质、风险与复杂度展示常见推进方式；既不规定游奕使必须照走，也不约束调用者采用建议。_Avoid_:默认工作流、路由表、自动编排规则。
-- **Assisted Runner(辅助运行器)**:历史术语。Issue #28 已删除该 wrapper 及其专属公开面；当前 Navigator attendance 只由共享角色生命周期提供。
-- **角色调用(Role invocation)**:一个角色从输入到回执的单次独立劳动。角色只拥有该次调用的内政;调用者拥有角色组合、顺序、重复次数、预算和停止条件。
-- **公开角色 CLI(Public role CLI)**:包外调用者使用角色包的唯一受支持产品入口；它接收调用请求并交付终局结果，不替调用者选择、组合或续跑角色。_Avoid_:把裸 Pi 角色入口、session 文件或事件流称为公开 CLI。
-- **内部角色入口(Internal role entrypoint)**:获授权的包开发 session 用来直接激活和诊断角色的仓内接缝，不是外部产品面，也不享有公开兼容承诺。_Avoid_:公开入口、备用 CLI。
-- **调用请求(Invocation request)**:一次角色调用的输入，由可选 opaque instruction、零到多个 attachments 与少量角色专属参数组成；内容是否充分由角色判断，不由 CLI 分类或裁决。
-- **附件(Attachment)**:调用者明确附给一次角色调用、并在受理时冻结内容的材料；原路径只表明出处，resume 继续消费同一份材料而非路径上的后来版本。
-- **终局结果(Terminal result)**:公开角色 CLI 对一次已受理调用交付的完整结果，汇合角色结算、Navigator 出席事实与声明的 artifacts；session 结束仍无已接受回执时,可汇合当前 run/attempt 绑定的 typed 无回执生命周期记录（`acceptedReceipt=false`）,由调用者裁断；该记录不是回执。过程事件与 session 记录不是终局结果。
-- **角色运行(Role run)**:一次已受理角色调用的持久执行身份，连接其调用请求、Pi session 与终局结果，并可在用户改选模型后继续同一现场。
-- **候簿(Ledger book)**:包所有的机器级记录之家,按主仓分簿(键=git common dir 宿主目录的 basename)。它是记录落点的唯一真源;消费者仓零侵入——记录不写进被服务的仓库。_Avoid_:家册、账本目录、工作区记录。
-- **司天台(Archivist)**:记录的所有者。两件职掌——**如实记录**(记录的落点由它决定,不由写入方各自选)与**生成高阶数据**(从记录派生可消费的结论;分析席由太史承担)。确定性机制,非 LLM 角色。_Avoid_:Recorder、Docket、遥测。
-- **太史(Analyst)**:司天台的分析席。只读司天台记录、生成高阶数据(首例:耗时榜单——腿墙钟总榜＋单腿动作榜,耗时两桶归因——模型等待与工具执行两桶互斥、加和≡腿墙钟,返工作为正交透镜另计,角色成功率);确定性机制,非 LLM 角色,可单独调用;指标居基础记录同家下的独立目录。建设排在二期记录工程后。规范见 [ADR 0068](docs/adr/0068-taishi-analysis-seat-reads-records-writes-sibling-home.md)。_Avoid_:遥测、metrics-service、Telemetry。
-- **Artifact reference**:终局结果中声明的本地材料引用，用于打开完整报告、证据或错误详情；它补充内联核心结论，不替代结论。
-- **引擎（Engine）**: 角色劳动的执行后端。默认=角色 session 在 pi 内自跑；可经**外包**把最重的推理段交给本地 CLI（cc/codex/cursor/kimi 等），内容交回同一 session 提交——治理面（票庭/soul/typed 交卷/审刑院/案卷）永远在 pi，一套逻辑。引擎选择与模型同法，唯一真源=池令（ADR 0069）。
-- **编排器(Orchestrator)**:包外的交通系统——起各角色 Pi 进程、递材料、按三态判词走边。它只读回执,不定义交卷形状。
-- **三态判词**:`converged` / `continue` / `escalate`。给事中票庭语义映射:署／封驳／上呈。环境/工具链故障不是判词,以非零退出走故障通道。
-- **裁类循环（Class-repair loop）**：由判词类字段、回执对账键、圈界参数三份合同自然组成的修理循环；次序是合同的推论，非规定流程。
-- **Merger（校书郎）**：保全双方已授权意图并完成一次普通双亲 merge commit；无进行中合并、无活可干、或需新意图/权力决定时升级；不发起、不发布、不编排 merge。
-- **尚书省（Marshal）**：审→判→修 质量收敛环的省部级驱动角色。调用方递票号与 baseline，尚书省驱动御史台取证、大理寺裁决、修内司修理滚到收敛（converged 唯庭可判）或 escalate 上呈，交回 typed 报告；不弹、不判、不修，只让链条转到收敛。canonical 英文名 `marshal`；席位待落地。
-- **Doctor(太医署)**:从一个保留的 Pi 原生 session-dir 案例读取工厂症状，产出单案过程成本诊断并开方的举证角色;不施工、不裁决、不改法。病人仍是工厂,方子走正常法链。
-- **工厂(Factory)**:车间整体——角色、闸、法、包模板、流程站点。太医署的唯一病人;案子只是症状载体,永远不是病人。
-- **大扫除(Factory cleanup)**:当工厂机制的复杂度成本已经增加,但交付速度、质量与可靠性没有可观察提升时,按最小完整责任边界删除这些无收益机制及其专属格式、适配、测试和文档。大扫除允许扩大现有接受范围或删除整个机制,不是以行为等价为目标的整理或重构。
-- **增量收益(Incremental benefit)**:某项工厂机制相对于更简单的下游兜底,在真实运行中额外产生的速度、质量或可靠性提升。设计理由、单元测试和历史 ADR 只说明意图,不构成增量收益证据。
-- **效率基线(Efficiency baseline)**:2026-07-27 时期一张 issue 从开工到 merge 落地的实际交付节奏。它只用于比较端到端效率,不是代码、角色集合或功能范围的回退边界。
-- **落地周期(Issue-to-merge lead time)**:从第一个获授权处理 issue 的角色调用开始,通常是 Coder 或先审票面的 Judge,到 merge commit 进入目标分支为止。期间的裁决、施工、评审、返修、CI、格式拒绝重试和工厂故障均计入。
-- **两层裁决(Two-level cleanup adjudication)**:大扫除先判断一项机制是否产生足以支持其存在的增量收益;机制若存活,其内部每道护栏、格式和流程仍须分别通过现行三问。局部枷锁不因机制必要而自动存活,局部违宪也不自动判整个角色死亡。
-- **一次性大扫除(One-shot factory cleanup)**:在一个裁决包内一次列全并处置工厂机制及内部枷锁,在同一施工批次中以独立 commit 完成,最终只通过一个 PR 和一次 merge 落地。内部可按落地周期影响排序,但不把清理范围拆成后续票或让半新半旧的工厂分批进入主线。
-- **免疫(Immunity)**:防止工厂复杂度再次无收益增长的独立治理线,通过现行宪法、Judge 和独立议题约束后续新增。免疫不属于大扫除范围,也不得成为清理中保留或新建机制的理由;两条线只能在排期上暂停或等待,不能互相吞并。
-- **方子(Prescription)**:太医署的 finding 加处置建议(`keep|thin|delete`);治系统不治症状,同任何提案一样走法链。
-- **真咬人(Real bite)**:某道闸最近真拦下东西的证据——保留 session 中实际被接受的 typed terminating tool result;回声与散文不构成证据。完整有界检索得到的 `noRealBite` 是无咬人证明,不是一次咬人。
-- **过程成本报告(Process-cost report)**:由保留 runs 路径中的 Pi session 字节可重算的单案调用数、腿数、墙钟、turn/token、工具调用、命名重试、typed 状态、commit 观察和具名 payload 字节账。趋势是读取多案后才有的独立输出类型。
+- **评审腿(Review leg)**:completeness／correctness 普通单轴 Reviewer run 之一。见 ADR 0010、0082。
+- **Soul 审刑院(Soul-compliance audit)**:独立实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」。见 ADR 0062。
+- **卷宗(Dossier)**:一次 run 在候簿里的全部既落账材料。见 ADR 0048、0085。
+- **先立卷后审卷**:跨角色／账本接缝上合法取证次序的名称。见 ADR 0085。
+- **绑定(Binding)**:targetHead 一类对象同一性机械校验能力。见 ADR 0004、0027、0037。
+- **Navigator(游奕使)**:旁听包角色结算的独立领航席；建议下一包角色/phase。见 ADR 0061。
+- **路书(Route playbook)**:游奕使用于专业判断的非约束参考路线。_Avoid_:默认工作流、路由表、自动编排规则。见 ADR 0061。
+- **角色调用(Role invocation)**:一个角色从输入到回执的单次独立劳动。见 ADR 0010。
+- **公开角色 CLI(Public role CLI)**:包外调用者使用角色包的产品入口。见 ADR 0052、0082。
+_Avoid_:把裸 Pi 角色入口、session 文件或事件流称为公开 CLI。
+- **内部角色入口(Internal role entrypoint)**:获授权包开发 session 用来激活和诊断角色的仓内接缝，不是外部产品面。_Avoid_:公开入口、备用 CLI。见 ADR 0082。
+- **调用请求(Invocation request)**:一次角色调用的输入（可选 instruction、attachments、角色专属参数）。见 ADR 0052。
+- **附件(Attachment)**:调用者明确附给一次角色调用的材料。见 ADR 0052。
+- **终局结果(Terminal result)**:公开角色 CLI 对一次已受理调用交付的完整结果。见 ADR 0052。
+- **角色运行(Role run)**:一次已受理角色调用的持久执行身份。见 ADR 0052。
+- **候簿(Ledger book)**:包所有的机器级记录之家,按主仓分簿。见 ADR 0048、0049。
+_Avoid_:家册、账本目录、工作区记录。
+- **司天台(Archivist)**:记录的所有者（如实记录与生成高阶数据）。确定性机制,非 LLM 角色。见 ADR 0047、0065、0077。
+_Avoid_:Recorder、Docket、遥测。
+- **太史(Analyst)**:司天台的分析席；只读记录、生成高阶数据。确定性机制。见 ADR 0068。
+_Avoid_:遥测、metrics-service、Telemetry。
+- **Artifact reference**:终局结果中声明的本地材料引用。见 ADR 0052。
+- **引擎（Engine）**:角色劳动的执行后端。见 ADR 0069、0071。
+- **编排器(Orchestrator)**:包外交通系统。见 ADR 0010。
+- **三态判词**:`converged` / `continue` / `escalate`（给事中票庭：署／封驳／上呈）。见 ADR 0074。
+- **裁类循环（Class-repair loop）**：由判词类字段、回执对账键、圈界参数三份合同自然组成的修理循环。见 ADR 0015。
+- **Merger（校书郎）**：保全双方已授权意图并完成一次普通双亲 merge commit 的角色。见 README 校书郎；ADR 0027。
+- **尚书省（Marshal）**：审→判→修 质量收敛环的省部级驱动角色。canonical 键 `marshal`。见 ADR 0051；README。
+- **Doctor(太医署)**:读保留 Pi session 案例、产出单案过程成本诊断并开方的举证角色。见 ADR 0012、0013、0017。
+- **工厂(Factory)**:车间整体（角色、闸、法、包模板、流程站点）。太医署的唯一病人。见 ADR 0013。
+- **大扫除(Factory cleanup)**:按最小完整责任边界删除无收益机制及其专属格式、适配、测试和文档。见 ADR 0036、0045。
+- **落地周期(Issue-to-merge lead time)**:首 run 起点至 now／关票的端到端时长。见 issue #136。
+- **方子(Prescription)**:太医署的 finding 加处置建议。见 ADR 0012、0013。
+- **真咬人(Real bite)**:闸最近真拦下东西的证据。见 ADR 0012。
+- **过程成本报告(Process-cost report)**:由保留 runs 中 Pi session 字节可重算的单案过程成本诊断。见 ADR 0017。

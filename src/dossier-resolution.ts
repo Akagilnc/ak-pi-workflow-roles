@@ -2,6 +2,7 @@
  * Unique dossier-resolution seam for 审刑院 (#233).
  * Machine pointers only: cwd + per-turn HostContext (Pi child env fallback).
  * No latest-run / mtime / global scan.
+ * See ADR 0085（先立卷后审卷）.
  */
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
