@@ -172,7 +172,7 @@ export function runIdFromRunDirectory(runDirectory: string): string | undefined 
  * artifactsDir / runDirectory candidates keep path ownership and skip this.
  * expectedRunId undefined (unparseable run dir) → never bound.
  */
-export function presentUniqueFallbackBoundToRun(
+function presentUniqueFallbackBoundToRun(
   body: Record<string, unknown>,
   expectedRunId: string | undefined,
 ): boolean {

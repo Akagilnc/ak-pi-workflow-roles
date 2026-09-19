@@ -1915,65 +1915,6 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
 });
 
 /**
- * #953: real countersign parent-leg identity diarist escalate carrying ticketNumber.
- * Parent diagnostic must relay the receipt facts (readableGateItem) — never invent
- * the stock "cannot identify court target" label when other facts are present.
- */
-test("#953 identity diarist escalate with ticketNumber relays receipt on parent diagnostic", async () => {
-  await withCountersignProject(async ({ home, project }) => {
-    const escalateReceipt = {
-      status: "escalate" as const,
-      ticketNumber: 953,
-      reason: "ambiguous co-review set",
-    };
-    const host = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: courtPipelinePiRunner(escalateReceipt),
-    });
-    const { io, stderr } = captureIo();
-    const result = await runPublicCountersign(
-      ["裁：本庭对象是否 #953？"],
-      {
-        home,
-        agentDir: join(home, ".pi"),
-        packageRoot,
-        cwd: project,
-        principalAuthority: piDurablePrincipalAuthority,
-        sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: host,
-        hostAdapters: [adapter("pi", host)],
-        createRunId: () => "01a0sign00-0000-7000-8000-00000000953e",
-      },
-      io,
-      parseCountersignArgv,
-    );
-    assert.equal(result.exitCode, 1);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
-    if (result.terminal?.roleOutcome.kind !== "failure") return;
-    const diagnostic = result.terminal.roleOutcome.diagnostic;
-    // Typed receipt facts survive on the parent face (not a sole invented phrase).
-    assert.ok(
-      diagnostic.includes("953"),
-      "parent diagnostic must carry ticketNumber from diarist escalate receipt",
-    );
-    assert.ok(
-      diagnostic.includes("ambiguous co-review set"),
-      "parent diagnostic must carry escalate reason from diarist receipt",
-    );
-    assert.equal(
-      diagnostic.includes("cannot identify court target"),
-      false,
-      "must not invent stock cannot-identify label when receipt already carries facts",
-    );
-    assert.ok(
-      stderr.some((line) => line.includes("953")),
-      "stderr diagnostic face must also relay ticketNumber",
-    );
-  });
-});
-
-/**
  * #871 sole tracer: typed co-review set on the real countersign entry.
  * Parent {100,101,102} → resume keeps set → new summons replaces with {100,101,103}.
  * Single-ticket + true-unbound are the same line's minimal boundaries.

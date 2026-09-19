@@ -172,7 +172,7 @@ function isEscalatePayload(payload: unknown): boolean {
  * run (ADR 0003/0041; no courtAttempt sole-filter on diarist). Same law as
  * secretariat parent face: every escalate receipt as-is, last = currentConclusion.
  */
-export function courtDiaristEscalateDiagnostic(
+function courtDiaristEscalateDiagnostic(
   roleOutcome: TerminalRoleOutcome | undefined,
 ): string {
   const payloads =

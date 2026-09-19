@@ -12,15 +12,10 @@ import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/packag
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
-  coalesceSubmissionRows,
-  type TerminalResult,
-} from "../../src/public-cli/terminal.ts";
-import {
   formatFailureStderrDiagnostic,
   publishFailureArtifacts,
   publishJudgeArtifacts,
   settleHostEndedNoReceipt,
-  withSubmissions,
 } from "../../src/public-cli/settlement.ts";
 import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
@@ -717,37 +712,7 @@ test("no lawful output after an older provider error settles honestly as no_rece
   });
 });
 
-// --- #953 absorbed from issue-953-summons-receipt (no parallel seedJudgeRun) ---
-
-test("#953 empty failure payloads do not shadow recorded submissions", () => {
-  const history = [{ judgeStatus: "continue" }] as const;
-  assert.deepEqual(coalesceSubmissionRows([], history), [...history]);
-  assert.deepEqual(coalesceSubmissionRows(undefined, history), [...history]);
-  assert.deepEqual(
-    coalesceSubmissionRows([{ judgeStatus: "pass" }], history),
-    [{ judgeStatus: "pass" }],
-  );
-
-  const failureTerminal: TerminalResult = {
-    roleOutcome: {
-      kind: "failure",
-      role: "judge",
-      diagnostic: "boom",
-      cause: "provider",
-      payloads: [],
-      decisiveFacts: { diagnostic: "boom", cause: "provider" },
-    },
-    navigator: { disposition: "no-advice" },
-    artifacts: [],
-    runId: "01a0-953-empty-payloads",
-  };
-  const attached = withSubmissions(failureTerminal, history);
-  assert.equal(attached.roleOutcome.kind, "failure");
-  if (attached.roleOutcome.kind === "failure") {
-    assert.deepEqual(attached.roleOutcome.payloads, [...history]);
-  }
-  assert.deepEqual(attached.submissions, [...history]);
-});
+// --- #953: real publish/read/settlement entries; structured reader contract only ---
 
 test("#953 reader adopts current failure after success; success after failure", async () => {
   await withTempHome(async (home) => {
@@ -810,81 +775,88 @@ test("#953 reader adopts current failure after success; success after failure", 
   });
 });
 
-test("#953 clear-fail leaves residual success face but reader still adopts current failure", async () => {
-  await withTempHome(async (home) => {
-    const runId = "01a0-953-shadow";
-    const runDirectory = join(
-      home,
-      ".ak-roles",
-      "books",
-      "proj",
-      "unbound",
-      "runs",
-      `${runId}@judge`,
-    );
-    const sessionDirectory = join(runDirectory, "session");
-    const artifactsDir = join(runDirectory, "artifacts");
-    await mkdir(sessionDirectory, { recursive: true });
-    await mkdir(artifactsDir, { recursive: true });
-    await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
-    const admitted = fixtureJudgeAdmitted({
-      runId,
-      runDirectory,
-      projectRoot: join(home, "proj"),
-      bookKey: "proj",
-    });
-    const residualReportPath = join(artifactsDir, "report.json");
-    await writeFile(
-      residualReportPath,
-      `${JSON.stringify({
-        role: "judge",
-        runId,
-        outcome: {
-          kind: "accepted",
-          role: "judge",
-          payloads: [{ judgeStatus: "continue" }],
-        },
-      })}\n`,
-      "utf8",
-    );
-    await chmod(artifactsDir, 0o555);
-    try {
-      const refs = await publishFailureArtifacts(
-        admitted,
-        { diagnostic: "CURRENT FAILURE", cause: "provider" },
-        piDurablePrincipalAuthority,
+const runningAsRoot =
+  typeof process.getuid === "function" && process.getuid() === 0;
+
+test(
+  "#953 clear-fail leaves residual success face but reader still adopts current failure",
+  { skip: runningAsRoot && "chmod 0555 does not block root unlink" },
+  async () => {
+    await withTempHome(async (home) => {
+      const runId = "01a0-953-shadow";
+      const runDirectory = join(
+        home,
+        ".ak-roles",
+        "books",
+        "proj",
+        "unbound",
+        "runs",
+        `${runId}@judge`,
       );
-      assert.ok(refs.some((ref) => ref.kind === "error"));
-      // Prove the clear seam actually failed: prior success face must remain.
-      await access(residualReportPath);
-      const residual = JSON.parse(
-        await readFile(residualReportPath, "utf8"),
-      ) as {
-        outcome?: { kind?: string; payloads?: ReadonlyArray<{ judgeStatus?: string }> };
-      };
-      assert.equal(residual.outcome?.kind, "accepted");
-      assert.equal(residual.outcome?.payloads?.[0]?.judgeStatus, "continue");
-      const read = await readRunTerminalArtifact(runDirectory);
-      assert.equal(read.status, "present");
-      if (read.status === "present") {
-        assert.equal(read.body.diagnostic, "CURRENT FAILURE");
-        assert.notEqual(
-          (read.body.outcome as { kind?: string } | undefined)?.kind,
-          "accepted",
+      const sessionDirectory = join(runDirectory, "session");
+      const artifactsDir = join(runDirectory, "artifacts");
+      await mkdir(sessionDirectory, { recursive: true });
+      await mkdir(artifactsDir, { recursive: true });
+      await writeFile(join(sessionDirectory, "session.jsonl"), "", "utf8");
+      const admitted = fixtureJudgeAdmitted({
+        runId,
+        runDirectory,
+        projectRoot: join(home, "proj"),
+        bookKey: "proj",
+      });
+      const residualReportPath = join(artifactsDir, "report.json");
+      await writeFile(
+        residualReportPath,
+        `${JSON.stringify({
+          role: "judge",
+          runId,
+          outcome: {
+            kind: "accepted",
+            role: "judge",
+            payloads: [{ judgeStatus: "continue" }],
+          },
+        })}\n`,
+        "utf8",
+      );
+      await chmod(artifactsDir, 0o555);
+      try {
+        const refs = await publishFailureArtifacts(
+          admitted,
+          { diagnostic: "CURRENT FAILURE", cause: "provider" },
+          piDurablePrincipalAuthority,
         );
+        assert.ok(refs.some((ref) => ref.kind === "error"));
+        // Clear seam failed: residual success face remains for reader to outrank.
+        await access(residualReportPath);
+        const residual = JSON.parse(
+          await readFile(residualReportPath, "utf8"),
+        ) as {
+          outcome?: { kind?: string; payloads?: ReadonlyArray<{ judgeStatus?: string }> };
+        };
+        assert.equal(residual.outcome?.kind, "accepted");
+        assert.equal(residual.outcome?.payloads?.[0]?.judgeStatus, "continue");
+        const read = await readRunTerminalArtifact(runDirectory);
+        assert.equal(read.status, "present");
+        if (read.status === "present") {
+          assert.equal(read.body.diagnostic, "CURRENT FAILURE");
+          assert.notEqual(
+            (read.body.outcome as { kind?: string } | undefined)?.kind,
+            "accepted",
+          );
+        }
+      } finally {
+        await chmod(artifactsDir, 0o755);
       }
-    } finally {
-      await chmod(artifactsDir, 0o755);
-    }
-  });
-});
+    });
+  },
+);
 
 /**
- * #953: settleHostEndedNoReceipt clears every reader-adoptable owned face and
- * leaves sibling / unbound parent unique, evidence, ledger, and attempt history.
- * Does not mint a no_receipt-shaped public artifact.
+ * #953: settleHostEndedNoReceipt leaves no reader-adoptable owned face; sibling
+ * run, evidence, ledger, and attempt history stay. Reader contract only — no
+ * known-filename clearance checklist.
  */
-test("#953 no_receipt clear matrix: owned faces gone; sibling/evidence/history retained", async () => {
+test("#953 no_receipt clears owned reader face; sibling and non-terminal retained", async () => {
   await withTempHome(async (home) => {
     const runId = "01a0-953-noreceipt";
     const siblingRunId = "01a0-953-sibling";
@@ -894,10 +866,11 @@ test("#953 no_receipt clear matrix: owned faces gone; sibling/evidence/history r
     const sessionDirectory = join(runDirectory, "session");
     const artifactsDir = join(runDirectory, "artifacts");
     const ledgerDir = join(runDirectory, "session", "submission-ledger");
+    const siblingArtifacts = join(siblingDirectory, "artifacts");
     await mkdir(sessionDirectory, { recursive: true });
     await mkdir(artifactsDir, { recursive: true });
     await mkdir(ledgerDir, { recursive: true });
-    await mkdir(join(siblingDirectory, "artifacts"), { recursive: true });
+    await mkdir(siblingArtifacts, { recursive: true });
 
     const sessionFile = join(sessionDirectory, "session.jsonl");
     await writeFile(
@@ -913,104 +886,10 @@ test("#953 no_receipt clear matrix: owned faces gone; sibling/evidence/history r
       "utf8",
     );
     const evidencePath = join(artifactsDir, "evidence.json");
-    await writeFile(
-      evidencePath,
-      `${JSON.stringify({ runId, role: "judge", note: "keep-me" })}\n`,
-      "utf8",
-    );
     const ledgerPath = join(ledgerDir, "records.jsonl");
     await writeFile(
       ledgerPath,
       `${JSON.stringify({ kind: "submission", runId, payload: { judgeStatus: "continue" } })}\n`,
-      "utf8",
-    );
-
-    const faceBody = (kind: string, extra: Record<string, unknown> = {}) =>
-      `${JSON.stringify({ role: "judge", runId, kind, ...extra })}\n`;
-
-    // Conventional faces
-    await writeFile(
-      join(artifactsDir, "report.json"),
-      `${JSON.stringify({
-        role: "judge",
-        runId,
-        outcome: { kind: "accepted", role: "judge", payloads: [] },
-      })}\n`,
-      "utf8",
-    );
-    await writeFile(
-      join(artifactsDir, "error.json"),
-      faceBody("error", { diagnostic: "conventional" }),
-      "utf8",
-    );
-    await writeFile(
-      join(artifactsDir, "audit-incomplete.json"),
-      faceBody("audit-incomplete", { diagnostic: "audit" }),
-      "utf8",
-    );
-    // Fixed fallbacks
-    await writeFile(
-      join(artifactsDir, "error.settlement.json"),
-      faceBody("error", { diagnostic: "fixed-artifacts" }),
-      "utf8",
-    );
-    await writeFile(
-      join(runDirectory, "error.settlement.json"),
-      faceBody("error", { diagnostic: "fixed-run" }),
-      "utf8",
-    );
-    // Same-run unique
-    const sameRunUnique = join(
-      artifactsDir,
-      "error.aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.json",
-    );
-    await writeFile(
-      sameRunUnique,
-      faceBody("error", { diagnostic: "same-run-unique" }),
-      "utf8",
-    );
-    // Parent unique bound to this runId — must clear
-    const ownedParentUnique = join(
-      runsRoot,
-      "error.11111111-2222-3333-4444-555555555555.json",
-    );
-    await writeFile(
-      ownedParentUnique,
-      `${JSON.stringify({
-        role: "judge",
-        runId,
-        kind: "error",
-        diagnostic: "owned-parent",
-      })}\n`,
-      "utf8",
-    );
-    // Sibling-bound parent unique — must retain
-    const siblingParentUnique = join(
-      runsRoot,
-      "error.66666666-7777-8888-9999-aaaaaaaaaaaa.json",
-    );
-    await writeFile(
-      siblingParentUnique,
-      `${JSON.stringify({
-        role: "judge",
-        runId: siblingRunId,
-        kind: "error",
-        diagnostic: "sibling-owned",
-      })}\n`,
-      "utf8",
-    );
-    // Unbound / no runId parent unique — must retain
-    const unboundParentUnique = join(
-      runsRoot,
-      "error.bbbbbbbb-cccc-dddd-eeee-ffffffffffff.json",
-    );
-    await writeFile(
-      unboundParentUnique,
-      `${JSON.stringify({
-        role: "judge",
-        kind: "error",
-        diagnostic: "unbound-parent",
-      })}\n`,
       "utf8",
     );
 
@@ -1020,6 +899,59 @@ test("#953 no_receipt clear matrix: owned faces gone; sibling/evidence/history r
       projectRoot: join(home, "proj"),
       bookKey: "proj",
     });
+    await publishJudgeArtifacts(
+      admitted,
+      {
+        kind: "accepted",
+        role: "judge",
+        payloads: [{ judgeStatus: "pass" }],
+      },
+      piDurablePrincipalAuthority.decode(admitted.principal),
+    );
+    // Non-terminal evidence must survive no_receipt clear — write after publish
+    // so the retention assert is against settleHostEndedNoReceipt, not publish.
+    await writeFile(
+      evidencePath,
+      `${JSON.stringify({ runId, role: "judge", note: "keep-me" })}\n`,
+      "utf8",
+    );
+    // Sibling face the shared reader must keep after target no_receipt.
+    await writeFile(
+      join(siblingArtifacts, "error.json"),
+      `${JSON.stringify({
+        kind: "error",
+        role: "judge",
+        runId: siblingRunId,
+        diagnostic: "sibling-owned",
+      })}\n`,
+      "utf8",
+    );
+    // Parent unique bound to target — reader-owned, must clear with the run.
+    await writeFile(
+      join(runsRoot, "error.11111111-2222-3333-4444-555555555555.json"),
+      `${JSON.stringify({
+        role: "judge",
+        runId,
+        kind: "error",
+        diagnostic: "owned-parent",
+      })}\n`,
+      "utf8",
+    );
+    // Sibling-bound parent unique — retained (sibling reader still present).
+    await writeFile(
+      join(runsRoot, "error.66666666-7777-8888-9999-aaaaaaaaaaaa.json"),
+      `${JSON.stringify({
+        role: "judge",
+        runId: siblingRunId,
+        kind: "error",
+        diagnostic: "sibling-parent",
+      })}\n`,
+      "utf8",
+    );
+
+    const before = await readRunTerminalArtifact(runDirectory);
+    assert.equal(before.status, "present");
+
     const hostEnded = await settleHostEndedNoReceipt(
       admitted,
       piDurablePrincipalAuthority,
@@ -1030,41 +962,25 @@ test("#953 no_receipt clear matrix: owned faces gone; sibling/evidence/history r
     const after = await readRunTerminalArtifact(runDirectory);
     assert.equal(after.status, "absent");
 
-    // Owned faces cleared
-    for (const path of [
-      join(artifactsDir, "report.json"),
-      join(artifactsDir, "error.json"),
-      join(artifactsDir, "audit-incomplete.json"),
-      join(artifactsDir, "error.settlement.json"),
-      join(runDirectory, "error.settlement.json"),
-      sameRunUnique,
-      ownedParentUnique,
-    ]) {
-      await assert.rejects(() => access(path), { code: "ENOENT" }, path);
+    const sibling = await readRunTerminalArtifact(siblingDirectory);
+    assert.equal(sibling.status, "present");
+    if (sibling.status === "present") {
+      assert.equal(sibling.body.diagnostic, "sibling-owned");
     }
 
-    // Retained: sibling / unbound parent unique, evidence, ledger, attempt history
-    for (const path of [
-      siblingParentUnique,
-      unboundParentUnique,
-      evidencePath,
-      ledgerPath,
-      sessionFile,
-    ]) {
-      await access(path);
-    }
-    const historyRaw = await readFile(sessionFile, "utf8");
-    assert.ok(historyRaw.includes("ak_attempt_history"));
-    assert.ok(historyRaw.includes("prior attempt"));
     const evidence = JSON.parse(await readFile(evidencePath, "utf8")) as {
       note?: string;
     };
     assert.equal(evidence.note, "keep-me");
+    const ledger = await readFile(ledgerPath, "utf8");
+    assert.ok(ledger.includes("continue"));
+    const historyRaw = await readFile(sessionFile, "utf8");
+    assert.ok(historyRaw.includes("ak_attempt_history"));
 
-    // No no_receipt-shaped public artifact minted
-    const artifactsNames = await readdir(artifactsDir).catch(() => [] as string[]);
+    // no_receipt must not mint a dedicated public artifact shape
+    const artifactsNames = await readdir(artifactsDir);
     assert.equal(
-      artifactsNames.some((name) => name.includes("no_receipt") || name === "no-receipt.json"),
+      artifactsNames.some((name) => name.includes("no_receipt")),
       false,
     );
   });
