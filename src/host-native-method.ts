@@ -62,11 +62,13 @@ async function packagedMethodSkillNames(packagedMethodsRealpath: string): Promis
 }
 
 /**
- * Byte map of every regular file under a skill directory (relative path → bytes).
- * Undefined when SKILL.md is missing. Other I/O errors propagate.
- * Integrity only — no free-text parsing of Skill prose.
+ * Byte map of every regular file under a packaged skill directory
+ * (relative path → bytes). Undefined when SKILL.md is missing. Other I/O
+ * errors propagate. Integrity only — no free-text parsing of Skill prose.
  */
-async function skillFileBytes(skillDir: string): Promise<ReadonlyMap<string, Buffer> | undefined> {
+async function packagedSkillFileBytes(
+  skillDir: string,
+): Promise<ReadonlyMap<string, Buffer> | undefined> {
   try {
     await access(join(skillDir, "SKILL.md"));
   } catch (error) {
@@ -92,14 +94,24 @@ async function skillFileBytes(skillDir: string): Promise<ReadonlyMap<string, Buf
   return files;
 }
 
-/** True when catalog skill publishes every packaged skill file with identical bytes. */
-function publishesPackagedSkill(
+/**
+ * True when catalog skill already carries identical bytes for every required
+ * packaged relative path. Only those paths are read — extra catalog files are
+ * out of scope for the compatibility proof.
+ */
+async function catalogPublishesPackagedSkill(
+  catalogSkillDir: string,
   required: ReadonlyMap<string, Buffer>,
-  available: ReadonlyMap<string, Buffer>,
-): boolean {
+): Promise<boolean> {
   for (const [rel, bytes] of required) {
-    const other = available.get(rel);
-    if (other === undefined || !bytes.equals(other)) return false;
+    let other: Buffer;
+    try {
+      other = await readFile(join(catalogSkillDir, rel));
+    } catch (error) {
+      if (isEnoent(error)) return false;
+      throw error;
+    }
+    if (!bytes.equals(other)) return false;
   }
   return true;
 }
@@ -110,6 +122,10 @@ function publishesPackagedSkill(
  * required (#980): a worktree catalog at another realpath that still carries
  * the packaged method bytes must stay put. Name-only / foreign / stale content
  * remains a true conflict. Incomplete, broken, or non-symlink entries too.
+ *
+ * Caller must only invoke this when `link` is known present; link-missing
+ * ENOENT is classified solely by the existence probe in
+ * `installWorkspaceMethodSkills`, not here.
  */
 async function isCompatibleMethodCatalog(
   link: string,
@@ -128,16 +144,9 @@ async function isCompatibleMethodCatalog(
   const names = await packagedMethodSkillNames(packagedMethodsRealpath);
   if (names.length === 0) return false;
   for (const name of names) {
-    const required = await skillFileBytes(join(packagedMethodsRealpath, name));
+    const required = await packagedSkillFileBytes(join(packagedMethodsRealpath, name));
     if (required === undefined) return false;
-    let available: ReadonlyMap<string, Buffer> | undefined;
-    try {
-      available = await skillFileBytes(join(resolved, name));
-    } catch (error) {
-      if (isEnoent(error)) return false;
-      throw error;
-    }
-    if (available === undefined || !publishesPackagedSkill(required, available)) return false;
+    if (!(await catalogPublishesPackagedSkill(join(resolved, name), required))) return false;
   }
   return true;
 }
@@ -146,14 +155,24 @@ async function isCompatibleMethodCatalog(
 export async function installWorkspaceMethodSkills(cwd: string, packageRoot: string): Promise<void> {
   const target = await realpath(packagedMethodsDir(packageRoot));
   const link = join(cwd, ".agents", "skills");
+
+  // Existence probe only — this seam alone classifies link-missing ENOENT.
+  let present: boolean;
   try {
+    await lstat(link);
+    present = true;
+  } catch (error) {
+    if (!isEnoent(error)) throw error;
+    present = false;
+  }
+
+  if (present) {
     if (await isCompatibleMethodCatalog(link, target)) return;
     const stat = await lstat(link);
     const detail = stat.isSymbolicLink() ? `symlink to ${await readlink(link)}` : "non-symlink entry";
     throw new Error(`workspace method catalog conflict at ${link}: ${detail}`);
-  } catch (error) {
-    if (!isEnoent(error)) throw error;
   }
+
   await mkdir(dirname(link), { recursive: true });
   try {
     await symlink(target, link);

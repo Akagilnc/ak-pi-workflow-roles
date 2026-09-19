@@ -106,9 +106,13 @@ test("#980 public ak-role codex catalog: create once, keep byte-identical twin, 
 
     // Existing catalog at a different path with identical packaged method bytes stays put
     // (this-repo worktree shape: .agents/skills -> ../resources/methods).
+    // Extra catalog-only files are outside the packaged proof and must not reject.
     {
       const twin = join(root, "twin-methods");
       await cp(packagedReal, twin, { recursive: true });
+      await writeFile(join(twin, "tdd", "catalog-only-extra.md"), "# extra\n", "utf8");
+      await mkdir(join(twin, "tdd", "catalog-only-dir"), { recursive: true });
+      await writeFile(join(twin, "tdd", "catalog-only-dir", "note.txt"), "noise\n", "utf8");
       await rm(link, { force: true });
       await symlink(twin, link);
       const before = await readlink(link);
