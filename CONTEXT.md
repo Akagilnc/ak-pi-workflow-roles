@@ -18,7 +18,7 @@
 - **发布 Schema(Published schema)**:供包外机器消费者使用的机器可读契约投影。见 ADR 0022。
 - **边界 Schema 真源(Boundary schema owner)**:定义单个工具输入或输出形状的唯一 Schema。见 ADR 0023。
 - **模型自报(Model self-report)**:角色在回执中声明、但未由拥有该事实的生产接缝现场观察的值。见 ADR 0024、0042。
-- **Judge(大理寺)**:只判卷、不改码、不 commit 的裁决角色。canonical 名。专事后判卷。见 ADR 0074。
+- **Judge(大理寺)**:只判卷、不改码、不 commit 的裁决角色。canonical 名。专事后判卷。见 README 大理寺；ADR 0074。
 - **Fixer(修内司)**:以 `plan`/`apply` 处理调用方修理包的角色。见 README Fixer；ADR 0015、0034、0050。
 - **Coder(将作监)**:以 `plan`/`apply` 完成首次实现或据理拒绝派单的角色。apply 绑定包内 canonical TDD 方法 Skill。见 ADR 0032、0034、0050、0082。
 - **未完终态(Unfinished)**:worker apply 阶段合法交卷状态，语义为**受阻求援**；可续交棒,不是失败,不豁免验收。见 ADR 0050。
@@ -36,7 +36,7 @@ _Avoid_:把「门下省」当作通进司的公开角色名。
 _Avoid_:门下省（那是省名）。
 - **评审腿(Review leg)**:completeness／correctness 普通单轴 Reviewer run 之一。见 ADR 0010、0082。
 - **Soul 审刑院(Soul-compliance audit)**:独立实质审计角色,自行取证并判断「该有的有没有」与「有的对不对」。见 ADR 0062。
-- **卷宗(Dossier)**:一次 run 在候簿里的全部既落账材料；卷宗即真源。
+- **卷宗(Dossier)**:一次 run 在候簿里的全部既落账材料。见 ADR 0048、0085。
 - **先立卷后审卷**:跨角色／账本接缝上合法取证次序的名称。见 ADR 0085。
 - **绑定(Binding)**:targetHead 一类对象同一性机械校验能力。见 ADR 0004、0027、0037。
 - **Navigator(游奕使)**:旁听包角色结算的独立领航席；建议下一包角色/phase，不裁决、不授权、不执行。见 ADR 0061。
@@ -46,21 +46,21 @@ _Avoid_:门下省（那是省名）。
 _Avoid_:把裸 Pi 角色入口、session 文件或事件流称为公开 CLI。
 - **内部角色入口(Internal role entrypoint)**:获授权包开发 session 用来激活和诊断角色的仓内接缝，不是外部产品面。_Avoid_:公开入口、备用 CLI。见 ADR 0082。
 - **调用请求(Invocation request)**:一次角色调用的输入（可选 instruction、attachments、角色专属参数）。见 ADR 0052。
-- **附件(Attachment)**:调用者明确附给一次角色调用、受理时冻结内容的材料。
-- **终局结果(Terminal result)**:公开角色 CLI 对一次已受理调用交付的完整结果。见 ADR 0041、0080。
-- **角色运行(Role run)**:一次已受理角色调用的持久执行身份。
+- **附件(Attachment)**:调用者明确附给一次角色调用的材料。见 ADR 0052。
+- **终局结果(Terminal result)**:公开角色 CLI 对一次已受理调用交付的完整结果。见 ADR 0052。
+- **角色运行(Role run)**:一次已受理角色调用的持久执行身份。见 ADR 0052。
 - **候簿(Ledger book)**:包所有的机器级记录之家,按主仓分簿。见 ADR 0048、0049。
 _Avoid_:家册、账本目录、工作区记录。
 - **司天台(Archivist)**:记录的所有者（如实记录与生成高阶数据）。确定性机制,非 LLM 角色。见 ADR 0047、0065、0077。
 _Avoid_:Recorder、Docket、遥测。
 - **太史(Analyst)**:司天台的分析席；只读记录、生成高阶数据。确定性机制。见 ADR 0068。
 _Avoid_:遥测、metrics-service、Telemetry。
-- **Artifact reference**:终局结果中声明的本地材料引用；补充内联结论，不替代结论。
+- **Artifact reference**:终局结果中声明的本地材料引用。见 ADR 0052。
 - **引擎（Engine）**:角色劳动的执行后端（默认 pi 内自跑；可外包本地 CLI）。见 ADR 0069、0071。
 - **编排器(Orchestrator)**:包外交通系统；本包不含通用编排器。见 ADR 0010。
-- **三态判词**:`converged` / `continue` / `escalate`（给事中票庭：署／封驳／上呈）。
+- **三态判词**:`converged` / `continue` / `escalate`（给事中票庭：署／封驳／上呈）。见 ADR 0074。
 - **裁类循环（Class-repair loop）**：由判词类字段、回执对账键、圈界参数三份合同自然组成的修理循环。见 ADR 0015。
-- **Merger（校书郎）**：保全双方已授权意图并完成一次普通双亲 merge commit 的角色。见 ADR 0027。
+- **Merger（校书郎）**：保全双方已授权意图并完成一次普通双亲 merge commit 的角色。见 README 校书郎；ADR 0027。
 - **尚书省（Marshal）**：审→判→修 质量收敛环的省部级驱动角色。canonical 键 `marshal`。见 ADR 0051、0053；README。
 - **Doctor(太医署)**:读保留 Pi session 案例、产出单案过程成本诊断并开方的举证角色。见 ADR 0012、0013、0017。
 - **工厂(Factory)**:车间整体（角色、闸、法、包模板、流程站点）。太医署的唯一病人。见 ADR 0013。
