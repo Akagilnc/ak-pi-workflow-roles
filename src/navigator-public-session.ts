@@ -173,6 +173,10 @@ export function createNativeNavigatorSessionFactory(deps?: {
             summoned = await summon(baseSummon);
           }
 
+          // Dispose won the race (with or without HostContext.signal): no late pointer/prepare.
+          // Cancel ownership stays on attendance/envelope; this only closes side effects (#959).
+          if (disposed) return;
+
           const outcome = summoned.terminal?.roleOutcome;
           if (outcome === undefined) {
             const detail = summoned.stderr?.trim() || `exit ${summoned.exitCode}`;
@@ -225,6 +229,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
             if (prose !== undefined) proseParts.push(prose);
           }
           if (proseParts.length === 0) return;
+          if (disposed) return;
           await tool.execute(
             "navigator-public-prepare",
             { prose: proseParts.join("\n\n") },
@@ -233,6 +238,8 @@ export function createNativeNavigatorSessionFactory(deps?: {
             context as never,
           );
         } catch (error) {
+          // Closed session: drain late nest errors without providerFailure side effects.
+          if (disposed) return;
           if (error instanceof NavigatorUnavailableError) throw error;
           const fact = navigatorProviderFailureFromError(error);
           // Catch path is the public-summon seam (source transport); untyped cause stays unknown.

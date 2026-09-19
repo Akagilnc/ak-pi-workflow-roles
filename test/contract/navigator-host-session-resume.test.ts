@@ -203,6 +203,84 @@ test("#959 non-resumable preflight mints once; resume transport failure does not
   });
 });
 
+test("#959 dispose closes session: late summon must not write pointer or prepare", async () => {
+  // Legal HostContext.signal absence: dispose is a marker only; in-flight summon may still
+  // resolve. After dispose returns, pointer append and prepare must not run (#959 continue).
+  await withTempRoot("navigator-host-dispose-late-", async (root) => {
+    seedGitRepository(root);
+    const runDirectory = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navlate@navigator");
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
+    await mkdir(join(parentRun, "session"), { recursive: true });
+
+    let releaseSummon: (() => void) | undefined;
+    const summonGate = new Promise<void>((resolve) => {
+      releaseSummon = resolve;
+    });
+    let prepared = 0;
+    const summon = async (): Promise<PublicSummonResult> => {
+      await summonGate;
+      return {
+        exitCode: 0,
+        runDirectory,
+        terminal: {
+          roleOutcome: {
+            kind: "accepted",
+            payloads: [{ prose: "late prose after dispose" }],
+          },
+        } as never,
+      };
+    };
+
+    const session = await createNativeNavigatorSessionFactory({
+      summonPublicRole: summon,
+      hostRunResumable: async () => false,
+    })({
+      context: {
+        cwd: root,
+        runDirectory: parentRun,
+        // No signal — legal HostContext; attendance would inject nestCancel, factory must still
+        // close side effects on dispose without owning AbortController.
+      } as never,
+      subject: "/work/subject-dispose-late",
+      tool: {
+        name: "ak_navigator_prepare",
+        async execute() {
+          prepared += 1;
+          return { content: [{ type: "text", text: "ok" }], details: {} };
+        },
+      } as never,
+    });
+
+    const promptDone = session.prompt("materials-while-live");
+    await session.dispose();
+    assert.equal(
+      readNavigatorHostRunPointer(session.entries() as readonly unknown[]),
+      undefined,
+      "dispose must complete before late summon side effects",
+    );
+    assert.equal(prepared, 0);
+
+    releaseSummon?.();
+    await promptDone;
+    assert.equal(
+      readNavigatorHostRunPointer(session.entries() as readonly unknown[]),
+      undefined,
+      "late summon must not append host-run pointer after dispose",
+    );
+    assert.equal(prepared, 0, "late summon must not call prepare after dispose");
+    assert.equal(
+      (session.entries() as readonly unknown[]).some(
+        (entry) =>
+          typeof entry === "object"
+          && entry !== null
+          && (entry as { customType?: string }).customType === NAVIGATOR_HOST_RUN_POINTER_ENTRY,
+      ),
+      false,
+    );
+  });
+});
+
 test("#959 typed non-resumable preflight allows one fresh mint", async () => {
   await withTempRoot("navigator-host-resume-absent-", async (root) => {
     seedGitRepository(root);

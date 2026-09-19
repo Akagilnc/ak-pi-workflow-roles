@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import test from "node:test";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
@@ -1146,6 +1146,200 @@ test("#959 post-role grace aborts hung nest; session_shutdown does not re-block"
       );
     });
   } finally {
+    t.mock.timers.reset();
+    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
+    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
+  }
+});
+
+test("#959 non-blocking dispose records sync failure without unhandled rejection", async (t) => {
+  // Same shared entry as the grace tracer: post-role dispose must catch sync throws from
+  // attendance.dispose (Promise.resolve(dispose()) evaluates before .then) and must not let
+  // recording fallback throw become unhandledRejection (#959 continue).
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    await withActivationHome({ prefix: "ak-nav-infra-dispose-fail-" }, async ({ home }) => {
+      seedGitRepository(home);
+      await mkdir(join(home, ".ak-roles"), { recursive: true });
+      await writeFile(
+        join(home, ".ak-roles", "public-cli.json"),
+        `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+      );
+      const modelSettingPath = join(home, "navigator-model.json");
+      await writeFile(modelSettingPath, `${JSON.stringify({ model: "provider/model" })}\n`);
+
+      const runDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-infra-dispose-fail");
+      await mkdir(join(runDir, "session"), { recursive: true });
+      process.env.AK_ROLE_RUN_DIR = runDir;
+
+      const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+      const sent: Array<{ customType?: string; details?: unknown }> = [];
+      const disposeFailures: Array<{ customType?: string; data?: unknown }> = [];
+      let summonStarted = false;
+      const summon = async (options: {
+        readonly role: "navigator";
+        readonly argv: readonly string[];
+        readonly cwd: string;
+        readonly home?: string;
+        readonly resumeRunId?: string;
+        readonly signal?: AbortSignal;
+      }) => {
+        summonStarted = true;
+        const signal = options.signal;
+        await new Promise<void>((_resolve, reject) => {
+          const onAbort = () => {
+            reject(signal?.reason ?? new Error("navigator nest aborted"));
+          };
+          if (signal?.aborted) {
+            onAbort();
+            return;
+          }
+          signal?.addEventListener("abort", onAbort, { once: true });
+        });
+        return { exitCode: 1 };
+      };
+
+      const pi = {
+        registerFlag() {},
+        getFlag(name: string) {
+          return name === "ak-role" ? "judge" : undefined;
+        },
+        on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+          handlers.set(name, handler);
+        },
+        registerTool() {},
+        getAllTools() {
+          return [];
+        },
+        setActiveTools() {},
+        getActiveTools() {
+          return [];
+        },
+        appendEntry(customType: string, data?: unknown) {
+          if (customType !== "ak-navigator-dispose-failure") return;
+          disposeFailures.push({ customType, data });
+          throw new Error("appendEntry recording poisoned");
+        },
+      };
+      const envelopeHost: RoleEnvelopeHost = {
+        host: pi as RoleHost,
+        appendEntry: pi.appendEntry,
+        sendMessage(message) {
+          sent.push(message as { customType?: string; details?: unknown });
+        },
+        startKeepalive() {},
+        stopKeepalive() {},
+      };
+      createRoleRuntimeExtension({
+        loadJudgeSoul: async () => "JUDGE LAW",
+        loadNavigatorWorkContext: async () => ({
+          subjectKey: `${runDir}/work`,
+          subject: "infra dispose-fail subject",
+          authority: "infra dispose-fail authority",
+          subjectProvenance: "placeholder" as const,
+        }),
+        createNavigatorAttendance: (options) => {
+          const attendance = createNavigatorAttendance({
+            context: options.context,
+            role: options.role,
+            phase: options.phase,
+            subjectKey: options.subjectKey,
+            subject: options.subject,
+            authority: options.authority,
+            invocationId: options.invocationId,
+            ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
+            loadSoul: async () => "navigator soul",
+            loadRoleHelp: async () => "Usage: ak-role navigator --help",
+            modelSettingPath,
+            createSession: createNativeNavigatorSessionFactory({
+              summonPublicRole: summon,
+              hostRunResumable: async () => false,
+            }),
+            onEvent: options.onEvent,
+          });
+          return {
+            ...attendance,
+            dispose(): void {
+              // Keep nest abort from the real attendance, then fail sync for the envelope path.
+              const closing = attendance.dispose();
+              void Promise.resolve(closing).catch(() => undefined);
+              throw new Error("sync attendance dispose failure");
+            },
+          };
+        },
+      })(envelopeHost);
+
+      const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+      const sessionManager = SessionManager.create(home, join(runDir, "session"));
+      const ctx = { cwd: home, sessionManager, abort() {}, runDirectory: runDir };
+      await handlers.get("session_start")?.({}, ctx);
+      // Poison sitian destination so recordDisposeFailure falls through to appendEntry,
+      // then appendEntry itself throws — nested catch must still swallow (#959).
+      const sessionFile = sessionManager.getSessionFile();
+      assert.ok(typeof sessionFile === "string" && sessionFile.length > 0);
+      await writeFile(join(dirname(sessionFile), "navigator-dispose-failure"), "not-a-directory\n");
+
+      const toolResult = handlers.get("tool_result");
+      assert.ok(toolResult, "shared envelope must register tool_result");
+      const pending = Promise.resolve(
+        toolResult(
+          {
+            toolCallId: "infra-dispose-fail",
+            toolName: JUDGE_OUTPUT_TOOL_NAME,
+            isError: true,
+            details: buildNavigatorInfrastructureFailureFact(),
+            content: [],
+          },
+          ctx,
+        ),
+      );
+      let settled = false;
+      void pending.then(
+        () => {
+          settled = true;
+        },
+        () => {
+          settled = true;
+        },
+      );
+
+      await waitForEventLoopCondition(() => summonStarted, {
+        label: "settlement feed must start nested public summon",
+        timeoutMs: 2_000,
+      });
+      assert.equal(settled, false, "hung feed must still be inside grace");
+
+      t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);
+      await waitForEventLoopCondition(() => settled, {
+        label: "post-role grace must release parent even when dispose throws sync",
+        timeoutMs: 1_000,
+      });
+
+      await handlers.get("agent_settled")?.({}, ctx);
+      const presentation = sent.find((message) => message.customType === NAVIGATOR_EVENT_TYPE);
+      assert.ok(presentation, "grace timeout must still project navigator attendance");
+
+      const shutdownStarted = Date.now();
+      await handlers.get("session_shutdown")?.({}, ctx);
+      assert.ok(
+        Date.now() - shutdownStarted < 500,
+        "session_shutdown must not re-block after sync dispose failure",
+      );
+      await flushEventLoopTurns(5);
+      assert.equal(unhandled.length, 0, "dispose/record failures must not become unhandledRejection");
+      assert.ok(
+        disposeFailures.some((entry) => entry.customType === "ak-navigator-dispose-failure"),
+        "when sitianReport cannot book, appendEntry fallback must still receive the diagnostic",
+      );
+    });
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
     t.mock.timers.reset();
     if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previousRunDir;
