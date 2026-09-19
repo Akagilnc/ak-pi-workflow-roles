@@ -54,6 +54,16 @@ ak-role config set-auto-resume-limit 3
 
 **宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动；裸 `resume` 同序取表。可调用角色及其机构子腿（审刑审计、太医审计）共享进程内机构子会话接缝；御史台方法 Skill 现行仅 Pi 原生 `/skill:ak-cross-m-review` 交付——非 Pi 宿主原生装载仍 OPEN（[#922](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/922)）。
 
+**推荐宿主（省 token，[#971](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/971)）：** 长腿的上下文靠宿主自带的自动压缩封顶，阈值写在各宿主自己的配置里，本包不代写、不另造压缩机制。
+
+| 席位 | 推荐 host | 该宿主的压缩阈值配置（默认路径；宿主自己的家目录覆盖照其约定） |
+| --- | --- | --- |
+| 大理寺（judge）、给事中（countersign） | `codex` | `~/.codex/config.toml`：`model_auto_compact_token_limit` |
+| 将作监（coder）、修内司（fixer） | `grok-build` | `~/.grok/config.toml`：`[model."<id>"] auto_compact_threshold_percent` |
+| 其余 LLM 席位（太史是确定性机制，无宿主） | `pi`（包默认） | `~/.pi/agent/settings.json`：`compaction.reserveTokens`（触发线＝模型窗口−该值；需 pi ≥ 0.85.1） |
+
+配席：`ak-role config set-host <seat> <host>`；单次改道仍用 `--host`。换宿主前先确认该席的 model 是该宿主跑得了的（例如 `codex` 只跑 OpenAI 系模型），否则先 `ak-role config set <seat> <provider/model[:thinking]>`。
+
 **宿主 provider 表（#788）：** 席位行只写一份 provider 名。owner 手改 `~/.ak-roles/host-providers.json`（形如 `{ "hermes": { "xai": "xai-oauth" } }`）；代码只读。表里没有的问宿主目录（本票 hermes）：唯一即用，零个或多个响亮失败。优先级：表 > 唯一 > 失败，代码无裁量。`config show` 原样打印该表。
 
 **强制方法 Skill（#922）：** Pi 使用 `--skill`。角色只绑定一个 Skill 时，Claude 使用 `--plugin-dir` 与原生 slash command；当前 print harness 无法在一轮发出多个 slash command，所以 Fixer 等多 Skill 角色在 Claude 上没有强制方法调用。Codex 通过官方项目 `.agents/skills` 目录发现随包方法：目录缺失时创建常设软链，既有项不覆盖；调用时显式传入每个官方 `$skill-name`。Hermes ACP 与 Grok ACP 当前 harness 无法强制 Skill 调用。这些缺口只在文档说明：本包不为其另造适配、能力探测、typed failure、catalog 或操作员前置，也不改宿主 trust／配置。
