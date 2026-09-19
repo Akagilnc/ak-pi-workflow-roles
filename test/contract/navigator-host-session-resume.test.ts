@@ -203,30 +203,38 @@ test("#959 non-resumable preflight mints once; resume transport failure does not
   });
 });
 
-test("#959 dispose closes session: late summon must not write pointer or prepare", async () => {
-  // Legal HostContext.signal absence: dispose is a marker only; in-flight summon may still
-  // resolve. After dispose returns, pointer append and prepare must not run (#959 continue).
-  await withTempRoot("navigator-host-dispose-late-", async (root) => {
+test("#959 dispose during resume preflight must not start summon", async () => {
+  // Legal HostContext.signal absence. First prompt pins a host run; second blocks in
+  // hostRunResumable; dispose before release must close admission — summon never starts
+  // (ADR 0018 / #959 continue: preflight race, not only late side effects).
+  await withTempRoot("navigator-host-dispose-preflight-", async (root) => {
     seedGitRepository(root);
-    const runDirectory = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navlate@navigator");
-    await mkdir(join(runDirectory, "session"), { recursive: true });
+    const firstDir = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navpre1@navigator");
+    const secondDir = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navpre2@navigator");
+    await mkdir(join(firstDir, "session"), { recursive: true });
+    await mkdir(join(secondDir, "session"), { recursive: true });
     const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
     await mkdir(join(parentRun, "session"), { recursive: true });
 
-    let releaseSummon: (() => void) | undefined;
-    const summonGate = new Promise<void>((resolve) => {
-      releaseSummon = resolve;
+    let releasePreflight: (() => void) | undefined;
+    const preflightGate = new Promise<void>((resolve) => {
+      releasePreflight = resolve;
     });
+    let preflightChecks = 0;
+    let summonCalls = 0;
     let prepared = 0;
-    const summon = async (): Promise<PublicSummonResult> => {
-      await summonGate;
+    const summon = async (options: {
+      readonly resumeRunId?: string;
+    }): Promise<PublicSummonResult> => {
+      summonCalls += 1;
+      const runDirectory = options.resumeRunId === undefined ? firstDir : secondDir;
       return {
         exitCode: 0,
         runDirectory,
         terminal: {
           roleOutcome: {
             kind: "accepted",
-            payloads: [{ prose: "late prose after dispose" }],
+            payloads: [{ prose: `summon-${summonCalls}` }],
           },
         } as never,
       };
@@ -234,15 +242,21 @@ test("#959 dispose closes session: late summon must not write pointer or prepare
 
     const session = await createNativeNavigatorSessionFactory({
       summonPublicRole: summon,
-      hostRunResumable: async () => false,
+      hostRunResumable: async () => {
+        preflightChecks += 1;
+        if (preflightChecks === 1) {
+          await preflightGate;
+          return true;
+        }
+        return false;
+      },
     })({
       context: {
         cwd: root,
         runDirectory: parentRun,
-        // No signal — legal HostContext; attendance would inject nestCancel, factory must still
-        // close side effects on dispose without owning AbortController.
+        // No signal — legal HostContext; factory must still refuse post-dispose summon.
       } as never,
-      subject: "/work/subject-dispose-late",
+      subject: "/work/subject-dispose-preflight",
       tool: {
         name: "ak_navigator_prepare",
         async execute() {
@@ -252,31 +266,38 @@ test("#959 dispose closes session: late summon must not write pointer or prepare
       } as never,
     });
 
-    const promptDone = session.prompt("materials-while-live");
-    await session.dispose();
-    assert.equal(
-      readNavigatorHostRunPointer(session.entries() as readonly unknown[]),
-      undefined,
-      "dispose must complete before late summon side effects",
-    );
-    assert.equal(prepared, 0);
+    await session.prompt("pin-host-run");
+    assert.equal(summonCalls, 1);
+    const pinned = readNavigatorHostRunPointer(session.entries() as readonly unknown[]);
+    assert.equal(pinned, "01navpre1");
 
-    releaseSummon?.();
-    await promptDone;
+    const secondPrompt = session.prompt("blocked-in-preflight");
+    // Let the second prompt reach hostRunResumable before dispose.
+    for (let i = 0; i < 20 && preflightChecks < 1; i += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    assert.equal(preflightChecks, 1, "second prompt must enter resumable preflight");
+    assert.equal(summonCalls, 1, "summon must not start while preflight is gated");
+
+    await session.dispose();
+    releasePreflight?.();
+    await secondPrompt;
+
+    assert.equal(summonCalls, 1, "dispose during preflight must not start a new summon");
     assert.equal(
       readNavigatorHostRunPointer(session.entries() as readonly unknown[]),
-      undefined,
-      "late summon must not append host-run pointer after dispose",
+      pinned,
+      "blocked second prompt must not rewrite host-run pointer after dispose",
     );
-    assert.equal(prepared, 0, "late summon must not call prepare after dispose");
+    assert.equal(prepared, 1, "only the first live prompt may prepare");
     assert.equal(
-      (session.entries() as readonly unknown[]).some(
+      (session.entries() as readonly unknown[]).filter(
         (entry) =>
           typeof entry === "object"
           && entry !== null
           && (entry as { customType?: string }).customType === NAVIGATOR_HOST_RUN_POINTER_ENTRY,
-      ),
-      false,
+      ).length,
+      1,
     );
   });
 });

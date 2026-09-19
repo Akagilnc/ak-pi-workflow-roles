@@ -340,7 +340,8 @@ test("Navigator session creation failures become unavailable without rejecting s
       assert.equal(events[0].disposition, "unavailable");
       assert.equal(events[0].unavailableSource, "session");
       assert.equal(events[0].unavailableCause, "session");
-      assert.notEqual(events[0].unavailableReason, undefined);
+      // #959 怎么验#2: unavailable keeps the host/session diagnostic as the real reason.
+      assert.equal(events[0].unavailableReason, diagnostic);
     }
   });
 });

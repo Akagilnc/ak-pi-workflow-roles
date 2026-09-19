@@ -247,6 +247,8 @@ test("#959 missing host binary stays activation spawn-failed with real path", as
     assert.ok(diagnostic.includes("ENOENT") || diagnostic.includes(missingBin), diagnostic);
     const details = result.knownFailure?.details as { binary?: string } | undefined;
     assert.equal(details?.binary, missingBin);
+    // Same diagnostic must remain the honest failure text for upstream unavailable projection.
+    assert.notEqual(diagnostic.trim(), "", "missing-binary diagnostic must stay non-empty for terminal unavailable");
   } finally {
     ledger.dispose();
   }

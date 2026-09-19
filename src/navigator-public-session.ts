@@ -148,6 +148,9 @@ export function createNativeNavigatorSessionFactory(deps?: {
         noReceipt = undefined;
         try {
           const summonHome = await resolveNavigatorLedgerHome(context);
+          // Admission after every await: dispose during preflight must not start summon
+          // (ADR 0018 / #959 — legal HostContext may omit signal).
+          if (disposed) return;
           const resumeRunId = hostRunId;
 
           // Call contract only: forward shared-lifecycle signal; do not own AbortController here
@@ -165,12 +168,17 @@ export function createNativeNavigatorSessionFactory(deps?: {
           const resumable = deps?.hostRunResumable ?? navigatorHostRunResumable;
           let summoned: PublicSummonResult;
           if (resumeRunId === undefined || summonHome === undefined) {
+            if (disposed) return;
             summoned = await summon(baseSummon);
-          } else if (await resumable(summonHome, resumeRunId)) {
-            summoned = await summon({ ...baseSummon, resumeRunId });
           } else {
-            hostRunId = undefined;
-            summoned = await summon(baseSummon);
+            const canResume = await resumable(summonHome, resumeRunId);
+            if (disposed) return;
+            if (canResume) {
+              summoned = await summon({ ...baseSummon, resumeRunId });
+            } else {
+              hostRunId = undefined;
+              summoned = await summon(baseSummon);
+            }
           }
 
           // Dispose won the race (with or without HostContext.signal): no late pointer/prepare.

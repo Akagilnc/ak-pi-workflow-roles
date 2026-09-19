@@ -974,6 +974,174 @@ test("public navigator session takes a seat edit for the next summon instead of 
   });
 });
 
+/** Shared #959 infra envelope: hung nest summon + real session_start/tool_result/shutdown. */
+async function withNavigatorInfraGraceEnvelope(
+  options: {
+    readonly prefix: string;
+    readonly runName: string;
+    readonly subject: string;
+    readonly authority: string;
+    readonly appendEntry?: (customType: string, data?: unknown) => void;
+    readonly wrapAttendance?: (
+      attendance: ReturnType<typeof createNavigatorAttendance>,
+    ) => ReturnType<typeof createNavigatorAttendance>;
+    readonly wrapSession?: (
+      session: Awaited<ReturnType<ReturnType<typeof createNativeNavigatorSessionFactory>>>,
+    ) => Awaited<ReturnType<ReturnType<typeof createNativeNavigatorSessionFactory>>>;
+  },
+  run: (harness: {
+    readonly home: string;
+    readonly runDir: string;
+    readonly handlers: Map<string, (event: unknown, ctx: unknown) => unknown>;
+    readonly sent: Array<{ customType?: string; details?: unknown }>;
+    readonly ctx: { cwd: string; sessionManager: unknown; abort(): void; runDirectory: string };
+    readonly sessionManager: { getSessionFile(): string | undefined };
+    readonly seenSignal: () => AbortSignal | undefined;
+    readonly summonStarted: () => boolean;
+    readonly nestStopped: () => boolean;
+    readonly sessionDisposeFinished: () => boolean;
+  }) => Promise<void>,
+): Promise<void> {
+  await withActivationHome({ prefix: options.prefix }, async ({ home }) => {
+    seedGitRepository(home);
+    await mkdir(join(home, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(home, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const modelSettingPath = join(home, "navigator-model.json");
+    await writeFile(modelSettingPath, `${JSON.stringify({ model: "provider/model" })}\n`);
+
+    const runDir = join(home, ".ak-roles", "books", basename(home), "runs", options.runName);
+    await mkdir(join(runDir, "session"), { recursive: true });
+    process.env.AK_ROLE_RUN_DIR = runDir;
+
+    const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
+    const sent: Array<{ customType?: string; details?: unknown }> = [];
+    let seenSignal: AbortSignal | undefined;
+    let summonStarted = false;
+    let nestStopped = false;
+    let sessionDisposeFinished = false;
+    const summon = async (summonOptions: {
+      readonly role: "navigator";
+      readonly argv: readonly string[];
+      readonly cwd: string;
+      readonly home?: string;
+      readonly resumeRunId?: string;
+      readonly signal?: AbortSignal;
+    }) => {
+      seenSignal = summonOptions.signal;
+      summonStarted = true;
+      assert.ok(seenSignal, "shared attendance must forward cancel signal into summon");
+      await new Promise<void>((_resolve, reject) => {
+        const onAbort = () => {
+          nestStopped = true;
+          reject(seenSignal?.reason ?? new Error("navigator nest aborted"));
+        };
+        if (seenSignal!.aborted) {
+          onAbort();
+          return;
+        }
+        seenSignal!.addEventListener("abort", onAbort, { once: true });
+      });
+      return { exitCode: 1 };
+    };
+
+    const pi = {
+      registerFlag() {},
+      getFlag(name: string) {
+        return name === "ak-role" ? "judge" : undefined;
+      },
+      on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
+        handlers.set(name, handler);
+      },
+      registerTool() {},
+      getAllTools() {
+        return [];
+      },
+      setActiveTools() {},
+      getActiveTools() {
+        return [];
+      },
+      appendEntry(customType: string, data?: unknown) {
+        options.appendEntry?.(customType, data);
+      },
+    };
+    const envelopeHost: RoleEnvelopeHost = {
+      host: pi as RoleHost,
+      appendEntry: pi.appendEntry,
+      sendMessage(message) {
+        sent.push(message as { customType?: string; details?: unknown });
+      },
+      startKeepalive() {},
+      stopKeepalive() {},
+    };
+    createRoleRuntimeExtension({
+      loadJudgeSoul: async () => "JUDGE LAW",
+      loadNavigatorWorkContext: async () => ({
+        // Placeholder skips warm prepare on session_start so the hung nest is
+        // only the settlement-feed summon under post-role grace (#959).
+        subjectKey: `${runDir}/work`,
+        subject: options.subject,
+        authority: options.authority,
+        subjectProvenance: "placeholder" as const,
+      }),
+      createNavigatorAttendance: (attendanceOptions) => {
+        const attendance = createNavigatorAttendance({
+          context: attendanceOptions.context,
+          role: attendanceOptions.role,
+          phase: attendanceOptions.phase,
+          subjectKey: attendanceOptions.subjectKey,
+          subject: attendanceOptions.subject,
+          authority: attendanceOptions.authority,
+          invocationId: attendanceOptions.invocationId,
+          ...(attendanceOptions.contextError === undefined
+            ? {}
+            : { contextError: attendanceOptions.contextError }),
+          loadSoul: async () => "navigator soul",
+          loadRoleHelp: async () => "Usage: ak-role navigator --help",
+          modelSettingPath,
+          createSession: async (sessionOptions) => {
+            const created = await createNativeNavigatorSessionFactory({
+              summonPublicRole: summon,
+              hostRunResumable: async () => false,
+            })(sessionOptions);
+            const wrapped = options.wrapSession?.(created) ?? created;
+            const innerDispose = wrapped.dispose.bind(wrapped);
+            return {
+              ...wrapped,
+              dispose: async () => {
+                await innerDispose();
+                // Hang after real dispose work so awaiting teardown re-blocks the court.
+                await new Promise<void>(() => {});
+                sessionDisposeFinished = true;
+              },
+            };
+          },
+          onEvent: attendanceOptions.onEvent,
+        });
+        return options.wrapAttendance?.(attendance) ?? attendance;
+      },
+    })(envelopeHost);
+
+    const { SessionManager } = await import("@earendil-works/pi-coding-agent");
+    const sessionManager = SessionManager.create(home, join(runDir, "session"));
+    const ctx = { cwd: home, sessionManager, abort() {}, runDirectory: runDir };
+    await run({
+      home,
+      runDir,
+      handlers,
+      sent,
+      ctx,
+      sessionManager,
+      seenSignal: () => seenSignal,
+      summonStarted: () => summonStarted,
+      nestStopped: () => nestStopped,
+      sessionDisposeFinished: () => sessionDisposeFinished,
+    });
+  });
+}
+
 test("#959 post-role grace aborts hung nest; session_shutdown does not re-block", async (t) => {
   // Real shared entry: session_start → infrastructure settlement → attendance settle →
   // public-session summon (listens to HostContext.signal) → grace dispose aborts nest →
@@ -981,170 +1149,85 @@ test("#959 post-role grace aborts hung nest; session_shutdown does not re-block"
   t.mock.timers.enable({ apis: ["setTimeout"] });
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
   try {
-    await withActivationHome({ prefix: "ak-nav-infra-grace-" }, async ({ home }) => {
-      seedGitRepository(home);
-      await mkdir(join(home, ".ak-roles"), { recursive: true });
-      await writeFile(
-        join(home, ".ak-roles", "public-cli.json"),
-        `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-      );
-      const modelSettingPath = join(home, "navigator-model.json");
-      await writeFile(modelSettingPath, `${JSON.stringify({ model: "provider/model" })}\n`);
+    await withNavigatorInfraGraceEnvelope(
+      {
+        prefix: "ak-nav-infra-grace-",
+        runName: "judge-infra-grace",
+        subject: "infra grace subject",
+        authority: "infra grace authority",
+      },
+      async ({ handlers, sent, ctx, seenSignal, summonStarted, nestStopped, sessionDisposeFinished }) => {
+        await handlers.get("session_start")?.({}, ctx);
 
-      const runDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-infra-grace");
-      await mkdir(join(runDir, "session"), { recursive: true });
-      process.env.AK_ROLE_RUN_DIR = runDir;
-
-      const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
-      const sent: Array<{ customType?: string; details?: unknown }> = [];
-      let seenSignal: AbortSignal | undefined;
-      let summonStarted = false;
-      let nestStopped = false;
-      const summon = async (options: {
-        readonly role: "navigator";
-        readonly argv: readonly string[];
-        readonly cwd: string;
-        readonly home?: string;
-        readonly resumeRunId?: string;
-        readonly signal?: AbortSignal;
-      }) => {
-        seenSignal = options.signal;
-        summonStarted = true;
-        assert.ok(seenSignal, "shared attendance must forward cancel signal into summon");
-        await new Promise<void>((_resolve, reject) => {
-          const onAbort = () => {
-            nestStopped = true;
-            reject(seenSignal?.reason ?? new Error("navigator nest aborted"));
-          };
-          if (seenSignal!.aborted) {
-            onAbort();
-            return;
-          }
-          seenSignal!.addEventListener("abort", onAbort, { once: true });
-        });
-        return { exitCode: 1 };
-      };
-
-      const pi = {
-        registerFlag() {},
-        getFlag(name: string) {
-          return name === "ak-role" ? "judge" : undefined;
-        },
-        on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
-          handlers.set(name, handler);
-        },
-        registerTool() {},
-        getAllTools() {
-          return [];
-        },
-        setActiveTools() {},
-        getActiveTools() {
-          return [];
-        },
-        appendEntry() {},
-      };
-      const envelopeHost: RoleEnvelopeHost = {
-        host: pi as RoleHost,
-        appendEntry: pi.appendEntry,
-        sendMessage(message) {
-          sent.push(message as { customType?: string; details?: unknown });
-        },
-        startKeepalive() {},
-        stopKeepalive() {},
-      };
-      createRoleRuntimeExtension({
-        loadJudgeSoul: async () => "JUDGE LAW",
-        loadNavigatorWorkContext: async () => ({
-          // Placeholder skips warm prepare on session_start so the hung nest is
-          // only the settlement-feed summon under post-role grace (#959).
-          subjectKey: `${runDir}/work`,
-          subject: "infra grace subject",
-          authority: "infra grace authority",
-          subjectProvenance: "placeholder" as const,
-        }),
-        createNavigatorAttendance: (options) => createNavigatorAttendance({
-          context: options.context,
-          role: options.role,
-          phase: options.phase,
-          subjectKey: options.subjectKey,
-          subject: options.subject,
-          authority: options.authority,
-          invocationId: options.invocationId,
-          ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
-          loadSoul: async () => "navigator soul",
-          loadRoleHelp: async () => "Usage: ak-role navigator --help",
-          modelSettingPath,
-          createSession: createNativeNavigatorSessionFactory({
-            summonPublicRole: summon,
-            hostRunResumable: async () => false,
-          }),
-          onEvent: options.onEvent,
-        }),
-      })(envelopeHost);
-
-      const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-      const sessionManager = SessionManager.create(home, join(runDir, "session"));
-      const ctx = { cwd: home, sessionManager, abort() {}, runDirectory: runDir };
-      await handlers.get("session_start")?.({}, ctx);
-
-      const toolResult = handlers.get("tool_result");
-      assert.ok(toolResult, "shared envelope must register tool_result");
-      const pending = Promise.resolve(
-        toolResult(
-          {
-            toolCallId: "infra-hung",
-            toolName: JUDGE_OUTPUT_TOOL_NAME,
-            isError: true,
-            details: buildNavigatorInfrastructureFailureFact(),
-            content: [],
+        const toolResult = handlers.get("tool_result");
+        assert.ok(toolResult, "shared envelope must register tool_result");
+        const pending = Promise.resolve(
+          toolResult(
+            {
+              toolCallId: "infra-hung",
+              toolName: JUDGE_OUTPUT_TOOL_NAME,
+              isError: true,
+              details: buildNavigatorInfrastructureFailureFact(),
+              content: [],
+            },
+            ctx,
+          ),
+        );
+        let settled = false;
+        void pending.then(
+          () => {
+            settled = true;
           },
-          ctx,
-        ),
-      );
-      let settled = false;
-      void pending.then(
-        () => {
-          settled = true;
-        },
-        () => {
-          settled = true;
-        },
-      );
+          () => {
+            settled = true;
+          },
+        );
 
-      await waitForEventLoopCondition(() => summonStarted, {
-        label: "settlement feed must start nested public summon",
-        timeoutMs: 2_000,
-      });
-      assert.equal(settled, false, "hung feed must still be inside grace");
-      assert.equal(seenSignal?.aborted, false, "nest stays live until grace dispose");
+        await waitForEventLoopCondition(() => summonStarted(), {
+          label: "settlement feed must start nested public summon",
+          timeoutMs: 2_000,
+        });
+        assert.equal(settled, false, "hung feed must still be inside grace");
+        assert.equal(seenSignal()?.aborted, false, "nest stays live until grace dispose");
 
-      t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);
-      await waitForEventLoopCondition(() => settled && nestStopped, {
-        label: "post-role grace must release parent and abort nested summon",
-        timeoutMs: 1_000,
-      });
-      assert.equal(seenSignal?.aborted, true, "grace dispose must abort nested summon signal");
-      assert.equal(nestStopped, true, "nested summon must observe abort and stop");
+        t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);
+        await waitForEventLoopCondition(() => settled && nestStopped(), {
+          label: "post-role grace must release parent and abort nested summon",
+          timeoutMs: 1_000,
+        });
+        assert.equal(seenSignal()?.aborted, true, "grace dispose must abort nested summon signal");
+        assert.equal(nestStopped(), true, "nested summon must observe abort and stop");
+        assert.equal(
+          sessionDisposeFinished(),
+          false,
+          "grace must not await hung session.dispose teardown",
+        );
 
-      await handlers.get("agent_settled")?.({}, ctx);
-      const presentation = sent.find((message) => message.customType === NAVIGATOR_EVENT_TYPE);
-      assert.ok(presentation, "grace timeout must project navigator attendance");
-      assert.equal(
-        (presentation.details as { disposition?: string } | undefined)?.disposition,
-        "unavailable",
-      );
-      assert.equal(
-        (presentation.details as { unavailableReason?: string } | undefined)?.unavailableReason,
-        "Navigator exceeded post-role delivery grace",
-      );
+        await handlers.get("agent_settled")?.({}, ctx);
+        const presentation = sent.find((message) => message.customType === NAVIGATOR_EVENT_TYPE);
+        assert.ok(presentation, "grace timeout must project navigator attendance");
+        assert.equal(
+          (presentation.details as { disposition?: string } | undefined)?.disposition,
+          "unavailable",
+        );
+        assert.equal(
+          (presentation.details as { unavailableReason?: string } | undefined)?.unavailableReason,
+          "Navigator exceeded post-role delivery grace",
+        );
 
-      const shutdownStarted = Date.now();
-      await handlers.get("session_shutdown")?.({}, ctx);
-      assert.ok(
-        Date.now() - shutdownStarted < 500,
-        "session_shutdown after grace must not hang on navigator dispose",
-      );
-    });
+        // Mutation proof: awaiting dispose() would wait on the same hung closing promise.
+        let shutdownDone = false;
+        const shutdown = Promise.resolve(handlers.get("session_shutdown")?.({}, ctx)).then(
+          () => {
+            shutdownDone = true;
+          },
+        );
+        await flushEventLoopTurns(5);
+        assert.equal(shutdownDone, true, "session_shutdown must finish without awaiting teardown");
+        assert.equal(sessionDisposeFinished(), false, "teardown must still be pending after shutdown");
+        await shutdown;
+      },
+    );
   } finally {
     t.mock.timers.reset();
     if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
@@ -1164,105 +1247,19 @@ test("#959 non-blocking dispose records sync failure without unhandled rejection
   };
   process.on("unhandledRejection", onUnhandled);
   try {
-    await withActivationHome({ prefix: "ak-nav-infra-dispose-fail-" }, async ({ home }) => {
-      seedGitRepository(home);
-      await mkdir(join(home, ".ak-roles"), { recursive: true });
-      await writeFile(
-        join(home, ".ak-roles", "public-cli.json"),
-        `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
-      );
-      const modelSettingPath = join(home, "navigator-model.json");
-      await writeFile(modelSettingPath, `${JSON.stringify({ model: "provider/model" })}\n`);
-
-      const runDir = join(home, ".ak-roles", "books", basename(home), "runs", "judge-infra-dispose-fail");
-      await mkdir(join(runDir, "session"), { recursive: true });
-      process.env.AK_ROLE_RUN_DIR = runDir;
-
-      const handlers = new Map<string, (event: unknown, ctx: unknown) => unknown>();
-      const sent: Array<{ customType?: string; details?: unknown }> = [];
-      const disposeFailures: Array<{ customType?: string; data?: unknown }> = [];
-      let summonStarted = false;
-      const summon = async (options: {
-        readonly role: "navigator";
-        readonly argv: readonly string[];
-        readonly cwd: string;
-        readonly home?: string;
-        readonly resumeRunId?: string;
-        readonly signal?: AbortSignal;
-      }) => {
-        summonStarted = true;
-        const signal = options.signal;
-        await new Promise<void>((_resolve, reject) => {
-          const onAbort = () => {
-            reject(signal?.reason ?? new Error("navigator nest aborted"));
-          };
-          if (signal?.aborted) {
-            onAbort();
-            return;
-          }
-          signal?.addEventListener("abort", onAbort, { once: true });
-        });
-        return { exitCode: 1 };
-      };
-
-      const pi = {
-        registerFlag() {},
-        getFlag(name: string) {
-          return name === "ak-role" ? "judge" : undefined;
-        },
-        on(name: string, handler: (event: unknown, ctx: unknown) => unknown) {
-          handlers.set(name, handler);
-        },
-        registerTool() {},
-        getAllTools() {
-          return [];
-        },
-        setActiveTools() {},
-        getActiveTools() {
-          return [];
-        },
-        appendEntry(customType: string, data?: unknown) {
+    const disposeFailures: Array<{ customType?: string; data?: unknown }> = [];
+    await withNavigatorInfraGraceEnvelope(
+      {
+        prefix: "ak-nav-infra-dispose-fail-",
+        runName: "judge-infra-dispose-fail",
+        subject: "infra dispose-fail subject",
+        authority: "infra dispose-fail authority",
+        appendEntry(customType, data) {
           if (customType !== "ak-navigator-dispose-failure") return;
           disposeFailures.push({ customType, data });
           throw new Error("appendEntry recording poisoned");
         },
-      };
-      const envelopeHost: RoleEnvelopeHost = {
-        host: pi as RoleHost,
-        appendEntry: pi.appendEntry,
-        sendMessage(message) {
-          sent.push(message as { customType?: string; details?: unknown });
-        },
-        startKeepalive() {},
-        stopKeepalive() {},
-      };
-      createRoleRuntimeExtension({
-        loadJudgeSoul: async () => "JUDGE LAW",
-        loadNavigatorWorkContext: async () => ({
-          subjectKey: `${runDir}/work`,
-          subject: "infra dispose-fail subject",
-          authority: "infra dispose-fail authority",
-          subjectProvenance: "placeholder" as const,
-        }),
-        createNavigatorAttendance: (options) => {
-          const attendance = createNavigatorAttendance({
-            context: options.context,
-            role: options.role,
-            phase: options.phase,
-            subjectKey: options.subjectKey,
-            subject: options.subject,
-            authority: options.authority,
-            invocationId: options.invocationId,
-            ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
-            loadSoul: async () => "navigator soul",
-            loadRoleHelp: async () => "Usage: ak-role navigator --help",
-            modelSettingPath,
-            createSession: createNativeNavigatorSessionFactory({
-              summonPublicRole: summon,
-              hostRunResumable: async () => false,
-            }),
-            onEvent: options.onEvent,
-          });
+        wrapAttendance(attendance) {
           return {
             ...attendance,
             dispose(): void {
@@ -1273,71 +1270,72 @@ test("#959 non-blocking dispose records sync failure without unhandled rejection
             },
           };
         },
-      })(envelopeHost);
+      },
+      async ({ handlers, sent, ctx, sessionManager, summonStarted }) => {
+        await handlers.get("session_start")?.({}, ctx);
+        // Poison sitian destination so recordDisposeFailure falls through to appendEntry,
+        // then appendEntry itself throws — nested catch must still swallow (#959).
+        const sessionFile = sessionManager.getSessionFile();
+        assert.ok(typeof sessionFile === "string" && sessionFile.length > 0);
+        await writeFile(join(dirname(sessionFile), "navigator-dispose-failure"), "not-a-directory\n");
 
-      const { SessionManager } = await import("@earendil-works/pi-coding-agent");
-      const sessionManager = SessionManager.create(home, join(runDir, "session"));
-      const ctx = { cwd: home, sessionManager, abort() {}, runDirectory: runDir };
-      await handlers.get("session_start")?.({}, ctx);
-      // Poison sitian destination so recordDisposeFailure falls through to appendEntry,
-      // then appendEntry itself throws — nested catch must still swallow (#959).
-      const sessionFile = sessionManager.getSessionFile();
-      assert.ok(typeof sessionFile === "string" && sessionFile.length > 0);
-      await writeFile(join(dirname(sessionFile), "navigator-dispose-failure"), "not-a-directory\n");
-
-      const toolResult = handlers.get("tool_result");
-      assert.ok(toolResult, "shared envelope must register tool_result");
-      const pending = Promise.resolve(
-        toolResult(
-          {
-            toolCallId: "infra-dispose-fail",
-            toolName: JUDGE_OUTPUT_TOOL_NAME,
-            isError: true,
-            details: buildNavigatorInfrastructureFailureFact(),
-            content: [],
+        const toolResult = handlers.get("tool_result");
+        assert.ok(toolResult, "shared envelope must register tool_result");
+        const pending = Promise.resolve(
+          toolResult(
+            {
+              toolCallId: "infra-dispose-fail",
+              toolName: JUDGE_OUTPUT_TOOL_NAME,
+              isError: true,
+              details: buildNavigatorInfrastructureFailureFact(),
+              content: [],
+            },
+            ctx,
+          ),
+        );
+        let settled = false;
+        void pending.then(
+          () => {
+            settled = true;
           },
-          ctx,
-        ),
-      );
-      let settled = false;
-      void pending.then(
-        () => {
-          settled = true;
-        },
-        () => {
-          settled = true;
-        },
-      );
+          () => {
+            settled = true;
+          },
+        );
 
-      await waitForEventLoopCondition(() => summonStarted, {
-        label: "settlement feed must start nested public summon",
-        timeoutMs: 2_000,
-      });
-      assert.equal(settled, false, "hung feed must still be inside grace");
+        await waitForEventLoopCondition(() => summonStarted(), {
+          label: "settlement feed must start nested public summon",
+          timeoutMs: 2_000,
+        });
+        assert.equal(settled, false, "hung feed must still be inside grace");
 
-      t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);
-      await waitForEventLoopCondition(() => settled, {
-        label: "post-role grace must release parent even when dispose throws sync",
-        timeoutMs: 1_000,
-      });
+        t.mock.timers.tick(NAVIGATOR_POST_ROLE_GRACE_MS);
+        await waitForEventLoopCondition(() => settled, {
+          label: "post-role grace must release parent even when dispose throws sync",
+          timeoutMs: 1_000,
+        });
 
-      await handlers.get("agent_settled")?.({}, ctx);
-      const presentation = sent.find((message) => message.customType === NAVIGATOR_EVENT_TYPE);
-      assert.ok(presentation, "grace timeout must still project navigator attendance");
+        await handlers.get("agent_settled")?.({}, ctx);
+        const presentation = sent.find((message) => message.customType === NAVIGATOR_EVENT_TYPE);
+        assert.ok(presentation, "grace timeout must still project navigator attendance");
 
-      const shutdownStarted = Date.now();
-      await handlers.get("session_shutdown")?.({}, ctx);
-      assert.ok(
-        Date.now() - shutdownStarted < 500,
-        "session_shutdown must not re-block after sync dispose failure",
-      );
-      await flushEventLoopTurns(5);
-      assert.equal(unhandled.length, 0, "dispose/record failures must not become unhandledRejection");
-      assert.ok(
-        disposeFailures.some((entry) => entry.customType === "ak-navigator-dispose-failure"),
-        "when sitianReport cannot book, appendEntry fallback must still receive the diagnostic",
-      );
-    });
+        let shutdownDone = false;
+        const shutdown = Promise.resolve(handlers.get("session_shutdown")?.({}, ctx)).then(
+          () => {
+            shutdownDone = true;
+          },
+        );
+        await flushEventLoopTurns(5);
+        assert.equal(shutdownDone, true, "session_shutdown must not re-block after sync dispose failure");
+        await shutdown;
+        await flushEventLoopTurns(5);
+        assert.equal(unhandled.length, 0, "dispose/record failures must not become unhandledRejection");
+        assert.ok(
+          disposeFailures.some((entry) => entry.customType === "ak-navigator-dispose-failure"),
+          "when sitianReport cannot book, appendEntry fallback must still receive the diagnostic",
+        );
+      },
+    );
   } finally {
     process.off("unhandledRejection", onUnhandled);
     t.mock.timers.reset();

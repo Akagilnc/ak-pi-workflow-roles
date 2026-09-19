@@ -302,6 +302,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let preparationFailure: unknown;
   let routePlaybookReadFailure: string | undefined;
   let disposed = false;
+  /** In-flight session teardown; repeat dispose returns the same promise (#959 mutation proof). */
+  let closing: Promise<void> | undefined;
   // Shared attendance seam owns nested summon cancel (ADR 0018 / #959).
   // Role session factory only forwards HostContext.signal — never its own controller.
   const nestCancel = new AbortController();
@@ -681,10 +683,15 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       }
       // Leave sessionReady so an in-flight createSession observes disposed and drains exactly once.
       // Late settleOnce completion observes disposed and skips onEvent.
-      const current = session;
-      session = undefined;
       activeInvocationId = undefined;
-      return current?.dispose();
+      if (closing === undefined) {
+        const current = session;
+        session = undefined;
+        // Preserve rejection for non-blocking recordDisposeFailure; resolve void on success.
+        closing = Promise.resolve(current?.dispose()).then(() => undefined);
+      }
+      // Same in-flight teardown on repeat dispose — awaiting here re-blocks the parent court.
+      return closing;
     },
   };
 
