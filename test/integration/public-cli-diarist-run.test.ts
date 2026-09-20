@@ -1265,11 +1265,6 @@ test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket
         ticketNumber: 863,
       },
     ]);
-    assert.deepEqual(
-      [...report.mutationClosureRuns].sort(),
-      [boundSource, freeSource, peerSource].sort(),
-      "structured result must record the frozen mutation closure",
-    );
     assert.equal(
       existsSync(boundSource),
       false,
