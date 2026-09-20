@@ -17,14 +17,7 @@ import { lstat, mkdir, open } from "node:fs/promises";
 import { join } from "node:path";
 
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
-import {
-  projectResumablePublicTerminalFace,
-  projectRunRelativeOpenablePath,
-  readRunTerminalArtifact,
-  redactExactRunIdToken,
-} from "../run-terminal-artifacts.ts";
 import type {
-  ControlledFailureCause,
   DurablePrincipal,
   DurablePrincipalAuthority,
   SessionCustomEntryAppender,
@@ -46,7 +39,6 @@ import {
   presentFailureTerminal,
   presentStructuralRejection,
   resolveControlledFailureResumeObservation,
-  type FirstFailureCarry,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 
@@ -186,27 +178,6 @@ export async function ensureRealArtifactsDirectory(runDirectory: string): Promis
 }
 
 /**
- * Copy arbitrary own string keys onto a null-prototype bag (#990). Ordinary
- * `{}` + `bag[key] =` invokes the inherited `__proto__` setter and drops the
- * key as own data; null-prototype assignment keeps `__proto__` and peers.
- */
-function transferOwnNamedProperties(
-  value: object,
-  depth: number,
-  seen: WeakSet<object>,
-): Record<string, unknown> {
-  const transferred: Record<string, unknown> = Object.create(null);
-  for (const key of Object.getOwnPropertyNames(value)) {
-    transferred[key] = transferNestedValue(
-      (value as unknown as Record<string, unknown>)[key],
-      depth + 1,
-      seen,
-    );
-  }
-  return transferred;
-}
-
-/**
  * Whole-object transfer of a thrown value (owner 2026-08-23: 「记录所有错误信息。
  * 不能丢详细情况」). Every own property of the Error object — enumerable or not,
  * which is how message/stack and any attached identity land verbatim — plus the
@@ -217,9 +188,14 @@ function serializeThrownValue(value: unknown, depth = 0, seen = new WeakSet<obje
   if (value instanceof Error) {
     if (seen.has(value)) return "[circular]";
     seen.add(value);
-    const transferred = transferOwnNamedProperties(value, depth, seen);
-    // Spread uses CreateDataPropertyOrThrow, so `__proto__` stays an own data
-    // property on the materialised face (unlike ordinary `obj[key] =`).
+    const transferred: Record<string, unknown> = {};
+    for (const key of Object.getOwnPropertyNames(value)) {
+      transferred[key] = transferNestedValue(
+        (value as unknown as Record<string, unknown>)[key],
+        depth + 1,
+        seen,
+      );
+    }
     return {
       errorKind: "Error",
       constructorName: value.constructor?.name,
@@ -261,7 +237,15 @@ function transferNestedValue(value: unknown, depth: number, seen: WeakSet<object
   if (value !== null && typeof value === "object") {
     if (seen.has(value)) return "[circular]";
     seen.add(value);
-    return transferOwnNamedProperties(value, depth, seen);
+    const transferred: Record<string, unknown> = {};
+    for (const key of Object.getOwnPropertyNames(value)) {
+      transferred[key] = transferNestedValue(
+        (value as unknown as Record<string, unknown>)[key],
+        depth + 1,
+        seen,
+      );
+    }
+    return transferred;
   }
   return value;
 }
@@ -315,20 +299,28 @@ async function writeHardenedArtifactFile(
   return filePath;
 }
 
-async function appendDispatchErrorRetentionPointer(
+async function retainDispatchError(
   admitted: { runDirectory: string; principal: DurablePrincipal },
   principalAuthority: DurablePrincipalAuthority,
   sessionAppender: SessionCustomEntryAppender,
   attempt: number,
-  filePath: string,
-): Promise<unknown | undefined> {
+  error: unknown,
+): Promise<{ file: string; pointerError?: unknown }> {
+  const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
+  // Whole-object dump: everything the thrown value carries, nothing picked.
+  const filePath = await writeHardenedArtifactFile(artifactsDir, `dispatch-error-attempt-${attempt}`, {
+    version: 1,
+    attempt,
+    recordedAt: new Date().toISOString(),
+    error: serializeThrownValue(error),
+  });
   // Addressable pointer in the dossier (卷宗): Pi session custom-entry codec
   // (appendPiSessionCustomEntry). Lease still owned here with run-writer.
   let pointerLease: RunWriterLease;
   try {
     pointerLease = await acquireRunWriterLease(admitted.runDirectory);
   } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) return undefined;
+    if (error instanceof RunWriterLeaseHeldError) return { file: filePath };
     throw error;
   }
   // Pointer-stage failure (#426 fix_now #5) is separated from the file write:
@@ -348,256 +340,9 @@ async function appendDispatchErrorRetentionPointer(
   } finally {
     await pointerLease.release();
   }
-  return pointerError;
-}
-
-async function retainDispatchError(
-  admitted: { runDirectory: string; principal: DurablePrincipal },
-  principalAuthority: DurablePrincipalAuthority,
-  sessionAppender: SessionCustomEntryAppender,
-  attempt: number,
-  error: unknown,
-): Promise<{ file: string; pointerError?: unknown }> {
-  const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
-  // Whole-object dump: everything the thrown value carries, nothing picked.
-  const filePath = await writeHardenedArtifactFile(artifactsDir, `dispatch-error-attempt-${attempt}`, {
-    version: 1,
-    attempt,
-    recordedAt: new Date().toISOString(),
-    error: serializeThrownValue(error),
-  });
-  const pointerError = await appendDispatchErrorRetentionPointer(
-    admitted,
-    principalAuthority,
-    sessionAppender,
-    attempt,
-    filePath,
-  );
   return pointerError === undefined ? { file: filePath } : { file: filePath, pointerError };
 }
 
-type PriorControlledFailureCarry = {
-  readonly diagnostic: string;
-  readonly cause?: ControlledFailureCause;
-  readonly decisiveFacts: Readonly<Record<string, unknown>>;
-};
-
-const CONTROLLED_FAILURE_CAUSES: ReadonlySet<string> = new Set<ControlledFailureCause>([
-  "activation",
-  "provider",
-  "session",
-  "output",
-  "timeout",
-]);
-
-/**
- * #990: prefer durable error.json original bytes for loop-held first-failure
- * memory. Settlement may already have projected the public Terminal face, so
- * reading the publisher-owned error body keeps private retention / accepted
- * carry unprojected. Fall back to the Terminal only when no present error face.
- */
-async function capturePriorControlledFailureOriginals(
-  runDirectory: string,
-  terminal: TerminalResult,
-): Promise<PriorControlledFailureCarry> {
-  if (terminal.roleOutcome.kind !== "failure") {
-    throw new TypeError("capturePriorControlledFailureOriginals requires a failure role outcome");
-  }
-  const read = await readRunTerminalArtifact(runDirectory).catch(() => undefined);
-  if (read?.status === "present" && read.file === "error.json") {
-    const body = read.body;
-    const diagnostic =
-      typeof body.diagnostic === "string"
-        ? body.diagnostic
-        : terminal.roleOutcome.diagnostic;
-    const cause =
-      typeof body.cause === "string" && CONTROLLED_FAILURE_CAUSES.has(body.cause)
-        ? (body.cause as ControlledFailureCause)
-        : undefined;
-    const decisiveFacts: Record<string, unknown> = {
-      ...(cause === undefined ? {} : { cause }),
-      diagnostic,
-    };
-    const identity = body.identity;
-    if (identity !== null && typeof identity === "object" && !Array.isArray(identity)) {
-      const named = identity as { name?: unknown; code?: unknown };
-      if (typeof named.name === "string") decisiveFacts.errorName = named.name;
-      if (named.code !== undefined) decisiveFacts.errorCode = named.code;
-    }
-    if (body.details !== undefined) {
-      decisiveFacts.secondaryEvidence = body.details;
-    }
-    return {
-      diagnostic,
-      ...(cause === undefined ? {} : { cause }),
-      decisiveFacts,
-    };
-  }
-  return {
-    diagnostic: terminal.roleOutcome.diagnostic,
-    ...(terminal.roleOutcome.cause === undefined
-      ? {}
-      : { cause: terminal.roleOutcome.cause }),
-    decisiveFacts: { ...terminal.roleOutcome.decisiveFacts },
-  };
-}
-
-/**
- * #990: retain a settled controlled-failure that auto-resume will continue
- * past. Writes this attempt's original-byte capture (not the projected public
- * Terminal). Reuses the same hardened dispatch-error-attempt-* face and
- * session pointer as thrown-dispatch retention — conventional error.json is
- * cleared by a later accepted publish, so each continued-past attempt keeps
- * its own durable snapshot; first-failure carry for finals is held separately
- * (first-write-wins).
- */
-async function retainControlledFailureTerminal(
-  admitted: { runDirectory: string; principal: DurablePrincipal },
-  principalAuthority: DurablePrincipalAuthority,
-  sessionAppender: SessionCustomEntryAppender,
-  attempt: number,
-  failure: PriorControlledFailureCarry,
-): Promise<{ file: string; pointerError?: unknown }> {
-  const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
-  const filePath = await writeHardenedArtifactFile(artifactsDir, `dispatch-error-attempt-${attempt}`, {
-    version: 1,
-    attempt,
-    recordedAt: new Date().toISOString(),
-    diagnostic: failure.diagnostic,
-    ...(failure.cause === undefined ? {} : { cause: failure.cause }),
-    decisiveFacts: { ...failure.decisiveFacts },
-  });
-  const pointerError = await appendDispatchErrorRetentionPointer(
-    admitted,
-    principalAuthority,
-    sessionAppender,
-    attempt,
-    filePath,
-  );
-  return pointerError === undefined ? { file: filePath } : { file: filePath, pointerError };
-}
-
-/**
- * Public Terminal evidence refs: keep absolute paths when runId is already a
- * top-level face; on resumable Terminals project to run-relative openable
- * pointers so path components cannot re-disclose runId (#108 / #990).
- * Durable retention files stay absolute in loop memory; only the public face
- * is projected (same boundary as engine-detour discloseRecordFile:false).
- */
-function projectEvidencePathsForPublicTerminal(
-  terminal: TerminalResult,
-  runDirectory: string,
-  errorFiles: readonly string[],
-): readonly string[] {
-  if (terminal.resume === undefined) return errorFiles;
-  const projected: string[] = [];
-  for (const file of errorFiles) {
-    const relativePath = projectRunRelativeOpenablePath(runDirectory, file);
-    if (relativePath !== undefined) projected.push(relativePath);
-  }
-  return projected;
-}
-
-/**
- * #990: project the whole first-failure carry for a public Terminal face.
- * Resumable finals redact exact runId tokens from diagnostic/facts and use
- * run-relative evidence pointers; non-resumable faces keep absolute paths and
- * original text (top-level runId already discloses identity).
- * Durable retention stays unprojected in loop memory.
- */
-function projectFirstFailureCarryForPublicTerminal(
-  terminal: TerminalResult,
-  prior: PriorControlledFailureCarry,
-  errorFiles: readonly string[],
-  runDirectory: string,
-  runId: string,
-): {
-  readonly diagnostic: string;
-  readonly decisiveFacts: Readonly<Record<string, unknown>>;
-  readonly dispatchErrorFiles: readonly string[];
-} {
-  const publicFiles = projectEvidencePathsForPublicTerminal(
-    terminal,
-    runDirectory,
-    errorFiles,
-  );
-  if (terminal.resume === undefined) {
-    return {
-      diagnostic: prior.diagnostic,
-      decisiveFacts: prior.decisiveFacts,
-      dispatchErrorFiles: publicFiles,
-    };
-  }
-  const projectedDiagnostic = redactExactRunIdToken(prior.diagnostic, runId);
-  const projectedFacts = redactExactRunIdToken(
-    { ...prior.decisiveFacts },
-    runId,
-  );
-  // Object-in must remain object-out; do not cast an array/entry-list as Record.
-  if (typeof projectedDiagnostic !== "string") {
-    throw new Error(
-      "public first-failure diagnostic redaction must preserve string shape",
-    );
-  }
-  if (
-    projectedFacts === null
-    || typeof projectedFacts !== "object"
-    || Array.isArray(projectedFacts)
-  ) {
-    throw new Error(
-      "public first-failure decisiveFacts redaction must preserve object shape",
-    );
-  }
-  const decisiveFacts: Readonly<Record<string, unknown>> = {
-    ...(projectedFacts as Record<string, unknown>),
-  };
-  return {
-    diagnostic: projectedDiagnostic,
-    decisiveFacts,
-    dispatchErrorFiles: publicFiles,
-  };
-}
-
-/**
- * #990: fold the first controlled failure's structured facts + surviving
- * evidence refs into finals that have no accepted/audit sole publisher
- * (failure / no_receipt). Accepted/audit faces are assembled only at
- * publishAcceptedTerminalArtifacts — finalize must not post-publish rewrite.
- */
-function carryPriorControlledFailureIntoTerminal(
-  terminal: TerminalResult,
-  prior: PriorControlledFailureCarry,
-  errorFiles: readonly string[],
-  runDirectory: string,
-  runId: string,
-): void {
-  const projected = projectFirstFailureCarryForPublicTerminal(
-    terminal,
-    prior,
-    errorFiles,
-    runDirectory,
-    runId,
-  );
-  const outcome = terminal.roleOutcome as {
-    decisiveFacts?: Record<string, unknown>;
-  };
-  const priorFacts = outcome.decisiveFacts ?? {};
-  outcome.decisiveFacts = {
-    ...priorFacts,
-    priorControlledFailureDiagnostic: projected.diagnostic,
-    priorControlledFailureDecisiveFacts: { ...projected.decisiveFacts },
-    dispatchErrorFiles: [...projected.dispatchErrorFiles],
-  };
-  const existing = terminal.artifacts ?? [];
-  const known = new Set(existing.map((artifact) => artifact.path));
-  const errorRefs: TerminalArtifactRef[] = projected.dispatchErrorFiles
-    .filter((path) => !known.has(path))
-    .map((path) => ({ kind: "error", path }));
-  (terminal as unknown as { artifacts: TerminalArtifactRef[] }).artifacts = [
-    ...existing,
-    ...errorRefs,
-  ];
-}
 /**
  * Unwrap TurnDispatchedFailure before this loop's own final presentation
  * (#840 r9 判词 class 1 — the auto-resume.ts final presentation boundary).
@@ -736,13 +481,7 @@ export async function runWithAutoResumeLoop<
   signal?: AbortSignal;
   buildInitialPayload: () => TPayload;
   buildResumePayload: () => TPayload;
-  dispatch: (
-    payload: TPayload,
-    lease: RunWriterLease,
-    isFirst: boolean,
-    attemptIo: CliIo,
-    firstFailureCarry?: FirstFailureCarry,
-  ) => Promise<T>;
+  dispatch: (payload: TPayload, lease: RunWriterLease, isFirst: boolean, attemptIo: CliIo) => Promise<T>;
 }): Promise<T> {
   // #422 single-point resolution + domain validation. NaN would bypass every
   // `attempts >= limit` comparison (always false) — reject here, before any dispatch.
@@ -758,36 +497,6 @@ export async function runWithAutoResumeLoop<
   let lastThrownError: unknown;
   let everyAttemptThrew = true;
   const retainedErrorFiles: string[] = [];
-  // #990: first controlled-failure diagnosis captured in-loop before fallible
-  // durable retention; installed as publish input on the next dispatch, and
-  // folded into every final Terminal at the shared exit (no post-publish rewrite).
-  let priorControlledFailure: PriorControlledFailureCarry | undefined;
-
-  const finalizeReturn = async (result: T): Promise<T> => {
-    const terminal = (result as { terminal?: TerminalResult }).terminal;
-    if (terminal === undefined) return result;
-    if (priorControlledFailure !== undefined) {
-      const kind = terminal.roleOutcome.kind;
-      // accepted/audit_escalation: sole publisher already folded carry + error
-      // refs before the one report write — no post-publish rewrite (#990).
-      if (kind !== "accepted" && kind !== "audit_escalation") {
-        carryPriorControlledFailureIntoTerminal(
-          terminal,
-          priorControlledFailure,
-          retainedErrorFiles,
-          options.admitted.runDirectory,
-          options.admitted.runId,
-        );
-      }
-    }
-    // #990: after carry/attach folds, project the complete public resumable
-    // face once more so current + first-failure tokens stay only in resume.command.
-    if (terminal.resume !== undefined) {
-      projectResumablePublicTerminalFace(terminal, options.admitted.runId);
-    }
-    presentTerminal(terminal, options.io);
-    return result;
-  };
 
   while (true) {
     let lease: RunWriterLease;
@@ -810,23 +519,7 @@ export async function runWithAutoResumeLoop<
     // not a replay of the initial one.
     let turnStartedBeforeThrow = false;
     try {
-      // #990: when a prior controlled failure is already held, pass it as
-      // explicit firstFailureCarry into dispatch → courtScope → sole publisher.
-      const publishCarry: FirstFailureCarry | undefined =
-        priorControlledFailure === undefined
-          ? undefined
-          : {
-              diagnostic: priorControlledFailure.diagnostic,
-              decisiveFacts: priorControlledFailure.decisiveFacts,
-              dispatchErrorFiles: retainedErrorFiles,
-            };
-      result = await options.dispatch(
-        currentPayload,
-        lease,
-        isFirst,
-        dummyIo,
-        publishCarry,
-      );
+      result = await options.dispatch(currentPayload, lease, isFirst, dummyIo);
     } catch (error) {
       // Owner 2026-08-23: 「出了异常，就原地记录错误信息，然后重试。」
       // Retain the whole exception in place (per-attempt full file + dossier
@@ -881,61 +574,35 @@ export async function runWithAutoResumeLoop<
 
       const lawful = terminal !== undefined && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
       if (lawful) {
-        return await finalizeReturn(result);
+        if (terminal !== undefined) {
+          // Present lawful terminal once to real io (dummy was used inside dispatch)
+          options.io.stdout(formatTerminalResult(terminal));
+        }
+        return result;
       }
       if (result.skipAutoResume === true) {
-        return await finalizeReturn(result);
+        if (terminal !== undefined) presentTerminal(terminal, options.io);
+        return result;
       }
       // #855: process cancel — stop even if dispatch forgot skipAutoResume.
       if (processCancelSignalName(options.signal) !== undefined) {
-        return await finalizeReturn(result);
+        if (terminal !== undefined) presentTerminal(terminal, options.io);
+        return result;
       }
     }
 
     if (result !== undefined) {
       const terminal = (result as { terminal?: TerminalResult }).terminal;
       if (autoResumeAttempts >= limit) {
-        return await finalizeReturn(result);
+        if (terminal !== undefined) presentTerminal(terminal, options.io);
+        return result;
       }
       if (
         result.turnDispatched === true
         && !(await isPrincipalAvailable(options.admitted.principal))
       ) {
-        return await finalizeReturn(result);
-      }
-      // Will auto-resume past this settled failure: capture this attempt's
-      // structured originals from durable bytes (public Terminal may already
-      // be projected), then fallible retention (afterDispatch may already have
-      // relocated admitted.runDirectory). first-carry is first-write-wins only;
-      // per-attempt retention always uses currentFailure.
-      if (terminal !== undefined && terminal.roleOutcome.kind === "failure") {
-        const currentFailure = await capturePriorControlledFailureOriginals(
-          options.admitted.runDirectory,
-          terminal,
-        );
-        if (priorControlledFailure === undefined) {
-          priorControlledFailure = currentFailure;
-        }
-        const attempt = dispatchOrdinal - 1;
-        try {
-          const { file, pointerError } = await retainControlledFailureTerminal(
-            options.admitted,
-            options.principalAuthority,
-            options.sessionAppender,
-            attempt,
-            currentFailure,
-          );
-          retainedErrorFiles.push(file);
-          if (pointerError !== undefined) {
-            options.io.stderr(
-              `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(pointerError)}\n`,
-            );
-          }
-        } catch (retentionError) {
-          options.io.stderr(
-            `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}\n`,
-          );
-        }
+        if (terminal !== undefined) presentTerminal(terminal, options.io);
+        return result;
       }
     } else {
       // Exception path: continue through the identical budget/session gates.
@@ -954,10 +621,11 @@ export async function runWithAutoResumeLoop<
           options.io,
         );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        return await finalizeReturn({
+        presentTerminal(terminal, options.io);
+        return {
           exitCode: 1,
           terminal,
-        } as T);
+        } as T;
       }
       // #855: process cancel on the throw path — do not re-dispatch; name the signal.
       const cancelName = processCancelSignalName(options.signal);
@@ -976,10 +644,11 @@ export async function runWithAutoResumeLoop<
           options.io,
         );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        return await finalizeReturn({
+        presentTerminal(terminal, options.io);
+        return {
           exitCode: 1,
           terminal,
-        } as T);
+        } as T;
       }
       if (!(await isPrincipalAvailable(options.admitted.principal))) {
         const terminal = await attachDispatchExceptionTerminal(
@@ -996,10 +665,11 @@ export async function runWithAutoResumeLoop<
           options.io,
         );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        return await finalizeReturn({
+        presentTerminal(terminal, options.io);
+        return {
           exitCode: 1,
           terminal,
-        } as T);
+        } as T;
       }
     }
 

@@ -38,29 +38,7 @@ function alwaysThrowingDispatch(callsRef:{n:number}, messages:readonly string[])
     withPrimaryAwareCleanup(
       async () => {
         callsRef.n+=1;
-        const error = new Error(messages[Math.min(callsRef.n-1,messages.length-1)]!);
-        // #990: own `__proto__` on the Error and on a nested plain object must
-        // survive recursive retention as own data properties (not prototype sets).
-        Object.defineProperty(error, "__proto__", {
-          value: `proto-own-${callsRef.n}`,
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-        const nested: Record<string, unknown> = Object.create(null);
-        Object.defineProperty(nested, "__proto__", {
-          value: `nested-proto-${callsRef.n}`,
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-        Object.defineProperty(error, "details", {
-          value: nested,
-          enumerable: true,
-          configurable: true,
-          writable: true,
-        });
-        throw error;
+        throw new Error(messages[Math.min(callsRef.n-1,messages.length-1)]!);
       },
       async () => {
         await lease.release();
@@ -136,8 +114,6 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     assert.equal(terminal.autoResumeCount,2);
 
     // (b) one retained error file per attempt; unique names — no overwrite.
-    // #990: each retained dump keeps Error-own and nested-object `__proto__`
-    // as own data properties through recursive transfer.
     const artifactsDir=join(runDir,"artifacts");
     const files=(await readdir(artifactsDir)).filter((f)=>f.startsWith("dispatch-error-attempt-")).sort();
     assert.equal(files.length,3);
@@ -145,27 +121,6 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     for(const f of files){
       const s=await stat(join(artifactsDir,f));
       assert.ok(s.isFile());
-      const body=JSON.parse(await readFile(join(artifactsDir,f),"utf8")) as {
-        attempt?: unknown;
-        error?: Record<string, unknown>;
-      };
-      assert.equal(typeof body.attempt,"number");
-      const retainedError=body.error;
-      assert.ok(retainedError && typeof retainedError==="object");
-      assert.equal(
-        Object.prototype.hasOwnProperty.call(retainedError,"__proto__"),
-        true,
-        "retained dispatch error must keep __proto__ as an own data property",
-      );
-      assert.equal(retainedError["__proto__"],`proto-own-${(body.attempt as number)+1}`);
-      const details=retainedError.details as Record<string, unknown> | undefined;
-      assert.ok(details && typeof details==="object");
-      assert.equal(
-        Object.prototype.hasOwnProperty.call(details,"__proto__"),
-        true,
-        "retained nested details must keep __proto__ as an own data property",
-      );
-      assert.equal(details["__proto__"],`nested-proto-${(body.attempt as number)+1}`);
     }
 
     // (c) dossier pointers address exactly these files.

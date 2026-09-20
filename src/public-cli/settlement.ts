@@ -140,7 +140,6 @@ import type {
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
 import {
   listSeamOwnedUniqueErrorFacePaths,
-  projectResumablePublicTerminalFace,
   RUN_TERMINAL_ARTIFACT_FILES,
   RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS,
 } from "../run-terminal-artifacts.ts";
@@ -170,12 +169,6 @@ function sealedLedgerHome(admitted: Pick<AdmittedRoleInvocation, "runDirectory">
   return homeFromRunDirectory(admitted.runDirectory);
 }
 
-export type FirstFailureCarry = {
-  readonly diagnostic: string;
-  readonly decisiveFacts: Readonly<Record<string, unknown>>;
-  readonly dispatchErrorFiles: readonly string[];
-};
-
 /**
  * Court-turn settlement scope (#637 same-ticket re-summons).
  * courtAttemptId tags the new court; recorded payloads stay run-scoped (#836).
@@ -184,11 +177,6 @@ export type SettlementCourtScope = {
   readonly courtAttemptId?: string;
   /** Public-invocation scope from the shared Host envelope (#537). */
   readonly invocationScopeId?: string;
-  /**
-   * #990: loop-held first controlled failure. Sole accepted publisher folds
-   * these into roleOutcome before the one report write (no post-publish rewrite).
-   */
-  readonly firstFailureCarry?: FirstFailureCarry;
 };
 
 function ledgerReadScope(
@@ -2446,27 +2434,7 @@ async function publishAcceptedTerminalArtifacts(
     readonly report: Record<string, unknown>;
     readonly evidence: Record<string, unknown>;
   },
-  scope?: SettlementCourtScope,
 ): Promise<TerminalArtifactRef[]> {
-  // #990: sole assembly for accepted/audit — fold loop-held first failure into
-  // the outcome and error artifact refs before the one report write. Auto-resume
-  // finalize must not post-publish rewrite these faces. Callers pass the same
-  // roleOutcome object as bodies.report.outcome; carry rides on
-  // SettlementCourtScope through dispatch → trySettle → this publisher.
-  const carry = scope?.firstFailureCarry;
-  const errorRefs: TerminalArtifactRef[] = [];
-  if (carry !== undefined) {
-    const outcome = roleOutcome as { decisiveFacts?: Record<string, unknown> };
-    outcome.decisiveFacts = {
-      ...(outcome.decisiveFacts ?? {}),
-      priorControlledFailureDiagnostic: carry.diagnostic,
-      priorControlledFailureDecisiveFacts: { ...carry.decisiveFacts },
-      dispatchErrorFiles: [...carry.dispatchErrorFiles],
-    };
-    for (const path of carry.dispatchErrorFiles) {
-      errorRefs.push({ kind: "error", path });
-    }
-  }
   // #419: history first — report/evidence stay last-write-wins views only
   // because every attempt's complete result has already been appended.
   await appendRunAttemptHistory(
@@ -2493,7 +2461,6 @@ async function publishAcceptedTerminalArtifacts(
   return [
     { kind: "report", path: reportPath },
     { kind: "evidence", path: evidencePath },
-    ...errorRefs,
   ];
 }
 
@@ -2501,7 +2468,6 @@ export async function publishJudgeArtifacts(
   admitted: AdmittedJudgeInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
-  scope?: SettlementCourtScope,
 ): Promise<TerminalArtifactRef[]> {
   return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
     report: {
@@ -2516,7 +2482,7 @@ export async function publishJudgeArtifacts(
       admittedRequestPath: admitted.admittedRequestPath,
       attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
     },
-  }, scope);
+  });
 }
 
 /**
@@ -2530,7 +2496,6 @@ export async function publishCoderArtifacts(
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
   } = {},
-  scope?: SettlementCourtScope,
 ): Promise<TerminalArtifactRef[]> {
   return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
     report: {
@@ -2552,7 +2517,7 @@ export async function publishCoderArtifacts(
         ? {}
         : { methodProvenance: options.methodProvenance }),
     },
-  }, scope);
+  });
 }
 
 /** Lawful Coder accepted outcome extracted from session (shared success interface). */
@@ -2617,7 +2582,6 @@ async function settleLawfulJudgeTerminalResult(
     admitted,
     roleOutcome,
     coordinates,
-    scope,
   );
   return withOptionalGateProjection(
     {
@@ -2686,7 +2650,6 @@ async function settleLawfulCoderTerminalResult(
         ? {}
         : { methodProvenance: options.methodProvenance }),
     },
-    scope,
   );
   return withOptionalGateProjection(
     {
@@ -2775,7 +2738,6 @@ export async function publishFixerArtifacts(
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
   },
-  scope?: SettlementCourtScope,
 ): Promise<TerminalArtifactRef[]> {
   return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
     report: {
@@ -2802,7 +2764,7 @@ export async function publishFixerArtifacts(
       methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
       methodInvocations: options.methodInvocations ?? [],
     },
-  }, scope);
+  });
 }
 
 /** Lawful Fixer accepted outcome extracted from session (no LLM auditor after #242). */
@@ -2838,7 +2800,6 @@ async function settleLawfulFixerTerminalResult(
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
-    scope,
   );
   return withOptionalGateProjection(
     {
@@ -2876,7 +2837,6 @@ export async function publishCollectorArtifacts(
   admitted: AdmittedCollectorInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
-  scope?: SettlementCourtScope,
 ): Promise<TerminalArtifactRef[]> {
   return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
     report: {
@@ -2895,7 +2855,7 @@ export async function publishCollectorArtifacts(
       admittedRequestPath: admitted.admittedRequestPath,
       attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
     },
-  }, scope);
+  });
 }
 
 /** Lawful Collector accepted outcome extracted from session. */
@@ -2940,7 +2900,6 @@ async function settleLawfulCollectorTerminalResult(
     admitted,
     accepted,
     coordinates,
-    scope,
   );
   return attachRecordedSubmissions(
     admitted,
@@ -3029,7 +2988,6 @@ export async function publishDoctorArtifacts(
     readonly cost?: DoctorCaseCost;
     readonly auditNoReceipt?: unknown;
   } = {},
-  scope?: SettlementCourtScope,
 ): Promise<TerminalArtifactRef[]> {
   return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
     report: {
@@ -3052,7 +3010,7 @@ export async function publishDoctorArtifacts(
       admittedRequestPath: admitted.admittedRequestPath,
       attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
     },
-  }, scope);
+  });
 }
 
 /** Lawful Doctor accepted/refused/audit_escalation outcome extracted from session. */
@@ -3071,13 +3029,7 @@ async function settleLawfulDoctorTerminalResult(
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   if (sealed === undefined) return undefined;
   if (sealed.kind === "audit_escalation") {
-    const artifacts = await publishDoctorArtifacts(
-      admitted,
-      sealed,
-      coordinates,
-      {},
-      scope,
-    );
+    const artifacts = await publishDoctorArtifacts(admitted, sealed, coordinates);
     return withOptionalGateProjection(
       {
         roleOutcome: sealed,
@@ -3101,7 +3053,6 @@ async function settleLawfulDoctorTerminalResult(
       ...(cost === undefined ? {} : { cost }),
       ...(auditNoReceipt === undefined ? {} : { auditNoReceipt }),
     },
-    scope,
   );
   return withOptionalGateProjection(
     {
@@ -3182,7 +3133,6 @@ async function publishSeatAcceptedArtifacts(
   },
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
-  scope?: SettlementCourtScope,
 ): Promise<TerminalArtifactRef[]> {
   return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
     report: {
@@ -3197,7 +3147,7 @@ async function publishSeatAcceptedArtifacts(
       admittedRequestPath: admitted.admittedRequestPath,
       attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
     },
-  }, scope);
+  });
 }
 
 async function settleLawfulSeatAcceptedTerminalResult(
@@ -3260,7 +3210,6 @@ async function settleLawfulSeatAcceptedTerminalResult(
       admitted,
       roleOutcome,
       coordinates,
-      scope,
     );
     return withSubmissions(
       await withOptionalGateProjection(
@@ -3722,7 +3671,6 @@ export async function publishReviewerArtifacts(
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
   },
-  scope?: SettlementCourtScope,
 ): Promise<TerminalArtifactRef[]> {
   return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
     report: {
@@ -3748,7 +3696,7 @@ export async function publishReviewerArtifacts(
       methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
       methodInvocations: options.methodInvocations ?? [],
     },
-  }, scope);
+  });
 }
 
 /** Lawful Reviewer accepted outcome extracted from session (no LLM auditor after #495 S6). */
@@ -3784,7 +3732,6 @@ async function settleLawfulReviewerTerminalResult(
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
-    scope,
   );
   return withOptionalGateProjection(
     {
@@ -3871,7 +3818,6 @@ export async function publishMergerArtifacts(
     readonly methodProvenance: PackagedMethodSkillProvenance;
     readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
   },
-  scope?: SettlementCourtScope,
 ): Promise<TerminalArtifactRef[]> {
   return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
     report: {
@@ -3892,7 +3838,7 @@ export async function publishMergerArtifacts(
       methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
       methodInvocations: options.methodInvocations ?? [],
     },
-  }, scope);
+  });
 }
 
 /** Lawful Merger accepted outcome extracted from session (shared success interface). */
@@ -3947,7 +3893,6 @@ async function settleLawfulMergerTerminalResult(
       methodProvenance: options.methodProvenance,
       methodInvocations,
     },
-    scope,
   );
   return attachRecordedSubmissions(
     admitted,
@@ -4326,12 +4271,10 @@ export async function settleFailureTerminalResult(
   if (failure.details !== undefined) {
     decisiveFacts.secondaryEvidence = failure.details;
   }
-  // Resumable failures: durable artifacts still land under the run directory
-  // with original bytes, but the public Terminal must not re-disclose the run
-  // ID via top-level runId, path components, decisiveFacts, diagnostic free
-  // text, or dynamic object keys — only resume.command may carry it
-  // (AC2 / #108 / #990). Project the complete public face once at this
-  // settlement boundary; later attach/carry folds re-apply the same helper.
+  // Resumable failures: durable artifacts still land under the run directory, but
+  // the public Terminal must not re-disclose the run ID via top-level runId,
+  // path components, or untrusted free text — only resume.command may carry it
+  // (AC2 / #108).
   if (options.resume !== undefined) {
     const roleOutcome: TerminalRoleOutcome = {
       kind: "failure",
@@ -4340,7 +4283,7 @@ export async function settleFailureTerminalResult(
       diagnostic: failure.diagnostic,
       decisiveFacts,
     };
-    const terminal = await withOptionalGateProjection(
+    return withOptionalGateProjection(
       {
         roleOutcome,
         navigator,
@@ -4350,8 +4293,6 @@ export async function settleFailureTerminalResult(
       sessionDirectory,
       detourGateContext(admitted, options),
     );
-    projectResumablePublicTerminalFace(terminal, admitted.runId);
-    return terminal;
   }
   const roleOutcome: TerminalRoleOutcome = {
     kind: "failure",

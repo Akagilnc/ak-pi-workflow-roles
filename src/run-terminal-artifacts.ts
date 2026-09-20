@@ -7,7 +7,7 @@
  * candidate algorithm.
  */
 import { readdir, readFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { roleRunArtifactsDirectory } from "./role-run-placement.ts";
 
@@ -29,143 +29,6 @@ export const RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS = [
   "artifacts/error.settlement.json",
   "error.settlement.json",
 ] as const;
-
-/**
- * Project an absolute path under the run directory to a run-relative openable
- * pointer (posix separators, no runId path bytes). Same public-face boundary as
- * engine-detour `discloseRecordFile: false` (#108 / #537): once the run
- * directory is known from `resume.command` (or top-level `runId`), the relative
- * path reopens the durable file. Returns `undefined` when the path is outside
- * the run directory.
- */
-export function projectRunRelativeOpenablePath(
-  runDirectory: string,
-  absolutePath: string,
-): string | undefined {
-  const rel = relative(resolve(runDirectory), resolve(absolutePath));
-  if (
-    rel.length === 0
-    || rel === ".."
-    || rel.startsWith(`..${sep}`)
-    || isAbsolute(rel)
-  ) {
-    return undefined;
-  }
-  return rel.split(sep).join("/");
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-/**
- * Public-face exact-token redaction for resumable Terminals (#108 / #990):
- * strip every occurrence of `runId` from structured values and dynamic object
- * keys so typed regions outside `resume.command` cannot re-disclose it.
- * Durable artifacts keep the original bytes; only the public projection uses this.
- *
- * Object input always yields an object. Dynamic-key projection must remain
- * complete: when two or more distinct source keys collapse to the same
- * projected key, keep every projected value in encounter order under that key
- * as an array (single-key projections stay scalar).
- */
-export function redactExactRunIdToken(value: unknown, runId: string): unknown {
-  if (runId.length === 0) return value;
-  if (typeof value === "string") {
-    return value.includes(runId) ? value.split(runId).join("") : value;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => redactExactRunIdToken(item, runId));
-  }
-  if (isPlainObject(value)) {
-    // Aggregate with Map so own keys like `__proto__` never hit Object.prototype
-    // setters; materialize via fromEntries as own data properties.
-    const buckets = new Map<string, unknown[]>();
-    for (const [key, entry] of Object.entries(value)) {
-      const projectedKey = key.includes(runId) ? key.split(runId).join("") : key;
-      const projectedValue = redactExactRunIdToken(entry, runId);
-      const existing = buckets.get(projectedKey);
-      if (existing !== undefined) {
-        existing.push(projectedValue);
-      } else {
-        buckets.set(projectedKey, [projectedValue]);
-      }
-    }
-    return Object.fromEntries(
-      [...buckets].map(([projectedKey, values]) => [
-        projectedKey,
-        values.length === 1 ? values[0]! : values,
-      ]),
-    );
-  }
-  return value;
-}
-
-/**
- * #108 / #990: project the complete public resumable Terminal face in place.
- * Exact runId tokens may remain only inside `resume.command`; every other
- * public region (roleOutcome, navigator, artifacts, submissions, gate, …) is
- * redacted. Callers keep private dossier / history bytes unprojected.
- */
-export function projectResumablePublicTerminalFace(
-  terminal: {
-    roleOutcome: unknown;
-    navigator?: unknown;
-    artifacts?: unknown;
-    submissions?: unknown;
-    gate?: unknown;
-    autoResumeCount?: unknown;
-    reviewerChildren?: unknown;
-    reviewerChildOutcomes?: unknown;
-    resume?: { command: string };
-    runId?: unknown;
-  },
-  runId: string,
-): void {
-  if (terminal.resume === undefined || runId.length === 0) return;
-  const resume = terminal.resume;
-  const projected = redactExactRunIdToken(
-    {
-      roleOutcome: terminal.roleOutcome,
-      navigator: terminal.navigator,
-      artifacts: terminal.artifacts,
-      submissions: terminal.submissions,
-      gate: terminal.gate,
-      autoResumeCount: terminal.autoResumeCount,
-      reviewerChildren: terminal.reviewerChildren,
-      reviewerChildOutcomes: terminal.reviewerChildOutcomes,
-      runId: terminal.runId,
-    },
-    runId,
-  );
-  // Object-in must remain object-out; do not cast away a shape change.
-  if (!isPlainObject(projected)) return;
-  terminal.roleOutcome = projected.roleOutcome as typeof terminal.roleOutcome;
-  if ("navigator" in projected) {
-    terminal.navigator = projected.navigator as typeof terminal.navigator;
-  }
-  if ("artifacts" in projected) {
-    terminal.artifacts = projected.artifacts as typeof terminal.artifacts;
-  }
-  if ("submissions" in projected) {
-    terminal.submissions = projected.submissions as typeof terminal.submissions;
-  }
-  if ("gate" in projected) terminal.gate = projected.gate as typeof terminal.gate;
-  if ("autoResumeCount" in projected) {
-    terminal.autoResumeCount = projected.autoResumeCount as typeof terminal.autoResumeCount;
-  }
-  if ("reviewerChildren" in projected) {
-    terminal.reviewerChildren =
-      projected.reviewerChildren as typeof terminal.reviewerChildren;
-  }
-  if ("reviewerChildOutcomes" in projected) {
-    terminal.reviewerChildOutcomes =
-      projected.reviewerChildOutcomes as typeof terminal.reviewerChildOutcomes;
-  }
-  if ("runId" in projected) terminal.runId = projected.runId as typeof terminal.runId;
-  // resume.command is the sole public carrier of the exact runId token.
-  terminal.resume = resume;
-}
 
 /** Unique open-ended failure names: error.<uuid>.json (publisher stem + uuid). */
 const UNIQUE_ERROR_FALLBACK_NAME =
@@ -198,6 +61,10 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Minimum producer-owned face shared by settlement terminal artifacts
  * (report / error / audit-incomplete). Consumer-driven: enough to identify a
@@ -210,7 +77,7 @@ function readUsableTerminalArtifactBody(
   if (body === null) {
     return { ok: false, reason: "terminal artifact JSON value is null" };
   }
-  if (!isPlainObject(body)) {
+  if (!isRecord(body)) {
     return {
       ok: false,
       reason: `terminal artifact JSON value is not a typed object (${Array.isArray(body) ? "array" : typeof body})`,

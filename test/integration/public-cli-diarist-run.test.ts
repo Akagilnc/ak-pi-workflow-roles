@@ -2260,7 +2260,6 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
     );
 
     const runId = "01a0diar00-0000-7000-8000-000000000003";
-    const plantedFailureMessage = "host turn failed after diarist board bind";
     const { io } = captureIo();
     const submitted = {
       status: "completed",
@@ -2344,67 +2343,5 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
       false,
       "unbound must not keep the durable run-state after relocate",
     );
-
-    // #990: later accepted final must still carry the first controlled failure's
-    // structured diagnosis + surviving evidence refs (no wash-white).
-    assert.ok(result.terminal, "final terminal required");
-    const accepted = result.terminal.roleOutcome;
-    assert.equal(accepted.kind, "accepted");
-    const facts = accepted.decisiveFacts;
-    assert.ok(facts, "accepted decisiveFacts must carry prior controlled failure");
-    assert.equal(facts.priorControlledFailureDiagnostic, plantedFailureMessage);
-    const priorFacts = facts.priorControlledFailureDecisiveFacts;
-    assert.ok(
-      priorFacts !== null && typeof priorFacts === "object" && !Array.isArray(priorFacts),
-      "priorControlledFailureDecisiveFacts must be a structured object",
-    );
-    assert.equal(
-      (priorFacts as { diagnostic?: unknown }).diagnostic,
-      plantedFailureMessage,
-    );
-    const retainedFiles = facts.dispatchErrorFiles;
-    assert.ok(
-      Array.isArray(retainedFiles) && retainedFiles.length >= 1,
-      "dispatchErrorFiles must point at retained first-failure evidence",
-    );
-    for (const file of retainedFiles) {
-      assert.equal(typeof file, "string");
-      assert.equal(existsSync(file as string), true, `retained evidence missing: ${file}`);
-      const retainedBody = JSON.parse(await readFile(file as string, "utf8")) as {
-        diagnostic?: unknown;
-        decisiveFacts?: { diagnostic?: unknown };
-      };
-      assert.equal(
-        retainedBody.diagnostic ?? retainedBody.decisiveFacts?.diagnostic,
-        plantedFailureMessage,
-      );
-    }
-    assert.ok(
-      result.terminal.artifacts.some((artifact) => artifact.kind === "error"),
-      "final terminal artifacts must include error evidence refs",
-    );
-
-    const reportPath = join(ticketPlacement.runDirectory, "artifacts", "report.json");
-    assert.equal(existsSync(reportPath), true, "accepted report face must exist");
-    const report = JSON.parse(await readFile(reportPath, "utf8")) as {
-      outcome?: {
-        kind?: unknown;
-        decisiveFacts?: {
-          priorControlledFailureDiagnostic?: unknown;
-          dispatchErrorFiles?: unknown;
-        };
-      };
-    };
-    assert.equal(report.outcome?.kind, "accepted");
-    assert.equal(
-      report.outcome?.decisiveFacts?.priorControlledFailureDiagnostic,
-      plantedFailureMessage,
-    );
-    const reportFiles = report.outcome?.decisiveFacts?.dispatchErrorFiles;
-    assert.ok(
-      Array.isArray(reportFiles) && reportFiles.length >= 1,
-      "published report must carry retained first-failure evidence refs",
-    );
-    assert.deepEqual(reportFiles, retainedFiles);
   });
 });
