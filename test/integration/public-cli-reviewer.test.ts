@@ -16,6 +16,7 @@ import {
   readFile,
   readdir,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -1175,6 +1176,86 @@ test("explicit single-lens projects admitted lens and optional caller provenance
       ),
     ) as { callerProvenance?: string };
     assert.equal(evidence.callerProvenance, "Review the latest commit on both axes.");
+  });
+});
+
+test("reviewer deps probe preserves non-ENOENT FS failures into rollback (#983)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    // Absolute symlink manifest → unreadable target: existsSync would wash
+    // EACCES into false/skip; honest access must keep the errno and roll back.
+    const hiddenDir = join(home, "unreadable-manifest");
+    await mkdir(hiddenDir, { recursive: true });
+    await writeFile(
+      join(hiddenDir, "package.json"),
+      `${JSON.stringify({ name: "ak-reviewer-eacces-probe", private: true })}\n`,
+      "utf8",
+    );
+    await symlink(join(hiddenDir, "package.json"), join(project, "package.json"));
+    await writeFile(
+      join(project, "pnpm-lock.yaml"),
+      [
+        "lockfileVersion: '9.0'",
+        "",
+        "settings:",
+        "  autoInstallPeers: true",
+        "  excludeLinksFromLockfile: false",
+        "",
+        "importers:",
+        "",
+        "  .:",
+        "    dependencies: {}",
+        "",
+        "packages: {}",
+        "",
+        "snapshots: {}",
+        "",
+      ].join("\n"),
+      "utf8",
+    );
+    execFileSync("git", ["add", "package.json", "pnpm-lock.yaml"], { cwd: project });
+    execFileSync("git", ["commit", "-m", "symlink manifest for EACCES probe"], {
+      cwd: project,
+    });
+
+    await chmod(hiddenDir, 0o000);
+    try {
+      const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+        cwd: project,
+        encoding: "utf8",
+      });
+      let hostReached = false;
+      const { io, stdout, stderr } = captureIo();
+      const result = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high",
+        "--project", project, "--base", "HEAD~1", "--lens", "correctness",
+        "--authority-ref", "CLAUDE.md",
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-cli-reviewer-deps-eacces",
+        io,
+        roleTurnHost: reviewerHost(async (args) => {
+          hostReached = true;
+          return lawfulChildTurn(args, { toolCallId: "eacces-should-not-run" });
+        }),
+      });
+      assert.equal(result.exitCode, 1, stdout.join("") || "expected prep failure");
+      assert.equal(hostReached, false, "role host must not run after deps probe failure");
+      assert.match(stderr.join(""), /EACCES/);
+      assert.equal(
+        execFileSync("git", ["worktree", "list", "--porcelain"], {
+          cwd: project,
+          encoding: "utf8",
+        }),
+        worktreeListBefore,
+      );
+    } finally {
+      await chmod(hiddenDir, 0o755);
+    }
   });
 });
 

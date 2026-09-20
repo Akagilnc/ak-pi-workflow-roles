@@ -10,8 +10,9 @@
  * starts after the caller module has finished init, so those slots stay intact.
  */
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { constants as fsConstants, existsSync } from "node:fs";
 import {
+  access,
   mkdir,
   mkdtemp,
   realpath,
@@ -681,15 +682,26 @@ function reviewerSandboxPath(worktreeAxis: string, projectRelative: string): str
  * Give the ephemeral Reviewer sandbox its own install from the worktree
  * manifest/lockfile (#983). Host `pnpm` only — no copy of caller
  * `node_modules`, no package-manager selection, no install→copy fallback.
- * No package.json or pnpm-lock.yaml → nothing to install (leave absent).
+ * Only true absence (ENOENT) of package.json or pnpm-lock.yaml skips install.
+ * Other probe failures (EACCES, …) keep their cause and enter the existing
+ * worktree rollback seam — never washed through existsSync boolean absence.
  * Missing `pnpm` is an honest capability gap; other install failures
- * propagate into the existing worktree rollback seam.
+ * propagate into the same rollback seam.
  */
+async function reviewerDepsPathPresent(path: string): Promise<boolean> {
+  try {
+    await access(path, fsConstants.F_OK);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
 async function provisionReviewerWorktreeDeps(worktreeRoot: string): Promise<void> {
-  if (
-    !existsSync(join(worktreeRoot, "package.json")) ||
-    !existsSync(join(worktreeRoot, "pnpm-lock.yaml"))
-  ) {
+  const hasManifest = await reviewerDepsPathPresent(join(worktreeRoot, "package.json"));
+  const hasLockfile = await reviewerDepsPathPresent(join(worktreeRoot, "pnpm-lock.yaml"));
+  if (!hasManifest || !hasLockfile) {
     return;
   }
   try {
