@@ -117,6 +117,14 @@ snapshots:
 async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
   seedGitProject(root);
   await writeFile(join(root, ".gitignore"), "node_modules\n", "utf8");
+  // Absolute marker outside the ephemeral worktree: default `pnpm install`
+  // would run this root postinstall and escape worktree rollback (#983 p1).
+  const outsideLifecycleMarker = join(root, "lifecycle-outside-marker");
+  await writeFile(
+    join(root, "postinstall.cjs"),
+    `require("node:fs").writeFileSync(${JSON.stringify(outsideLifecycleMarker)}, "ran");\n`,
+    "utf8",
+  );
   await writeFile(
     join(root, "package.json"),
     `${JSON.stringify({
@@ -124,6 +132,9 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
       private: true,
       type: "module",
       packageManager: "pnpm@11.20.0",
+      scripts: {
+        postinstall: "node postinstall.cjs",
+      },
       dependencies: {
         "ak-reviewer-deps-probe": "file:packages/ak-reviewer-deps-probe",
       },
@@ -160,7 +171,7 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
   );
   execFileSync(
     "git",
-    ["add", ".gitignore", "package.json", "pnpm-lock.yaml", "packages", "test"],
+    ["add", ".gitignore", "package.json", "pnpm-lock.yaml", "postinstall.cjs", "packages", "test"],
     { cwd: root },
   );
   execFileSync("git", ["commit", "-m", "seed focused-test probe"], { cwd: root });
@@ -193,6 +204,11 @@ function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: stri
     existsSync(join(sourceProjectRoot, "node_modules")),
     false,
     "source tree must remain without node_modules after sandbox install",
+  );
+  assert.equal(
+    existsSync(join(sourceProjectRoot, "lifecycle-outside-marker")),
+    false,
+    "automatic deps provision must not run target root lifecycle scripts outside the sandbox",
   );
   const marker = join(
     sandboxRoot,

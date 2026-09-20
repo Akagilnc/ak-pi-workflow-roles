@@ -682,6 +682,9 @@ function reviewerSandboxPath(worktreeAxis: string, projectRelative: string): str
  * Give the ephemeral Reviewer sandbox its own install from the worktree
  * manifest/lockfile (#983). Host `pnpm` only — no copy of caller
  * `node_modules`, no package-manager selection, no install→copy fallback.
+ * `--ignore-scripts` keeps automatic prep from running the target's lifecycle
+ * hooks (which can write outside the worktree/tmpdir and escape rollback).
+ * Reviewer-driven evidence installs/runs remain unrestricted under audit-law.
  * Only true absence (ENOENT) of package.json or pnpm-lock.yaml skips install.
  * Other probe failures (EACCES, …) keep their cause and enter the existing
  * worktree rollback seam — never washed through existsSync boolean absence.
@@ -705,7 +708,7 @@ async function provisionReviewerWorktreeDeps(worktreeRoot: string): Promise<void
     return;
   }
   try {
-    await execFileAsync("pnpm", ["install", "--frozen-lockfile"], {
+    await execFileAsync("pnpm", ["install", "--frozen-lockfile", "--ignore-scripts"], {
       cwd: worktreeRoot,
     });
   } catch (error) {
