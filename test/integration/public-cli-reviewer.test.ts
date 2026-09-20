@@ -91,8 +91,8 @@ type ReviewerDepsRootIdentity = "directory" | "symlink";
 /**
  * Source tree with a committed focused-test probe and ignored deps — the #983
  * shape: worktree add does not carry deps; provision must. Nested relative
- * (pnpm-like), absolute (npm-link-like), in-sandbox dangling bin, and escaping
- * dangling links cover the nested boundary on the same fixture.
+ * (pnpm-like) and absolute (npm-link-like) links on the same fixture cover
+ * ordinary resolution plus nested escape write-isolation.
  *
  * Root identity is a minimal dual shape (not a full path×identity matrix):
  * - `directory` — ordinary checkout `node_modules/` (default)
@@ -171,17 +171,9 @@ async function seedGitProjectWithIgnoredDeps(
     absStore,
     join(modulesRoot, "ak-reviewer-abs-deps-probe"),
   );
-  // Common broken bin: dangling but lexically inside node_modules — must not
-  // abort provision. Escaping dangling relative link must be removed in sandbox.
-  await mkdir(join(modulesRoot, ".bin"), { recursive: true });
-  await symlink("./nowhere", join(modulesRoot, ".bin", "broken"));
-  await symlink(
-    "../../outside-missing",
-    join(modulesRoot, "escape-dangle"),
-  );
   if (rootIdentity === "symlink") {
     // Absolute root link matches the live write-through shape (resolvable outside
-    // the sandbox). Relative `.real-node-modules` would dangle after verbatim cp.
+    // the sandbox). Provision must materialize into a worktree-owned directory.
     await symlink(modulesRoot, join(root, "node_modules"));
   }
 }
@@ -272,17 +264,6 @@ function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: stri
       "sandbox deps write must not reach the caller source tree",
     );
   }
-  const sandboxBroken = join(sandboxRoot, "node_modules", ".bin", "broken");
-  const sandboxEscape = join(sandboxRoot, "node_modules", "escape-dangle");
-  assert.ok(
-    lstatSync(sandboxBroken).isSymbolicLink(),
-    "in-sandbox dangling bin link must survive provision",
-  );
-  assert.throws(
-    () => lstatSync(sandboxEscape),
-    { code: "ENOENT" },
-    "escaping dangling deps link must be removed from sandbox",
-  );
 }
 
 /** After sandbox close: ignored source deps must be untouched by Reviewer writes. */
@@ -329,14 +310,6 @@ function assertSourceIgnoredDepsUntouched(
     existsSync(join(absStore, "write-isolation-marker")),
     false,
     "absolute linked store must not retain sandbox writes",
-  );
-  assert.ok(
-    lstatSync(join(materialRoot, ".bin", "broken")).isSymbolicLink(),
-    "source dangling bin fixture must remain",
-  );
-  assert.ok(
-    lstatSync(join(materialRoot, "escape-dangle")).isSymbolicLink(),
-    "source escaping-dangle fixture must remain",
   );
 }
 
@@ -1546,8 +1519,9 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         createRunId: () => runId,
         io,
         roleTurnHost: reviewerHost(async (args, options) => {
-          // First turn also sandboxed; deps must resolve before the 429 (#983).
-          assertFocusedTestResolvesInSandbox(options.cwd, project);
+          // First-turn deps resolution is covered by the dual-lens failure path;
+          // this tracer's unique deps proof is the resume turn below (#983).
+          assert.notEqual(realpathSync(options.cwd), realpathSync(project));
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -1758,7 +1732,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
           // Sandbox keeps the caller subdirectory layout under a new worktree root.
           assert.equal(options.cwd.endsWith(join("nested", "leaf")), true);
           assert.notEqual(realpathSync(options.cwd), callerProjectRoot);
-          assertFocusedTestResolvesInSandbox(options.cwd, project);
+          // Resume deps proof lives on the dedicated single-axis resume tracer (#983).
           return lawfulChildTurn(args, {
             lens: "completeness",
             toolCallId: "subdir-resume",

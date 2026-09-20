@@ -12,18 +12,15 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
-  copyFile,
   cp,
   lstat,
   mkdir,
   mkdtemp,
-  readdir,
-  readlink,
   realpath,
   rm,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
 import type { CliIo } from "./public-cli/cli-io.ts";
@@ -681,123 +678,24 @@ function reviewerSandboxPath(worktreeAxis: string, projectRelative: string): str
   return projectRelative === "" ? worktreeAxis : join(worktreeAxis, projectRelative);
 }
 
-/** True when `candidate` is the same path as `root` or a path under it. */
-function isPathInsideRoot(root: string, candidate: string): boolean {
-  const rel = relative(root, candidate);
-  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
-}
-
-/**
- * Copy `source` onto `destination` as real files/directories (no retained
- * symlinks). Used when a dependency link would otherwise resolve outside the
- * sandbox copy.
- */
-async function copyTreeMaterialized(
-  source: string,
-  destination: string,
-  stack: Set<string> = new Set(),
-): Promise<void> {
-  const sourceStat = await lstat(source);
-  if (sourceStat.isSymbolicLink()) {
-    const real = await realpath(source);
-    if (stack.has(real)) {
-      await mkdir(destination, { recursive: true });
-      return;
-    }
-    stack.add(real);
-    try {
-      await copyTreeMaterialized(real, destination, stack);
-    } finally {
-      stack.delete(real);
-    }
-    return;
-  }
-  if (sourceStat.isDirectory()) {
-    await mkdir(destination, { recursive: true });
-    for (const name of await readdir(source)) {
-      await copyTreeMaterialized(join(source, name), join(destination, name), stack);
-    }
-    return;
-  }
-  await mkdir(dirname(destination), { recursive: true });
-  await copyFile(source, destination);
-}
-
-/** Lexical symlink target (no existence check) — for dangling / looping links. */
-async function lexicalSymlinkTarget(linkPath: string): Promise<string> {
-  const target = await readlink(linkPath);
-  return isAbsolute(target) ? resolve(target) : resolve(dirname(linkPath), target);
-}
-
-/**
- * Nested-link policy under a real sandbox `node_modules` directory (#983):
- * keep links whose resolution stays inside that directory (including common
- * in-sandbox dangling bins); materialize resolvable escapes; drop
- * unresolvable links that lexically escape.
- *
- * Containment uses two roots because macOS realpath rewrites `/var` →
- * `/private/var`: resolvable links compare against the realpath'd root;
- * dangling / looping links compare against the lexical copy-walk root.
- */
-async function materializeEscapingDependencySymlinks(
-  sandboxModulesRootReal: string,
-  sandboxModulesRootLexical: string,
-  current: string,
-): Promise<void> {
-  const currentStat = await lstat(current);
-  if (currentStat.isSymbolicLink()) {
-    let real: string | undefined;
-    try {
-      real = await realpath(current);
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT" && code !== "ELOOP") {
-        throw error;
-      }
-    }
-    if (real !== undefined) {
-      if (isPathInsideRoot(sandboxModulesRootReal, real)) {
-        return;
-      }
-      await rm(current, { force: true });
-      await copyTreeMaterialized(real, current);
-      return;
-    }
-    const lexical = await lexicalSymlinkTarget(current);
-    if (isPathInsideRoot(sandboxModulesRootLexical, lexical)) {
-      return;
-    }
-    await rm(current, { force: true });
-    return;
-  }
-  if (!currentStat.isDirectory()) {
-    return;
-  }
-  for (const name of await readdir(current)) {
-    await materializeEscapingDependencySymlinks(
-      sandboxModulesRootReal,
-      sandboxModulesRootLexical,
-      join(current, name),
-    );
-  }
-}
-
 /**
  * Ignored dependency trees (node_modules) do not follow `git worktree add`.
  * When the source checkout already has them, mirror that material into the
  * ephemeral sandbox so Reviewer probes and focused tests resolve the same way
  * as in the caller tree (#983).
  *
- * Unified boundary: sandbox `node_modules` is always a real directory owned by
- * the worktree — never a retained root symlink into the caller tree. Follow a
- * source root symlink once to choose the directory to copy; then keep in-tree
- * relative links and materialize/drop nested escapes. Same shared seam for all
- * Reviewer paths; no second install, no public flag, no write-through.
+ * Unified materialization: `fs.cp({ recursive, dereference })` turns root
+ * symlinks, nested absolute escapes, and ordinary in-tree relative links into
+ * real files/directories owned by the worktree. No retained sandbox symlinks →
+ * no write-through. Dangling / looping links fail with their native cause
+ * (ENOENT / ELOOP) into the caller rollback seam — never a silent skip or a
+ * second classification pass. Same shared seam for all Reviewer paths; no
+ * second install, no public flag.
  *
  * Documented absence only: `lstat(source/node_modules)` ENOENT → leave absent.
  * A present root entry that is not a usable directory (broken/looping symlink,
  * permission/I/O errors, non-directory) preserves the cause and fails into the
- * caller rollback/diagnostic seam — never a silent skip.
+ * caller rollback/diagnostic seam.
  */
 async function provisionReviewerWorktreeDeps(
   sourceProjectRoot: string,
@@ -833,7 +731,7 @@ async function provisionReviewerWorktreeDeps(
     }
   }
   // Root identity: copy from a real directory. A source root symlink must not
-  // be retained as sandbox/node_modules (verbatim cp would write-through).
+  // be retained as sandbox/node_modules (that would write-through).
   let copySource = sourceModules;
   if (sourceStat.isSymbolicLink()) {
     // realpath rejections (dangling ENOENT, ELOOP, EACCES, races, …) propagate.
@@ -843,16 +741,13 @@ async function provisionReviewerWorktreeDeps(
       `reviewer worktree deps source must be a directory or symlink: ${sourceModules}`,
     );
   }
-  // verbatimSymlinks: keep relative in-tree targets relative. Node's default
-  // rewrites them to absolute source paths and re-opens a write-through channel.
-  await cp(copySource, target, { recursive: true, verbatimSymlinks: true });
+  await cp(copySource, target, { recursive: true, dereference: true });
   const targetStat = await lstat(target);
   if (targetStat.isSymbolicLink()) {
     throw new Error(
       `reviewer worktree deps copy must yield a real directory: ${target}`,
     );
   }
-  await materializeEscapingDependencySymlinks(await realpath(target), target, target);
 }
 
 
