@@ -1529,6 +1529,13 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       true,
       "the first ticket-identifying leg is relocated after its typed assertion",
     );
+    assert.equal(
+      existsSync(
+        join(bookRoot, "unbound", "runs", `${observedDiaristRunId}@diarist`),
+      ),
+      false,
+      "relocate must remove the unbound admission leaf (not copy-and-leave)",
+    );
 
     assert.deepEqual(result.terminal?.gate?.actualSeats, ["notary"]);
     await readFile(join(ticketRun, "session", "auditor-roles", "o01_notary.jsonl"), "utf8");
@@ -1634,6 +1641,11 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       existsSync(coderTicketRun),
       true,
       "work seat relocates in-home after first legal typed ticket bind",
+    );
+    assert.equal(
+      existsSync(coderAdmissionDirectory),
+      false,
+      "work seat relocate must remove the unbound admission leaf (not copy-and-leave)",
     );
     const coderAdmitted = JSON.parse(
       await readFile(join(coderTicketRun, "admitted-request.json"), "utf8"),
