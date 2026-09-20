@@ -1,6 +1,8 @@
-import { mkdir, readdir, rename } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { lstat, mkdir, readdir, rename, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import {
   physicalPathIdentity,
@@ -10,6 +12,8 @@ import {
   autopsyWriterLock,
   describeErrorIdentity,
 } from "./public-cli/run-lifecycle.ts";
+
+const execFileAsync = promisify(execFile);
 export type MigrationDisposition = "placed" | "unbound" | "discarded";
 
 export type MigrationItemOutcome =
@@ -118,15 +122,11 @@ async function findWriterLocks(root: string): Promise<WriterLockCandidate[]> {
   return locks;
 }
 
-/**
- * Refuse migration from a role whose canonical dossier is inside books/, and
- * while a writer lease proves a run is currently active. Retained lifecycle
- * state is history, not holder liveness.
- */
-export async function assertBookTopologyMigrationPrerequisites(
+function assertNotRunningFromBooksDossier(
   booksDirectory: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<void> {
+  env: NodeJS.ProcessEnv,
+  operationLabel: string,
+): void {
   const runDirectory = env.AK_ROLE_RUN_DIR;
   if (
     runDirectory !== undefined
@@ -134,31 +134,172 @@ export async function assertBookTopologyMigrationPrerequisites(
       || physicallyContainedIn(booksDirectory, runDirectory))
   ) {
     throw new Error(
-      `book topology migration cannot run from a role dossier inside books/: ${runDirectory}`,
+      `${operationLabel} cannot run from a role dossier inside books/: ${runDirectory}`,
     );
   }
+}
 
+/**
+ * Process start time via `ps -p <pid> -o lstart=` (portable on macOS/Linux).
+ * Signal-0 only proves a PID exists; start-vs-lock-mtime discriminates recycled
+ * PIDs for migration gates that opt in. Shared lease acquire must NOT use this.
+ */
+async function readProcessStartTimeMs(
+  pid: number,
+): Promise<"absent" | "unreadable" | number> {
+  try {
+    const { stdout } = await execFileAsync(
+      "ps",
+      ["-p", String(pid), "-o", "lstart="],
+      { encoding: "utf8" },
+    );
+    const text = stdout.trim();
+    if (text === "") return "absent";
+    const startMs = Date.parse(text);
+    if (!Number.isFinite(startMs)) {
+      return "unreadable";
+    }
+    return startMs;
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    // `ps` exits 1 when the pid is gone between autopsy and this probe.
+    if (code === 1) return "absent";
+    return "unreadable";
+  }
+}
+
+type WriterLockGatePolicy = {
+  readonly refuseLabel: string;
+  readonly unverifiableLabel: string;
+  /**
+   * When true, an autopsy-"alive" pid whose process start is strictly after the
+   * lock mtime is treated as a recycled unrelated holder (not blocking). Start
+   * time that cannot be confirmed fails loud — never whitewashed as clear.
+   */
+  readonly discriminateRecycledPid: boolean;
+};
+
+async function assertWriterLocksClear(
+  lockCandidates: readonly WriterLockCandidate[],
+  policy: WriterLockGatePolicy,
+): Promise<void> {
   const active: string[] = [];
-  for (const candidate of await findWriterLocks(booksDirectory)) {
+  for (const candidate of lockCandidates) {
     const lockPath = candidate.path;
     if (!candidate.regularFile) {
       throw new Error(
-        `cannot establish zero in-flight runs from ${lockPath}: writer lock is a ${candidate.kind}, holder liveness unverifiable`,
+        `${policy.unverifiableLabel} from ${lockPath}: writer lock is a ${candidate.kind}, holder liveness unverifiable`,
       );
     }
     const holder = await autopsyWriterLock(lockPath);
-    if (holder.verdict === "alive") {
-      active.push(`${lockPath} (live pid ${holder.pid})`);
-    } else if (holder.verdict === "unknown") {
+    if (holder.verdict === "unknown") {
       const cause = holder.reason === "unreadable"
         ? `unreadable: ${describeErrorIdentity(holder.readFailure)}`
         : `unparseable holder: ${JSON.stringify(holder.content)}`;
-      throw new Error(`cannot establish zero in-flight runs from ${lockPath}: ${cause}`);
+      throw new Error(`${policy.unverifiableLabel} from ${lockPath}: ${cause}`);
     }
+    if (holder.verdict !== "alive") continue;
+
+    if (!policy.discriminateRecycledPid) {
+      active.push(`${lockPath} (live pid ${holder.pid})`);
+      continue;
+    }
+
+    let lockMtimeMs: number;
+    try {
+      lockMtimeMs = (await stat(lockPath)).mtimeMs;
+    } catch (error) {
+      throw new Error(
+        `${policy.unverifiableLabel} from ${lockPath}: cannot read lock mtime for recycled-pid check: ${describeErrorIdentity(error)}`,
+      );
+    }
+    const start = await readProcessStartTimeMs(holder.pid);
+    if (start === "absent") {
+      // Holder exited between autopsy and ps — not in flight.
+      continue;
+    }
+    if (start === "unreadable") {
+      throw new Error(
+        `${policy.unverifiableLabel} from ${lockPath}: cannot confirm whether live pid ${holder.pid} is the original lock holder (process start time unreadable)`,
+      );
+    }
+    if (start > lockMtimeMs) {
+      // PID exists but process started after the lock was written — recycled.
+      continue;
+    }
+    active.push(`${lockPath} (live pid ${holder.pid})`);
   }
   if (active.length > 0) {
-    throw new Error(`book topology migration requires zero in-flight runs:\n${active.join("\n")}`);
+    throw new Error(`${policy.refuseLabel}:\n${active.join("\n")}`);
   }
+}
+
+/**
+ * Refuse migration from a role whose canonical dossier is inside books/, and
+ * while a writer lease proves a run is currently active. Retained lifecycle
+ * state is history, not holder liveness.
+ *
+ * #860 whole-books gate: scans every writer.lock under books/. Does not
+ * discriminate recycled PIDs (signal-0 alive remains refuse).
+ */
+export async function assertBookTopologyMigrationPrerequisites(
+  booksDirectory: string,
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  assertNotRunningFromBooksDossier(booksDirectory, env, "book topology migration");
+  await assertWriterLocksClear(await findWriterLocks(booksDirectory), {
+    refuseLabel: "book topology migration requires zero in-flight runs",
+    unverifiableLabel: "cannot establish zero in-flight runs",
+    discriminateRecycledPid: false,
+  });
+}
+
+/**
+ * #863 / #986 relocate gate: only writer locks under the mutation-closure run
+ * directories may block. Outside-closure locks (other books, non-rewritten
+ * peers in untouched books) must not refuse. Recycled-PID holders that merely
+ * reuse a historical lock's pid number are not treated as the original writer.
+ */
+export async function assertBoardBoundUnboundRelocatePrerequisites(
+  booksDirectory: string,
+  mutationClosureRunDirectories: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<void> {
+  assertNotRunningFromBooksDossier(
+    booksDirectory,
+    env,
+    "board-bound unbound relocate",
+  );
+  if (mutationClosureRunDirectories.length === 0) return;
+
+  const candidates: WriterLockCandidate[] = [];
+  for (const runDirectory of mutationClosureRunDirectories) {
+    const lockPath = join(runDirectory, "writer.lock");
+    try {
+      const st = await lstat(lockPath);
+      const kind = st.isFile() ? "file"
+        : st.isDirectory() ? "directory"
+        : st.isSymbolicLink() ? "symbolic link"
+        : st.isFIFO() ? "FIFO"
+        : st.isSocket() ? "socket"
+        : st.isCharacterDevice() ? "character device"
+        : st.isBlockDevice() ? "block device"
+        : "unknown filesystem object";
+      candidates.push({ path: lockPath, regularFile: st.isFile(), kind });
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (code === "ENOENT") continue;
+      throw error;
+    }
+  }
+
+  await assertWriterLocksClear(candidates, {
+    refuseLabel:
+      "board-bound unbound relocate requires zero in-flight writers in mutation closure",
+    unverifiableLabel:
+      "cannot establish mutation-closure writer liveness",
+    discriminateRecycledPid: true,
+  });
 }
 
 export function datedBooksBackupDirectory(
