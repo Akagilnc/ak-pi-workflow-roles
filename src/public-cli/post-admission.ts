@@ -68,10 +68,7 @@ import {
 } from "../engine-detour-usage.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
-import {
-  missingCredentialPreDispatchFailure,
-  postRunMissingCredentialFailure,
-} from "./public-run-credentials.ts";
+import { postRunMissingCredentialFailure } from "./public-run-credentials.ts";
 import {
   clearCurrentCourt,
   clearTypedProviderHttpObservation,
@@ -739,23 +736,10 @@ export async function dispatchPostAdmissionTurn<
     }
   };
   try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials,
-    );
-    if (missingCredential !== undefined) {
-      return {
-        ...(await presentControlledFailure(
-          admitted,
-          withEngineDetourInvocationScope(missingCredential, request.invocationScopeId),
-          adapters,
-          env.principalAuthority,
-          io,
-          persistRunState,
-        )) as { exitCode: number; admitted: A; terminal: T },
-        ...deferredPersist,
-      };
-    }
+    // #987: do not pre-block host dispatch on AK credential catalog facts.
+    // Host attempt + postRunMissingCredentialFailure / runner knownFailure settle
+    // MissingProviderCredential (docs/pi-0.84.1-capability-audit.md: no local auth
+    // checker; keep local settlement only).
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
     // Single authority projectHostTransitionPriorNative classifies the prior native volume.
     // Same-run resume (#637) keeps host identity on the run's invocation page.

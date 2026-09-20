@@ -1,7 +1,8 @@
 /**
  * Shared public-run credential seam: one owner for missing selected-provider
- * detection, typed failure construction, pre-dispatch fail-closed payload, and
- * post-run credential annotation. Role runners supply model/credential facts only.
+ * detection, typed failure construction, and post-run credential annotation.
+ * Role runners supply model/credential facts only. #987 deleted the pre-dispatch
+ * local auth checker; host attempt + this settlement annotate remain.
  */
 import {
   missingPublicProviderCredential,
@@ -20,7 +21,7 @@ export function knownFailureForMissingProviderCredential(
   credentials: CredentialProviders | undefined,
 ): RoleTurnKnownFailure | undefined {
   if (model === undefined || credentials === undefined) return undefined;
-  // Only the public credential catalog is fail-closed here; offline/test providers
+  // Only the public credential catalog is annotated here; offline/test providers
   // are not represented in auth.json shape and must not be washed into MissingProviderCredential.
   if (model.provider !== "openai-codex" && model.provider !== "xai") return undefined;
   if (!missingPublicProviderCredential(model.provider, credentials)) {
@@ -32,28 +33,6 @@ export function knownFailureForMissingProviderCredential(
       name: "MissingProviderCredential",
       code: model.provider,
     },
-  };
-}
-
-/** Pre-dispatch fail-closed payload when selected public provider lacks credentials. */
-export type MissingCredentialPreDispatchFailure = Readonly<{
-  timedOut: false;
-  code: 1;
-  stderr: string;
-  knownFailure: RoleTurnKnownFailure;
-}>;
-
-export function missingCredentialPreDispatchFailure(
-  model: SeatModelConfig | undefined,
-  credentials: CredentialProviders | undefined,
-): MissingCredentialPreDispatchFailure | undefined {
-  const knownFailure = knownFailureForMissingProviderCredential(model, credentials);
-  if (knownFailure === undefined) return undefined;
-  return {
-    timedOut: false,
-    code: 1,
-    stderr: `Missing credential for provider ${String(knownFailure.identity?.code ?? "unknown")}`,
-    knownFailure,
   };
 }
 

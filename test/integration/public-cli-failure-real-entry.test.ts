@@ -598,14 +598,15 @@ test("credential-boundary knownFailure keeps provider cause when runner omits it
     assert.ok(stderr[0]!.length > 0);
   });
 });
-test("default runner empty-auth retains provider cause, identity, and primary diagnostic", async () => {
+test("empty-auth reaches host then settlement annotates MissingProviderCredential (#987)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
-    // No piRunner: production defaultExplicitInternalPiRunner subprocess.
-    // Empty auth.json + selected xai is the live counterexample from Judge apply.
+    // #987: pre-dispatch local auth checker deleted — host must be attempted;
+    // post-run annotate (not a package pre-block) supplies MissingProviderCredential.
+    let hostTurns = 0;
     const result = await runAkRole(
       ["--model", "xai/grok-4:off", "judge", "--project", project, "probe empty auth"],
       {
@@ -614,10 +615,26 @@ test("default runner empty-auth retains provider cause, identity, and primary di
         cwd: project,
         credentials: { "openai-codex": false, xai: false },
         createRunId: () => "run-default-empty-auth-001",
-        judgeTimeoutMs: 60_000,
         io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            hostTurns += 1;
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+            return {
+              code: 1,
+              stderr: "No API key found for the selected model.",
+              timedOut: false,
+              args: [...args],
+            };
+          },
+        }),
       },
     );
+    assert.ok(hostTurns >= 1, `empty credentials must not pre-block host dispatch (hostTurns=${hostTurns})`);
     const { terminal, errorRef } = await assertPublicFailureSettlement({
       result,
       stdout,
@@ -626,7 +643,6 @@ test("default runner empty-auth retains provider cause, identity, and primary di
       identityName: "MissingProviderCredential",
       identityCode: "xai",
     });
-    // Typed credential channel + emission bounds (AC6) — not presentation prose.
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
       assert.equal(terminal.roleOutcome.cause, "provider");
