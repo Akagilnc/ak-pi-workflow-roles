@@ -730,16 +730,14 @@ async function lexicalSymlinkTarget(linkPath: string): Promise<string> {
 }
 
 /**
- * After a deps tree copy: keep symlinks that stay inside the sandbox; replace
- * any resolvable link whose realpath escapes with a materialized copy; drop
- * unresolvable (dangling / looping) links that lexically escape. In-sandbox
- * dangling links are kept so provision does not fail closed on common broken
- * bins (#983).
+ * Nested-link policy under a real sandbox `node_modules` directory (#983):
+ * keep links whose resolution stays inside that directory (including common
+ * in-sandbox dangling bins); materialize resolvable escapes; drop
+ * unresolvable links that lexically escape.
  *
- * `sandboxModulesRootReal` is realpath'd (macOS `/private/var`); 
- * `sandboxModulesRootLexical` is the path form used by the copy walk (`/var`).
- * Resolvable links are compared with the real root; dangling links with the
- * lexical root so `/var` vs `/private/var` does not false-escape.
+ * Containment uses two roots because macOS realpath rewrites `/var` →
+ * `/private/var`: resolvable links compare against the realpath'd root;
+ * dangling / looping links compare against the lexical copy-walk root.
  */
 async function materializeEscapingDependencySymlinks(
   sandboxModulesRootReal: string,
@@ -788,11 +786,14 @@ async function materializeEscapingDependencySymlinks(
  * Ignored dependency trees (node_modules) do not follow `git worktree add`.
  * When the source checkout already has them, mirror that material into the
  * ephemeral sandbox so Reviewer probes and focused tests resolve the same way
- * as in the caller tree (#983). Shape is a recursive directory copy that keeps
- * in-tree relative links and materializes any link that would resolve outside
- * the sandbox — same shared seam for all Reviewer paths, no second install, no
- * public flag, and no writable path back into the caller tree. Absence in the
- * source is left absent.
+ * as in the caller tree (#983).
+ *
+ * Unified boundary: sandbox `node_modules` is always a real directory owned by
+ * the worktree — never a retained root symlink into the caller tree. Follow a
+ * source root symlink once to choose the directory to copy; then keep in-tree
+ * relative links and materialize/drop nested escapes. Same shared seam for all
+ * Reviewer paths; no second install, no public flag, no write-through.
+ * Absence in the source is left absent.
  */
 async function provisionReviewerWorktreeDeps(
   sourceProjectRoot: string,
@@ -821,9 +822,26 @@ async function provisionReviewerWorktreeDeps(
       throw error;
     }
   }
+  // Root identity: copy from a real directory. A source root symlink must not
+  // be retained as sandbox/node_modules (verbatim cp would write-through).
+  const sourceStat = await lstat(sourceModules);
+  let copySource = sourceModules;
+  if (sourceStat.isSymbolicLink()) {
+    try {
+      copySource = await realpath(sourceModules);
+    } catch {
+      return;
+    }
+  }
   // verbatimSymlinks: keep relative in-tree targets relative. Node's default
   // rewrites them to absolute source paths and re-opens a write-through channel.
-  await cp(sourceModules, target, { recursive: true, verbatimSymlinks: true });
+  await cp(copySource, target, { recursive: true, verbatimSymlinks: true });
+  const targetStat = await lstat(target);
+  if (targetStat.isSymbolicLink()) {
+    throw new Error(
+      `reviewer worktree deps copy must yield a real directory: ${target}`,
+    );
+  }
   await materializeEscapingDependencySymlinks(await realpath(target), target, target);
 }
 

@@ -86,14 +86,15 @@ function seedGitProject(root: string): void {
 }
 
 /**
- * Source tree with a committed focused-test probe and ignored node_modules
- * dependencies — the #983 shape: worktree add does not carry deps; provision
- * must. Includes a relative in-tree link (pnpm-like) and an absolute link
- * (npm-link-like) so write-isolation covers real dependency symlink shapes.
+ * Source tree with a committed focused-test probe and ignored deps — the #983
+ * shape: worktree add does not carry deps; provision must. Root `node_modules`
+ * is itself a symlink to `.real-node-modules` (caller-tree write-through risk);
+ * nested relative (pnpm-like), absolute (npm-link-like), in-sandbox dangling
+ * bin, and escaping dangling links cover the nested boundary on the same fixture.
  */
 async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
   seedGitProject(root);
-  await writeFile(join(root, ".gitignore"), "node_modules\n", "utf8");
+  await writeFile(join(root, ".gitignore"), "node_modules\n.real-node-modules\n", "utf8");
   await writeFile(
     join(root, "package.json"),
     `${JSON.stringify({
@@ -121,7 +122,9 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
   );
   execFileSync("git", ["add", ".gitignore", "package.json", "test"], { cwd: root });
   execFileSync("git", ["commit", "-m", "seed focused-test probe"], { cwd: root });
-  const storeDep = join(root, "node_modules", ".store", "ak-reviewer-deps-probe");
+  // Material lives behind a root symlink — provision must not retain that identity.
+  const realModules = join(root, ".real-node-modules");
+  const storeDep = join(realModules, ".store", "ak-reviewer-deps-probe");
   await mkdir(storeDep, { recursive: true });
   await writeFile(
     join(storeDep, "package.json"),
@@ -135,9 +138,9 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
   await writeFile(join(storeDep, "index.js"), 'export const value = "ok";\n', "utf8");
   await symlink(
     ".store/ak-reviewer-deps-probe",
-    join(root, "node_modules", "ak-reviewer-deps-probe"),
+    join(realModules, "ak-reviewer-deps-probe"),
   );
-  const absStore = join(root, "node_modules", ".abs-store", "ak-reviewer-abs-deps-probe");
+  const absStore = join(realModules, ".abs-store", "ak-reviewer-abs-deps-probe");
   await mkdir(absStore, { recursive: true });
   await writeFile(
     join(absStore, "package.json"),
@@ -151,22 +154,26 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
   await writeFile(join(absStore, "index.js"), 'export const value = "ok-abs";\n', "utf8");
   await symlink(
     absStore,
-    join(root, "node_modules", "ak-reviewer-abs-deps-probe"),
+    join(realModules, "ak-reviewer-abs-deps-probe"),
   );
   // Common broken bin: dangling but lexically inside node_modules — must not
   // abort provision. Escaping dangling relative link must be removed in sandbox.
-  await mkdir(join(root, "node_modules", ".bin"), { recursive: true });
-  await symlink("./nowhere", join(root, "node_modules", ".bin", "broken"));
+  await mkdir(join(realModules, ".bin"), { recursive: true });
+  await symlink("./nowhere", join(realModules, ".bin", "broken"));
   await symlink(
     "../../outside-missing",
-    join(root, "node_modules", "escape-dangle"),
+    join(realModules, "escape-dangle"),
   );
+  // Absolute root link matches the live write-through shape (resolvable outside
+  // the sandbox). Relative `.real-node-modules` would dangle after verbatim cp.
+  await symlink(realModules, join(root, "node_modules"));
 }
 
 /**
  * Native focused-test resolves in the ephemeral sandbox (probe assert + exit
  * status), and a write under sandbox node_modules must not escape into the
- * caller source tree (#983 write-isolation).
+ * caller source tree (#983 write-isolation) — including through a root
+ * node_modules symlink into `.real-node-modules`.
  */
 function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: string): void {
   // Sandbox cwd may be a caller subdirectory; focused tests live at the git root.
@@ -185,6 +192,11 @@ function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: stri
     encoding: "utf8",
     env,
   });
+  assert.equal(
+    lstatSync(join(sandboxRoot, "node_modules")).isSymbolicLink(),
+    false,
+    "sandbox node_modules root must be a real directory, not a retained symlink",
+  );
   const relativeMarkerRel = join(
     "node_modules",
     "ak-reviewer-deps-probe",
@@ -195,18 +207,21 @@ function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: stri
     "ak-reviewer-abs-deps-probe",
     "write-isolation-marker",
   );
-  const sourceRelativeMarker = join(sourceProjectRoot, relativeMarkerRel);
+  const sourceRealModules = join(sourceProjectRoot, ".real-node-modules");
+  const sourceRelativeMarker = join(sourceRealModules, "ak-reviewer-deps-probe", "write-isolation-marker");
   const sourceStoreMarker = join(
-    sourceProjectRoot,
-    "node_modules",
+    sourceRealModules,
     ".store",
     "ak-reviewer-deps-probe",
     "write-isolation-marker",
   );
-  const sourceAbsoluteMarker = join(sourceProjectRoot, absoluteMarkerRel);
+  const sourceAbsoluteMarker = join(
+    sourceRealModules,
+    "ak-reviewer-abs-deps-probe",
+    "write-isolation-marker",
+  );
   const sourceAbsStoreMarker = join(
-    sourceProjectRoot,
-    "node_modules",
+    sourceRealModules,
     ".abs-store",
     "ak-reviewer-abs-deps-probe",
     "write-isolation-marker",
@@ -248,20 +263,13 @@ function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: stri
 
 /** After sandbox close: ignored source deps must be untouched by Reviewer writes. */
 function assertSourceIgnoredDepsUntouched(sourceProjectRoot: string): void {
-  const relativeLink = join(sourceProjectRoot, "node_modules", "ak-reviewer-deps-probe");
-  const absoluteLink = join(sourceProjectRoot, "node_modules", "ak-reviewer-abs-deps-probe");
-  const storeDep = join(
-    sourceProjectRoot,
-    "node_modules",
-    ".store",
-    "ak-reviewer-deps-probe",
-  );
-  const absStore = join(
-    sourceProjectRoot,
-    "node_modules",
-    ".abs-store",
-    "ak-reviewer-abs-deps-probe",
-  );
+  const rootLink = join(sourceProjectRoot, "node_modules");
+  const realModules = join(sourceProjectRoot, ".real-node-modules");
+  const relativeLink = join(realModules, "ak-reviewer-deps-probe");
+  const absoluteLink = join(realModules, "ak-reviewer-abs-deps-probe");
+  const storeDep = join(realModules, ".store", "ak-reviewer-deps-probe");
+  const absStore = join(realModules, ".abs-store", "ak-reviewer-abs-deps-probe");
+  assert.ok(lstatSync(rootLink).isSymbolicLink(), "source root node_modules symlink must remain");
   assert.ok(lstatSync(relativeLink).isSymbolicLink(), "relative deps link fixture must remain");
   assert.ok(lstatSync(absoluteLink).isSymbolicLink(), "absolute deps link fixture must remain");
   assert.deepEqual(readdirSync(storeDep).sort(), ["index.js", "package.json"]);
@@ -277,11 +285,11 @@ function assertSourceIgnoredDepsUntouched(sourceProjectRoot: string): void {
     "absolute linked store must not retain sandbox writes",
   );
   assert.ok(
-    lstatSync(join(sourceProjectRoot, "node_modules", ".bin", "broken")).isSymbolicLink(),
+    lstatSync(join(realModules, ".bin", "broken")).isSymbolicLink(),
     "source dangling bin fixture must remain",
   );
   assert.ok(
-    lstatSync(join(sourceProjectRoot, "node_modules", "escape-dangle")).isSymbolicLink(),
+    lstatSync(join(realModules, "escape-dangle")).isSymbolicLink(),
     "source escaping-dangle fixture must remain",
   );
 }
