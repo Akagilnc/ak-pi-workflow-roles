@@ -436,27 +436,28 @@ async function capturePriorControlledFailureOriginals(
 
 /**
  * #990: retain a settled controlled-failure that auto-resume will continue
- * past. Writes the loop-held original-byte carry (not the projected public
+ * past. Writes this attempt's original-byte capture (not the projected public
  * Terminal). Reuses the same hardened dispatch-error-attempt-* face and
  * session pointer as thrown-dispatch retention — conventional error.json is
- * cleared by a later accepted publish, so this durable snapshot is what keeps
- * first-failure diagnosis addressable after success.
+ * cleared by a later accepted publish, so each continued-past attempt keeps
+ * its own durable snapshot; first-failure carry for finals is held separately
+ * (first-write-wins).
  */
 async function retainControlledFailureTerminal(
   admitted: { runDirectory: string; principal: DurablePrincipal },
   principalAuthority: DurablePrincipalAuthority,
   sessionAppender: SessionCustomEntryAppender,
   attempt: number,
-  prior: PriorControlledFailureCarry,
+  failure: PriorControlledFailureCarry,
 ): Promise<{ file: string; pointerError?: unknown }> {
   const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
   const filePath = await writeHardenedArtifactFile(artifactsDir, `dispatch-error-attempt-${attempt}`, {
     version: 1,
     attempt,
     recordedAt: new Date().toISOString(),
-    diagnostic: prior.diagnostic,
-    ...(prior.cause === undefined ? {} : { cause: prior.cause }),
-    decisiveFacts: { ...prior.decisiveFacts },
+    diagnostic: failure.diagnostic,
+    ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+    decisiveFacts: { ...failure.decisiveFacts },
   });
   const pointerError = await appendDispatchErrorRetentionPointer(
     admitted,
@@ -874,16 +875,18 @@ export async function runWithAutoResumeLoop<
       ) {
         return await finalizeReturn(result);
       }
-      // Will auto-resume past this settled failure: capture structured memory
-      // from durable original bytes (public Terminal may already be projected),
-      // then fallible retention (afterDispatch may already have relocated
-      // admitted.runDirectory).
+      // Will auto-resume past this settled failure: capture this attempt's
+      // structured originals from durable bytes (public Terminal may already
+      // be projected), then fallible retention (afterDispatch may already have
+      // relocated admitted.runDirectory). first-carry is first-write-wins only;
+      // per-attempt retention always uses currentFailure.
       if (terminal !== undefined && terminal.roleOutcome.kind === "failure") {
+        const currentFailure = await capturePriorControlledFailureOriginals(
+          options.admitted.runDirectory,
+          terminal,
+        );
         if (priorControlledFailure === undefined) {
-          priorControlledFailure = await capturePriorControlledFailureOriginals(
-            options.admitted.runDirectory,
-            terminal,
-          );
+          priorControlledFailure = currentFailure;
         }
         const attempt = dispatchOrdinal - 1;
         try {
@@ -892,7 +895,7 @@ export async function runWithAutoResumeLoop<
             options.principalAuthority,
             options.sessionAppender,
             attempt,
-            priorControlledFailure,
+            currentFailure,
           );
           retainedErrorFiles.push(file);
           if (pointerError !== undefined) {

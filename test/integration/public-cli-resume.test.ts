@@ -1063,10 +1063,11 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
 });
 
 /**
- * #990: first controlled failure (diagnostic embeds runId) → auto-resume →
- * second typed failure whose diagnostic + details also embed runId → resumable
- * final. Complete public Terminal (current failure + first-failure carry) must
- * keep the exact token only in resume.command; durable retention keeps originals.
+ * #990: two distinct controlled failures continue under budget, then a third
+ * typed failure settles as the resumable final. Per-attempt retained artifacts
+ * must match that attempt's diagnosis (not wash later attempts with the first
+ * carry); public Terminal (current failure + first-failure carry) keeps the
+ * exact runId token only in resume.command; durable retention keeps originals.
  */
 test("first-failure carry onto resumable final keeps runId only in resume.command", async () => {
   await withTempHome(async (home) => {
@@ -1074,13 +1075,17 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     await mkdir(join(home, ".ak-roles"), { recursive: true });
+    // Budget of 2 resumes: attempt 0 + attempt 1 continue past distinct
+    // controlled failures; attempt 2 is the budget-exhausted resumable final.
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ autoResumeLimit: 1 }, null, 2)}\n`,
+      `${JSON.stringify({ autoResumeLimit: 2 }, null, 2)}\n`,
     );
     const runId = "run-carry-resume-disclose-001";
     const plantedDiagnostic =
       `ENOENT: no such file or directory, open '/tmp/ledger/runs/${runId}@judge/invocation.json'`;
+    const midDiagnostic =
+      `provider deferred run ${runId} mid-budget (typed 429, distinct from first)`;
     const finalDiagnostic =
       `provider declined run ${runId} after auto-resume (typed 429)`;
     // Colliding dynamic keys after runId strip (`hint-${runId}` and `hint-`
@@ -1109,16 +1114,21 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
             hostTurns += 1;
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
-            // Principal must remain available so auto-resume takes a second turn.
+            // Principal must remain available so auto-resume continues under budget.
             await writeFile(join(sessionDir, "session.jsonl"), "");
             await observeTyped429ViaProductionHandler({
               runDirectory: join(sessionDir, ".."),
               provider: "openai-codex",
             });
+            const diagnostic =
+              hostTurns === 1
+                ? plantedDiagnostic
+                : hostTurns === 2
+                  ? midDiagnostic
+                  : finalDiagnostic;
             await writeSessionProviderStop(sessionDir, {
               provider: "openai-codex",
-              errorMessage:
-                hostTurns === 1 ? plantedDiagnostic : finalDiagnostic,
+              errorMessage: diagnostic,
             });
             return {
               code: 1,
@@ -1128,9 +1138,8 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
               knownFailure: {
                 cause: "provider",
                 identity: { name: "ProviderError", code: 429 },
-                diagnostic:
-                  hostTurns === 1 ? plantedDiagnostic : finalDiagnostic,
-                ...(hostTurns === 1 ? {} : { details: finalDetails }),
+                diagnostic,
+                ...(hostTurns === 3 ? { details: finalDetails } : {}),
               },
             };
           },
@@ -1138,7 +1147,7 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
       },
     );
 
-    assert.equal(hostTurns, 2, "auto-resume must take a second host turn");
+    assert.equal(hostTurns, 3, "auto-resume budget must cross two controlled failures then a final");
     assert.equal(result.exitCode, 1);
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
@@ -1195,7 +1204,7 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
       "public prior decisiveFacts must not re-disclose runId",
     );
     const publicFiles = facts.dispatchErrorFiles;
-    assert.ok(Array.isArray(publicFiles) && publicFiles.length >= 1);
+    assert.ok(Array.isArray(publicFiles) && publicFiles.length >= 2);
     for (const file of publicFiles) {
       assert.equal(typeof file, "string");
       assert.equal(
@@ -1219,22 +1228,46 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
     const retainedNames = (await readdir(artifactsDir)).filter((name) =>
       name.startsWith("dispatch-error-attempt-"),
     );
-    assert.ok(retainedNames.length >= 1, "durable first-failure retention required");
-    let sawOriginal = false;
+    assert.ok(retainedNames.length >= 2, "durable retention required for each continued-past failure");
+    const retainedByAttempt = new Map<number, {
+      diagnostic?: unknown;
+      decisiveFacts?: { diagnostic?: unknown };
+    }>();
     for (const name of retainedNames) {
       const body = JSON.parse(await readFile(join(artifactsDir, name), "utf8")) as {
+        attempt?: unknown;
         diagnostic?: unknown;
         decisiveFacts?: { diagnostic?: unknown };
       };
-      const diagnostic = body.diagnostic ?? body.decisiveFacts?.diagnostic;
-      if (typeof diagnostic === "string" && diagnostic.includes(runId)) {
-        sawOriginal = true;
-        assert.equal(diagnostic.includes(plantedDiagnostic) || diagnostic === plantedDiagnostic, true);
-      }
+      assert.equal(typeof body.attempt, "number");
+      retainedByAttempt.set(body.attempt as number, body);
     }
-    assert.equal(sawOriginal, true, "durable artifact must retain original runId bytes");
+    const attempt0 = retainedByAttempt.get(0);
+    const attempt1 = retainedByAttempt.get(1);
+    assert.ok(attempt0, "attempt 0 retained artifact required");
+    assert.ok(attempt1, "attempt 1 retained artifact required");
+    assert.equal(
+      attempt0.diagnostic ?? attempt0.decisiveFacts?.diagnostic,
+      plantedDiagnostic,
+      "attempt 0 retained artifact must keep the first controlled failure",
+    );
+    assert.equal(
+      attempt1.diagnostic ?? attempt1.decisiveFacts?.diagnostic,
+      midDiagnostic,
+      "attempt 1 retained artifact must keep the second controlled failure (not wash with first)",
+    );
+    assert.equal(
+      String(attempt0.diagnostic ?? "").includes(runId),
+      true,
+      "durable first-failure artifact must retain original runId bytes",
+    );
+    assert.equal(
+      String(attempt1.diagnostic ?? "").includes(runId),
+      true,
+      "durable second-failure artifact must retain original runId bytes",
+    );
 
-    // Final durable error.json keeps the second failure's original bytes too.
+    // Final durable error.json keeps the budget-exhausted failure's original bytes.
     const finalError = JSON.parse(
       await readFile(join(artifactsDir, "error.json"), "utf8"),
     ) as { diagnostic?: unknown; details?: unknown };
