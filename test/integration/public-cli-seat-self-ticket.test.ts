@@ -130,8 +130,6 @@ function baseEnv(input: {
   toolName: string;
   details: unknown;
   additionalDetails?: readonly unknown[];
-  /** Observe admission placement while the turn still runs (pre-relocate). */
-  onAdmissionTurn?: (request: RoleTurnRequest) => void;
   /** Countersign court station: may bind a typed ticket (起居郎 handoff face). */
   runCourtDiaristStation?: (
     admitted: { ticketNumber?: number; runDirectory: string },
@@ -148,7 +146,6 @@ function baseEnv(input: {
   });
   const roleTurnHost = {
     async executeTurn(request: RoleTurnRequest) {
-      input.onAdmissionTurn?.(request);
       const result = await host.executeTurn(request);
       if (input.additionalDetails !== undefined) {
         for (const [index, details] of input.additionalDetails.entries()) {
@@ -212,7 +209,6 @@ async function assertDurableUnbound(runDirectory: string): Promise<void> {
 
 test("public coder binds its typed receipt assertion without parsing summons text", async () => {
   await withSeatProject(async ({ home, project }) => {
-    let admissionRunDirectory: string | undefined;
     const result = await runPublicCoder(
       ["apply", "Implement the fix for ticket #582."],
       baseEnv({
@@ -221,7 +217,8 @@ test("public coder binds its typed receipt assertion without parsing summons tex
         runId: "01a063500-0000-7000-8000-00000000coder",
         role: "coder",
         toolName: CODER_OUTPUT_TOOL_NAME,
-        // #863: malformed first, then first legal wins; both receipts retained.
+        // #863: malformed first, then first legal wins; all original receipts retained.
+        // Topology unbound→bind→relocate belongs to the #859 public-entry tracer.
         details: {
           status: "completed",
           report: "malformed ticket shape",
@@ -231,9 +228,6 @@ test("public coder binds its typed receipt assertion without parsing summons tex
           { status: "completed", report: "first legal", ticketNumber: 582 },
           { status: "completed", report: "later receipt", ticketNumber: 999 },
         ],
-        onAdmissionTurn: (request) => {
-          admissionRunDirectory = request.runDirectory;
-        },
       }),
       captureIo().io,
       parseCoderArgv,
@@ -247,16 +241,7 @@ test("public coder binds its typed receipt assertion without parsing summons tex
       { status: "completed", report: "first legal", ticketNumber: 582 },
       { status: "completed", report: "later receipt", ticketNumber: 999 },
     ]);
-    // Observable sequence: admission unbound → bind first legal → relocate in-home.
-    assert.match(
-      (admissionRunDirectory ?? "").replaceAll("\\", "/"),
-      /\/unbound\/runs\//,
-    );
     await assertDurableTicket(result.admitted!.runDirectory, 582);
-    assert.match(
-      result.admitted!.runDirectory.replaceAll("\\", "/"),
-      /\/582\/runs\//,
-    );
   });
 });
 

@@ -11,6 +11,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm, writeFile, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import test from "node:test";
@@ -20,6 +21,7 @@ import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { HostContext, RoleHost, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -1587,6 +1589,56 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       assert.equal(artifact.path.startsWith(join(unboundRunDirectory, "artifacts")), true);
       await readFile(artifact.path, "utf8");
     }
+
+    // #863 / #859: work-seat self-report — admission unbound → bind → in-home relocate.
+    const coderId = "01a0sign00-0000-7000-8000-0000000coder";
+    let coderAdmissionDirectory = "";
+    const coderBase = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "coder",
+        toolName: CODER_OUTPUT_TOOL_NAME,
+        details: {
+          status: "completed",
+          report: "work-seat typed self-report",
+          ticketNumber: 582,
+        },
+      }),
+    });
+    const coder = await runAkRole(
+      ["coder", "--model", "test/caller-seat:high", "--project", project, "Implement ticket work."],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io: captureIo().io,
+        createRunId: () => coderId,
+        roleTurnHost: {
+          async executeTurn(request: RoleTurnRequest) {
+            coderAdmissionDirectory = request.runDirectory;
+            return coderBase.executeTurn(request);
+          },
+        },
+      },
+    );
+    assert.equal(coder.exitCode, 0);
+    assert.equal(
+      coderAdmissionDirectory,
+      join(bookRoot, "unbound", "runs", `${coderId}@coder`),
+      "work seat admits under unbound before typed self-report bind",
+    );
+    const coderTicketRun = join(bookRoot, "582", "runs", `${coderId}@coder`);
+    assert.equal(
+      existsSync(coderTicketRun),
+      true,
+      "work seat relocates in-home after first legal typed ticket bind",
+    );
+    const coderAdmitted = JSON.parse(
+      await readFile(join(coderTicketRun, "admitted-request.json"), "utf8"),
+    ) as { ticketNumber?: number };
+    assert.equal(coderAdmitted.ticketNumber, 582);
 
     const allowedBookEntries = new Set(["582", "unbound", "navigator", "collector-handbook"]);
     for (const entry of await readdir(bookRoot)) {

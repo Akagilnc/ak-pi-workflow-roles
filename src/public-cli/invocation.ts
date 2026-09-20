@@ -648,6 +648,12 @@ export async function relocateAdmittedRunToTicket(
     newRunDirectory: target.runDirectory,
   });
 
+  // Disk move first. Publish in-memory admitted/principal identity only after
+  // rename succeeds — otherwise rename failure leaves disk at unbound while
+  // memory already shows the ticket path, and the unbound retry gate whitewashes
+  // the next call (#863 online atomicity).
+  await rename(oldRunDirectory, target.runDirectory);
+
   const admittedRecord = admitted as unknown as Record<string, unknown>;
   rewriteRunDirectoryPathFields(
     admittedRecord,
@@ -673,7 +679,6 @@ export async function relocateAdmittedRunToTicket(
   const principal = authority.seal(target);
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
-  await rename(oldRunDirectory, target.runDirectory);
   heldLease?.relocate(target.runDirectory);
 }
 
