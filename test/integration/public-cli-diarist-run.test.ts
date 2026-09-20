@@ -2243,24 +2243,45 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
 
 /**
  * Host turn already started + board ticket already written by the accept hook,
- * then the turn fails: failure stays honest and the run still relocates under the
- * ticket before lease release (shared afterDispatch once-only finish).
+ * then the turn fails: the run relocates under the ticket before auto-resume,
+ * whose next host request must use that current durable location.
  */
-test("ak-role diarist host-turn failure still relocates board-bound run", async () => {
+test("ak-role diarist auto-resume uses the relocated board-bound run", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    // Temp-home config only — never the real seat table. Zero resume budget so
-    // this tracer stays on the post-turn relocate seam.
+    // Temp-home config only — never the real seat table. One retry crosses the
+    // post-turn relocate seam in the same public invocation.
     await mkdir(join(home, ".ak-roles"), { recursive: true });
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ autoResumeLimit: 0 }, null, 2)}\n`,
+      `${JSON.stringify({ autoResumeLimit: 1 }, null, 2)}\n`,
     );
 
     const runId = "01a0diar00-0000-7000-8000-000000000003";
     const { io } = captureIo();
+    const submitted = {
+      status: "completed",
+      ticketNumber: TICKET,
+      sessions: [],
+    };
+    const failAfterBind = diaristEnvelopeRunner(submitted, {
+      afterAdmit: "throw",
+    });
+    const completeAfterResume = diaristEnvelopeRunner(submitted);
+    let hostTurns = 0;
+    const hostRunDirectories: string[] = [];
+    const roleTurnHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: immutablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        hostTurns += 1;
+        return hostTurns === 1
+          ? failAfterBind(args, options)
+          : completeAfterResume(args, options);
+      },
+    });
 
     const result = await runAkRole(
       [
@@ -2278,23 +2299,14 @@ test("ak-role diarist host-turn failure still relocates board-bound run", async 
         io,
         createRunId: () => runId,
         principalAuthority: immutablePrincipalAuthority,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: immutablePrincipalAuthority,
-          piRunner: diaristEnvelopeRunner(
-            {
-              status: "completed",
-              ticketNumber: TICKET,
-              sessions: [],
-            },
-            { afterAdmit: "throw" },
-          ),
-        }),
+        roleTurnHost: {
+          executeTurn: async (request) => {
+            hostRunDirectories.push(request.runDirectory);
+            return roleTurnHost.executeTurn(request);
+          },
+        },
       },
     );
-
-    assert.notEqual(result.exitCode, 0, "host failure must stay non-zero");
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
 
     const bookKey = resolveBookKeyFromGit(project);
     const ticketPlacement = roleRunPlacement(
@@ -2315,6 +2327,12 @@ test("ak-role diarist host-turn failure still relocates board-bound run", async 
         role: "diarist",
       },
     );
+    assert.deepEqual(hostRunDirectories, [
+      unboundPlacement.runDirectory,
+      ticketPlacement.runDirectory,
+    ]);
+    assert.equal(result.exitCode, 0, "auto-resume should recover the host turn");
+    assert.equal(result.terminal?.roleOutcome.kind, "completed");
     assert.equal(
       existsSync(join(ticketPlacement.runDirectory, "run-state.json")),
       true,
