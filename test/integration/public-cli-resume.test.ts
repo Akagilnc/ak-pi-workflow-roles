@@ -1176,20 +1176,32 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
       false,
       "public decisiveFacts.diagnostic must not re-disclose runId",
     );
-    const publicSecondary = JSON.stringify(facts.secondaryEvidence ?? {});
+    const publicSecondary = facts.secondaryEvidence;
+    assert.ok(
+      publicSecondary !== null
+        && typeof publicSecondary === "object"
+        && !Array.isArray(publicSecondary),
+      "public secondaryEvidence must remain a non-array Record after runId redaction",
+    );
+    const secondaryRecord = publicSecondary as Record<string, unknown>;
     assert.equal(
-      publicSecondary.includes(runId),
+      JSON.stringify(secondaryRecord).includes(runId),
       false,
       "public secondaryEvidence must not re-disclose runId",
     );
+    const collidedHint = secondaryRecord["hint-"];
+    assert.ok(
+      Array.isArray(collidedHint) && collidedHint.length === 2,
+      "colliding dynamic keys must project to an ordered value array under the shared key",
+    );
     assert.equal(
-      publicSecondary.includes("first"),
-      true,
+      collidedHint[0],
+      "first",
       "public secondaryEvidence must keep first colliding dynamic-key value",
     );
     assert.equal(
-      publicSecondary.includes("second"),
-      true,
+      collidedHint[1],
+      "second",
       "public secondaryEvidence must keep second colliding dynamic-key value",
     );
     assert.equal(typeof facts.priorControlledFailureDiagnostic, "string");

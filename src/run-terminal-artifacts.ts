@@ -54,15 +54,20 @@ export function projectRunRelativeOpenablePath(
   return rel.split(sep).join("/");
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * Public-face exact-token redaction for resumable Terminals (#108 / #990):
  * strip every occurrence of `runId` from structured values and dynamic object
  * keys so typed regions outside `resume.command` cannot re-disclose it.
  * Durable artifacts keep the original bytes; only the public projection uses this.
  *
- * Dynamic-key projection must remain complete: when two distinct source keys
- * collapse to the same projected key, return an ordered `[projectedKey, value]`
- * entry list for that object instead of silently overwriting earlier values.
+ * Object input always yields an object. Dynamic-key projection must remain
+ * complete: when two or more distinct source keys collapse to the same
+ * projected key, keep every projected value in encounter order under that key
+ * as an array (single-key projections stay scalar).
  */
 export function redactExactRunIdToken(value: unknown, runId: string): unknown {
   if (runId.length === 0) return value;
@@ -72,21 +77,22 @@ export function redactExactRunIdToken(value: unknown, runId: string): unknown {
   if (Array.isArray(value)) {
     return value.map((item) => redactExactRunIdToken(item, runId));
   }
-  if (value !== null && typeof value === "object") {
-    const projectedEntries: Array<[string, unknown]> = [];
-    const out: Record<string, unknown> = {};
-    let collided = false;
-    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+  if (isPlainObject(value)) {
+    const buckets: Record<string, unknown[]> = {};
+    for (const [key, entry] of Object.entries(value)) {
       const projectedKey = key.includes(runId) ? key.split(runId).join("") : key;
       const projectedValue = redactExactRunIdToken(entry, runId);
-      projectedEntries.push([projectedKey, projectedValue]);
-      if (Object.prototype.hasOwnProperty.call(out, projectedKey)) {
-        collided = true;
-        continue;
+      if (Object.prototype.hasOwnProperty.call(buckets, projectedKey)) {
+        buckets[projectedKey]!.push(projectedValue);
+      } else {
+        buckets[projectedKey] = [projectedValue];
       }
-      out[projectedKey] = projectedValue;
     }
-    return collided ? projectedEntries : out;
+    const out: Record<string, unknown> = {};
+    for (const [projectedKey, values] of Object.entries(buckets)) {
+      out[projectedKey] = values.length === 1 ? values[0]! : values;
+    }
+    return out;
   }
   return value;
 }
@@ -127,19 +133,13 @@ export function projectResumablePublicTerminalFace(
       runId: terminal.runId,
     },
     runId,
-  ) as {
-    roleOutcome: unknown;
-    navigator?: unknown;
-    artifacts?: unknown;
-    submissions?: unknown;
-    gate?: unknown;
-    autoResumeCount?: unknown;
-    reviewerChildren?: unknown;
-    reviewerChildOutcomes?: unknown;
-    runId?: unknown;
-  };
-  terminal.roleOutcome = projected.roleOutcome;
-  if ("navigator" in projected) terminal.navigator = projected.navigator as typeof terminal.navigator;
+  );
+  // Object-in must remain object-out; do not cast away a shape change.
+  if (!isPlainObject(projected)) return;
+  terminal.roleOutcome = projected.roleOutcome as typeof terminal.roleOutcome;
+  if ("navigator" in projected) {
+    terminal.navigator = projected.navigator as typeof terminal.navigator;
+  }
   if ("artifacts" in projected) {
     terminal.artifacts = projected.artifacts as typeof terminal.artifacts;
   }
@@ -194,10 +194,6 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /**
  * Minimum producer-owned face shared by settlement terminal artifacts
  * (report / error / audit-incomplete). Consumer-driven: enough to identify a
@@ -210,7 +206,7 @@ function readUsableTerminalArtifactBody(
   if (body === null) {
     return { ok: false, reason: "terminal artifact JSON value is null" };
   }
-  if (!isRecord(body)) {
+  if (!isPlainObject(body)) {
     return {
       ok: false,
       reason: `terminal artifact JSON value is not a typed object (${Array.isArray(body) ? "array" : typeof body})`,

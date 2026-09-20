@@ -520,12 +520,32 @@ function projectFirstFailureCarryForPublicTerminal(
       dispatchErrorFiles: publicFiles,
     };
   }
+  const projectedDiagnostic = redactExactRunIdToken(prior.diagnostic, runId);
+  const projectedFacts = redactExactRunIdToken(
+    { ...prior.decisiveFacts },
+    runId,
+  );
+  // Object-in must remain object-out; do not cast an array/entry-list as Record.
+  if (typeof projectedDiagnostic !== "string") {
+    throw new Error(
+      "public first-failure diagnostic redaction must preserve string shape",
+    );
+  }
+  if (
+    projectedFacts === null
+    || typeof projectedFacts !== "object"
+    || Array.isArray(projectedFacts)
+  ) {
+    throw new Error(
+      "public first-failure decisiveFacts redaction must preserve object shape",
+    );
+  }
+  const decisiveFacts: Readonly<Record<string, unknown>> = {
+    ...(projectedFacts as Record<string, unknown>),
+  };
   return {
-    diagnostic: redactExactRunIdToken(prior.diagnostic, runId) as string,
-    decisiveFacts: redactExactRunIdToken(
-      { ...prior.decisiveFacts },
-      runId,
-    ) as Readonly<Record<string, unknown>>,
+    diagnostic: projectedDiagnostic,
+    decisiveFacts,
     dispatchErrorFiles: publicFiles,
   };
 }
