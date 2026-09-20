@@ -286,17 +286,32 @@ function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: stri
 }
 
 /** After sandbox close: ignored source deps must be untouched by Reviewer writes. */
-function assertSourceIgnoredDepsUntouched(sourceProjectRoot: string): void {
+function assertSourceIgnoredDepsUntouched(
+  sourceProjectRoot: string,
+  expectedRootIdentity: ReviewerDepsRootIdentity,
+): void {
   const rootModules = join(sourceProjectRoot, "node_modules");
   const rootStat = lstatSync(rootModules);
-  const materialRoot = rootStat.isSymbolicLink()
-    ? realpathSync(rootModules)
-    : rootModules;
-  if (rootStat.isSymbolicLink()) {
-    assert.ok(rootStat.isSymbolicLink(), "source root node_modules symlink must remain");
+  if (expectedRootIdentity === "symlink") {
+    assert.equal(
+      rootStat.isSymbolicLink(),
+      true,
+      "source root node_modules symlink must remain",
+    );
   } else {
-    assert.equal(rootStat.isDirectory(), true, "source root node_modules must remain a directory");
+    assert.equal(
+      rootStat.isSymbolicLink(),
+      false,
+      "source root node_modules must remain a real directory, not a symlink",
+    );
+    assert.equal(
+      rootStat.isDirectory(),
+      true,
+      "source root node_modules must remain a directory",
+    );
   }
+  const materialRoot =
+    expectedRootIdentity === "symlink" ? realpathSync(rootModules) : rootModules;
   const relativeLink = join(materialRoot, "ak-reviewer-deps-probe");
   const absoluteLink = join(materialRoot, "ak-reviewer-abs-deps-probe");
   const storeDep = join(materialRoot, ".store", "ak-reviewer-deps-probe");
@@ -1262,7 +1277,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
       }),
       worktreeListBefore,
     );
-    assertSourceIgnoredDepsUntouched(project);
+    assertSourceIgnoredDepsUntouched(project, "symlink");
     assert.equal(captured!.includes("--ak-review-task"), false);
     assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
     const okDialogue = readUserDialogueStdin(capturedStdin ?? "");
@@ -1553,7 +1568,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         }),
         worktreeListBefore,
       );
-      assertSourceIgnoredDepsUntouched(project);
+      assertSourceIgnoredDepsUntouched(project, "directory");
     }
 
     const bookKey = resolveBookKeyFromGit(project);
@@ -1621,7 +1636,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       }),
       worktreeListBefore,
     );
-    assertSourceIgnoredDepsUntouched(project);
+    assertSourceIgnoredDepsUntouched(project, "directory");
     assert.equal(Array.isArray(resumeArgs), true);
     assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
@@ -1710,7 +1725,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
       encoding: "utf8",
     });
     assert.equal(worktreeListAfter, worktreeListBefore);
-    assertSourceIgnoredDepsUntouched(project);
+    assertSourceIgnoredDepsUntouched(project, "directory");
 
     // Durable identity matches the caller project (10a); one durable page is enough.
     const bookKey = resolveBookKeyFromGit(project);
@@ -1760,7 +1775,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
       encoding: "utf8",
     });
     assert.equal(worktreeListAfterResume, worktreeListBefore);
-    assertSourceIgnoredDepsUntouched(project);
+    assertSourceIgnoredDepsUntouched(project, "directory");
   });
 });
 
