@@ -2379,9 +2379,10 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
     assert.equal(attemptHistory.length, 2);
     assert.equal(attemptHistory[0]?.data?.sequence, 1);
     assert.equal(attemptHistory[0]?.data?.outcome?.kind, "failure");
-    assert.equal(
-      attemptHistory[0]?.data?.outcome?.diagnostic,
-      "host turn failed after diarist board bind",
+    // Diagnostic is free text: assert non-empty presence only (ticket AC4 / quality-law).
+    assert.equal(typeof attemptHistory[0]?.data?.outcome?.diagnostic, "string");
+    assert.ok(
+      (attemptHistory[0]?.data?.outcome?.diagnostic as string).length > 0,
     );
     assert.equal(attemptHistory[0]?.data?.role, "diarist");
     assert.equal(attemptHistory[0]?.data?.runId, runId);
