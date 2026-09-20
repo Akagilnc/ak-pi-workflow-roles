@@ -793,15 +793,25 @@ async function materializeEscapingDependencySymlinks(
  * source root symlink once to choose the directory to copy; then keep in-tree
  * relative links and materialize/drop nested escapes. Same shared seam for all
  * Reviewer paths; no second install, no public flag, no write-through.
- * Absence in the source is left absent.
+ *
+ * Documented absence only: `lstat(source/node_modules)` ENOENT → leave absent.
+ * A present root entry that is not a usable directory (broken/looping symlink,
+ * permission/I/O errors, non-directory) preserves the cause and fails into the
+ * caller rollback/diagnostic seam — never a silent skip.
  */
 async function provisionReviewerWorktreeDeps(
   sourceProjectRoot: string,
   worktreeRoot: string,
 ): Promise<void> {
   const sourceModules = join(sourceProjectRoot, "node_modules");
-  if (!existsSync(sourceModules)) {
-    return;
+  let sourceStat;
+  try {
+    sourceStat = await lstat(sourceModules);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
   }
   const target = join(worktreeRoot, "node_modules");
   try {
@@ -824,14 +834,14 @@ async function provisionReviewerWorktreeDeps(
   }
   // Root identity: copy from a real directory. A source root symlink must not
   // be retained as sandbox/node_modules (verbatim cp would write-through).
-  const sourceStat = await lstat(sourceModules);
   let copySource = sourceModules;
   if (sourceStat.isSymbolicLink()) {
-    try {
-      copySource = await realpath(sourceModules);
-    } catch {
-      return;
-    }
+    // realpath rejections (dangling ENOENT, ELOOP, EACCES, races, …) propagate.
+    copySource = await realpath(sourceModules);
+  } else if (!sourceStat.isDirectory()) {
+    throw new Error(
+      `reviewer worktree deps source must be a directory or symlink: ${sourceModules}`,
+    );
   }
   // verbatimSymlinks: keep relative in-tree targets relative. Node's default
   // rewrites them to absolute source paths and re-opens a write-through channel.
