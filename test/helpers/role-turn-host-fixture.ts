@@ -160,11 +160,17 @@ export function scriptedTerminatingToolSession(input: {
   readonly seal?: boolean;
   readonly toolCallId?: string;
   readonly acceptedText?: string;
+  /**
+   * Session JSONL write mode. Default replace. Resume fixtures that must keep
+   * prior run-owned records (e.g. ak_run_attempt_history) pass append.
+   */
+  readonly sessionWriteMode?: "replace" | "append";
 }): LegacyFauxPiRunner {
   const isError = input.isError === true;
   const seal = input.seal ?? !isError;
   const toolCallId = input.toolCallId ?? `call_${input.role}_1`;
   const acceptedText = input.acceptedText ?? `${input.role} output accepted`;
+  const sessionWriteMode = input.sessionWriteMode ?? "replace";
   const rows = [
     sessionUserMessageRow("user-1", "kickoff", 1),
     ...sessionToolExchangeRows({
@@ -181,7 +187,7 @@ export function scriptedTerminatingToolSession(input: {
   return async (extraArgs) => {
     const sessionFile = argvFlagValue(extraArgs, "--session");
     assert.ok(sessionFile);
-    await writeSessionJsonl(sessionFile, rows);
+    await writeSessionJsonl(sessionFile, rows, sessionWriteMode);
     return {
       code: 0,
       timedOut: false,
