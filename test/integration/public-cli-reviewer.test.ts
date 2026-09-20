@@ -7,7 +7,7 @@ import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts"
  * Caller instruction is optional provenance, never semantic control.
  */
 import assert from "node:assert/strict";
-import { existsSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import {
   access,
   chmod,
@@ -16,6 +16,7 @@ import {
   readFile,
   readdir,
   rm,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -85,8 +86,10 @@ function seedGitProject(root: string): void {
 }
 
 /**
- * Source tree with a committed focused-test probe and an ignored node_modules
- * dependency — the #983 shape: worktree add does not carry deps; provision must.
+ * Source tree with a committed focused-test probe and ignored node_modules
+ * dependencies — the #983 shape: worktree add does not carry deps; provision
+ * must. Includes a relative in-tree link (pnpm-like) and an absolute link
+ * (npm-link-like) so write-isolation covers real dependency symlink shapes.
  */
 async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
   seedGitProject(root);
@@ -107,8 +110,10 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
       'import assert from "node:assert/strict";',
       'import test from "node:test";',
       'import { value } from "ak-reviewer-deps-probe";',
+      'import { value as absValue } from "ak-reviewer-abs-deps-probe";',
       'test("resolves provisioned dependency", () => {',
       '  assert.equal(value, "ok");',
+      '  assert.equal(absValue, "ok-abs");',
       "});",
       "",
     ].join("\n"),
@@ -116,10 +121,10 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
   );
   execFileSync("git", ["add", ".gitignore", "package.json", "test"], { cwd: root });
   execFileSync("git", ["commit", "-m", "seed focused-test probe"], { cwd: root });
-  const depRoot = join(root, "node_modules", "ak-reviewer-deps-probe");
-  await mkdir(depRoot, { recursive: true });
+  const storeDep = join(root, "node_modules", ".store", "ak-reviewer-deps-probe");
+  await mkdir(storeDep, { recursive: true });
   await writeFile(
-    join(depRoot, "package.json"),
+    join(storeDep, "package.json"),
     `${JSON.stringify({
       name: "ak-reviewer-deps-probe",
       type: "module",
@@ -127,7 +132,27 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
     }, null, 2)}\n`,
     "utf8",
   );
-  await writeFile(join(depRoot, "index.js"), 'export const value = "ok";\n', "utf8");
+  await writeFile(join(storeDep, "index.js"), 'export const value = "ok";\n', "utf8");
+  await symlink(
+    ".store/ak-reviewer-deps-probe",
+    join(root, "node_modules", "ak-reviewer-deps-probe"),
+  );
+  const absStore = join(root, "node_modules", ".abs-store", "ak-reviewer-abs-deps-probe");
+  await mkdir(absStore, { recursive: true });
+  await writeFile(
+    join(absStore, "package.json"),
+    `${JSON.stringify({
+      name: "ak-reviewer-abs-deps-probe",
+      type: "module",
+      main: "index.js",
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(join(absStore, "index.js"), 'export const value = "ok-abs";\n', "utf8");
+  await symlink(
+    absStore,
+    join(root, "node_modules", "ak-reviewer-abs-deps-probe"),
+  );
 }
 
 /**
@@ -152,22 +177,86 @@ function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: stri
     encoding: "utf8",
     env,
   });
-  const markerRel = join("node_modules", "ak-reviewer-deps-probe", "write-isolation-marker");
-  const sourceMarker = join(sourceProjectRoot, markerRel);
-  assert.equal(existsSync(sourceMarker), false);
-  writeFileSync(join(sandboxRoot, markerRel), "sandbox-only\n", "utf8");
-  assert.equal(
-    existsSync(sourceMarker),
-    false,
-    "sandbox deps write must not reach the caller source tree",
+  const relativeMarkerRel = join(
+    "node_modules",
+    "ak-reviewer-deps-probe",
+    "write-isolation-marker",
   );
+  const absoluteMarkerRel = join(
+    "node_modules",
+    "ak-reviewer-abs-deps-probe",
+    "write-isolation-marker",
+  );
+  const sourceRelativeMarker = join(sourceProjectRoot, relativeMarkerRel);
+  const sourceStoreMarker = join(
+    sourceProjectRoot,
+    "node_modules",
+    ".store",
+    "ak-reviewer-deps-probe",
+    "write-isolation-marker",
+  );
+  const sourceAbsoluteMarker = join(sourceProjectRoot, absoluteMarkerRel);
+  const sourceAbsStoreMarker = join(
+    sourceProjectRoot,
+    "node_modules",
+    ".abs-store",
+    "ak-reviewer-abs-deps-probe",
+    "write-isolation-marker",
+  );
+  for (const marker of [
+    sourceRelativeMarker,
+    sourceStoreMarker,
+    sourceAbsoluteMarker,
+    sourceAbsStoreMarker,
+  ]) {
+    assert.equal(existsSync(marker), false);
+  }
+  writeFileSync(join(sandboxRoot, relativeMarkerRel), "sandbox-only-rel\n", "utf8");
+  writeFileSync(join(sandboxRoot, absoluteMarkerRel), "sandbox-only-abs\n", "utf8");
+  for (const marker of [
+    sourceRelativeMarker,
+    sourceStoreMarker,
+    sourceAbsoluteMarker,
+    sourceAbsStoreMarker,
+  ]) {
+    assert.equal(
+      existsSync(marker),
+      false,
+      "sandbox deps write must not reach the caller source tree",
+    );
+  }
 }
 
 /** After sandbox close: ignored source deps must be untouched by Reviewer writes. */
 function assertSourceIgnoredDepsUntouched(sourceProjectRoot: string): void {
-  const depRoot = join(sourceProjectRoot, "node_modules", "ak-reviewer-deps-probe");
-  assert.ok(existsSync(depRoot), "source ignored deps fixture must remain");
-  assert.deepEqual(readdirSync(depRoot).sort(), ["index.js", "package.json"]);
+  const relativeLink = join(sourceProjectRoot, "node_modules", "ak-reviewer-deps-probe");
+  const absoluteLink = join(sourceProjectRoot, "node_modules", "ak-reviewer-abs-deps-probe");
+  const storeDep = join(
+    sourceProjectRoot,
+    "node_modules",
+    ".store",
+    "ak-reviewer-deps-probe",
+  );
+  const absStore = join(
+    sourceProjectRoot,
+    "node_modules",
+    ".abs-store",
+    "ak-reviewer-abs-deps-probe",
+  );
+  assert.ok(lstatSync(relativeLink).isSymbolicLink(), "relative deps link fixture must remain");
+  assert.ok(lstatSync(absoluteLink).isSymbolicLink(), "absolute deps link fixture must remain");
+  assert.deepEqual(readdirSync(storeDep).sort(), ["index.js", "package.json"]);
+  assert.deepEqual(readdirSync(absStore).sort(), ["index.js", "package.json"]);
+  assert.equal(
+    existsSync(join(storeDep, "write-isolation-marker")),
+    false,
+    "relative linked store must not retain sandbox writes",
+  );
+  assert.equal(
+    existsSync(join(absStore, "write-isolation-marker")),
+    false,
+    "absolute linked store must not retain sandbox writes",
+  );
 }
 
 /** Production ReviewerIntent face (ADR 0003 / #917 lens axes). */

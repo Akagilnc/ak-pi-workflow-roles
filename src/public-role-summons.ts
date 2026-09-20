@@ -11,9 +11,18 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { cp, lstat, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import {
+  copyFile,
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readdir,
+  realpath,
+  rm,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
 import type { CliIo } from "./public-cli/cli-io.ts";
@@ -671,14 +680,87 @@ function reviewerSandboxPath(worktreeAxis: string, projectRelative: string): str
   return projectRelative === "" ? worktreeAxis : join(worktreeAxis, projectRelative);
 }
 
+/** True when `candidate` is the same path as `root` or a path under it. */
+function isPathInsideRoot(root: string, candidate: string): boolean {
+  const rel = relative(root, candidate);
+  return rel === "" || (!rel.startsWith(`..${sep}`) && rel !== ".." && !isAbsolute(rel));
+}
+
+/**
+ * Copy `source` onto `destination` as real files/directories (no retained
+ * symlinks). Used when a dependency link would otherwise resolve outside the
+ * sandbox copy.
+ */
+async function copyTreeMaterialized(
+  source: string,
+  destination: string,
+  stack: Set<string> = new Set(),
+): Promise<void> {
+  const sourceStat = await lstat(source);
+  if (sourceStat.isSymbolicLink()) {
+    const real = await realpath(source);
+    if (stack.has(real)) {
+      await mkdir(destination, { recursive: true });
+      return;
+    }
+    stack.add(real);
+    try {
+      await copyTreeMaterialized(real, destination, stack);
+    } finally {
+      stack.delete(real);
+    }
+    return;
+  }
+  if (sourceStat.isDirectory()) {
+    await mkdir(destination, { recursive: true });
+    for (const name of await readdir(source)) {
+      await copyTreeMaterialized(join(source, name), join(destination, name), stack);
+    }
+    return;
+  }
+  await mkdir(dirname(destination), { recursive: true });
+  await copyFile(source, destination);
+}
+
+/**
+ * After a deps tree copy: keep symlinks that stay inside the sandbox; replace
+ * any link whose realpath escapes with a materialized copy so Reviewer writes
+ * cannot leave the ephemeral worktree (#983).
+ */
+async function materializeEscapingDependencySymlinks(
+  sandboxModulesRoot: string,
+  current: string,
+): Promise<void> {
+  const currentStat = await lstat(current);
+  if (currentStat.isSymbolicLink()) {
+    const real = await realpath(current);
+    if (isPathInsideRoot(sandboxModulesRoot, real)) {
+      return;
+    }
+    await rm(current, { force: true });
+    await copyTreeMaterialized(real, current);
+    return;
+  }
+  if (!currentStat.isDirectory()) {
+    return;
+  }
+  for (const name of await readdir(current)) {
+    await materializeEscapingDependencySymlinks(
+      sandboxModulesRoot,
+      join(current, name),
+    );
+  }
+}
+
 /**
  * Ignored dependency trees (node_modules) do not follow `git worktree add`.
  * When the source checkout already has them, mirror that material into the
  * ephemeral sandbox so Reviewer probes and focused tests resolve the same way
- * as in the caller tree (#983). Shape is a recursive directory copy — same
- * shared seam for all Reviewer paths, no second install, no public flag, and
- * no writable path back into the caller tree. Absence in the source is left
- * absent.
+ * as in the caller tree (#983). Shape is a recursive directory copy that keeps
+ * in-tree relative links and materializes any link that would resolve outside
+ * the sandbox — same shared seam for all Reviewer paths, no second install, no
+ * public flag, and no writable path back into the caller tree. Absence in the
+ * source is left absent.
  */
 async function provisionReviewerWorktreeDeps(
   sourceProjectRoot: string,
@@ -707,7 +789,11 @@ async function provisionReviewerWorktreeDeps(
       throw error;
     }
   }
-  await cp(sourceModules, target, { recursive: true });
+  // verbatimSymlinks: keep relative in-tree targets relative. Node's default
+  // rewrites them to absolute source paths and re-opens a write-through channel.
+  await cp(sourceModules, target, { recursive: true, verbatimSymlinks: true });
+  // realpath so macOS /var vs /private/var does not false-positive as escaping.
+  await materializeEscapingDependencySymlinks(await realpath(target), target);
 }
 
 
