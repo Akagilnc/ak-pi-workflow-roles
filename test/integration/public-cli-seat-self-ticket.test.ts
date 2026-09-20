@@ -234,6 +234,10 @@ test("public coder binds its typed receipt assertion without parsing summons tex
       { status: "completed", report: "later receipt", ticketNumber: 999 },
     ]);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
+    // #863: shared post-admission bind relocates unbound → ticket in-home.
+    const runDir = result.admitted!.runDirectory.replaceAll("\\", "/");
+    assert.match(runDir, /\/582\/runs\//);
+    assert.equal(runDir.includes("/unbound/runs/"), false);
   });
 });
 
@@ -304,6 +308,9 @@ test("public countersign without --ticket: binds only via 起居郎 typed handof
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
+    const runDir = result.admitted!.runDirectory.replaceAll("\\", "/");
+    assert.match(runDir, /\/582\/runs\//);
+    assert.equal(runDir.includes("/unbound/runs/"), false);
   });
 });
 

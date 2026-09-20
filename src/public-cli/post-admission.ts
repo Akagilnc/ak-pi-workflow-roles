@@ -22,6 +22,7 @@ import {
   bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
   freezeAttachmentsIntoRun,
+  relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
@@ -704,6 +705,9 @@ export async function dispatchPostAdmissionTurn<
           : (asserted as { ticketNumber: number }).ticketNumber;
         if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
       }
+      // #863: shared post-admission bind must relocate unbound→ticket in-home
+      // before lease release (work-seat self-report and any prior board bind).
+      await relocateAdmittedRunToTicket(admitted, env.principalAuthority, lease);
       if (adapters.afterDispatch !== undefined) await adapters.afterDispatch(admitted, lease);
       return result;
     } catch (error) {
