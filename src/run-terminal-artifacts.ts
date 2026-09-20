@@ -56,9 +56,9 @@ export function projectRunRelativeOpenablePath(
 
 /**
  * Public-face exact-token redaction for resumable Terminals (#108 / #990):
- * strip every occurrence of `runId` from structured values so typed regions
- * outside `resume.command` cannot re-disclose it. Durable artifacts keep the
- * original bytes; only the public projection uses this.
+ * strip every occurrence of `runId` from structured values and dynamic object
+ * keys so typed regions outside `resume.command` cannot re-disclose it.
+ * Durable artifacts keep the original bytes; only the public projection uses this.
  */
 export function redactExactRunIdToken(value: unknown, runId: string): unknown {
   if (runId.length === 0) return value;
@@ -71,11 +71,84 @@ export function redactExactRunIdToken(value: unknown, runId: string): unknown {
   if (value !== null && typeof value === "object") {
     const out: Record<string, unknown> = {};
     for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = redactExactRunIdToken(entry, runId);
+      const projectedKey = key.includes(runId) ? key.split(runId).join("") : key;
+      out[projectedKey] = redactExactRunIdToken(entry, runId);
     }
     return out;
   }
   return value;
+}
+
+/**
+ * #108 / #990: project the complete public resumable Terminal face in place.
+ * Exact runId tokens may remain only inside `resume.command`; every other
+ * public region (roleOutcome, navigator, artifacts, submissions, gate, …) is
+ * redacted. Callers keep private dossier / history bytes unprojected.
+ */
+export function projectResumablePublicTerminalFace(
+  terminal: {
+    roleOutcome: unknown;
+    navigator?: unknown;
+    artifacts?: unknown;
+    submissions?: unknown;
+    gate?: unknown;
+    autoResumeCount?: unknown;
+    reviewerChildren?: unknown;
+    reviewerChildOutcomes?: unknown;
+    resume?: { command: string };
+    runId?: unknown;
+  },
+  runId: string,
+): void {
+  if (terminal.resume === undefined || runId.length === 0) return;
+  const resume = terminal.resume;
+  const projected = redactExactRunIdToken(
+    {
+      roleOutcome: terminal.roleOutcome,
+      navigator: terminal.navigator,
+      artifacts: terminal.artifacts,
+      submissions: terminal.submissions,
+      gate: terminal.gate,
+      autoResumeCount: terminal.autoResumeCount,
+      reviewerChildren: terminal.reviewerChildren,
+      reviewerChildOutcomes: terminal.reviewerChildOutcomes,
+      runId: terminal.runId,
+    },
+    runId,
+  ) as {
+    roleOutcome: unknown;
+    navigator?: unknown;
+    artifacts?: unknown;
+    submissions?: unknown;
+    gate?: unknown;
+    autoResumeCount?: unknown;
+    reviewerChildren?: unknown;
+    reviewerChildOutcomes?: unknown;
+    runId?: unknown;
+  };
+  terminal.roleOutcome = projected.roleOutcome;
+  if ("navigator" in projected) terminal.navigator = projected.navigator as typeof terminal.navigator;
+  if ("artifacts" in projected) {
+    terminal.artifacts = projected.artifacts as typeof terminal.artifacts;
+  }
+  if ("submissions" in projected) {
+    terminal.submissions = projected.submissions as typeof terminal.submissions;
+  }
+  if ("gate" in projected) terminal.gate = projected.gate as typeof terminal.gate;
+  if ("autoResumeCount" in projected) {
+    terminal.autoResumeCount = projected.autoResumeCount as typeof terminal.autoResumeCount;
+  }
+  if ("reviewerChildren" in projected) {
+    terminal.reviewerChildren =
+      projected.reviewerChildren as typeof terminal.reviewerChildren;
+  }
+  if ("reviewerChildOutcomes" in projected) {
+    terminal.reviewerChildOutcomes =
+      projected.reviewerChildOutcomes as typeof terminal.reviewerChildOutcomes;
+  }
+  if ("runId" in projected) terminal.runId = projected.runId as typeof terminal.runId;
+  // resume.command is the sole public carrier of the exact runId token.
+  terminal.resume = resume;
 }
 
 /** Unique open-ended failure names: error.<uuid>.json (publisher stem + uuid). */

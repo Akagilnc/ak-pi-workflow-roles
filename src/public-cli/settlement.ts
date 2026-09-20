@@ -140,6 +140,7 @@ import type {
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
 import {
   listSeamOwnedUniqueErrorFacePaths,
+  projectResumablePublicTerminalFace,
   RUN_TERMINAL_ARTIFACT_FILES,
   RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS,
 } from "../run-terminal-artifacts.ts";
@@ -4325,10 +4326,12 @@ export async function settleFailureTerminalResult(
   if (failure.details !== undefined) {
     decisiveFacts.secondaryEvidence = failure.details;
   }
-  // Resumable failures: durable artifacts still land under the run directory, but
-  // the public Terminal must not re-disclose the run ID via top-level runId,
-  // path components, or untrusted free text — only resume.command may carry it
-  // (AC2 / #108).
+  // Resumable failures: durable artifacts still land under the run directory
+  // with original bytes, but the public Terminal must not re-disclose the run
+  // ID via top-level runId, path components, decisiveFacts, diagnostic free
+  // text, or dynamic object keys — only resume.command may carry it
+  // (AC2 / #108 / #990). Project the complete public face once at this
+  // settlement boundary; later attach/carry folds re-apply the same helper.
   if (options.resume !== undefined) {
     const roleOutcome: TerminalRoleOutcome = {
       kind: "failure",
@@ -4337,7 +4340,7 @@ export async function settleFailureTerminalResult(
       diagnostic: failure.diagnostic,
       decisiveFacts,
     };
-    return withOptionalGateProjection(
+    const terminal = await withOptionalGateProjection(
       {
         roleOutcome,
         navigator,
@@ -4347,6 +4350,8 @@ export async function settleFailureTerminalResult(
       sessionDirectory,
       detourGateContext(admitted, options),
     );
+    projectResumablePublicTerminalFace(terminal, admitted.runId);
+    return terminal;
   }
   const roleOutcome: TerminalRoleOutcome = {
     kind: "failure",

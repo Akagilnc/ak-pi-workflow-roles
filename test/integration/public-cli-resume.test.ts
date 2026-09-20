@@ -69,9 +69,12 @@ function assertRunIdAbsentOutsideResume(
     roleOutcome: terminal.roleOutcome,
     navigator: terminal.navigator,
     artifacts: terminal.artifacts,
+    submissions: terminal.submissions,
     gate: terminal.gate,
     runId: terminal.runId,
     autoResumeCount: terminal.autoResumeCount,
+    reviewerChildren: terminal.reviewerChildren,
+    reviewerChildOutcomes: terminal.reviewerChildOutcomes,
   };
   assert.equal(
     JSON.stringify(outside).includes(runId),
@@ -1061,8 +1064,9 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
 
 /**
  * #990: first controlled failure (diagnostic embeds runId) → auto-resume →
- * resumable final. Public carry fields must use the same runId-only contract;
- * durable retention keeps the original bytes.
+ * second typed failure whose diagnostic + details also embed runId → resumable
+ * final. Complete public Terminal (current failure + first-failure carry) must
+ * keep the exact token only in resume.command; durable retention keeps originals.
  */
 test("first-failure carry onto resumable final keeps runId only in resume.command", async () => {
   await withTempHome(async (home) => {
@@ -1077,6 +1081,12 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
     const runId = "run-carry-resume-disclose-001";
     const plantedDiagnostic =
       `ENOENT: no such file or directory, open '/tmp/ledger/runs/${runId}@judge/invocation.json'`;
+    const finalDiagnostic =
+      `provider declined run ${runId} after auto-resume (typed 429)`;
+    const finalDetails = {
+      providerPath: `/tmp/ledger/runs/${runId}@judge/session/session.jsonl`,
+      [`hint-${runId}`]: "nested key also embeds runId",
+    };
     const { io, stdout } = captureIo();
     let hostTurns = 0;
 
@@ -1105,7 +1115,7 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
             await writeSessionProviderStop(sessionDir, {
               provider: "openai-codex",
               errorMessage:
-                hostTurns === 1 ? plantedDiagnostic : "upstream declined this request",
+                hostTurns === 1 ? plantedDiagnostic : finalDiagnostic,
             });
             return {
               code: 1,
@@ -1116,7 +1126,8 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
                 cause: "provider",
                 identity: { name: "ProviderError", code: 429 },
                 diagnostic:
-                  hostTurns === 1 ? plantedDiagnostic : "upstream declined this request",
+                  hostTurns === 1 ? plantedDiagnostic : finalDiagnostic,
+                ...(hostTurns === 1 ? {} : { details: finalDetails }),
               },
             };
           },
@@ -1131,14 +1142,33 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
     assert.ok(result.terminal!.resume, "final must be resumable");
     assertRunIdAbsentOutsideResume(result.terminal!, runId);
 
-    const facts = result.terminal!.roleOutcome.decisiveFacts as
+    const outcome = result.terminal!.roleOutcome;
+    assert.equal(outcome.kind, "failure");
+    assert.equal(
+      String(outcome.diagnostic).includes(runId),
+      false,
+      "public final diagnostic must not re-disclose runId",
+    );
+    const facts = outcome.decisiveFacts as
       | {
+          diagnostic?: unknown;
+          secondaryEvidence?: unknown;
           priorControlledFailureDiagnostic?: unknown;
           priorControlledFailureDecisiveFacts?: unknown;
           dispatchErrorFiles?: unknown;
         }
       | undefined;
-    assert.ok(facts, "resumable final must carry first-failure facts");
+    assert.ok(facts, "resumable final must carry structured facts");
+    assert.equal(
+      JSON.stringify(facts.diagnostic ?? "").includes(runId),
+      false,
+      "public decisiveFacts.diagnostic must not re-disclose runId",
+    );
+    assert.equal(
+      JSON.stringify(facts.secondaryEvidence ?? {}).includes(runId),
+      false,
+      "public secondaryEvidence must not re-disclose runId",
+    );
     assert.equal(typeof facts.priorControlledFailureDiagnostic, "string");
     assert.equal(
       String(facts.priorControlledFailureDiagnostic).includes(runId),
@@ -1189,6 +1219,17 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
       }
     }
     assert.equal(sawOriginal, true, "durable artifact must retain original runId bytes");
+
+    // Final durable error.json keeps the second failure's original bytes too.
+    const finalError = JSON.parse(
+      await readFile(join(artifactsDir, "error.json"), "utf8"),
+    ) as { diagnostic?: unknown; details?: unknown };
+    assert.equal(finalError.diagnostic, finalDiagnostic);
+    assert.equal(
+      JSON.stringify(finalError.details ?? {}).includes(runId),
+      true,
+      "private final error.json must retain original runId bytes in details",
+    );
 
     const presented = stdout.join("");
     const resumeCommand = result.terminal!.resume!.command;

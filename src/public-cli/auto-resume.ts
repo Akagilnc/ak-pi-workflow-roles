@@ -18,10 +18,13 @@ import { join } from "node:path";
 
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
 import {
+  projectResumablePublicTerminalFace,
   projectRunRelativeOpenablePath,
+  readRunTerminalArtifact,
   redactExactRunIdToken,
 } from "../run-terminal-artifacts.ts";
 import type {
+  ControlledFailureCause,
   DurablePrincipal,
   DurablePrincipalAuthority,
   SessionCustomEntryAppender,
@@ -365,9 +368,76 @@ async function retainDispatchError(
   return pointerError === undefined ? { file: filePath } : { file: filePath, pointerError };
 }
 
+type PriorControlledFailureCarry = {
+  readonly diagnostic: string;
+  readonly cause?: ControlledFailureCause;
+  readonly decisiveFacts: Readonly<Record<string, unknown>>;
+};
+
+const CONTROLLED_FAILURE_CAUSES: ReadonlySet<string> = new Set<ControlledFailureCause>([
+  "activation",
+  "provider",
+  "session",
+  "output",
+  "timeout",
+]);
+
 /**
- * #990: retain a settled controlled-failure Terminal that auto-resume will
- * continue past. Reuses the same hardened dispatch-error-attempt-* face and
+ * #990: prefer durable error.json original bytes for loop-held first-failure
+ * memory. Settlement may already have projected the public Terminal face, so
+ * reading the publisher-owned error body keeps private retention / accepted
+ * carry unprojected. Fall back to the Terminal only when no present error face.
+ */
+async function capturePriorControlledFailureOriginals(
+  runDirectory: string,
+  terminal: TerminalResult,
+): Promise<PriorControlledFailureCarry> {
+  if (terminal.roleOutcome.kind !== "failure") {
+    throw new TypeError("capturePriorControlledFailureOriginals requires a failure role outcome");
+  }
+  const read = await readRunTerminalArtifact(runDirectory).catch(() => undefined);
+  if (read?.status === "present" && read.file === "error.json") {
+    const body = read.body;
+    const diagnostic =
+      typeof body.diagnostic === "string"
+        ? body.diagnostic
+        : terminal.roleOutcome.diagnostic;
+    const cause =
+      typeof body.cause === "string" && CONTROLLED_FAILURE_CAUSES.has(body.cause)
+        ? (body.cause as ControlledFailureCause)
+        : undefined;
+    const decisiveFacts: Record<string, unknown> = {
+      ...(cause === undefined ? {} : { cause }),
+      diagnostic,
+    };
+    const identity = body.identity;
+    if (identity !== null && typeof identity === "object" && !Array.isArray(identity)) {
+      const named = identity as { name?: unknown; code?: unknown };
+      if (typeof named.name === "string") decisiveFacts.errorName = named.name;
+      if (named.code !== undefined) decisiveFacts.errorCode = named.code;
+    }
+    if (body.details !== undefined) {
+      decisiveFacts.secondaryEvidence = body.details;
+    }
+    return {
+      diagnostic,
+      ...(cause === undefined ? {} : { cause }),
+      decisiveFacts,
+    };
+  }
+  return {
+    diagnostic: terminal.roleOutcome.diagnostic,
+    ...(terminal.roleOutcome.cause === undefined
+      ? {}
+      : { cause: terminal.roleOutcome.cause }),
+    decisiveFacts: { ...terminal.roleOutcome.decisiveFacts },
+  };
+}
+
+/**
+ * #990: retain a settled controlled-failure that auto-resume will continue
+ * past. Writes the loop-held original-byte carry (not the projected public
+ * Terminal). Reuses the same hardened dispatch-error-attempt-* face and
  * session pointer as thrown-dispatch retention — conventional error.json is
  * cleared by a later accepted publish, so this durable snapshot is what keeps
  * first-failure diagnosis addressable after success.
@@ -377,19 +447,16 @@ async function retainControlledFailureTerminal(
   principalAuthority: DurablePrincipalAuthority,
   sessionAppender: SessionCustomEntryAppender,
   attempt: number,
-  terminal: TerminalResult,
+  prior: PriorControlledFailureCarry,
 ): Promise<{ file: string; pointerError?: unknown }> {
-  if (terminal.roleOutcome.kind !== "failure") {
-    throw new TypeError("retainControlledFailureTerminal requires a failure role outcome");
-  }
   const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
   const filePath = await writeHardenedArtifactFile(artifactsDir, `dispatch-error-attempt-${attempt}`, {
     version: 1,
     attempt,
     recordedAt: new Date().toISOString(),
-    diagnostic: terminal.roleOutcome.diagnostic,
-    ...(terminal.roleOutcome.cause === undefined ? {} : { cause: terminal.roleOutcome.cause }),
-    decisiveFacts: { ...terminal.roleOutcome.decisiveFacts },
+    diagnostic: prior.diagnostic,
+    ...(prior.cause === undefined ? {} : { cause: prior.cause }),
+    decisiveFacts: { ...prior.decisiveFacts },
   });
   const pointerError = await appendDispatchErrorRetentionPointer(
     admitted,
@@ -400,11 +467,6 @@ async function retainControlledFailureTerminal(
   );
   return pointerError === undefined ? { file: filePath } : { file: filePath, pointerError };
 }
-
-type PriorControlledFailureCarry = {
-  readonly diagnostic: string;
-  readonly decisiveFacts: Readonly<Record<string, unknown>>;
-};
 
 /**
  * Public Terminal evidence refs: keep absolute paths when runId is already a
@@ -689,6 +751,11 @@ export async function runWithAutoResumeLoop<
         );
       }
     }
+    // #990: after carry/attach folds, project the complete public resumable
+    // face once more so current + first-failure tokens stay only in resume.command.
+    if (terminal.resume !== undefined) {
+      projectResumablePublicTerminalFace(terminal, options.admitted.runId);
+    }
     presentTerminal(terminal, options.io);
     return result;
   };
@@ -808,14 +875,15 @@ export async function runWithAutoResumeLoop<
         return await finalizeReturn(result);
       }
       // Will auto-resume past this settled failure: capture structured memory
-      // first (must not depend on durable I/O), then fallible retention
-      // (afterDispatch may already have relocated admitted.runDirectory).
+      // from durable original bytes (public Terminal may already be projected),
+      // then fallible retention (afterDispatch may already have relocated
+      // admitted.runDirectory).
       if (terminal !== undefined && terminal.roleOutcome.kind === "failure") {
         if (priorControlledFailure === undefined) {
-          priorControlledFailure = {
-            diagnostic: terminal.roleOutcome.diagnostic,
-            decisiveFacts: { ...terminal.roleOutcome.decisiveFacts },
-          };
+          priorControlledFailure = await capturePriorControlledFailureOriginals(
+            options.admitted.runDirectory,
+            terminal,
+          );
         }
         const attempt = dispatchOrdinal - 1;
         try {
@@ -824,7 +892,7 @@ export async function runWithAutoResumeLoop<
             options.principalAuthority,
             options.sessionAppender,
             attempt,
-            terminal,
+            priorControlledFailure,
           );
           retainedErrorFiles.push(file);
           if (pointerError !== undefined) {

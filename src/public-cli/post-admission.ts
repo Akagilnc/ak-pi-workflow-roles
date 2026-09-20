@@ -125,6 +125,7 @@ import {
   runWithAutoResumeLoop,
   TurnDispatchedFailure,
 } from "./auto-resume.ts";
+import { projectResumablePublicTerminalFace } from "../run-terminal-artifacts.ts";
 
 /** #855: process-cancel settlement never re-enters auto-resume. */
 function withProcessCancelSkipAutoResume<T extends object>(
@@ -513,6 +514,11 @@ export async function presentControlledFailure<
       },
     ),
   );
+  // #990: submissions attach can reintroduce exact runId tokens after settle
+  // projection — re-apply the unified resumable public-face boundary here.
+  if (terminal.resume !== undefined) {
+    projectResumablePublicTerminalFace(terminal, admitted.runId);
+  }
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
