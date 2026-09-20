@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { lstat, mkdir, readdir, rename, stat } from "node:fs/promises";
+import { lstat, mkdir, readdir, rename, stat, unlink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
@@ -9,8 +9,11 @@ import {
   physicallyContainedIn,
 } from "./activation-ledger-topology.ts";
 import {
+  acquireRunWriterLease,
   autopsyWriterLock,
   describeErrorIdentity,
+  RunWriterLeaseHeldError,
+  type RunWriterLease,
 } from "./public-cli/run-lifecycle.ts";
 
 const execFileAsync = promisify(execFile);
@@ -161,6 +164,9 @@ function assertNotRunningFromBooksDossier(
  * Process start time via `ps -p <pid> -o lstart=` (portable on macOS/Linux).
  * Signal-0 only proves a PID exists; start-vs-lock-mtime discriminates recycled
  * PIDs for migration gates that opt in. Shared lease acquire must NOT use this.
+ *
+ * `lstart` is whole-second only; callers must not compare it to millisecond
+ * mtime as if sub-second order were knowable (#986).
  */
 async function readProcessStartTimeMs(
   pid: number,
@@ -186,13 +192,47 @@ async function readProcessStartTimeMs(
   }
 }
 
+/** Recycled-PID identity relative to a lock mtime, given whole-second `lstart`. */
+type RecycledPidIdentity =
+  | { readonly kind: "recycled" }
+  | { readonly kind: "original-holder" }
+  | { readonly kind: "absent" }
+  | {
+      readonly kind: "unconfirmable";
+      readonly reason: "unreadable-start" | "same-second";
+    };
+
+/**
+ * Classify whether a signal-0-alive pid is the original lock holder.
+ * Only a strictly later wall-clock second than the lock mtime proves recycle;
+ * the same second is identity-unconfirmable (never treated as original-live).
+ */
+async function classifyRecycledPidIdentity(
+  pid: number,
+  lockMtimeMs: number,
+): Promise<RecycledPidIdentity> {
+  const start = await readProcessStartTimeMs(pid);
+  if (start === "absent") return { kind: "absent" };
+  if (start === "unreadable") {
+    return { kind: "unconfirmable", reason: "unreadable-start" };
+  }
+  const startSec = Math.floor(start / 1000);
+  const lockSec = Math.floor(lockMtimeMs / 1000);
+  if (startSec > lockSec) return { kind: "recycled" };
+  if (startSec === lockSec) {
+    return { kind: "unconfirmable", reason: "same-second" };
+  }
+  return { kind: "original-holder" };
+}
+
 type WriterLockGatePolicy = {
   readonly refuseLabel: string;
   readonly unverifiableLabel: string;
   /**
-   * When true, an autopsy-"alive" pid whose process start is strictly after the
-   * lock mtime is treated as a recycled unrelated holder (not blocking). Start
-   * time that cannot be confirmed fails loud — never whitewashed as clear.
+   * When true, an autopsy-"alive" pid whose process start falls in a strictly
+   * later whole second than the lock mtime is treated as a recycled unrelated
+   * holder (not blocking). Same-second or otherwise unconfirmable start fails
+   * loud — never whitewashed as clear or as confirmed original-live.
    */
   readonly discriminateRecycledPid: boolean;
 };
@@ -231,19 +271,16 @@ async function assertWriterLocksClear(
         `${policy.unverifiableLabel} from ${lockPath}: cannot read lock mtime for recycled-pid check: ${describeErrorIdentity(error)}`,
       );
     }
-    const start = await readProcessStartTimeMs(holder.pid);
-    if (start === "absent") {
-      // Holder exited between autopsy and ps — not in flight.
+    const identity = await classifyRecycledPidIdentity(holder.pid, lockMtimeMs);
+    if (identity.kind === "absent" || identity.kind === "recycled") {
+      // Absent: exited between autopsy and ps. Recycled: unrelated reuse.
       continue;
     }
-    if (start === "unreadable") {
-      throw new Error(
-        `${policy.unverifiableLabel} from ${lockPath}: cannot confirm whether live pid ${holder.pid} is the original lock holder (process start time unreadable)`,
-      );
-    }
-    if (start > lockMtimeMs) {
-      // PID exists but process started after the lock was written — recycled.
-      continue;
+    if (identity.kind === "unconfirmable") {
+      const detail = identity.reason === "same-second"
+        ? `live pid ${holder.pid} start second equals lock mtime second (ps lstart is whole-second only; identity unconfirmable)`
+        : `cannot confirm whether live pid ${holder.pid} is the original lock holder (process start time unreadable)`;
+      throw new Error(`${policy.unverifiableLabel} from ${lockPath}: ${detail}`);
     }
     active.push(`${lockPath} (live pid ${holder.pid})`);
   }
@@ -272,6 +309,33 @@ export async function assertBookTopologyMigrationPrerequisites(
   });
 }
 
+const BOARD_BOUND_RELOCATE_REFUSE =
+  "board-bound unbound relocate requires zero in-flight writers in mutation closure";
+const BOARD_BOUND_RELOCATE_UNVERIFIABLE =
+  "cannot establish mutation-closure writer liveness";
+
+async function mutationClosureLockCandidates(
+  mutationClosureRunDirectories: readonly string[],
+): Promise<WriterLockCandidate[]> {
+  const candidates: WriterLockCandidate[] = [];
+  for (const runDirectory of mutationClosureRunDirectories) {
+    const lockPath = join(runDirectory, "writer.lock");
+    try {
+      const st = await lstat(lockPath);
+      candidates.push({
+        path: lockPath,
+        regularFile: st.isFile(),
+        kind: writerLockFilesystemKind(st),
+      });
+    } catch (error) {
+      const code = (error as { code?: unknown }).code;
+      if (code === "ENOENT") continue;
+      throw error;
+    }
+  }
+  return candidates;
+}
+
 /**
  * #863 / #986 relocate gate: only writer locks under the mutation-closure run
  * directories may block. Outside-closure locks (other books, non-rewritten
@@ -290,30 +354,131 @@ export async function assertBoardBoundUnboundRelocatePrerequisites(
   );
   if (mutationClosureRunDirectories.length === 0) return;
 
-  const candidates: WriterLockCandidate[] = [];
-  for (const runDirectory of mutationClosureRunDirectories) {
-    const lockPath = join(runDirectory, "writer.lock");
-    try {
-      const st = await lstat(lockPath);
-      candidates.push({
-        path: lockPath,
-        regularFile: st.isFile(),
-        kind: writerLockFilesystemKind(st),
-      });
-    } catch (error) {
-      const code = (error as { code?: unknown }).code;
-      if (code === "ENOENT") continue;
-      throw error;
-    }
-  }
+  await assertWriterLocksClear(
+    await mutationClosureLockCandidates(mutationClosureRunDirectories),
+    {
+      refuseLabel: BOARD_BOUND_RELOCATE_REFUSE,
+      unverifiableLabel: BOARD_BOUND_RELOCATE_UNVERIFIABLE,
+      discriminateRecycledPid: true,
+    },
+  );
+}
 
-  await assertWriterLocksClear(candidates, {
-    refuseLabel:
-      "board-bound unbound relocate requires zero in-flight writers in mutation closure",
-    unverifiableLabel:
-      "cannot establish mutation-closure writer liveness",
-    discriminateRecycledPid: true,
-  });
+/**
+ * Unlink a mutation-closure lock only when the live pid is proven recycled
+ * (start second strictly after lock mtime second). Same-second stays
+ * unconfirmable; original-holder stays contested. Does not alter shared
+ * acquire/reclaim — this is the #863 gate's authorized orphan cleanup before
+ * taking the ordinary writer lease for the mutation window.
+ */
+async function reclaimRecycledMutationClosureLock(
+  lockPath: string,
+): Promise<"reclaimed" | "not-recycled"> {
+  const holder = await autopsyWriterLock(lockPath);
+  if (holder.verdict !== "alive") return "not-recycled";
+  let lockMtimeMs: number;
+  try {
+    lockMtimeMs = (await stat(lockPath)).mtimeMs;
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === "ENOENT") return "reclaimed";
+    throw new Error(
+      `${BOARD_BOUND_RELOCATE_UNVERIFIABLE} from ${lockPath}: cannot read lock mtime for recycled-pid reclaim: ${describeErrorIdentity(error)}`,
+    );
+  }
+  const identity = await classifyRecycledPidIdentity(holder.pid, lockMtimeMs);
+  if (identity.kind === "absent") return "not-recycled";
+  if (identity.kind === "unconfirmable") {
+    const detail = identity.reason === "same-second"
+      ? `live pid ${holder.pid} start second equals lock mtime second (ps lstart is whole-second only; identity unconfirmable)`
+      : `cannot confirm whether live pid ${holder.pid} is the original lock holder (process start time unreadable)`;
+    throw new Error(`${BOARD_BOUND_RELOCATE_UNVERIFIABLE} from ${lockPath}: ${detail}`);
+  }
+  if (identity.kind !== "recycled") return "not-recycled";
+  // Re-read before unlink: a real writer that replaced the orphan must not
+  // lose its lock (same narrow window discipline as stale reclaim).
+  const again = await autopsyWriterLock(lockPath);
+  if (again.verdict !== "alive" || again.pid !== holder.pid) {
+    return "not-recycled";
+  }
+  try {
+    await unlink(lockPath);
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    if (code === "ENOENT") return "reclaimed";
+    throw error;
+  }
+  return "reclaimed";
+}
+
+async function describeHeldLeaseContest(lockPath: string): Promise<string> {
+  const holder = await autopsyWriterLock(lockPath);
+  if (holder.verdict === "alive") return `live pid ${holder.pid}`;
+  if (holder.verdict === "dead") return `dead pid ${holder.pid}`;
+  if (holder.verdict === "absent") return "absent holder";
+  return holder.reason === "unreadable"
+    ? `unreadable: ${describeErrorIdentity(holder.readFailure)}`
+    : `unparseable holder: ${JSON.stringify(holder.content)}`;
+}
+
+async function acquireOneMutationClosureLease(
+  runDirectory: string,
+): Promise<RunWriterLease> {
+  try {
+    return await acquireRunWriterLease(runDirectory);
+  } catch (error) {
+    if (!(error instanceof RunWriterLeaseHeldError)) throw error;
+  }
+  const lockPath = join(runDirectory, "writer.lock");
+  const reclaimed = await reclaimRecycledMutationClosureLock(lockPath);
+  if (reclaimed !== "reclaimed") {
+    throw new Error(
+      `${BOARD_BOUND_RELOCATE_REFUSE}:\n${lockPath} (${await describeHeldLeaseContest(lockPath)})`,
+    );
+  }
+  try {
+    return await acquireRunWriterLease(runDirectory);
+  } catch (error) {
+    if (error instanceof RunWriterLeaseHeldError) {
+      throw new Error(
+        `${BOARD_BOUND_RELOCATE_REFUSE}:\n${lockPath} (${await describeHeldLeaseContest(lockPath)})`,
+      );
+    }
+    throw error;
+  }
+}
+
+/**
+ * Freeze-time mutual exclusion for #863/#986 relocate: after the read-only
+ * mutation-closure snapshot, take the ordinary writer lease on every run in
+ * that frozen set and hold through rewrite/rename. Reuses acquire/release
+ * without changing their semantics; recycled orphans are cleared only at this
+ * gate. Caller must release every returned lease (including on apply failure).
+ */
+export async function holdBoardBoundUnboundRelocateClosure(
+  booksDirectory: string,
+  mutationClosureRunDirectories: readonly string[],
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<readonly RunWriterLease[]> {
+  await assertBoardBoundUnboundRelocatePrerequisites(
+    booksDirectory,
+    mutationClosureRunDirectories,
+    env,
+  );
+  if (mutationClosureRunDirectories.length === 0) return [];
+
+  const leases: RunWriterLease[] = [];
+  try {
+    for (const runDirectory of mutationClosureRunDirectories) {
+      leases.push(await acquireOneMutationClosureLease(runDirectory));
+    }
+    return leases;
+  } catch (error) {
+    for (const lease of leases) {
+      await lease.release();
+    }
+    throw error;
+  }
 }
 
 export function datedBooksBackupDirectory(
