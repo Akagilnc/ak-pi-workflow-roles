@@ -23,6 +23,7 @@ import {
   type BookTopologyPartitionMigrator,
   type MigrationItemOutcome,
 } from "./book-topology-migration.ts";
+import { listBookRunDirectories } from "./role-run-placement.ts";
 import {
   rewriteRoleRunDurablePages,
   type RunDirectoryPathRewrite,
@@ -283,11 +284,20 @@ export type BoardBoundUnboundRelocation = {
   readonly ticketNumber: number;
 };
 
+type PlannedBoardBoundMove = {
+  readonly sourcePath: string;
+  readonly targetPath: string;
+  readonly ticketNumber: number;
+};
+
 /**
- * Live in-place repair for already-migrated trees (#863 stock): rename each
- * `unbound/runs/<runId>@<role>` that holds a board typed ticketNumber into
- * `<ticket>/runs/…`, rewriting durable pages through the shared relocation
- * seam. Leaves without a board ticket stay unbound. Refuses overwrite.
+ * Live in-place repair for already-migrated trees (#863 stock): plan the full
+ * board-bound unbound→ticket batch first, refuse any overwrite before the first
+ * rename, then rename and rewrite durable pages through the shared relocation
+ * seam with the batch `crossRunRewrites` map (same closure shape as offline
+ * `planBookMoves`). Leaves without a board ticket stay unbound; other runs in
+ * the book still receive the rewrite map so officer/parent/source-run pointers
+ * do not keep naming vanished unbound paths.
  */
 export async function relocateBoardBoundUnboundRunsInBook(
   bookDirectory: string,
@@ -303,7 +313,8 @@ export async function relocateBoardBoundUnboundRunsInBook(
     throw error;
   }
 
-  const relocated: BoardBoundUnboundRelocation[] = [];
+  const planned: PlannedBoardBoundMove[] = [];
+  const claimed = new Map<string, string>();
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const parsed = parseRunLeaf(entry.name);
@@ -318,25 +329,58 @@ export async function relocateBoardBoundUnboundRunsInBook(
       parsed.runId,
       parsed.role,
     );
-    if (await pathExists(targetPath)) {
+    const prior = claimed.get(targetPath);
+    if (prior !== undefined) {
       throw new Error(
-        `board-bound unbound relocate refuses to overwrite ${targetPath} with ${sourcePath}`,
+        `board-bound unbound relocate refuses to overwrite ${targetPath} (already claimed by ${prior}) with ${sourcePath}`,
       );
     }
-    await mkdir(dirname(targetPath), { recursive: true });
-    await rename(sourcePath, targetPath);
-    await rewriteRoleRunDurablePages({
-      pagesDirectory: targetPath,
-      oldRunDirectory: sourcePath,
-      newRunDirectory: targetPath,
-    });
-    relocated.push({
-      from: sourcePath,
-      to: targetPath,
+    claimed.set(targetPath, sourcePath);
+    planned.push({
+      sourcePath,
+      targetPath,
       ticketNumber: boardTicket,
     });
   }
-  return relocated;
+
+  if (planned.length === 0) return [];
+
+  for (const move of planned) {
+    if (await pathExists(move.targetPath)) {
+      throw new Error(
+        `board-bound unbound relocate refuses to overwrite ${move.targetPath} with ${move.sourcePath}`,
+      );
+    }
+  }
+
+  const crossRunRewrites: RunDirectoryPathRewrite[] = planned.map((move) => ({
+    oldRunDirectory: move.sourcePath,
+    newRunDirectory: move.targetPath,
+  }));
+
+  for (const move of planned) {
+    await mkdir(dirname(move.targetPath), { recursive: true });
+    await rename(move.sourcePath, move.targetPath);
+  }
+
+  const relocatedByNew = new Map(
+    planned.map((move) => [move.targetPath, move] as const),
+  );
+  for (const runDir of await listBookRunDirectories(bookDirectory)) {
+    const move = relocatedByNew.get(runDir);
+    await rewriteRoleRunDurablePages({
+      pagesDirectory: runDir,
+      oldRunDirectory: move?.sourcePath ?? runDir,
+      newRunDirectory: runDir,
+      crossRunRewrites,
+    });
+  }
+
+  return planned.map((move) => ({
+    from: move.sourcePath,
+    to: move.targetPath,
+    ticketNumber: move.ticketNumber,
+  }));
 }
 
 /**
