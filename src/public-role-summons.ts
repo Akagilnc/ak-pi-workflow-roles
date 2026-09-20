@@ -729,8 +729,9 @@ async function resolveReviewerDepsRoot(
 
 /**
  * Single host-pnpm install seam for Reviewer sandboxes: cancel via AbortSignal,
- * discard unbounded install logs (stdio ignored), and launch the Windows
- * `pnpm.cmd` shim through a shell as Node's execFile contract requires.
+ * pipe logs without execFile maxBuffer, keep a bounded diagnostic tail on
+ * non-zero exit (失败诚实), and launch the Windows `pnpm.cmd` shim through a
+ * shell as Node's execFile contract requires.
  */
 function runHostPnpmInstall(options: {
   readonly depsRoot: string;
@@ -743,15 +744,26 @@ function runHostPnpmInstall(options: {
     "--ignore-pnpmfile",
   ] as const;
   const useShell = process.platform === "win32";
+  // Bound memory on large install logs; keep the tail so the failure cause stays.
+  const diagnosticCap = 256 * 1024;
   return new Promise<void>((resolve, reject) => {
     const child = spawn("pnpm", [...args], {
       cwd: options.depsRoot,
-      stdio: "ignore",
+      stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
       windowsHide: true,
       ...(useShell ? { shell: true } : {}),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
+    let diagnostic = "";
+    const appendDiagnostic = (chunk: string): void => {
+      diagnostic += chunk;
+      if (diagnostic.length > diagnosticCap) {
+        diagnostic = diagnostic.slice(diagnostic.length - diagnosticCap);
+      }
+    };
+    child.stdout?.setEncoding("utf8").on("data", appendDiagnostic);
+    child.stderr?.setEncoding("utf8").on("data", appendDiagnostic);
     child.once("error", (error) => {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") {
         reject(new Error(
@@ -767,11 +779,12 @@ function runHostPnpmInstall(options: {
         resolve();
         return;
       }
-      reject(new Error(
+      const summary =
         signalName === null || signalName === undefined
           ? `pnpm install failed with exit code ${code ?? "unknown"}`
-          : `pnpm install failed with signal ${signalName}`,
-      ));
+          : `pnpm install failed with signal ${signalName}`;
+      const detail = diagnostic.trim();
+      reject(new Error(detail.length > 0 ? `${summary}\n${detail}` : summary));
     });
   });
 }

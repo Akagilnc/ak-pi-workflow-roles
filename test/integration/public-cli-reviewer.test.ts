@@ -1301,6 +1301,64 @@ test("reviewer deps probe preserves non-ENOENT FS failures into rollback (#983)"
   });
 });
 
+test("reviewer deps probe keeps host pnpm non-zero exit cause (#983)", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    await seedGitProjectWithIgnoredDeps(project);
+    // Self-owned temp bin dir (non-empty path); fake pnpm writes a unique cause.
+    const binDir = await mkdtemp(join(home, "fake-pnpm-bin-"));
+    assert.ok(binDir.length > 0, "fake pnpm bin dir path must be non-empty");
+    const fakePnpm = join(binDir, "pnpm");
+    await writeFile(
+      fakePnpm,
+      "#!/bin/sh\nprintf '%s\\n' 'UNIQUE_PNPM_CAUSE' >&2\nexit 17\n",
+      "utf8",
+    );
+    await chmod(fakePnpm, 0o755);
+
+    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+    let hostReached = false;
+    const { io, stdout, stderr } = captureIo();
+    const priorPath = process.env.PATH;
+    process.env.PATH = `${binDir}:${priorPath ?? ""}`;
+    try {
+      const result = await runAkRole([
+        "reviewer", "--model", "test/caller-seat:high",
+        "--project", project, "--base", "HEAD~1", "--lens", "correctness",
+        "--authority-ref", "CLAUDE.md",
+      ], {
+        packageRoot,
+        home,
+        cwd: project,
+        createRunId: () => "run-cli-reviewer-deps-pnpm-cause",
+        io,
+        roleTurnHost: reviewerHost(async (args) => {
+          hostReached = true;
+          return lawfulChildTurn(args, { toolCallId: "pnpm-fail-should-not-run" });
+        }),
+      });
+      assert.equal(result.exitCode, 1, stdout.join("") || "expected pnpm install failure");
+      assert.equal(hostReached, false, "role host must not run after pnpm non-zero exit");
+      const diagnostic = `${stderr.join("")}\n${stdout.join("")}`;
+      assert.match(diagnostic, /UNIQUE_PNPM_CAUSE/);
+      assert.match(diagnostic, /pnpm install failed with exit code 17/);
+      assert.equal(
+        execFileSync("git", ["worktree", "list", "--porcelain"], {
+          cwd: project,
+          encoding: "utf8",
+        }),
+        worktreeListBefore,
+      );
+    } finally {
+      process.env.PATH = priorPath;
+    }
+  });
+});
+
 test("default dual-lens final seal fails closed when HEAD drifts during the batch", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
