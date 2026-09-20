@@ -17,7 +17,10 @@ import { lstat, mkdir, open } from "node:fs/promises";
 import { join } from "node:path";
 
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
-import { projectRunRelativeOpenablePath } from "../run-terminal-artifacts.ts";
+import {
+  projectRunRelativeOpenablePath,
+  redactExactRunIdToken,
+} from "../run-terminal-artifacts.ts";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
@@ -425,22 +428,64 @@ function projectEvidencePathsForPublicTerminal(
 }
 
 /**
+ * #990: project the whole first-failure carry for a public Terminal face.
+ * Resumable finals redact exact runId tokens from diagnostic/facts and use
+ * run-relative evidence pointers; non-resumable faces keep absolute paths and
+ * original text (top-level runId already discloses identity).
+ * Durable retention stays unprojected in loop memory.
+ */
+function projectFirstFailureCarryForPublicTerminal(
+  terminal: TerminalResult,
+  prior: PriorControlledFailureCarry,
+  errorFiles: readonly string[],
+  runDirectory: string,
+  runId: string,
+): {
+  readonly diagnostic: string;
+  readonly decisiveFacts: Readonly<Record<string, unknown>>;
+  readonly dispatchErrorFiles: readonly string[];
+} {
+  const publicFiles = projectEvidencePathsForPublicTerminal(
+    terminal,
+    runDirectory,
+    errorFiles,
+  );
+  if (terminal.resume === undefined) {
+    return {
+      diagnostic: prior.diagnostic,
+      decisiveFacts: prior.decisiveFacts,
+      dispatchErrorFiles: publicFiles,
+    };
+  }
+  return {
+    diagnostic: redactExactRunIdToken(prior.diagnostic, runId) as string,
+    decisiveFacts: redactExactRunIdToken(
+      { ...prior.decisiveFacts },
+      runId,
+    ) as Readonly<Record<string, unknown>>,
+    dispatchErrorFiles: publicFiles,
+  };
+}
+
+/**
  * #990: fold the first controlled failure's structured facts + surviving
- * evidence refs into any later final Terminal before it becomes the only
- * external observation surface (no second SoT, no diarist-only path).
- * Accepted report faces are folded at the sole publisher before write; this
- * only updates the in-memory Terminal (+ error artifact refs).
+ * evidence refs into finals that have no accepted/audit sole publisher
+ * (failure / no_receipt). Accepted/audit faces are assembled only at
+ * publishAcceptedTerminalArtifacts — finalize must not post-publish rewrite.
  */
 function carryPriorControlledFailureIntoTerminal(
   terminal: TerminalResult,
   prior: PriorControlledFailureCarry,
   errorFiles: readonly string[],
   runDirectory: string,
+  runId: string,
 ): void {
-  const publicFiles = projectEvidencePathsForPublicTerminal(
+  const projected = projectFirstFailureCarryForPublicTerminal(
     terminal,
-    runDirectory,
+    prior,
     errorFiles,
+    runDirectory,
+    runId,
   );
   const outcome = terminal.roleOutcome as {
     decisiveFacts?: Record<string, unknown>;
@@ -448,13 +493,13 @@ function carryPriorControlledFailureIntoTerminal(
   const priorFacts = outcome.decisiveFacts ?? {};
   outcome.decisiveFacts = {
     ...priorFacts,
-    priorControlledFailureDiagnostic: prior.diagnostic,
-    priorControlledFailureDecisiveFacts: { ...prior.decisiveFacts },
-    dispatchErrorFiles: [...publicFiles],
+    priorControlledFailureDiagnostic: projected.diagnostic,
+    priorControlledFailureDecisiveFacts: { ...projected.decisiveFacts },
+    dispatchErrorFiles: [...projected.dispatchErrorFiles],
   };
   const existing = terminal.artifacts ?? [];
   const known = new Set(existing.map((artifact) => artifact.path));
-  const errorRefs: TerminalArtifactRef[] = publicFiles
+  const errorRefs: TerminalArtifactRef[] = projected.dispatchErrorFiles
     .filter((path) => !known.has(path))
     .map((path) => ({ kind: "error", path }));
   (terminal as unknown as { artifacts: TerminalArtifactRef[] }).artifacts = [
@@ -631,12 +676,18 @@ export async function runWithAutoResumeLoop<
     const terminal = (result as { terminal?: TerminalResult }).terminal;
     if (terminal === undefined) return result;
     if (priorControlledFailure !== undefined) {
-      carryPriorControlledFailureIntoTerminal(
-        terminal,
-        priorControlledFailure,
-        retainedErrorFiles,
-        options.admitted.runDirectory,
-      );
+      const kind = terminal.roleOutcome.kind;
+      // accepted/audit_escalation: sole publisher already folded carry + error
+      // refs before the one report write — no post-publish rewrite (#990).
+      if (kind !== "accepted" && kind !== "audit_escalation") {
+        carryPriorControlledFailureIntoTerminal(
+          terminal,
+          priorControlledFailure,
+          retainedErrorFiles,
+          options.admitted.runDirectory,
+          options.admitted.runId,
+        );
+      }
     }
     presentTerminal(terminal, options.io);
     return result;

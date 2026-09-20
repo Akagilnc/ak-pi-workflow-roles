@@ -9,7 +9,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { execFileSync, spawn } from "node:child_process";
@@ -56,6 +56,27 @@ function assertRunIdOnlyInResumeCommand(
     terminal.runId,
     undefined,
     "top-level runId must be omitted on resumable failure Terminal",
+  );
+}
+
+/** #108 / #990: typed public regions outside resume.command must not re-disclose runId. */
+function assertRunIdAbsentOutsideResume(
+  terminal: TerminalResult,
+  runId: string,
+): void {
+  assertRunIdOnlyInResumeCommand(terminal, runId);
+  const outside = {
+    roleOutcome: terminal.roleOutcome,
+    navigator: terminal.navigator,
+    artifacts: terminal.artifacts,
+    gate: terminal.gate,
+    runId: terminal.runId,
+    autoResumeCount: terminal.autoResumeCount,
+  };
+  assert.equal(
+    JSON.stringify(outside).includes(runId),
+    false,
+    "run ID must not appear outside resume.command in typed Terminal regions",
   );
 }
 
@@ -1035,6 +1056,148 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
     assert.equal(errorBody.runId, runId);
     assert.equal(typeof errorBody.diagnostic, "string");
     assert.equal(errorBody.diagnostic!.includes(runId), true);
+  });
+});
+
+/**
+ * #990: first controlled failure (diagnostic embeds runId) → auto-resume →
+ * resumable final. Public carry fields must use the same runId-only contract;
+ * durable retention keeps the original bytes.
+ */
+test("first-failure carry onto resumable final keeps runId only in resume.command", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await mkdir(join(home, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(home, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ autoResumeLimit: 1 }, null, 2)}\n`,
+    );
+    const runId = "run-carry-resume-disclose-001";
+    const plantedDiagnostic =
+      `ENOENT: no such file or directory, open '/tmp/ledger/runs/${runId}@judge/invocation.json'`;
+    const { io, stdout } = captureIo();
+    let hostTurns = 0;
+
+    const result = await runAkRole(
+      ["judge", "--model", "test/caller-seat:high", "--project", project, "carry then resume"],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => runId,
+        io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            hostTurns += 1;
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            // Principal must remain available so auto-resume takes a second turn.
+            await writeFile(join(sessionDir, "session.jsonl"), "");
+            await observeTyped429ViaProductionHandler({
+              runDirectory: join(sessionDir, ".."),
+              provider: "openai-codex",
+            });
+            await writeSessionProviderStop(sessionDir, {
+              provider: "openai-codex",
+              errorMessage:
+                hostTurns === 1 ? plantedDiagnostic : "upstream declined this request",
+            });
+            return {
+              code: 1,
+              stderr: "provider_error\n",
+              timedOut: false,
+              args: [...args],
+              knownFailure: {
+                cause: "provider",
+                identity: { name: "ProviderError", code: 429 },
+                diagnostic:
+                  hostTurns === 1 ? plantedDiagnostic : "upstream declined this request",
+              },
+            };
+          },
+        }),
+      },
+    );
+
+    assert.equal(hostTurns, 2, "auto-resume must take a second host turn");
+    assert.equal(result.exitCode, 1);
+    assert.ok(result.terminal);
+    assert.equal(result.terminal!.roleOutcome.kind, "failure");
+    assert.ok(result.terminal!.resume, "final must be resumable");
+    assertRunIdAbsentOutsideResume(result.terminal!, runId);
+
+    const facts = result.terminal!.roleOutcome.decisiveFacts as
+      | {
+          priorControlledFailureDiagnostic?: unknown;
+          priorControlledFailureDecisiveFacts?: unknown;
+          dispatchErrorFiles?: unknown;
+        }
+      | undefined;
+    assert.ok(facts, "resumable final must carry first-failure facts");
+    assert.equal(typeof facts.priorControlledFailureDiagnostic, "string");
+    assert.equal(
+      String(facts.priorControlledFailureDiagnostic).includes(runId),
+      false,
+      "public prior diagnostic must not re-disclose runId",
+    );
+    assert.equal(
+      JSON.stringify(facts.priorControlledFailureDecisiveFacts ?? {}).includes(runId),
+      false,
+      "public prior decisiveFacts must not re-disclose runId",
+    );
+    const publicFiles = facts.dispatchErrorFiles;
+    assert.ok(Array.isArray(publicFiles) && publicFiles.length >= 1);
+    for (const file of publicFiles) {
+      assert.equal(typeof file, "string");
+      assert.equal(
+        String(file).includes(runId),
+        false,
+        `public evidence pointer must not embed runId: ${String(file)}`,
+      );
+    }
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const runDirectory = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "unbound",
+      "runs",
+      `${runId}@judge`,
+    );
+    const artifactsDir = join(runDirectory, "artifacts");
+    const retainedNames = (await readdir(artifactsDir)).filter((name) =>
+      name.startsWith("dispatch-error-attempt-"),
+    );
+    assert.ok(retainedNames.length >= 1, "durable first-failure retention required");
+    let sawOriginal = false;
+    for (const name of retainedNames) {
+      const body = JSON.parse(await readFile(join(artifactsDir, name), "utf8")) as {
+        diagnostic?: unknown;
+        decisiveFacts?: { diagnostic?: unknown };
+      };
+      const diagnostic = body.diagnostic ?? body.decisiveFacts?.diagnostic;
+      if (typeof diagnostic === "string" && diagnostic.includes(runId)) {
+        sawOriginal = true;
+        assert.equal(diagnostic.includes(plantedDiagnostic) || diagnostic === plantedDiagnostic, true);
+      }
+    }
+    assert.equal(sawOriginal, true, "durable artifact must retain original runId bytes");
+
+    const presented = stdout.join("");
+    const resumeCommand = result.terminal!.resume!.command;
+    assert.equal(presented.includes(resumeCommand), true);
+    assert.equal(
+      presented.split(resumeCommand).join("").includes(runId),
+      false,
+      "presented Terminal must not disclose runId outside resume.command",
+    );
   });
 });
 

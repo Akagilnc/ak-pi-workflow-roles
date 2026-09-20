@@ -2447,10 +2447,13 @@ async function publishAcceptedTerminalArtifacts(
   },
   scope?: SettlementCourtScope,
 ): Promise<TerminalArtifactRef[]> {
-  // #990: fold loop-held first failure into the outcome before the one report write.
-  // Callers pass the same roleOutcome object as bodies.report.outcome; carry rides
-  // on SettlementCourtScope through dispatch → trySettle → sole publisher.
+  // #990: sole assembly for accepted/audit — fold loop-held first failure into
+  // the outcome and error artifact refs before the one report write. Auto-resume
+  // finalize must not post-publish rewrite these faces. Callers pass the same
+  // roleOutcome object as bodies.report.outcome; carry rides on
+  // SettlementCourtScope through dispatch → trySettle → this publisher.
   const carry = scope?.firstFailureCarry;
+  const errorRefs: TerminalArtifactRef[] = [];
   if (carry !== undefined) {
     const outcome = roleOutcome as { decisiveFacts?: Record<string, unknown> };
     outcome.decisiveFacts = {
@@ -2459,6 +2462,9 @@ async function publishAcceptedTerminalArtifacts(
       priorControlledFailureDecisiveFacts: { ...carry.decisiveFacts },
       dispatchErrorFiles: [...carry.dispatchErrorFiles],
     };
+    for (const path of carry.dispatchErrorFiles) {
+      errorRefs.push({ kind: "error", path });
+    }
   }
   // #419: history first — report/evidence stay last-write-wins views only
   // because every attempt's complete result has already been appended.
@@ -2486,6 +2492,7 @@ async function publishAcceptedTerminalArtifacts(
   return [
     { kind: "report", path: reportPath },
     { kind: "evidence", path: evidencePath },
+    ...errorRefs,
   ];
 }
 

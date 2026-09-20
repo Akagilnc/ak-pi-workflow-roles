@@ -54,6 +54,30 @@ export function projectRunRelativeOpenablePath(
   return rel.split(sep).join("/");
 }
 
+/**
+ * Public-face exact-token redaction for resumable Terminals (#108 / #990):
+ * strip every occurrence of `runId` from structured values so typed regions
+ * outside `resume.command` cannot re-disclose it. Durable artifacts keep the
+ * original bytes; only the public projection uses this.
+ */
+export function redactExactRunIdToken(value: unknown, runId: string): unknown {
+  if (runId.length === 0) return value;
+  if (typeof value === "string") {
+    return value.includes(runId) ? value.split(runId).join("") : value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => redactExactRunIdToken(item, runId));
+  }
+  if (value !== null && typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+      out[key] = redactExactRunIdToken(entry, runId);
+    }
+    return out;
+  }
+  return value;
+}
+
 /** Unique open-ended failure names: error.<uuid>.json (publisher stem + uuid). */
 const UNIQUE_ERROR_FALLBACK_NAME =
   /^error\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.json$/i;
