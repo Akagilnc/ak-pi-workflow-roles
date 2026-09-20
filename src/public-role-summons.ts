@@ -729,9 +729,9 @@ async function resolveReviewerDepsRoot(
 
 /**
  * Single host-pnpm install seam for Reviewer sandboxes: cancel via AbortSignal,
- * pipe logs without execFile maxBuffer, keep a bounded diagnostic tail on
- * non-zero exit (失败诚实), and launch the Windows `pnpm.cmd` shim through a
- * shell as Node's execFile contract requires.
+ * pipe logs without execFile maxBuffer, keep a bounded head+tail diagnostic on
+ * non-zero exit (失败诚实 — early causes survive later overflow), and launch
+ * the Windows `pnpm.cmd` shim through a shell as Node's execFile contract requires.
  */
 function runHostPnpmInstall(options: {
   readonly depsRoot: string;
@@ -744,8 +744,10 @@ function runHostPnpmInstall(options: {
     "--ignore-pnpmfile",
   ] as const;
   const useShell = process.platform === "win32";
-  // Bound memory on large install logs; keep the tail so the failure cause stays.
-  const diagnosticCap = 256 * 1024;
+  // Bound memory on large install logs; keep head and tail so a cause that
+  // appears before a flood of later output is not sliced away.
+  const headCap = 128 * 1024;
+  const tailCap = 128 * 1024;
   return new Promise<void>((resolve, reject) => {
     const child = spawn("pnpm", [...args], {
       cwd: options.depsRoot,
@@ -755,12 +757,28 @@ function runHostPnpmInstall(options: {
       ...(useShell ? { shell: true } : {}),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
-    let diagnostic = "";
+    let head = "";
+    let tail = "";
+    let totalBytes = 0;
     const appendDiagnostic = (chunk: string): void => {
-      diagnostic += chunk;
-      if (diagnostic.length > diagnosticCap) {
-        diagnostic = diagnostic.slice(diagnostic.length - diagnosticCap);
+      if (chunk.length === 0) return;
+      totalBytes += chunk.length;
+      if (head.length < headCap) {
+        const take = headCap - head.length;
+        head += chunk.slice(0, take);
+        chunk = chunk.slice(take);
+        if (chunk.length === 0) return;
       }
+      if (chunk.length >= tailCap) {
+        tail = chunk.slice(chunk.length - tailCap);
+        return;
+      }
+      tail = (tail + chunk).slice(-tailCap);
+    };
+    const finalizeDiagnostic = (): string => {
+      if (totalBytes <= headCap + tailCap) return `${head}${tail}`.trim();
+      const omitted = totalBytes - headCap - tailCap;
+      return `${head}\n...[${omitted} bytes truncated]...\n${tail}`.trim();
     };
     child.stdout?.setEncoding("utf8").on("data", appendDiagnostic);
     child.stderr?.setEncoding("utf8").on("data", appendDiagnostic);
@@ -783,7 +801,7 @@ function runHostPnpmInstall(options: {
         signalName === null || signalName === undefined
           ? `pnpm install failed with exit code ${code ?? "unknown"}`
           : `pnpm install failed with signal ${signalName}`;
-      const detail = diagnostic.trim();
+      const detail = finalizeDiagnostic();
       reject(new Error(detail.length > 0 ? `${summary}\n${detail}` : summary));
     });
   });
