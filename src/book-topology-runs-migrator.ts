@@ -386,19 +386,6 @@ async function applyBoardBoundUnboundMovesInBook(
 }
 
 /**
- * Live in-place repair for already-migrated trees (#863 stock): plan the full
- * board-bound unbound→ticket batch first, refuse any overwrite before mutation,
- * rewrite durable pages (including batch `crossRunRewrites`) while sources still
- * sit at unbound, then rename. Leaves without a board ticket stay unbound.
- */
-export async function relocateBoardBoundUnboundRunsInBook(
-  bookDirectory: string,
-): Promise<readonly BoardBoundUnboundRelocation[]> {
-  const planned = await planBoardBoundUnboundMovesInBook(bookDirectory);
-  return applyBoardBoundUnboundMovesInBook(bookDirectory, planned);
-}
-
-/**
  * Walk every book under `booksDirectory` and relocate board-bound unbound
  * runs in place. Gate (#986) covers only the mutation closure: every run
  * directory in every book that has ≥1 planned board-bound move (rewrite walks

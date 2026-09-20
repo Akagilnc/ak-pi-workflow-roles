@@ -98,21 +98,39 @@ type WriterLockCandidate = {
   readonly kind: string;
 };
 
+type WriterLockFsShape = {
+  isFile(): boolean;
+  isDirectory(): boolean;
+  isSymbolicLink(): boolean;
+  isFIFO(): boolean;
+  isSocket(): boolean;
+  isCharacterDevice(): boolean;
+  isBlockDevice(): boolean;
+};
+
+/** Sole label for writer.lock filesystem object kinds (Dirent or Stats). */
+function writerLockFilesystemKind(entry: WriterLockFsShape): string {
+  return entry.isFile() ? "file"
+    : entry.isDirectory() ? "directory"
+    : entry.isSymbolicLink() ? "symbolic link"
+    : entry.isFIFO() ? "FIFO"
+    : entry.isSocket() ? "socket"
+    : entry.isCharacterDevice() ? "character device"
+    : entry.isBlockDevice() ? "block device"
+    : "unknown filesystem object";
+}
+
 async function findWriterLocks(root: string): Promise<WriterLockCandidate[]> {
   const locks: WriterLockCandidate[] = [];
   async function walk(directory: string): Promise<void> {
     for (const entry of await readdir(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.name === "writer.lock") {
-        const kind = entry.isFile() ? "file"
-          : entry.isDirectory() ? "directory"
-          : entry.isSymbolicLink() ? "symbolic link"
-          : entry.isFIFO() ? "FIFO"
-          : entry.isSocket() ? "socket"
-          : entry.isCharacterDevice() ? "character device"
-          : entry.isBlockDevice() ? "block device"
-          : "unknown filesystem object";
-        locks.push({ path, regularFile: entry.isFile(), kind });
+        locks.push({
+          path,
+          regularFile: entry.isFile(),
+          kind: writerLockFilesystemKind(entry),
+        });
       } else if (entry.isDirectory()) {
         await walk(path);
       }
@@ -277,15 +295,11 @@ export async function assertBoardBoundUnboundRelocatePrerequisites(
     const lockPath = join(runDirectory, "writer.lock");
     try {
       const st = await lstat(lockPath);
-      const kind = st.isFile() ? "file"
-        : st.isDirectory() ? "directory"
-        : st.isSymbolicLink() ? "symbolic link"
-        : st.isFIFO() ? "FIFO"
-        : st.isSocket() ? "socket"
-        : st.isCharacterDevice() ? "character device"
-        : st.isBlockDevice() ? "block device"
-        : "unknown filesystem object";
-      candidates.push({ path: lockPath, regularFile: st.isFile(), kind });
+      candidates.push({
+        path: lockPath,
+        regularFile: st.isFile(),
+        kind: writerLockFilesystemKind(st),
+      });
     } catch (error) {
       const code = (error as { code?: unknown }).code;
       if (code === "ENOENT") continue;
