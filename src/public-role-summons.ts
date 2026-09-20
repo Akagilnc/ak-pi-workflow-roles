@@ -687,15 +687,15 @@ function reviewerSandboxPath(worktreeAxis: string, projectRelative: string): str
  * Unified materialization: `fs.cp({ recursive, dereference })` turns root
  * symlinks, nested absolute escapes, and ordinary in-tree relative links into
  * real files/directories owned by the worktree. No retained sandbox symlinks →
- * no write-through. Dangling / looping links fail with their native cause
- * (ENOENT / ELOOP) into the caller rollback seam — never a silent skip or a
- * second classification pass. Same shared seam for all Reviewer paths; no
- * second install, no public flag.
+ * no write-through. Dangling / looping links and other native I/O failures
+ * propagate into the caller rollback seam — never a silent skip or a second
+ * classification pass. Same shared seam for all Reviewer paths; no second
+ * install, no public flag.
  *
  * Documented absence only: `lstat(source/node_modules)` ENOENT → leave absent.
- * A present root entry that is not a usable directory (broken/looping symlink,
- * permission/I/O errors, non-directory) preserves the cause and fails into the
- * caller rollback/diagnostic seam.
+ * Other source lstat/realpath errors preserve their cause. A pre-existing
+ * target symlink is rejected (cp would write through it); an ordinary
+ * pre-existing directory is merged by cp; other target shapes fail via cp.
  */
 async function provisionReviewerWorktreeDeps(
   sourceProjectRoot: string,
@@ -719,12 +719,6 @@ async function provisionReviewerWorktreeDeps(
         `reviewer worktree deps target must not be a symlink: ${target}`,
       );
     }
-    if (!existing.isDirectory()) {
-      throw new Error(
-        `reviewer worktree deps target exists and is not a directory: ${target}`,
-      );
-    }
-    return;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       throw error;
@@ -736,18 +730,8 @@ async function provisionReviewerWorktreeDeps(
   if (sourceStat.isSymbolicLink()) {
     // realpath rejections (dangling ENOENT, ELOOP, EACCES, races, …) propagate.
     copySource = await realpath(sourceModules);
-  } else if (!sourceStat.isDirectory()) {
-    throw new Error(
-      `reviewer worktree deps source must be a directory or symlink: ${sourceModules}`,
-    );
   }
   await cp(copySource, target, { recursive: true, dereference: true });
-  const targetStat = await lstat(target);
-  if (targetStat.isSymbolicLink()) {
-    throw new Error(
-      `reviewer worktree deps copy must yield a real directory: ${target}`,
-    );
-  }
 }
 
 
