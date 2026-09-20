@@ -17,6 +17,7 @@ import { lstat, mkdir, open } from "node:fs/promises";
 import { join } from "node:path";
 
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
+import { projectRunRelativeOpenablePath } from "../run-terminal-artifacts.ts";
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
@@ -403,6 +404,27 @@ type PriorControlledFailureCarry = {
 };
 
 /**
+ * Public Terminal evidence refs: keep absolute paths when runId is already a
+ * top-level face; on resumable Terminals project to run-relative openable
+ * pointers so path components cannot re-disclose runId (#108 / #990).
+ * Durable retention files stay absolute in loop memory; only the public face
+ * is projected (same boundary as engine-detour discloseRecordFile:false).
+ */
+function projectEvidencePathsForPublicTerminal(
+  terminal: TerminalResult,
+  runDirectory: string,
+  errorFiles: readonly string[],
+): readonly string[] {
+  if (terminal.resume === undefined) return errorFiles;
+  const projected: string[] = [];
+  for (const file of errorFiles) {
+    const relativePath = projectRunRelativeOpenablePath(runDirectory, file);
+    if (relativePath !== undefined) projected.push(relativePath);
+  }
+  return projected;
+}
+
+/**
  * #990: fold the first controlled failure's structured facts + surviving
  * evidence refs into any later final Terminal before it becomes the only
  * external observation surface (no second SoT, no diarist-only path).
@@ -413,7 +435,13 @@ function carryPriorControlledFailureIntoTerminal(
   terminal: TerminalResult,
   prior: PriorControlledFailureCarry,
   errorFiles: readonly string[],
+  runDirectory: string,
 ): void {
+  const publicFiles = projectEvidencePathsForPublicTerminal(
+    terminal,
+    runDirectory,
+    errorFiles,
+  );
   const outcome = terminal.roleOutcome as {
     decisiveFacts?: Record<string, unknown>;
   };
@@ -422,11 +450,11 @@ function carryPriorControlledFailureIntoTerminal(
     ...priorFacts,
     priorControlledFailureDiagnostic: prior.diagnostic,
     priorControlledFailureDecisiveFacts: { ...prior.decisiveFacts },
-    dispatchErrorFiles: [...errorFiles],
+    dispatchErrorFiles: [...publicFiles],
   };
   const existing = terminal.artifacts ?? [];
   const known = new Set(existing.map((artifact) => artifact.path));
-  const errorRefs: TerminalArtifactRef[] = errorFiles
+  const errorRefs: TerminalArtifactRef[] = publicFiles
     .filter((path) => !known.has(path))
     .map((path) => ({ kind: "error", path }));
   (terminal as unknown as { artifacts: TerminalArtifactRef[] }).artifacts = [
@@ -607,6 +635,7 @@ export async function runWithAutoResumeLoop<
         terminal,
         priorControlledFailure,
         retainedErrorFiles,
+        options.admitted.runDirectory,
       );
     }
     presentTerminal(terminal, options.io);

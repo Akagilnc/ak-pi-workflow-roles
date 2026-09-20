@@ -7,7 +7,7 @@
  * candidate algorithm.
  */
 import { readdir, readFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { roleRunArtifactsDirectory } from "./role-run-placement.ts";
 
@@ -29,6 +29,30 @@ export const RUN_TERMINAL_ERROR_FALLBACK_RELATIVE_PATHS = [
   "artifacts/error.settlement.json",
   "error.settlement.json",
 ] as const;
+
+/**
+ * Project an absolute path under the run directory to a run-relative openable
+ * pointer (posix separators, no runId path bytes). Same public-face boundary as
+ * engine-detour `discloseRecordFile: false` (#108 / #537): once the run
+ * directory is known from `resume.command` (or top-level `runId`), the relative
+ * path reopens the durable file. Returns `undefined` when the path is outside
+ * the run directory.
+ */
+export function projectRunRelativeOpenablePath(
+  runDirectory: string,
+  absolutePath: string,
+): string | undefined {
+  const rel = relative(resolve(runDirectory), resolve(absolutePath));
+  if (
+    rel.length === 0
+    || rel === ".."
+    || rel.startsWith(`..${sep}`)
+    || isAbsolute(rel)
+  ) {
+    return undefined;
+  }
+  return rel.split(sep).join("/");
+}
 
 /** Unique open-ended failure names: error.<uuid>.json (publisher stem + uuid). */
 const UNIQUE_ERROR_FALLBACK_NAME =
