@@ -124,7 +124,6 @@ const RESUME_SEAT_DISPATCH: Record<
     ) => Promise<{
       exitCode: number;
       terminal?: TerminalResult;
-      staleWriterLeaseReclaimed?: true;
     }>;
   }
 > = {
@@ -473,19 +472,15 @@ export type CliResult = {
   /** Settled Terminal when an admitted Role run produced one (programmatic/tests). */
   terminal?: TerminalResult;
   hostFailure?: HostSelectionFailure;
-  /** Typed #556 fact from public resume/dispatch when a dead holder lock was unlinked. */
-  staleWriterLeaseReclaimed?: true;
 };
 
 function cliResultFromRoleRun(result: {
   exitCode: number;
   terminal?: TerminalResult;
-  staleWriterLeaseReclaimed?: true;
 }): CliResult {
   return {
     exitCode: result.exitCode,
     ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-    ...(result.staleWriterLeaseReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
   };
 }
 

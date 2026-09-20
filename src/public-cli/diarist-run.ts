@@ -76,7 +76,7 @@ export function buildDiaristTurnRequest(
 async function bindAndRelocateDiaristIfBoardBound(
   admitted: AdmittedDiaristInvocation,
   authority: DiaristRunEnv["principalAuthority"],
-  lease: RunWriterLease,
+  lease?: RunWriterLease,
 ): Promise<void> {
   const boardTicket = await readBoardTicketNumber(admitted.runDirectory);
   if (boardTicket === undefined) return;

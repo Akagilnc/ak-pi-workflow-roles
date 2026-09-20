@@ -785,7 +785,7 @@ export async function runPublicCountersign(
 function countersignAdapters(options?: {
   beforeDispatch?: (
     admitted: AdmittedCountersignInvocation,
-    lease: RunWriterLease,
+    lease?: RunWriterLease,
   ) => void | Promise<void>;
 }) {
   return {

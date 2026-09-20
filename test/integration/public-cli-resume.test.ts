@@ -4,8 +4,9 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  * #108 typed HTTP 429 resume seam.
  * Seams: run-lifecycle / settleJudgeFailureTerminalResult / runAkRole(judge|resume)
  * with injectable Pi runner. Assert typed regions, resume command identity,
- * exact-session reopen, temporary overrides, reject-without-replay, one-writer
- * lease — never table labels/layout/prose classification.
+ * exact-session reopen, temporary overrides, reject-without-replay — never
+ * table labels/layout/prose classification. #987: public manual resume does
+ * not take a package writer-lease gate before host CLI resume.
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -1559,7 +1560,7 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
   });
 });
 
-test("concurrent resume cannot create a second writer or dispatch", async () => {
+test("#987 public manual resume reaches host CLI despite live writer lease", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -1606,13 +1607,12 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
       "unbound", "runs",
       `${runId}@judge`,
     );
-    const lockPath = join(runDirectory, "writer.lock");
     const lease = await acquireRunWriterLease(runDirectory);
     let dispatches = 0;
     await withPrimaryAwareCleanup(
       async () => {
-        const { io: io2, stdout, stderr } = captureIo();
-        const blocked = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+        const { io: io2 } = captureIo();
+        const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
           packageRoot,
           home,
           cwd: project,
@@ -1622,175 +1622,51 @@ test("concurrent resume cannot create a second writer or dispatch", async () => 
             packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
-            dispatches += 1;
-            return {
-              code: 0,
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-            };
-          },
+              dispatches += 1;
+              const sessionPath = args[args.indexOf("--session") + 1]!;
+              await writeFile(
+                sessionPath,
+                `${JSON.stringify({
+                  type: "message",
+                  message: {
+                    role: "toolResult",
+                    toolName: JUDGE_OUTPUT_TOOL_NAME,
+                    isError: false,
+                    details: { judgeStatus: "converged", note: "resume despite live lease" },
+                  },
+                })}\n`,
+                "utf8",
+              );
+              return {
+                code: 0,
+                stderr: "",
+                timedOut: false,
+                args: [...args],
+                sealedAcceptance: {
+                  role: "judge",
+                  details: { judgeStatus: "converged", note: "resume despite live lease" },
+                },
+              };
+            },
           }),
         });
-        // Concurrent resume rejected before second dispatch.
-        assert.equal(dispatches, 0);
-        assert.equal(stdout.length, 0);
-        assert.equal(stderr.length >= 1, true);
-        assert.notEqual(blocked.exitCode, 0);
-        assert.equal(blocked.staleWriterLeaseReclaimed, undefined);
+        // #987: live package writer lease must not pre-block host CLI resume.
+        assert.equal(dispatches, 1);
+        assert.equal(resumed.exitCode, 0);
+        assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
       },
       async () => {
         await lease.release();
       },
     );
 
-    // Direct lease double-acquire also fails closed.
+    // Shared lease acquire itself still fails closed for other authorized writers.
     const first = await acquireRunWriterLease(runDirectory);
     await assert.rejects(
       () => acquireRunWriterLease(runDirectory),
       (error: unknown) => error instanceof RunWriterLeaseHeldError,
     );
     await first.release();
-
-    for (const unparseable of ["", "123junk"]) {
-      await writeFile(lockPath, unparseable, "utf8");
-      const { io: ioUnparseable } = captureIo();
-      const blocked = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        io: ioUnparseable,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-            dispatches += 1;
-            return {
-              code: 0,
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-            };
-          },
-        }),
-      });
-      assert.equal(dispatches, 0);
-      assert.notEqual(blocked.exitCode, 0);
-      assert.equal(blocked.staleWriterLeaseReclaimed, undefined);
-      assert.equal(await readFile(lockPath, "utf8"), unparseable);
-    }
-
-    const child = spawn("sleep", ["30"]);
-    const pid = child.pid;
-    assert.ok(typeof pid === "number" && pid > 0);
-    child.kill("SIGTERM");
-    await new Promise<void>((resolve) => child.once("close", () => resolve()));
-    await writeFile(lockPath, `${pid}\n`, "utf8");
-    // #629: a reclaim followed by a live re-lock by another resumer must reject
-    // as held AND still carry the typed reclaim fact on the rejection. The
-    // contender re-locks the pathname the moment reclaim frees it — the sync
-    // write inside the stderr hook deterministically lands before the acquire
-    // loop's next create attempt. No dispatch; the contender's live lock stays.
-    {
-      const contenderPid = process.pid;
-      const ioContended = {
-        stdout: () => {},
-        stderr: (line: string) => {
-          if (!existsSync(lockPath)) {
-            writeFileSync(lockPath, `${contenderPid}\n`, "utf8");
-          }
-        },
-      };
-      const blockedAfterReclaim = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        io: ioContended,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          dispatches += 1;
-          return {
-            code: 0,
-            stderr: "",
-            timedOut: false,
-            args: [...args],
-          };
-        },
-        }),
-      });
-      assert.equal(dispatches, 0);
-      assert.notEqual(blockedAfterReclaim.exitCode, 0);
-      assert.equal(blockedAfterReclaim.staleWriterLeaseReclaimed, true);
-      assert.equal(await readFile(lockPath, "utf8"), `${contenderPid}\n`);
-    }
-
-    const deadChild = spawn("sleep", ["30"]);
-    const deadPid = deadChild.pid;
-    assert.ok(typeof deadPid === "number" && deadPid > 0);
-    deadChild.kill("SIGTERM");
-    await new Promise<void>((resolve) => deadChild.once("close", () => resolve()));
-    await writeFile(lockPath, `${deadPid}\n`, "utf8");
-    // #629: the reclaim diagnostic is emitted even when the stderr sink throws —
-    // acquire swallows sink failures, so the typed fact must be recorded before
-    // the fallible sink call. The resume itself still reclaims and dispatches.
-    {
-      const sinkThrowArmed = { value: true };
-      const ioDead = {
-        stdout: () => {},
-        stderr: (line: string) => {
-          if (sinkThrowArmed.value && !existsSync(lockPath)) {
-            sinkThrowArmed.value = false;
-            throw new Error("stderr sink exploded at reclaim");
-          }
-        },
-      };
-      const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        io: ioDead,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-            dispatches += 1;
-            const sessionPath = args[args.indexOf("--session") + 1]!;
-            await writeFile(
-              sessionPath,
-              `${JSON.stringify({
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolName: JUDGE_OUTPUT_TOOL_NAME,
-                  isError: false,
-                  details: { judgeStatus: "converged", note: "dead lock reclaimed" },
-                },
-              })}\n`,
-              "utf8",
-            );
-            return {
-              code: 0,
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-              sealedAcceptance: {
-                role: "judge",
-                details: { judgeStatus: "converged", note: "dead lock reclaimed" },
-              },
-            };
-          },
-        }),
-      });
-      assert.equal(dispatches, 1);
-      assert.equal(resumed.exitCode, 0);
-      assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
-      assert.equal(resumed.staleWriterLeaseReclaimed, true);
-    }
   });
 });
 

@@ -73,7 +73,6 @@ import {
   postRunMissingCredentialFailure,
 } from "./public-run-credentials.ts";
 import {
-  acquireRunWriterLease,
   clearCurrentCourt,
   clearTypedProviderHttpObservation,
   describeErrorIdentity,
@@ -81,11 +80,9 @@ import {
   readCurrentCourt,
   recordCurrentCourt,
   renderResumeCommand,
-  RunWriterLeaseHeldError,
   type CurrentCourtState,
   type RunWriterLease,
   type TypedProviderHttpObservation,
-  type WriterLeaseDiagnosticKind,
 } from "./run-lifecycle.ts";
 import {
   processCancelDiagnostic,
@@ -327,13 +324,14 @@ export type PostAdmissionAdapters<
     result: RoleTurnResult;
     sessionFile: string;
   }) => Promise<RoleTurnKnownFailure | undefined>;
-  beforeDispatch?: (admitted: A, lease: RunWriterLease) => Promise<void> | void;
+  beforeDispatch?: (admitted: A, lease?: RunWriterLease) => Promise<void> | void;
   /**
-   * After the host turn settles and before the writer lease is released.
-   * Post-turn bind/relocate (e.g. Diarist first assert) must run here so the
-   * held lease follows the run directory and failures stay controlled.
+   * After the host turn settles and before any held writer lease is released.
+   * Post-turn bind/relocate (e.g. Diarist first assert) must run here so a
+   * held lease (when present) follows the run directory and failures stay
+   * controlled. Public manual resume (#987) may omit the lease.
    */
-  afterDispatch?: (admitted: A, lease: RunWriterLease) => Promise<void> | void;
+  afterDispatch?: (admitted: A, lease?: RunWriterLease) => Promise<void> | void;
 };
 
 export type ControlledFailureInput = {
@@ -614,7 +612,8 @@ export async function dispatchPostAdmissionTurn<
   env: PostAdmissionEnv;
   io: CliIo;
   request: RoleTurnRequest;
-  lease: RunWriterLease;
+  /** Absent on public manual resume (#987): no package lease gate before host CLI resume. */
+  lease?: RunWriterLease;
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
   persistRunState?: boolean;
@@ -1313,20 +1312,23 @@ export async function dispatchPostAdmissionTurn<
       ...deferredPersist,
     });
   } finally {
-    try {
-      await lease.release();
-    } catch (error) {
-      // lease.release() is documented best-effort and never rejects in the
-      // production acquireRunWriterLease implementation (createWriterLease
-      // reports cleanup failures via callback, never throws) — this guard is
-      // structural only: an uncaught throw from a finally block silently
-      // replaces whatever the try already returned, including a properly
-      // tagged turnDispatched:true result (#840 r9 判词 class 1 boundary).
-      io.stderr(
-        formatCliDiagnostic(
-          `writer lease release failed unexpectedly (best-effort continue): ${describeErrorIdentity(error)}`,
-        ),
-      );
+    // Public manual resume (#987) holds no package writer lease.
+    if (lease !== undefined) {
+      try {
+        await lease.release();
+      } catch (error) {
+        // lease.release() is documented best-effort and never rejects in the
+        // production acquireRunWriterLease implementation (createWriterLease
+        // reports cleanup failures via callback, never throws) — this guard is
+        // structural only: an uncaught throw from a finally block silently
+        // replaces whatever the try already returned, including a properly
+        // tagged turnDispatched:true result (#840 r9 判词 class 1 boundary).
+        io.stderr(
+          formatCliDiagnostic(
+            `writer lease release failed unexpectedly (best-effort continue): ${describeErrorIdentity(error)}`,
+          ),
+        );
+      }
     }
   }
 }
@@ -1538,8 +1540,10 @@ export async function runPostAdmissionSeatResume<
 }): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
   let request = input.request;
 
-  // Load once for runDirectory / structural rejection / afterAdmittedLoad;
-  // court identity is judged only after the writer lease is held (below).
+  // Load once for runDirectory / structural rejection / afterAdmittedLoad.
+  // Court identity for public manual resume is judged in the turn builder
+  // (#987: no package writer-lease gate before host CLI resume). Station-child
+  // auto-resume still acquires the shared lease in runWithAutoResumeLoop.
   let loaded;
   try {
     loaded = await input.load(request);
@@ -1570,8 +1574,9 @@ export async function runPostAdmissionSeatResume<
 
   const buildRequestAfterLease = async (): Promise<RoleTurnRequest> => {
         let openCourtAttemptId: string | undefined;
-        // Build uses the admitted judged under this lease (rehydrated when open
-        // court materials ride). Settlement identity stays on the outer admitted.
+        // Build uses the admitted for this resume (rehydrated when open court
+        // materials ride). Settlement identity stays on the outer admitted.
+        // Name kept for station-child callers that still build under lease.
         let admittedForBuild = loaded.admitted;
 
         // Bare resume: open-court pointer is the continue signal (not ledger seal).
@@ -1647,9 +1652,10 @@ export async function runPostAdmissionSeatResume<
     return turnRequest;
   };
 
-  // Court recovery / open under lease, then dispatch.
+  // Court recovery / open, then dispatch. Public manual resume does not take a
+  // package writer lease before the host CLI (#987 / ADR 0080 one-shot).
   // Station-child same-ticket/same-parent resume is call-local auto-resume
-  // (#840 / #416). Public `ak-role resume` stays one-shot (ADR 0080).
+  // (#840 / #416) and still acquires the shared lease in its loop.
   // afterAdmittedPrepare runs inside this try so mint failure and cleanup share one finally.
   try {
     if (input.afterAdmittedPrepare !== undefined) {
@@ -1868,10 +1874,11 @@ export async function runPostAdmissionResumable<
 }
 
 /**
- * Manual resume: lease + dispatch. Pass-through to the host — no sealed-accepted
- * short-circuit (#833 / #416). Court open (summons / message / open court) is
- * built under lease when using buildRequestAfterLease; sole-final stays per-attempt.
- * After-lease build shares dispatchAfterWriterLease with station-child auto-resume.
+ * Manual resume: pass-through to the host CLI resume — no package writer-lease
+ * pre-gate (#987), no sealed-accepted short-circuit (#833 / #416). Court open
+ * (summons / message / open court) is built when using buildRequestAfterLease;
+ * sole-final stays per-attempt. Station-child auto-resume keeps shared lease
+ * acquire in runWithAutoResumeLoop + dispatchAfterWriterLease.
  */
 export async function runPostAdmissionManualResume<
   A extends AdmittedRoleInvocation,
@@ -1880,9 +1887,9 @@ export async function runPostAdmissionManualResume<
   admitted: A;
   env: PostAdmissionEnv;
   io: CliIo;
-  /** Eager turn request (non-court path / seats that build before lease). */
+  /** Eager turn request (non-court path / seats that build before dispatch). */
   request?: RoleTurnRequest;
-  /** After-lease builder (#637). Mutually exclusive with a prebuilt request. */
+  /** Turn builder (#637). Mutually exclusive with a prebuilt request. */
   buildRequestAfterLease?: () => Promise<RoleTurnRequest>;
   adapters: PostAdmissionAdapters<A, T>;
   /** Seat-table engine axis on resume (#600). */
@@ -1891,7 +1898,6 @@ export async function runPostAdmissionManualResume<
   exitCode: number;
   admitted?: A;
   terminal?: T;
-  staleWriterLeaseReclaimed?: true;
 }> {
   const {
     admitted,
@@ -1905,67 +1911,34 @@ export async function runPostAdmissionManualResume<
   // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
   const effectiveModel = env.model;
 
-  let lease: RunWriterLease;
-  let staleWriterLeaseReclaimed: true | undefined;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic, kind?: WriterLeaseDiagnosticKind) => {
-      // Record the typed fact before the fallible sink: if io.stderr throws
-      // (acquire deliberately swallows diagnostic-sink failures), the reclaim
-      // still happened and must stay observable.
-      if (kind === "stale-reclaimed") staleWriterLeaseReclaimed = true;
-      io.stderr(diagnostic);
-    });
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      // A held rejection after our own reclaim must still carry the fact that
-      // this caller reclaimed the stale lock — e.g. another resumer re-locked
-      // before our retry create (#629).
-      return {
-        exitCode: 1,
-        ...(staleWriterLeaseReclaimed === true
-          ? { staleWriterLeaseReclaimed: true as const }
-          : {}),
-      };
-    }
-    throw error;
-  }
-
   // Explicit public resume is a new counting unit — mint once for this call.
   const invocationScopeId = mintEngineDetourInvocationScope({
     ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
   });
 
-  const result = await dispatchAfterWriterLease({
-    lease,
-    build: async () => {
-      if (request === undefined) {
-        if (buildRequestAfterLease === undefined) {
-          throw new Error(
-            "runPostAdmissionManualResume requires request or buildRequestAfterLease",
-          );
-        }
-        request = await buildRequestAfterLease();
-      }
-      request = withEngineDetourInvocationScope(request, invocationScopeId);
-      return request;
+  if (request === undefined) {
+    if (buildRequestAfterLease === undefined) {
+      throw new Error(
+        "runPostAdmissionManualResume requires request or buildRequestAfterLease",
+      );
+    }
+    request = await buildRequestAfterLease();
+  }
+  request = withEngineDetourInvocationScope(request, invocationScopeId);
+
+  const result = await dispatchPostAdmissionTurn({
+    admitted,
+    env: {
+      ...env,
+      ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
+      ...(admitted.correlationId === undefined
+        ? {}
+        : { correlationId: admitted.correlationId }),
     },
-    dispatch: (turnRequest) =>
-      dispatchPostAdmissionTurn({
-        admitted,
-        env: {
-          ...env,
-          ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
-          ...(admitted.correlationId === undefined
-            ? {}
-            : { correlationId: admitted.correlationId }),
-        },
-        io,
-        request: turnRequest,
-        lease,
-        adapters,
-        ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
-      }),
+    io,
+    request,
+    adapters,
+    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
   });
   if (
     result.terminal !== undefined &&
@@ -1981,10 +1954,5 @@ export async function runPostAdmissionManualResume<
   if (result.terminal !== undefined) {
     (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
   }
-  return {
-    ...result,
-    ...(staleWriterLeaseReclaimed === true
-      ? { staleWriterLeaseReclaimed: true as const }
-      : {}),
-  };
+  return result;
 }
