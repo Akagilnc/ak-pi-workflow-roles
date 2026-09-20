@@ -10,7 +10,13 @@
  * starts after the caller module has finished init, so those slots stay intact.
  */
 import { execFile, spawn } from "node:child_process";
-import { constants as fsConstants, existsSync } from "node:fs";
+import {
+  closeSync,
+  constants as fsConstants,
+  existsSync,
+  openSync,
+  readFileSync,
+} from "node:fs";
 import {
   access,
   mkdir,
@@ -729,11 +735,12 @@ async function resolveReviewerDepsRoot(
 
 /**
  * Single host-pnpm install seam for Reviewer sandboxes: cancel via AbortSignal,
- * pipe logs without execFile maxBuffer, keep a bounded head+tail diagnostic on
- * non-zero exit (失败诚实 — early causes survive later overflow), and launch
- * the Windows `pnpm.cmd` shim through a shell as Node's execFile contract requires.
+ * redirect install stdout/stderr to a temp file (O(1) memory — no position
+ * windows / pipe sampling), attach the full log on non-zero exit (失败诚实 —
+ * cause at any offset remains), and launch the Windows `pnpm.cmd` shim through
+ * a shell as Node's execFile contract requires. Never use execFile maxBuffer.
  */
-function runHostPnpmInstall(options: {
+async function runHostPnpmInstall(options: {
   readonly depsRoot: string;
   readonly signal?: AbortSignal;
 }): Promise<void> {
@@ -744,67 +751,71 @@ function runHostPnpmInstall(options: {
     "--ignore-pnpmfile",
   ] as const;
   const useShell = process.platform === "win32";
-  // Bound memory on large install logs; keep head and tail so a cause that
-  // appears before a flood of later output is not sliced away.
-  const headCap = 128 * 1024;
-  const tailCap = 128 * 1024;
-  return new Promise<void>((resolve, reject) => {
-    const child = spawn("pnpm", [...args], {
-      cwd: options.depsRoot,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
-      windowsHide: true,
-      ...(useShell ? { shell: true } : {}),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
+  const diagnosticDir = await mkdtemp(join(tmpdir(), "ak-reviewer-pnpm-"));
+  const diagnosticPath = join(diagnosticDir, "install.log");
+  const diagnosticFd = openSync(diagnosticPath, "w");
+  try {
+    await new Promise<void>((resolve, reject) => {
+      let settled = false;
+      const settle = (next: () => void): void => {
+        if (settled) return;
+        settled = true;
+        try {
+          closeSync(diagnosticFd);
+        } catch {
+          // Already closed.
+        }
+        next();
+      };
+      const child = spawn("pnpm", [...args], {
+        cwd: options.depsRoot,
+        // One fd for both faces: kernel-backed, no in-process log windows.
+        stdio: ["ignore", diagnosticFd, diagnosticFd],
+        env: process.env,
+        windowsHide: true,
+        ...(useShell ? { shell: true } : {}),
+        ...(options.signal === undefined ? {} : { signal: options.signal }),
+      });
+      child.once("error", (error) => {
+        settle(() => {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            reject(new Error(
+              "reviewer worktree deps require host pnpm CLI (packageManager=pnpm); pnpm not found on PATH",
+              { cause: error },
+            ));
+            return;
+          }
+          reject(error instanceof Error ? error : new Error(String(error)));
+        });
+      });
+      child.once("close", (code, signalName) => {
+        settle(() => {
+          if (code === 0) {
+            resolve();
+            return;
+          }
+          const summary =
+            signalName === null || signalName === undefined
+              ? `pnpm install failed with exit code ${code ?? "unknown"}`
+              : `pnpm install failed with signal ${signalName}`;
+          let detail = "";
+          try {
+            detail = readFileSync(diagnosticPath, "utf8").trim();
+          } catch {
+            // Keep exit summary if the log cannot be read.
+          }
+          reject(new Error(detail.length > 0 ? `${summary}\n${detail}` : summary));
+        });
+      });
     });
-    let head = "";
-    let tail = "";
-    let totalBytes = 0;
-    const appendDiagnostic = (chunk: string): void => {
-      if (chunk.length === 0) return;
-      totalBytes += chunk.length;
-      if (head.length < headCap) {
-        const take = headCap - head.length;
-        head += chunk.slice(0, take);
-        chunk = chunk.slice(take);
-        if (chunk.length === 0) return;
-      }
-      if (chunk.length >= tailCap) {
-        tail = chunk.slice(chunk.length - tailCap);
-        return;
-      }
-      tail = (tail + chunk).slice(-tailCap);
-    };
-    const finalizeDiagnostic = (): string => {
-      if (totalBytes <= headCap + tailCap) return `${head}${tail}`.trim();
-      const omitted = totalBytes - headCap - tailCap;
-      return `${head}\n...[${omitted} bytes truncated]...\n${tail}`.trim();
-    };
-    child.stdout?.setEncoding("utf8").on("data", appendDiagnostic);
-    child.stderr?.setEncoding("utf8").on("data", appendDiagnostic);
-    child.once("error", (error) => {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        reject(new Error(
-          "reviewer worktree deps require host pnpm CLI (packageManager=pnpm); pnpm not found on PATH",
-          { cause: error },
-        ));
-        return;
-      }
-      reject(error);
-    });
-    child.once("close", (code, signalName) => {
-      if (code === 0) {
-        resolve();
-        return;
-      }
-      const summary =
-        signalName === null || signalName === undefined
-          ? `pnpm install failed with exit code ${code ?? "unknown"}`
-          : `pnpm install failed with signal ${signalName}`;
-      const detail = finalizeDiagnostic();
-      reject(new Error(detail.length > 0 ? `${summary}\n${detail}` : summary));
-    });
-  });
+  } finally {
+    try {
+      closeSync(diagnosticFd);
+    } catch {
+      // Closed in settle.
+    }
+    await rm(diagnosticDir, { recursive: true, force: true });
+  }
 }
 
 async function provisionReviewerWorktreeDeps(
