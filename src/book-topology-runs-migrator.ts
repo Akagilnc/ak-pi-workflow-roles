@@ -285,6 +285,13 @@ export type BoardBoundUnboundRelocation = {
   readonly ticketNumber: number;
 };
 
+/** Structured result for #863/#986 real-entry relocate (mutation closure recorded). */
+export type BoardBoundUnboundRelocateReport = {
+  readonly relocated: readonly BoardBoundUnboundRelocation[];
+  /** Frozen plan-time closure: every run directory that may be rewritten or renamed. */
+  readonly mutationClosureRuns: readonly string[];
+};
+
 type PlannedBoardBoundMove = {
   readonly sourcePath: string;
   readonly targetPath: string;
@@ -404,7 +411,7 @@ async function applyBoardBoundUnboundMovesInBook(
 export async function relocateBoardBoundUnboundRunsInBooks(
   booksDirectory: string,
   env: NodeJS.ProcessEnv = process.env,
-): Promise<readonly BoardBoundUnboundRelocation[]> {
+): Promise<BoardBoundUnboundRelocateReport> {
   type BookBatch = {
     readonly bookDirectory: string;
     readonly planned: readonly PlannedBoardBoundMove[];
@@ -446,7 +453,10 @@ export async function relocateBoardBoundUnboundRunsInBooks(
       );
       relocated.push(...moved);
     }
-    return relocated;
+    return {
+      relocated,
+      mutationClosureRuns: mutationClosure,
+    };
   } finally {
     for (const lease of leases) {
       await lease.release();

@@ -1253,18 +1253,23 @@ test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket
       sourceRun: { runDirectory: boundSource },
     });
 
-    const relocated = await relocateBoardBoundUnboundRunsInBooks(
+    const report = await relocateBoardBoundUnboundRunsInBooks(
       booksDirectory,
       {},
     );
     const boundTarget = join(bookDir, "863", "runs", boundLeaf);
-    assert.deepEqual(relocated, [
+    assert.deepEqual(report.relocated, [
       {
         from: boundSource,
         to: boundTarget,
         ticketNumber: 863,
       },
     ]);
+    assert.deepEqual(
+      [...report.mutationClosureRuns].sort(),
+      [boundSource, freeSource, peerSource].sort(),
+      "structured result must record the frozen mutation closure",
+    );
     assert.equal(
       existsSync(boundSource),
       false,
