@@ -2261,7 +2261,7 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
 
     const runId = "01a0diar00-0000-7000-8000-000000000003";
     const plantedFailureMessage = "host turn failed after diarist board bind";
-    const { io, stdout, stderr } = captureIo();
+    const { io } = captureIo();
     const submitted = {
       status: "completed",
       ticketNumber: TICKET,
@@ -2405,12 +2405,118 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
       Array.isArray(reportFiles) && reportFiles.length >= 1,
       "published report must carry retained first-failure evidence refs",
     );
-
-    const combinedIo = [...stdout, ...stderr].join("\n");
+    // Terminal and published report must be one assembled face (no post-publish drift).
     assert.equal(
-      combinedIo.includes("ENOENT") && combinedIo.includes("unbound"),
-      false,
-      "auto-resume must not cover the original failure with stale unbound ENOENT",
+      report.outcome?.decisiveFacts?.priorControlledFailureDiagnostic,
+      facts.priorControlledFailureDiagnostic,
+    );
+    assert.deepEqual(reportFiles, retainedFiles);
+  });
+
+  // Same public-entry tracer: after a first controlled failure, a later non-accepted
+  // final (budget exhausted) must still carry the first structured diagnosis.
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await mkdir(join(home, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(home, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ autoResumeLimit: 1 }, null, 2)}\n`,
+    );
+
+    const runId = "01a0diar00-0000-7000-8000-000000000004";
+    const firstFailureMessage = "host turn failed after diarist board bind";
+    const secondFailureMessage = "host turn failed again on resumed ticket run";
+    const { io } = captureIo();
+    const submitted = {
+      status: "completed",
+      ticketNumber: TICKET,
+      sessions: [],
+    };
+    let hostTurns = 0;
+    const hostRunDirectories: string[] = [];
+    const roleTurnHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: immutablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        hostTurns += 1;
+        const message =
+          hostTurns === 1 ? firstFailureMessage : secondFailureMessage;
+        const runner = diaristEnvelopeRunner(submitted, { afterAdmit: "throw" });
+        try {
+          return await runner(args, options);
+        } catch {
+          throw new Error(message);
+        }
+      },
+    });
+
+    const result = await runAkRole(
+      [
+        "diarist",
+        "--model",
+        "test/caller-seat:high",
+        "--project",
+        project,
+        `整理 #${TICKET} 起居录`,
+      ],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => runId,
+        principalAuthority: immutablePrincipalAuthority,
+        roleTurnHost: {
+          executeTurn: async (request) => {
+            hostRunDirectories.push(request.runDirectory);
+            return roleTurnHost.executeTurn(request);
+          },
+        },
+      },
+    );
+
+    const bookKey = resolveBookKeyFromGit(project);
+    const ticketPlacement = roleRunPlacement(
+      resolveActivationLedgerHome(home),
+      {
+        bookKey,
+        subject: { ticketNumber: TICKET },
+        runId,
+        role: "diarist",
+      },
+    );
+    const unboundPlacement = roleRunPlacement(
+      resolveActivationLedgerHome(home),
+      {
+        bookKey,
+        subject: { unbound: true },
+        runId,
+        role: "diarist",
+      },
+    );
+    assert.deepEqual(hostRunDirectories, [
+      unboundPlacement.runDirectory,
+      ticketPlacement.runDirectory,
+    ]);
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    const failureFacts = result.terminal?.roleOutcome.decisiveFacts;
+    assert.ok(failureFacts, "non-accepted final must expose decisiveFacts");
+    assert.equal(
+      failureFacts.priorControlledFailureDiagnostic,
+      firstFailureMessage,
+      "budget-exhausted final must still carry the first controlled failure",
+    );
+    assert.equal(
+      (failureFacts.priorControlledFailureDecisiveFacts as { diagnostic?: unknown } | undefined)
+        ?.diagnostic,
+      firstFailureMessage,
+    );
+    assert.match(
+      String(result.terminal?.roleOutcome.diagnostic ?? ""),
+      /host turn failed again on resumed ticket run/,
     );
   });
 });

@@ -399,17 +399,17 @@ async function retainControlledFailureTerminal(
 type PriorControlledFailureCarry = {
   readonly diagnostic: string;
   readonly decisiveFacts: Readonly<Record<string, unknown>>;
-  readonly errorFiles: readonly string[];
 };
 
 /**
  * #990: fold the first controlled failure's structured facts + surviving
- * evidence refs into the later lawful Terminal before it becomes the only
+ * evidence refs into any later final Terminal before it becomes the only
  * external observation surface (no second SoT, no diarist-only path).
  */
-function carryPriorControlledFailureIntoLawfulTerminal(
+function carryPriorControlledFailureIntoTerminal(
   terminal: TerminalResult,
   prior: PriorControlledFailureCarry,
+  errorFiles: readonly string[],
 ): void {
   const outcome = terminal.roleOutcome as {
     decisiveFacts?: Record<string, unknown>;
@@ -419,11 +419,11 @@ function carryPriorControlledFailureIntoLawfulTerminal(
     ...priorFacts,
     priorControlledFailureDiagnostic: prior.diagnostic,
     priorControlledFailureDecisiveFacts: { ...prior.decisiveFacts },
-    dispatchErrorFiles: [...prior.errorFiles],
+    dispatchErrorFiles: [...errorFiles],
   };
   const existing = terminal.artifacts ?? [];
   const known = new Set(existing.map((artifact) => artifact.path));
-  const errorRefs: TerminalArtifactRef[] = prior.errorFiles
+  const errorRefs: TerminalArtifactRef[] = errorFiles
     .filter((path) => !known.has(path))
     .map((path) => ({ kind: "error", path }));
   (terminal as unknown as { artifacts: TerminalArtifactRef[] }).artifacts = [
@@ -433,28 +433,25 @@ function carryPriorControlledFailureIntoLawfulTerminal(
 }
 
 /**
- * Patch the already-published accepted report face so published materials match
- * the carried Terminal outcome. Best-effort: report I/O failure must not mask
- * the lawful result (same diagnostic-sink isolation as throw retention).
+ * #990: one assembly at the shared auto-resume final seam — carry first failure
+ * into Terminal, then write the published report face from that same outcome.
+ * No post-publish best-effort 补写 (ADR 0080). Write failure must not present as
+ * a complete consistent final.
  */
-async function patchPublishedReportWithCarriedOutcome(
+async function assembleFinalTerminalAndPublishedFaces(
   terminal: TerminalResult,
-  io: CliIo,
+  prior: PriorControlledFailureCarry | undefined,
+  errorFiles: readonly string[],
 ): Promise<void> {
+  if (prior === undefined) return;
+  carryPriorControlledFailureIntoTerminal(terminal, prior, errorFiles);
   const reportRef = terminal.artifacts.find((artifact) => artifact.kind === "report");
   if (reportRef === undefined) return;
-  try {
-    const raw = await readFile(reportRef.path, "utf8");
-    const body = JSON.parse(raw) as Record<string, unknown>;
-    body.outcome = terminal.roleOutcome;
-    await writeFile(reportRef.path, `${JSON.stringify(body, null, 2)}\n`, "utf8");
-  } catch (error) {
-    io.stderr(
-      `prior controlled failure report patch failed (best-effort continue): ${describeErrorIdentity(error)}\n`,
-    );
-  }
+  const raw = await readFile(reportRef.path, "utf8");
+  const body = JSON.parse(raw) as Record<string, unknown>;
+  body.outcome = terminal.roleOutcome;
+  await writeFile(reportRef.path, `${JSON.stringify(body, null, 2)}\n`, "utf8");
 }
-
 /**
  * Unwrap TurnDispatchedFailure before this loop's own final presentation
  * (#840 r9 判词 class 1 — the auto-resume.ts final presentation boundary).
@@ -609,9 +606,53 @@ export async function runWithAutoResumeLoop<
   let lastThrownError: unknown;
   let everyAttemptThrew = true;
   const retainedErrorFiles: string[] = [];
-  // #990: first controlled-failure Terminal washed by a later lawful final —
-  // keep structured diagnosis in-loop and durable evidence refs for carry-forward.
+  // #990: first controlled-failure diagnosis captured in-loop before fallible
+  // durable retention; later finals assemble Terminal (+ report when present)
+  // from this memory at the shared exit seam.
   let priorControlledFailure: PriorControlledFailureCarry | undefined;
+
+  const finalizeReturn = async (result: T): Promise<T> => {
+    const terminal = (result as { terminal?: TerminalResult }).terminal;
+    if (terminal === undefined) return result;
+    try {
+      await assembleFinalTerminalAndPublishedFaces(
+        terminal,
+        priorControlledFailure,
+        retainedErrorFiles,
+      );
+    } catch (error) {
+      const diagnostic =
+        `final terminal/report assembly failed after prior controlled failure carry: ${describeErrorIdentity(error)}`;
+      const failureTerminal: TerminalResult = {
+        roleOutcome: {
+          kind: "failure",
+          role: options.admitted.role,
+          diagnostic,
+          decisiveFacts: {
+            diagnostic,
+            assemblyError: describeErrorIdentity(error),
+            ...(priorControlledFailure === undefined
+              ? {}
+              : {
+                  priorControlledFailureDiagnostic: priorControlledFailure.diagnostic,
+                  priorControlledFailureDecisiveFacts: {
+                    ...priorControlledFailure.decisiveFacts,
+                  },
+                }),
+            dispatchErrorFiles: [...retainedErrorFiles],
+          },
+        },
+        navigator: { disposition: "no-advice" },
+        artifacts: retainedErrorFiles.map((path) => ({ kind: "error" as const, path })),
+        runId: options.admitted.runId,
+        autoResumeCount: autoResumeAttempts,
+      };
+      presentTerminal(failureTerminal, options.io);
+      return { exitCode: 1, terminal: failureTerminal } as T;
+    }
+    presentTerminal(terminal, options.io);
+    return result;
+  };
 
   while (true) {
     let lease: RunWriterLease;
@@ -689,47 +730,38 @@ export async function runWithAutoResumeLoop<
 
       const lawful = terminal !== undefined && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
       if (lawful) {
-        if (terminal !== undefined) {
-          // #990: later lawful final must still carry first controlled failure.
-          if (priorControlledFailure !== undefined) {
-            carryPriorControlledFailureIntoLawfulTerminal(terminal, {
-              ...priorControlledFailure,
-              errorFiles: retainedErrorFiles,
-            });
-            await patchPublishedReportWithCarriedOutcome(terminal, options.io);
-          }
-          // Present lawful terminal once to real io (dummy was used inside dispatch)
-          options.io.stdout(formatTerminalResult(terminal));
-        }
-        return result;
+        return await finalizeReturn(result);
       }
       if (result.skipAutoResume === true) {
-        if (terminal !== undefined) presentTerminal(terminal, options.io);
-        return result;
+        return await finalizeReturn(result);
       }
       // #855: process cancel — stop even if dispatch forgot skipAutoResume.
       if (processCancelSignalName(options.signal) !== undefined) {
-        if (terminal !== undefined) presentTerminal(terminal, options.io);
-        return result;
+        return await finalizeReturn(result);
       }
     }
 
     if (result !== undefined) {
       const terminal = (result as { terminal?: TerminalResult }).terminal;
       if (autoResumeAttempts >= limit) {
-        if (terminal !== undefined) presentTerminal(terminal, options.io);
-        return result;
+        return await finalizeReturn(result);
       }
       if (
         result.turnDispatched === true
         && !(await isPrincipalAvailable(options.admitted.principal))
       ) {
-        if (terminal !== undefined) presentTerminal(terminal, options.io);
-        return result;
+        return await finalizeReturn(result);
       }
-      // Will auto-resume past this settled failure: retain durable snapshot now
+      // Will auto-resume past this settled failure: capture structured memory
+      // first (must not depend on durable I/O), then fallible retention
       // (afterDispatch may already have relocated admitted.runDirectory).
       if (terminal !== undefined && terminal.roleOutcome.kind === "failure") {
+        if (priorControlledFailure === undefined) {
+          priorControlledFailure = {
+            diagnostic: terminal.roleOutcome.diagnostic,
+            decisiveFacts: { ...terminal.roleOutcome.decisiveFacts },
+          };
+        }
         const attempt = dispatchOrdinal - 1;
         try {
           const { file, pointerError } = await retainControlledFailureTerminal(
@@ -740,13 +772,6 @@ export async function runWithAutoResumeLoop<
             terminal,
           );
           retainedErrorFiles.push(file);
-          if (priorControlledFailure === undefined) {
-            priorControlledFailure = {
-              diagnostic: terminal.roleOutcome.diagnostic,
-              decisiveFacts: { ...terminal.roleOutcome.decisiveFacts },
-              errorFiles: [],
-            };
-          }
           if (pointerError !== undefined) {
             options.io.stderr(
               `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(pointerError)}\n`,
@@ -775,11 +800,10 @@ export async function runWithAutoResumeLoop<
           options.io,
         );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        presentTerminal(terminal, options.io);
-        return {
+        return await finalizeReturn({
           exitCode: 1,
           terminal,
-        } as T;
+        } as T);
       }
       // #855: process cancel on the throw path — do not re-dispatch; name the signal.
       const cancelName = processCancelSignalName(options.signal);
@@ -798,11 +822,10 @@ export async function runWithAutoResumeLoop<
           options.io,
         );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        presentTerminal(terminal, options.io);
-        return {
+        return await finalizeReturn({
           exitCode: 1,
           terminal,
-        } as T;
+        } as T);
       }
       if (!(await isPrincipalAvailable(options.admitted.principal))) {
         const terminal = await attachDispatchExceptionTerminal(
@@ -819,11 +842,10 @@ export async function runWithAutoResumeLoop<
           options.io,
         );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        presentTerminal(terminal, options.io);
-        return {
+        return await finalizeReturn({
           exitCode: 1,
           terminal,
-        } as T;
+        } as T);
       }
     }
 
