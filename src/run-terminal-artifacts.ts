@@ -78,21 +78,25 @@ export function redactExactRunIdToken(value: unknown, runId: string): unknown {
     return value.map((item) => redactExactRunIdToken(item, runId));
   }
   if (isPlainObject(value)) {
-    const buckets: Record<string, unknown[]> = {};
+    // Aggregate with Map so own keys like `__proto__` never hit Object.prototype
+    // setters; materialize via fromEntries as own data properties.
+    const buckets = new Map<string, unknown[]>();
     for (const [key, entry] of Object.entries(value)) {
       const projectedKey = key.includes(runId) ? key.split(runId).join("") : key;
       const projectedValue = redactExactRunIdToken(entry, runId);
-      if (Object.prototype.hasOwnProperty.call(buckets, projectedKey)) {
-        buckets[projectedKey]!.push(projectedValue);
+      const existing = buckets.get(projectedKey);
+      if (existing !== undefined) {
+        existing.push(projectedValue);
       } else {
-        buckets[projectedKey] = [projectedValue];
+        buckets.set(projectedKey, [projectedValue]);
       }
     }
-    const out: Record<string, unknown> = {};
-    for (const [projectedKey, values] of Object.entries(buckets)) {
-      out[projectedKey] = values.length === 1 ? values[0]! : values;
-    }
-    return out;
+    return Object.fromEntries(
+      [...buckets].map(([projectedKey, values]) => [
+        projectedKey,
+        values.length === 1 ? values[0]! : values,
+      ]),
+    );
   }
   return value;
 }

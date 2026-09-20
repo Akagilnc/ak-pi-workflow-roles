@@ -1089,11 +1089,16 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
     const finalDiagnostic =
       `provider declined run ${runId} after auto-resume (typed 429)`;
     // Colliding dynamic keys after runId strip (`hint-${runId}` and `hint-`
-    // both project to `hint-`): public face must keep both values observable.
+    // both project to `hint-`; `__proto__${runId}` and `__proto__` both project
+    // to own key `__proto__`): public face must keep both values observable.
+    // Computed `__proto__` keys are required — bare `__proto__:` would set the
+    // object prototype instead of creating an own property.
     const finalDetails = {
       providerPath: `/tmp/ledger/runs/${runId}@judge/session/session.jsonl`,
       [`hint-${runId}`]: "first",
       "hint-": "second",
+      [`__proto__${runId}`]: "proto-first",
+      ["__proto__"]: "proto-second",
     };
     const { io, stdout } = captureIo();
     let hostTurns = 0;
@@ -1204,6 +1209,26 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
       "second",
       "public secondaryEvidence must keep second colliding dynamic-key value",
     );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(secondaryRecord, "__proto__"),
+      true,
+      "public secondaryEvidence must keep __proto__ as an own data property",
+    );
+    const collidedProto = secondaryRecord["__proto__"];
+    assert.ok(
+      Array.isArray(collidedProto) && collidedProto.length === 2,
+      "colliding __proto__ dynamic keys must project to an ordered value array",
+    );
+    assert.equal(
+      collidedProto[0],
+      "proto-first",
+      "public secondaryEvidence must keep first __proto__ colliding value",
+    );
+    assert.equal(
+      collidedProto[1],
+      "proto-second",
+      "public secondaryEvidence must keep second __proto__ colliding value",
+    );
     assert.equal(typeof facts.priorControlledFailureDiagnostic, "string");
     assert.equal(
       String(facts.priorControlledFailureDiagnostic).includes(runId),
@@ -1288,6 +1313,13 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
     assert.ok(privateDetails && typeof privateDetails === "object");
     assert.equal(privateDetails[`hint-${runId}`], "first");
     assert.equal(privateDetails["hint-"], "second");
+    assert.equal(privateDetails[`__proto__${runId}`], "proto-first");
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(privateDetails, "__proto__"),
+      true,
+      "private final error.json must retain own __proto__ key",
+    );
+    assert.equal(privateDetails["__proto__"], "proto-second");
     assert.equal(
       privateDetails.providerPath,
       finalDetails.providerPath,
