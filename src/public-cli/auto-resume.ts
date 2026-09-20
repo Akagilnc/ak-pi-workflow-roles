@@ -186,6 +186,27 @@ export async function ensureRealArtifactsDirectory(runDirectory: string): Promis
 }
 
 /**
+ * Copy arbitrary own string keys onto a null-prototype bag (#990). Ordinary
+ * `{}` + `bag[key] =` invokes the inherited `__proto__` setter and drops the
+ * key as own data; null-prototype assignment keeps `__proto__` and peers.
+ */
+function transferOwnNamedProperties(
+  value: object,
+  depth: number,
+  seen: WeakSet<object>,
+): Record<string, unknown> {
+  const transferred: Record<string, unknown> = Object.create(null);
+  for (const key of Object.getOwnPropertyNames(value)) {
+    transferred[key] = transferNestedValue(
+      (value as unknown as Record<string, unknown>)[key],
+      depth + 1,
+      seen,
+    );
+  }
+  return transferred;
+}
+
+/**
  * Whole-object transfer of a thrown value (owner 2026-08-23: 「记录所有错误信息。
  * 不能丢详细情况」). Every own property of the Error object — enumerable or not,
  * which is how message/stack and any attached identity land verbatim — plus the
@@ -196,14 +217,9 @@ function serializeThrownValue(value: unknown, depth = 0, seen = new WeakSet<obje
   if (value instanceof Error) {
     if (seen.has(value)) return "[circular]";
     seen.add(value);
-    const transferred: Record<string, unknown> = {};
-    for (const key of Object.getOwnPropertyNames(value)) {
-      transferred[key] = transferNestedValue(
-        (value as unknown as Record<string, unknown>)[key],
-        depth + 1,
-        seen,
-      );
-    }
+    const transferred = transferOwnNamedProperties(value, depth, seen);
+    // Spread uses CreateDataPropertyOrThrow, so `__proto__` stays an own data
+    // property on the materialised face (unlike ordinary `obj[key] =`).
     return {
       errorKind: "Error",
       constructorName: value.constructor?.name,
@@ -245,15 +261,7 @@ function transferNestedValue(value: unknown, depth: number, seen: WeakSet<object
   if (value !== null && typeof value === "object") {
     if (seen.has(value)) return "[circular]";
     seen.add(value);
-    const transferred: Record<string, unknown> = {};
-    for (const key of Object.getOwnPropertyNames(value)) {
-      transferred[key] = transferNestedValue(
-        (value as unknown as Record<string, unknown>)[key],
-        depth + 1,
-        seen,
-      );
-    }
-    return transferred;
+    return transferOwnNamedProperties(value, depth, seen);
   }
   return value;
 }
