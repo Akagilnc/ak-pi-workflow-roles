@@ -153,6 +153,14 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
     absStore,
     join(root, "node_modules", "ak-reviewer-abs-deps-probe"),
   );
+  // Common broken bin: dangling but lexically inside node_modules — must not
+  // abort provision. Escaping dangling relative link must be removed in sandbox.
+  await mkdir(join(root, "node_modules", ".bin"), { recursive: true });
+  await symlink("./nowhere", join(root, "node_modules", ".bin", "broken"));
+  await symlink(
+    "../../outside-missing",
+    join(root, "node_modules", "escape-dangle"),
+  );
 }
 
 /**
@@ -225,6 +233,17 @@ function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: stri
       "sandbox deps write must not reach the caller source tree",
     );
   }
+  const sandboxBroken = join(sandboxRoot, "node_modules", ".bin", "broken");
+  const sandboxEscape = join(sandboxRoot, "node_modules", "escape-dangle");
+  assert.ok(
+    lstatSync(sandboxBroken).isSymbolicLink(),
+    "in-sandbox dangling bin link must survive provision",
+  );
+  assert.equal(
+    existsSync(sandboxEscape),
+    false,
+    "escaping dangling deps link must be removed from sandbox",
+  );
 }
 
 /** After sandbox close: ignored source deps must be untouched by Reviewer writes. */
@@ -256,6 +275,14 @@ function assertSourceIgnoredDepsUntouched(sourceProjectRoot: string): void {
     existsSync(join(absStore, "write-isolation-marker")),
     false,
     "absolute linked store must not retain sandbox writes",
+  );
+  assert.ok(
+    lstatSync(join(sourceProjectRoot, "node_modules", ".bin", "broken")).isSymbolicLink(),
+    "source dangling bin fixture must remain",
+  );
+  assert.ok(
+    lstatSync(join(sourceProjectRoot, "node_modules", "escape-dangle")).isSymbolicLink(),
+    "source escaping-dangle fixture must remain",
   );
 }
 

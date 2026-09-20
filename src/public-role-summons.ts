@@ -18,11 +18,12 @@ import {
   mkdir,
   mkdtemp,
   readdir,
+  readlink,
   realpath,
   rm,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import type { CliIo } from "./public-cli/cli-io.ts";
@@ -722,23 +723,53 @@ async function copyTreeMaterialized(
   await copyFile(source, destination);
 }
 
+/** Lexical symlink target (no existence check) — for dangling / looping links. */
+async function lexicalSymlinkTarget(linkPath: string): Promise<string> {
+  const target = await readlink(linkPath);
+  return isAbsolute(target) ? resolve(target) : resolve(dirname(linkPath), target);
+}
+
 /**
  * After a deps tree copy: keep symlinks that stay inside the sandbox; replace
- * any link whose realpath escapes with a materialized copy so Reviewer writes
- * cannot leave the ephemeral worktree (#983).
+ * any resolvable link whose realpath escapes with a materialized copy; drop
+ * unresolvable (dangling / looping) links that lexically escape. In-sandbox
+ * dangling links are kept so provision does not fail closed on common broken
+ * bins (#983).
+ *
+ * `sandboxModulesRootReal` is realpath'd (macOS `/private/var`); 
+ * `sandboxModulesRootLexical` is the path form used by the copy walk (`/var`).
+ * Resolvable links are compared with the real root; dangling links with the
+ * lexical root so `/var` vs `/private/var` does not false-escape.
  */
 async function materializeEscapingDependencySymlinks(
-  sandboxModulesRoot: string,
+  sandboxModulesRootReal: string,
+  sandboxModulesRootLexical: string,
   current: string,
 ): Promise<void> {
   const currentStat = await lstat(current);
   if (currentStat.isSymbolicLink()) {
-    const real = await realpath(current);
-    if (isPathInsideRoot(sandboxModulesRoot, real)) {
+    let real: string | undefined;
+    try {
+      real = await realpath(current);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT" && code !== "ELOOP") {
+        throw error;
+      }
+    }
+    if (real !== undefined) {
+      if (isPathInsideRoot(sandboxModulesRootReal, real)) {
+        return;
+      }
+      await rm(current, { force: true });
+      await copyTreeMaterialized(real, current);
+      return;
+    }
+    const lexical = await lexicalSymlinkTarget(current);
+    if (isPathInsideRoot(sandboxModulesRootLexical, lexical)) {
       return;
     }
     await rm(current, { force: true });
-    await copyTreeMaterialized(real, current);
     return;
   }
   if (!currentStat.isDirectory()) {
@@ -746,7 +777,8 @@ async function materializeEscapingDependencySymlinks(
   }
   for (const name of await readdir(current)) {
     await materializeEscapingDependencySymlinks(
-      sandboxModulesRoot,
+      sandboxModulesRootReal,
+      sandboxModulesRootLexical,
       join(current, name),
     );
   }
@@ -792,8 +824,7 @@ async function provisionReviewerWorktreeDeps(
   // verbatimSymlinks: keep relative in-tree targets relative. Node's default
   // rewrites them to absolute source paths and re-opens a write-through channel.
   await cp(sourceModules, target, { recursive: true, verbatimSymlinks: true });
-  // realpath so macOS /var vs /private/var does not false-positive as escaping.
-  await materializeEscapingDependencySymlinks(await realpath(target), target);
+  await materializeEscapingDependencySymlinks(await realpath(target), target, target);
 }
 
 
