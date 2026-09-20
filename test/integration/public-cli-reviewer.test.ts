@@ -19,7 +19,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -87,8 +87,11 @@ function seedGitProject(root: string): void {
 
 /**
  * #983 fixture: committed manifest/lockfile + focused probe, no pre-seeded
- * `node_modules`. Ephemeral worktrees install via host `pnpm --frozen-lockfile`.
- * Lockfile text matches `pnpm install --lockfile-only` for the file: dep below.
+ * `node_modules`. Ephemeral worktrees install via host `pnpm --frozen-lockfile`
+ * with `--ignore-scripts --ignore-pnpmfile`. Lockfile text matches
+ * `pnpm install --lockfile-only` for the file: dep below.
+ * `projectRelative` places the package face under a subdirectory so
+ * `--project <subdir>` owns its own deps root (walk-up still covers root).
  */
 const REVIEWER_DEPS_PROBE_LOCKFILE = `lockfileVersion: '9.0'
 
@@ -114,19 +117,30 @@ snapshots:
   ak-reviewer-deps-probe@file:packages/ak-reviewer-deps-probe: {}
 `;
 
-async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
+async function seedGitProjectWithIgnoredDeps(
+  root: string,
+  projectRelative = "",
+): Promise<void> {
   seedGitProject(root);
+  const projectDir = projectRelative === "" ? root : join(root, projectRelative);
+  await mkdir(projectDir, { recursive: true });
   await writeFile(join(root, ".gitignore"), "node_modules\n", "utf8");
-  // Absolute marker outside the ephemeral worktree: default `pnpm install`
-  // would run this root postinstall and escape worktree rollback (#983 p1).
+  // Absolute markers outside the ephemeral worktree: default `pnpm install`
+  // would run root postinstall / .pnpmfile.cjs and escape worktree rollback.
   const outsideLifecycleMarker = join(root, "lifecycle-outside-marker");
+  const outsidePnpmfileMarker = join(root, "pnpmfile-outside-marker");
   await writeFile(
-    join(root, "postinstall.cjs"),
+    join(projectDir, "postinstall.cjs"),
     `require("node:fs").writeFileSync(${JSON.stringify(outsideLifecycleMarker)}, "ran");\n`,
     "utf8",
   );
   await writeFile(
-    join(root, "package.json"),
+    join(projectDir, ".pnpmfile.cjs"),
+    `require("node:fs").writeFileSync(${JSON.stringify(outsidePnpmfileMarker)}, "pnpmfile-ran");\nmodule.exports = {};\n`,
+    "utf8",
+  );
+  await writeFile(
+    join(projectDir, "package.json"),
     `${JSON.stringify({
       name: "ak-reviewer-worktree-deps-probe",
       private: true,
@@ -141,8 +155,8 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
     }, null, 2)}\n`,
     "utf8",
   );
-  await writeFile(join(root, "pnpm-lock.yaml"), REVIEWER_DEPS_PROBE_LOCKFILE, "utf8");
-  const probePkg = join(root, "packages", "ak-reviewer-deps-probe");
+  await writeFile(join(projectDir, "pnpm-lock.yaml"), REVIEWER_DEPS_PROBE_LOCKFILE, "utf8");
+  const probePkg = join(projectDir, "packages", "ak-reviewer-deps-probe");
   await mkdir(probePkg, { recursive: true });
   await writeFile(
     join(probePkg, "package.json"),
@@ -155,9 +169,9 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
     "utf8",
   );
   await writeFile(join(probePkg, "index.js"), 'export const value = "ok";\n', "utf8");
-  await mkdir(join(root, "test"), { recursive: true });
+  await mkdir(join(projectDir, "test"), { recursive: true });
   await writeFile(
-    join(root, "test", "deps-probe.test.js"),
+    join(projectDir, "test", "deps-probe.test.js"),
     [
       'import assert from "node:assert/strict";',
       'import test from "node:test";',
@@ -169,14 +183,23 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
     ].join("\n"),
     "utf8",
   );
-  execFileSync(
-    "git",
-    ["add", ".gitignore", "package.json", "pnpm-lock.yaml", "postinstall.cjs", "packages", "test"],
-    { cwd: root },
-  );
+  const relativePaths = [
+    ".gitignore",
+    ...(projectRelative === ""
+      ? ["package.json", "pnpm-lock.yaml", "postinstall.cjs", ".pnpmfile.cjs", "packages", "test"]
+      : [
+        join(projectRelative, "package.json"),
+        join(projectRelative, "pnpm-lock.yaml"),
+        join(projectRelative, "postinstall.cjs"),
+        join(projectRelative, ".pnpmfile.cjs"),
+        join(projectRelative, "packages"),
+        join(projectRelative, "test"),
+      ]),
+  ];
+  execFileSync("git", ["add", ...relativePaths], { cwd: root });
   execFileSync("git", ["commit", "-m", "seed focused-test probe"], { cwd: root });
   assert.equal(
-    existsSync(join(root, "node_modules")),
+    existsSync(join(projectDir, "node_modules")),
     false,
     "fixture must not pre-seed source node_modules",
   );
@@ -184,19 +207,25 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
 
 /**
  * Native focused-test resolves in the ephemeral sandbox after install (probe
- * assert + exit status). Sandbox writes must not create source `node_modules`.
+ * assert + exit status). Walk from execution cwd to the provisioned deps root.
+ * Sandbox writes must not create source `node_modules`.
  */
 function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: string): void {
-  const sandboxRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
-    cwd,
-    encoding: "utf8",
-  }).trim();
+  let depsRoot = cwd;
+  for (;;) {
+    if (existsSync(join(depsRoot, "package.json")) && existsSync(join(depsRoot, "pnpm-lock.yaml"))) {
+      break;
+    }
+    const parent = dirname(depsRoot);
+    assert.notEqual(parent, depsRoot, "sandbox must expose a provisioned deps root");
+    depsRoot = parent;
+  }
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   delete env.NODE_CHANNEL_FD;
   delete env.NODE_CHANNEL_SERIALIZATION_MODE;
   execFileSync(process.execPath, ["--test", "test/deps-probe.test.js"], {
-    cwd: sandboxRoot,
+    cwd: depsRoot,
     encoding: "utf8",
     env,
   });
@@ -210,8 +239,13 @@ function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: stri
     false,
     "automatic deps provision must not run target root lifecycle scripts outside the sandbox",
   );
+  assert.equal(
+    existsSync(join(sourceProjectRoot, "pnpmfile-outside-marker")),
+    false,
+    "automatic deps provision must not execute target .pnpmfile.cjs outside the sandbox",
+  );
   const marker = join(
-    sandboxRoot,
+    depsRoot,
     "node_modules",
     "ak-reviewer-deps-probe",
     "write-isolation-marker",
@@ -225,12 +259,14 @@ function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: stri
 }
 
 /** After sandbox close: source checkout still has no installed deps. */
-function assertSourceRemainsWithoutNodeModules(sourceProjectRoot: string): void {
-  assert.equal(
-    existsSync(join(sourceProjectRoot, "node_modules")),
-    false,
-    "source tree must remain without node_modules after Reviewer cleanup",
-  );
+function assertSourceRemainsWithoutNodeModules(...sourceRoots: string[]): void {
+  for (const sourceProjectRoot of sourceRoots) {
+    assert.equal(
+      existsSync(join(sourceProjectRoot, "node_modules")),
+      false,
+      `source tree must remain without node_modules after Reviewer cleanup: ${sourceProjectRoot}`,
+    );
+  }
 }
 
 /** Production ReviewerIntent face (ADR 0003 / #917 lens axes). */
@@ -1200,16 +1236,12 @@ test("reviewer deps probe preserves non-ENOENT FS failures into rollback (#983)"
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    // Absolute symlink manifest → unreadable target: existsSync would wash
-    // EACCES into false/skip; honest access must keep the errno and roll back.
-    const hiddenDir = join(home, "unreadable-manifest");
-    await mkdir(hiddenDir, { recursive: true });
-    await writeFile(
-      join(hiddenDir, "package.json"),
-      `${JSON.stringify({ name: "ak-reviewer-eacces-probe", private: true })}\n`,
-      "utf8",
-    );
-    await symlink(join(hiddenDir, "package.json"), join(project, "package.json"));
+    // Symlink through a regular file → access returns ENOTDIR. Privilege- and
+    // platform-stable (unlike chmod 000, which root/Windows may ignore).
+    // existsSync would wash this into false/skip; honest access keeps the errno.
+    const notADirectory = join(home, "manifest-not-a-directory");
+    await writeFile(notADirectory, "regular-file\n", "utf8");
+    await symlink(join(notADirectory, "package.json"), join(project, "package.json"));
     await writeFile(
       join(project, "pnpm-lock.yaml"),
       [
@@ -1232,45 +1264,40 @@ test("reviewer deps probe preserves non-ENOENT FS failures into rollback (#983)"
       "utf8",
     );
     execFileSync("git", ["add", "package.json", "pnpm-lock.yaml"], { cwd: project });
-    execFileSync("git", ["commit", "-m", "symlink manifest for EACCES probe"], {
+    execFileSync("git", ["commit", "-m", "symlink manifest for ENOTDIR probe"], {
       cwd: project,
     });
 
-    await chmod(hiddenDir, 0o000);
-    try {
-      const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
+    let hostReached = false;
+    const { io, stdout } = captureIo();
+    const result = await runAkRole([
+      "reviewer", "--model", "test/caller-seat:high",
+      "--project", project, "--base", "HEAD~1", "--lens", "correctness",
+      "--authority-ref", "CLAUDE.md",
+    ], {
+      packageRoot,
+      home,
+      cwd: project,
+      createRunId: () => "run-cli-reviewer-deps-enotdir",
+      io,
+      roleTurnHost: reviewerHost(async (args) => {
+        hostReached = true;
+        return lawfulChildTurn(args, { toolCallId: "enotdir-should-not-run" });
+      }),
+    });
+    assert.equal(result.exitCode, 1, stdout.join("") || "expected prep failure");
+    assert.equal(hostReached, false, "role host must not run after deps probe failure");
+    assert.equal(
+      execFileSync("git", ["worktree", "list", "--porcelain"], {
         cwd: project,
         encoding: "utf8",
-      });
-      let hostReached = false;
-      const { io, stdout } = captureIo();
-      const result = await runAkRole([
-        "reviewer", "--model", "test/caller-seat:high",
-        "--project", project, "--base", "HEAD~1", "--lens", "correctness",
-        "--authority-ref", "CLAUDE.md",
-      ], {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => "run-cli-reviewer-deps-eacces",
-        io,
-        roleTurnHost: reviewerHost(async (args) => {
-          hostReached = true;
-          return lawfulChildTurn(args, { toolCallId: "eacces-should-not-run" });
-        }),
-      });
-      assert.equal(result.exitCode, 1, stdout.join("") || "expected prep failure");
-      assert.equal(hostReached, false, "role host must not run after deps probe failure");
-      assert.equal(
-        execFileSync("git", ["worktree", "list", "--porcelain"], {
-          cwd: project,
-          encoding: "utf8",
-        }),
-        worktreeListBefore,
-      );
-    } finally {
-      await chmod(hiddenDir, 0o755);
-    }
+      }),
+      worktreeListBefore,
+    );
   });
 });
 
@@ -1627,10 +1654,10 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
-    // Two commits (empty seed + probe) so HEAD~1 is valid; ignored deps for #983.
-    await seedGitProjectWithIgnoredDeps(project);
+    // Subdirectory owns package.json + lockfile (git root has neither) — the
+    // #983 deps-root shape that must not skip provisioning.
+    await seedGitProjectWithIgnoredDeps(project, join("nested", "leaf"));
     const subdir = join(project, "nested", "leaf");
-    await mkdir(subdir, { recursive: true });
     const callerProjectRoot = realpathSync(subdir);
     // Trap second host-facing projection: first maps test→test-mapped; a second
     // pass would map test-mapped→test-mapped-twice and fail the provider assert.
@@ -1697,7 +1724,8 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
       encoding: "utf8",
     });
     assert.equal(worktreeListAfter, worktreeListBefore);
-    assertSourceRemainsWithoutNodeModules(project);
+    // Git root has no package face; package face is nested/leaf — check both.
+    assertSourceRemainsWithoutNodeModules(project, subdir);
 
     // Durable identity matches the caller project (10a); one durable page is enough.
     const bookKey = resolveBookKeyFromGit(project);
@@ -1730,7 +1758,8 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
           // Sandbox keeps the caller subdirectory layout under a new worktree root.
           assert.equal(options.cwd.endsWith(join("nested", "leaf")), true);
           assert.notEqual(realpathSync(options.cwd), callerProjectRoot);
-          // Resume deps proof lives on the dedicated single-axis resume tracer (#983).
+          // #983: subdirectory resume must provision the nested deps root too.
+          assertFocusedTestResolvesInSandbox(options.cwd, project);
           return lawfulChildTurn(args, {
             lens: "completeness",
             toolCallId: "subdir-resume",
@@ -1747,7 +1776,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
       encoding: "utf8",
     });
     assert.equal(worktreeListAfterResume, worktreeListBefore);
-    assertSourceRemainsWithoutNodeModules(project);
+    assertSourceRemainsWithoutNodeModules(project, subdir);
   });
 });
 
