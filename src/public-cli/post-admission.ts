@@ -839,8 +839,13 @@ export async function dispatchPostAdmissionTurn<
     // (station-child and ordinary share one seam). Dialogue continuation stays
     // caller/peer opaque — never splice system path sections into user dialogue.
     // No package-resume parallel face or typed resume identity.
-    let turnRequest: RoleTurnRequest =
-      env.signal === undefined ? request : { ...request, signal: env.signal };
+    // #990: one-shot / auto-resume may freeze principal+runDirectory before
+    // relocate; always take durable identity from the live admitted object.
+    let turnRequest: RoleTurnRequest = {
+      ...(env.signal === undefined ? request : { ...request, signal: env.signal }),
+      principal: admitted.principal,
+      runDirectory: admitted.runDirectory,
+    };
     if (env.stationChild !== undefined) {
       turnRequest = { ...turnRequest, stationChild: env.stationChild };
     }

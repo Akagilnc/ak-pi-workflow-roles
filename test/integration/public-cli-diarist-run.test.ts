@@ -2332,7 +2332,7 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
       ticketPlacement.runDirectory,
     ]);
     assert.equal(result.exitCode, 0, "auto-resume should recover the host turn");
-    assert.equal(result.terminal?.roleOutcome.kind, "completed");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
       existsSync(join(ticketPlacement.runDirectory, "run-state.json")),
       true,
