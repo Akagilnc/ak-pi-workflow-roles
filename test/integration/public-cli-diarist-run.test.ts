@@ -28,6 +28,7 @@ import type {
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { migrateBookTopology } from "../../src/book-topology-migration.ts";
 import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
@@ -115,7 +116,12 @@ function diaristEnvelopeRunner(
     const sessionDir = join(runDir, "session");
     const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
-    await writeFile(sessionFile, "");
+    // Resume turns share the same ticket-run session. Do not truncate prior
+    // run-owned records (ak_run_attempt_history) that settlement already appended.
+    const sessionAlreadyPresent = existsSync(sessionFile);
+    if (!sessionAlreadyPresent) {
+      await writeFile(sessionFile, "");
+    }
     const runtime = createDiaristRoleRuntime(host, {
       loadSoul: async () => "起居郎职分（测试装载）",
     });
@@ -168,6 +174,7 @@ function diaristEnvelopeRunner(
       role: "diarist",
       toolName: DIARIST_OUTPUT_TOOL_NAME,
       details: accepted.details,
+      sessionWriteMode: sessionAlreadyPresent ? "append" : "replace",
     })(args, options);
   };
 }
@@ -2343,5 +2350,45 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
       false,
       "unbound must not keep the durable run-state after relocate",
     );
+
+    // Fixture fidelity: same ticket-run session keeps first failure history and
+    // appends the accepted resume. Assert structured ak_run_attempt_history only.
+    const relocatedSessionFile = join(
+      ticketPlacement.runDirectory,
+      "session",
+      "session.jsonl",
+    );
+    const attemptHistory = (await readFile(relocatedSessionFile, "utf8"))
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as {
+        type?: string;
+        customType?: string;
+        data?: {
+          sequence?: number;
+          role?: string;
+          runId?: string;
+          outcome?: { kind?: string; diagnostic?: string };
+        };
+      })
+      .filter(
+        (row) =>
+          row.type === "custom" &&
+          row.customType === ATTEMPT_HISTORY_ENTRY_TYPE,
+      );
+    assert.equal(attemptHistory.length, 2);
+    assert.equal(attemptHistory[0]?.data?.sequence, 1);
+    assert.equal(attemptHistory[0]?.data?.outcome?.kind, "failure");
+    assert.equal(
+      attemptHistory[0]?.data?.outcome?.diagnostic,
+      "host turn failed after diarist board bind",
+    );
+    assert.equal(attemptHistory[0]?.data?.role, "diarist");
+    assert.equal(attemptHistory[0]?.data?.runId, runId);
+    assert.equal(attemptHistory[1]?.data?.sequence, 2);
+    assert.equal(attemptHistory[1]?.data?.outcome?.kind, "accepted");
+    assert.equal(attemptHistory[1]?.data?.role, "diarist");
+    assert.equal(attemptHistory[1]?.data?.runId, runId);
+    assert.match(ticketPlacement.runDirectory, new RegExp(`/${TICKET}/runs/`));
   });
 });
