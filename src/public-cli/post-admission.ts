@@ -110,6 +110,8 @@ import {
   settleFailureTerminalResult,
   settleHostEndedNoReceipt,
   attachRecordedSubmissions,
+  type FirstFailureCarry,
+  type SettlementCourtScope,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -319,7 +321,7 @@ export type PostAdmissionAdapters<
     admitted: A,
     authority: DurablePrincipalAuthority,
     /** Current court turn scope (#637); omit for run-scoped sealed reads. */
-    scope?: { readonly courtAttemptId?: string },
+    scope?: SettlementCourtScope,
   ) => Promise<T | undefined>;
   /** Default: isLawfulTypedTerminalOutcome(terminal.roleOutcome). */
   shouldPresentSettled?: (terminal: T) => boolean;
@@ -618,6 +620,8 @@ export async function dispatchPostAdmissionTurn<
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
   persistRunState?: boolean;
+  /** #990: loop-held first controlled failure for sole accepted publisher. */
+  firstFailureCarry?: FirstFailureCarry;
 }): Promise<{
   exitCode: number;
   admitted: A;
@@ -962,19 +966,26 @@ export async function dispatchPostAdmissionTurn<
       );
     }
 
-    const courtScope =
-      (request.courtAttemptId === undefined || request.courtAttemptId.length === 0) &&
-      (request.invocationScopeId === undefined || request.invocationScopeId.length === 0)
-        ? undefined
-        : {
-            ...(request.courtAttemptId === undefined || request.courtAttemptId.length === 0
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
-            ...(request.invocationScopeId === undefined ||
-              request.invocationScopeId.length === 0
-              ? {}
-              : { invocationScopeId: request.invocationScopeId }),
-          };
+    const courtScope: SettlementCourtScope | undefined = (() => {
+      const base =
+        (request.courtAttemptId === undefined || request.courtAttemptId.length === 0) &&
+        (request.invocationScopeId === undefined || request.invocationScopeId.length === 0) &&
+        input.firstFailureCarry === undefined
+          ? undefined
+          : {
+              ...(request.courtAttemptId === undefined || request.courtAttemptId.length === 0
+                ? {}
+                : { courtAttemptId: request.courtAttemptId }),
+              ...(request.invocationScopeId === undefined ||
+                request.invocationScopeId.length === 0
+                ? {}
+                : { invocationScopeId: request.invocationScopeId }),
+              ...(input.firstFailureCarry === undefined
+                ? {}
+                : { firstFailureCarry: input.firstFailureCarry }),
+            };
+      return base;
+    })();
 
     // Single complete boundary (#840 r9 判词 class 1): resolving the
     // host/runner failure facts, trySettle, its shouldPresent gate, and the
@@ -1687,7 +1698,7 @@ export async function runPostAdmissionSeatResume<
         buildResumePayload: (): StationChildAttempt => ({ resumeTurn: true }),
         // Same as public manual resume: prior-court sealed acceptance is not a
         // redispatch brake (#833). New-court station-child turns still auto-resume.
-        dispatch: async (payload, lease, _isFirst, attemptIo) =>
+        dispatch: async (payload, lease, _isFirst, attemptIo, firstFailureCarry) =>
           dispatchAfterWriterLease({
             lease,
             build: async () => {
@@ -1729,6 +1740,7 @@ export async function runPostAdmissionSeatResume<
                 ...(input.effectiveEngine === undefined
                   ? {}
                   : { effectiveEngine: input.effectiveEngine }),
+                ...(firstFailureCarry === undefined ? {} : { firstFailureCarry }),
               });
               return settleDeferredPersist(
                 loaded.admitted,
@@ -1852,7 +1864,7 @@ export async function runPostAdmissionResumable<
     ...(env.signal === undefined ? {} : { signal: env.signal }),
     buildInitialPayload: buildScopedInitial,
     buildResumePayload: buildScopedResume,
-    dispatch: async (request, lease, _isFirst, attemptIo) => {
+    dispatch: async (request, lease, _isFirst, attemptIo, firstFailureCarry) => {
       const result = await dispatchPostAdmissionTurn({
         admitted,
         env: {
@@ -1866,6 +1878,7 @@ export async function runPostAdmissionResumable<
         persistRunState: false,
         // #600: every attempt (initial + auto-resume) writes seat engine when present.
         ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+        ...(firstFailureCarry === undefined ? {} : { firstFailureCarry }),
       });
       return settleDeferredPersist(admitted, env.principalAuthority, adapters, attemptIo, result);
     },

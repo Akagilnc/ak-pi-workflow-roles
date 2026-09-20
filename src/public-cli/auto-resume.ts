@@ -13,7 +13,7 @@
  */
 import { constants as fsConstants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open, readFile, writeFile } from "node:fs/promises";
+import { lstat, mkdir, open } from "node:fs/promises";
 import { join } from "node:path";
 
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
@@ -39,6 +39,7 @@ import {
   presentFailureTerminal,
   presentStructuralRejection,
   resolveControlledFailureResumeObservation,
+  type FirstFailureCarry,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 
@@ -405,6 +406,8 @@ type PriorControlledFailureCarry = {
  * #990: fold the first controlled failure's structured facts + surviving
  * evidence refs into any later final Terminal before it becomes the only
  * external observation surface (no second SoT, no diarist-only path).
+ * Accepted report faces are folded at the sole publisher before write; this
+ * only updates the in-memory Terminal (+ error artifact refs).
  */
 function carryPriorControlledFailureIntoTerminal(
   terminal: TerminalResult,
@@ -430,27 +433,6 @@ function carryPriorControlledFailureIntoTerminal(
     ...existing,
     ...errorRefs,
   ];
-}
-
-/**
- * #990: one assembly at the shared auto-resume final seam — carry first failure
- * into Terminal, then write the published report face from that same outcome.
- * No post-publish best-effort 补写 (ADR 0080). Write failure must not present as
- * a complete consistent final.
- */
-async function assembleFinalTerminalAndPublishedFaces(
-  terminal: TerminalResult,
-  prior: PriorControlledFailureCarry | undefined,
-  errorFiles: readonly string[],
-): Promise<void> {
-  if (prior === undefined) return;
-  carryPriorControlledFailureIntoTerminal(terminal, prior, errorFiles);
-  const reportRef = terminal.artifacts.find((artifact) => artifact.kind === "report");
-  if (reportRef === undefined) return;
-  const raw = await readFile(reportRef.path, "utf8");
-  const body = JSON.parse(raw) as Record<string, unknown>;
-  body.outcome = terminal.roleOutcome;
-  await writeFile(reportRef.path, `${JSON.stringify(body, null, 2)}\n`, "utf8");
 }
 /**
  * Unwrap TurnDispatchedFailure before this loop's own final presentation
@@ -590,7 +572,13 @@ export async function runWithAutoResumeLoop<
   signal?: AbortSignal;
   buildInitialPayload: () => TPayload;
   buildResumePayload: () => TPayload;
-  dispatch: (payload: TPayload, lease: RunWriterLease, isFirst: boolean, attemptIo: CliIo) => Promise<T>;
+  dispatch: (
+    payload: TPayload,
+    lease: RunWriterLease,
+    isFirst: boolean,
+    attemptIo: CliIo,
+    firstFailureCarry?: FirstFailureCarry,
+  ) => Promise<T>;
 }): Promise<T> {
   // #422 single-point resolution + domain validation. NaN would bypass every
   // `attempts >= limit` comparison (always false) — reject here, before any dispatch.
@@ -607,48 +595,19 @@ export async function runWithAutoResumeLoop<
   let everyAttemptThrew = true;
   const retainedErrorFiles: string[] = [];
   // #990: first controlled-failure diagnosis captured in-loop before fallible
-  // durable retention; later finals assemble Terminal (+ report when present)
-  // from this memory at the shared exit seam.
+  // durable retention; installed as publish input on the next dispatch, and
+  // folded into every final Terminal at the shared exit (no post-publish rewrite).
   let priorControlledFailure: PriorControlledFailureCarry | undefined;
 
   const finalizeReturn = async (result: T): Promise<T> => {
     const terminal = (result as { terminal?: TerminalResult }).terminal;
     if (terminal === undefined) return result;
-    try {
-      await assembleFinalTerminalAndPublishedFaces(
+    if (priorControlledFailure !== undefined) {
+      carryPriorControlledFailureIntoTerminal(
         terminal,
         priorControlledFailure,
         retainedErrorFiles,
       );
-    } catch (error) {
-      const diagnostic =
-        `final terminal/report assembly failed after prior controlled failure carry: ${describeErrorIdentity(error)}`;
-      const failureTerminal: TerminalResult = {
-        roleOutcome: {
-          kind: "failure",
-          role: options.admitted.role,
-          diagnostic,
-          decisiveFacts: {
-            diagnostic,
-            assemblyError: describeErrorIdentity(error),
-            ...(priorControlledFailure === undefined
-              ? {}
-              : {
-                  priorControlledFailureDiagnostic: priorControlledFailure.diagnostic,
-                  priorControlledFailureDecisiveFacts: {
-                    ...priorControlledFailure.decisiveFacts,
-                  },
-                }),
-            dispatchErrorFiles: [...retainedErrorFiles],
-          },
-        },
-        navigator: { disposition: "no-advice" },
-        artifacts: retainedErrorFiles.map((path) => ({ kind: "error" as const, path })),
-        runId: options.admitted.runId,
-        autoResumeCount: autoResumeAttempts,
-      };
-      presentTerminal(failureTerminal, options.io);
-      return { exitCode: 1, terminal: failureTerminal } as T;
     }
     presentTerminal(terminal, options.io);
     return result;
@@ -675,7 +634,23 @@ export async function runWithAutoResumeLoop<
     // not a replay of the initial one.
     let turnStartedBeforeThrow = false;
     try {
-      result = await options.dispatch(currentPayload, lease, isFirst, dummyIo);
+      // #990: when a prior controlled failure is already held, pass it as
+      // explicit firstFailureCarry into dispatch → courtScope → sole publisher.
+      const publishCarry: FirstFailureCarry | undefined =
+        priorControlledFailure === undefined
+          ? undefined
+          : {
+              diagnostic: priorControlledFailure.diagnostic,
+              decisiveFacts: priorControlledFailure.decisiveFacts,
+              dispatchErrorFiles: retainedErrorFiles,
+            };
+      result = await options.dispatch(
+        currentPayload,
+        lease,
+        isFirst,
+        dummyIo,
+        publishCarry,
+      );
     } catch (error) {
       // Owner 2026-08-23: 「出了异常，就原地记录错误信息，然后重试。」
       // Retain the whole exception in place (per-attempt full file + dossier

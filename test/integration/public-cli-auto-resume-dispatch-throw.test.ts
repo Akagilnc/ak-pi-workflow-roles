@@ -181,6 +181,67 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
   });
 });
 
+test("first controlled failure carries into later non-accepted final at shared loop", async()=>{
+  await withTempHome(async(home)=>{
+    const project=join(home,"proj");
+    const runId="carry-non-accepted-final";
+    const runDir=join(home,".ak-roles","books","proj","runs",`${runId}@judge`);
+    await mkdir(project,{recursive:true});
+    await mkdir(join(runDir,"session"),{recursive:true});
+    const sessionFile=join(runDir,"session","session.jsonl");
+    await writeFile(sessionFile,"{}\n","utf8");
+    const firstDiagnostic="first-controlled-failure";
+    const finalDiagnostic="budget-exhausted-failure";
+    let calls=0;
+    const {io}=captureIo();
+    const result=await runWithAutoResumeLoop({
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId,projectRoot:project},
+      io,
+      autoResumeLimit:1,
+      buildInitialPayload: ()=>({attempt:"initial"}),
+      buildResumePayload: ()=>({attempt:"resume"}),
+      dispatch: async(_payload,lease)=>{
+        calls+=1;
+        await lease.release();
+        const diagnostic=calls===1?firstDiagnostic:finalDiagnostic;
+        return{
+          exitCode:1,
+          terminal:{
+            roleOutcome:{
+              kind:"failure",
+              role:"judge",
+              diagnostic,
+              decisiveFacts:{diagnostic},
+            },
+            navigator:{disposition:"no-advice"},
+            artifacts:[],
+            runId,
+          },
+        };
+      },
+    });
+    assert.equal(calls,2);
+    assert.equal(result.exitCode,1);
+    assert.equal(result.terminal?.roleOutcome.kind,"failure");
+    assert.equal(result.terminal?.roleOutcome.diagnostic,finalDiagnostic);
+    const facts=result.terminal?.roleOutcome.decisiveFacts as
+      | Readonly<Record<string, unknown>>
+      | undefined;
+    assert.equal(facts?.priorControlledFailureDiagnostic,firstDiagnostic);
+    assert.equal(
+      (facts?.priorControlledFailureDecisiveFacts as {diagnostic?:unknown}|undefined)?.diagnostic,
+      firstDiagnostic,
+    );
+    const retained=facts?.dispatchErrorFiles;
+    assert.ok(
+      Array.isArray(retained) && retained.length>=1,
+      "retained first-failure evidence refs must survive the non-accepted final",
+    );
+  });
+});
+
 test("retention sink failure does not break the retry path (PR #418 isolation precedent)", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");
