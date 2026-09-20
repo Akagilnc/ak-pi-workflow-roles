@@ -426,7 +426,10 @@ function carryPriorControlledFailureIntoLawfulTerminal(
   const errorRefs: TerminalArtifactRef[] = prior.errorFiles
     .filter((path) => !known.has(path))
     .map((path) => ({ kind: "error", path }));
-  (terminal as { artifacts: TerminalArtifactRef[] }).artifacts = [...existing, ...errorRefs];
+  (terminal as unknown as { artifacts: TerminalArtifactRef[] }).artifacts = [
+    ...existing,
+    ...errorRefs,
+  ];
 }
 
 /**
