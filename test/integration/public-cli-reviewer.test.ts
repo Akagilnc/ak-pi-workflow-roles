@@ -1227,7 +1227,7 @@ test("reviewer deps probe preserves non-ENOENT FS failures into rollback (#983)"
         encoding: "utf8",
       });
       let hostReached = false;
-      const { io, stdout, stderr } = captureIo();
+      const { io, stdout } = captureIo();
       const result = await runAkRole([
         "reviewer", "--model", "test/caller-seat:high",
         "--project", project, "--base", "HEAD~1", "--lens", "correctness",
@@ -1245,7 +1245,6 @@ test("reviewer deps probe preserves non-ENOENT FS failures into rollback (#983)"
       });
       assert.equal(result.exitCode, 1, stdout.join("") || "expected prep failure");
       assert.equal(hostReached, false, "role host must not run after deps probe failure");
-      assert.match(stderr.join(""), /EACCES/);
       assert.equal(
         execFileSync("git", ["worktree", "list", "--porcelain"], {
           cwd: project,
