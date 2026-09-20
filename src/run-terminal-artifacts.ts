@@ -59,6 +59,10 @@ export function projectRunRelativeOpenablePath(
  * strip every occurrence of `runId` from structured values and dynamic object
  * keys so typed regions outside `resume.command` cannot re-disclose it.
  * Durable artifacts keep the original bytes; only the public projection uses this.
+ *
+ * Dynamic-key projection must remain complete: when two distinct source keys
+ * collapse to the same projected key, return an ordered `[projectedKey, value]`
+ * entry list for that object instead of silently overwriting earlier values.
  */
 export function redactExactRunIdToken(value: unknown, runId: string): unknown {
   if (runId.length === 0) return value;
@@ -69,12 +73,20 @@ export function redactExactRunIdToken(value: unknown, runId: string): unknown {
     return value.map((item) => redactExactRunIdToken(item, runId));
   }
   if (value !== null && typeof value === "object") {
+    const projectedEntries: Array<[string, unknown]> = [];
     const out: Record<string, unknown> = {};
+    let collided = false;
     for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
       const projectedKey = key.includes(runId) ? key.split(runId).join("") : key;
-      out[projectedKey] = redactExactRunIdToken(entry, runId);
+      const projectedValue = redactExactRunIdToken(entry, runId);
+      projectedEntries.push([projectedKey, projectedValue]);
+      if (Object.prototype.hasOwnProperty.call(out, projectedKey)) {
+        collided = true;
+        continue;
+      }
+      out[projectedKey] = projectedValue;
     }
-    return out;
+    return collided ? projectedEntries : out;
   }
   return value;
 }

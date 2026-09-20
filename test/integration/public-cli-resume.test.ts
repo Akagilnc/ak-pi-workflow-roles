@@ -1083,9 +1083,12 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
       `ENOENT: no such file or directory, open '/tmp/ledger/runs/${runId}@judge/invocation.json'`;
     const finalDiagnostic =
       `provider declined run ${runId} after auto-resume (typed 429)`;
+    // Colliding dynamic keys after runId strip (`hint-${runId}` and `hint-`
+    // both project to `hint-`): public face must keep both values observable.
     const finalDetails = {
       providerPath: `/tmp/ledger/runs/${runId}@judge/session/session.jsonl`,
-      [`hint-${runId}`]: "nested key also embeds runId",
+      [`hint-${runId}`]: "first",
+      "hint-": "second",
     };
     const { io, stdout } = captureIo();
     let hostTurns = 0;
@@ -1164,10 +1167,21 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
       false,
       "public decisiveFacts.diagnostic must not re-disclose runId",
     );
+    const publicSecondary = JSON.stringify(facts.secondaryEvidence ?? {});
     assert.equal(
-      JSON.stringify(facts.secondaryEvidence ?? {}).includes(runId),
+      publicSecondary.includes(runId),
       false,
       "public secondaryEvidence must not re-disclose runId",
+    );
+    assert.equal(
+      publicSecondary.includes("first"),
+      true,
+      "public secondaryEvidence must keep first colliding dynamic-key value",
+    );
+    assert.equal(
+      publicSecondary.includes("second"),
+      true,
+      "public secondaryEvidence must keep second colliding dynamic-key value",
     );
     assert.equal(typeof facts.priorControlledFailureDiagnostic, "string");
     assert.equal(
@@ -1225,8 +1239,16 @@ test("first-failure carry onto resumable final keeps runId only in resume.comman
       await readFile(join(artifactsDir, "error.json"), "utf8"),
     ) as { diagnostic?: unknown; details?: unknown };
     assert.equal(finalError.diagnostic, finalDiagnostic);
+    const privateDetails = finalError.details as Record<string, unknown> | undefined;
+    assert.ok(privateDetails && typeof privateDetails === "object");
+    assert.equal(privateDetails[`hint-${runId}`], "first");
+    assert.equal(privateDetails["hint-"], "second");
     assert.equal(
-      JSON.stringify(finalError.details ?? {}).includes(runId),
+      privateDetails.providerPath,
+      finalDetails.providerPath,
+    );
+    assert.equal(
+      JSON.stringify(privateDetails).includes(runId),
       true,
       "private final error.json must retain original runId bytes in details",
     );
