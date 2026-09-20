@@ -7,7 +7,7 @@ import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts"
  * Caller instruction is optional provenance, never semantic control.
  */
 import assert from "node:assert/strict";
-import { existsSync, lstatSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, realpathSync, writeFileSync } from "node:fs";
 import {
   access,
   chmod,
@@ -16,7 +16,6 @@ import {
   readFile,
   readdir,
   rm,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -85,39 +84,65 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-/** Caller-tree `node_modules` root identity under the same nested-link fixture. */
-type ReviewerDepsRootIdentity = "directory" | "symlink";
-
 /**
- * Source tree with a committed focused-test probe and ignored deps — the #983
- * shape: worktree add does not carry deps; provision must. Nested relative
- * (pnpm-like) and absolute (npm-link-like) links on the same fixture cover
- * ordinary resolution plus nested escape write-isolation.
- *
- * Root identity is a minimal dual shape (not a full path×identity matrix):
- * - `directory` — ordinary checkout `node_modules/` (default)
- * - `symlink` — absolute root link into `.real-node-modules` (write-through risk)
+ * #983 fixture: committed manifest/lockfile + focused probe, no pre-seeded
+ * `node_modules`. Ephemeral worktrees install via host `pnpm --frozen-lockfile`.
+ * Lockfile text matches `pnpm install --lockfile-only` for the file: dep below.
  */
-async function seedGitProjectWithIgnoredDeps(
-  root: string,
-  options?: { readonly rootIdentity?: ReviewerDepsRootIdentity },
-): Promise<void> {
-  const rootIdentity = options?.rootIdentity ?? "directory";
+const REVIEWER_DEPS_PROBE_LOCKFILE = `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+  excludeLinksFromLockfile: false
+
+importers:
+
+  .:
+    dependencies:
+      ak-reviewer-deps-probe:
+        specifier: file:packages/ak-reviewer-deps-probe
+        version: file:packages/ak-reviewer-deps-probe
+
+packages:
+
+  ak-reviewer-deps-probe@file:packages/ak-reviewer-deps-probe:
+    resolution: {directory: packages/ak-reviewer-deps-probe, type: directory}
+
+snapshots:
+
+  ak-reviewer-deps-probe@file:packages/ak-reviewer-deps-probe: {}
+`;
+
+async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
   seedGitProject(root);
-  await writeFile(
-    join(root, ".gitignore"),
-    rootIdentity === "symlink" ? "node_modules\n.real-node-modules\n" : "node_modules\n",
-    "utf8",
-  );
+  await writeFile(join(root, ".gitignore"), "node_modules\n", "utf8");
   await writeFile(
     join(root, "package.json"),
     `${JSON.stringify({
       name: "ak-reviewer-worktree-deps-probe",
-      type: "module",
       private: true,
+      type: "module",
+      packageManager: "pnpm@11.20.0",
+      dependencies: {
+        "ak-reviewer-deps-probe": "file:packages/ak-reviewer-deps-probe",
+      },
     }, null, 2)}\n`,
     "utf8",
   );
+  await writeFile(join(root, "pnpm-lock.yaml"), REVIEWER_DEPS_PROBE_LOCKFILE, "utf8");
+  const probePkg = join(root, "packages", "ak-reviewer-deps-probe");
+  await mkdir(probePkg, { recursive: true });
+  await writeFile(
+    join(probePkg, "package.json"),
+    `${JSON.stringify({
+      name: "ak-reviewer-deps-probe",
+      version: "1.0.0",
+      type: "module",
+      main: "index.js",
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(join(probePkg, "index.js"), 'export const value = "ok";\n', "utf8");
   await mkdir(join(root, "test"), { recursive: true });
   await writeFile(
     join(root, "test", "deps-probe.test.js"),
@@ -125,191 +150,69 @@ async function seedGitProjectWithIgnoredDeps(
       'import assert from "node:assert/strict";',
       'import test from "node:test";',
       'import { value } from "ak-reviewer-deps-probe";',
-      'import { value as absValue } from "ak-reviewer-abs-deps-probe";',
       'test("resolves provisioned dependency", () => {',
       '  assert.equal(value, "ok");',
-      '  assert.equal(absValue, "ok-abs");',
       "});",
       "",
     ].join("\n"),
     "utf8",
   );
-  execFileSync("git", ["add", ".gitignore", "package.json", "test"], { cwd: root });
+  execFileSync(
+    "git",
+    ["add", ".gitignore", "package.json", "pnpm-lock.yaml", "packages", "test"],
+    { cwd: root },
+  );
   execFileSync("git", ["commit", "-m", "seed focused-test probe"], { cwd: root });
-  // Material root: real directory, or behind a root symlink that must not be retained.
-  const modulesRoot =
-    rootIdentity === "symlink" ? join(root, ".real-node-modules") : join(root, "node_modules");
-  const storeDep = join(modulesRoot, ".store", "ak-reviewer-deps-probe");
-  await mkdir(storeDep, { recursive: true });
-  await writeFile(
-    join(storeDep, "package.json"),
-    `${JSON.stringify({
-      name: "ak-reviewer-deps-probe",
-      type: "module",
-      main: "index.js",
-    }, null, 2)}\n`,
-    "utf8",
+  assert.equal(
+    existsSync(join(root, "node_modules")),
+    false,
+    "fixture must not pre-seed source node_modules",
   );
-  await writeFile(join(storeDep, "index.js"), 'export const value = "ok";\n', "utf8");
-  await symlink(
-    ".store/ak-reviewer-deps-probe",
-    join(modulesRoot, "ak-reviewer-deps-probe"),
-  );
-  const absStore = join(modulesRoot, ".abs-store", "ak-reviewer-abs-deps-probe");
-  await mkdir(absStore, { recursive: true });
-  await writeFile(
-    join(absStore, "package.json"),
-    `${JSON.stringify({
-      name: "ak-reviewer-abs-deps-probe",
-      type: "module",
-      main: "index.js",
-    }, null, 2)}\n`,
-    "utf8",
-  );
-  await writeFile(join(absStore, "index.js"), 'export const value = "ok-abs";\n', "utf8");
-  await symlink(
-    absStore,
-    join(modulesRoot, "ak-reviewer-abs-deps-probe"),
-  );
-  if (rootIdentity === "symlink") {
-    // Absolute root link matches the live write-through shape (resolvable outside
-    // the sandbox). Provision must materialize into a worktree-owned directory.
-    await symlink(modulesRoot, join(root, "node_modules"));
-  }
-}
-
-/** Source material root for write-isolation checks (follows a root symlink once). */
-function sourceDepsMaterialRoot(sourceProjectRoot: string): string {
-  const rootModules = join(sourceProjectRoot, "node_modules");
-  const rootStat = lstatSync(rootModules);
-  return rootStat.isSymbolicLink() ? realpathSync(rootModules) : rootModules;
 }
 
 /**
- * Native focused-test resolves in the ephemeral sandbox (probe assert + exit
- * status), and a write under sandbox node_modules must not escape into the
- * caller source tree (#983 write-isolation) — for both real-directory and
- * root-symlink caller identities.
+ * Native focused-test resolves in the ephemeral sandbox after install (probe
+ * assert + exit status). Sandbox writes must not create source `node_modules`.
  */
 function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: string): void {
-  // Sandbox cwd may be a caller subdirectory; focused tests live at the git root.
   const sandboxRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
     cwd,
     encoding: "utf8",
   }).trim();
-  // Nested node:test must not inherit the parent runner's IPC/context channels.
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT;
   delete env.NODE_CHANNEL_FD;
   delete env.NODE_CHANNEL_SERIALIZATION_MODE;
-  // Probe asserts structured `value === "ok"`; non-zero exit throws via execFileSync.
   execFileSync(process.execPath, ["--test", "test/deps-probe.test.js"], {
     cwd: sandboxRoot,
     encoding: "utf8",
     env,
   });
   assert.equal(
-    lstatSync(join(sandboxRoot, "node_modules")).isSymbolicLink(),
+    existsSync(join(sourceProjectRoot, "node_modules")),
     false,
-    "sandbox node_modules root must be a real directory, not a retained symlink",
+    "source tree must remain without node_modules after sandbox install",
   );
-  const relativeMarkerRel = join(
+  const marker = join(
+    sandboxRoot,
     "node_modules",
     "ak-reviewer-deps-probe",
     "write-isolation-marker",
   );
-  const absoluteMarkerRel = join(
-    "node_modules",
-    "ak-reviewer-abs-deps-probe",
-    "write-isolation-marker",
+  writeFileSync(marker, "sandbox-only\n", "utf8");
+  assert.equal(
+    existsSync(join(sourceProjectRoot, "node_modules")),
+    false,
+    "sandbox deps write must not create source node_modules",
   );
-  const sourceMaterial = sourceDepsMaterialRoot(sourceProjectRoot);
-  const sourceRelativeMarker = join(sourceMaterial, "ak-reviewer-deps-probe", "write-isolation-marker");
-  const sourceStoreMarker = join(
-    sourceMaterial,
-    ".store",
-    "ak-reviewer-deps-probe",
-    "write-isolation-marker",
-  );
-  const sourceAbsoluteMarker = join(
-    sourceMaterial,
-    "ak-reviewer-abs-deps-probe",
-    "write-isolation-marker",
-  );
-  const sourceAbsStoreMarker = join(
-    sourceMaterial,
-    ".abs-store",
-    "ak-reviewer-abs-deps-probe",
-    "write-isolation-marker",
-  );
-  for (const marker of [
-    sourceRelativeMarker,
-    sourceStoreMarker,
-    sourceAbsoluteMarker,
-    sourceAbsStoreMarker,
-  ]) {
-    assert.equal(existsSync(marker), false);
-  }
-  writeFileSync(join(sandboxRoot, relativeMarkerRel), "sandbox-only-rel\n", "utf8");
-  writeFileSync(join(sandboxRoot, absoluteMarkerRel), "sandbox-only-abs\n", "utf8");
-  for (const marker of [
-    sourceRelativeMarker,
-    sourceStoreMarker,
-    sourceAbsoluteMarker,
-    sourceAbsStoreMarker,
-  ]) {
-    assert.equal(
-      existsSync(marker),
-      false,
-      "sandbox deps write must not reach the caller source tree",
-    );
-  }
 }
 
-/** After sandbox close: ignored source deps must be untouched by Reviewer writes. */
-function assertSourceIgnoredDepsUntouched(
-  sourceProjectRoot: string,
-  expectedRootIdentity: ReviewerDepsRootIdentity,
-): void {
-  const rootModules = join(sourceProjectRoot, "node_modules");
-  const rootStat = lstatSync(rootModules);
-  if (expectedRootIdentity === "symlink") {
-    assert.equal(
-      rootStat.isSymbolicLink(),
-      true,
-      "source root node_modules symlink must remain",
-    );
-  } else {
-    assert.equal(
-      rootStat.isSymbolicLink(),
-      false,
-      "source root node_modules must remain a real directory, not a symlink",
-    );
-    assert.equal(
-      rootStat.isDirectory(),
-      true,
-      "source root node_modules must remain a directory",
-    );
-  }
-  const materialRoot =
-    expectedRootIdentity === "symlink" ? realpathSync(rootModules) : rootModules;
-  const relativeLink = join(materialRoot, "ak-reviewer-deps-probe");
-  const absoluteLink = join(materialRoot, "ak-reviewer-abs-deps-probe");
-  const storeDep = join(materialRoot, ".store", "ak-reviewer-deps-probe");
-  const absStore = join(materialRoot, ".abs-store", "ak-reviewer-abs-deps-probe");
-  assert.ok(lstatSync(relativeLink).isSymbolicLink(), "relative deps link fixture must remain");
-  assert.ok(lstatSync(absoluteLink).isSymbolicLink(), "absolute deps link fixture must remain");
-  assert.deepEqual(readdirSync(storeDep).sort(), ["index.js", "package.json"]);
-  assert.deepEqual(readdirSync(absStore).sort(), ["index.js", "package.json"]);
+/** After sandbox close: source checkout still has no installed deps. */
+function assertSourceRemainsWithoutNodeModules(sourceProjectRoot: string): void {
   assert.equal(
-    existsSync(join(storeDep, "write-isolation-marker")),
+    existsSync(join(sourceProjectRoot, "node_modules")),
     false,
-    "relative linked store must not retain sandbox writes",
-  );
-  assert.equal(
-    existsSync(join(absStore, "write-isolation-marker")),
-    false,
-    "absolute linked store must not retain sandbox writes",
+    "source tree must remain without node_modules after Reviewer cleanup",
   );
 }
 
@@ -1200,9 +1103,8 @@ test("explicit single-lens projects admitted lens and optional caller provenance
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
-    // Minimal dual-root map (#983): symlink identity on explicit single-lens;
-    // resume + dual-lens keep the ordinary directory root below.
-    await seedGitProjectWithIgnoredDeps(project, { rootIdentity: "symlink" });
+    // #983: source has manifest/lockfile only — no pre-seeded node_modules.
+    await seedGitProjectWithIgnoredDeps(project);
     const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
       cwd: project,
       encoding: "utf8",
@@ -1250,7 +1152,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
       }),
       worktreeListBefore,
     );
-    assertSourceIgnoredDepsUntouched(project, "symlink");
+    assertSourceRemainsWithoutNodeModules(project);
     assert.equal(captured!.includes("--ak-review-task"), false);
     assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
     const okDialogue = readUserDialogueStdin(capturedStdin ?? "");
@@ -1542,7 +1444,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         }),
         worktreeListBefore,
       );
-      assertSourceIgnoredDepsUntouched(project, "directory");
+      assertSourceRemainsWithoutNodeModules(project);
     }
 
     const bookKey = resolveBookKeyFromGit(project);
@@ -1610,7 +1512,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       }),
       worktreeListBefore,
     );
-    assertSourceIgnoredDepsUntouched(project, "directory");
+    assertSourceRemainsWithoutNodeModules(project);
     assert.equal(Array.isArray(resumeArgs), true);
     assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
@@ -1699,7 +1601,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
       encoding: "utf8",
     });
     assert.equal(worktreeListAfter, worktreeListBefore);
-    assertSourceIgnoredDepsUntouched(project, "directory");
+    assertSourceRemainsWithoutNodeModules(project);
 
     // Durable identity matches the caller project (10a); one durable page is enough.
     const bookKey = resolveBookKeyFromGit(project);
@@ -1749,7 +1651,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
       encoding: "utf8",
     });
     assert.equal(worktreeListAfterResume, worktreeListBefore);
-    assertSourceIgnoredDepsUntouched(project, "directory");
+    assertSourceRemainsWithoutNodeModules(project);
   });
 });
 

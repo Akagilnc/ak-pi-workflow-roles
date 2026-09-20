@@ -12,8 +12,6 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
-  cp,
-  lstat,
   mkdir,
   mkdtemp,
   realpath,
@@ -680,58 +678,33 @@ function reviewerSandboxPath(worktreeAxis: string, projectRelative: string): str
 
 /**
  * Ignored dependency trees (node_modules) do not follow `git worktree add`.
- * When the source checkout already has them, mirror that material into the
- * ephemeral sandbox so Reviewer probes and focused tests resolve the same way
- * as in the caller tree (#983).
- *
- * Unified materialization: `fs.cp({ recursive, dereference })` turns root
- * symlinks, nested absolute escapes, and ordinary in-tree relative links into
- * real files/directories owned by the worktree. No retained sandbox symlinks →
- * no write-through. Dangling / looping links and other native I/O failures
- * propagate into the caller rollback seam — never a silent skip or a second
- * classification pass. Same shared seam for all Reviewer paths; no second
- * install, no public flag.
- *
- * Documented absence only: `lstat(source/node_modules)` ENOENT → leave absent.
- * Other source lstat/realpath errors preserve their cause. A pre-existing
- * target symlink is rejected (cp would write through it); an ordinary
- * pre-existing directory is merged by cp; other target shapes fail via cp.
+ * Give the ephemeral Reviewer sandbox its own install from the worktree
+ * manifest/lockfile (#983). Host `pnpm` only — no copy of caller
+ * `node_modules`, no package-manager selection, no install→copy fallback.
+ * No package.json or pnpm-lock.yaml → nothing to install (leave absent).
+ * Missing `pnpm` is an honest capability gap; other install failures
+ * propagate into the existing worktree rollback seam.
  */
-async function provisionReviewerWorktreeDeps(
-  sourceProjectRoot: string,
-  worktreeRoot: string,
-): Promise<void> {
-  const sourceModules = join(sourceProjectRoot, "node_modules");
-  let sourceStat;
+async function provisionReviewerWorktreeDeps(worktreeRoot: string): Promise<void> {
+  if (
+    !existsSync(join(worktreeRoot, "package.json")) ||
+    !existsSync(join(worktreeRoot, "pnpm-lock.yaml"))
+  ) {
+    return;
+  }
   try {
-    sourceStat = await lstat(sourceModules);
+    await execFileAsync("pnpm", ["install", "--frozen-lockfile"], {
+      cwd: worktreeRoot,
+    });
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return;
+      throw new Error(
+        "reviewer worktree deps require host pnpm CLI (packageManager=pnpm); pnpm not found on PATH",
+        { cause: error },
+      );
     }
     throw error;
   }
-  const target = join(worktreeRoot, "node_modules");
-  try {
-    const existing = await lstat(target);
-    if (existing.isSymbolicLink()) {
-      throw new Error(
-        `reviewer worktree deps target must not be a symlink: ${target}`,
-      );
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw error;
-    }
-  }
-  // Root identity: copy from a real directory. A source root symlink must not
-  // be retained as sandbox/node_modules (that would write-through).
-  let copySource = sourceModules;
-  if (sourceStat.isSymbolicLink()) {
-    // realpath rejections (dangling ENOENT, ELOOP, EACCES, races, …) propagate.
-    copySource = await realpath(sourceModules);
-  }
-  await cp(copySource, target, { recursive: true, dereference: true });
 }
 
 
@@ -800,7 +773,7 @@ export async function openEphemeralReviewerWorktree(options: {
       await mkdir(reviewerSandboxPath(worktreeRoot, projectRelative), { recursive: true });
     }
     // After registration: provision ignored deps so prep failure still rolls back.
-    await provisionReviewerWorktreeDeps(sourceProjectRoot, worktreeRoot);
+    await provisionReviewerWorktreeDeps(worktreeRoot);
   } catch (error) {
     await rollback(error);
   }
@@ -969,7 +942,7 @@ export async function summonParallelReviewerLenses(options: {
       if (projectRelative !== "") {
         await mkdir(reviewerSandboxPath(path, projectRelative), { recursive: true });
       }
-      await provisionReviewerWorktreeDeps(sourceProjectRoot, path);
+      await provisionReviewerWorktreeDeps(path);
     }),
   );
   const creationFailures = creation.flatMap((result) =>
