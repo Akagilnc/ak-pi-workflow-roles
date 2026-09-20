@@ -130,7 +130,7 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
   await writeFile(join(depRoot, "index.js"), 'export const value = "ok";\n', "utf8");
 }
 
-/** Native focused-test result in the ephemeral sandbox — not ERR_MODULE_NOT_FOUND. */
+/** Native focused-test resolves in the ephemeral sandbox (probe assert + exit status). */
 function assertFocusedTestResolvesInSandbox(cwd: string): void {
   // Sandbox cwd may be a caller subdirectory; focused tests live at the git root.
   const sandboxRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
@@ -142,13 +142,12 @@ function assertFocusedTestResolvesInSandbox(cwd: string): void {
   delete env.NODE_TEST_CONTEXT;
   delete env.NODE_CHANNEL_FD;
   delete env.NODE_CHANNEL_SERIALIZATION_MODE;
-  const result = execFileSync(
-    process.execPath,
-    ["--test", "test/deps-probe.test.js"],
-    { cwd: sandboxRoot, encoding: "utf8", env },
-  );
-  assert.match(result, /# pass 1/);
-  assert.equal(result.includes("ERR_MODULE_NOT_FOUND"), false);
+  // Probe asserts structured `value === "ok"`; non-zero exit throws via execFileSync.
+  execFileSync(process.execPath, ["--test", "test/deps-probe.test.js"], {
+    cwd: sandboxRoot,
+    encoding: "utf8",
+    env,
+  });
 }
 
 /** Production ReviewerIntent face (ADR 0003 / #917 lens axes). */
@@ -1335,6 +1334,10 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     await seedGitProjectWithIgnoredDeps(project);
     const runId = "run-cli-reviewer-resume";
     const instruction = "Review the branch after quota recovery.";
+    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
+      cwd: project,
+      encoding: "utf8",
+    });
 
     {
       const { io } = captureIo();
@@ -1364,6 +1367,14 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       });
       assert.ok(first.terminal?.resume, "reviewer 429 must be resumable");
       assert.equal(first.terminal?.roleOutcome.role, "reviewer");
+      // Single-axis first-failure cleanup: compare immediately after 429 returns.
+      assert.equal(
+        execFileSync("git", ["worktree", "list", "--porcelain"], {
+          cwd: project,
+          encoding: "utf8",
+        }),
+        worktreeListBefore,
+      );
     }
 
     const bookKey = resolveBookKeyFromGit(project);
@@ -1384,10 +1395,6 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     assert.equal(admitted.lens, "correctness");
     assert.equal(realpathSync(String(admitted.projectRoot)), realpathSync(project));
 
-    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
-      cwd: project,
-      encoding: "utf8",
-    });
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
