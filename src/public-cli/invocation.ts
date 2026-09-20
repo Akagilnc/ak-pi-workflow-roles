@@ -639,8 +639,14 @@ export async function relocateAdmittedRunToTicket(
     role: admitted.role,
   });
   ensureRoleRunDirectory(ledgerHome, dirname(target.runDirectory));
-  await rename(oldRunDirectory, target.runDirectory);
-  heldLease?.relocate(target.runDirectory);
+
+  // Rewrite while still at unbound so parse/write failures leave the source in
+  // place; rename only after the durable-page closure succeeds (#863 P1).
+  await rewriteRoleRunDurablePages({
+    pagesDirectory: oldRunDirectory,
+    oldRunDirectory,
+    newRunDirectory: target.runDirectory,
+  });
 
   const admittedRecord = admitted as unknown as Record<string, unknown>;
   rewriteRunDirectoryPathFields(
@@ -667,11 +673,8 @@ export async function relocateAdmittedRunToTicket(
   const principal = authority.seal(target);
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
-  await rewriteRoleRunDurablePages({
-    pagesDirectory: target.runDirectory,
-    oldRunDirectory,
-    newRunDirectory: target.runDirectory,
-  });
+  await rename(oldRunDirectory, target.runDirectory);
+  heldLease?.relocate(target.runDirectory);
 }
 
 /**

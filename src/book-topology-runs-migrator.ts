@@ -292,12 +292,11 @@ type PlannedBoardBoundMove = {
 
 /**
  * Live in-place repair for already-migrated trees (#863 stock): plan the full
- * board-bound unbound→ticket batch first, refuse any overwrite before the first
- * rename, then rename and rewrite durable pages through the shared relocation
- * seam with the batch `crossRunRewrites` map (same closure shape as offline
- * `planBookMoves`). Leaves without a board ticket stay unbound; other runs in
- * the book still receive the rewrite map so officer/parent/source-run pointers
- * do not keep naming vanished unbound paths.
+ * board-bound unbound→ticket batch first, refuse any overwrite before mutation,
+ * rewrite durable pages (including batch `crossRunRewrites`) while sources still
+ * sit at unbound, then rename. Parse/write failures therefore leave sources in
+ * place so a retry can finish the same closure; rename-only retries still find
+ * remaining unbound sources. Leaves without a board ticket stay unbound.
  */
 export async function relocateBoardBoundUnboundRunsInBook(
   bookDirectory: string,
@@ -314,7 +313,6 @@ export async function relocateBoardBoundUnboundRunsInBook(
   }
 
   const planned: PlannedBoardBoundMove[] = [];
-  const claimed = new Map<string, string>();
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     const parsed = parseRunLeaf(entry.name);
@@ -329,13 +327,6 @@ export async function relocateBoardBoundUnboundRunsInBook(
       parsed.runId,
       parsed.role,
     );
-    const prior = claimed.get(targetPath);
-    if (prior !== undefined) {
-      throw new Error(
-        `board-bound unbound relocate refuses to overwrite ${targetPath} (already claimed by ${prior}) with ${sourcePath}`,
-      );
-    }
-    claimed.set(targetPath, sourcePath);
     planned.push({
       sourcePath,
       targetPath,
@@ -357,23 +348,25 @@ export async function relocateBoardBoundUnboundRunsInBook(
     oldRunDirectory: move.sourcePath,
     newRunDirectory: move.targetPath,
   }));
+  const relocatedBySource = new Map(
+    planned.map((move) => [move.sourcePath, move] as const),
+  );
+
+  // Rewrite before any rename so durable-page failures remain retryable from
+  // the same unbound sources (failure-honesty: no relocatedCount=0 whitewash).
+  for (const runDir of await listBookRunDirectories(bookDirectory)) {
+    const move = relocatedBySource.get(runDir);
+    await rewriteRoleRunDurablePages({
+      pagesDirectory: runDir,
+      oldRunDirectory: move?.sourcePath ?? runDir,
+      newRunDirectory: move?.targetPath ?? runDir,
+      crossRunRewrites,
+    });
+  }
 
   for (const move of planned) {
     await mkdir(dirname(move.targetPath), { recursive: true });
     await rename(move.sourcePath, move.targetPath);
-  }
-
-  const relocatedByNew = new Map(
-    planned.map((move) => [move.targetPath, move] as const),
-  );
-  for (const runDir of await listBookRunDirectories(bookDirectory)) {
-    const move = relocatedByNew.get(runDir);
-    await rewriteRoleRunDurablePages({
-      pagesDirectory: runDir,
-      oldRunDirectory: move?.sourcePath ?? runDir,
-      newRunDirectory: runDir,
-      crossRunRewrites,
-    });
   }
 
   return planned.map((move) => ({

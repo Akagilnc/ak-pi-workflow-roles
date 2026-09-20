@@ -394,9 +394,9 @@ async function rewriteNestedMachinePathPages(
 /**
  * Rewrite admitted-request / invocation / run-state path fields (attachment
  * frozenPath / summons.attachmentPaths pointers only), then nested package-owned
- * session seams, after the run directory has already been moved or copied.
- * `pagesDirectory` is where the pages now live; path strings still naming an
- * old run directory become the matching new directory. `crossRunRewrites`
+ * session seams. Callers may rewrite before or after the filesystem move/copy:
+ * `pagesDirectory` is where the pages currently live on disk; path strings that
+ * still name `oldRunDirectory` become `newRunDirectory`. `crossRunRewrites`
  * covers officer/parent pointers that landed under a different final placement.
  */
 export async function rewriteRoleRunDurablePages(input: {
