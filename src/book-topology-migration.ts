@@ -14,7 +14,18 @@ import {
   describeErrorIdentity,
   RunWriterLeaseHeldError,
   type RunWriterLease,
+  type WriterLeaseDiagnosticKind,
 } from "./public-cli/run-lifecycle.ts";
+
+/** Same cleanup-diagnostic seam as acquireRunWriterLease callers (CLI stderr). */
+export type MutationClosureLeaseCleanupDiagnostic = (
+  diagnostic: string,
+  kind?: WriterLeaseDiagnosticKind,
+) => void;
+
+function defaultMutationClosureCleanupDiagnostic(diagnostic: string): void {
+  process.stderr.write(diagnostic);
+}
 
 const execFileAsync = promisify(execFile);
 export type MigrationDisposition = "placed" | "unbound" | "discarded";
@@ -423,9 +434,10 @@ async function describeHeldLeaseContest(lockPath: string): Promise<string> {
 
 async function acquireOneMutationClosureLease(
   runDirectory: string,
+  onCleanupFailure: MutationClosureLeaseCleanupDiagnostic,
 ): Promise<RunWriterLease> {
   try {
-    return await acquireRunWriterLease(runDirectory);
+    return await acquireRunWriterLease(runDirectory, onCleanupFailure);
   } catch (error) {
     if (!(error instanceof RunWriterLeaseHeldError)) throw error;
   }
@@ -437,7 +449,7 @@ async function acquireOneMutationClosureLease(
     );
   }
   try {
-    return await acquireRunWriterLease(runDirectory);
+    return await acquireRunWriterLease(runDirectory, onCleanupFailure);
   } catch (error) {
     if (error instanceof RunWriterLeaseHeldError) {
       throw new Error(
@@ -459,6 +471,7 @@ export async function holdBoardBoundUnboundRelocateClosure(
   booksDirectory: string,
   mutationClosureRunDirectories: readonly string[],
   env: NodeJS.ProcessEnv = process.env,
+  onCleanupFailure: MutationClosureLeaseCleanupDiagnostic = defaultMutationClosureCleanupDiagnostic,
 ): Promise<readonly RunWriterLease[]> {
   await assertBoardBoundUnboundRelocatePrerequisites(
     booksDirectory,
@@ -467,10 +480,14 @@ export async function holdBoardBoundUnboundRelocateClosure(
   );
   if (mutationClosureRunDirectories.length === 0) return [];
 
+  // Sink is closed into each lease at acquire; normal finally release and
+  // partial-acquire rollback release both surface cleanup failures there.
   const leases: RunWriterLease[] = [];
   try {
     for (const runDirectory of mutationClosureRunDirectories) {
-      leases.push(await acquireOneMutationClosureLease(runDirectory));
+      leases.push(
+        await acquireOneMutationClosureLease(runDirectory, onCleanupFailure),
+      );
     }
     return leases;
   } catch (error) {

@@ -39,6 +39,10 @@ if (parsed.relocateBoardBoundUnbound) {
   const ledgerHome = parsed.ledgerHome ?? join(homedir(), ".ak-roles");
   const report = await relocateBoardBoundUnboundRunsInBooks(
     join(ledgerHome, "books"),
+    process.env,
+    (diagnostic) => {
+      process.stderr.write(diagnostic);
+    },
   );
   process.stdout.write(
     `${JSON.stringify(

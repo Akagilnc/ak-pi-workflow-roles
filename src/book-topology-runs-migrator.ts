@@ -22,6 +22,7 @@ import {
   type BookTopologyMigrationContext,
   type BookTopologyPartitionMigrator,
   type MigrationItemOutcome,
+  type MutationClosureLeaseCleanupDiagnostic,
 } from "./book-topology-migration.ts";
 import type { RunWriterLease } from "./public-cli/run-lifecycle.ts";
 import { listBookRunDirectories } from "./role-run-placement.ts";
@@ -411,6 +412,7 @@ async function applyBoardBoundUnboundMovesInBook(
 export async function relocateBoardBoundUnboundRunsInBooks(
   booksDirectory: string,
   env: NodeJS.ProcessEnv = process.env,
+  onCleanupFailure?: MutationClosureLeaseCleanupDiagnostic,
 ): Promise<BoardBoundUnboundRelocateReport> {
   type BookBatch = {
     readonly bookDirectory: string;
@@ -437,6 +439,7 @@ export async function relocateBoardBoundUnboundRunsInBooks(
     booksDirectory,
     mutationClosure,
     env,
+    onCleanupFailure,
   );
   const leasesByRunDirectory = new Map<string, RunWriterLease>();
   for (let i = 0; i < mutationClosure.length; i += 1) {
