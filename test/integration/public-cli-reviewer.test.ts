@@ -84,6 +84,73 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
+/**
+ * Source tree with a committed focused-test probe and an ignored node_modules
+ * dependency — the #983 shape: worktree add does not carry deps; provision must.
+ */
+async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
+  seedGitProject(root);
+  await writeFile(join(root, ".gitignore"), "node_modules\n", "utf8");
+  await writeFile(
+    join(root, "package.json"),
+    `${JSON.stringify({
+      name: "ak-reviewer-worktree-deps-probe",
+      type: "module",
+      private: true,
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  await mkdir(join(root, "test"), { recursive: true });
+  await writeFile(
+    join(root, "test", "deps-probe.test.js"),
+    [
+      'import assert from "node:assert/strict";',
+      'import test from "node:test";',
+      'import { value } from "ak-reviewer-deps-probe";',
+      'test("resolves provisioned dependency", () => {',
+      '  assert.equal(value, "ok");',
+      "});",
+      "",
+    ].join("\n"),
+    "utf8",
+  );
+  execFileSync("git", ["add", ".gitignore", "package.json", "test"], { cwd: root });
+  execFileSync("git", ["commit", "-m", "seed focused-test probe"], { cwd: root });
+  const depRoot = join(root, "node_modules", "ak-reviewer-deps-probe");
+  await mkdir(depRoot, { recursive: true });
+  await writeFile(
+    join(depRoot, "package.json"),
+    `${JSON.stringify({
+      name: "ak-reviewer-deps-probe",
+      type: "module",
+      main: "index.js",
+    }, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(join(depRoot, "index.js"), 'export const value = "ok";\n', "utf8");
+}
+
+/** Native focused-test result in the ephemeral sandbox — not ERR_MODULE_NOT_FOUND. */
+function assertFocusedTestResolvesInSandbox(cwd: string): void {
+  // Sandbox cwd may be a caller subdirectory; focused tests live at the git root.
+  const sandboxRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
+    cwd,
+    encoding: "utf8",
+  }).trim();
+  // Nested node:test must not inherit the parent runner's IPC/context channels.
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.NODE_CHANNEL_FD;
+  delete env.NODE_CHANNEL_SERIALIZATION_MODE;
+  const result = execFileSync(
+    process.execPath,
+    ["--test", "test/deps-probe.test.js"],
+    { cwd: sandboxRoot, encoding: "utf8", env },
+  );
+  assert.match(result, /# pass 1/);
+  assert.equal(result.includes("ERR_MODULE_NOT_FOUND"), false);
+}
+
 /** Production ReviewerIntent face (ADR 0003 / #917 lens axes). */
 function lawfulReviewerReceipt(
   lens: "completeness" | "correctness",
@@ -971,7 +1038,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
-    seedGitProject(project);
+    await seedGitProjectWithIgnoredDeps(project);
     const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
       cwd: project,
       encoding: "utf8",
@@ -999,6 +1066,8 @@ test("explicit single-lens projects admitted lens and optional caller provenance
         turnCwd = options.cwd;
         // Explicit --lens also runs in a fresh copy (#946 统一新副本).
         assert.notEqual(realpathSync(options.cwd), realpathSync(project));
+        // #983: provisioned ignored deps let in-repo focused tests resolve.
+        assertFocusedTestResolvesInSandbox(options.cwd);
         // Deliberate receipt/lens mismatch must still land (仓级第 0 条).
         return lawfulChildTurn(args, {
           lens: "completeness",
@@ -1263,7 +1332,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
-    seedGitProject(project);
+    await seedGitProjectWithIgnoredDeps(project);
     const runId = "run-cli-reviewer-resume";
     const instruction = "Review the branch after quota recovery.";
 
@@ -1280,7 +1349,9 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        roleTurnHost: reviewerHost(async (args) => {
+        roleTurnHost: reviewerHost(async (args, options) => {
+          // First turn also sandboxed; deps must resolve before the 429 (#983).
+          assertFocusedTestResolvesInSandbox(options.cwd);
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -1344,6 +1415,8 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         // Resume runs in a fresh copy of the source tree at resume time (#946 10a).
         assert.notEqual(realpathSync(options.cwd), realpathSync(project));
+        // #983: resume path shares the same provisioned-deps capability.
+        assertFocusedTestResolvesInSandbox(options.cwd);
         resumeCwd = options.cwd;
         return lawfulChildTurn(args, {
           lens: "correctness",
@@ -1380,8 +1453,8 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
+    // Two commits (empty seed + probe) so HEAD~1 is valid; ignored deps for #983.
+    await seedGitProjectWithIgnoredDeps(project);
     const subdir = join(project, "nested", "leaf");
     await mkdir(subdir, { recursive: true });
     const callerProjectRoot = realpathSync(subdir);
@@ -1417,6 +1490,8 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
         assert.equal(options.timeoutMs, 17_777);
         assert.equal(options.cwd.endsWith(join("nested", "leaf")), true);
         assert.notEqual(realpathSync(options.cwd), callerProjectRoot);
+        // #983: dual-lens child sandboxes share the same deps provision.
+        assertFocusedTestResolvesInSandbox(options.cwd);
         if (args.includes("--provider")) {
           capturedProviders.push(args[args.indexOf("--provider") + 1]!);
         }
@@ -1480,6 +1555,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
           // Sandbox keeps the caller subdirectory layout under a new worktree root.
           assert.equal(options.cwd.endsWith(join("nested", "leaf")), true);
           assert.notEqual(realpathSync(options.cwd), callerProjectRoot);
+          assertFocusedTestResolvesInSandbox(options.cwd);
           return lawfulChildTurn(args, {
             lens: "completeness",
             toolCallId: "subdir-resume",

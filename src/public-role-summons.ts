@@ -11,7 +11,7 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
@@ -671,6 +671,39 @@ function reviewerSandboxPath(worktreeAxis: string, projectRelative: string): str
   return projectRelative === "" ? worktreeAxis : join(worktreeAxis, projectRelative);
 }
 
+/**
+ * Ignored dependency trees (node_modules) do not follow `git worktree add`.
+ * When the source checkout already has them, mirror that material into the
+ * ephemeral sandbox so Reviewer probes and focused tests resolve the same way
+ * as in the caller tree (#983). Shape is a directory symlink — no second
+ * install, no public flag. Absence in the source is left absent.
+ */
+async function provisionReviewerWorktreeDeps(
+  sourceProjectRoot: string,
+  worktreeRoot: string,
+): Promise<void> {
+  const sourceModules = join(sourceProjectRoot, "node_modules");
+  if (!existsSync(sourceModules)) {
+    return;
+  }
+  const target = join(worktreeRoot, "node_modules");
+  try {
+    const existing = await lstat(target);
+    if (!existing.isSymbolicLink()) {
+      throw new Error(
+        `reviewer worktree deps target exists and is not a symlink: ${target}`,
+      );
+    }
+    return;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  await symlink(sourceModules, target, "dir");
+}
+
+
 export type EphemeralReviewerWorktree = {
   readonly executionCwd: string;
   /** Always safe to call once; delete failure is diagnostic only (#946 10a). */
@@ -735,6 +768,8 @@ export async function openEphemeralReviewerWorktree(options: {
     if (projectRelative !== "") {
       await mkdir(reviewerSandboxPath(worktreeRoot, projectRelative), { recursive: true });
     }
+    // After registration: provision ignored deps so prep failure still rolls back.
+    await provisionReviewerWorktreeDeps(sourceProjectRoot, worktreeRoot);
   } catch (error) {
     await rollback(error);
   }
@@ -746,7 +781,8 @@ export async function openEphemeralReviewerWorktree(options: {
       closed = true;
       const cleanupErrors: unknown[] = [];
       try {
-        await execFileAsync("git", ["worktree", "remove", worktreeRoot], {
+        // --force: ephemeral sandboxes may carry provisioned ignored deps (#983).
+        await execFileAsync("git", ["worktree", "remove", "--force", worktreeRoot], {
           cwd: sourceProjectRoot,
         });
       } catch (error) {
@@ -896,12 +932,13 @@ export async function summonParallelReviewerLenses(options: {
         cwd: sourceProjectRoot,
       });
       // Git has registered the worktree — enter the rollback set before any further
-      // prep (mkdir of caller subdirectory) so a later failure cannot leak the entry.
+      // prep (mkdir / deps) so a later failure cannot leak the entry.
       created.add(path);
       // Preserve caller subdirectory even when it is not present in the pinned commit.
       if (projectRelative !== "") {
         await mkdir(reviewerSandboxPath(path, projectRelative), { recursive: true });
       }
+      await provisionReviewerWorktreeDeps(sourceProjectRoot, path);
     }),
   );
   const creationFailures = creation.flatMap((result) =>
@@ -1011,7 +1048,8 @@ export async function summonParallelReviewerLenses(options: {
   // tmp dirs are left to the OS and git worktree prune (#946).
   const cleanup = await Promise.allSettled(
     [...created].map((path) =>
-      execFileAsync("git", ["worktree", "remove", path], { cwd: sourceProjectRoot })),
+      // --force: ephemeral sandboxes may carry provisioned ignored deps (#983).
+      execFileAsync("git", ["worktree", "remove", "--force", path], { cwd: sourceProjectRoot })),
   );
   const cleanupFailures = cleanup.flatMap((result) =>
     result.status === "rejected" ? [result.reason] : []);
