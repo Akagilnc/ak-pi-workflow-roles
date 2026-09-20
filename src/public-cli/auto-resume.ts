@@ -13,7 +13,7 @@
  */
 import { constants as fsConstants } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { lstat, mkdir, open } from "node:fs/promises";
+import { lstat, mkdir, open, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
@@ -299,28 +299,20 @@ async function writeHardenedArtifactFile(
   return filePath;
 }
 
-async function retainDispatchError(
+async function appendDispatchErrorRetentionPointer(
   admitted: { runDirectory: string; principal: DurablePrincipal },
   principalAuthority: DurablePrincipalAuthority,
   sessionAppender: SessionCustomEntryAppender,
   attempt: number,
-  error: unknown,
-): Promise<{ file: string; pointerError?: unknown }> {
-  const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
-  // Whole-object dump: everything the thrown value carries, nothing picked.
-  const filePath = await writeHardenedArtifactFile(artifactsDir, `dispatch-error-attempt-${attempt}`, {
-    version: 1,
-    attempt,
-    recordedAt: new Date().toISOString(),
-    error: serializeThrownValue(error),
-  });
+  filePath: string,
+): Promise<unknown | undefined> {
   // Addressable pointer in the dossier (卷宗): Pi session custom-entry codec
   // (appendPiSessionCustomEntry). Lease still owned here with run-writer.
   let pointerLease: RunWriterLease;
   try {
     pointerLease = await acquireRunWriterLease(admitted.runDirectory);
   } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) return { file: filePath };
+    if (error instanceof RunWriterLeaseHeldError) return undefined;
     throw error;
   }
   // Pointer-stage failure (#426 fix_now #5) is separated from the file write:
@@ -340,7 +332,124 @@ async function retainDispatchError(
   } finally {
     await pointerLease.release();
   }
+  return pointerError;
+}
+
+async function retainDispatchError(
+  admitted: { runDirectory: string; principal: DurablePrincipal },
+  principalAuthority: DurablePrincipalAuthority,
+  sessionAppender: SessionCustomEntryAppender,
+  attempt: number,
+  error: unknown,
+): Promise<{ file: string; pointerError?: unknown }> {
+  const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
+  // Whole-object dump: everything the thrown value carries, nothing picked.
+  const filePath = await writeHardenedArtifactFile(artifactsDir, `dispatch-error-attempt-${attempt}`, {
+    version: 1,
+    attempt,
+    recordedAt: new Date().toISOString(),
+    error: serializeThrownValue(error),
+  });
+  const pointerError = await appendDispatchErrorRetentionPointer(
+    admitted,
+    principalAuthority,
+    sessionAppender,
+    attempt,
+    filePath,
+  );
   return pointerError === undefined ? { file: filePath } : { file: filePath, pointerError };
+}
+
+/**
+ * #990: retain a settled controlled-failure Terminal that auto-resume will
+ * continue past. Reuses the same hardened dispatch-error-attempt-* face and
+ * session pointer as thrown-dispatch retention — conventional error.json is
+ * cleared by a later accepted publish, so this durable snapshot is what keeps
+ * first-failure diagnosis addressable after success.
+ */
+async function retainControlledFailureTerminal(
+  admitted: { runDirectory: string; principal: DurablePrincipal },
+  principalAuthority: DurablePrincipalAuthority,
+  sessionAppender: SessionCustomEntryAppender,
+  attempt: number,
+  terminal: TerminalResult,
+): Promise<{ file: string; pointerError?: unknown }> {
+  if (terminal.roleOutcome.kind !== "failure") {
+    throw new TypeError("retainControlledFailureTerminal requires a failure role outcome");
+  }
+  const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
+  const filePath = await writeHardenedArtifactFile(artifactsDir, `dispatch-error-attempt-${attempt}`, {
+    version: 1,
+    attempt,
+    recordedAt: new Date().toISOString(),
+    diagnostic: terminal.roleOutcome.diagnostic,
+    ...(terminal.roleOutcome.cause === undefined ? {} : { cause: terminal.roleOutcome.cause }),
+    decisiveFacts: { ...terminal.roleOutcome.decisiveFacts },
+  });
+  const pointerError = await appendDispatchErrorRetentionPointer(
+    admitted,
+    principalAuthority,
+    sessionAppender,
+    attempt,
+    filePath,
+  );
+  return pointerError === undefined ? { file: filePath } : { file: filePath, pointerError };
+}
+
+type PriorControlledFailureCarry = {
+  readonly diagnostic: string;
+  readonly decisiveFacts: Readonly<Record<string, unknown>>;
+  readonly errorFiles: readonly string[];
+};
+
+/**
+ * #990: fold the first controlled failure's structured facts + surviving
+ * evidence refs into the later lawful Terminal before it becomes the only
+ * external observation surface (no second SoT, no diarist-only path).
+ */
+function carryPriorControlledFailureIntoLawfulTerminal(
+  terminal: TerminalResult,
+  prior: PriorControlledFailureCarry,
+): void {
+  const outcome = terminal.roleOutcome as {
+    decisiveFacts?: Record<string, unknown>;
+  };
+  const priorFacts = outcome.decisiveFacts ?? {};
+  outcome.decisiveFacts = {
+    ...priorFacts,
+    priorControlledFailureDiagnostic: prior.diagnostic,
+    priorControlledFailureDecisiveFacts: { ...prior.decisiveFacts },
+    dispatchErrorFiles: [...prior.errorFiles],
+  };
+  const existing = terminal.artifacts ?? [];
+  const known = new Set(existing.map((artifact) => artifact.path));
+  const errorRefs: TerminalArtifactRef[] = prior.errorFiles
+    .filter((path) => !known.has(path))
+    .map((path) => ({ kind: "error", path }));
+  (terminal as { artifacts: TerminalArtifactRef[] }).artifacts = [...existing, ...errorRefs];
+}
+
+/**
+ * Patch the already-published accepted report face so published materials match
+ * the carried Terminal outcome. Best-effort: report I/O failure must not mask
+ * the lawful result (same diagnostic-sink isolation as throw retention).
+ */
+async function patchPublishedReportWithCarriedOutcome(
+  terminal: TerminalResult,
+  io: CliIo,
+): Promise<void> {
+  const reportRef = terminal.artifacts.find((artifact) => artifact.kind === "report");
+  if (reportRef === undefined) return;
+  try {
+    const raw = await readFile(reportRef.path, "utf8");
+    const body = JSON.parse(raw) as Record<string, unknown>;
+    body.outcome = terminal.roleOutcome;
+    await writeFile(reportRef.path, `${JSON.stringify(body, null, 2)}\n`, "utf8");
+  } catch (error) {
+    io.stderr(
+      `prior controlled failure report patch failed (best-effort continue): ${describeErrorIdentity(error)}\n`,
+    );
+  }
 }
 
 /**
@@ -497,6 +606,9 @@ export async function runWithAutoResumeLoop<
   let lastThrownError: unknown;
   let everyAttemptThrew = true;
   const retainedErrorFiles: string[] = [];
+  // #990: first controlled-failure Terminal washed by a later lawful final —
+  // keep structured diagnosis in-loop and durable evidence refs for carry-forward.
+  let priorControlledFailure: PriorControlledFailureCarry | undefined;
 
   while (true) {
     let lease: RunWriterLease;
@@ -575,6 +687,14 @@ export async function runWithAutoResumeLoop<
       const lawful = terminal !== undefined && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
       if (lawful) {
         if (terminal !== undefined) {
+          // #990: later lawful final must still carry first controlled failure.
+          if (priorControlledFailure !== undefined) {
+            carryPriorControlledFailureIntoLawfulTerminal(terminal, {
+              ...priorControlledFailure,
+              errorFiles: retainedErrorFiles,
+            });
+            await patchPublishedReportWithCarriedOutcome(terminal, options.io);
+          }
           // Present lawful terminal once to real io (dummy was used inside dispatch)
           options.io.stdout(formatTerminalResult(terminal));
         }
@@ -603,6 +723,37 @@ export async function runWithAutoResumeLoop<
       ) {
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
+      }
+      // Will auto-resume past this settled failure: retain durable snapshot now
+      // (afterDispatch may already have relocated admitted.runDirectory).
+      if (terminal !== undefined && terminal.roleOutcome.kind === "failure") {
+        const attempt = dispatchOrdinal - 1;
+        try {
+          const { file, pointerError } = await retainControlledFailureTerminal(
+            options.admitted,
+            options.principalAuthority,
+            options.sessionAppender,
+            attempt,
+            terminal,
+          );
+          retainedErrorFiles.push(file);
+          if (priorControlledFailure === undefined) {
+            priorControlledFailure = {
+              diagnostic: terminal.roleOutcome.diagnostic,
+              decisiveFacts: { ...terminal.roleOutcome.decisiveFacts },
+              errorFiles: [],
+            };
+          }
+          if (pointerError !== undefined) {
+            options.io.stderr(
+              `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(pointerError)}\n`,
+            );
+          }
+        } catch (retentionError) {
+          options.io.stderr(
+            `dispatch error retention failed (best-effort continue): ${describeErrorIdentity(retentionError)}\n`,
+          );
+        }
       }
     } else {
       // Exception path: continue through the identical budget/session gates.
