@@ -7,7 +7,7 @@ import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts"
  * Caller instruction is optional provenance, never semantic control.
  */
 import assert from "node:assert/strict";
-import { realpathSync } from "node:fs";
+import { existsSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import {
   access,
   chmod,
@@ -130,8 +130,12 @@ async function seedGitProjectWithIgnoredDeps(root: string): Promise<void> {
   await writeFile(join(depRoot, "index.js"), 'export const value = "ok";\n', "utf8");
 }
 
-/** Native focused-test resolves in the ephemeral sandbox (probe assert + exit status). */
-function assertFocusedTestResolvesInSandbox(cwd: string): void {
+/**
+ * Native focused-test resolves in the ephemeral sandbox (probe assert + exit
+ * status), and a write under sandbox node_modules must not escape into the
+ * caller source tree (#983 write-isolation).
+ */
+function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: string): void {
   // Sandbox cwd may be a caller subdirectory; focused tests live at the git root.
   const sandboxRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], {
     cwd,
@@ -148,6 +152,22 @@ function assertFocusedTestResolvesInSandbox(cwd: string): void {
     encoding: "utf8",
     env,
   });
+  const markerRel = join("node_modules", "ak-reviewer-deps-probe", "write-isolation-marker");
+  const sourceMarker = join(sourceProjectRoot, markerRel);
+  assert.equal(existsSync(sourceMarker), false);
+  writeFileSync(join(sandboxRoot, markerRel), "sandbox-only\n", "utf8");
+  assert.equal(
+    existsSync(sourceMarker),
+    false,
+    "sandbox deps write must not reach the caller source tree",
+  );
+}
+
+/** After sandbox close: ignored source deps must be untouched by Reviewer writes. */
+function assertSourceIgnoredDepsUntouched(sourceProjectRoot: string): void {
+  const depRoot = join(sourceProjectRoot, "node_modules", "ak-reviewer-deps-probe");
+  assert.ok(existsSync(depRoot), "source ignored deps fixture must remain");
+  assert.deepEqual(readdirSync(depRoot).sort(), ["index.js", "package.json"]);
 }
 
 /** Production ReviewerIntent face (ADR 0003 / #917 lens axes). */
@@ -1066,7 +1086,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
         // Explicit --lens also runs in a fresh copy (#946 统一新副本).
         assert.notEqual(realpathSync(options.cwd), realpathSync(project));
         // #983: provisioned ignored deps let in-repo focused tests resolve.
-        assertFocusedTestResolvesInSandbox(options.cwd);
+        assertFocusedTestResolvesInSandbox(options.cwd, project);
         // Deliberate receipt/lens mismatch must still land (仓级第 0 条).
         return lawfulChildTurn(args, {
           lens: "completeness",
@@ -1085,6 +1105,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
       }),
       worktreeListBefore,
     );
+    assertSourceIgnoredDepsUntouched(project);
     assert.equal(captured!.includes("--ak-review-task"), false);
     assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
     const okDialogue = readUserDialogueStdin(capturedStdin ?? "");
@@ -1354,7 +1375,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         io,
         roleTurnHost: reviewerHost(async (args, options) => {
           // First turn also sandboxed; deps must resolve before the 429 (#983).
-          assertFocusedTestResolvesInSandbox(options.cwd);
+          assertFocusedTestResolvesInSandbox(options.cwd, project);
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -1375,6 +1396,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         }),
         worktreeListBefore,
       );
+      assertSourceIgnoredDepsUntouched(project);
     }
 
     const bookKey = resolveBookKeyFromGit(project);
@@ -1423,7 +1445,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         // Resume runs in a fresh copy of the source tree at resume time (#946 10a).
         assert.notEqual(realpathSync(options.cwd), realpathSync(project));
         // #983: resume path shares the same provisioned-deps capability.
-        assertFocusedTestResolvesInSandbox(options.cwd);
+        assertFocusedTestResolvesInSandbox(options.cwd, project);
         resumeCwd = options.cwd;
         return lawfulChildTurn(args, {
           lens: "correctness",
@@ -1442,6 +1464,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
       }),
       worktreeListBefore,
     );
+    assertSourceIgnoredDepsUntouched(project);
     assert.equal(Array.isArray(resumeArgs), true);
     assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
@@ -1498,7 +1521,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
         assert.equal(options.cwd.endsWith(join("nested", "leaf")), true);
         assert.notEqual(realpathSync(options.cwd), callerProjectRoot);
         // #983: dual-lens child sandboxes share the same deps provision.
-        assertFocusedTestResolvesInSandbox(options.cwd);
+        assertFocusedTestResolvesInSandbox(options.cwd, project);
         if (args.includes("--provider")) {
           capturedProviders.push(args[args.indexOf("--provider") + 1]!);
         }
@@ -1530,6 +1553,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
       encoding: "utf8",
     });
     assert.equal(worktreeListAfter, worktreeListBefore);
+    assertSourceIgnoredDepsUntouched(project);
 
     // Durable identity matches the caller project (10a); one durable page is enough.
     const bookKey = resolveBookKeyFromGit(project);
@@ -1562,7 +1586,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
           // Sandbox keeps the caller subdirectory layout under a new worktree root.
           assert.equal(options.cwd.endsWith(join("nested", "leaf")), true);
           assert.notEqual(realpathSync(options.cwd), callerProjectRoot);
-          assertFocusedTestResolvesInSandbox(options.cwd);
+          assertFocusedTestResolvesInSandbox(options.cwd, project);
           return lawfulChildTurn(args, {
             lens: "completeness",
             toolCallId: "subdir-resume",
@@ -1579,6 +1603,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
       encoding: "utf8",
     });
     assert.equal(worktreeListAfterResume, worktreeListBefore);
+    assertSourceIgnoredDepsUntouched(project);
   });
 });
 

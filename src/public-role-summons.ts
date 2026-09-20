@@ -11,7 +11,7 @@
  */
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
-import { lstat, mkdir, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { cp, lstat, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
@@ -675,8 +675,10 @@ function reviewerSandboxPath(worktreeAxis: string, projectRelative: string): str
  * Ignored dependency trees (node_modules) do not follow `git worktree add`.
  * When the source checkout already has them, mirror that material into the
  * ephemeral sandbox so Reviewer probes and focused tests resolve the same way
- * as in the caller tree (#983). Shape is a directory symlink — no second
- * install, no public flag. Absence in the source is left absent.
+ * as in the caller tree (#983). Shape is a recursive directory copy — same
+ * shared seam for all Reviewer paths, no second install, no public flag, and
+ * no writable path back into the caller tree. Absence in the source is left
+ * absent.
  */
 async function provisionReviewerWorktreeDeps(
   sourceProjectRoot: string,
@@ -689,9 +691,14 @@ async function provisionReviewerWorktreeDeps(
   const target = join(worktreeRoot, "node_modules");
   try {
     const existing = await lstat(target);
-    if (!existing.isSymbolicLink()) {
+    if (existing.isSymbolicLink()) {
       throw new Error(
-        `reviewer worktree deps target exists and is not a symlink: ${target}`,
+        `reviewer worktree deps target must not be a symlink: ${target}`,
+      );
+    }
+    if (!existing.isDirectory()) {
+      throw new Error(
+        `reviewer worktree deps target exists and is not a directory: ${target}`,
       );
     }
     return;
@@ -700,7 +707,7 @@ async function provisionReviewerWorktreeDeps(
       throw error;
     }
   }
-  await symlink(sourceModules, target, "dir");
+  await cp(sourceModules, target, { recursive: true });
 }
 
 
