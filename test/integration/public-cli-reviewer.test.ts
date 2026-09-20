@@ -239,9 +239,9 @@ function assertFocusedTestResolvesInSandbox(cwd: string, sourceProjectRoot: stri
     lstatSync(sandboxBroken).isSymbolicLink(),
     "in-sandbox dangling bin link must survive provision",
   );
-  assert.equal(
-    existsSync(sandboxEscape),
-    false,
+  assert.throws(
+    () => lstatSync(sandboxEscape),
+    { code: "ENOENT" },
     "escaping dangling deps link must be removed from sandbox",
   );
 }
