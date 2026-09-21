@@ -785,9 +785,7 @@ function countersignAdapters(options?: {
 
 /**
  * Resume a previously admitted Countersign run (#599 / DK-3 / #637 / #987).
- * Restores role/ticket/session identity. Bound court re-entry runs the diarist
- * refresh station (ADR 0075 每次过庭都跑); unbound skips refresh. Refresh is
- * not a resume precondition and does not rewrite host resume (#987). Gate
+ * Restores role/ticket/session identity. Gate
  * same-parent and explicit `ak-role resume <runId>` share this entry; summons
  * may carry this turn's instruction. Manual resume keeps package-envelope /
  * caller-message semantics and birth attachments. 起居录 path delivery remains
@@ -827,27 +825,7 @@ export async function runPublicCountersignResume(
         ),
       );
     },
-    adapters: countersignAdapters(request.summons === undefined ? undefined : {
-      beforeDispatch: async (admitted) => {
-        // #871 B7: durable set damage already identified at load — settle as
-        // station-child exhausted → presentControlledFailure (not structural exit 2).
-        if (admitted.courtTicketNumbersDamage !== undefined) {
-          throw new StationChildExhaustedError(
-            admitted.courtTicketNumbersDamage,
-          );
-        }
-        // #871: same-ticket re-summons may hand a fresh typed set from identity.
-        // Whole-set replace onto this run fact; no new set → keep stored set.
-        // Manual resume (no pending) keeps the durable set and never invents one.
-        if (env.pendingCourtTicketNumbers !== undefined) {
-          await bindCourtTicketNumbersOnAdmitted(
-            admitted,
-            env.pendingCourtTicketNumbers,
-          );
-        }
-        await runCountersignCourtDiaristStation(admitted, env, io);
-      },
-    }),
+    adapters: countersignAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
 }

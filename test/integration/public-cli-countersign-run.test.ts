@@ -2046,9 +2046,10 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     type Phase = "first" | "resumeKeep" | "replace" | "single" | "unbound";
     let phase: Phase = "first";
     const boundRefreshTickets: number[] = [];
+    const countersignPrompts: string[] = [];
     let countersignBodyTurns = 0;
 
-    const host = roleTurnHostFromLegacyPiRunner({
+    const baseHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
       piRunner: async (args, options) => {
@@ -2088,6 +2089,14 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
         return courtPipelinePiRunner(parent)(args, options);
       },
     });
+    const host: RoleTurnHost = {
+      executeTurn: async (request) => {
+        if (request.activation.role === "countersign") {
+          countersignPrompts.push(request.continuation.prompt);
+        }
+        return await baseHost.executeTurn(request);
+      },
+    };
 
     const envBase = {
       home,
@@ -2144,9 +2153,17 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     const resumed = await runPublicCountersignResume(
       {
         runId: firstRunId,
-        message: "裁：#100 二轮再审，集合不变。",
+        summons: {
+          instruction: "裁：#100 二轮再审，集合不变。",
+          instructionEmpty: false,
+        },
       },
-      envBase,
+      {
+        ...envBase,
+        runCourtDiaristStation: async () => {
+          throw new Error("refresh unavailable");
+        },
+      },
       captureIo().io,
     );
     assert.equal(resumed.exitCode, 0);
@@ -2154,10 +2171,11 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     assert.equal(resumed.admitted?.ticketNumber, parent);
     assert.deepEqual(resumed.admitted?.courtTicketNumbers, [parent, childA, childB]);
     assert.equal(countersignBodyTurns, 1);
+    assert.equal(countersignPrompts.at(-1), "裁：#100 二轮再审，集合不变。");
     assert.equal(
       boundRefreshTickets.length,
       0,
-      "explicit resume must dispatch without a diarist refresh precondition",
+      "same-parent resume must dispatch without a diarist refresh precondition",
     );
 
     // --- #987 public re-summons mints new with set {parent,A,C}; B not refreshed ---
