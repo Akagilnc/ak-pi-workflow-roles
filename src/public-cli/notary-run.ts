@@ -1,7 +1,8 @@
 /**
  * Public Notary Role run: admit source-run locator → shared post-admission coordinator
- * → settle Terminal result (#448 / #517). Zero caller prompt/attachment. Lifecycle is
- * the shared post-admission seam; this module keeps only Notary adapters.
+ * → settle Terminal result (#448 / #517). Explicit new has zero caller
+ * prompt/attachment; explicit resume accepts the shared optional caller message.
+ * Lifecycle is the shared post-admission seam; this module keeps only Notary adapters.
  * #637 / #747: same-parent (--source-run) re-summons resume the seat's previous run.
  */
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
@@ -231,11 +232,6 @@ export async function runPublicNotaryResume(
     env,
     io,
     load: async (effective) => {
-      if (effective.message !== undefined) {
-        throw new CliUsageError(
-          "notary rejects caller prompt/instruction; only zero caller-prompt continuation admitted",
-        );
-      }
       const loaded = await loadResumableNotaryRun(
         env.home,
         effective.runId,

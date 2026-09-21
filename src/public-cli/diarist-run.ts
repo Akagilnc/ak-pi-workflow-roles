@@ -30,9 +30,7 @@ import {
   markRunAdmitted,
   type PublicResumeRequest,
   type RunWriterLease,
-  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
-import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   presentStructuralRejection,
   trySettleDiaristTerminalResult,
@@ -128,39 +126,14 @@ export async function runPublicDiarist(
     throw error;
   }
 
-  // #637 / #771 / ADR 0075 / #779: ticket identity is the LLM's typed assertion
-  // on this turn, OR a typed handoff key already held by the caller (countersign
-  // refresh). Code never pre-judges the summons text and never freezes a
-  // candidate catalog. First summons without handoff stays unbound until assert.
+  // #637 / #771 / ADR 0075 / #779 / #987: ticket identity is the LLM's typed
+  // assertion on this turn, OR a typed handoff key already held by the caller
+  // (countersign refresh bind). Code never pre-judges the summons text and never
+  // freezes a candidate catalog. Public same-ticket resume-by-ticketNumber was
+  // deleted (#987 Result 7); callers continue an existing diarist run only via
+  // explicit `ak-role resume <runId>`. Handoff ticket remains a bind key only.
 
-  const projectRoot = parsed.project ?? env.cwd;
   const handoffTicket = env.boundTicketNumber;
-  if (
-    typeof handoffTicket === "number" &&
-    Number.isSafeInteger(handoffTicket) &&
-    handoffTicket >= 1
-  ) {
-    const summons: SameTicketSummonsMaterials = {
-      instruction: parsed.instruction,
-      instructionEmpty: parsed.instruction.trim() === "",
-      attachmentPaths: parsed.attachmentPaths,
-    };
-    const resumed = await tryResumeSameTicketSeatRun({
-      home: env.home,
-      projectRoot,
-      role: "diarist",
-      ticketNumber: handoffTicket,
-      freshSummons: env.freshSummons,
-      summons,
-      resume: (runId, materials) =>
-        runPublicDiaristResume(
-          { runId, ...(materials === undefined ? {} : { summons: materials }) },
-          env,
-          io,
-        ),
-    });
-    if (resumed !== undefined) return resumed;
-  }
 
   let admitted: AdmittedDiaristInvocation;
   try {

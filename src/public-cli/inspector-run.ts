@@ -219,7 +219,7 @@ function inspectorAdapters(options?: {
 /**
  * Resume a previously admitted Inspector run (#633 / #637); the session principal reopens.
  * Same-ticket summons deliver this turn's instruction + frozen attachments; manual
- * resume keeps package-envelope / caller-message semantics and birth attachments.
+ * resume forwards only caller-supplied message bytes.
  */
 export async function runPublicInspectorResume(
   request: PublicResumeRequest,

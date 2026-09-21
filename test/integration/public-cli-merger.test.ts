@@ -679,7 +679,7 @@ test("ak-role resume continues merger with package method and exact session", as
           args.some((a) => a.includes("[ak-role:resume-continue]")),
           false,
         );
-        assert.equal(readUserDialogueStdin(resumeStdin ?? "").startsWith("/skill:resolving-merge-conflicts"), true);
+        assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "");
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         const expansion = `<skill name="resolving-merge-conflicts" location="${material.skillPath}">\nReferences are relative to ${material.rootDirectory}.\n\n${material.body}\n</skill>\n\n${instruction}`;
         const receipt = {
