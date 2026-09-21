@@ -3,20 +3,17 @@
  * Seat differences are composition-root fields. Reviewer parallel axes and
  * countersign deferred identity stay the two lawful specials of this entry.
  */
-import type { DurablePrincipalAuthority, RoleTurnActivation, RoleTurnRequest } from "../host-contracts.ts";
+import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { readBoardTicketNumber } from "../run-ticket-number.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
-  resolvePackagedMethodSkillPath,
   type PackagedMethodSkillMaterial,
-  type PackagedMethodSkillName,
 } from "../package-resources/method-skill.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
 import {
   packagedRoleAcceptedOutputTool,
-  packagedRoleActivationFlags,
   packagedRoleMetadata,
 } from "../packaged-role-registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
@@ -61,6 +58,7 @@ import {
   readEngineDetourInfrastructureFailure,
   trySettleAcceptedSeatTerminalResult,
   trySettleCoderTerminalResult,
+  observedMethodSkillOptions,
   trySettleCollectorTerminalResult,
   trySettleDoctorTerminalResult,
   trySettleFixerTerminalResult,
@@ -70,7 +68,12 @@ import {
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import { isLawfulTypedTerminalOutcome, type TerminalResult } from "./terminal.ts";
-import { projectRoleTurnRequest, type RoleTurnRequestProjectionOptions } from "./turn-request.ts";
+import {
+  admittedSeatTurnDetails,
+  packagedSettleSkill,
+  projectRoleTurnRequest,
+  type RoleTurnRequestProjectionOptions,
+} from "./turn-request.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
 import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
 
@@ -93,73 +96,16 @@ function roleRecord(role: PackagedRole) {
   return record;
 }
 
-function settleSkill(admitted: AdmittedRoleInvocation): PackagedMethodSkillName | undefined {
-  const record = packagedRoleMetadata(admitted.role);
-  if (record === undefined) return undefined;
-  if ("applyMethod" in record && record.applyMethod !== undefined) {
-    return "phase" in admitted && admitted.phase === "apply" ? record.applyMethod : undefined;
-  }
-  if ("settleMethod" in record && record.settleMethod !== undefined) return record.settleMethod;
-  return undefined;
-}
-
-function methodBindings(admitted: AdmittedRoleInvocation, packageRoot: string) {
-  const record = packagedRoleMetadata(admitted.role);
-  const names: PackagedMethodSkillName[] = [];
-  if (record !== undefined && "methodSkills" in record && record.methodSkills !== undefined) {
-    names.push(...record.methodSkills);
-  }
-  const apply = settleSkill(admitted);
-  if (apply !== undefined && !names.includes(apply)) names.push(apply);
-  return names.map((name) => ({
-    kind: "skill" as const,
-    path: resolvePackagedMethodSkillPath(packageRoot, name),
-  }));
-}
-
-function readAdmittedPath(admitted: AdmittedRoleInvocation, path: string): unknown {
-  let current: unknown = admitted;
-  for (const key of path.split(".")) {
-    if (current === null || typeof current !== "object") return undefined;
-    current = (current as Record<string, unknown>)[key];
-  }
-  return current;
-}
-
-/** Activation object for one admitted run. Field copies come from the composition-root record. */
-function activationForAdmitted(admitted: AdmittedRoleInvocation): RoleTurnActivation {
-  if (packagedRoleMetadata(admitted.role) === undefined) {
-    throw new Error(`no turn projection for ${admitted.role}`);
-  }
-  const activation: Record<string, unknown> = { role: admitted.role };
-  for (const spec of packagedRoleActivationFlags(admitted.role)) {
-    let value = readAdmittedPath(admitted, spec.from ?? spec.field);
-    if (spec.fallback === "gate-pointer") {
-      const trimmed = typeof value === "string" ? value.trim() : "";
-      value = trimmed !== ""
-        ? trimmed
-        : parentRunPathFromGatePointerInstruction(admitted.instruction);
-      if (typeof value !== "string" || value === "") continue;
-    }
-    if (value === undefined) continue;
-    if (spec.text === true) {
-      if (typeof value !== "number") continue;
-      value = String(value);
-    }
-    activation[spec.field] = value;
-  }
-  return activation as RoleTurnActivation;
-}
-
 /** Project any admitted public role onto the host-neutral turn request. */
 export function buildInstructionSeatTurnRequest(
   admitted: AdmittedRoleInvocation,
   options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
-  return projectRoleTurnRequest(admitted, {
-    activation: activationForAdmitted(admitted),
-    methods: methodBindings(admitted, options.packageRoot),
-  }, options);
+  return projectRoleTurnRequest(
+    admitted,
+    admittedSeatTurnDetails(admitted, options.packageRoot),
+    options,
+  );
 }
 
 function initialPrompt(
@@ -202,19 +148,21 @@ async function settleSeat(
     case "fixer":
       return material === undefined
         ? undefined
-        : trySettleFixerTerminalResult(admitted, authority, {
-          methodProvenance: material.provenance,
-          methodSkillPath: material.skillPath,
-          methodSkillConfiguredPath: resolvePackagedMethodSkillPath(packageRoot, "diagnosing-bugs"),
-        }, scope);
+        : trySettleFixerTerminalResult(
+          admitted,
+          authority,
+          observedMethodSkillOptions(packageRoot, material),
+          scope,
+        );
     case "merger":
       return material === undefined
         ? undefined
-        : trySettleMergerTerminalResult(admitted, authority, {
-          methodProvenance: material.provenance,
-          methodSkillPath: material.skillPath,
-          methodSkillConfiguredPath: resolvePackagedMethodSkillPath(packageRoot, "resolving-merge-conflicts"),
-        }, scope);
+        : trySettleMergerTerminalResult(
+          admitted,
+          authority,
+          observedMethodSkillOptions(packageRoot, material),
+          scope,
+        );
     case "collector":
       return trySettleCollectorTerminalResult(admitted, authority, scope);
     case "doctor":
@@ -385,7 +333,7 @@ async function dispatchAdmitted(
 ): Promise<SeatRunResult> {
   const record = roleRecord(admitted.role);
   let material: PackagedMethodSkillMaterial | undefined;
-  const skill = settleSkill(admitted);
+  const skill = packagedSettleSkill(admitted);
   if (skill !== undefined) {
     try {
       material = await loadPackagedMethodSkillMaterial(env.packageRoot, skill);
@@ -732,7 +680,7 @@ export async function runPublicInstructionSeatResume(
       trySettle: async () => undefined,
     },
     afterAdmittedLoad: (admitted) => {
-      const skill = settleSkill(admitted);
+      const skill = packagedSettleSkill(admitted);
       if (skill === undefined) {
         return Promise.resolve({ kind: "continue" as const, adapters: seatAdapters(admitted, env) });
       }

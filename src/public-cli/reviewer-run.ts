@@ -8,7 +8,6 @@ import { resolve } from "node:path";
 
 import type {
   DurablePrincipalAuthority,
-  MethodBinding,
   RoleTurnKnownFailure,
   RoleTurnRequest,
 } from "../host-contracts.ts";
@@ -19,7 +18,6 @@ import {
 } from "../package-resources/engine-material.ts";
 import {
   loadPackagedMethodSkillMaterial,
-  resolvePackagedMethodSkillPath,
   type PackagedMethodSkillMaterial,
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
@@ -38,6 +36,7 @@ import {
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
+  observedMethodSkillOptions,
   presentStructuralRejection,
   readEngineDetourInfrastructureFailure,
   trySettleReviewerTerminalResult,
@@ -49,6 +48,8 @@ import {
   type TerminalResult,
 } from "./terminal.ts";
 import {
+  admittedSeatTurnDetails,
+  packagedSettleSkill,
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
@@ -72,10 +73,6 @@ type ReviewerRunResult = {
   admitted?: AdmittedReviewerInvocation;
   terminal?: TerminalResult;
 };
-
-function reviewerMethods(packageRoot: string): readonly MethodBinding[] {
-  return [{ kind: "skill", path: resolvePackagedMethodSkillPath(packageRoot, "ak-cross-m-review") }];
-}
 
 /**
  * All Reviewer turns (explicit --lens, dual-lens child, resume) execute in a
@@ -110,16 +107,7 @@ export function buildReviewerTurnRequest(
 ): RoleTurnRequest {
   return projectRoleTurnRequest(
     admitted,
-    {
-      activation: {
-        role: "reviewer",
-        baseRevision: admitted.baseRevision,
-        lens: admitted.lens,
-        authorityRefs: admitted.authorityRefs,
-        ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
-      },
-      methods: reviewerMethods(options.packageRoot),
-    },
+    admittedSeatTurnDetails(admitted, options.packageRoot),
     options,
   );
 }
@@ -135,14 +123,7 @@ function reviewerAdapters(
         : trySettleReviewerTerminalResult(
             admitted,
             authority,
-            {
-              methodProvenance: methodMaterial.provenance,
-              methodSkillPath: methodMaterial.skillPath,
-              methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-                packageRoot,
-                "ak-cross-m-review",
-              ),
-            },
+            observedMethodSkillOptions(packageRoot, methodMaterial),
             scope,
           ),
     resolveRunnerKnownFailure: async ({ result, sessionFile }) => {
@@ -164,8 +145,13 @@ function reviewerAdapters(
 
 async function loadReviewerMethodMaterial(
   packageRoot: string,
+  admitted: AdmittedReviewerInvocation,
 ): Promise<PackagedMethodSkillMaterial> {
-  return await loadPackagedMethodSkillMaterial(packageRoot, "ak-cross-m-review");
+  const name = packagedSettleSkill(admitted);
+  if (name === undefined) {
+    throw new Error("reviewer has no packaged method");
+  }
+  return await loadPackagedMethodSkillMaterial(packageRoot, name);
 }
 
 /** Continue the existing method turn; frozen axes remain on typed activation fields. */
@@ -306,7 +292,7 @@ export async function runPublicReviewer(
 
   let methodMaterial: PackagedMethodSkillMaterial;
   try {
-    methodMaterial = await loadReviewerMethodMaterial(env.packageRoot);
+    methodMaterial = await loadReviewerMethodMaterial(env.packageRoot, admitted);
   } catch (error) {
     return (await presentControlledFailure(
       admitted,
@@ -448,7 +434,7 @@ export async function runPublicReviewerResume(
         admitted,
         authority: env.principalAuthority,
         io,
-        loadMaterial: () => loadReviewerMethodMaterial(env.packageRoot),
+        loadMaterial: () => loadReviewerMethodMaterial(env.packageRoot, admitted),
         adaptersWith: (material) => reviewerAdapters(env.packageRoot, material),
         emptyAdapters: reviewerAdapters(env.packageRoot),
       });

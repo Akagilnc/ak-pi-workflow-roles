@@ -89,7 +89,9 @@ import {
 } from "../secretariat-contracts.ts";
 import {
   observePackagedMethodSkillInvocation,
+  resolvePackagedMethodSkillPath,
   type ObservedPackagedMethodSkillInvocation,
+  type PackagedMethodSkillMaterial,
   type PackagedMethodSkillName,
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
@@ -2669,6 +2671,25 @@ function sessionMessageText(message: SessionMessage | undefined): string {
     }
   }
   return parts.join("\n");
+}
+
+/**
+ * Locations a loaded packaged method may be observed at.
+ * The name is the loaded material; the configured path is the package copy.
+ */
+export function observedMethodSkillOptions(
+  packageRoot: string,
+  material: PackagedMethodSkillMaterial,
+): {
+  readonly methodProvenance: PackagedMethodSkillProvenance;
+  readonly methodSkillPath: string;
+  readonly methodSkillConfiguredPath: string;
+} {
+  return {
+    methodProvenance: material.provenance,
+    methodSkillPath: material.skillPath,
+    methodSkillConfiguredPath: resolvePackagedMethodSkillPath(packageRoot, material.name),
+  };
 }
 
 /**
