@@ -379,38 +379,15 @@ test("A2: non-judge public seat enters the shared auto-resume loop", async () =>
   });
 });
 
-test("A2: station-child same-ticket resume enters the shared auto-resume loop", async () => {
+test("A2: station-child resume by package runId enters the shared auto-resume loop", async () => {
+  // #987 Result 7: public ticketNumber same-ticket resume is gone; public
+  // `ak-role resume` is a single host pass-through (autoResumeCount 0). Station
+  // children still resume by package runId under stationChild and keep the
+  // shared call-local auto-resume budget (#840 / ADR 0080).
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    let calls = 0;
-    const host = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args, options) => {
-        calls += 1;
-        if (calls === 1) {
-          return scriptedTerminatingToolSession({
-            role: "diarist",
-            toolName: DIARIST_OUTPUT_TOOL_NAME,
-            details: { status: "completed", ticketNumber: 582, sessions: [] },
-          })(args, options);
-        }
-        const sd = args[args.indexOf("--session-dir") + 1]!;
-        await mkdir(sd, { recursive: true });
-        const sf = args[args.indexOf("--session") + 1]!;
-        await writeFile(
-          sf,
-          JSON.stringify({
-            type: "message",
-            message: { role: "user", content: [{ type: "text", text: "go" }] },
-          }) + "\n",
-          "utf8",
-        );
-        return { code: 1, stderr: `fail ${calls}\n`, timedOut: false, args: [...args] };
-      },
-    });
     const first = await summonPublicRole({
       role: "diarist",
       argv: ["--project", project, "整理 #582"],
@@ -418,38 +395,107 @@ test("A2: station-child same-ticket resume enters the shared auto-resume loop", 
       home,
       packageRoot,
       boundTicketNumber: 582,
-      roleTurnHost: host,
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: scriptedTerminatingToolSession({
+          role: "diarist",
+          toolName: DIARIST_OUTPUT_TOOL_NAME,
+          details: { status: "completed", ticketNumber: 582, sessions: [] },
+        }),
+      }),
       createRunId: () => "416-station-child-001",
       credentials: { "openai-codex": true, xai: true },
     });
     assert.equal(first.exitCode, 0, "first station-child mint must bind the ticket");
-    const resumed = await summonPublicRole({
-      role: "diarist",
-      argv: ["--project", project, "refresh #582"],
-      cwd: project,
-      home,
-      packageRoot,
-      boundTicketNumber: 582,
-      roleTurnHost: host,
-      credentials: { "openai-codex": true, xai: true },
+    const runId = first.admitted?.runId ?? first.terminal?.runId;
+    assert.equal(runId, "416-station-child-001");
+
+    let calls = 0;
+    const failingHost = createMinimalHost(async (request: RoleTurnRequest) => {
+      calls += 1;
+      const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
+        request.principal,
+      );
+      await mkdir(sessionDirectory, { recursive: true });
+      await writeFile(
+        sessionFile,
+        JSON.stringify({
+          type: "message",
+          message: { role: "user", content: [{ type: "text", text: "go" }] },
+        }) + "\n",
+        "utf8",
+      );
+      return { code: 1, stderr: `fail ${calls}\n`, timedOut: false };
     });
-    assert.equal(calls, 4, "same-ticket station-child resume retries up to shared budget");
+    const env = {
+      home,
+      agentDir: join(home, ".pi"),
+      packageRoot,
+      cwd: project,
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      stationChild: true as const,
+      roleTurnHost: failingHost,
+    };
+    const io2 = captureIo();
+    const resumed = await runPostAdmissionSeatResume({
+      request: {
+        runId: runId!,
+        summons: { instruction: "refresh #582" },
+      },
+      env,
+      io: io2.io,
+      load: (effective) =>
+        loadResumableDiaristRun(home, effective.runId, piDurablePrincipalAuthority),
+      buildTurnRequest: async (admitted, effective) => {
+        const summonsPrepared = await prepareSummonsResumeMaterials(
+          admitted.runDirectory,
+          effective.summons,
+        );
+        return buildDiaristTurnRequest(
+          admitted,
+          resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
+        );
+      },
+      adapters: {
+        trySettle: async () => undefined,
+        shouldPresentSettled: () => true,
+      },
+    });
+    assert.equal(calls, 3, "station-child resume retries up to shared budget");
     assert.equal(resumed.exitCode, 1);
     assert.equal(resumed.terminal?.autoResumeCount, 2);
 
-    const again = await summonPublicRole({
-      role: "diarist",
-      argv: ["--project", project, "refresh again #582"],
-      cwd: project,
-      home,
-      packageRoot,
-      boundTicketNumber: 582,
-      roleTurnHost: host,
-      credentials: { "openai-codex": true, xai: true },
+    calls = 0;
+    const io3 = captureIo();
+    const again = await runPostAdmissionSeatResume({
+      request: {
+        runId: runId!,
+        summons: { instruction: "refresh again #582" },
+      },
+      env,
+      io: io3.io,
+      load: (effective) =>
+        loadResumableDiaristRun(home, effective.runId, piDurablePrincipalAuthority),
+      buildTurnRequest: async (admitted, effective) => {
+        const summonsPrepared = await prepareSummonsResumeMaterials(
+          admitted.runDirectory,
+          effective.summons,
+        );
+        return buildDiaristTurnRequest(
+          admitted,
+          resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
+        );
+      },
+      adapters: {
+        trySettle: async () => undefined,
+        shouldPresentSettled: () => true,
+      },
     });
     assert.equal(
       calls,
-      7,
+      3,
       "prior autoResumeCount observation must not shrink the next call-local budget",
     );
     assert.equal(again.exitCode, 1);

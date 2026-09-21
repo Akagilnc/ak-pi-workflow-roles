@@ -17,10 +17,7 @@ import {
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
 import { listBookRunDirectories } from "../role-run-placement.ts";
-import {
-  isSafePositiveTicketNumber,
-  readBoardTicketNumber,
-} from "../run-ticket-number.ts";
+import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   readLatestTypedProviderHttpObservation,
@@ -1183,19 +1180,19 @@ async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boole
 /**
  * Locate the latest retained run for one seat under a book (#637 / #747).
  * Same walk surface as findRunDirectoryById (listBookRunDirectories). Match by
- * parent run path (officer seats, #747) or by ticket number (countersign /
- * diarist principal). runId is UUIDv7 — lexicographic max is latest among runs
- * that formed a session principal. No parallel index.
+ * parent run path (officer / gate seats, #747 / #987). runId is UUIDv7 —
+ * lexicographic max is latest among runs that formed a session principal. No
+ * parallel index. Public ticket-number selection of a prior run was deleted
+ * (#987 Result 7); callers use explicit `ak-role resume <runId>`.
  * Only a truly missing book directory means no history; damage/permission errors propagate.
  */
 export async function findLatestRunIdForSeatTicket(input: {
   readonly home: string;
   readonly bookKey: string;
   readonly role: RoleRunRecord["role"];
-  readonly ticketNumber?: number;
-  readonly parentRunPath?: string;
+  readonly parentRunPath: string;
 }): Promise<string | undefined> {
-  if (input.ticketNumber === undefined && input.parentRunPath === undefined) {
+  if (input.parentRunPath.trim() === "") {
     return undefined;
   }
   const ledgerHome = resolveActivationLedgerHome(input.home);
@@ -1214,14 +1211,8 @@ export async function findLatestRunIdForSeatTicket(input: {
     if (!entry.endsWith(suffix)) continue;
     const runId = entry.slice(0, entry.length - suffix.length);
     if (runId.length === 0) continue;
-    if (input.parentRunPath !== undefined) {
-      const parentPath = await readRunParentPath(runDirectory);
-      if (parentPath !== input.parentRunPath) continue;
-    } else if (input.ticketNumber !== undefined) {
-      // Same-ticket resume is board identity only — never migration-derived.
-      const ticketNumber = await readBoardTicketNumber(runDirectory);
-      if (ticketNumber !== input.ticketNumber) continue;
-    }
+    const parentPath = await readRunParentPath(runDirectory);
+    if (parentPath !== input.parentRunPath) continue;
     // Durable fact: never resume-select a provisional that never formed principal.
     if (!(await runHasFormedSessionPrincipal(runDirectory))) continue;
     if (best === undefined || runId > best) best = runId;
