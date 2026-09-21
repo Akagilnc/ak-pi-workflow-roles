@@ -70,8 +70,10 @@ import {
   projectCommandHelp,
   projectOwnerOptions,
   PUBLIC_NAVIGATOR_HELP_NOTE,
+  PUBLIC_ROLE_OPTION_OWNERS,
   renderHumanOwnerOptionLines,
   type PublicOptionDefinition,
+  type PublicRoleOptionOwner,
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import { runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
@@ -117,26 +119,27 @@ function publicSeatArgv(owner: PublicSeatArgvOwner) {
   };
 }
 
-export const PUBLIC_ROLE_ARGV = {
-  judge: publicSeatArgv("judge"),
-  countersign: publicSeatArgv("countersign"),
-  "gleaner-left": publicSeatArgv("gleaner-left"),
-  coder: publicSeatArgv("coder"),
-  fixer: publicSeatArgv("fixer"),
-  collector: publicSeatArgv("collector"),
-  doctor: publicSeatArgv("doctor"),
-  merger: publicSeatArgv("merger"),
-  notary: publicSeatArgv("notary"),
-  inspector: publicSeatArgv("inspector"),
-  reviewer: publicSeatArgv("reviewer"),
-  gatekeeper: publicSeatArgv("gatekeeper"),
-  navigator: publicSeatArgv("navigator"),
-  auditor: publicSeatArgv("auditor"),
-  diarist: publicSeatArgv("diarist"),
-  secretariat: publicSeatArgv("secretariat"),
-  /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
-  analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
+type PublicRoleArgvTable = {
+  [K in PublicRoleOptionOwner]: K extends "analyst"
+    ? {
+        readonly parse: typeof parseAnalystArgv;
+        readonly options: readonly PublicOptionDefinition[];
+      }
+    : ReturnType<typeof publicSeatArgv>;
 };
+
+/**
+ * One argv row per public owner. Seats come from PUBLIC_ROLE_OPTION_OWNERS
+ * (composition-root roles plus the deterministic analyst command).
+ */
+export const PUBLIC_ROLE_ARGV = Object.fromEntries(
+  PUBLIC_ROLE_OPTION_OWNERS.map((owner) => [
+    owner,
+    owner === "analyst"
+      ? { parse: parseAnalystArgv, options: optionsForOwner("analyst") }
+      : publicSeatArgv(owner),
+  ]),
+) as PublicRoleArgvTable;
 
 /** Global public options — same typed table as role rows (#342). */
 export const PUBLIC_GLOBAL_OPTIONS: readonly PublicOptionDefinition[] =
