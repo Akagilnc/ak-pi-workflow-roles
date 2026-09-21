@@ -35,7 +35,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
-  buildJudgeTransportPrompt,
+  buildInstructionTransportPrompt,
   parseJudgeArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
@@ -301,7 +301,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
 });
 
 test("structurally empty request stays empty while attachments remain typed transport", () => {
-  const empty = buildJudgeTransportPrompt(
+  const empty = buildInstructionTransportPrompt(
     fixtureJudgeAdmitted({
       runId: "r",
       bookKey: "b",
@@ -315,7 +315,7 @@ test("structurally empty request stays empty while attachments remain typed tran
   );
   assert.equal(empty, "");
 
-  const withAttach = buildJudgeTransportPrompt(
+  const withAttach = buildInstructionTransportPrompt(
     fixtureJudgeAdmitted({
       runId: "r",
       bookKey: "b",

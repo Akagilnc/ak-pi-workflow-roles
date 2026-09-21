@@ -1426,7 +1426,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
       home,
       cwd: subdir,
       credentials: { "openai-codex": true, xai: true },
-      reviewerTimeoutMs: 17_777,
+      timeoutMs: 17_777,
       io,
       roleTurnHost: reviewerHost(async (args, options) => {
         assert.equal(options.timeoutMs, 17_777);

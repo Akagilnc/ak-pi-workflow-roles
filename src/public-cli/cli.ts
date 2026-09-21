@@ -211,45 +211,17 @@ export type CliEnv = {
   io?: CliIo;
   /**
    * Injectable host-neutral turn host (tests). Production composes the Pi
-   * adapter once per dispatch from packageRoot + seat extraPiArgs/timeout.
+   * adapter once per dispatch from packageRoot + extraPiArgs/timeout.
    */
   roleTurnHost?: RoleTurnHost;
   /** Composition-root-owned unique named adapter table. */
   hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   /** Optional caller correlation id (#78 host channel). */
   correlationId?: string;
-  /** Extra Pi args for Judge runs (tests: faux provider). */
-  judgeExtraPiArgs?: readonly string[];
-  /** Override Judge role-run timeout (tests). */
-  judgeTimeoutMs?: number;
-  /** Extra Pi args for Coder runs (tests: faux provider). */
-  coderExtraPiArgs?: readonly string[];
-  /** Override Coder role-run timeout (tests). */
-  coderTimeoutMs?: number;
-  /** Extra Pi args for Collector runs (tests: faux provider). */
-  collectorExtraPiArgs?: readonly string[];
-  /** Override Collector role-run timeout (tests). */
-  collectorTimeoutMs?: number;
-  /** Extra Pi args for Doctor runs (tests: faux provider). */
-  doctorExtraPiArgs?: readonly string[];
-  /** Override Doctor role-run timeout (tests). */
-  doctorTimeoutMs?: number;
-  /** Extra Pi args for Fixer runs (tests: faux provider). */
-  fixerExtraPiArgs?: readonly string[];
-  /** Override Fixer role-run timeout (tests). */
-  fixerTimeoutMs?: number;
-  /** Extra Pi args for Reviewer runs (tests: faux provider). */
-  reviewerExtraPiArgs?: readonly string[];
-  /** Override Reviewer role-run timeout (tests). */
-  reviewerTimeoutMs?: number;
-  /** Extra Pi args for Merger runs (tests: faux provider). */
-  mergerExtraPiArgs?: readonly string[];
-  /** Override Merger role-run timeout (tests). */
-  mergerTimeoutMs?: number;
-  /** Extra Pi args for Notary runs (tests: faux provider). */
-  notaryExtraPiArgs?: readonly string[];
-  /** Override Notary role-run timeout (tests). */
-  notaryTimeoutMs?: number;
+  /** Extra Pi args for the dispatched public seat (tests: faux provider). */
+  extraPiArgs?: readonly string[];
+  /** Override the dispatched public seat's role-run timeout (tests). */
+  timeoutMs?: number;
   createRunId?: () => string;
   /**
    * #724: set by the `new` support verb before role dispatch; seat runners
@@ -284,42 +256,8 @@ function createRoleEnvironment(
   afterHost?: () => void,
 ) {
   const role = options.role;
-  const extraPiArgs =
-    role === "coder"
-      ? env.coderExtraPiArgs
-      : role === "fixer"
-        ? env.fixerExtraPiArgs
-        : role === "reviewer"
-          ? env.reviewerExtraPiArgs
-          : role === "merger"
-            ? env.mergerExtraPiArgs
-            : role === "judge"
-              ? env.judgeExtraPiArgs
-              : role === "collector"
-                ? env.collectorExtraPiArgs
-                : role === "doctor"
-                  ? env.doctorExtraPiArgs
-                  : role === "notary"
-                    ? env.notaryExtraPiArgs
-                    : undefined;
-  const timeoutMs =
-    role === "coder"
-      ? env.coderTimeoutMs
-      : role === "fixer"
-        ? env.fixerTimeoutMs
-        : role === "reviewer"
-          ? env.reviewerTimeoutMs
-          : role === "merger"
-            ? env.mergerTimeoutMs
-            : role === "judge"
-              ? env.judgeTimeoutMs
-              : role === "collector"
-                ? env.collectorTimeoutMs
-                : role === "doctor"
-                  ? env.doctorTimeoutMs
-                  : role === "notary"
-                    ? env.notaryTimeoutMs
-                    : undefined;
+  const extraPiArgs = env.extraPiArgs;
+  const timeoutMs = env.timeoutMs;
 
   // #617/#178/#788/#840: host first, then model; nested child seat selects own host.
   const hostAdapters = composeRoleTurnHostAdapters(

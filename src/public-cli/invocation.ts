@@ -1863,29 +1863,6 @@ export function buildInstructionTransportPrompt(
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
-/** Build the Pi prompt transport for an admitted Judge request. */
-export function buildJudgeTransportPrompt(
-  admitted: AdmittedJudgeInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return buildInstructionTransportPrompt(admitted, engineMaterial);
-}
-
-export function buildSecretariatTransportPrompt(
-  admitted: AdmittedSecretariatInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return buildInstructionTransportPrompt(admitted, engineMaterial);
-}
-
-export function buildInspectorTransportPrompt(
-  admitted: AdmittedInspectorInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return buildInstructionTransportPrompt(admitted, engineMaterial);
-}
-
-
 export type AdmitCountersignInvocationOptions = {
   home: string;
   cwd: string;
@@ -2000,14 +1977,6 @@ export async function materializeCountersignInvocation(
   );
 }
 
-/** Build the Pi prompt transport for an admitted Countersign request. */
-export function buildCountersignTransportPrompt(
-  admitted: AdmittedCountersignInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return buildInstructionTransportPrompt(admitted, engineMaterial);
-}
-
 /** Load admitted-request.json written at admission (Navigator work-context seam). */
 export async function loadAdmittedJudgeRequest(
   runDirectory: string,
@@ -2111,26 +2080,6 @@ async function admitCoderInvocation(
     attachments: placed.attachments,
     admittedRequestPath,
   };
-}
-
-/**
- * Build the Pi prompt transport for an admitted Coder request.
- * Task bytes already live at taskPath for --ak-coder-task; the prompt carries
- * the same instruction plus frozen Attachment paths.
- */
-export function buildCoderTransportPrompt(
-  admitted: AdmittedCoderInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines: string[] = [admitted.instruction];
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("已受理附件（冻结快照路径）：");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 export type AdmitFixerInvocationOptions = {
@@ -2248,26 +2197,6 @@ async function admitFixerInvocation(
     admittedRequestPath,
     prerequisites,
   };
-}
-
-/**
- * Build the Pi prompt transport for an admitted Fixer request.
- * Instruction bytes live at packetPath; prerequisites at optional path.
- * Diagnosis method is available via package --skill, not forced into this prompt.
- */
-export function buildFixerTransportPrompt(
-  admitted: AdmittedFixerInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines: string[] = [admitted.instruction];
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("已受理附件（冻结快照路径）：");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 function parsePositivePrOption(raw: string | undefined): number {
@@ -2529,19 +2458,6 @@ async function admitCollectorInvocation(
     admittedRequestPath,
     repository,
   };
-}
-
-/**
- * #676 A: Collector consumes the real call task + frozen attachments so the role
- * can identify issue/PR from materials via ak_collector_bind_target. Explicit --pr
- * still wins at admission; unique head/commit association also binds. No fixed
- * kickoff rewrite of the caller task; no mechanical task-text target lock.
- */
-export function buildCollectorTransportPrompt(
-  admitted: AdmittedCollectorInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return buildInstructionTransportPrompt(admitted, engineMaterial);
 }
 
 /** Positive Issue number grammar shared with Doctor case path identity. */
@@ -2831,21 +2747,7 @@ async function admitDoctorInvocation(
   };
 }
 
-/** Build the Pi prompt transport for an admitted Doctor request. */
-export function buildDoctorTransportPrompt(
-  admitted: AdmittedDoctorInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("已受理附件（冻结快照路径）：");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
-}
+
 
 export type ParseNotaryArgvResult = {
   readonly sourceRun: string;
@@ -3489,26 +3391,6 @@ async function admitMergerInvocation(
     attachments: placed.attachments,
     admittedRequestPath,
   };
-}
-
-/**
- * Build the host-neutral prompt transport for an admitted Merger request.
- * Method material binds on RoleTurnRequest.methods; Pi-native `/skill:` form
- * is adapter-internal only (ADR 0082).
- */
-export function buildMergerTransportPrompt(
-  admitted: AdmittedMergerInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines: string[] = [admitted.instruction];
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("已受理附件（冻结快照路径）：");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 const ANALYST_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;

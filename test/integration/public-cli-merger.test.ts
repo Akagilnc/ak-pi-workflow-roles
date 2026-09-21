@@ -32,7 +32,7 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
   type AdmitMergerInvocationOptions,
-  buildMergerTransportPrompt,
+  buildInstructionTransportPrompt,
   deriveMergerEnvelopeFromActiveMerge,
   parseMergerArgv,
 } from "../../src/public-cli/invocation.ts";
@@ -236,7 +236,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
     );
 
     // Transport prompt is host-neutral; Pi `/skill:` is adapter-internal only (#822).
-    const prompt = buildMergerTransportPrompt(admitted);
+    const prompt = buildInstructionTransportPrompt(admitted);
     assert.equal(prompt.startsWith("/skill:"), false);
     assert.equal(prompt.includes(admitted.instruction), true);
   });
@@ -553,7 +553,7 @@ test("ak-role merger dispatches and settles escalate without active merge and co
           cwd: home,
           io,
           createRunId: () => "run-merger-dispatch-001",
-          mergerTimeoutMs: 5_000,
+          timeoutMs: 5_000,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,

@@ -37,7 +37,7 @@ import {
   admitPublicRole,
   bindAdmittedTicketNumber,
   bindCourtTicketNumbersOnAdmitted,
-  buildCountersignTransportPrompt,
+  buildInstructionTransportPrompt,
   freezePreparedAttachmentsIntoRun,
   materializeCountersignInvocation,
   relocateAdmittedRunToTicket,
@@ -743,7 +743,7 @@ export async function runPublicCountersign(
             // #969/#879: gate path first mint carries parent payload as dialogue content;
             // ordinary public entry keeps package transport prompt.
             prompt: (env.reviewReask ?? env.gateReviewInstruction)
-              ?? buildCountersignTransportPrompt(
+              ?? buildInstructionTransportPrompt(
                 admitted,
                 engineSessionMaterialFromOptions({
                   ...pickEngineAxis(env),

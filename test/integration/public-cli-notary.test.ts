@@ -462,7 +462,7 @@ test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => 
         cwd: project,
         io,
         createRunId: () => "01a0notary-0000-7000-8000-000000000003",
-        notaryTimeoutMs: 5_000,
+        timeoutMs: 5_000,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
@@ -536,7 +536,7 @@ test("layer ④ transport/provider failure is controlled non-zero failure", asyn
         cwd: project,
         io,
         createRunId: () => "01a0notary-0000-7000-8000-000000000004",
-        notaryTimeoutMs: 5_000,
+        timeoutMs: 5_000,
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,

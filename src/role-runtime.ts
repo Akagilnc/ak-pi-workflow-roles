@@ -439,33 +439,41 @@ type ActivationRuntime = {
 };
 
 function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: string; run(): Promise<void> } {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined) {
+    throw new Error(`Unsupported workflow role: ${String(role)}`);
+  }
+  return {
+    id: record.activationStage,
+    run: () => activateRegisteredRole(role, runtime),
+  };
+}
+
+async function activateRegisteredRole(role: PackagedRole, runtime: ActivationRuntime): Promise<void> {
   switch (role) {
-    case "judge": return { id: "load-and-install", run: async () => runtime.judge.activate() };
-    case "fixer": return { id: "load-and-install", run: async () => runtime.fixer.activate() };
-    case "coder": return { id: "load-and-install", run: async () => runtime.coder.activate(runtime.context) };
-    case "reviewer": return { id: "load-and-install", run: async () => {
+    case "judge": return runtime.judge.activate();
+    case "fixer": return runtime.fixer.activate();
+    case "coder": return runtime.coder.activate(runtime.context);
+    case "reviewer": {
       const admitted = runtime.decodeReviewerAdmitted();
       const activation = await runtime.reviewer.activate(runtime.context, admitted);
       runtime.bindReviewerParent(activation);
-    } };
-    case "collector": return { id: "load-and-install", run: async () => runtime.collector.activate(runtime.context, runtime.event) };
-    case "doctor": return { id: "load-and-install", run: async () => runtime.doctor.activate() };
-    case "notary": return {
-      id: "load-and-install",
-      run: async () => {
-        // Envelope owns ticket flag read (ADR 0018); role receives admitted value only.
-        await runtime.notary.activate(runtime.decodeNotaryAdmitted());
-      },
-    };
-    case "countersign": return { id: "load-and-install", run: async () => runtime.countersign.activate() };
-    case "gleaner-left": return { id: "load-and-install", run: async () => runtime.gleanerLeft.activate() };
-    case "inspector": return { id: "load-and-install", run: async () => runtime.inspector.activate() };
-    case "gatekeeper": return { id: "load-and-install", run: async () => runtime.gatekeeper.activate() };
-    case "navigator": return { id: "load-and-install", run: async () => runtime.navigator.activate() };
-    case "auditor": return { id: "load-and-install", run: async () => runtime.auditor.activate() };
-    case "diarist": return { id: "load-and-install", run: async () => runtime.diarist.activate() };
-    case "secretariat": return { id: "load-and-install", run: async () => runtime.secretariat.activate() };
-    case "merger": return { id: "prepare-git-and-install", run: async () => runtime.merger() };
+      return;
+    }
+    case "collector": return runtime.collector.activate(runtime.context, runtime.event);
+    case "doctor": return runtime.doctor.activate();
+    case "notary":
+      // Envelope owns ticket flag read (ADR 0018); role receives admitted value only.
+      return runtime.notary.activate(runtime.decodeNotaryAdmitted());
+    case "countersign": return runtime.countersign.activate();
+    case "gleaner-left": return runtime.gleanerLeft.activate();
+    case "inspector": return runtime.inspector.activate();
+    case "gatekeeper": return runtime.gatekeeper.activate();
+    case "navigator": return runtime.navigator.activate();
+    case "auditor": return runtime.auditor.activate();
+    case "diarist": return runtime.diarist.activate();
+    case "secretariat": return runtime.secretariat.activate();
+    case "merger": return runtime.merger();
   }
 }
 
@@ -2426,11 +2434,11 @@ export function createRoleRuntimeExtension(
             ...new Set([...roleHost.getActiveTools(), ENGINE_DETOUR_TOOL_NAME]),
           ]);
         }
-        // Worker gates ①②: arm records baseline and runs private one-shot hook uninstall (ADR 0070).
+        // Worker gates ①②: registry declares the worker seats (ADR 0066 / 0070).
         // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.
-        if (entry.role === "coder" || entry.role === "fixer") {
-          if (entry.role === "coder") coder.armSubmissionGate(ctx.cwd, ctx.sessionManager);
-          else fixer.armSubmissionGate(ctx.cwd, ctx.sessionManager);
+        if ("worker" in entry && entry.worker === true) {
+          const workerArms = { coder, fixer } as const;
+          workerArms[entry.role].armSubmissionGate(ctx.cwd, ctx.sessionManager);
         }
         admitted = true;
       } catch (error) {
