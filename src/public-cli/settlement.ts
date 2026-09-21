@@ -2939,42 +2939,27 @@ export async function trySettleCollectorTerminalResult(
 }
 
 /**
- * #836: runtime cost is a machine fact recorded beside the role's original
- * testimony (`ak_doctor_audit_candidate` custom entry), never merged into the
- * accepted payload itself. Absence (no candidate entry, or entry without a
- * cost sibling) reads as undefined — never invented.
+ * #836: cost and the auditor's no-receipt facts ride beside the role's
+ * testimony on the current attempt's candidate entry. Absence is omitted,
+ * never invented. Both facts come from that one entry.
  */
-function extractDoctorCandidateCostFact(
+function extractDoctorCandidateFacts(
   entries: readonly SessionEntry[],
-): DoctorCaseCost | undefined {
+): { readonly cost?: DoctorCaseCost; readonly auditNoReceipt?: unknown } {
   const scanStart = currentAttemptStartIndex(entries);
   for (let i = entries.length - 1; i >= scanStart; i -= 1) {
     const entry = entries[i];
-    if (entry?.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
-      const data = entry.data;
-      return isRecord(data) ? (data.cost as DoctorCaseCost | undefined) : undefined;
+    if (entry?.type !== "custom" || entry.customType !== DOCTOR_CANDIDATE_ENTRY_TYPE) {
+      continue;
     }
+    const data = entry.data;
+    if (!isRecord(data)) return {};
+    return {
+      ...(data.cost === undefined ? {} : { cost: data.cost as DoctorCaseCost }),
+      ...(data.auditNoReceipt === undefined ? {} : { auditNoReceipt: data.auditNoReceipt }),
+    };
   }
-  return undefined;
-}
-
-/**
- * #836: the auditor's own no-receipt lifecycle facts are a machine fact about
- * the audit leg, recorded beside (never merged into) the role's accepted
- * testimony. Absence reads as undefined — never invented.
- */
-function extractDoctorCandidateAuditNoReceiptFact(
-  entries: readonly SessionEntry[],
-): unknown {
-  const scanStart = currentAttemptStartIndex(entries);
-  for (let i = entries.length - 1; i >= scanStart; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
-      const data = entry.data;
-      return isRecord(data) ? data.auditNoReceipt : undefined;
-    }
-  }
-  return undefined;
+  return {};
 }
 
 export async function publishDoctorArtifacts(
@@ -3020,46 +3005,18 @@ async function settleLawfulDoctorTerminalResult(
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted, "doctor", scope);
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  if (sealed === undefined) return undefined;
-  if (sealed.kind === "audit_escalation") {
-    const artifacts = await publishDoctorArtifacts(admitted, sealed, coordinates);
-    return withOptionalGateProjection(
-      {
-        roleOutcome: sealed,
-        navigator: extractNavigatorFact(entries),
-        artifacts,
-        runId: admitted.runId,
-      },
-      sessionDirectory,
-      detourGateContext(admitted, scope),
-    );
-  }
-  const roleOutcome = sealed;
-  const navigator = extractNavigatorFact(entries);
-  const cost = extractDoctorCandidateCostFact(entries);
-  const auditNoReceipt = extractDoctorCandidateAuditNoReceiptFact(entries);
-  const artifacts = await publishDoctorArtifacts(
+  return settleSealedLedgerTerminal(
     admitted,
-    roleOutcome,
-    coordinates,
-    {
-      ...(cost === undefined ? {} : { cost }),
-      ...(auditNoReceipt === undefined ? {} : { auditNoReceipt }),
-    },
-  );
-  return withOptionalGateProjection(
-    {
+    authority,
+    scope,
+    (roleOutcome, coordinates, entries) => publishDoctorArtifacts(
+      admitted,
       roleOutcome,
-      navigator,
-      artifacts,
-      runId: admitted.runId,
-    },
-    sessionDirectory,
-    detourGateContext(admitted, scope),
+      coordinates,
+      roleOutcome.kind === "audit_escalation"
+        ? {}
+        : extractDoctorCandidateFacts(entries),
+    ),
   );
 }
 

@@ -411,10 +411,8 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     };
     assert.equal(report.role, "doctor");
     assert.deepEqual(report.outcome?.payloads, [candidateDetails]);
-    // #836: settlement.ts extractDoctorCandidateCostFact/publishDoctorArtifacts
-    // must read the audit candidate entry and publish machine cost as an
-    // independent report field beside — not merged into — the role's original
-    // payload sequence.
+    // #836: settlement publishes machine cost from the audit candidate entry
+    // as an independent report field beside the role's original payload.
     assert.deepEqual(report.cost, candidateCost);
     assert.ok((await readFile(reportPath!, "utf8")).includes(findingObservation));
 
@@ -519,11 +517,9 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     );
     assert.equal(settled.roleOutcome.kind, "accepted");
 
-    // #836: extractDoctorCandidateCostFact/extractDoctorCandidateAuditNoReceiptFact
-    // must bound their scan to the current attempt (currentAttemptStartIndex),
-    // the same bound already used elsewhere in settlement.ts for other
-    // attempt-sensitive scans — a later attempt with no candidate entry of
-    // its own must not inherit the prior attempt's cost/auditNoReceipt.
+    // #836: candidate cost and auditNoReceipt stay on the current attempt.
+    // A later attempt with no candidate entry of its own must not inherit
+    // the prior attempt's facts.
     const settleSessionFile = join(runDirectory, "session", "session.jsonl");
     await appendFile(
       settleSessionFile,
