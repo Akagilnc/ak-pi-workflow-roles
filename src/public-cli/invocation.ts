@@ -828,8 +828,9 @@ export function parsePositiveTicketNumber(
 }
 
 /**
- * One token scan for every public seat parser.
- * Seat code only assigns values; `--` still ends flag parsing.
+ * One token scan for public argv.
+ * Callers assign values; `--` still ends flag parsing.
+ * Analyst keeps its own assignment. Public seats assign in `parsePublicSeatArgv`.
  */
 function scanPublicArgv(
   args: readonly string[],
@@ -865,66 +866,6 @@ function appendBareInstruction(
     throw new CliUsageError(`unknown ${owner} option: ${token}`);
   }
   positional.push(token);
-}
-
-type SeatArgvScan = {
-  readonly attachmentPaths: string[];
-  project?: string;
-  readonly positional: string[];
-  readonly options: TypedOptionConsumer;
-};
-
-/**
- * Shared assignment for the public faces every seat already defines the same way:
- * repeatable `--attach`, optional `--project`, and opaque bare instruction.
- * Other option ids are assigned once in `parsePublicSeatArgv`.
- */
-function scanSeatArgv(
-  owner: Exclude<OptionOwner, "global">,
-  args: readonly string[],
-  handlers: {
-    readonly onSeatOption: (taken: TakenTypedOption) => void;
-    readonly onBare?: (token: string, positional: string[]) => void;
-    readonly onDoubleDash?: (rest: readonly string[], positional: string[]) => void;
-  },
-): SeatArgvScan {
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
-  const positional: string[] = [];
-  const options = createTypedOptionConsumer(roleOptions(owner));
-  scanPublicArgv(args, options, {
-    onDashed(taken) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        return;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        return;
-      }
-      handlers.onSeatOption(taken);
-    },
-    onBare(token) {
-      if (handlers.onBare !== undefined) {
-        handlers.onBare(token, positional);
-        return;
-      }
-      appendBareInstruction(owner, token, positional);
-    },
-    onDoubleDash(rest) {
-      if (handlers.onDoubleDash !== undefined) {
-        handlers.onDoubleDash(rest, positional);
-        return;
-      }
-      positional.push(...rest);
-    },
-  });
-  return {
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
-    positional,
-    options,
-  };
 }
 
 /** LLM public seats. Analyst stays on its own deterministic argv. */
@@ -965,6 +906,12 @@ function assignPublicSeatOption(
 ): void {
   const value = taken.value;
   switch (taken.def.id) {
+    case "attach":
+      fields.attachmentPaths.push(requireOptionPath(taken.def.canonical, value));
+      return;
+    case "project":
+      fields.project = requireOptionPath(taken.def.canonical, value);
+      return;
     case "subject": {
       const raw = typeof value === "string" ? value.trim() : "";
       if (raw !== "judge" && raw !== "doctor") {
@@ -1088,34 +1035,32 @@ export function parsePublicSeatArgv(
     positional: [],
     authorityRefs: [],
   };
-  const scanned = scanSeatArgv(owner, args, {
-    onSeatOption(taken) {
+  const options = createTypedOptionConsumer(roleOptions(owner));
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
       assignPublicSeatOption(owner, taken, fields);
     },
-    onBare(token, positional) {
+    onBare(token) {
       rejectSeatBareToken(owner, token);
-      appendBareInstruction(owner, token, positional);
+      appendBareInstruction(owner, token, fields.positional);
     },
-    onDoubleDash(rest, positional) {
+    onDoubleDash(rest) {
       if (owner === "notary" && rest.length > 0) {
         throw new CliUsageError(
           "notary rejects caller prompt/instruction; only --source-run locator is admitted",
         );
       }
-      positional.push(...rest);
+      fields.positional.push(...rest);
     },
   });
-  fields.attachmentPaths = scanned.attachmentPaths;
-  if (scanned.project !== undefined) fields.project = scanned.project;
-  fields.positional = scanned.positional;
 
   const phaseDef = optionsForOwner(owner).find(
     (def) => def.id === "phase" && def.form === "positional",
   );
   const phase = phaseDef === undefined
     ? undefined
-    : scanned.options.consumeLeadingPhase(fields.positional);
-  scanned.options.assertRequired();
+    : options.consumeLeadingPhase(fields.positional);
+  options.assertRequired();
 
   const project = fields.project === undefined ? {} : { project: fields.project };
   if (owner === "notary") {
