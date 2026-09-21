@@ -196,6 +196,29 @@ function rewriteSummonsMaterials(
   }
 }
 
+/** Project one admitted page in memory after its containing run moved. */
+export function rewriteAdmittedRoleRunPage(
+  page: Record<string, unknown>,
+  rewrites: readonly RunDirectoryPathRewrite[],
+): void {
+  rewriteRunDirectoryPathFieldsAgainstRewrites(page, ADMITTED_PAGE_FIELDS, rewrites);
+  rewriteSourceRunLocator(page.sourceRun, rewrites);
+  if (Array.isArray(page.attachments)) {
+    for (const attachment of page.attachments) {
+      if (isPlainObject(attachment)) {
+        rewriteRunDirectoryPathFieldsAgainstRewrites(attachment, ["frozenPath"], rewrites);
+      }
+    }
+  }
+  if (isPlainObject(page.principal)) {
+    rewriteRunDirectoryPathFieldsAgainstRewrites(
+      page.principal,
+      ["sessionDirectory", "sessionFile"],
+      rewrites,
+    );
+  }
+}
+
 async function rewriteJsonObjectFile(
   path: string,
   fields: readonly string[],
@@ -394,9 +417,9 @@ async function rewriteNestedMachinePathPages(
 /**
  * Rewrite admitted-request / invocation / run-state path fields (attachment
  * frozenPath / summons.attachmentPaths pointers only), then nested package-owned
- * session seams, after the run directory has already been moved or copied.
- * `pagesDirectory` is where the pages now live; path strings still naming an
- * old run directory become the matching new directory. `crossRunRewrites`
+ * session seams. Callers may rewrite before or after the filesystem move/copy:
+ * `pagesDirectory` is where the pages currently live on disk; path strings that
+ * still name `oldRunDirectory` become `newRunDirectory`. `crossRunRewrites`
  * covers officer/parent pointers that landed under a different final placement.
  */
 export async function rewriteRoleRunDurablePages(input: {
@@ -414,33 +437,7 @@ export async function rewriteRoleRunDurablePages(input: {
       string,
       unknown
     >;
-    rewriteRunDirectoryPathFieldsAgainstRewrites(
-      page,
-      ADMITTED_PAGE_FIELDS,
-      rewrites,
-    );
-    // Nested notary typed locator — same value family as top-level sourceRunPath.
-    rewriteSourceRunLocator(page.sourceRun, rewrites);
-    if (Array.isArray(page.attachments)) {
-      for (const attachment of page.attachments) {
-        if (isPlainObject(attachment)) {
-          // Pointer only — never open or mutate frozen attachment bytes.
-          rewriteRunDirectoryPathFieldsAgainstRewrites(
-            attachment,
-            ["frozenPath"],
-            rewrites,
-          );
-        }
-      }
-    }
-    // Nested principal wire (sessionDirectory/sessionFile) when present.
-    if (isPlainObject(page.principal)) {
-      rewriteRunDirectoryPathFieldsAgainstRewrites(
-        page.principal,
-        ["sessionDirectory", "sessionFile"],
-        rewrites,
-      );
-    }
+    rewriteAdmittedRoleRunPage(page, rewrites);
     await writeFile(admittedPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
   }
 

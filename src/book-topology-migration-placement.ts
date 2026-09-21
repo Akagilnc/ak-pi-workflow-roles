@@ -397,7 +397,15 @@ export async function findPlacedMigratingRun(
     const preferred = destPathFromSourceRelative(booksDirectory, bookKey, sourceRelative);
     if (preferred !== undefined) {
       const hit = matches.find((path) => path === preferred);
-      return hit === undefined ? undefined : placedRunFromPath(hit);
+      if (hit !== undefined) return placedRunFromPath(hit);
+      // T9 may have used the board ticket to move an historical unbound leaf
+      // under `<ticket>/runs`. The complete leaf is the placement identity;
+      // when it remains unique, downstream record/mixed/T11 consumers must
+      // follow that authoritative T9 result rather than re-derive unbound.
+      if (sourceRelative.replaceAll("\\", "/").startsWith("unbound/runs/")) {
+        return uniquePlacedRun(leafName, matches);
+      }
+      return undefined;
     }
     // Historical flat `runs/<leaf>` alias after T9 nested the unique complete leaf.
     if (isFlatRunsRelative(sourceRelative, leafName)) {

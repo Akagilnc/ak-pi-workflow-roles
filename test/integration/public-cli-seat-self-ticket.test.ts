@@ -144,25 +144,25 @@ function baseEnv(input: {
       details: input.details,
     }),
   });
-  const roleTurnHost = input.additionalDetails === undefined
-    ? host
-    : {
-        async executeTurn(request: RoleTurnRequest) {
-          const result = await host.executeTurn(request);
-          for (const [index, details] of input.additionalDetails!.entries()) {
-            await sealAcceptedSubmission({
-              cwd: request.cwd,
-              home: request.home,
-              runId: input.runId,
-              runDirectory: request.runDirectory,
-              role: input.role,
-              details,
-              toolCallId: `call_${input.role}_${index + 2}`,
-            });
-          }
-          return result;
-        },
-      };
+  const roleTurnHost = {
+    async executeTurn(request: RoleTurnRequest) {
+      const result = await host.executeTurn(request);
+      if (input.additionalDetails !== undefined) {
+        for (const [index, details] of input.additionalDetails.entries()) {
+          await sealAcceptedSubmission({
+            cwd: request.cwd,
+            home: request.home,
+            runId: input.runId,
+            runDirectory: request.runDirectory,
+            role: input.role,
+            details,
+            toolCallId: `call_${input.role}_${index + 2}`,
+          });
+        }
+      }
+      return result;
+    },
+  };
   return {
     home: input.home,
     agentDir: join(input.home, ".pi"),
@@ -217,8 +217,15 @@ test("public coder binds its typed receipt assertion without parsing summons tex
         runId: "01a063500-0000-7000-8000-00000000coder",
         role: "coder",
         toolName: CODER_OUTPUT_TOOL_NAME,
-        details: { status: "completed", report: "done", ticketNumber: 582 },
+        // #863: malformed first, then first legal wins; all original receipts retained.
+        // Topology unbound→bind→relocate belongs to the #859 public-entry tracer.
+        details: {
+          status: "completed",
+          report: "malformed ticket shape",
+          ticketNumber: "582",
+        },
         additionalDetails: [
+          { status: "completed", report: "first legal", ticketNumber: 582 },
           { status: "completed", report: "later receipt", ticketNumber: 999 },
         ],
       }),
@@ -230,7 +237,8 @@ test("public coder binds its typed receipt assertion without parsing summons tex
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted outcome");
     assert.deepEqual(result.terminal.roleOutcome.payloads, [
-      { status: "completed", report: "done", ticketNumber: 582 },
+      { status: "completed", report: "malformed ticket shape", ticketNumber: "582" },
+      { status: "completed", report: "first legal", ticketNumber: 582 },
       { status: "completed", report: "later receipt", ticketNumber: 999 },
     ]);
     await assertDurableTicket(result.admitted!.runDirectory, 582);
@@ -303,6 +311,8 @@ test("public countersign without --ticket: binds only via 起居郎 typed handof
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
+    // Topology relocate for 起居郎 is owned by the #859 public-entry tracer;
+    // this seat file only proves typed bind from the diarist handoff.
     await assertDurableTicket(result.admitted!.runDirectory, 582);
   });
 });

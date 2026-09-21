@@ -11,6 +11,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { existsSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm, writeFile, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import test from "node:test";
@@ -20,6 +21,7 @@ import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { buildPiTurnExtraArgs } from "../../src/pi/role-turn-host.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { HostContext, RoleHost, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -47,6 +49,7 @@ import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-princip
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { resolveNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import {
   argvFlagValue,
@@ -1527,6 +1530,13 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       true,
       "the first ticket-identifying leg is relocated after its typed assertion",
     );
+    assert.equal(
+      existsSync(
+        join(bookRoot, "unbound", "runs", `${observedDiaristRunId}@diarist`),
+      ),
+      false,
+      "relocate must remove the unbound admission leaf (not copy-and-leave)",
+    );
 
     assert.deepEqual(result.terminal?.gate?.actualSeats, ["notary"]);
     await readFile(join(ticketRun, "session", "auditor-roles", "o01_notary.jsonl"), "utf8");
@@ -1585,6 +1595,99 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     assert.ok(unbound.terminal?.artifacts.length);
     for (const artifact of unbound.terminal!.artifacts) {
       assert.equal(artifact.path.startsWith(join(unboundRunDirectory, "artifacts")), true);
+      await readFile(artifact.path, "utf8");
+    }
+
+    // #863 / #859: work-seat self-report — admission unbound → bind → in-home relocate.
+    const coderId = "01a0sign00-0000-7000-8000-0000000coder";
+    const coderUnboundRun = join(bookRoot, "unbound", "runs", `${coderId}@coder`);
+    const peerRun = join(bookRoot, "unbound", "runs", "01a0sign00-0000-7000-8000-00000000peer@judge");
+    await mkdir(peerRun, { recursive: true });
+    const peerPage = `${JSON.stringify({ runDirectory: peerRun, sourceRun: { runDirectory: coderUnboundRun } }, null, 2)}\n`;
+    await writeFile(
+      join(peerRun, "admitted-request.json"),
+      peerPage,
+      "utf8",
+    );
+    const coderBase = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "coder",
+        toolName: CODER_OUTPUT_TOOL_NAME,
+        details: {
+          status: "completed",
+          report: "work-seat typed self-report",
+          ticketNumber: 582,
+        },
+      }),
+    });
+    let coderAdmissionDirectory = "";
+    const coder = await runAkRole(
+      ["coder", "--model", "test/caller-seat:high", "--project", project, "Implement ticket work."],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        io: captureIo().io,
+        createRunId: () => coderId,
+        roleTurnHost: {
+          async executeTurn(request: RoleTurnRequest) {
+            coderAdmissionDirectory = request.runDirectory;
+            return coderBase.executeTurn(request);
+          },
+        },
+      },
+    );
+    assert.equal(coder.exitCode, 0);
+    assert.equal(
+      coderAdmissionDirectory,
+      join(bookRoot, "unbound", "runs", `${coderId}@coder`),
+      "work seat admits under unbound before typed self-report bind",
+    );
+    const coderTicketRun = join(bookRoot, "582", "runs", `${coderId}@coder`);
+    assert.equal(
+      existsSync(coderTicketRun),
+      true,
+      "work seat relocates in-home after first legal typed ticket bind",
+    );
+    assert.equal(
+      existsSync(coderAdmissionDirectory),
+      false,
+      "work seat relocate must remove the unbound admission leaf (not copy-and-leave)",
+    );
+    const coderAdmitted = JSON.parse(
+      await readFile(join(coderTicketRun, "admitted-request.json"), "utf8"),
+    ) as { ticketNumber?: number };
+    assert.equal(coderAdmitted.ticketNumber, 582);
+    const resumedIdentity = await readRoleRunState(
+      coderTicketRun,
+      piDurablePrincipalAuthority,
+    );
+    assert.equal(resumedIdentity?.runDirectory, coderTicketRun);
+    assert.equal(
+      await readFile(join(peerRun, "admitted-request.json"), "utf8"),
+      peerPage,
+      "online relocate must not read or overwrite an unleased peer page",
+    );
+    const relocatedFromDurableLocator = await resolveNotarySourceRunLocator({
+      projectRoot: project,
+      sourceRun: coderUnboundRun,
+      home,
+    });
+    assert.equal(
+      relocatedFromDurableLocator.runDirectory,
+      coderTicketRun,
+      "a typed durable locator must follow the run identity after relocation",
+    );
+    assert.ok(coder.terminal?.artifacts.length);
+    for (const artifact of coder.terminal!.artifacts) {
+      assert.equal(
+        artifact.path.startsWith(join(coderTicketRun, "artifacts")),
+        true,
+        "relocated terminal artifacts must expose the live ticket-scoped paths",
+      );
       await readFile(artifact.path, "utf8");
     }
 

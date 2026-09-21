@@ -32,6 +32,8 @@ import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { migrateBookTopology } from "../../src/book-topology-migration.ts";
 import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
+import { relocateBoardBoundUnboundRunsInBooks } from "../../src/book-topology-runs-migrator.ts";
+import { findPlacedMigratingRun } from "../../src/book-topology-migration-placement.ts";
 import {
   readTicketProvenance,
   reprojectTicketProvenance,
@@ -1214,6 +1216,99 @@ test("migrateBookTopology preserves legacy and prior bare under unbound when lat
       unboundBodies.includes('"updatedAt":"t0"'),
       true,
       "first bare header in unbound",
+    );
+  });
+});
+
+test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket and rewrites peers", async () => {
+  // #863 stock batch: same migration-suite entry shape as migrateBookTopology —
+  // InBooks is the real flag body; no parallel helper/unit tracer.
+  await withTempRoot("ak-book-topology-board-bound-", async (home) => {
+    const ledgerHome = join(home, ".ak-roles");
+    const booksDirectory = join(ledgerHome, "books");
+    const bookDir = join(booksDirectory, "demo-book");
+    const boundLeaf = "01a086300-0000-7000-8000-00000000judge@judge";
+    const freeLeaf = "01a086300-0000-7000-8000-00000000free@fixer";
+    const peerLeaf = "01a086300-0000-7000-8000-0000000peer@coder";
+    const boundSource = join(bookDir, "unbound", "runs", boundLeaf);
+    const freeSource = join(bookDir, "unbound", "runs", freeLeaf);
+    const peerSource = join(bookDir, "unbound", "runs", peerLeaf);
+
+    async function seedRun(
+      runDir: string,
+      page: Record<string, unknown>,
+    ): Promise<void> {
+      await mkdir(join(runDir, "session"), { recursive: true });
+      await writeFile(
+        join(runDir, "admitted-request.json"),
+        `${JSON.stringify(page, null, 2)}\n`,
+        "utf8",
+      );
+      await writeFile(
+        join(runDir, "invocation.json"),
+        `${JSON.stringify({ runDirectory: runDir }, null, 2)}\n`,
+        "utf8",
+      );
+    }
+
+    await seedRun(boundSource, {
+      runDirectory: boundSource,
+      ticketNumber: 863,
+    });
+    await seedRun(freeSource, { runDirectory: freeSource });
+    await seedRun(peerSource, {
+      runDirectory: peerSource,
+      sourceRun: { runDirectory: boundSource },
+    });
+
+    const relocated = await relocateBoardBoundUnboundRunsInBooks(
+      booksDirectory,
+      {},
+    );
+    const boundTarget = join(bookDir, "863", "runs", boundLeaf);
+    assert.deepEqual(relocated, [
+      {
+        from: boundSource,
+        to: boundTarget,
+        ticketNumber: 863,
+      },
+    ]);
+    assert.equal(
+      existsSync(boundSource),
+      false,
+      "stock relocate must remove the unbound leaf",
+    );
+    assert.equal(existsSync(boundTarget), true);
+    assert.deepEqual(
+      await findPlacedMigratingRun(
+        booksDirectory,
+        "demo-book",
+        boundLeaf,
+        `unbound/runs/${boundLeaf}`,
+      ),
+      { runDirectory: boundTarget, disposition: "placed" },
+      "downstream migrators must reuse T9's board-ticket placement",
+    );
+    assert.equal(
+      existsSync(freeSource),
+      true,
+      "true-unbound without board ticket stays under unbound",
+    );
+    assert.equal(existsSync(peerSource), true);
+
+    const boundAdmitted = JSON.parse(
+      await readFile(join(boundTarget, "admitted-request.json"), "utf8"),
+    ) as { runDirectory?: string; ticketNumber?: number };
+    assert.equal(boundAdmitted.ticketNumber, 863);
+    assert.equal(boundAdmitted.runDirectory, boundTarget);
+
+    const peerAdmitted = JSON.parse(
+      await readFile(join(peerSource, "admitted-request.json"), "utf8"),
+    ) as { sourceRun?: { runDirectory?: string } };
+    assert.equal(
+      peerAdmitted.sourceRun?.runDirectory,
+      boundTarget,
+      "batch cross-run rewrite must retarget peers before rename",
     );
   });
 });

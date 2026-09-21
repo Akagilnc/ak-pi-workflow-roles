@@ -41,7 +41,6 @@ import {
   requireSafePositiveTicketNumber,
 } from "../run-ticket-number.ts";
 import {
-  rewriteRoleRunDurablePages,
   rewriteRunDirectoryPathFields,
   rewriteRunDirectoryPathValue,
 } from "../role-run-relocation.ts";
@@ -628,8 +627,8 @@ export async function relocateAdmittedRunToTicket(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   heldLease?: { relocate(runDirectory: string): void },
-): Promise<void> {
-  if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return;
+): Promise<{ oldRunDirectory: string; newRunDirectory: string } | undefined> {
+  if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return undefined;
   const oldRunDirectory = admitted.runDirectory;
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(oldRunDirectory));
   const target = roleRunPlacement(ledgerHome, {
@@ -639,7 +638,17 @@ export async function relocateAdmittedRunToTicket(
     role: admitted.role,
   });
   ensureRoleRunDirectory(ledgerHome, dirname(target.runDirectory));
+  // Host sealing is pure identity projection, but may reject the coordinates.
+  // Keep that failure before the filesystem commit point.
+  const principal = authority.seal(target);
+
+  // Rename is the only durable commit. Persisted paths are resolved from typed
+  // run identity on read, so online relocation never writes unleased peers or
+  // pretends a directory rename plus page rewrites form one transaction.
   await rename(oldRunDirectory, target.runDirectory);
+
+  // rename moved the open lock inode with the directory. Transfer cleanup
+  // ownership immediately after the commit.
   heldLease?.relocate(target.runDirectory);
 
   const admittedRecord = admitted as unknown as Record<string, unknown>;
@@ -664,14 +673,9 @@ export async function relocateAdmittedRunToTicket(
       target.runDirectory,
     ) as string;
   }
-  const principal = authority.seal(target);
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
-  await rewriteRoleRunDurablePages({
-    pagesDirectory: target.runDirectory,
-    oldRunDirectory,
-    newRunDirectory: target.runDirectory,
-  });
+  return { oldRunDirectory, newRunDirectory: target.runDirectory };
 }
 
 /**

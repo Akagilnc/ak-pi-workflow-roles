@@ -22,11 +22,13 @@ import {
   bindAdmittedTicketNumber,
   buildInstructionTransportPrompt,
   freezeAttachmentsIntoRun,
+  relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import { resolveHostAwareSessionAvailability } from "../session-identity.ts";
+import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
 import type {
   ControlledFailureCause,
@@ -116,6 +118,34 @@ import {
   runWithAutoResumeLoop,
   TurnDispatchedFailure,
 } from "./auto-resume.ts";
+
+function projectRelocatedTurnIdentity(
+  request: RoleTurnRequest,
+  result: { readonly terminal?: TerminalResult },
+  admitted: AdmittedRoleInvocation,
+  relocation: { readonly oldRunDirectory: string; readonly newRunDirectory: string },
+): void {
+  const rewrite = (value: unknown) => rewriteRunDirectoryPathValue(
+    value,
+    relocation.oldRunDirectory,
+    relocation.newRunDirectory,
+  );
+  const mutableRequest = request as unknown as Record<string, unknown>;
+  mutableRequest.runDirectory = admitted.runDirectory;
+  mutableRequest.principal = admitted.principal;
+  const activation = mutableRequest.activation;
+  if (activation !== null && typeof activation === "object" && !Array.isArray(activation)) {
+    for (const field of ["taskPath", "packetPath", "prerequisitesPath", "inputPath", "requestManifestPath"] as const) {
+      const record = activation as Record<string, unknown>;
+      if (field in record) record[field] = rewrite(record[field]);
+    }
+  }
+  if (result.terminal !== undefined) {
+    for (const artifact of result.terminal.artifacts) {
+      artifact.path = rewrite(artifact.path) as string;
+    }
+  }
+}
 
 /** #855: process-cancel settlement never re-enters auto-resume. */
 function withProcessCancelSkipAutoResume<T extends object>(
@@ -702,6 +732,12 @@ export async function dispatchPostAdmissionTurn<
           ? undefined
           : (asserted as { ticketNumber: number }).ticketNumber;
         if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
+      }
+      // #863: shared post-admission bind must relocate unbound→ticket in-home
+      // before lease release (work-seat self-report and any prior board bind).
+      const relocation = await relocateAdmittedRunToTicket(admitted, env.principalAuthority, lease);
+      if (relocation !== undefined) {
+        projectRelocatedTurnIdentity(request, result, admitted, relocation);
       }
       if (adapters.afterDispatch !== undefined) await adapters.afterDispatch(admitted, lease);
       return result;
