@@ -2589,6 +2589,70 @@ async function settleSealedLedgerTerminal(
   );
 }
 
+/**
+ * Sealed accepted outcome publishes. Any other ledger face falls through to
+ * the latest bound errored tool result in the scan window, which settles as
+ * output failure. Both faces attach run-scoped submissions. Absence of both
+ * stays undefined. Session is read first so a read failure keeps its identity
+ * even when the ledger has no accepted row.
+ */
+async function settleSealedAcceptedOrToolResidual(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  scope: SettlementCourtScope | undefined,
+  role: TerminalRoleName,
+  residualToolName: string,
+  scan: "current-attempt" | "session",
+  publish: (
+    roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" }>,
+    coordinates: DurablePrincipalCoordinates,
+    entries: readonly SessionEntry[],
+  ) => Promise<TerminalArtifactRef[]>,
+): Promise<TerminalResult | undefined> {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted, role, scope);
+  if (roleOutcome?.role !== role || roleOutcome.kind !== "accepted") {
+    const scanStart = scan === "current-attempt" ? currentAttemptStartIndex(entries) : 0;
+    for (let index = entries.length - 1; index >= scanStart; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(entries, index, message, residualToolName);
+      if (residual === undefined) continue;
+      const candidate = residual.candidate;
+      const details = isRecord(candidate) ? candidate : { candidate };
+      const failed = await settleFailureTerminalResult(
+        admitted,
+        {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details,
+        },
+        authority,
+        scope ?? {},
+      );
+      return attachRecordedSubmissions(admitted, failed, scope);
+    }
+    return undefined;
+  }
+  const artifacts = await publish(roleOutcome, coordinates, entries);
+  return attachRecordedSubmissions(
+    admitted,
+    await withOptionalGateProjection(
+      {
+        roleOutcome,
+        navigator: extractNavigatorFact(entries),
+        artifacts,
+        runId: admitted.runId,
+      },
+      sessionDirectory,
+      detourGateContext(admitted, scope),
+    ),
+    scope,
+  );
+}
+
 async function settleLawfulJudgeTerminalResult(
   admitted: AdmittedJudgeInvocation,
   authority: DurablePrincipalAuthority,
@@ -2855,62 +2919,21 @@ export async function publishCollectorArtifacts(
   });
 }
 
-/** Lawful Collector accepted outcome extracted from session. */
-export type LawfulCollectorRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 async function settleLawfulCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted, "collector", scope);
-  if (roleOutcome?.role !== "collector" || roleOutcome.kind !== "accepted") {
-    // Bounded to the current attempt so multi-attempt resume timeout/no-output
-    // is not masked by a prior wait-tool residual (#633).
-    const scanStart = currentAttemptStartIndex(entries);
-    for (let index = entries.length - 1; index >= scanStart; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
-      if (residual === undefined) continue;
-      const candidate = residual.candidate;
-      const details = isRecord(candidate) ? candidate : { candidate };
-      const failed = await settleFailureTerminalResult(
-        admitted,
-        {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details,
-        },
-        authority,
-        scope ?? {},
-      );
-      return attachRecordedSubmissions(admitted, failed, scope);
-    }
-    return undefined;
-  }
-  const accepted: LawfulCollectorRoleOutcome = roleOutcome;
-  const navigator = extractNavigatorFact(entries);
-  const artifacts = await publishCollectorArtifacts(
+  // #633: current attempt only — a prior wait-tool residual must not mask
+  // this attempt's timeout or missing output.
+  return settleSealedAcceptedOrToolResidual(
     admitted,
-    accepted,
-    coordinates,
-  );
-  return attachRecordedSubmissions(
-    admitted,
-    await withOptionalGateProjection(
-      {
-        roleOutcome: accepted,
-        navigator,
-        artifacts,
-        runId: admitted.runId,
-      },
-      sessionDirectory,
-      detourGateContext(admitted, scope),
-    ),
+    authority,
     scope,
+    "collector",
+    COLLECTOR_WAIT_TOOL,
+    "current-attempt",
+    (roleOutcome, coordinates) => publishCollectorArtifacts(admitted, roleOutcome, coordinates),
   );
 }
 
@@ -3574,8 +3597,6 @@ export async function publishMergerArtifacts(
   });
 }
 
-/** Lawful Merger accepted outcome extracted from session (shared success interface). */
-export type LawfulMergerRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 async function settleLawfulMergerTerminalResult(
   admitted: AdmittedMergerInvocation,
   authority: DurablePrincipalAuthority,
@@ -3586,61 +3607,24 @@ async function settleLawfulMergerTerminalResult(
   },
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted, "merger", scope);
-  if (roleOutcome?.role !== "merger" || roleOutcome.kind !== "accepted") {
-    // #836: non-sole-round barrier deleted; residual path is host/session only.
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
-      if (residual === undefined) continue;
-      const candidate = residual.candidate;
-      const details = isRecord(candidate) ? candidate : { candidate };
-      const failed = await settleFailureTerminalResult(
-        admitted,
-        {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details,
-        },
-        authority,
-        scope ?? {},
-      );
-      return attachRecordedSubmissions(admitted, failed, scope);
-    }
-    return undefined;
-  }
-  const accepted: LawfulMergerRoleOutcome = roleOutcome;
-  const navigator = extractNavigatorFact(entries);
-  const methodInvocations = extractObservedMethodInvocations(entries, {
-    name: options.methodProvenance.name,
-    allowedLocations: [options.methodSkillPath, options.methodSkillConfiguredPath],
-  });
-  const artifacts = await publishMergerArtifacts(
+  // #836: residual scan stays on the whole host session.
+  return settleSealedAcceptedOrToolResidual(
     admitted,
-    accepted,
-    coordinates,
-    {
-      methodProvenance: options.methodProvenance,
-      methodInvocations,
-    },
-  );
-  return attachRecordedSubmissions(
-    admitted,
-    await withOptionalGateProjection(
-      {
-        roleOutcome: accepted,
-        navigator,
-        artifacts,
-        runId: admitted.runId,
-      },
-      sessionDirectory,
-      detourGateContext(admitted, scope),
-    ),
+    authority,
     scope,
+    "merger",
+    MERGER_OUTPUT_TOOL_NAME,
+    "session",
+    (roleOutcome, coordinates, entries) => {
+      const methodInvocations = extractObservedMethodInvocations(entries, {
+        name: options.methodProvenance.name,
+        allowedLocations: [options.methodSkillPath, options.methodSkillConfiguredPath],
+      });
+      return publishMergerArtifacts(admitted, roleOutcome, coordinates, {
+        methodProvenance: options.methodProvenance,
+        methodInvocations,
+      });
+    },
   );
 }
 
