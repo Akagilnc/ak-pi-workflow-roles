@@ -14,7 +14,11 @@ import {
   type PackagedMethodSkillName,
 } from "../package-resources/method-skill.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
-import { packagedRoleActivationFlags, packagedRoleMetadata } from "../packaged-role-registry.ts";
+import {
+  packagedRoleAcceptedOutputTool,
+  packagedRoleActivationFlags,
+  packagedRoleMetadata,
+} from "../packaged-role-registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitPublicRole,
@@ -55,19 +59,13 @@ import {
   presentStructuralRejection,
   readCollectorInfrastructureFailure,
   readEngineDetourInfrastructureFailure,
-  trySettleAuditorTerminalResult,
+  trySettleAcceptedSeatTerminalResult,
   trySettleCoderTerminalResult,
   trySettleCollectorTerminalResult,
-  trySettleDiaristTerminalResult,
   trySettleDoctorTerminalResult,
   trySettleFixerTerminalResult,
-  trySettleGatekeeperTerminalResult,
-  trySettleGleanerLeftTerminalResult,
-  trySettleInspectorTerminalResult,
   trySettleJudgeTerminalResult,
   trySettleMergerTerminalResult,
-  trySettleNavigatorTerminalResult,
-  trySettleNotaryTerminalResult,
   trySettleSecretariatTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -221,29 +219,16 @@ async function settleSeat(
       return trySettleCollectorTerminalResult(admitted, authority, scope);
     case "doctor":
       return trySettleDoctorTerminalResult(admitted, authority, scope);
-    case "notary":
-      return trySettleNotaryTerminalResult(admitted, authority, scope);
-    case "gleaner-left":
-      return trySettleGleanerLeftTerminalResult(admitted, authority, scope);
-    case "inspector":
-      return trySettleInspectorTerminalResult(admitted, authority, scope);
     case "secretariat":
       return trySettleSecretariatTerminalResult(admitted, authority, scope);
-    case "gatekeeper":
-      return trySettleGatekeeperTerminalResult(admitted, authority, scope);
-    case "navigator":
-      return trySettleNavigatorTerminalResult(admitted, authority, scope);
-    case "auditor":
-      return trySettleAuditorTerminalResult(admitted, authority, scope);
-    case "diarist":
-      return trySettleDiaristTerminalResult(admitted, authority, scope);
     case "reviewer":
     case "countersign":
       return undefined;
-    default: {
-      const unexpected: never = admitted;
-      throw new Error(`no settlement for ${String(unexpected)}`);
-    }
+    default:
+      if (packagedRoleAcceptedOutputTool(admitted.role) === undefined) {
+        throw new Error(`no settlement for ${admitted.role}`);
+      }
+      return trySettleAcceptedSeatTerminalResult(admitted, authority, scope);
   }
 }
 

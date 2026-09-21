@@ -217,6 +217,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
+    settlement: "accepted",
     acceptedText: "符宝郎回执已接受",
     activationFlags: [
       { field: "sourceRun", from: "sourceRunPath", flag: "ak-notary-source-run", binds: "input" },
@@ -274,6 +275,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+    settlement: "accepted",
     acceptedText: "左拾遗回执已接受",
     activationFlags: [
       { field: "baseRevision", flag: "ak-gleaner-left-base" },
@@ -294,6 +296,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "inspector",
     phases: [null],
     outputTool: INSPECTOR_OUTPUT_TOOL_NAME,
+    settlement: "accepted",
     acceptedText: "台院回执已接受",
     activationFlags: [
       {
@@ -319,6 +322,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: GATEKEEPER_OUTPUT_TOOL_NAME,
+    settlement: "accepted",
     acceptedText: "门下省决议已受理",
     activationStage: "load-and-install",
     // Province materials; officers reuse their own public records below.
@@ -333,6 +337,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
+    settlement: "accepted",
     acceptedText: "游奕使建议已受理",
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
@@ -347,6 +352,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "auditor",
     phases: [null],
     outputTool: AUDITOR_OUTPUT_TOOL_NAME,
+    settlement: "accepted",
     acceptedText: "审刑院回执已接受",
     activationStage: "load-and-install",
     sessionMaterials: AUDITOR_PUBLIC_SESSION_MATERIALS,
@@ -362,6 +368,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "diarist",
     phases: [null],
     outputTool: DIARIST_OUTPUT_TOOL_NAME,
+    settlement: "accepted",
     acceptedText: "起居郎回执已接受",
     activationStage: "load-and-install",
     sessionMaterials: [
@@ -409,6 +416,18 @@ export type PackagedActivationFlag = {
   readonly flag?: string;
   readonly binds?: "input" | "phase";
 };
+
+/**
+ * Output tool for seats whose settlement is the shared accepted-tool scan.
+ * Absent means this seat has its own settlement function.
+ */
+export function packagedRoleAcceptedOutputTool(role: string): string | undefined {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined || !("settlement" in record) || record.settlement !== "accepted") {
+    return undefined;
+  }
+  return record.outputTool;
+}
 
 /** Host flags for one seat. Absent means this seat publishes only `ak-role`. */
 export function packagedRoleActivationFlags(role: string): readonly PackagedActivationFlag[] {

@@ -29,7 +29,7 @@ import { parseNotaryArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicNotary } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   attachRecordedSubmissions,
-  trySettleNotaryTerminalResult,
+  trySettleAcceptedSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
@@ -402,7 +402,7 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
       },
     };
 
-    const settled = await trySettleNotaryTerminalResult(
+    const settled = await trySettleAcceptedSeatTerminalResult(
       admitted,
       piDurablePrincipalAuthority,
       { courtAttemptId: "court-2" },
@@ -420,7 +420,7 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
       assert.deepEqual(withHistory.roleOutcome.payloads, [second]);
     }
 
-    const emptyCourt = await trySettleNotaryTerminalResult(
+    const emptyCourt = await trySettleAcceptedSeatTerminalResult(
       admitted,
       piDurablePrincipalAuthority,
       { courtAttemptId: "court-never-sealed" },

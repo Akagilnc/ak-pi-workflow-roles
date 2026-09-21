@@ -82,34 +82,14 @@ import {
   MERGER_OUTPUT_TOOL_NAME,
 } from "../merger-contracts.ts";
 import {
-  NOTARY_OUTPUT_TOOL_NAME,
-} from "../notary-contracts.ts";
-import {
   COUNTERSIGN_OUTPUT_TOOL_NAME,
 } from "../countersign-contracts.ts";
-import {
-  GLEANER_LEFT_OUTPUT_TOOL_NAME,
-} from "../gleaner-left-contracts.ts";
-import {
-  DIARIST_OUTPUT_TOOL_NAME,
-} from "../diarist-contracts.ts";
+import { packagedRoleAcceptedOutputTool } from "../packaged-role-registry.ts";
 import {
   SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
   SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
   SECRETARIAT_OUTPUT_TOOL_NAME,
 } from "../secretariat-contracts.ts";
-import {
-  INSPECTOR_OUTPUT_TOOL_NAME,
-} from "../inspector-contracts.ts";
-import {
-  GATEKEEPER_OUTPUT_TOOL_NAME,
-} from "../package-contracts/gatekeeper-output.ts";
-import {
-  NAVIGATOR_OUTPUT_TOOL_NAME,
-} from "../package-contracts/navigator-output.ts";
-import {
-  AUDITOR_OUTPUT_TOOL_NAME,
-} from "../package-contracts/auditor-output.ts";
 import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
@@ -153,13 +133,7 @@ import {
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
   type AdmittedCountersignInvocation,
-  type AdmittedDiaristInvocation,
   type AdmittedSecretariatInvocation,
-  type AdmittedGleanerLeftInvocation,
-  type AdmittedInspectorInvocation,
-  type AdmittedGatekeeperInvocation,
-  type AdmittedNavigatorInvocation,
-  type AdmittedNotaryInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
@@ -3096,16 +3070,7 @@ export async function trySettleDoctorTerminalResult(
  * #757: sealed receipts pass through full decisiveFacts — one path, no per-seat projector.
  */
 type SeatAcceptedSettlementSpec = {
-  readonly role:
-    | "notary"
-    | "countersign"
-    | "gleaner-left"
-    | "inspector"
-    | "gatekeeper"
-    | "navigator"
-    | "auditor"
-    | "diarist"
-    | "secretariat";
+  readonly role: TerminalRoleName;
   readonly toolName: string;
 };
 
@@ -3151,16 +3116,7 @@ async function publishSeatAcceptedArtifacts(
 }
 
 async function settleLawfulSeatAcceptedTerminalResult(
-  admitted:
-    | AdmittedNotaryInvocation
-    | AdmittedCountersignInvocation
-    | AdmittedGleanerLeftInvocation
-    | AdmittedInspectorInvocation
-    | AdmittedGatekeeperInvocation
-    | AdmittedNavigatorInvocation
-    | import("./invocation.ts").AdmittedAuditorInvocation
-    | AdmittedDiaristInvocation
-    | AdmittedSecretariatInvocation,
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   spec: SeatAcceptedSettlementSpec,
   scope?: SettlementCourtScope,
@@ -3244,43 +3200,20 @@ async function settleLawfulSeatAcceptedTerminalResult(
   return undefined;
 }
 
-/** Lawful Notary accepted outcome (pass/bounce/escalate). */
-export type LawfulNotaryRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulNotaryTerminalResult(
-  admitted: AdmittedNotaryInvocation,
+/** Accepted-tool seats: one scan, tool name from the composition-root record. */
+export async function trySettleAcceptedSeatTerminalResult(
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  // #757: default sealed pass-through — no projectAccepted identity wrapper.
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "notary",
-    toolName: NOTARY_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-/** Settle a lawful Notary Terminal from the admitted session. */
-export async function settleNotaryTerminalResult(
-  admitted: AdmittedNotaryInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleLawfulNotaryTerminalResult(admitted, authority, scope);
-  if (settled === undefined) {
-    throw new Error(
-      "Notary Role run completed without a lawful typed terminal result",
-    );
+  const toolName = packagedRoleAcceptedOutputTool(admitted.role);
+  if (toolName === undefined) {
+    throw new Error(`accepted-seat settlement is not declared for ${admitted.role}`);
   }
-  return settled;
-}
-
-/** Try to settle a lawful Notary Terminal; undefined only for genuine absence. */
-export async function trySettleNotaryTerminalResult(
-  admitted: AdmittedNotaryInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulNotaryTerminalResult(admitted, authority, scope);
+  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+    role: admitted.role,
+    toolName,
+  }, scope);
 }
 
 /** Lawful Countersign accepted outcome (署/封驳/上呈, #572 / ADR 0074). */
@@ -3321,66 +3254,7 @@ export async function trySettleCountersignTerminalResult(
   return settleLawfulCountersignTerminalResult(admitted, authority, scope);
 }
 
-/** Lawful Gleaner-Left accepted outcome (completed 弹章, #502). */
-export type LawfulGleanerLeftRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 
-async function settleLawfulGleanerLeftTerminalResult(
-  admitted: AdmittedGleanerLeftInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "gleaner-left",
-    toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-/** Settle a lawful Gleaner-Left Terminal from the admitted session. */
-export async function settleGleanerLeftTerminalResult(
-  admitted: AdmittedGleanerLeftInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleLawfulGleanerLeftTerminalResult(admitted, authority, scope);
-  if (settled === undefined) {
-    throw new Error(
-      "Gleaner-Left Role run completed without a lawful typed terminal result",
-    );
-  }
-  return settled;
-}
-
-/** Try to settle a lawful Gleaner-Left Terminal; undefined only for genuine absence. */
-export async function trySettleGleanerLeftTerminalResult(
-  admitted: AdmittedGleanerLeftInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulGleanerLeftTerminalResult(admitted, authority, scope);
-}
-
-/** Lawful Diarist accepted outcome (completed 入录选择, #708). */
-export type LawfulDiaristRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulDiaristTerminalResult(
-  admitted: AdmittedDiaristInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "diarist",
-    toolName: DIARIST_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-/** Try to settle a lawful Diarist Terminal; undefined only for genuine absence. */
-export async function trySettleDiaristTerminalResult(
-  admitted: AdmittedDiaristInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulDiaristTerminalResult(admitted, authority, scope);
-}
 
 /**
  * #969 seat projection sole authority: 给事中 terminal (署|上呈) booked as a
@@ -3516,95 +3390,7 @@ export async function trySettleSecretariatTerminalResult(
   return settleLawfulSecretariatTerminalResult(admitted, authority, scope);
 }
 
-/** Lawful Inspector accepted outcome (pass/bounce/escalate). */
-export type LawfulInspectorRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 
-async function settleLawfulInspectorTerminalResult(
-  admitted: AdmittedInspectorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "inspector",
-    toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-export async function trySettleInspectorTerminalResult(
-  admitted: AdmittedInspectorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulInspectorTerminalResult(admitted, authority, scope);
-}
-
-/** Lawful Gatekeeper accepted outcome (dispatch | pass, #639). */
-export type LawfulGatekeeperRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulGatekeeperTerminalResult(
-  admitted: AdmittedGatekeeperInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "gatekeeper",
-    toolName: GATEKEEPER_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-/** Try to settle a lawful Gatekeeper Terminal; undefined only for genuine absence. */
-export async function trySettleGatekeeperTerminalResult(
-  admitted: AdmittedGatekeeperInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulGatekeeperTerminalResult(admitted, authority, scope);
-}
-
-/** Lawful Navigator accepted outcome (route advice, #639). */
-export type LawfulNavigatorRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulNavigatorTerminalResult(
-  admitted: AdmittedNavigatorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "navigator",
-    toolName: NAVIGATOR_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-/** Try to settle a lawful Navigator Terminal; undefined only for genuine absence. */
-export async function trySettleNavigatorTerminalResult(
-  admitted: AdmittedNavigatorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulNavigatorTerminalResult(admitted, authority, scope);
-}
-
-/** Lawful Auditor accepted outcome (pass/bounce/escalate, #675 / #754). */
-export type LawfulAuditorRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulAuditorTerminalResult(
-  admitted: import("./invocation.ts").AdmittedAuditorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "auditor",
-    toolName: AUDITOR_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-export async function trySettleAuditorTerminalResult(
-  admitted: import("./invocation.ts").AdmittedAuditorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulAuditorTerminalResult(admitted, authority, scope);
-}
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */
 export async function trySettleCoderTerminalResult(

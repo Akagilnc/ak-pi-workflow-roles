@@ -152,6 +152,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     bareCommand: false,
     outputTool: "ak_notary_output",
+    settlement: "accepted",
     acceptedText: "符宝郎回执已接受",
     activationFlags: [
       { field: "sourceRun", from: "sourceRunPath", flag: "ak-notary-source-run", binds: "input" },
@@ -198,6 +199,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     bareCommand: false,
     outputTool: "ak_gleaner_left_output",
+    settlement: "accepted",
     acceptedText: "左拾遗回执已接受",
     activationFlags: [
       { field: "baseRevision", flag: "ak-gleaner-left-base" },
@@ -213,6 +215,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "inspector",
     phases: [null],
     outputTool: "ak_inspector_output",
+    settlement: "accepted",
     acceptedText: "台院回执已接受",
     activationFlags: [
       {
@@ -234,6 +237,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "none",
     phases: [null],
     outputTool: "ak_gatekeeper_output",
+    settlement: "accepted",
     acceptedText: "门下省决议已受理",
     activationStage: "load-and-install",
   },
@@ -246,6 +250,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "none",
     phases: [null],
     outputTool: "ak_navigator_output",
+    settlement: "accepted",
     acceptedText: "游奕使建议已受理",
     activationStage: "load-and-install",
   },
@@ -258,6 +263,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "auditor",
     phases: [null],
     outputTool: "ak_auditor_output",
+    settlement: "accepted",
     acceptedText: "审刑院回执已接受",
     activationStage: "load-and-install",
   },
@@ -270,6 +276,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "diarist",
     phases: [null],
     outputTool: "ak_diarist_output",
+    settlement: "accepted",
     acceptedText: "起居郎回执已接受",
     activationStage: "load-and-install",
   },
