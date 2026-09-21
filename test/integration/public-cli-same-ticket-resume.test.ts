@@ -67,6 +67,7 @@ type SeenTurn = {
   model?: RoleTurnRequest["model"];
   sourceRun?: string;
   courtAttemptId?: string;
+  host?: string;
 };
 
 function seedGitProject(root: string): void {
@@ -192,6 +193,7 @@ function observingSealHost(inner: RoleTurnHost, seen: SeenTurn[]): RoleTurnHost 
         ...(request.courtAttemptId === undefined
           ? {}
           : { courtAttemptId: request.courtAttemptId }),
+        ...(request.host === undefined ? {} : { host: request.host }),
       });
       return inner.executeTurn(request);
     },
@@ -873,6 +875,7 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
       firstRunDirectory,
       "second auditor summons continues the same run directory",
     );
+    assert.equal(seen[1]!.host, "pi", "pre-start request must include the selected host envelope");
     assert.equal(seen[1]!.runId, firstRunId);
     assert.equal(
       seen[1]!.model?.model,
@@ -1073,6 +1076,7 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
     );
 
     heldLease = await acquireRunWriterLease(runDirectory);
+    const attachmentsBefore = await readdir(join(runDirectory, "attachments")).catch(() => []);
 
     // Same parent path so lookup resumes into the leased run (#747).
     const resumed = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
@@ -1086,7 +1090,7 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
         createRunId: () => "01a063700-0000-7000-8000-00000000n022",
       },
     );
-    assert.equal(resumed.exitCode, 0, "held lease must not pre-block same-ticket resume");
+    assert.equal(resumed.exitCode, 1, "host starts, but package settlement waits for the held lease");
     assert.equal(
       seen.length,
       2,
@@ -1096,6 +1100,12 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
       seen[1]!.runDirectory,
       runDirectory,
       "re-summons continues the retained seat run (ADR 0079)",
+    );
+    assert.equal(await readCurrentCourt(runDirectory), undefined, "lease loser must not open a court");
+    assert.deepEqual(
+      await readdir(join(runDirectory, "attachments")).catch(() => []),
+      attachmentsBefore,
+      "lease loser must not freeze summons attachments",
     );
   } finally {
     if (heldLease !== undefined) await heldLease.release();
@@ -1181,12 +1191,20 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
         // make the run-state write that clearCurrentCourt performs fail (its
         // read still succeeds). Arm the stderr-restore hook only for this turn.
         sealingTurnArmed = true;
-        await chmod(runStateFile, 0o400);
-        return scriptedTerminatingToolSession({
+        const result = await scriptedTerminatingToolSession({
           role: "notary",
           toolName: NOTARY_OUTPUT_TOOL_NAME,
           details: { status: "pass", findings: [] },
         })(extraArgs, options);
+        // The host is now complete; poison only the post-result court cleanup,
+        // not the package's pre-result running-state write.
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          const state = JSON.parse(await readFile(runStateFile, "utf8")) as { status?: string };
+          if (state.status === "running") break;
+          await new Promise((resolve) => setTimeout(resolve, 1));
+        }
+        await chmod(runStateFile, 0o400);
+        return result;
       },
     });
     const host = observingSealHost(inner, seen);
