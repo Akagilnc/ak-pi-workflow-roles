@@ -12,14 +12,12 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   admitAuditorInvocation,
   admitGatekeeperInvocation,
-  admitJudgeInvocation,
   admitNavigatorInvocation,
   buildInstructionTransportPrompt,
-  admissionCallerOptions,
   persistAdmittedSourceRunPath,
+  summonedTicketFields,
   type AdmittedAuditorInvocation,
   type AdmittedGatekeeperInvocation,
-  type AdmittedJudgeInvocation,
   type AdmittedNavigatorInvocation,
   type ParseInstructionArgvResult,
 } from "./invocation.ts";
@@ -43,10 +41,8 @@ import {
   readEngineDetourInfrastructureFailure,
   trySettleAuditorTerminalResult,
   trySettleGatekeeperTerminalResult,
-  trySettleJudgeTerminalResult,
   trySettleNavigatorTerminalResult,
 } from "./settlement.ts";
-import type { PublicCallableRole } from "./registry.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { TerminalResult } from "./terminal.ts";
 import {
@@ -55,13 +51,11 @@ import {
 } from "./turn-request.ts";
 
 export type InstructionSeatRole =
-  | "judge"
   | "gatekeeper"
   | "navigator"
   | "auditor";
 
 export type AdmittedInstructionSeatInvocation =
-  | AdmittedJudgeInvocation
   | AdmittedGatekeeperInvocation
   | AdmittedNavigatorInvocation
   | AdmittedAuditorInvocation;
@@ -110,8 +104,6 @@ function instructionSeatAdapters(options?: {
       scope?: { readonly courtAttemptId?: string },
     ) => {
       switch (admitted.role) {
-        case "judge":
-          return trySettleJudgeTerminalResult(admitted, authority, scope);
         case "gatekeeper":
           return trySettleGatekeeperTerminalResult(admitted, authority, scope);
         case "navigator":
@@ -155,8 +147,6 @@ async function admitInstructionSeat(
   options: Parameters<typeof admitGatekeeperInvocation>[0],
 ): Promise<AdmittedInstructionSeatInvocation> {
   switch (role) {
-    case "judge":
-      return admitJudgeInvocation(options);
     case "gatekeeper":
       return admitGatekeeperInvocation(options);
     case "navigator":
@@ -240,90 +230,17 @@ async function withAuditorSoulEnv<
   }
 }
 
-function isSharedInstructionRole(role: PublicCallableRole): role is InstructionSeatRole {
-  return role === "judge"
-    || role === "gatekeeper"
-    || role === "navigator"
-    || role === "auditor";
-}
-
-async function delegatePublicSeat(
-  role: Exclude<PublicCallableRole, InstructionSeatRole>,
-  argv: readonly string[],
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-  parseArgv: (args: readonly string[]) => never,
-): Promise<{ exitCode: number; admitted?: unknown; terminal?: TerminalResult }> {
-  switch (role) {
-    case "coder": {
-      const { runPublicCoder } = await import("./coder-run.ts");
-      return runPublicCoder(argv, env, io, parseArgv as never);
-    }
-    case "fixer": {
-      const { runPublicFixer } = await import("./fixer-run.ts");
-      return runPublicFixer(argv, env, io, parseArgv as never);
-    }
-    case "reviewer": {
-      const { runPublicReviewer } = await import("./reviewer-run.ts");
-      return runPublicReviewer(argv, env, io, parseArgv as never);
-    }
-    case "collector": {
-      const { runPublicCollector } = await import("./collector-run.ts");
-      return runPublicCollector(argv, env, io, parseArgv as never);
-    }
-    case "doctor": {
-      const { runPublicDoctor } = await import("./doctor-run.ts");
-      return runPublicDoctor(argv, env, io, parseArgv as never);
-    }
-    case "merger": {
-      const { runPublicMerger } = await import("./merger-run.ts");
-      return runPublicMerger(argv, env, io, parseArgv as never);
-    }
-    case "notary": {
-      const { runPublicNotary } = await import("./notary-run.ts");
-      return runPublicNotary(argv, env, io, parseArgv as never);
-    }
-    case "inspector": {
-      const { runPublicInspector } = await import("./inspector-run.ts");
-      return runPublicInspector(argv, env, io, parseArgv as never);
-    }
-    case "countersign": {
-      const { runPublicCountersign } = await import("./countersign-run.ts");
-      return runPublicCountersign(argv, env, io, parseArgv as never);
-    }
-    case "diarist": {
-      const { runPublicDiarist } = await import("./diarist-run.ts");
-      return runPublicDiarist(argv, env, io, parseArgv as never);
-    }
-    case "secretariat": {
-      const { runPublicSecretariat } = await import("./secretariat-run.ts");
-      return runPublicSecretariat(argv, env, io, parseArgv as never);
-    }
-    case "gleaner-left": {
-      const { runPublicGleanerLeft } = await import("./gleaner-left-run.ts");
-      return runPublicGleanerLeft(argv, env, io, parseArgv as never);
-    }
-  }
-}
-
 export async function runPublicInstructionSeat(
   argv: readonly string[],
   env: InstructionSeatRunEnv,
   io: CliIo,
-  role: PublicCallableRole,
+  role: InstructionSeatRole,
   parseArgv: (args: readonly string[]) => ParseInstructionArgvResult,
 ): Promise<{
   exitCode: number;
   admitted?: AdmittedInstructionSeatInvocation;
   terminal?: TerminalResult;
 }> {
-  if (!isSharedInstructionRole(role)) {
-    return delegatePublicSeat(role, argv, env, io, parseArgv as never) as Promise<{
-      exitCode: number;
-      admitted?: AdmittedInstructionSeatInvocation;
-      terminal?: TerminalResult;
-    }>;
-  }
   let parsed: ParseInstructionArgvResult;
   try {
     parsed = parseArgv(argv);
@@ -420,12 +337,17 @@ export async function runPublicInstructionSeat(
   let admitted: AdmittedInstructionSeatInvocation;
   try {
     admitted = await admitInstructionSeat(role, {
-      ...admissionCallerOptions(env),
+      home: env.home,
+      principalAuthority: env.principalAuthority,
+      cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
+      ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      ...(env.model === undefined ? {} : { model: env.model }),
+      ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
       ...(auditorSourceTicket === undefined
-        ? {}
+        ? summonedTicketFields(env.boundTicketNumber)
         : { assertedTicketNumber: auditorSourceTicket }),
     });
   } catch (error) {
