@@ -1107,7 +1107,7 @@ export async function dispatchPostAdmissionTurn<
             await recordBestEffortPostDispatchDiagnostic(
               admitted,
               env,
-              `current-court cleanup failed after accepted settlement (best-effort continue, self-heals on next resume): ${describeErrorIdentity(error)}`,
+              `current-court cleanup failed after accepted settlement (best-effort continue): ${describeErrorIdentity(error)}`,
               io,
             );
           }
