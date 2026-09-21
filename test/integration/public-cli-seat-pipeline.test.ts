@@ -2,11 +2,12 @@
  * #505 route, submission, and settlement tracer.
  * One public entry (runAkRole) per active registry seat.
  * The host argv role is the route. The sealed terminal and report.json are the
- * submission and settlement faces. Seat differences stay on the registry record.
+ * submission and settlement faces. Navigator routebook read failure stays an
+ * advisory diagnostic and leaves the accepted receipt in place.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -27,6 +28,8 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 
 const TICKET = 505;
+const ROUTEBOOK_FAILURE = "missing playbook";
+const ROUTEBOOK_INVOCATION = "01a05052-0000-7000-8000-000000000099";
 
 function seedGitProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root });
@@ -69,12 +72,40 @@ test("#505 every active seat routes, submits, and settles from the public entry"
           const seat = PUBLIC_ROLE_RECORDS.find((item) => item.role === role);
           assert.ok(seat, `public host argv has no registry role: ${role ?? ""}`);
           routed.push(seat.role);
-          return scriptedTerminatingToolSession({
+          const written = await scriptedTerminatingToolSession({
             role: seat.role as TerminalRoleName,
             toolName: seat.outputTool,
             details: { status: "completed" },
             acceptedText: seat.acceptedText,
           })(args, options);
+          if (seat.role === "navigator") {
+            const sessionFile = argvFlagValue(args, "--session");
+            assert.ok(sessionFile);
+            const prior = await readFile(sessionFile, "utf8");
+            const marker = JSON.stringify({
+              type: "custom",
+              customType: "ak-navigator-invocation",
+              data: {
+                invocationId: ROUTEBOOK_INVOCATION,
+                role: "navigator",
+                phase: null,
+                subjectKey: "subject",
+              },
+            });
+            const attendance = JSON.stringify({
+              type: "custom_message",
+              customType: "ak-navigator-attendance",
+              message: {
+                details: {
+                  invocationId: ROUTEBOOK_INVOCATION,
+                  disposition: "no-advice",
+                  routePlaybookReadFailure: ROUTEBOOK_FAILURE,
+                },
+              },
+            });
+            await writeFile(sessionFile, `${marker}\n${prior}${attendance}\n`, "utf8");
+          }
+          return written;
         },
       });
       const result = await runAkRole(
@@ -111,6 +142,13 @@ test("#505 every active seat routes, submits, and settles from the public entry"
         problems.push(`outcome ${outcome?.kind ?? "missing"}:${outcome && "role" in outcome ? outcome.role : ""}`);
       }
       if (reportRole !== record.role) problems.push(`report role ${String(reportRole)}`);
+      if (record.role === "navigator") {
+        const navigator = result.terminal?.navigator;
+        if (navigator?.advisoryDiagnostic !== ROUTEBOOK_FAILURE) {
+          problems.push(`routebook diagnostic ${String(navigator?.advisoryDiagnostic)}`);
+        }
+        if (outcome?.kind !== "accepted") problems.push("routebook failure changed the receipt");
+      }
       if (problems.length > 0) {
         failures.push(`${record.role}: ${problems.join("; ")} stderr=${stderr.at(-1) ?? ""}`);
       }
