@@ -47,6 +47,7 @@ import {
   pickEngineAxis,
 } from "../package-resources/engine-material.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
+import { packagedRoleMetadata } from "../packaged-role-registry.ts";
 import {
   recordEffectiveInvocationModel,
   requireAuthorityRef,
@@ -54,15 +55,11 @@ import {
   type AdmittedCoderInvocation,
   type AdmittedCountersignInvocation,
   type AdmittedCollectorInvocation,
-  type AdmittedDiaristInvocation,
   type AdmittedDoctorInvocation,
   type AdmittedInspectorInvocation,
   type AdmittedNotaryInvocation,
   type AdmittedFixerInvocation,
   type AdmittedGleanerLeftInvocation,
-  type AdmittedGatekeeperInvocation,
-  type AdmittedJudgeInvocation,
-  type AdmittedNavigatorInvocation,
   type AdmittedMergerInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
@@ -1769,70 +1766,63 @@ export async function loadResumablePublicRole(
   return seatLoadedResult(loaded, admitResumedRole(loaded));
 }
 
+/**
+ * One resume restore. Admission kind comes from the composition-root record;
+ * seat-only required fields stay on that kind. Instruction seats share one face.
+ */
 function admitResumedRole(loaded: {
   readonly run: RoleRunRecord;
   readonly principal: DurablePrincipal;
   readonly observation?: TypedHttp429Observation;
   readonly admittedFields: LoadedAdmittedRequestFields;
 }): AdmittedRoleInvocation {
+  const role = loaded.run.role;
   const runId = loaded.run.runId;
-  switch (loaded.run.role) {
-    case "judge": {
-      const admitted: AdmittedJudgeInvocation = {
-        role: "judge",
-        ...resumedBaseAdmitted(loaded),
-      };
-      return admitted;
-    }
-    case "diarist": {
-      const admitted: AdmittedDiaristInvocation = {
-        role: "diarist",
-        ...resumedBaseAdmitted(loaded),
-      };
-      return admitted;
-    }
-    case "secretariat": {
-      const admitted: import("./invocation.ts").AdmittedSecretariatInvocation = {
-        role: "secretariat",
-        ...resumedBaseAdmitted(loaded),
-      };
-      return admitted;
-    }
-    case "gatekeeper":
-    case "navigator":
-    case "auditor": {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined) {
+    throw new CliUsageError(`unknown role run id: ${role}`);
+  }
+  const fields = loaded.admittedFields;
+  const base = resumedBaseAdmitted(loaded);
+  switch (record.admission) {
+    case "instruction": {
+      if (role === "inspector") {
+        const admitted: AdmittedInspectorInvocation = {
+          role: "inspector",
+          ...base,
+          ...(fields.sourceRunPath === undefined
+            ? {}
+            : { sourceRunPath: fields.sourceRunPath }),
+        };
+        return admitted;
+      }
       return {
-        role: loaded.run.role,
-        ...resumedBaseAdmitted(loaded),
-      } as
-        | AdmittedGatekeeperInvocation
-        | AdmittedNavigatorInvocation
-        | import("./invocation.ts").AdmittedAuditorInvocation;
+        role,
+        ...base,
+      } as AdmittedRoleInvocation;
     }
-    case "inspector": {
-      const admitted: AdmittedInspectorInvocation = {
-        role: "inspector",
-        ...resumedBaseAdmitted(loaded),
-        ...(loaded.admittedFields.sourceRunPath === undefined
+    case "countersign": {
+      const admitted: AdmittedCountersignInvocation = {
+        role: "countersign",
+        ...base,
+        ...(base.courtTicketNumbers === undefined
           ? {}
-          : { sourceRunPath: loaded.admittedFields.sourceRunPath }),
+          : { courtTicketNumbers: base.courtTicketNumbers }),
+        ...(fields.courtTicketNumbersDamage === undefined
+          ? {}
+          : { courtTicketNumbersDamage: fields.courtTicketNumbersDamage }),
       };
       return admitted;
     }
     case "coder": {
-      const phase = loaded.admittedFields.phase ?? loaded.run.phase;
-      if (phase !== "plan" && phase !== "apply") {
-        throw new CliUsageError(
-          `role run admitted coder phase is missing: ${runId}`,
-        );
-      }
-      const taskPath = loaded.admittedFields.taskPath;
+      const phase = resumedWorkerPhase(fields.phase ?? loaded.run.phase, record.phases, role, runId);
+      const taskPath = fields.taskPath;
       if (taskPath === undefined) {
         throw new CliUsageError(
           `role run admitted coder task path is missing: ${runId}`,
         );
       }
-      if (loaded.admittedFields.instruction.trim() === "") {
+      if (fields.instruction.trim() === "") {
         throw new CliUsageError(
           `role run admitted coder task is blank: ${runId}`,
         );
@@ -1840,46 +1830,41 @@ function admitResumedRole(loaded: {
       const admitted: AdmittedCoderInvocation = {
         role: "coder",
         phase,
-        ...resumedBaseAdmitted(loaded),
+        ...base,
         instructionEmpty: false,
         taskPath,
       };
       return admitted;
     }
     case "fixer": {
-      const phase = loaded.admittedFields.phase ?? loaded.run.phase;
-      if (phase !== "plan" && phase !== "apply") {
-        throw new CliUsageError(
-          `role run admitted fixer phase is missing: ${runId}`,
-        );
-      }
-      const packetPath = loaded.admittedFields.packetPath;
+      const phase = resumedWorkerPhase(fields.phase ?? loaded.run.phase, record.phases, role, runId);
+      const packetPath = fields.packetPath;
       if (packetPath === undefined) {
         throw new CliUsageError(
           `role run admitted fixer packet path is missing: ${runId}`,
         );
       }
-      if (loaded.admittedFields.instruction.trim() === "") {
+      if (fields.instruction.trim() === "") {
         throw new CliUsageError(
           `role run admitted fixer instruction is blank: ${runId}`,
         );
       }
-      const prerequisites = loaded.admittedFields.prerequisites ?? Object.freeze([]);
+      const prerequisites = fields.prerequisites ?? Object.freeze([]);
       const admitted: AdmittedFixerInvocation = {
         role: "fixer",
         phase,
-        ...resumedBaseAdmitted(loaded),
+        ...base,
         instructionEmpty: false,
         packetPath,
-        ...(loaded.admittedFields.prerequisitesPath === undefined
+        ...(fields.prerequisitesPath === undefined
           ? {}
-          : { prerequisitesPath: loaded.admittedFields.prerequisitesPath }),
+          : { prerequisitesPath: fields.prerequisitesPath }),
         prerequisites,
       };
       return admitted;
     }
     case "reviewer": {
-      const rawBase = loaded.admittedFields.baseRevision;
+      const rawBase = fields.baseRevision;
       if (rawBase === undefined || rawBase.trim() === "") {
         throw new CliUsageError(
           `role run admitted reviewer base revision is missing: ${runId}`,
@@ -1890,15 +1875,13 @@ function admitResumedRole(loaded: {
           `role run admitted reviewer base revision is damaged: ${runId}`,
         );
       }
-      const lens = loaded.admittedFields.lens;
+      const lens = fields.lens;
       if (!isReviewerLens(lens)) {
         throw new CliUsageError(
           `role run admitted reviewer lens is missing: ${runId}`,
         );
       }
-      const authorityRefs = Object.freeze([
-        ...(loaded.admittedFields.authorityRefs ?? []),
-      ]);
+      const authorityRefs = Object.freeze([...(fields.authorityRefs ?? [])]);
       if (authorityRefs.length === 0) {
         throw new CliUsageError(
           `role run admitted reviewer authority refs are missing: ${runId}`,
@@ -1906,32 +1889,15 @@ function admitResumedRole(loaded: {
       }
       const admitted: AdmittedReviewerInvocation = {
         role: "reviewer",
-        ...resumedBaseAdmitted(loaded),
+        ...base,
         baseRevision: rawBase,
         lens,
         authorityRefs,
       };
       return admitted;
     }
-    case "countersign": {
-      const base = resumedBaseAdmitted(loaded);
-      const admitted: AdmittedCountersignInvocation = {
-        role: "countersign",
-        ...base,
-        ...(base.courtTicketNumbers === undefined
-          ? {}
-          : { courtTicketNumbers: base.courtTicketNumbers }),
-        ...(loaded.admittedFields.courtTicketNumbersDamage === undefined
-          ? {}
-          : {
-              courtTicketNumbersDamage:
-                loaded.admittedFields.courtTicketNumbersDamage,
-            }),
-      };
-      return admitted;
-    }
-    case "gleaner-left": {
-      const baseRevision = loaded.admittedFields.baseRevision;
+    case "gleaner": {
+      const baseRevision = fields.baseRevision;
       if (baseRevision === undefined || baseRevision.trim() === "") {
         throw new CliUsageError(
           `role run admitted gleaner-left base revision is missing: ${runId}`,
@@ -1939,32 +1905,32 @@ function admitResumedRole(loaded: {
       }
       const admitted: AdmittedGleanerLeftInvocation = {
         role: "gleaner-left",
-        ...resumedBaseAdmitted(loaded),
+        ...base,
         baseRevision,
       };
       return admitted;
     }
     case "merger": {
-      const mergerInputPath = loaded.admittedFields.mergerInputPath;
+      const mergerInputPath = fields.mergerInputPath;
       if (mergerInputPath === undefined) {
         throw new CliUsageError(
           `role run admitted merger input path is missing: ${runId}`,
         );
       }
-      const derived = loaded.admittedFields.derived;
+      const derived = fields.derived;
       if (derived === undefined) {
         throw new CliUsageError(
           `role run admitted merger envelope is missing: ${runId}`,
         );
       }
-      if (loaded.admittedFields.instruction.trim() === "") {
+      if (fields.instruction.trim() === "") {
         throw new CliUsageError(
           `role run admitted merger task is blank: ${runId}`,
         );
       }
       const admitted: AdmittedMergerInvocation = {
         role: "merger",
-        ...resumedBaseAdmitted(loaded),
+        ...base,
         instructionEmpty: false,
         mergerInputPath,
         derived,
@@ -1972,7 +1938,7 @@ function admitResumedRole(loaded: {
       return admitted;
     }
     case "collector": {
-      const { prNumber, repository, repositoryDisplay, manifestDigest } = loaded.admittedFields;
+      const { prNumber, repository, repositoryDisplay, manifestDigest } = fields;
       if (
         repository === undefined ||
         repositoryDisplay === undefined ||
@@ -1996,21 +1962,19 @@ function admitResumedRole(loaded: {
       }
       const admitted: AdmittedCollectorInvocation = {
         role: "collector",
-        ...resumedBaseAdmitted(loaded),
+        ...base,
         ...(prNumber === undefined ? {} : { prNumber }),
         repository: parsedRepository,
-        ...(loaded.admittedFields.requestManifestPath === undefined
+        ...(fields.requestManifestPath === undefined
           ? {}
-          : { requestManifestPath: loaded.admittedFields.requestManifestPath }),
-        ...(loaded.admittedFields.waitWindowMs === undefined
-          ? {}
-          : { waitWindowMs: loaded.admittedFields.waitWindowMs }),
+          : { requestManifestPath: fields.requestManifestPath }),
+        ...(fields.waitWindowMs === undefined ? {} : { waitWindowMs: fields.waitWindowMs }),
         manifestDigest,
       };
       return admitted;
     }
     case "doctor": {
-      const { issueNumber, caseRunsPath, caseIdentity } = loaded.admittedFields;
+      const { issueNumber, caseRunsPath, caseIdentity } = fields;
       if (
         issueNumber === undefined ||
         caseRunsPath === undefined ||
@@ -2022,7 +1986,7 @@ function admitResumedRole(loaded: {
       }
       const admitted: AdmittedDoctorInvocation = {
         role: "doctor",
-        ...resumedBaseAdmitted(loaded),
+        ...base,
         issueNumber,
         caseRunsPath,
         caseIdentity,
@@ -2030,7 +1994,7 @@ function admitResumedRole(loaded: {
       return admitted;
     }
     case "notary": {
-      const { sourceRunPath, sourceRun } = loaded.admittedFields;
+      const { sourceRunPath, sourceRun } = fields;
       if (sourceRunPath === undefined || sourceRun === undefined) {
         throw new CliUsageError(
           `role run admitted notary source-run locator is missing: ${runId}`,
@@ -2038,15 +2002,29 @@ function admitResumedRole(loaded: {
       }
       const admitted: AdmittedNotaryInvocation = {
         role: "notary",
-        ...resumedBaseAdmitted(loaded),
+        ...base,
         sourceRunPath,
         sourceRun,
       };
       return admitted;
     }
     default: {
-      const unexpected: never = loaded.run.role;
-      throw new CliUsageError(`unknown role run id: ${String(unexpected)}`);
+      throw new CliUsageError(`unknown role run id: ${role}`);
     }
   }
+}
+
+/** Worker phase on resume: value must belong to the registry phase set. */
+function resumedWorkerPhase(
+  phase: string | undefined,
+  phases: readonly (string | null)[],
+  role: string,
+  runId: string,
+): "plan" | "apply" {
+  if (phase === "plan" || phase === "apply") {
+    if (phases.some((item) => item === phase)) {
+      return phase;
+    }
+  }
+  throw new CliUsageError(`role run admitted ${role} phase is missing: ${runId}`);
 }
