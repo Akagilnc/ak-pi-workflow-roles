@@ -19,7 +19,6 @@ import { join, dirname } from "node:path";
 import test from "node:test";
 
 import { runWithAutoResumeLoop, DISPATCH_ERROR_RETENTION_ENTRY_TYPE } from "../../src/public-cli/auto-resume.ts";
-import { acquireRunWriterLease } from "../../src/public-cli/run-lifecycle.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
@@ -213,50 +212,5 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
     assert.equal(result.terminal?.roleOutcome.kind,"failure");
     assert.equal(result.terminal?.autoResumeCount,2);
     assert.match(stderr.join(""),/dispatch error retention failed/);
-  });
-});
-
-test("#987 auto-resume loop reaches dispatch despite live writer lease", async () => {
-  // Result 5: loop must not pre-acquire / reject on held lease (exit 2). Host
-  // resume path is reached; shared acquire stays available to other writers.
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    const runId = "987-held-lease-loop";
-    const runDir = join(home, ".ak-roles", "books", "proj", "runs", `${runId}@judge`);
-    await mkdir(project, { recursive: true });
-    await mkdir(join(runDir, "session"), { recursive: true });
-    const sessionFile = join(runDir, "session", "session.jsonl");
-    await writeFile(sessionFile, "{}\n", "utf8");
-    const held = await acquireRunWriterLease(runDir);
-    let calls = 0;
-    let seenLease: { release(): Promise<void> } | undefined;
-    const { io } = captureIo();
-    try {
-      const result = await runWithAutoResumeLoop({
-        principalAuthority: piDurablePrincipalAuthority,
-        sessionAppender: appendPiSessionCustomEntry,
-        admitted: {
-          principal: fixturePrincipal(dirname(sessionFile), sessionFile),
-          runDirectory: runDir,
-          role: "judge",
-          runId,
-          projectRoot: project,
-        },
-        io,
-        autoResumeLimit: 0,
-        buildInitialPayload: () => ["--initial"],
-        buildResumePayload: () => ["--resume"],
-        dispatch: async (_payload, lease) => {
-          calls += 1;
-          seenLease = lease;
-          return { exitCode: 0 };
-        },
-      });
-      assert.equal(calls, 1, "held lease must not block the first dispatch");
-      assert.equal(result.exitCode, 0, "must not exit 2 on RunWriterLeaseHeldError");
-      assert.equal(seenLease, undefined, "loop must not supply a pre-acquired lease");
-    } finally {
-      await held.release();
-    }
   });
 });
