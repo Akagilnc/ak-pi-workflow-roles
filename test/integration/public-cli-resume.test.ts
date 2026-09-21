@@ -1652,8 +1652,8 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
         });
         // #987: live package writer lease must not pre-block host CLI resume.
         assert.equal(dispatches, 1);
-        assert.equal(resumed.exitCode, 0);
-        assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+        assert.equal(resumed.exitCode, 1);
+        assert.equal(resumed.terminal, undefined);
       },
       async () => {
         await lease.release();

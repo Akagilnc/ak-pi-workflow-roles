@@ -68,8 +68,8 @@ import {
 } from "../engine-detour-usage.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
-import { postRunMissingCredentialFailure } from "./public-run-credentials.ts";
 import {
+  acquireRunWriterLease,
   clearCurrentCourt,
   clearTypedProviderHttpObservation,
   describeErrorIdentity,
@@ -79,6 +79,7 @@ import {
   renderResumeCommand,
   type CurrentCourtState,
   type RunWriterLease,
+  RunWriterLeaseHeldError,
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
 import {
@@ -614,6 +615,8 @@ export async function dispatchPostAdmissionTurn<
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
   persistRunState?: boolean;
+  /** A manual resume host call already started before package mutation. */
+  startedTurn?: Promise<RoleTurnResult>;
 }): Promise<{
   exitCode: number;
   admitted: A;
@@ -736,10 +739,8 @@ export async function dispatchPostAdmissionTurn<
     }
   };
   try {
-    // #987: do not pre-block host dispatch on AK credential catalog facts.
-    // Host attempt + postRunMissingCredentialFailure / runner knownFailure settle
-    // MissingProviderCredential (docs/pi-0.84.1-capability-audit.md: no local auth
-    // checker; keep local settlement only).
+    // #987: do not pre-block or classify host dispatch from AK credential
+    // catalog facts. Per-invocation runner/host evidence owns provider identity.
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
     // Single authority projectHostTransitionPriorNative classifies the prior native volume.
     // Same-run resume (#637) keeps host identity on the run's invocation page.
@@ -863,7 +864,7 @@ export async function dispatchPostAdmissionTurn<
 
     let result: RoleTurnResult;
     try {
-      result = await env.roleTurnHost.executeTurn(turnRequest);
+      result = await (input.startedTurn ?? env.roleTurnHost.executeTurn(turnRequest));
     } catch (error) {
       const processCancelName = processCancelSignalName(env.signal);
       const settled = await settleAfterTurnStarted(
@@ -979,15 +980,10 @@ export async function dispatchPostAdmissionTurn<
         adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
           ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
           : result.knownFailure;
-      const credentialFailure = postRunMissingCredentialFailure(
-        result,
-        env.model,
-        env.credentials,
-      );
       resolution = await resolveAuditedRunnerFailureResolution({
         runner: runnerKnownFailure,
         sessionFile,
-        credential: credentialFailure,
+        credential: undefined,
         runDirectory: admitted.runDirectory,
       });
       // A direct, current signal from the host/runner itself (timeout / host
@@ -1008,7 +1004,6 @@ export async function dispatchPostAdmissionTurn<
         result.timedOut
         || result.knownFailure !== undefined
         || runnerKnownFailure !== undefined
-        || credentialFailure !== undefined
         || processCancelName !== undefined;
       hostSignalFailed =
         directHostFailureSignal
@@ -1910,20 +1905,50 @@ export async function runPostAdmissionManualResume<
   }
   request = withEngineDetourInvocationScope(request, invocationScopeId);
 
-  const result = await dispatchPostAdmissionTurn({
-    admitted,
-    env: {
-      ...env,
-      ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
-      ...(admitted.correlationId === undefined
-        ? {}
-        : { correlationId: admitted.correlationId }),
-    },
-    io,
-    request,
-    adapters,
-    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
-  });
+  // The host resume is invoked before any package lifecycle mutation. Once the
+  // native call is in flight, the existing shared lease remains the sole owner
+  // of package writes (run-state, attachments, hooks, relocation, settlement).
+  const startedTurn = env.roleTurnHost.executeTurn(request);
+  let lease: RunWriterLease;
+  try {
+    lease = await acquireRunWriterLease(admitted.runDirectory);
+  } catch (error) {
+    // Observe the native call before returning so a host rejection cannot become
+    // an unhandled promise. A live writer continues to own every package write.
+    try {
+      await startedTurn;
+    } catch {
+      // The lease conflict is the package-side reason settlement cannot proceed.
+    }
+    if (error instanceof RunWriterLeaseHeldError) {
+      io.stderr(formatCliDiagnostic(error.message));
+      return { exitCode: 1, admitted };
+    }
+    throw error;
+  }
+
+  const result = await (async () => {
+    try {
+      return await dispatchPostAdmissionTurn({
+        admitted,
+        env: {
+          ...env,
+          ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
+          ...(admitted.correlationId === undefined
+            ? {}
+            : { correlationId: admitted.correlationId }),
+        },
+        io,
+        request,
+        lease,
+        startedTurn,
+        adapters,
+        ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+      });
+    } finally {
+      await lease.release();
+    }
+  })();
   if (
     result.terminal !== undefined &&
     isLawfulTypedTerminalOutcome(result.terminal.roleOutcome)
