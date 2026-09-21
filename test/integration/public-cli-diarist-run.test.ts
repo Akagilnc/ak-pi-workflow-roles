@@ -32,6 +32,7 @@ import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { migrateBookTopology } from "../../src/book-topology-migration.ts";
 import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
 import { relocateBoardBoundUnboundRunsInBooks } from "../../src/book-topology-runs-migrator.ts";
+import { findPlacedMigratingRun } from "../../src/book-topology-migration-placement.ts";
 import {
   readTicketProvenance,
   reprojectTicketProvenance,
@@ -1271,6 +1272,16 @@ test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket
       "stock relocate must remove the unbound leaf",
     );
     assert.equal(existsSync(boundTarget), true);
+    assert.deepEqual(
+      await findPlacedMigratingRun(
+        booksDirectory,
+        "demo-book",
+        boundLeaf,
+        `unbound/runs/${boundLeaf}`,
+      ),
+      { runDirectory: boundTarget, disposition: "placed" },
+      "downstream migrators must reuse T9's board-ticket placement",
+    );
     assert.equal(
       existsSync(freeSource),
       true,

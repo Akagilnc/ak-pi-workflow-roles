@@ -1599,6 +1599,14 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
 
     // #863 / #859: work-seat self-report — admission unbound → bind → in-home relocate.
     const coderId = "01a0sign00-0000-7000-8000-0000000coder";
+    const coderUnboundRun = join(bookRoot, "unbound", "runs", `${coderId}@coder`);
+    const peerRun = join(bookRoot, "unbound", "runs", "01a0sign00-0000-7000-8000-00000000peer@judge");
+    await mkdir(peerRun, { recursive: true });
+    await writeFile(
+      join(peerRun, "admitted-request.json"),
+      `${JSON.stringify({ runDirectory: peerRun, sourceRun: { runDirectory: coderUnboundRun } }, null, 2)}\n`,
+      "utf8",
+    );
     let coderAdmissionDirectory = "";
     const coderBase = roleTurnHostFromLegacyPiRunner({
       packageRoot,
@@ -1651,6 +1659,23 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       await readFile(join(coderTicketRun, "admitted-request.json"), "utf8"),
     ) as { ticketNumber?: number };
     assert.equal(coderAdmitted.ticketNumber, 582);
+    const peerAdmitted = JSON.parse(
+      await readFile(join(peerRun, "admitted-request.json"), "utf8"),
+    ) as { sourceRun?: { runDirectory?: string } };
+    assert.equal(
+      peerAdmitted.sourceRun?.runDirectory,
+      coderTicketRun,
+      "online relocate must close same-book durable references",
+    );
+    assert.ok(coder.terminal?.artifacts.length);
+    for (const artifact of coder.terminal!.artifacts) {
+      assert.equal(
+        artifact.path.startsWith(join(coderTicketRun, "artifacts")),
+        true,
+        "relocated terminal artifacts must expose the live ticket-scoped paths",
+      );
+      await readFile(artifact.path, "utf8");
+    }
 
     const allowedBookEntries = new Set(["582", "unbound", "navigator", "collector-handbook"]);
     for (const entry of await readdir(bookRoot)) {

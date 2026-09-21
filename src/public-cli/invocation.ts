@@ -27,6 +27,7 @@ import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
   ensureRoleRunDirectory,
   ensureRoleRunPlacement,
+  listBookRunDirectories,
   roleRunArtifactsDirectory,
   roleRunPlacement,
   type RoleRunSubject,
@@ -628,8 +629,8 @@ export async function relocateAdmittedRunToTicket(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   heldLease?: { relocate(runDirectory: string): void },
-): Promise<void> {
-  if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return;
+): Promise<{ oldRunDirectory: string; newRunDirectory: string } | undefined> {
+  if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return undefined;
   const oldRunDirectory = admitted.runDirectory;
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(oldRunDirectory));
   const target = roleRunPlacement(ledgerHome, {
@@ -642,17 +643,33 @@ export async function relocateAdmittedRunToTicket(
 
   // Rewrite while still at unbound so parse/write failures leave the source in
   // place; rename only after the durable-page closure succeeds (#863 P1).
-  await rewriteRoleRunDurablePages({
-    pagesDirectory: oldRunDirectory,
-    oldRunDirectory,
-    newRunDirectory: target.runDirectory,
-  });
+  const crossRunRewrites = [{ oldRunDirectory, newRunDirectory: target.runDirectory }];
+  const bookDirectory = activationBookDirectory(ledgerHome, admitted.bookKey);
+  // A newly admitted run can only acquire incoming durable references from
+  // package-owned child runs that it synchronously settled during this turn.
+  // Those children have released their writer leases before returning here;
+  // unrelated concurrent writers cannot know this freshly minted run identity.
+  // Rewrite the complete book graph before rename, so every consumer switches
+  // from the old path in the same relocation closure.
+  for (const runDirectory of await listBookRunDirectories(bookDirectory)) {
+    const movingSelf = runDirectory === oldRunDirectory;
+    await rewriteRoleRunDurablePages({
+      pagesDirectory: runDirectory,
+      oldRunDirectory: movingSelf ? oldRunDirectory : runDirectory,
+      newRunDirectory: movingSelf ? target.runDirectory : runDirectory,
+      crossRunRewrites,
+    });
+  }
 
   // Disk move first. Publish in-memory admitted/principal identity only after
   // rename succeeds — otherwise rename failure leaves disk at unbound while
   // memory already shows the ticket path, and the unbound retry gate whitewashes
   // the next call (#863 online atomicity).
   await rename(oldRunDirectory, target.runDirectory);
+
+  // rename moved the open lock inode with the directory. Transfer cleanup
+  // ownership before any subsequent fallible identity projection.
+  heldLease?.relocate(target.runDirectory);
 
   const admittedRecord = admitted as unknown as Record<string, unknown>;
   rewriteRunDirectoryPathFields(
@@ -679,7 +696,7 @@ export async function relocateAdmittedRunToTicket(
   const principal = authority.seal(target);
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
-  heldLease?.relocate(target.runDirectory);
+  return { oldRunDirectory, newRunDirectory: target.runDirectory };
 }
 
 /**
