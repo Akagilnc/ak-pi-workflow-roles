@@ -646,6 +646,8 @@ export async function dispatchPostAdmissionTurn<
   startedTurn?: Promise<RoleTurnResult>;
   /** Final host projection used by a manual resume started before package writes. */
   projectedRequest?: RoleTurnRequest;
+  /** Package writes deferred until a manually-started host is under lease. */
+  afterTurnStartedBeforeDispatch?: () => Promise<void>;
 }): Promise<{
   exitCode: number;
   admitted: A;
@@ -794,6 +796,38 @@ export async function dispatchPostAdmissionTurn<
         )) as { exitCode: number; admitted: A; terminal: T },
         ...deferredPersist,
       };
+    }
+
+    if (input.afterTurnStartedBeforeDispatch !== undefined) {
+      try {
+        await input.afterTurnStartedBeforeDispatch();
+      } catch (error) {
+        // The native host is already live. Always observe it before settling
+        // the package-side failure so its rejection cannot escape unhandled.
+        try {
+          await input.startedTurn;
+        } catch {
+          // The deferred-write failure remains the controlling package cause.
+        }
+        const settled = await settleAfterTurnStarted(
+          admitted,
+          withEngineDetourInvocationScope({
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+          }, request.invocationScopeId),
+          adapters,
+          env.principalAuthority,
+          io,
+          persistRunState,
+        );
+        return await finishAfterTurn({
+          ...settled,
+          turnDispatched: true as const,
+          ...deferredPersist,
+        });
+      }
     }
 
     await clearTypedProviderHttpObservation(admitted.runDirectory);
@@ -1956,6 +1990,10 @@ export async function runPostAdmissionManualResume<
   // native call is in flight, the existing shared lease remains the sole owner
   // of package writes (run-state, attachments, hooks, relocation, settlement).
   const startedTurn = env.roleTurnHost.executeTurn(projectedRequest);
+  // Package lease/deferred work may take multiple turns before dispatch awaits
+  // this promise. Attach an observer immediately; the original promise keeps
+  // its rejection for the unified settlement path below.
+  void startedTurn.catch(() => undefined);
   let lease: RunWriterLease;
   try {
     lease = await acquireRunWriterLease(admitted.runDirectory);
@@ -1976,7 +2014,6 @@ export async function runPostAdmissionManualResume<
 
   const result = await (async () => {
     try {
-      await applyDeferredWrites();
       return await dispatchPostAdmissionTurn({
         admitted,
         env: dispatchEnv,
@@ -1985,6 +2022,7 @@ export async function runPostAdmissionManualResume<
         lease,
         startedTurn,
         projectedRequest,
+        afterTurnStartedBeforeDispatch: applyDeferredWrites,
         adapters,
         ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
       });

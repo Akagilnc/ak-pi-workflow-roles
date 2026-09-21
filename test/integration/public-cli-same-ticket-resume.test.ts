@@ -16,7 +16,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -1109,6 +1109,55 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
     );
   } finally {
     if (heldLease !== undefined) await heldLease.release();
+    await rm(scratch.home, { recursive: true, force: true });
+    await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test("#987 deferred summons write failure after host start settles through the public resume boundary", async () => {
+  const scratch = await openNotaryScratch("home-deferred-failure-");
+  let attachmentsDirectory: string | undefined;
+  let attachmentsBackup: string | undefined;
+  try {
+    const { home, project, io, credentials } = scratch;
+    const sealHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "notary",
+        toolName: NOTARY_OUTPUT_TOOL_NAME,
+        details: { status: "pass", findings: [] },
+      }),
+    });
+    let turns = 0;
+    const host: RoleTurnHost = {
+      executeTurn: async (request) => {
+        turns += 1;
+        if (turns === 1) return sealHost.executeTurn(request);
+        attachmentsDirectory = join(request.runDirectory, "attachments");
+        attachmentsBackup = `${attachmentsDirectory}.bak`;
+        await rename(attachmentsDirectory, attachmentsBackup);
+        await writeFile(attachmentsDirectory, "not a directory", "utf8");
+        throw new Error("simultaneous host rejection must be observed");
+      },
+    };
+
+    const first = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`], {
+      home, packageRoot, cwd: project, credentials, io, roleTurnHost: host,
+      createRunId: () => "01a063700-0000-7000-8000-00000000n031",
+    });
+    assert.equal(first.exitCode, 0);
+
+    const resumed = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`], {
+      home, packageRoot, cwd: project, credentials, io, roleTurnHost: host,
+    });
+    assert.equal(turns, 2, "the native host genuinely starts before the deferred write");
+    assert.equal(resumed.exitCode, 1);
+  } finally {
+    if (attachmentsDirectory !== undefined) await rm(attachmentsDirectory, { force: true }).catch(() => undefined);
+    if (attachmentsDirectory !== undefined && attachmentsBackup !== undefined) {
+      await rename(attachmentsBackup, attachmentsDirectory).catch(() => undefined);
+    }
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
   }
