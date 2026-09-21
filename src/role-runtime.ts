@@ -392,84 +392,18 @@ export { createProductionMergerGitState } from "./merger-git-state.ts";
 export type { MergerGitState, ActiveMergerGitState } from "./merger-git-state.ts";
 export type { MergerRoleDependencies } from "./merger-role.ts";
 
-type WorkerArmable = {
-  activate(context?: HostContext): Promise<void>;
-  armSubmissionGate(cwd: string, parent: { getSessionFile(): string | undefined }): void;
-};
-
-type ActivationRuntime = {
-  event: { reason: string };
-  context: HostContext;
-  judge: { activate(): Promise<void> };
-  fixer: WorkerArmable;
-  coder: WorkerArmable;
-  reviewer: {
-    activate(
-      context: HostContext,
-      admitted: ReviewerAdmittedInputs,
-    ): Promise<ReviewerActivation>;
-  };
-  /** Envelope decodes Reviewer transport flags inside the activation stage. */
-  decodeReviewerAdmitted(): ReviewerAdmittedInputs;
-  /** Envelope stores live Reviewer activation for agent_start prompt assembly. */
-  bindReviewerParent(activation: ReviewerActivation): void;
-  collector: {
-    activate(context: HostContext, event: { reason: string }): Promise<void>;
-  };
-  doctor: { activate(): Promise<void> };
-  notary: {
-    activate(admitted?: import("./notary-role.ts").NotaryAdmittedTicket): Promise<void>;
-  };
-  /** Envelope decodes Notary ticket flag inside the activation stage (ADR 0018). */
-  decodeNotaryAdmitted(): import("./notary-role.ts").NotaryAdmittedTicket | undefined;
-  countersign: { activate(): Promise<void> };
-  gleanerLeft: { activate(): Promise<void> };
-  inspector: { activate(): Promise<void> };
-  gatekeeper: { activate(): Promise<void> };
-  navigator: { activate(): Promise<void> };
-  auditor: { activate(): Promise<void> };
-  diarist: { activate(): Promise<void> };
-  secretariat: { activate(): Promise<void> };
-  merger(): Promise<void>;
-};
-
-function activationStage(role: PackagedRole, runtime: ActivationRuntime): { id: string; run(): Promise<void> } {
+function activationStage(
+  role: PackagedRole,
+  activate: Record<PackagedRole, () => Promise<void>>,
+): { id: string; run(): Promise<void> } {
   const record = packagedRoleMetadata(role);
   if (record === undefined) {
     throw new Error(`Unsupported workflow role: ${String(role)}`);
   }
   return {
     id: record.activationStage,
-    run: () => activateRegisteredRole(role, runtime),
+    run: () => activate[role](),
   };
-}
-
-async function activateRegisteredRole(role: PackagedRole, runtime: ActivationRuntime): Promise<void> {
-  switch (role) {
-    case "judge": return runtime.judge.activate();
-    case "fixer": return runtime.fixer.activate();
-    case "coder": return runtime.coder.activate(runtime.context);
-    case "reviewer": {
-      const admitted = runtime.decodeReviewerAdmitted();
-      const activation = await runtime.reviewer.activate(runtime.context, admitted);
-      runtime.bindReviewerParent(activation);
-      return;
-    }
-    case "collector": return runtime.collector.activate(runtime.context, runtime.event);
-    case "doctor": return runtime.doctor.activate();
-    case "notary":
-      // Envelope owns ticket flag read (ADR 0018); role receives admitted value only.
-      return runtime.notary.activate(runtime.decodeNotaryAdmitted());
-    case "countersign": return runtime.countersign.activate();
-    case "gleaner-left": return runtime.gleanerLeft.activate();
-    case "inspector": return runtime.inspector.activate();
-    case "gatekeeper": return runtime.gatekeeper.activate();
-    case "navigator": return runtime.navigator.activate();
-    case "auditor": return runtime.auditor.activate();
-    case "diarist": return runtime.diarist.activate();
-    case "secretariat": return runtime.secretariat.activate();
-    case "merger": return runtime.merger();
-  }
 }
 
 function validateActivationTraceRecord(record: unknown): ActivationTraceRecord {
@@ -2281,40 +2215,32 @@ export function createRoleRuntimeExtension(
       selectedRole = entry.role;
       await navigatorAttendance?.dispose();
       navigatorAttendance = undefined;
-      const runtime: ActivationRuntime = {
-        event,
-        context: ctx,
-        judge,
-        fixer,
-        coder,
-        reviewer,
-        decodeReviewerAdmitted() {
-          return decodeReviewerAdmittedInputs((name) => roleHost.getFlag(name));
+      // One activation call per seat. Stage id still comes from the registry.
+      // Envelope owns Reviewer and Notary flag reads (ADR 0018).
+      const activateByRole = {
+        judge: () => judge.activate(),
+        fixer: () => fixer.activate(),
+        coder: () => coder.activate(ctx),
+        reviewer: async () => {
+          const admitted = decodeReviewerAdmittedInputs((name) => roleHost.getFlag(name));
+          activeReviewerParent = await reviewer.activate(ctx, admitted);
         },
-        bindReviewerParent(activation) {
-          activeReviewerParent = activation;
+        collector: () => collector.activate(ctx, event),
+        doctor: () => doctor.activate(),
+        notary: () => {
+          const ticketNumber = readNotaryTicketFlag(roleHost.getFlag(NOTARY_TICKET_FLAG.name));
+          return notary.activate(ticketNumber === undefined ? undefined : { ticketNumber });
         },
-        decodeNotaryAdmitted() {
-          const ticketNumber = readNotaryTicketFlag(
-            roleHost.getFlag(NOTARY_TICKET_FLAG.name),
-          );
-          return ticketNumber === undefined ? undefined : { ticketNumber };
-        },
-        collector,
-        doctor,
-        notary,
-        countersign,
-        gleanerLeft,
-        inspector,
-        gatekeeper,
-        navigator,
-        auditor,
-        diarist,
-        secretariat,
-        merger: async () => {
-          await merger.activate();
-        },
-      };
+        countersign: () => countersign.activate(),
+        "gleaner-left": () => gleanerLeft.activate(),
+        inspector: () => inspector.activate(),
+        gatekeeper: () => gatekeeper.activate(),
+        navigator: () => navigator.activate(),
+        auditor: () => auditor.activate(),
+        diarist: () => diarist.activate(),
+        secretariat: () => secretariat.activate(),
+        merger: () => merger.activate(),
+      } satisfies Record<PackagedRole, () => Promise<void>>;
       try {
         // Production topology only (ADR 0048/0049): no test-only ledger hooks.
         // Admit durable session file first so lifecycle getEntries/appendEntry are truthful:
@@ -2415,7 +2341,7 @@ export function createRoleRuntimeExtension(
           }
         }
 
-        await executeActivationStage(entry.role, activationStage(entry.role, runtime), { clock, writeTrace });
+        await executeActivationStage(entry.role, activationStage(entry.role, activateByRole), { clock, writeTrace });
         roleReferenceMaterials = await dependencies.loadRoleReferenceMaterials?.(entry.role) ?? "";
         // #357 T2 / #378 / #380 / #391 / #818: any role+engine activation registers the package detour tool once.
         // Gate is resolveEngineName (RoleHost flag → env fallback) — no per-engine execute branch; no role-module spawn.
