@@ -681,7 +681,7 @@ export async function runWithAutoResumeLoop<
     // throws and beforeDispatch failures retry the initial payload (#840 / #416).
     if (result?.turnDispatched === true || turnStartedBeforeThrow) {
       currentPayload = options.buildResumePayload();
+      isFirst = false;
     }
-    isFirst = false;
   }
 }

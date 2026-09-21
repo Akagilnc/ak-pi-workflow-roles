@@ -32,8 +32,8 @@ function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{st
 
 type LoopDispatchResult={exitCode:number;terminal?:TerminalResult};
 
-function alwaysThrowingDispatch(callsRef:{n:number}, messages:readonly string[]){
-  // #987: auto-resume loop no longer supplies a lease; release only when present.
+function alwaysThrowingDispatch(callsRef:{n:number}, messages:readonly string[], leases?:boolean[]){
+  // #987: initial retries keep the lease; host resumes receive none.
   return async(
     _extraArgs:readonly string[],
     lease:{release():Promise<void>}|undefined,
@@ -41,6 +41,7 @@ function alwaysThrowingDispatch(callsRef:{n:number}, messages:readonly string[])
     withPrimaryAwareCleanup(
       async () => {
         callsRef.n+=1;
+        leases?.push(lease !== undefined);
         throw new Error(messages[Math.min(callsRef.n-1,messages.length-1)]!);
       },
       async () => {
@@ -97,6 +98,7 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
     await writeFile(sessionFile,"{}\n","utf8");
     await plantRecordedSubmissions({home,project,runDirectory:runDir,runId,role:"judge"});
     const callsRef={n:0};
+    const leases:boolean[]=[];
     const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
@@ -106,12 +108,13 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
       autoResumeLimit:2,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
-      dispatch:alwaysThrowingDispatch(callsRef,[`boom-attempt-${1}`,`boom-attempt-${2}`,`boom-final`]),
+      dispatch:alwaysThrowingDispatch(callsRef,[`boom-attempt-${1}`,`boom-attempt-${2}`,`boom-final`],leases),
     });
     const terminal=result.terminal as TerminalResult;
 
     // (a) budget reached: initial + limit resumes; count observation equals limit.
     assert.equal(callsRef.n,3);
+    assert.deepEqual(leases,[true,true,true]);
     assert.equal(result.exitCode,1);
     assert.equal(terminal.roleOutcome.kind,"failure");
     assert.equal(terminal.autoResumeCount,2);
