@@ -9,7 +9,6 @@ import { lstat, realpath } from "node:fs/promises";
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
 import {
   activationBookDirectory,
-  homeFromRunDirectory,
   physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
@@ -165,22 +164,7 @@ export async function resolveNotarySourceRunLocator(options: {
 export async function loadNotarySourceRunLocator(
   path: string,
 ): Promise<NotarySourceRunLocator> {
-  let real: string;
-  try {
-    real = await requireRunDirectory(path, path);
-  } catch (error) {
-    const identity = parseRunDirectoryName(basename(path));
-    if (identity === undefined) throw error;
-    const bookKey = basename(dirname(dirname(dirname(path))));
-    const relocated = await findRunDirectoryById(
-      homeFromRunDirectory(path),
-      identity.runId,
-      bookKey,
-      identity.role,
-    );
-    if (relocated === undefined) throw error;
-    real = await requireRunDirectory(relocated, path);
-  }
+  const real = await requireRunDirectory(path, path);
   const identity = parseRunDirectoryName(basename(real))!;
   const runState = await readRoleRunIdentity(real);
   if (runState === undefined) {

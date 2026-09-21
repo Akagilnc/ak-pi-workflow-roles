@@ -10,11 +10,10 @@ import {
   mkdtemp,
   readdir,
   realpath,
-  rename,
   rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -36,7 +35,6 @@ import {
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
-import { rewriteRoleRunDurablePages } from "../../src/role-run-relocation.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -391,51 +389,6 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
     );
     assert.equal(rejectedProjection.exitCode, 2);
     assert.equal(rejectedProjection.terminal, undefined);
-  });
-});
-
-test("notary fresh activation follows a source run relocated after admission", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const sourceRunPath = await seedCanonicalSourceRun(home, project);
-    const bookKey = resolveBookKeyFromGit(project);
-    const relocatedSourceRunPath = join(
-      activationBookDirectory(resolveActivationLedgerHome(home), bookKey),
-      "986",
-      "runs",
-      `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
-    );
-    const baseHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: scriptedNotarySession({ status: "pass", findings: [] }),
-    });
-
-    const result = await runAkRole(
-      ["notary", "--model", "test/caller-seat:high", "--source-run", sourceRunPath],
-      {
-        home,
-        packageRoot,
-        cwd: project,
-        io: captureIo().io,
-        createRunId: () => "01a0notary-0000-7000-8000-000000000986",
-        roleTurnHost: createMinimalHost(async (request) => {
-          await mkdir(dirname(relocatedSourceRunPath), { recursive: true });
-          await rename(sourceRunPath, relocatedSourceRunPath);
-          await rewriteRoleRunDurablePages({
-            pagesDirectory: relocatedSourceRunPath,
-            oldRunDirectory: sourceRunPath,
-            newRunDirectory: relocatedSourceRunPath,
-          });
-          return await baseHost.executeTurn(request);
-        }),
-      },
-    );
-
-    assert.equal(result.exitCode, 0, JSON.stringify(result));
-    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
   });
 });
 
