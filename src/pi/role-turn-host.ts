@@ -164,7 +164,7 @@ function piUserDialogueBody(request: RoleTurnRequest): string {
           const _exhaustive: never = request.continuation;
           return _exhaustive;
         })();
-  return request.continuation.kind === "resume" && request.activation.role === "reviewer"
+  return request.continuation.kind === "resume"
     ? rawPrompt
     : applyPiNativeSkillInvocation(request.methods, rawPrompt);
 }

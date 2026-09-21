@@ -2373,12 +2373,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       assert.equal(seen[seen.indexOf("--session-dir") + 1], admitted.sessionDirectory);
       // Resume continues the existing method turn instead of invoking its Skill again.
       const rawPrompt = c.message === undefined ? "" : c.message;
-      const expectedBody =
-        c.role === "merger"
-          ? (rawPrompt.length === 0
-            ? "/skill:resolving-merge-conflicts"
-            : `/skill:resolving-merge-conflicts ${rawPrompt}`)
-          : rawPrompt;
+      const expectedBody = rawPrompt;
       assert.equal(readUserDialogueStdin(seenStdin ?? ""), expectedBody);
       assert.equal(readUserDialogueStdin((seenStdin ?? "").trim()), expectedBody);
     }

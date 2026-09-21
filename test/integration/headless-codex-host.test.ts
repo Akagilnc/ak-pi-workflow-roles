@@ -171,7 +171,7 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     const prompts = (await readFile(promptLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string);
     assert.deepEqual(prompts.slice(0, 2), [
       "$diagnosing-bugs $tdd work",
-      "$diagnosing-bugs $tdd continue",
+      "continue",
     ]);
     const argv = (await readFile(argvLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
     assert.deepEqual(argv[1]!.slice(0, 4), ["exec", "--approve-for-me", "resume", "thread-fake-1"]);
@@ -287,6 +287,7 @@ process.exit(1);
     assert.ok(description);
     let bound: string | undefined;
     let rejectBind = false;
+    let sessionParent = join(ledger.runDirectory, "session", "session.jsonl");
     const host = createHeadlessRoleTurnHost({
       description,
       hostName: "codex",
@@ -299,7 +300,7 @@ process.exit(1);
           if (rejectBind) throw new Error("session identity store is read-only");
           bound = id;
         },
-        resolveSessionFile: () => join(ledger.runDirectory, "session", "session.jsonl"),
+        resolveSessionFile: () => sessionParent,
       },
       prepare: async (request) => ({
         mcpServers: [],
@@ -350,6 +351,14 @@ process.exit(1);
       exitCode: 1,
       sessionBindingDiagnostic: "session identity store is read-only",
     });
+    rejectBind = false;
+    sessionParent = "/dev/null/session.jsonl";
+    const recordFailed = await execute("no-thread");
+    assert.equal(recordFailed.knownFailure?.identity?.code, "codex-turn-failed");
+    assert.equal(
+      recordFailed.knownFailure?.diagnostic,
+      "thread-store conflict: session already has an active writer (code -32600)",
+    );
   } finally {
     ledger.dispose();
   }

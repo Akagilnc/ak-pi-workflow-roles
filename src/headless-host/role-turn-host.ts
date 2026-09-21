@@ -554,7 +554,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               args,
               cwd: request.cwd,
               env,
-              stdin: applyMethodPrompt(prompt),
+              stdin: request.continuation.kind === "resume" ? prompt : applyMethodPrompt(prompt),
               ...(abortSignal === undefined ? {} : { signal: abortSignal }),
               ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
               onStdoutLine(line) {
@@ -568,6 +568,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                   return;
                 }
                 // One bounded live seam owns both recording and host-specific reduction.
+                codexObserver?.observe(event);
                 reportHostSessionEvent({
                   host: config.hostName,
                   cwd: request.cwd,
@@ -575,12 +576,22 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                   source: "headless-host",
                   event,
                 });
-                codexObserver?.observe(event);
               },
             });
           } catch (error) {
             if (isHostAbortedError(error)) throw error;
             const message = error instanceof Error ? error.message : String(error);
+            const observedHostFailure = codexObserver?.result().failureDiagnostic;
+            if (observedHostFailure !== undefined) {
+              return {
+                status: "terminal",
+                result: failure("output", "HeadlessCliError", "codex-turn-failed", {
+                  diagnostic: observedHostFailure,
+                  sessionRecordDiagnostic: message,
+                  sessionId,
+                }, observedHostFailure),
+              };
+            }
             // SitianInfrastructureError.knownCause is session; spawn errno stays activation.
             const isRecordFailure =
               typeof error === "object"

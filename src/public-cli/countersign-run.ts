@@ -24,6 +24,7 @@
  * continues the body (r5 unbound-continue). Bound refresh hands the typed key to
  * 起居郎 so freeze loads issue face (ADR 0075: 每次过庭都跑是调用者用法 / typed handoff).
  */
+import { resolve } from "node:path";
 import type {
   DurablePrincipalAuthority,
   RoleTurnRequest,
@@ -62,7 +63,6 @@ import {
   markRunAdmitted,
   type PublicResumeRequest,
   type RunWriterLease,
-  type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
@@ -475,6 +475,33 @@ export async function runPublicCountersign(
   }
 
   let admitted: AdmittedCountersignInvocation;
+  const gateParentRunPath =
+    typeof env.parentRunPath === "string" && env.parentRunPath.trim() !== ""
+      ? env.parentRunPath
+      : undefined;
+  if (gateParentRunPath !== undefined) {
+    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction ?? parsed.instruction;
+    const resumed = await tryResumeSameTicketSeatRun({
+      home: env.home,
+      projectRoot: resolve(parsed.project ?? env.cwd),
+      role: "countersign",
+      parentRunPath: gateParentRunPath,
+      freshSummons: env.freshSummons,
+      summons: {
+        sourceRunPath: gateParentRunPath,
+        instruction: resumeInstruction,
+        instructionEmpty: resumeInstruction.trim() === "",
+      },
+      resume: (runId, materials) =>
+        runPublicCountersignResume(
+          { runId, ...(materials === undefined ? {} : { summons: materials }) },
+          env,
+          io,
+        ),
+    });
+    if (resumed !== undefined) return resumed;
+  }
+
   try {
     admitted = await admitCountersignInvocation({
       home: env.home,
@@ -517,40 +544,6 @@ export async function runPublicCountersign(
 
         // #747 / #987: gate same-parent resume before identity mint. Public entry
         // without parentRunPath never selects a prior run by ticket number.
-        const gateParentRunPath =
-          typeof env.parentRunPath === "string" && env.parentRunPath.trim() !== ""
-            ? env.parentRunPath
-            : undefined;
-        if (gateParentRunPath !== undefined) {
-          const resumeInstruction =
-            env.reviewReask ?? env.gateReviewInstruction ?? parsed.instruction;
-          const summons: SameTicketSummonsMaterials = {
-            sourceRunPath: gateParentRunPath,
-            instruction: resumeInstruction,
-            instructionEmpty: resumeInstruction.trim() === "",
-          };
-          const resumed = await tryResumeSameTicketSeatRun({
-            home: env.home,
-            projectRoot: admitted.projectRoot,
-            role: "countersign",
-            parentRunPath: gateParentRunPath,
-            freshSummons: env.freshSummons,
-            summons,
-            resume: (runId, materials) =>
-              runPublicCountersignResume(
-                {
-                  runId,
-                  ...(materials === undefined ? {} : { summons: materials }),
-                },
-                env,
-                io,
-              ),
-          });
-          if (resumed !== undefined) {
-            return resumed;
-          }
-        }
-
         // #637 / #771: ticket identity is the 起居郎 LLM typed assertion (never
         // mechanical matching of summons text). Resolve that typed key before
         // materializing a first-mint run. Controlled failures materialize below so

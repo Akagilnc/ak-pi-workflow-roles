@@ -481,9 +481,9 @@ export async function runWithAutoResumeLoop<
   buildInitialPayload: () => TPayload;
   buildResumePayload: () => TPayload;
   /**
-   * #987: no package writer-lease pre-gate before host CLI resume. Lease stays
-   * optional so authorized write paths inside dispatch may still hold one; the
-   * loop itself neither acquires nor rejects on a live holder.
+   * #987: the initial turn retains the existing writer lease/liveness guard;
+   * actual resume attempts pass no lease so a live holder cannot pre-block the
+   * host CLI's own continuation contract.
    */
   dispatch: (
     payload: TPayload,
@@ -515,11 +515,12 @@ export async function runWithAutoResumeLoop<
     // not a replay of the initial one.
     let turnStartedBeforeThrow = false;
     try {
-      // #987 result 5: auto-resume passes through to the host CLI resume — same
-      // rule as public manual resume (PR #996). Shared acquire remains available
-      // to authorized write paths (e.g. retainDispatchError pointer stage); this
-      // loop must not pre-block the caller's summons on a live holder.
-      result = await options.dispatch(currentPayload, undefined, isFirst, dummyIo);
+      // #987: guard the initial new turn with the existing lease, but do not
+      // pre-block a real host CLI resume on a package-side live holder.
+      const lease = isFirst
+        ? await acquireRunWriterLease(options.admitted.runDirectory)
+        : undefined;
+      result = await options.dispatch(currentPayload, lease, isFirst, dummyIo);
     } catch (error) {
       // Owner 2026-08-23: 「出了异常，就原地记录错误信息，然后重试。」
       // Retain the whole exception in place (per-attempt full file + dossier
