@@ -1,13 +1,13 @@
 /**
  * One public role run: admit → turn request → post-admission → settle.
  * Seat differences are composition-root fields. An omitted reviewer lens
- * starts two ordinary single-axis runs here. Countersign deferred identity
- * stays on its own run module.
+ * starts two ordinary single-axis runs here. Countersign keeps deferred
+ * identity on this entry; the court diarist station stays in countersign-run.
  */
 import { resolve } from "node:path";
 
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
-import { readBoardTicketNumber } from "../run-ticket-number.ts";
+import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
 import {
@@ -20,13 +20,17 @@ import { CliUsageError } from "./cli-errors.ts";
 import {
   admitPublicRole,
   bindAdmittedTicketNumber,
+  bindCourtTicketNumbersOnAdmitted,
   buildGleanerLeftTransportPrompt,
   buildInstructionTransportPrompt,
   buildNotaryTransportPrompt,
   buildReviewerTransportPrompt,
+  materializeCountersignInvocation,
   persistAdmittedSourceRunPath,
   recordAdmittedCorrelation,
   relocateAdmittedRunToTicket,
+  withPreparedAttachments,
+  type AdmittedCountersignInvocation,
   type AdmittedRoleInvocation,
   type PublicSeatParse,
 } from "./invocation.ts";
@@ -70,12 +74,16 @@ import {
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
-import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
+import {
+  invokeCourtDiarist,
+  runCountersignCourtDiaristStation,
+  type CountersignRunEnv,
+} from "./countersign-run.ts";
 
-export type InstructionSeatRunEnv = PostAdmissionEnv & {
-  reviewReask?: string;
-  gateReviewInstruction?: string;
-};
+export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
+  CountersignRunEnv,
+  "reviewReask" | "gateReviewInstruction" | "parentRunPath" | "runCourtDiaristStation"
+>;
 
 type SeatRunResult = {
   exitCode: number;
@@ -380,6 +388,190 @@ async function runOmittedLensBatch(
   return { exitCode: failed ? 1 : 0, terminal };
 }
 
+/**
+ * Countersign on the shared entry: gate parent resume, deferred materialization,
+ * 起居郎 identity, then the same one-shot settlement as every other seat.
+ * Court refresh stays on runCountersignCourtDiaristStation.
+ */
+async function runCountersignBody(
+  parsed: PublicSeatParse,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult> {
+  const gateParentRunPath =
+    typeof env.parentRunPath === "string" && env.parentRunPath.trim() !== ""
+      ? env.parentRunPath
+      : undefined;
+  if (gateParentRunPath !== undefined) {
+    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction ?? parsed.instruction ?? "";
+    const resumed = await tryResumeSameTicketSeatRun({
+      home: env.home,
+      projectRoot: resolve(parsed.project ?? env.cwd),
+      role: "countersign",
+      parentRunPath: gateParentRunPath,
+      freshSummons: env.freshSummons,
+      summons: {
+        sourceRunPath: gateParentRunPath,
+        instruction: resumeInstruction,
+        instructionEmpty: resumeInstruction.trim() === "",
+      },
+      resume: (runId, materials) => runPublicInstructionSeatResume(
+        { runId, ...(materials === undefined ? {} : { summons: materials }) },
+        env,
+        io,
+      ),
+    });
+    if (resumed != null) return resumed;
+  }
+
+  let admitted: AdmittedCountersignInvocation;
+  try {
+    const admittedRole = await admitPublicRole("countersign", parsed, env, { deferPersistence: true });
+    if (admittedRole.role !== "countersign") {
+      throw new Error(`countersign admission produced ${admittedRole.role}`);
+    }
+    admitted = admittedRole;
+  } catch (error) {
+    const rejected = usageExit(error, io);
+    if (rejected !== undefined) return rejected;
+    throw error;
+  }
+
+  try {
+    return await withPreparedAttachments(parsed.attachmentPaths ?? [], async (preparedAttachments) => {
+      const materializeAdmission = async (ticketNumber?: number): Promise<void> => {
+        await materializeCountersignInvocation(admitted, {
+          home: env.home,
+          principalAuthority: env.principalAuthority,
+          preparedAttachments,
+          ...(env.model === undefined ? {} : { model: env.model }),
+          ...(ticketNumber === undefined ? {} : { ticketNumber }),
+        });
+      };
+
+      let typedTicket: number | undefined;
+      let typedCourtTicketNumbers: readonly number[] | undefined;
+      let identityDiaristRan = false;
+
+      if (env.runCourtDiaristStation === undefined) {
+        let outcome: Awaited<ReturnType<typeof invokeCourtDiarist>>;
+        try {
+          outcome = await invokeCourtDiarist({
+            instruction: parsed.instruction ?? "",
+            projectRoot: admitted.projectRoot,
+            failureLabel: "unbound summons",
+            ...(env.boundTicketNumber === undefined ? {} : { boundTicketNumber: env.boundTicketNumber }),
+          }, env, io);
+        } catch (error) {
+          await materializeAdmission(
+            isSafePositiveTicketNumber(env.boundTicketNumber) ? env.boundTicketNumber : undefined,
+          );
+          await markRunAdmitted(admitted, env.principalAuthority);
+          return await presentControlledFailure(admitted, {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+          }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
+        }
+        identityDiaristRan = true;
+        if (outcome.identity.kind === "escalate" || outcome.failedWithoutEscalate !== undefined) {
+          const diagnostic = outcome.identity.kind === "escalate"
+            ? outcome.identity.diagnostic
+            : outcome.failedWithoutEscalate?.diagnostic ?? "";
+          await materializeAdmission(
+            isSafePositiveTicketNumber(env.boundTicketNumber) ? env.boundTicketNumber : undefined,
+          );
+          await markRunAdmitted(admitted, env.principalAuthority);
+          return await presentControlledFailure(admitted, {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: new Error(diagnostic),
+          }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
+        }
+        if (outcome.identity.kind === "ticket") {
+          typedTicket = isSafePositiveTicketNumber(env.boundTicketNumber)
+            ? env.boundTicketNumber
+            : outcome.identity.ticketNumber;
+          typedCourtTicketNumbers = outcome.identity.courtTicketNumbers;
+        } else if (isSafePositiveTicketNumber(env.boundTicketNumber)) {
+          typedTicket = env.boundTicketNumber;
+        }
+      }
+
+      await materializeAdmission(typedTicket);
+      await markRunAdmitted(admitted, env.principalAuthority);
+      if (gateParentRunPath !== undefined) {
+        await persistAdmittedSourceRunPath(admitted, gateParentRunPath);
+        admitted = { ...admitted, sourceRunPath: gateParentRunPath };
+      }
+      if (identityDiaristRan && typedTicket !== undefined) {
+        try {
+          await bindAdmittedTicketNumber(admitted, typedTicket);
+          await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+          await bindCourtTicketNumbersOnAdmitted(admitted, typedCourtTicketNumbers ?? [typedTicket]);
+        } catch (error) {
+          return await presentControlledFailure(admitted, {
+            timedOut: false,
+            code: null,
+            stderr: "",
+            thrown: error,
+          }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
+        }
+      }
+
+      const turnProjection: RoleTurnRequestProjectionOptions = {
+        packageRoot: env.packageRoot,
+        home: env.home,
+        agentDir: env.agentDir,
+        ...(env.model === undefined ? {} : { model: env.model }),
+        ...pickEngineAxis(env),
+        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+        ...(env.correlationId === undefined || env.correlationId.trim() === ""
+          ? {}
+          : { correlationId: env.correlationId }),
+        continuation: {
+          kind: "initial",
+          prompt: (env.reviewReask ?? env.gateReviewInstruction)
+            ?? buildInstructionTransportPrompt(
+              admitted,
+              engineSessionMaterialFromOptions({
+                ...pickEngineAxis(env),
+                packageRoot: env.packageRoot,
+              }),
+            ),
+        },
+      };
+      const turnRequest = buildInstructionSeatTurnRequest(admitted, turnProjection);
+      const result = await runPostAdmissionOneShot({
+        admitted,
+        env,
+        io,
+        request: turnRequest,
+        adapters: {
+          ...seatAdapters(admitted, env),
+          beforeDispatch: async (admittedSeat, lease) => {
+            if (admittedSeat.role !== "countersign") return;
+            if (!identityDiaristRan || typedTicket !== undefined) {
+              await runCountersignCourtDiaristStation(admittedSeat, env, io);
+            }
+            await relocateAdmittedRunToTicket(admittedSeat, env.principalAuthority, lease);
+            Object.assign(turnRequest, buildInstructionSeatTurnRequest(admittedSeat, turnProjection));
+          },
+        },
+        ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+      });
+      await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+      return result;
+    });
+  } catch (error) {
+    const rejected = usageExit(error, io);
+    if (rejected !== undefined) return rejected;
+    throw error;
+  }
+}
+
 export async function runPublicInstructionSeat(
   argv: readonly string[],
   env: InstructionSeatRunEnv,
@@ -388,10 +580,6 @@ export async function runPublicInstructionSeat(
   parseArgv: (args: readonly string[]) => PublicSeatParse,
 ): Promise<SeatRunResult> {
   const record = roleRecord(role);
-  if (record.admission === "countersign") {
-    return runPublicCountersign(argv, env, io, parseArgv);
-  }
-
   let parsed: PublicSeatParse;
   try {
     parsed = parseArgv(argv);
@@ -399,6 +587,9 @@ export async function runPublicInstructionSeat(
     const rejected = usageExit(error, io);
     if (rejected !== undefined) return rejected;
     throw error;
+  }
+  if (record.admission === "countersign") {
+    return runCountersignBody(parsed, env, io);
   }
 
   if ("parallelLenses" in record && record.parallelLenses === true) {
@@ -616,7 +807,6 @@ export async function runPublicInstructionSeatResume(
   io: CliIo,
 ): Promise<SeatRunResult> {
   const role = await peekRoleRunRole(env.home, request.runId);
-  if (role === "countersign") return runPublicCountersignResume(request, env, io);
   const execution: { cwd?: string } = {
     ...(env.executionCwd === undefined ? {} : { cwd: env.executionCwd }),
   };
@@ -626,6 +816,11 @@ export async function runPublicInstructionSeatResume(
     io,
     load: async (effective) => {
       const loaded = await loadResumablePublicRole(env.home, effective.runId, env.principalAuthority);
+      if (role === "countersign" && loaded.admitted.role !== "countersign") {
+        throw new CliUsageError(
+          `role run ${effective.runId} belongs to ${loaded.admitted.role}, not countersign`,
+        );
+      }
       if (
         loaded.admitted.role === "notary"
         && effective.summons?.sourceRunPath !== undefined

@@ -25,7 +25,7 @@ import { createDefaultGateOfficerSummon } from "../../src/gatekeeper-pass-envelo
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { parseCountersignArgv } from "../../src/public-cli/invocation.ts";
-import { runPublicCountersign } from "../../src/public-cli/countersign-run.ts";
+import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import { projectActivationFlags } from "../../src/role-activation-flags.ts";
 import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
@@ -664,7 +664,7 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
       ];
       const stdout: string[] = [];
       const stderr: string[] = [];
-      const countersignResult = await runPublicCountersign(
+      const countersignResult = await runPublicInstructionSeat(
         ["裁：继续审票 #582 是否足以开工。"],
         {
           home,
@@ -679,6 +679,7 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
           createRunId: () => "01a0sign00-0000-7000-8000-00000000a1b",
         },
         { stdout: (text) => stdout.push(text), stderr: (text) => stderr.push(text) },
+        "countersign",
         parseCountersignArgv,
       );
       assert.equal(countersignResult.exitCode, 0, stderr.join("") || stdout.join(""));

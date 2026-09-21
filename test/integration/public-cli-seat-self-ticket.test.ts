@@ -26,7 +26,6 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
-import { runPublicCountersign } from "../../src/public-cli/countersign-run.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   bindAdmittedTicketNumber,
@@ -289,7 +288,7 @@ test("public judge without --ticket: no mechanical bind from summons text", asyn
 
 test("public countersign without --ticket: binds only via 起居郎 typed handoff", async () => {
   await withSeatProject(async ({ home, project }) => {
-    const result = await runPublicCountersign(
+    const result = await runPublicInstructionSeat(
       ["裁：继续审票 #582 是否足以开工。"],
       baseEnv({
         home,
@@ -307,7 +306,7 @@ test("public countersign without --ticket: binds only via 起居郎 typed handof
         },
       }),
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", parseCountersignArgv,
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
@@ -345,7 +344,7 @@ test("countersign and notary reject --ticket as unknown option (exit 2)", async 
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const countersign = await runPublicCountersign(
+    const countersign = await runPublicInstructionSeat(
       ["--ticket", "582", "裁"],
       {
         home,
@@ -362,7 +361,7 @@ test("countersign and notary reject --ticket as unknown option (exit 2)", async 
         createRunId: () => "01a063500-0000-7000-8000-00000000rej1",
       },
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", parseCountersignArgv,
     );
     assert.equal(countersign.exitCode, 2);
     assert.equal(countersign.admitted, undefined);
