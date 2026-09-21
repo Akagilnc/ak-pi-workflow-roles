@@ -1306,6 +1306,30 @@ test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket
   });
 });
 
+test("relocateBoardBoundUnboundRunsInBooks refuses an identity-unverifiable bare PID lock without deleting it", async () => {
+  await withTempRoot("ak-book-topology-bare-pid-", async (home) => {
+    const booksDirectory = join(home, ".ak-roles", "books");
+    const runDirectory = join(
+      booksDirectory,
+      "demo-book",
+      "unbound",
+      "runs",
+      "01a098600-0000-7000-8000-00000000judge@judge",
+    );
+    await mkdir(runDirectory, { recursive: true });
+    await writeFile(
+      join(runDirectory, "admitted-request.json"),
+      `${JSON.stringify({ runDirectory, ticketNumber: 986 })}\n`,
+      "utf8",
+    );
+    const lockPath = join(runDirectory, "writer.lock");
+    await writeFile(lockPath, `${process.pid}\n`, "utf8");
+
+    await assert.rejects(relocateBoardBoundUnboundRunsInBooks(booksDirectory, {}));
+    assert.equal(await readFile(lockPath, "utf8"), `${process.pid}\n`);
+  });
+});
+
 test("ticket provenance normalizes historical and incoming session index domains", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");

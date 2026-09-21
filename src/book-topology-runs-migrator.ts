@@ -406,8 +406,8 @@ async function applyBoardBoundUnboundMovesInBook(
  * run directory in every book that has ≥1 planned board-bound move at plan
  * time. The ordinary writer lease is held on that frozen set through
  * rewrite/rename so writers cannot enter the window; apply never re-enumerates
- * the book. Outside-closure locks do not refuse; recycled PIDs are not treated
- * as the original holder. #860 whole-books gate stays separate.
+ * the book. Outside-closure locks do not refuse; a bare live PID inside the
+ * closure has unverifiable identity and fails loud. #860 stays separate.
  */
 export async function relocateBoardBoundUnboundRunsInBooks(
   booksDirectory: string,
