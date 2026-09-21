@@ -24,7 +24,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "none",
     phases: [null],
     outputTool: "ak_judge_output",
-    settlement: "judge",
+    settlement: "sealed",
     runnerFailure: "engine-detour-known-first",
     acceptedText: "大理寺回执已接受",
     activationStage: "load-and-install",
@@ -42,7 +42,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settleMethod: "diagnosing-bugs",
     phases: ["plan", "apply"],
     outputTool: "ak_fixer_output",
-    settlement: "fixer",
+    settlement: "sealed",
     acceptedText: "修内司回执已接受",
     activationFlags: [
       { field: "packetPath", flag: "ak-fix-packet", binds: "input" },
@@ -62,7 +62,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     applyMethod: "tdd",
     phases: ["plan", "apply"],
     outputTool: "ak_coder_output",
-    settlement: "coder",
+    settlement: "sealed",
     acceptedText: "将作监回执已接受",
     activationFlags: [
       { field: "taskPath", flag: "ak-coder-task", binds: "input" },
@@ -84,7 +84,8 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     bareCommand: false,
     outputTool: "ak_reviewer_output",
-    settlement: "reviewer",
+    settlement: "sealed",
+    sealedAcceptedOnly: true,
     runnerFailure: "engine-detour-record-first",
     acceptedText: "御史台回执已接受",
     activationFlags: [
@@ -105,7 +106,9 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     bareCommand: false,
     outputTool: "ak_collector_output",
-    settlement: "collector",
+    settlement: "residual",
+    residualScan: "current-attempt",
+    residualTool: "ak_collector_wait",
     runnerFailure: "collector-known-first",
     acceptedText: "通进司回执已接受",
     activationFlags: [
@@ -126,7 +129,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     bareCommand: false,
     outputTool: "ak_doctor_output",
-    settlement: "doctor",
+    settlement: "sealed",
     acceptedText: "太医署回执已接受",
     activationFlags: [
       { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
@@ -144,7 +147,9 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settleMethod: "resolving-merge-conflicts",
     phases: [null],
     outputTool: "ak_merger_output",
-    settlement: "merger",
+    settlement: "residual",
+    residualScan: "session",
+    residualTool: "ak_merger_output",
     acceptedText: "合并回执已接受",
     activationFlags: [
       { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },

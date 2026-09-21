@@ -1,5 +1,6 @@
 /** Composition-root unique authoritative public-role records (#509 / #524). */
 import { COLLECTOR_OUTPUT_TOOL } from "./package-contracts/collector-output.ts";
+import { COLLECTOR_WAIT_TOOL } from "./collector-ledger.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME } from "./package-contracts/gatekeeper-output.ts";
 import { NAVIGATOR_OUTPUT_TOOL_NAME } from "./package-contracts/navigator-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "./package-contracts/judge-output.ts";
@@ -60,7 +61,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: JUDGE_OUTPUT_TOOL_NAME,
-    settlement: "judge",
+    settlement: "sealed",
     runnerFailure: "engine-detour-known-first",
     acceptedText: "大理寺回执已接受",
     activationStage: "load-and-install",
@@ -85,7 +86,7 @@ export const PUBLIC_ROLE_RECORDS = [
     settleMethod: "diagnosing-bugs",
     phases: ["plan", "apply"],
     outputTool: FIXER_OUTPUT_TOOL_NAME,
-    settlement: "fixer",
+    settlement: "sealed",
     acceptedText: "修内司回执已接受",
     activationFlags: [
       { field: "packetPath", flag: "ak-fix-packet", binds: "input" },
@@ -111,7 +112,7 @@ export const PUBLIC_ROLE_RECORDS = [
     applyMethod: "tdd",
     phases: ["plan", "apply"],
     outputTool: CODER_OUTPUT_TOOL_NAME,
-    settlement: "coder",
+    settlement: "sealed",
     acceptedText: "将作监回执已接受",
     activationFlags: [
       { field: "taskPath", flag: "ak-coder-task", binds: "input" },
@@ -141,7 +142,9 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: REVIEWER_OUTPUT_TOOL_NAME,
-    settlement: "reviewer",
+    settlement: "sealed",
+    /** Publish only an accepted ledger outcome; audit escalation stays unsettled here. */
+    sealedAcceptedOnly: true,
     runnerFailure: "engine-detour-record-first",
     acceptedText: "御史台回执已接受",
     activationFlags: [
@@ -169,7 +172,10 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: COLLECTOR_OUTPUT_TOOL,
-    settlement: "collector",
+    settlement: "residual",
+    /** #633: a prior wait-tool residual must not mask this attempt. */
+    residualScan: "current-attempt",
+    residualTool: COLLECTOR_WAIT_TOOL,
     runnerFailure: "collector-known-first",
     acceptedText: "通进司回执已接受",
     activationFlags: [
@@ -191,7 +197,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: DOCTOR_OUTPUT_TOOL_NAME,
-    settlement: "doctor",
+    settlement: "sealed",
     acceptedText: "太医署回执已接受",
     activationFlags: [
       { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
@@ -210,7 +216,10 @@ export const PUBLIC_ROLE_RECORDS = [
     settleMethod: "resolving-merge-conflicts",
     phases: [null],
     outputTool: MERGER_OUTPUT_TOOL_NAME,
-    settlement: "merger",
+    settlement: "residual",
+    /** #836: residual scan stays on the whole host session. */
+    residualScan: "session",
+    residualTool: MERGER_OUTPUT_TOOL_NAME,
     acceptedText: "合并回执已接受",
     activationFlags: [
       { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },

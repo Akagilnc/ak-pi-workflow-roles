@@ -79,13 +79,9 @@ import {
   REVIEWER_OUTPUT_TOOL_NAME,
 } from "../package-contracts/reviewer-output.ts";
 import {
-  MERGER_OUTPUT_TOOL_NAME,
-} from "../merger-contracts.ts";
-import {
   packagedRoleAcceptedOutputTool,
   packagedRoleMetadata,
   type PackagedRole,
-  type PublicRoleRecord,
 } from "../packaged-role-registry.ts";
 import {
   SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
@@ -2489,7 +2485,7 @@ export async function publishJudgeArtifacts(
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
 ): Promise<TerminalArtifactRef[]> {
-  return publishSeatAcceptedArtifacts(admitted, roleOutcome, coordinates);
+  return publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, []);
 }
 
 /**
@@ -2613,17 +2609,52 @@ async function settleSealedAcceptedOrToolResidual(
   );
 }
 
-async function settleLawfulJudgeTerminalResult(
-  admitted: AdmittedJudgeInvocation,
+type MethodPublicationOptions = {
+  readonly methodProvenance?: PackagedMethodSkillProvenance;
+  readonly methodSkillPath?: string;
+  readonly methodSkillConfiguredPath?: string;
+};
+
+/**
+ * One settlement for every registered seat. The registry `settlement` leaf
+ * picks sealed ledger, sealed-or-residual, or the accepted-tool scan.
+ * Seat evidence and the observed-method tail stay on the artifact face.
+ */
+async function settleSeat(
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
+  scope: SettlementCourtScope | undefined,
+  options: MethodPublicationOptions,
 ): Promise<TerminalResult | undefined> {
-  return settleSealedLedgerTerminal(
-    admitted,
-    authority,
-    scope,
-    (roleOutcome, coordinates) => publishJudgeArtifacts(admitted, roleOutcome, coordinates),
-  );
+  const record = packagedRoleMetadata(admitted.role);
+  if (record === undefined) {
+    throw new Error(`no settlement for ${admitted.role}`);
+  }
+  if (record.settlement === "accepted") {
+    return trySettleAcceptedSeatTerminalResult(admitted, authority, scope);
+  }
+  const publish = (
+    roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
+    coordinates: DurablePrincipalCoordinates,
+    entries: readonly SessionEntry[],
+  ) => publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries, options);
+  if (record.settlement === "residual") {
+    return settleSealedAcceptedOrToolResidual(
+      admitted,
+      authority,
+      scope,
+      admitted.role,
+      record.residualTool,
+      record.residualScan,
+      publish,
+    );
+  }
+  const accept = "sealedAcceptedOnly" in record && record.sealedAcceptedOnly === true
+    ? (
+      roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
+    ) => roleOutcome.role === admitted.role && roleOutcome.kind === "accepted"
+    : undefined;
+  return settleSealedLedgerTerminal(admitted, authority, scope, publish, accept);
 }
 
 /**
@@ -2636,7 +2667,7 @@ export async function settleJudgeTerminalResult(
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulJudgeTerminalResult(admitted, authority, scope);
+  const settled = await settleSeat(admitted, authority, scope, {});
   if (settled === undefined) {
     throw new Error(
       "Judge Role run completed without a lawful typed terminal result",
@@ -2655,29 +2686,7 @@ export async function trySettleJudgeTerminalResult(
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulJudgeTerminalResult(admitted, authority, scope);
-}
-
-async function settleLawfulCoderTerminalResult(
-  admitted: AdmittedCoderInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance?: PackagedMethodSkillProvenance;
-  } = {},
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleSealedLedgerTerminal(
-    admitted,
-    authority,
-    scope,
-    (roleOutcome, coordinates, entries) => publishDeclaredSeatArtifacts(
-      admitted,
-      roleOutcome,
-      coordinates,
-      entries,
-      options,
-    ),
-  );
+  return settleSeat(admitted, authority, scope, {});
 }
 
 /** Settle a lawful Coder Terminal from the admitted session (shared #106 success interface). */
@@ -2689,7 +2698,7 @@ export async function settleCoderTerminalResult(
   } = {},
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulCoderTerminalResult(admitted, authority, options, scope);
+  const settled = await settleSeat(admitted, authority, scope, options);
   if (settled === undefined) {
     throw new Error(
       "Coder Role run completed without a lawful typed terminal result",
@@ -2763,30 +2772,6 @@ function extractObservedMethodInvocations(
   return Object.freeze(observed);
 }
 
-async function settleLawfulFixerTerminalResult(
-  admitted: AdmittedFixerInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodSkillPath: string;
-    readonly methodSkillConfiguredPath: string;
-  },
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleSealedLedgerTerminal(
-    admitted,
-    authority,
-    scope,
-    (roleOutcome, coordinates, entries) => publishDeclaredSeatArtifacts(
-      admitted,
-      roleOutcome,
-      coordinates,
-      entries,
-      options,
-    ),
-  );
-}
-
 /** Settle a lawful Fixer Terminal from the admitted session (shared #106 success interface). */
 export async function settleFixerTerminalResult(
   admitted: AdmittedFixerInvocation,
@@ -2798,7 +2783,7 @@ export async function settleFixerTerminalResult(
   },
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulFixerTerminalResult(admitted, authority, options, scope);
+  const settled = await settleSeat(admitted, authority, scope, options);
   if (settled === undefined) {
     throw new Error(
       "Fixer Role run completed without a lawful typed terminal result",
@@ -2807,36 +2792,13 @@ export async function settleFixerTerminalResult(
   return settled;
 }
 
-async function settleLawfulCollectorTerminalResult(
-  admitted: AdmittedCollectorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  // #633: current attempt only — a prior wait-tool residual must not mask
-  // this attempt's timeout or missing output.
-  return settleSealedAcceptedOrToolResidual(
-    admitted,
-    authority,
-    scope,
-    "collector",
-    COLLECTOR_WAIT_TOOL,
-    "current-attempt",
-    (roleOutcome, coordinates, entries) => publishDeclaredSeatArtifacts(
-      admitted,
-      roleOutcome,
-      coordinates,
-      entries,
-    ),
-  );
-}
-
 /** Settle a lawful Collector Terminal from the admitted session. */
 export async function settleCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulCollectorTerminalResult(admitted, authority, scope);
+  const settled = await settleSeat(admitted, authority, scope, {});
   if (settled === undefined) {
     throw new Error(
       "Collector Role run completed without a lawful typed terminal result",
@@ -2851,7 +2813,7 @@ export async function trySettleCollectorTerminalResult(
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulCollectorTerminalResult(admitted, authority, scope);
+  return settleSeat(admitted, authority, scope, {});
 }
 
 /**
@@ -2899,6 +2861,9 @@ type SeatArtifactFace = {
 };
 
 const SEAT_ARTIFACT_FACE: Partial<Record<TerminalRoleName, SeatArtifactFace>> = {
+  judge: {
+    leaves: [],
+  },
   coder: {
     reportPhase: true,
     evidenceRole: true,
@@ -3067,31 +3032,13 @@ async function publishDeclaredSeatArtifacts(
   });
 }
 
-async function settleLawfulDoctorTerminalResult(
-  admitted: AdmittedDoctorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleSealedLedgerTerminal(
-    admitted,
-    authority,
-    scope,
-    (roleOutcome, coordinates, entries) => publishDeclaredSeatArtifacts(
-      admitted,
-      roleOutcome,
-      coordinates,
-      entries,
-    ),
-  );
-}
-
 /** Settle a lawful Doctor Terminal from the admitted session. */
 export async function settleDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulDoctorTerminalResult(admitted, authority, scope);
+  const settled = await settleSeat(admitted, authority, scope, {});
   if (settled === undefined) {
     throw new Error(
       "Doctor Role run completed without a lawful typed terminal result",
@@ -3106,7 +3053,7 @@ export async function trySettleDoctorTerminalResult(
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulDoctorTerminalResult(admitted, authority, scope);
+  return settleSeat(admitted, authority, scope, {});
 }
 
 /**
@@ -3271,64 +3218,7 @@ export async function trySettleAcceptedSeatTerminalResult(
   return applySecretariatCountersignTerminal(admitted, authority, settled);
 }
 
-type SettlementReader = (
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  material: PackagedMethodSkillMaterial | undefined,
-  packageRoot: string,
-  scope: SettlementCourtScope | undefined,
-) => Promise<TerminalResult | undefined>;
-
-/**
- * Readers stay seat-specific. The composition-root `settlement` leaf is the
- * only choice; `trySettlePublicSeat` does not branch on the role name.
- */
-const SETTLEMENT_READER = {
-  accepted: (admitted, authority, _material, _packageRoot, scope) =>
-    trySettleAcceptedSeatTerminalResult(admitted, authority, scope),
-  judge: (admitted, authority, _material, _packageRoot, scope) =>
-    trySettleJudgeTerminalResult(admitted as AdmittedJudgeInvocation, authority, scope),
-  coder: (admitted, authority, material, _packageRoot, scope) =>
-    trySettleCoderTerminalResult(
-      admitted as AdmittedCoderInvocation,
-      authority,
-      material === undefined ? {} : { methodProvenance: material.provenance },
-      scope,
-    ),
-  fixer: (admitted, authority, material, packageRoot, scope) =>
-    material === undefined
-      ? Promise.resolve(undefined)
-      : trySettleFixerTerminalResult(
-        admitted as AdmittedFixerInvocation,
-        authority,
-        observedMethodSkillOptions(packageRoot, material),
-        scope,
-      ),
-  merger: (admitted, authority, material, packageRoot, scope) =>
-    material === undefined
-      ? Promise.resolve(undefined)
-      : trySettleMergerTerminalResult(
-        admitted as AdmittedMergerInvocation,
-        authority,
-        observedMethodSkillOptions(packageRoot, material),
-        scope,
-      ),
-  collector: (admitted, authority, _material, _packageRoot, scope) =>
-    trySettleCollectorTerminalResult(admitted as AdmittedCollectorInvocation, authority, scope),
-  doctor: (admitted, authority, _material, _packageRoot, scope) =>
-    trySettleDoctorTerminalResult(admitted as AdmittedDoctorInvocation, authority, scope),
-  reviewer: (admitted, authority, material, packageRoot, scope) =>
-    material === undefined
-      ? Promise.resolve(undefined)
-      : trySettleReviewerTerminalResult(
-        admitted as AdmittedReviewerInvocation,
-        authority,
-        observedMethodSkillOptions(packageRoot, material),
-        scope,
-      ),
-} satisfies Record<PublicRoleRecord["settlement"], SettlementReader>;
-
-/** One settlement dispatch. The registry `settlement` leaf selects the reader. */
+/** One settlement dispatch. The registry `settlement` leaf selects the path. */
 export async function trySettlePublicSeat(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
@@ -3336,11 +3226,15 @@ export async function trySettlePublicSeat(
   material: PackagedMethodSkillMaterial | undefined,
   packageRoot: string,
 ): Promise<TerminalResult | undefined> {
-  const record = packagedRoleMetadata(admitted.role);
-  if (record === undefined) {
-    throw new Error(`no settlement for ${admitted.role}`);
-  }
-  return SETTLEMENT_READER[record.settlement](admitted, authority, material, packageRoot, scope);
+  const face = SEAT_ARTIFACT_FACE[admitted.role];
+  if (face?.method === "observed" && material === undefined) return undefined;
+  const options: MethodPublicationOptions =
+    face?.method === "observed" && material !== undefined
+      ? observedMethodSkillOptions(packageRoot, material)
+      : face?.method === "optional" && material !== undefined
+        ? { methodProvenance: material.provenance }
+        : {};
+  return settleSeat(admitted, authority, scope, options);
 }
 
 /**
@@ -3472,7 +3366,7 @@ export async function trySettleCoderTerminalResult(
   } = {},
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulCoderTerminalResult(admitted, authority, options, scope);
+  return settleSeat(admitted, authority, scope, options);
 }
 
 /** Try to settle a lawful Fixer Terminal; undefined only for genuine absence. */
@@ -3486,32 +3380,7 @@ export async function trySettleFixerTerminalResult(
   },
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulFixerTerminalResult(admitted, authority, options, scope);
-}
-
-async function settleLawfulReviewerTerminalResult(
-  admitted: AdmittedReviewerInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodSkillPath: string;
-    readonly methodSkillConfiguredPath: string;
-  },
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleSealedLedgerTerminal(
-    admitted,
-    authority,
-    scope,
-    (roleOutcome, coordinates, entries) => publishDeclaredSeatArtifacts(
-      admitted,
-      roleOutcome,
-      coordinates,
-      entries,
-      options,
-    ),
-    (roleOutcome) => roleOutcome.role === "reviewer" && roleOutcome.kind === "accepted",
-  );
+  return settleSeat(admitted, authority, scope, options);
 }
 
 /** Settle a lawful Reviewer Terminal from the admitted session (shared #106 success interface). */
@@ -3525,7 +3394,7 @@ export async function settleReviewerTerminalResult(
   },
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulReviewerTerminalResult(admitted, authority, options, scope);
+  const settled = await settleSeat(admitted, authority, scope, options);
   if (settled === undefined) {
     throw new Error(
       "Reviewer Role run completed without a lawful typed terminal result",
@@ -3545,35 +3414,7 @@ export async function trySettleReviewerTerminalResult(
   },
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulReviewerTerminalResult(admitted, authority, options, scope);
-}
-
-async function settleLawfulMergerTerminalResult(
-  admitted: AdmittedMergerInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodSkillPath: string;
-    readonly methodSkillConfiguredPath: string;
-  },
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  // #836: residual scan stays on the whole host session.
-  return settleSealedAcceptedOrToolResidual(
-    admitted,
-    authority,
-    scope,
-    "merger",
-    MERGER_OUTPUT_TOOL_NAME,
-    "session",
-    (roleOutcome, coordinates, entries) => publishDeclaredSeatArtifacts(
-      admitted,
-      roleOutcome,
-      coordinates,
-      entries,
-      options,
-    ),
-  );
+  return settleSeat(admitted, authority, scope, options);
 }
 
 /** Settle a lawful Merger Terminal from the admitted session (shared #106 success interface). */
@@ -3587,7 +3428,7 @@ export async function settleMergerTerminalResult(
   },
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulMergerTerminalResult(admitted, authority, options, scope);
+  const settled = await settleSeat(admitted, authority, scope, options);
   if (settled === undefined) {
     throw new Error(
       "Merger Role run completed without a lawful typed terminal result",
@@ -3607,7 +3448,7 @@ export async function trySettleMergerTerminalResult(
   },
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulMergerTerminalResult(admitted, authority, options, scope);
+  return settleSeat(admitted, authority, scope, options);
 }
 
 /** One failed attempt to place a durable failure artifact (path is private layout). */
