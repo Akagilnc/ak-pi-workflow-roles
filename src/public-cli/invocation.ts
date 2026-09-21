@@ -1442,6 +1442,40 @@ export function summonedTicketFields(
   return { assertedTicketNumber: ticketNumber };
 }
 
+/**
+ * Fields every public admit call shares, including the summons ticket.
+ * Seat runners spread this once; they do not restate ticket placement.
+ */
+export function admissionCallerOptions(env: {
+  readonly home: string;
+  readonly principalAuthority: DurablePrincipalAuthority;
+  readonly cwd: string;
+  readonly createRunId?: () => string;
+  readonly model?: InvocationEffectiveModel;
+  readonly correlationId?: string;
+  readonly boundTicketNumber?: number;
+}): {
+  readonly home: string;
+  readonly principalAuthority: DurablePrincipalAuthority;
+  readonly cwd: string;
+  readonly createRunId?: () => string;
+  readonly model?: InvocationEffectiveModel;
+  readonly correlationId?: string;
+  readonly assertedTicketNumber?: number;
+} {
+  return {
+    home: env.home,
+    principalAuthority: env.principalAuthority,
+    cwd: env.cwd,
+    ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.correlationId === undefined || env.correlationId.trim() === ""
+      ? {}
+      : { correlationId: env.correlationId }),
+    ...summonedTicketFields(env.boundTicketNumber),
+  };
+}
+
 /** One placement subject: a typed ticket already on the summons, otherwise unbound. */
 function admissionSubject(ticketNumber: number | undefined): RoleRunSubject {
   const fields = ticketAdmissionFields(ticketNumber);

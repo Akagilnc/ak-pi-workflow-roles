@@ -8,7 +8,7 @@ import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-res
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitDoctorInvocation,
-  summonedTicketFields,
+  admissionCallerOptions,
   buildDoctorTransportPrompt,
   type AdmittedDoctorInvocation,
   type ParseDoctorArgvResult
@@ -72,9 +72,6 @@ export async function runPublicDoctor(
   try {
     const parsed = parseDoctorArgv(argv);
     admitted = await admitDoctorInvocation({
-      home: env.home,
-      principalAuthority: env.principalAuthority,
-      cwd: env.cwd,
       issueNumber: parsed.issueNumber,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -82,7 +79,7 @@ export async function runPublicDoctor(
       ...(parsed.runs === undefined ? {} : { runs: parsed.runs }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
-          ...summonedTicketFields(env.boundTicketNumber),
+          ...admissionCallerOptions(env),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -95,8 +92,8 @@ export async function runPublicDoctor(
   await markRunAdmitted(admitted, env.principalAuthority);
 
   const turnRequest = buildDoctorTurnRequest(admitted, {
-    packageRoot: env.packageRoot,
     home: env.home,
+    packageRoot: env.packageRoot,
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...pickEngineAxis(env),

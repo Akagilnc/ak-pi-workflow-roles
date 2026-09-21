@@ -35,7 +35,7 @@ import { readableGateItem } from "../readable-gate-item.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import {
   admitCountersignInvocation,
-  summonedTicketFields,
+  admissionCallerOptions,
   bindAdmittedTicketNumber,
   bindCourtTicketNumbersOnAdmitted,
   buildCountersignTransportPrompt,
@@ -477,9 +477,6 @@ export async function runPublicCountersign(
   let admitted: AdmittedCountersignInvocation;
   try {
     admitted = await admitCountersignInvocation({
-      home: env.home,
-      principalAuthority: env.principalAuthority,
-      cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
@@ -491,7 +488,7 @@ export async function runPublicCountersign(
         ? {}
         : { correlationId: env.correlationId }),
       deferPersistence: true,
-          ...summonedTicketFields(env.boundTicketNumber),
+          ...admissionCallerOptions(env),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

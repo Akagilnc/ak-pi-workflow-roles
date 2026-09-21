@@ -18,7 +18,7 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCoderInvocation,
-  summonedTicketFields,
+  admissionCallerOptions,
   buildCoderTransportPrompt,
   type AdmittedCoderInvocation,
 } from "./invocation.ts";
@@ -115,16 +115,13 @@ export async function runPublicCoder(
   try {
     const parsed = parseCoderArgv(argv);
     admitted = await admitCoderInvocation({
-      home: env.home,
-      principalAuthority: env.principalAuthority,
-      cwd: env.cwd,
       phase: parsed.phase,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
-          ...summonedTicketFields(env.boundTicketNumber),
+          ...admissionCallerOptions(env),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

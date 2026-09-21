@@ -16,7 +16,7 @@ import {
   recordAdmittedCorrelation,
   type AdmittedDiaristInvocation,
   type ParseDiaristArgvResult,
-  summonedTicketFields,
+  admissionCallerOptions,
 } from "./invocation.ts";
 import {
   prepareSummonsResumeMaterials,
@@ -166,9 +166,6 @@ export async function runPublicDiarist(
   let admitted: AdmittedDiaristInvocation;
   try {
     admitted = await admitDiaristInvocation({
-      home: env.home,
-      principalAuthority: env.principalAuthority,
-      cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
@@ -176,8 +173,8 @@ export async function runPublicDiarist(
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
       ...(handoffTicket === undefined
-        ? summonedTicketFields(env.boundTicketNumber)
-        : { assertedTicketNumber: handoffTicket }),
+        ? admissionCallerOptions(env)
+        : { ...admissionCallerOptions(env), assertedTicketNumber: handoffTicket }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -191,8 +188,8 @@ export async function runPublicDiarist(
 
 
   const turnProjection: RoleTurnRequestProjectionOptions = {
-    packageRoot: env.packageRoot,
     home: env.home,
+    packageRoot: env.packageRoot,
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...pickEngineAxis(env),

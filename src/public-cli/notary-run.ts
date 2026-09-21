@@ -13,7 +13,7 @@ import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-res
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitNotaryInvocation,
-  summonedTicketFields,
+  admissionCallerOptions,
   buildNotaryTransportPrompt,
   type AdmittedNotaryInvocation,
   type ParseNotaryArgvResult,
@@ -153,15 +153,12 @@ export async function runPublicNotary(
   let admitted: AdmittedNotaryInvocation;
   try {
     admitted = await admitNotaryInvocation({
-      home: env.home,
-      principalAuthority: env.principalAuthority,
-      cwd: env.cwd,
       sourceRun: parsed.sourceRun,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-          ...summonedTicketFields(env.boundTicketNumber),
+          ...admissionCallerOptions(env),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

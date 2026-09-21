@@ -8,7 +8,7 @@ import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-res
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCollectorInvocation,
-  summonedTicketFields,
+  admissionCallerOptions,
   buildCollectorTransportPrompt,
   type AdmittedCollectorInvocation,
   type ParseCollectorArgvResult,
@@ -76,9 +76,6 @@ export async function runPublicCollector(
   try {
     const parsed = parseCollectorArgv(argv);
     admitted = await admitCollectorInvocation({
-      home: env.home,
-      principalAuthority: env.principalAuthority,
-      cwd: env.cwd,
       ...(parsed.prNumber === undefined ? {} : { prNumber: parsed.prNumber }),
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -88,7 +85,7 @@ export async function runPublicCollector(
       ...(parsed.waitWindowMs === undefined ? {} : { waitWindowMs: parsed.waitWindowMs }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
-          ...summonedTicketFields(env.boundTicketNumber),
+          ...admissionCallerOptions(env),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -101,8 +98,8 @@ export async function runPublicCollector(
   await markRunAdmitted(admitted, env.principalAuthority);
 
   const turnRequest = buildCollectorTurnRequest(admitted, {
-    packageRoot: env.packageRoot,
     home: env.home,
+    packageRoot: env.packageRoot,
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...pickEngineAxis(env),

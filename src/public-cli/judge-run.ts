@@ -12,7 +12,7 @@ import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-res
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitJudgeInvocation,
-  summonedTicketFields,
+  admissionCallerOptions,
   buildJudgeTransportPrompt,
   type AdmittedJudgeInvocation,
 } from "./invocation.ts";
@@ -95,15 +95,12 @@ export async function runPublicJudge(
   try {
     const parsed = parseJudgeArgv(argv);
     admitted = await admitJudgeInvocation({
-      home: env.home,
-      principalAuthority: env.principalAuthority,
-      cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
-      ...summonedTicketFields(env.boundTicketNumber),
+      ...admissionCallerOptions(env),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

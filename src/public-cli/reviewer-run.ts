@@ -26,7 +26,7 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitReviewerInvocation,
-  summonedTicketFields,
+  admissionCallerOptions,
   buildReviewerTransportPrompt,
   type AdmittedReviewerInvocation,
   type ReviewerLens,
@@ -292,9 +292,6 @@ export async function runPublicReviewer(
   let admitted: AdmittedReviewerInvocation;
   try {
     admitted = await admitReviewerInvocation({
-      home: env.home,
-      principalAuthority: env.principalAuthority,
-      cwd: env.cwd,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
       baseRevision: parsed.baseRevision,
@@ -304,7 +301,7 @@ export async function runPublicReviewer(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
       ...(env.model === undefined ? {} : { model: env.model }),
-          ...summonedTicketFields(env.boundTicketNumber),
+          ...admissionCallerOptions(env),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

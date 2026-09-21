@@ -21,7 +21,7 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitFixerInvocation,
-  summonedTicketFields,
+  admissionCallerOptions,
   buildFixerTransportPrompt,
   type AdmittedFixerInvocation,
 } from "./invocation.ts";
@@ -134,9 +134,6 @@ export async function runPublicFixer(
   try {
     const parsed = parseFixerArgv(argv);
     admitted = await admitFixerInvocation({
-      home: env.home,
-      principalAuthority: env.principalAuthority,
-      cwd: env.cwd,
       phase: parsed.phase,
       instruction: parsed.instruction,
       attachmentPaths: parsed.attachmentPaths,
@@ -146,7 +143,7 @@ export async function runPublicFixer(
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
-          ...summonedTicketFields(env.boundTicketNumber),
+          ...admissionCallerOptions(env),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
