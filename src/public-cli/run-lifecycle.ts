@@ -1670,9 +1670,16 @@ async function loadResumableRunRecord(
   } else if (mergedSet.tickets !== undefined) {
     courtTicketNumbers = mergedSet.tickets;
   }
-  const referencedRunId = sourceRun?.runId ?? basename(sourceRunPath ?? "").split("@")[0];
+  const sourceRunLeaf = basename(sourceRunPath ?? "").split("@");
+  const referencedRunId = sourceRun?.runId ?? sourceRunLeaf[0];
+  const referencedRole = sourceRun?.role ?? sourceRunLeaf[1];
   if (referencedRunId !== undefined && referencedRunId !== "") {
-    const currentSourceRunDirectory = await findRunDirectoryById(home, referencedRunId);
+    const currentSourceRunDirectory = await findRunDirectoryById(
+      home,
+      referencedRunId,
+      run.bookKey,
+      referencedRole,
+    );
     if (currentSourceRunDirectory !== undefined) {
       sourceRunPath = currentSourceRunDirectory;
       if (sourceRun !== undefined) {

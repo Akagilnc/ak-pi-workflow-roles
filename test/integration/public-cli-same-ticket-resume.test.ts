@@ -339,6 +339,21 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
       "same-ticket distinct parent must leave two notary run directories",
     );
 
+    // The source run identity is scoped to its original book and role. Another
+    // book may lawfully use the same run id without making this locator ambiguous.
+    await mkdir(
+      join(
+        home,
+        ".ak-roles",
+        "books",
+        "another-book",
+        "999",
+        "runs",
+        `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`,
+      ),
+      { recursive: true },
+    );
+
     // 3) Live seat-table switch before same-parent re-summons (#747).
     assert.equal(
       (
