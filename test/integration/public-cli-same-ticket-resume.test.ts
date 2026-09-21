@@ -1030,7 +1030,11 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
   }
 });
 
-test("#637 held writer lease: re-summons must not record a new currentCourt", async () => {
+test("#987 same-ticket re-summons reaches host despite live writer lease", async () => {
+  // Same-ticket resume into the retained run shares public manual-resume
+  // orchestration (#987): package writer lease must not pre-block host CLI.
+  // Shared acquire still fails closed for other authorized writers (covered
+  // by lease unit cases / initial auto-resume loop).
   const scratch = await openNotaryScratch("home-lease-");
   let heldLease: Awaited<ReturnType<typeof acquireRunWriterLease>> | undefined;
   try {
@@ -1071,7 +1075,7 @@ test("#637 held writer lease: re-summons must not record a new currentCourt", as
     heldLease = await acquireRunWriterLease(runDirectory);
 
     // Same parent path so lookup resumes into the leased run (#747).
-    const blocked = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const resumed = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
@@ -1082,16 +1086,16 @@ test("#637 held writer lease: re-summons must not record a new currentCourt", as
         createRunId: () => "01a063700-0000-7000-8000-00000000n022",
       },
     );
-    assert.notEqual(blocked.exitCode, 0, "held lease must reject the re-summons");
+    assert.equal(resumed.exitCode, 0, "held lease must not pre-block same-ticket resume");
     assert.equal(
       seen.length,
-      1,
-      "held lease must not dispatch a second court turn",
+      2,
+      "same-ticket resume must reach the host despite live writer lease",
     );
     assert.equal(
-      await readCurrentCourt(runDirectory),
-      undefined,
-      "held-lease rejection must not persist a new currentCourt before acquire",
+      seen[1]!.runDirectory,
+      runDirectory,
+      "re-summons continues the retained seat run (ADR 0079)",
     );
   } finally {
     if (heldLease !== undefined) await heldLease.release();

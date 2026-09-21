@@ -813,7 +813,6 @@ export function listRolesForDisplay(
 
 /**
  * Read configured credential presence from a Pi auth.json document.
- * Presence drives the selected-provider fail-closed seam (public-run-credentials).
  */
 export function credentialProvidersFromAuthData(
   data: unknown,
