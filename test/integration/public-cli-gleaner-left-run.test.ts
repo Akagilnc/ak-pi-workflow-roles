@@ -18,7 +18,7 @@ import {
   admitPublicRole,
   parseGleanerLeftArgv,
 } from "../../src/public-cli/invocation.ts";
-import { buildGleanerLeftTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
+import { buildInstructionSeatTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -100,7 +100,7 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
     assert.equal(admitted.attachments.length, 0);
     assert.equal(admitted.ticketNumber, undefined);
 
-    const turn = buildGleanerLeftTurnRequest(admitted, {
+    const turn = buildInstructionSeatTurnRequest(admitted, {
       packageRoot,
       home,
       agentDir: join(home, ".pi"),

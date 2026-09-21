@@ -30,7 +30,7 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
-import { buildDiaristTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
+import { buildInstructionSeatTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   prepareSummonsResumeMaterials,
   resumeTurnRequestProjectionOptions,
@@ -530,7 +530,7 @@ test("A2: station-child after-lease build failure releases the lock and retries 
           admitted.runDirectory,
           effective.summons,
         );
-        return buildDiaristTurnRequest(
+        return buildInstructionSeatTurnRequest(
           admitted,
           resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
         );

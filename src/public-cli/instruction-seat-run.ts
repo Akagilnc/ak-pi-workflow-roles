@@ -687,46 +687,6 @@ export async function runPublicInstructionSeat(
   return runAdmitted();
 }
 
-export const buildDiaristTurnRequest = buildInstructionSeatTurnRequest;
-export const buildGleanerLeftTurnRequest = buildInstructionSeatTurnRequest;
-export const buildInspectorTurnRequest = buildInstructionSeatTurnRequest;
-
-export function runPublicJudge(
-  argv: readonly string[],
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-  parse: (args: readonly string[]) => PublicSeatParse,
-) {
-  return runPublicInstructionSeat(argv, env, io, "judge", parse);
-}
-
-export function runPublicCoder(
-  argv: readonly string[],
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-  parse: (args: readonly string[]) => PublicSeatParse,
-) {
-  return runPublicInstructionSeat(argv, env, io, "coder", parse);
-}
-
-export function runPublicFixer(
-  argv: readonly string[],
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-  parse: (args: readonly string[]) => PublicSeatParse,
-) {
-  return runPublicInstructionSeat(argv, env, io, "fixer", parse);
-}
-
-export function runPublicNotary(
-  argv: readonly string[],
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-  parse: (args: readonly string[]) => PublicSeatParse,
-) {
-  return runPublicInstructionSeat(argv, env, io, "notary", parse);
-}
-
 export async function runPublicInstructionSeatResume(
   request: PublicResumeRequest,
   env: InstructionSeatRunEnv,

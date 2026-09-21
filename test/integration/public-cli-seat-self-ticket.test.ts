@@ -25,7 +25,7 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { runPublicCoder, runPublicFixer, runPublicJudge, runPublicNotary } from "../../src/public-cli/instruction-seat-run.ts";
+import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import { runPublicCountersign } from "../../src/public-cli/countersign-run.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -206,7 +206,7 @@ async function assertDurableUnbound(runDirectory: string): Promise<void> {
 
 test("public coder binds its typed receipt assertion without parsing summons text", async () => {
   await withSeatProject(async ({ home, project }) => {
-    const result = await runPublicCoder(
+    const result = await runPublicInstructionSeat(
       ["apply", "Implement the fix for ticket #582."],
       baseEnv({
         home,
@@ -227,6 +227,7 @@ test("public coder binds its typed receipt assertion without parsing summons tex
         ],
       }),
       captureIo().io,
+      "coder",
       parseCoderArgv,
     );
     assert.equal(result.exitCode, 0);
@@ -244,7 +245,7 @@ test("public coder binds its typed receipt assertion without parsing summons tex
 
 test("public fixer ignores a malformed ticket assertion without rejecting its receipt", async () => {
   await withSeatProject(async ({ home, project }) => {
-    const result = await runPublicFixer(
+    const result = await runPublicInstructionSeat(
       ["apply", "Repair the regression on ticket #582."],
       baseEnv({
         home,
@@ -255,6 +256,7 @@ test("public fixer ignores a malformed ticket assertion without rejecting its re
         details: { status: "completed", report: "repaired", ticketNumber: "582", classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }] },
       }),
       captureIo().io,
+      "fixer",
       parseFixerArgv,
     );
     assert.equal(result.exitCode, 0);
@@ -265,7 +267,7 @@ test("public fixer ignores a malformed ticket assertion without rejecting its re
 
 test("public judge without --ticket: no mechanical bind from summons text", async () => {
   await withSeatProject(async ({ home, project }) => {
-    const result = await runPublicJudge(
+    const result = await runPublicInstructionSeat(
       ["Adjudicate whether ticket #582 may proceed."],
       baseEnv({
         home,
@@ -276,6 +278,7 @@ test("public judge without --ticket: no mechanical bind from summons text", asyn
         details: { judgeStatus: "converged" },
       }),
       captureIo().io,
+      "judge",
       parseJudgeArgv,
     );
     assert.equal(result.exitCode, 0);
@@ -382,7 +385,7 @@ test("notary keeps its bound source-run ticket over a different receipt assertio
       "utf8",
     );
 
-    const result = await runPublicNotary(
+    const result = await runPublicInstructionSeat(
       ["--source-run", sourceRunPath],
       {
         home,
@@ -403,6 +406,7 @@ test("notary keeps its bound source-run ticket over a different receipt assertio
         createRunId: () => "01a063500-0000-7000-8000-0000000notary",
       },
       captureIo().io,
+      "notary",
       parseNotaryArgv,
     );
     assert.equal(result.exitCode, 0);
