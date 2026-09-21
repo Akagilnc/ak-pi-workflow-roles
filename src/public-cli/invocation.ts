@@ -1574,17 +1574,66 @@ export async function admitPublicRole(
         },
       });
     }
-    case "fixer":
-      return admitFixerInvocation({
+    case "fixer": {
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      if (instruction.trim() === "") {
+        throw new CliUsageError("fixer requires a nonblank repair instruction");
+      }
+      const phase = parsed.phase ?? "apply";
+      if (!record.phases.some((item) => item === phase)) {
+        throw new CliUsageError("fixer phase must be plan or apply");
+      }
+      let prerequisites: readonly FixerPrerequisite[] = Object.freeze([]);
+      let prerequisitesSource: string | undefined;
+      if (parsed.prerequisitesPath !== undefined) {
+        const absolutePrereq = isAbsolute(parsed.prerequisitesPath)
+          ? parsed.prerequisitesPath
+          : resolve(parsed.prerequisitesPath);
+        try {
+          prerequisitesSource = await readFile(absolutePrereq, "utf8");
+        } catch (error) {
+          throw new CliUsageError(
+            `fixer prerequisites path is unreadable: ${parsed.prerequisitesPath}`,
+            { cause: error },
+          );
+        }
+        try {
+          prerequisites = parseFixerPrerequisites(prerequisitesSource);
+        } catch (error) {
+          if (error instanceof FixerPacketValidationError) {
+            throw new CliUsageError(error.message, { cause: error });
+          }
+          throw error;
+        }
+      }
+      return admitStandardMaterialInvocation("fixer", {
         ...shared,
-        phase: parsed.phase ?? "apply",
         instruction,
         attachmentPaths,
-        ...(parsed.prerequisitesPath === undefined
-          ? {}
-          : { prerequisitesPath: parsed.prerequisitesPath }),
         ...project,
+        placedFields: async (placed) => {
+          let prerequisitesPath: string | undefined;
+          if (prerequisitesSource !== undefined) {
+            prerequisitesPath = join(placed.runDirectory, "prerequisites.json");
+            await writeFile(
+              prerequisitesPath,
+              `${JSON.stringify(prerequisites, null, 2)}\n`,
+              "utf8",
+            );
+          }
+          const packetPath = join(placed.runDirectory, "fix-packet.md");
+          await writeFile(packetPath, instruction, "utf8");
+          return {
+            phase,
+            packetPath,
+            prerequisites,
+            ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
+          };
+        },
       });
+    }
     case "collector":
       return admitCollectorInvocation({
         ...shared,
@@ -1859,10 +1908,11 @@ async function persistPlacedAdmission(
  * Countersign passes deferPersistence so same-ticket lookup can reserve coordinates
  * before materializeCountersignInvocation writes the page.
  * Seats whose extra facts are known before placement pass them as admittedFields.
- * Seats whose extra facts depend on the placed run pass placedFields (coder writes task.md).
+ * Seats whose extra facts depend on the placed run pass placedFields
+ * (coder writes task.md; fixer writes fix-packet.md and optional prerequisites.json).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder" | "fixer",
   Extra extends object = {},
 >(
   role: R,
@@ -2072,106 +2122,6 @@ export type AdmitFixerInvocationOptions = {
   /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
   assertedTicketNumber?: number;
 };
-
-/**
- * Admit a Fixer Role run on the common Invocation request plus optional prerequisites.
- * Nonblank instruction remains authoritative. Phase defaults to apply at parse time.
- * Prerequisite grammar is structural; unmet/insufficient prerequisites stay Fixer judgments.
- */
-async function admitFixerInvocation(
-  options: AdmitFixerInvocationOptions,
-): Promise<AdmittedFixerInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  const instruction = options.instruction;
-  if (instruction.trim() === "") {
-    throw new CliUsageError(
-      "fixer requires a nonblank repair instruction",
-    );
-  }
-  if (options.phase !== "plan" && options.phase !== "apply") {
-    throw new CliUsageError("fixer phase must be plan or apply");
-  }
-
-  // Validate/read prerequisites before freezing request materials.
-  let prerequisites: readonly FixerPrerequisite[] = Object.freeze([]);
-  let prerequisitesSource: string | undefined;
-  if (options.prerequisitesPath !== undefined) {
-    const absolutePrereq = isAbsolute(options.prerequisitesPath)
-      ? options.prerequisitesPath
-      : resolve(options.prerequisitesPath);
-    try {
-      prerequisitesSource = await readFile(absolutePrereq, "utf8");
-    } catch (error) {
-      throw new CliUsageError(
-        `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
-        { cause: error },
-      );
-    }
-    try {
-      prerequisites = parseFixerPrerequisites(prerequisitesSource);
-    } catch (error) {
-      if (error instanceof FixerPacketValidationError) {
-        throw new CliUsageError(error.message, { cause: error });
-      }
-      throw error;
-    }
-  }
-
-  const placed = await placeRoleAdmission({
-    role: "fixer",
-    home: options.home,
-    principalAuthority: options.principalAuthority,
-    cwd: options.cwd,
-    attachmentPaths: options.attachmentPaths,
-    ...(options.project === undefined ? {} : { project: options.project }),
-    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-    ...(options.assertedTicketNumber === undefined
-      ? {}
-      : { assertedTicketNumber: options.assertedTicketNumber }),
-  });
-
-  let prerequisitesPath: string | undefined;
-  if (prerequisitesSource !== undefined) {
-    prerequisitesPath = join(placed.runDirectory, "prerequisites.json");
-    await writeFile(
-      prerequisitesPath,
-      `${JSON.stringify(prerequisites, null, 2)}\n`,
-      "utf8",
-    );
-  }
-
-  const packetPath = join(placed.runDirectory, "fix-packet.md");
-  await writeFile(packetPath, instruction, "utf8");
-
-  const admitted = {
-    role: "fixer" as const,
-    phase: options.phase,
-    runId: placed.runId,
-    bookKey: placed.bookKey,
-    projectRoot: placed.projectRoot,
-    runDirectory: placed.runDirectory,
-    principal: placed.principal,
-    instruction,
-    instructionEmpty: false as const,
-    packetPath,
-    ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
-    prerequisites: prerequisites.map((entry) => ({
-      id: entry.id,
-      requirement: entry.requirement,
-    })),
-    attachments: persistedAttachmentRefs(placed.attachments),
-    ...placed.ticketFields,
-  };
-  const admittedRequestPath = await persistPlacedAdmission(admitted, placed, options.model);
-  return {
-    ...admitted,
-    attachments: placed.attachments,
-    admittedRequestPath,
-    prerequisites,
-  };
-}
 
 function parsePositivePrOption(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === "") throw new CliUsageError("--pr requires a positive pull request number");
