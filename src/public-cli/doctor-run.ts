@@ -14,6 +14,7 @@ import {
   type ParseDoctorArgvResult
 } from "./invocation.ts";
 import {
+  roleTurnOptions,
   runPostAdmissionOneShot,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
@@ -91,17 +92,9 @@ export async function runPublicDoctor(
 
   await markRunAdmitted(admitted, env.principalAuthority);
 
-  const turnRequest = buildDoctorTurnRequest(admitted, {
-    home: env.home,
-    packageRoot: env.packageRoot,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...pickEngineAxis(env),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(env.correlationId === undefined || env.correlationId.trim() === ""
-      ? {}
-      : { correlationId: env.correlationId }),
-    continuation: {
+  const turnRequest = buildDoctorTurnRequest(
+    admitted,
+    roleTurnOptions(env, admitted, {
       kind: "initial",
       prompt: buildDoctorTransportPrompt(
         admitted,
@@ -110,8 +103,8 @@ export async function runPublicDoctor(
           packageRoot: env.packageRoot,
         }),
       ),
-    },
-  });
+    }),
+  );
 
   return await runPostAdmissionOneShot({
     admitted,

@@ -1399,6 +1399,30 @@ export function resumeTurnRequestProjectionOptions(
   };
 }
 
+/** Shared new-turn and in-call auto-resume projection. Seat code supplies prompt and activation. */
+export function roleTurnOptions(
+  env: PostAdmissionEnv,
+  admitted: { readonly correlationId?: string },
+  continuation: RoleTurnRequest["continuation"],
+  extra?: { readonly cwd?: string },
+): RoleTurnRequestProjectionOptions {
+  const correlationId = admitted.correlationId ?? env.correlationId;
+  return {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...pickEngineAxis(env),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(correlationId === undefined || correlationId.trim() === ""
+      ? {}
+      : { correlationId }),
+    continuation,
+    ...(extra?.cwd === undefined ? {} : { cwd: extra.cwd }),
+    ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
+  };
+}
+
 /**
  * Hold the writer lease through after-lease build, then hand off to dispatch.
  * Builder (or any throw before dispatch) must release here — dispatch's finally

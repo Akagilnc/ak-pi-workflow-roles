@@ -14,6 +14,7 @@ import {
   type ParseGleanerLeftArgvResult,
 } from "./invocation.ts";
 import {
+  roleTurnOptions,
   runPostAdmissionOneShot,
   type PostAdmissionEnv,
   runPostAdmissionSeatResume,
@@ -89,17 +90,9 @@ export async function runPublicGleanerLeft(
 
   await markRunAdmitted(admitted, env.principalAuthority);
 
-  const turnRequest = buildGleanerLeftTurnRequest(admitted, {
-    home: env.home,
-    packageRoot: env.packageRoot,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...pickEngineAxis(env),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(env.correlationId === undefined || env.correlationId.trim() === ""
-      ? {}
-      : { correlationId: env.correlationId }),
-    continuation: {
+  const turnRequest = buildGleanerLeftTurnRequest(
+    admitted,
+    roleTurnOptions(env, admitted, {
       kind: "initial",
       prompt: buildGleanerLeftTransportPrompt(
         admitted,
@@ -108,8 +101,8 @@ export async function runPublicGleanerLeft(
           packageRoot: env.packageRoot,
         }),
       ),
-    },
-  });
+    }),
+  );
 
   return await runPostAdmissionOneShot({
     admitted,

@@ -41,6 +41,7 @@ import {
 import {
   presentControlledFailure,
   resolveResumeMethodMaterialAdapters,
+  roleTurnOptions,
   runPostAdmissionResumable,
   runPostAdmissionSeatResume,
   type PostAdmissionAdapters,
@@ -163,17 +164,9 @@ export async function runPublicCoder(
     env,
     io,
     buildInitialRequest: () =>
-      buildCoderTurnRequest(admitted, {
-        packageRoot: env.packageRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...pickEngineAxis(env),
-        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-        ...(admitted.correlationId === undefined && env.correlationId === undefined
-          ? {}
-          : { correlationId: admitted.correlationId ?? env.correlationId }),
-        continuation: {
+      buildCoderTurnRequest(
+        admitted,
+        roleTurnOptions(env, admitted, {
           kind: "initial",
           prompt: buildCoderTransportPrompt(
             admitted,
@@ -182,27 +175,19 @@ export async function runPublicCoder(
               packageRoot: env.packageRoot,
             }),
           ),
-        },
-      }),
+        }),
+      ),
     buildResumeRequest: () =>
-      buildCoderTurnRequest(admitted, {
-        packageRoot: env.packageRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...pickEngineAxis(env),
-        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-        ...(admitted.correlationId === undefined && env.correlationId === undefined
-          ? {}
-          : { correlationId: admitted.correlationId ?? env.correlationId }),
-        continuation: {
+      buildCoderTurnRequest(
+        admitted,
+        roleTurnOptions(env, admitted, {
           kind: "resume",
           prompt: buildAutoResumeContinuationPrompt({
             packageRoot: env.packageRoot,
             ...pickEngineAxis(env),
           }),
-        },
-      }),
+        }),
+      ),
     adapters: coderAdapters(methodProvenance),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

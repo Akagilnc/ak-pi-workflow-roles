@@ -42,6 +42,7 @@ import {
 import {
   presentControlledFailure,
   resolveResumeMethodMaterialAdapters,
+  roleTurnOptions,
   runPostAdmissionResumable,
   runPostAdmissionSeatResume,
   type PostAdmissionAdapters,
@@ -113,32 +114,6 @@ async function loadMergerMethodMaterial(
     packageRoot,
     "resolving-merge-conflicts",
   );
-}
-
-function mergerTurnOptions(
-  admitted: AdmittedMergerInvocation,
-  env: MergerRunEnv,
-): {
-  packageRoot: string;
-  home: string;
-  agentDir: string;
-  model?: import("./config.ts").SeatModelConfig;
-  engine?: string;
-  engineModel?: string;
-  timeoutMs?: number;
-  correlationId?: string;
-} {
-  return {
-    packageRoot: env.packageRoot,
-    home: env.home,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...pickEngineAxis(env),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(admitted.correlationId === undefined && env.correlationId === undefined
-      ? {}
-      : { correlationId: admitted.correlationId ?? env.correlationId }),
-  };
 }
 
 export async function runPublicMerger(
@@ -214,9 +189,9 @@ export async function runPublicMerger(
     env,
     io,
     buildInitialRequest: () =>
-      buildMergerTurnRequest(admitted, {
-        ...mergerTurnOptions(admitted, env),
-        continuation: {
+      buildMergerTurnRequest(
+        admitted,
+        roleTurnOptions(env, admitted, {
           kind: "initial",
           prompt: buildMergerTransportPrompt(
             admitted,
@@ -225,27 +200,19 @@ export async function runPublicMerger(
               packageRoot: env.packageRoot,
             }),
           ),
-        },
-      }),
+        }),
+      ),
     buildResumeRequest: () =>
-      buildMergerTurnRequest(admitted, {
-        packageRoot: env.packageRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...pickEngineAxis(env),
-        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-        ...(admitted.correlationId === undefined && env.correlationId === undefined
-          ? {}
-          : { correlationId: admitted.correlationId ?? env.correlationId }),
-        continuation: {
+      buildMergerTurnRequest(
+        admitted,
+        roleTurnOptions(env, admitted, {
           kind: "resume",
           prompt: buildAutoResumeContinuationPrompt({
             packageRoot: env.packageRoot,
             ...pickEngineAxis(env),
           }),
-        },
-      }),
+        }),
+      ),
     adapters: mergerAdapters(env.packageRoot, methodMaterial),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

@@ -44,6 +44,7 @@ import {
 import {
   presentControlledFailure,
   resolveResumeMethodMaterialAdapters,
+  roleTurnOptions,
   runPostAdmissionResumable,
   runPostAdmissionSeatResume,
   type PostAdmissionAdapters,
@@ -178,17 +179,9 @@ export async function runPublicFixer(
     env,
     io,
     buildInitialRequest: () =>
-      buildFixerTurnRequest(admitted, {
-        packageRoot: env.packageRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...pickEngineAxis(env),
-        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-        ...(admitted.correlationId === undefined && env.correlationId === undefined
-          ? {}
-          : { correlationId: admitted.correlationId ?? env.correlationId }),
-        continuation: {
+      buildFixerTurnRequest(
+        admitted,
+        roleTurnOptions(env, admitted, {
           kind: "initial",
           prompt: buildFixerTransportPrompt(
             admitted,
@@ -197,27 +190,19 @@ export async function runPublicFixer(
               packageRoot: env.packageRoot,
             }),
           ),
-        },
-      }),
+        }),
+      ),
     buildResumeRequest: () =>
-      buildFixerTurnRequest(admitted, {
-        packageRoot: env.packageRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...pickEngineAxis(env),
-        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-        ...(admitted.correlationId === undefined && env.correlationId === undefined
-          ? {}
-          : { correlationId: admitted.correlationId ?? env.correlationId }),
-        continuation: {
+      buildFixerTurnRequest(
+        admitted,
+        roleTurnOptions(env, admitted, {
           kind: "resume",
           prompt: buildAutoResumeContinuationPrompt({
             packageRoot: env.packageRoot,
             ...pickEngineAxis(env),
           }),
-        },
-      }),
+        }),
+      ),
     adapters: fixerAdapters(env.packageRoot, methodMaterial),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

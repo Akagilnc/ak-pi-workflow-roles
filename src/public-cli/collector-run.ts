@@ -14,6 +14,7 @@ import {
   type ParseCollectorArgvResult,
 } from "./invocation.ts";
 import {
+  roleTurnOptions,
   runPostAdmissionOneShot,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
@@ -97,17 +98,9 @@ export async function runPublicCollector(
 
   await markRunAdmitted(admitted, env.principalAuthority);
 
-  const turnRequest = buildCollectorTurnRequest(admitted, {
-    home: env.home,
-    packageRoot: env.packageRoot,
-    agentDir: env.agentDir,
-    ...(env.model === undefined ? {} : { model: env.model }),
-    ...pickEngineAxis(env),
-    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-    ...(admitted.correlationId === undefined && env.correlationId === undefined
-      ? {}
-      : { correlationId: admitted.correlationId ?? env.correlationId }),
-    continuation: {
+  const turnRequest = buildCollectorTurnRequest(
+    admitted,
+    roleTurnOptions(env, admitted, {
       kind: "initial",
       prompt: buildCollectorTransportPrompt(
         admitted,
@@ -116,8 +109,8 @@ export async function runPublicCollector(
           packageRoot: env.packageRoot,
         }),
       ),
-    },
-  });
+    }),
+  );
 
   return await runPostAdmissionOneShot({
     admitted,

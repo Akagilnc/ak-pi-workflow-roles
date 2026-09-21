@@ -55,6 +55,7 @@ import {
 import {
   presentControlledFailure,
   resolveResumeMethodMaterialAdapters,
+  roleTurnOptions,
   runPostAdmissionResumable,
   runPostAdmissionSeatResume,
   type PostAdmissionAdapters,
@@ -340,47 +341,41 @@ export async function runPublicReviewer(
         env: sandboxedEnv,
         io,
         buildInitialRequest: () =>
-          buildReviewerTurnRequest(admitted, {
-            packageRoot: sandboxedEnv.packageRoot,
-            home: sandboxedEnv.home,
-            agentDir: sandboxedEnv.agentDir,
-            ...(sandboxedEnv.model === undefined ? {} : { model: sandboxedEnv.model }),
-            ...pickEngineAxis(sandboxedEnv),
-            ...(sandboxedEnv.timeoutMs === undefined ? {} : { timeoutMs: sandboxedEnv.timeoutMs }),
-            ...(admitted.correlationId === undefined && sandboxedEnv.correlationId === undefined
-              ? {}
-              : { correlationId: admitted.correlationId ?? sandboxedEnv.correlationId }),
-            // Ephemeral worktree cwd; durable projectRoot stays on admitted caller project.
-            ...(sandboxedEnv.executionCwd === undefined ? {} : { cwd: sandboxedEnv.executionCwd }),
-            continuation: {
-              kind: "initial",
-              prompt: buildReviewerTransportPrompt(
-                admitted,
-                engineSessionMaterialFromOptions({
-                  ...pickEngineAxis(sandboxedEnv),
-                  packageRoot: sandboxedEnv.packageRoot,
-                }),
-              ),
-            },
-          }),
+          buildReviewerTurnRequest(
+            admitted,
+            roleTurnOptions(
+              sandboxedEnv,
+              admitted,
+              {
+                kind: "initial",
+                prompt: buildReviewerTransportPrompt(
+                  admitted,
+                  engineSessionMaterialFromOptions({
+                    ...pickEngineAxis(sandboxedEnv),
+                    packageRoot: sandboxedEnv.packageRoot,
+                  }),
+                ),
+              },
+              sandboxedEnv.executionCwd === undefined
+                ? undefined
+                : { cwd: sandboxedEnv.executionCwd },
+            ),
+          ),
         buildResumeRequest: () =>
-          buildReviewerTurnRequest(admitted, {
-            packageRoot: sandboxedEnv.packageRoot,
-            home: sandboxedEnv.home,
-            agentDir: sandboxedEnv.agentDir,
-            ...(sandboxedEnv.model === undefined ? {} : { model: sandboxedEnv.model }),
-            ...pickEngineAxis(sandboxedEnv),
-            ...(sandboxedEnv.timeoutMs === undefined ? {} : { timeoutMs: sandboxedEnv.timeoutMs }),
-            ...(admitted.correlationId === undefined && sandboxedEnv.correlationId === undefined
-              ? {}
-              : { correlationId: admitted.correlationId ?? sandboxedEnv.correlationId }),
-            // In-batch auto-resume keeps the same call's sandbox (dual-lens or single).
-            ...(sandboxedEnv.executionCwd === undefined ? {} : { cwd: sandboxedEnv.executionCwd }),
-            continuation: {
-              kind: "resume",
-              prompt: reviewerResumePrompt(sandboxedEnv),
-            },
-          }),
+          buildReviewerTurnRequest(
+            admitted,
+            roleTurnOptions(
+              sandboxedEnv,
+              admitted,
+              {
+                kind: "resume",
+                prompt: reviewerResumePrompt(sandboxedEnv),
+              },
+              sandboxedEnv.executionCwd === undefined
+                ? undefined
+                : { cwd: sandboxedEnv.executionCwd },
+            ),
+          ),
         adapters: reviewerAdapters(sandboxedEnv.packageRoot, methodMaterial),
         ...(sandboxedEnv.engine === undefined ? {} : { effectiveEngine: sandboxedEnv.engine }),
       }));

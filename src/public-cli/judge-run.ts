@@ -34,6 +34,7 @@ import {
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
 import {
+  roleTurnOptions,
   runPostAdmissionResumable,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
@@ -117,17 +118,9 @@ export async function runPublicJudge(
     env,
     io,
     buildInitialRequest: () =>
-      buildJudgeTurnRequest(admitted, {
-        packageRoot: env.packageRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...pickEngineAxis(env),
-        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-        ...(admitted.correlationId === undefined && env.correlationId === undefined
-          ? {}
-          : { correlationId: admitted.correlationId ?? env.correlationId }),
-        continuation: {
+      buildJudgeTurnRequest(
+        admitted,
+        roleTurnOptions(env, admitted, {
           kind: "initial",
           prompt: buildJudgeTransportPrompt(
             admitted,
@@ -136,27 +129,19 @@ export async function runPublicJudge(
               packageRoot: env.packageRoot,
             }),
           ),
-        },
-      }),
+        }),
+      ),
     buildResumeRequest: () =>
-      buildJudgeTurnRequest(admitted, {
-        packageRoot: env.packageRoot,
-        home: env.home,
-        agentDir: env.agentDir,
-        ...(env.model === undefined ? {} : { model: env.model }),
-        ...pickEngineAxis(env),
-        ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-        ...(admitted.correlationId === undefined && env.correlationId === undefined
-          ? {}
-          : { correlationId: admitted.correlationId ?? env.correlationId }),
-        continuation: {
+      buildJudgeTurnRequest(
+        admitted,
+        roleTurnOptions(env, admitted, {
           kind: "resume",
           prompt: buildAutoResumeContinuationPrompt({
             packageRoot: env.packageRoot,
             ...pickEngineAxis(env),
           }),
-        },
-      }),
+        }),
+      ),
     adapters: judgeAdapters(),
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
