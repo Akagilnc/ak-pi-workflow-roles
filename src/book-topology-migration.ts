@@ -10,7 +10,6 @@ import {
   acquireRunWriterLease,
   autopsyWriterLock,
   describeErrorIdentity,
-  RunWriterLeaseHeldError,
   type RunWriterLease,
   type WriterLeaseDiagnosticKind,
 } from "./public-cli/run-lifecycle.ts";
@@ -283,31 +282,6 @@ export async function assertBoardBoundUnboundRelocatePrerequisites(
   );
 }
 
-async function describeHeldLeaseContest(lockPath: string): Promise<string> {
-  const holder = await autopsyWriterLock(lockPath);
-  if (holder.verdict === "alive") return `live pid ${holder.pid}`;
-  if (holder.verdict === "dead") return `dead pid ${holder.pid}`;
-  if (holder.verdict === "absent") return "absent holder";
-  return holder.reason === "unreadable"
-    ? `unreadable: ${describeErrorIdentity(holder.readFailure)}`
-    : `unparseable holder: ${JSON.stringify(holder.content)}`;
-}
-
-async function acquireOneMutationClosureLease(
-  runDirectory: string,
-  onCleanupFailure: MutationClosureLeaseCleanupDiagnostic,
-): Promise<RunWriterLease> {
-  try {
-    return await acquireRunWriterLease(runDirectory, onCleanupFailure);
-  } catch (error) {
-    if (!(error instanceof RunWriterLeaseHeldError)) throw error;
-  }
-  const lockPath = join(runDirectory, "writer.lock");
-  throw new Error(
-    `${BOARD_BOUND_RELOCATE_UNVERIFIABLE} from ${lockPath}: bare PID identity cannot be confirmed (${await describeHeldLeaseContest(lockPath)})`,
-  );
-}
-
 /**
  * Freeze-time mutual exclusion for #863/#986 relocate: after the read-only
  * mutation-closure snapshot, take the ordinary writer lease on every run in
@@ -334,7 +308,7 @@ export async function holdBoardBoundUnboundRelocateClosure(
   try {
     for (const runDirectory of mutationClosureRunDirectories) {
       leases.push(
-        await acquireOneMutationClosureLease(runDirectory, onCleanupFailure),
+        await acquireRunWriterLease(runDirectory, onCleanupFailure),
       );
     }
     return leases;
