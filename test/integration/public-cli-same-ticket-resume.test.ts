@@ -16,7 +16,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { chmodSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -67,7 +67,6 @@ type SeenTurn = {
   model?: RoleTurnRequest["model"];
   sourceRun?: string;
   courtAttemptId?: string;
-  host?: string;
 };
 
 function seedGitProject(root: string): void {
@@ -193,7 +192,6 @@ function observingSealHost(inner: RoleTurnHost, seen: SeenTurn[]): RoleTurnHost 
         ...(request.courtAttemptId === undefined
           ? {}
           : { courtAttemptId: request.courtAttemptId }),
-        ...(request.host === undefined ? {} : { host: request.host }),
       });
       return inner.executeTurn(request);
     },
@@ -875,7 +873,6 @@ test("#675/#637 public auditor: same-parent re-summons resume prior run under li
       firstRunDirectory,
       "second auditor summons continues the same run directory",
     );
-    assert.equal(seen[1]!.host, "pi", "pre-start request must include the selected host envelope");
     assert.equal(seen[1]!.runId, firstRunId);
     assert.equal(
       seen[1]!.model?.model,
@@ -1076,7 +1073,6 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
     );
 
     heldLease = await acquireRunWriterLease(runDirectory);
-    const attachmentsBefore = await readdir(join(runDirectory, "attachments")).catch(() => []);
 
     // Same parent path so lookup resumes into the leased run (#747).
     const resumed = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
@@ -1090,7 +1086,7 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
         createRunId: () => "01a063700-0000-7000-8000-00000000n022",
       },
     );
-    assert.equal(resumed.exitCode, 1, "host starts, but package settlement waits for the held lease");
+    assert.equal(resumed.exitCode, 0, "held lease must not pre-block same-ticket resume");
     assert.equal(
       seen.length,
       2,
@@ -1101,78 +1097,8 @@ test("#987 same-ticket re-summons reaches host despite live writer lease", async
       runDirectory,
       "re-summons continues the retained seat run (ADR 0079)",
     );
-    assert.equal(await readCurrentCourt(runDirectory), undefined, "lease loser must not open a court");
-    assert.deepEqual(
-      await readdir(join(runDirectory, "attachments")).catch(() => []),
-      attachmentsBefore,
-      "lease loser must not freeze summons attachments",
-    );
   } finally {
     if (heldLease !== undefined) await heldLease.release();
-    await rm(scratch.home, { recursive: true, force: true });
-    await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
-  }
-});
-
-test("#987 deferred summons write failure after host start settles through the public resume boundary", async () => {
-  const scratch = await openNotaryScratch("home-deferred-failure-");
-  let resumedRunDirectory: string | undefined;
-  let external: string | undefined;
-  let externalBackup: string | undefined;
-  try {
-    const { home, project, firstSourcePath, io, credentials } = scratch;
-    external = join(home, "deferred-attachment.md");
-    externalBackup = `${external}.bak`;
-    await writeFile(external, "deferred material\n", "utf8");
-    const instruction = `卷宗指针：${firstSourcePath}`;
-    const sealHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: scriptedTerminatingToolSession({
-        role: "inspector",
-        toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-        details: { status: "pass", findings: [] },
-      }),
-    });
-    let turns = 0;
-    const host: RoleTurnHost = {
-      executeTurn: async (request) => {
-        turns += 1;
-        if (turns === 1) return sealHost.executeTurn(request);
-        resumedRunDirectory = request.runDirectory;
-        await rename(external!, externalBackup!);
-        throw new Error("simultaneous host rejection must be observed");
-      },
-    };
-
-    const first = await runAkRole(["inspector", instruction, "--attach", external], {
-      home, packageRoot, cwd: project, credentials, io, roleTurnHost: host,
-      createRunId: () => "01a063700-0000-7000-8000-00000000n031",
-    });
-    assert.equal(first.exitCode, 0);
-
-    const resumed = await runAkRole(["inspector", instruction, "--attach", external], {
-      home, packageRoot, cwd: project, credentials, io, roleTurnHost: host,
-    });
-    assert.equal(turns, 2, "the native host genuinely starts before the deferred write");
-    assert.equal(resumed.exitCode, 1);
-    assert.ok(resumedRunDirectory !== undefined);
-    const sessionRows = (await readFile(join(resumedRunDirectory, "session", "session.jsonl"), "utf8"))
-      .trim().split("\n").filter(Boolean)
-      .map((line) => JSON.parse(line) as {
-        customType?: unknown;
-        data?: { cause?: unknown; relatedFailure?: unknown };
-      });
-    const relatedHostFailure = sessionRows.find((row) =>
-      row.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE
-      && row.data?.cause === "host_rejection_beside_deferred_write"
-    );
-    assert.equal(typeof relatedHostFailure?.data?.relatedFailure, "string");
-    assert.ok((relatedHostFailure?.data?.relatedFailure as string).length > 0);
-  } finally {
-    if (external !== undefined && externalBackup !== undefined) {
-      await rename(externalBackup, external).catch(() => undefined);
-    }
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
   }
@@ -1255,22 +1181,12 @@ test("#840 bounce class 1/2: cleanup failure after a real bare `ak-role resume` 
         // make the run-state write that clearCurrentCourt performs fail (its
         // read still succeeds). Arm the stderr-restore hook only for this turn.
         sealingTurnArmed = true;
-        const stateBeforeThisDispatch = await readFile(runStateFile, "utf8");
-        const result = await scriptedTerminatingToolSession({
+        await chmod(runStateFile, 0o400);
+        return scriptedTerminatingToolSession({
           role: "notary",
           toolName: NOTARY_OUTPUT_TOOL_NAME,
           details: { status: "pass", findings: [] },
         })(extraArgs, options);
-        // The host is now complete; poison only the post-result court cleanup,
-        // not the package's pre-result running-state write.
-        for (let attempt = 0; attempt < 100; attempt += 1) {
-          const currentStateText = await readFile(runStateFile, "utf8");
-          const state = JSON.parse(currentStateText) as { status?: string };
-          if (state.status === "running" && currentStateText !== stateBeforeThisDispatch) break;
-          await new Promise((resolve) => setTimeout(resolve, 1));
-        }
-        await chmod(runStateFile, 0o400);
-        return result;
       },
     });
     const host = observingSealHost(inner, seen);

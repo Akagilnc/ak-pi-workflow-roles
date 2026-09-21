@@ -69,7 +69,6 @@ import {
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
-  acquireRunWriterLease,
   clearCurrentCourt,
   clearTypedProviderHttpObservation,
   describeErrorIdentity,
@@ -79,7 +78,6 @@ import {
   renderResumeCommand,
   type CurrentCourtState,
   type RunWriterLease,
-  RunWriterLeaseHeldError,
   type TypedProviderHttpObservation,
 } from "./run-lifecycle.ts";
 import {
@@ -228,10 +226,9 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
   env: PostAdmissionEnv,
   diagnostic: string,
   io: CliIo,
-  facts?: { readonly cause: string; readonly relatedFailure: string },
 ): Promise<void> {
   io.stderr(formatCliDiagnostic(diagnostic));
-  const payload = { diagnostic, recordedAt: new Date().toISOString(), ...(facts === undefined ? {} : facts) };
+  const payload = { diagnostic, recordedAt: new Date().toISOString() };
   try {
     await env.sessionAppender(
       env.principalAuthority,
@@ -603,33 +600,6 @@ async function settleDeferredPersist<
   }
 }
 
-async function projectPostAdmissionTurnRequest<A extends AdmittedRoleInvocation>(
-  admitted: A,
-  env: PostAdmissionEnv,
-  request: RoleTurnRequest,
-): Promise<RoleTurnRequest> {
-  const previousHost = readInvocationSelectedHost(admitted.runDirectory);
-  const liveHost = env.host;
-  const principalCoordinates = admitted.principal === undefined
-    ? undefined
-    : env.principalAuthority.decode(admitted.principal);
-  const hostTransition =
-    previousHost !== undefined && liveHost !== undefined && principalCoordinates !== undefined
-      ? await projectHostTransitionPriorNative({
-          previousHost,
-          liveHost,
-          piSessionFile: principalCoordinates.sessionFile,
-        })
-      : undefined;
-  let projected = env.signal === undefined ? request : { ...request, signal: env.signal };
-  if (env.stationChild !== undefined) projected = { ...projected, stationChild: env.stationChild };
-  if (hostTransition !== undefined) projected = { ...projected, hostTransition };
-  if (typeof liveHost === "string" && liveHost.trim() !== "") {
-    projected = { ...projected, host: liveHost.trim() };
-  }
-  return projected;
-}
-
 export async function dispatchPostAdmissionTurn<
   A extends AdmittedRoleInvocation,
   T extends TerminalResult = TerminalResult,
@@ -643,12 +613,6 @@ export async function dispatchPostAdmissionTurn<
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
   persistRunState?: boolean;
-  /** A manual resume host call already started before package mutation. */
-  startedTurn?: Promise<RoleTurnResult>;
-  /** Final host projection used by a manual resume started before package writes. */
-  projectedRequest?: RoleTurnRequest;
-  /** Package writes deferred until a manually-started host is under lease. */
-  afterTurnStartedBeforeDispatch?: () => Promise<void>;
 }): Promise<{
   exitCode: number;
   admitted: A;
@@ -776,9 +740,23 @@ export async function dispatchPostAdmissionTurn<
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
     // Single authority projectHostTransitionPriorNative classifies the prior native volume.
     // Same-run resume (#637) keeps host identity on the run's invocation page.
-    let projectedRequest: RoleTurnRequest;
+    let previousHost: string | undefined;
+    const liveHost = env.host;
+    const principalCoordinates =
+      admitted.principal === undefined
+        ? undefined
+        : env.principalAuthority.decode(admitted.principal);
+    let hostTransition: RoleTurnRequest["hostTransition"];
     try {
-      projectedRequest = input.projectedRequest ?? await projectPostAdmissionTurnRequest(admitted, env, request);
+      previousHost = readInvocationSelectedHost(admitted.runDirectory);
+      hostTransition =
+        previousHost !== undefined && liveHost !== undefined && principalCoordinates !== undefined
+          ? await projectHostTransitionPriorNative({
+              previousHost,
+              liveHost,
+              piSessionFile: principalCoordinates.sessionFile,
+            })
+          : undefined;
     } catch (error) {
       // prior-native IO is on the public one-shot path — controlled failure, not bare throw.
       return {
@@ -797,51 +775,6 @@ export async function dispatchPostAdmissionTurn<
         )) as { exitCode: number; admitted: A; terminal: T },
         ...deferredPersist,
       };
-    }
-
-    if (input.afterTurnStartedBeforeDispatch !== undefined) {
-      try {
-        await input.afterTurnStartedBeforeDispatch();
-      } catch (error) {
-        // The native host is already live. Always observe it before settling
-        // the package-side failure so its rejection cannot escape unhandled.
-        let hostRejection: unknown;
-        try {
-          await input.startedTurn;
-        } catch (error) {
-          hostRejection = error;
-        }
-        if (hostRejection !== undefined) {
-          await recordBestEffortPostDispatchDiagnostic(
-            admitted,
-            env,
-            `host turn failed beside deferred package write failure: ${describeErrorIdentity(hostRejection)}`,
-            io,
-            {
-              cause: "host_rejection_beside_deferred_write",
-              relatedFailure: describeErrorIdentity(hostRejection),
-            },
-          );
-        }
-        const settled = await settleAfterTurnStarted(
-          admitted,
-          withEngineDetourInvocationScope({
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-          }, request.invocationScopeId),
-          adapters,
-          env.principalAuthority,
-          io,
-          persistRunState,
-        );
-        return await finishAfterTurn({
-          ...settled,
-          turnDispatched: true as const,
-          ...deferredPersist,
-        });
-      }
     }
 
     await clearTypedProviderHttpObservation(admitted.runDirectory);
@@ -886,7 +819,19 @@ export async function dispatchPostAdmissionTurn<
     // (station-child and ordinary share one seam). Dialogue continuation stays
     // caller/peer opaque — never splice system path sections into user dialogue.
     // No package-resume parallel face or typed resume identity.
-    const turnRequest = projectedRequest;
+    let turnRequest: RoleTurnRequest =
+      env.signal === undefined ? request : { ...request, signal: env.signal };
+    if (env.stationChild !== undefined) {
+      turnRequest = { ...turnRequest, stationChild: env.stationChild };
+    }
+    if (hostTransition !== undefined) {
+      turnRequest = { ...turnRequest, hostTransition };
+    }
+    // Selected host axis rides the shared Host envelope for in-turn tools
+    // (detour usage ledger) — never a pre-spawn invocation.json reread.
+    if (typeof liveHost === "string" && liveHost.trim() !== "") {
+      turnRequest = { ...turnRequest, host: liveHost.trim() };
+    }
     // 0081 non-dialogue face: freeze pointer section under run/attachments/.
     // Seat consumes via loadCaseDossierReadingMaterial → existing agent-start
     // readingMaterial / systemPrompt.materials fold. Caller instruction, empty
@@ -915,7 +860,7 @@ export async function dispatchPostAdmissionTurn<
 
     let result: RoleTurnResult;
     try {
-      result = await (input.startedTurn ?? env.roleTurnHost.executeTurn(turnRequest));
+      result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
       const processCancelName = processCancelSignalName(env.signal);
       const settled = await settleAfterTurnStarted(
@@ -1602,10 +1547,7 @@ export async function runPostAdmissionSeatResume<
   let env = input.env;
   let preparedCleanup: (() => Promise<void>) | undefined;
 
-  const buildRequest = async (deferWrites: boolean): Promise<{
-    request: RoleTurnRequest;
-    applyDeferredWrites: () => Promise<void>;
-  }> => {
+  const buildRequestAfterLease = async (): Promise<RoleTurnRequest> => {
         let openCourtAttemptId: string | undefined;
         // Build uses the admitted for this resume (rehydrated when open court
         // materials ride). Settlement identity stays on the outer admitted.
@@ -1635,7 +1577,7 @@ export async function runPostAdmissionSeatResume<
 
         // Freeze external paths once; rewrite summons to the frozen identity so
         // currentCourt + later bare resume reuse the accepted snapshot.
-        if (!deferWrites && request.summons !== undefined) {
+        if (request.summons !== undefined) {
           const prepared = await prepareSummonsResumeMaterials(
             admittedForBuild.runDirectory,
             request.summons,
@@ -1672,7 +1614,7 @@ export async function runPostAdmissionSeatResume<
               ? turnRequest.courtAttemptId
               : randomUUID());
           turnRequest = { ...turnRequest, courtAttemptId };
-          if (openCourtAttemptId === undefined && !deferWrites) {
+          if (openCourtAttemptId === undefined) {
             const court: CurrentCourtState = {
               courtAttemptId,
               ...(request.summons === undefined
@@ -1682,31 +1624,7 @@ export async function runPostAdmissionSeatResume<
             await recordCurrentCourt(admittedForBuild.runDirectory, court);
           }
         }
-    const requestForDeferredWrite = request;
-    return {
-      request: turnRequest,
-      applyDeferredWrites: async () => {
-        if (!deferWrites || openCourtAttemptId !== undefined ||
-            (requestForDeferredWrite.summons === undefined && requestForDeferredWrite.message === undefined)) return;
-        let storedSummons = requestForDeferredWrite.summons;
-        if (storedSummons !== undefined) {
-          const prepared = await prepareSummonsResumeMaterials(
-            admittedForBuild.runDirectory,
-            storedSummons,
-          );
-          if (prepared !== undefined && (storedSummons.attachmentPaths?.length ?? 0) > 0) {
-            storedSummons = {
-              ...storedSummons,
-              attachmentPaths: prepared.attachments.map((attachment) => attachment.frozenPath),
-            };
-          }
-        }
-        await recordCurrentCourt(admittedForBuild.runDirectory, {
-          courtAttemptId: turnRequest.courtAttemptId!,
-          ...(storedSummons === undefined ? {} : { summons: storedSummons }),
-        });
-      },
-    };
+    return turnRequest;
   };
 
   // Court recovery / open, then dispatch. Public manual resume does not take a
@@ -1768,10 +1686,8 @@ export async function runPostAdmissionSeatResume<
                   },
                 };
               }
-              const built = await buildRequest(false);
-              await built.applyDeferredWrites();
               const turnRequest = withEngineDetourInvocationScope(
-                built.request,
+                await buildRequestAfterLease(),
                 invocationScopeId,
               );
               firstTurn = turnRequest;
@@ -1809,7 +1725,7 @@ export async function runPostAdmissionSeatResume<
       ...(input.effectiveEngine === undefined
         ? {}
         : { effectiveEngine: input.effectiveEngine }),
-      buildRequestBeforeHost: () => buildRequest(true),
+      buildRequestAfterLease,
     });
   } catch (error) {
     // Open-court rehydrate load under lease may still surface seat structural
@@ -1949,10 +1865,7 @@ export async function runPostAdmissionManualResume<
   /** Eager turn request (non-court path / seats that build before dispatch). */
   request?: RoleTurnRequest;
   /** Turn builder (#637). Mutually exclusive with a prebuilt request. */
-  buildRequestBeforeHost?: () => Promise<{
-    request: RoleTurnRequest;
-    applyDeferredWrites: () => Promise<void>;
-  }>;
+  buildRequestAfterLease?: () => Promise<RoleTurnRequest>;
   adapters: PostAdmissionAdapters<A, T>;
   /** Seat-table engine axis on resume (#600). */
   effectiveEngine?: string;
@@ -1967,7 +1880,7 @@ export async function runPostAdmissionManualResume<
     io,
     adapters,
     effectiveEngine,
-    buildRequestBeforeHost,
+    buildRequestAfterLease,
   } = input;
   let request = input.request;
   // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
@@ -1978,72 +1891,30 @@ export async function runPostAdmissionManualResume<
     ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
   });
 
-  let applyDeferredWrites = async (): Promise<void> => {};
   if (request === undefined) {
-    if (buildRequestBeforeHost === undefined) {
+    if (buildRequestAfterLease === undefined) {
       throw new Error(
-        "runPostAdmissionManualResume requires request or buildRequestBeforeHost",
+        "runPostAdmissionManualResume requires request or buildRequestAfterLease",
       );
     }
-    const built = await buildRequestBeforeHost();
-    request = built.request;
-    applyDeferredWrites = built.applyDeferredWrites;
+    request = await buildRequestAfterLease();
   }
   request = withEngineDetourInvocationScope(request, invocationScopeId);
 
-  const dispatchEnv: PostAdmissionEnv = {
-    ...env,
-    ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
-    ...(admitted.correlationId === undefined
-      ? {}
-      : { correlationId: admitted.correlationId }),
-  };
-  const projectedRequest = await projectPostAdmissionTurnRequest(admitted, dispatchEnv, request);
-
-  // The host resume is invoked before any package lifecycle mutation. Once the
-  // native call is in flight, the existing shared lease remains the sole owner
-  // of package writes (run-state, attachments, hooks, relocation, settlement).
-  const startedTurn = env.roleTurnHost.executeTurn(projectedRequest);
-  // Package lease/deferred work may take multiple turns before dispatch awaits
-  // this promise. Attach an observer immediately; the original promise keeps
-  // its rejection for the unified settlement path below.
-  void startedTurn.catch(() => undefined);
-  let lease: RunWriterLease;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory);
-  } catch (error) {
-    // Observe the native call before returning so a host rejection cannot become
-    // an unhandled promise. A live writer continues to own every package write.
-    try {
-      await startedTurn;
-    } catch {
-      // The lease conflict is the package-side reason settlement cannot proceed.
-    }
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      return { exitCode: 1, admitted };
-    }
-    throw error;
-  }
-
-  const result = await (async () => {
-    try {
-      return await dispatchPostAdmissionTurn({
-        admitted,
-        env: dispatchEnv,
-        io,
-        request,
-        lease,
-        startedTurn,
-        projectedRequest,
-        afterTurnStartedBeforeDispatch: applyDeferredWrites,
-        adapters,
-        ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
-      });
-    } finally {
-      await lease.release();
-    }
-  })();
+  const result = await dispatchPostAdmissionTurn({
+    admitted,
+    env: {
+      ...env,
+      ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
+      ...(admitted.correlationId === undefined
+        ? {}
+        : { correlationId: admitted.correlationId }),
+    },
+    io,
+    request,
+    adapters,
+    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
+  });
   if (
     result.terminal !== undefined &&
     isLawfulTypedTerminalOutcome(result.terminal.roleOutcome)
