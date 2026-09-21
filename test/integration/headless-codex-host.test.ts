@@ -257,6 +257,76 @@ test("#959 missing host binary stays activation spawn-failed with real path", as
   }
 });
 
+test("#987 codex host failure wins over missing-thread-id label", async () => {
+  // Result 6 / 失败诚实: turn.failed (or nonzero exit) must surface as host
+  // failure even when thread.started never arrived — not HeadlessMissingThreadId.
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-987-codex-fail-", runName: "run@codex" });
+  const fakeBin = join(ledger.runDirectory, "fake-codex-turn-failed");
+  await writeFile(
+    fakeBin,
+    `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({
+  type: "turn.failed",
+  error: { message: "thread-store conflict: session already has an active writer (code -32600)" },
+}) + "\\n");
+process.exit(1);
+`,
+    "utf8",
+  );
+  await chmod(fakeBin, 0o755);
+  try {
+    const description = lookupHeadlessHostDescription("codex");
+    assert.ok(description);
+    let bound: string | undefined;
+    const host = createHeadlessRoleTurnHost({
+      description,
+      hostName: "codex",
+      binary: fakeBin,
+      sessionIdentity: {
+        async load() {
+          return undefined;
+        },
+        async bind(_principal, id) {
+          bound = id;
+        },
+        resolveSessionFile: () => join(ledger.runDirectory, "session", "session.jsonl"),
+      },
+      prepare: async () => ({
+        mcpServers: [],
+        systemPrompt: { body: "system", materials: [] },
+        prompt: "probe",
+        jsonSchema: { type: "object", properties: { status: { type: "string" } }, required: ["status"] },
+        terminatingToolName: "ak_probe_output",
+        async ingestStructuredOutput() {},
+        async closeRound() {
+          return { accepted: true as const };
+        },
+      }),
+    });
+    const result = await host.executeTurn({
+      principal: fixturePrincipal(join(ledger.runDirectory, "session")),
+      activation: { role: "inspector" },
+      methods: [],
+      continuation: { kind: "initial", prompt: "probe" },
+      model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
+      cwd: ledger.runDirectory,
+      home: ledger.runDirectory,
+      agentDir: join(ledger.runDirectory, "agent"),
+      runDirectory: ledger.runDirectory,
+    });
+    assert.equal(result.knownFailure?.identity?.name, "HeadlessCliError");
+    assert.equal(result.knownFailure?.identity?.code, "codex-turn-failed");
+    assert.equal(
+      result.knownFailure?.diagnostic,
+      "thread-store conflict: session already has an active writer (code -32600)",
+    );
+    assert.notEqual(result.knownFailure?.identity?.code, "missing-thread-id");
+    assert.equal(bound, undefined, "no thread id arrived; bind must not invent one");
+  } finally {
+    ledger.dispose();
+  }
+});
+
 test("headless stdin delivery error cannot settle valid output as success", async () => {
   const ledger = createTempPackageHomeLedger({ prefix: "ak-headless-epipe-", runName: "run@codex" });
   const fakeBin = join(ledger.runDirectory, "fake-codex-epipe");

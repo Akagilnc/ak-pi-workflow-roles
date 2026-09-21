@@ -37,7 +37,6 @@ import { isLawfulTypedTerminalOutcome, formatTerminalResult, type TerminalArtifa
 import {
   attachRecordedSubmissions,
   presentFailureTerminal,
-  presentStructuralRejection,
   resolveControlledFailureResumeObservation,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -481,7 +480,17 @@ export async function runWithAutoResumeLoop<
   signal?: AbortSignal;
   buildInitialPayload: () => TPayload;
   buildResumePayload: () => TPayload;
-  dispatch: (payload: TPayload, lease: RunWriterLease, isFirst: boolean, attemptIo: CliIo) => Promise<T>;
+  /**
+   * #987: no package writer-lease pre-gate before host CLI resume. Lease stays
+   * optional so authorized write paths inside dispatch may still hold one; the
+   * loop itself neither acquires nor rejects on a live holder.
+   */
+  dispatch: (
+    payload: TPayload,
+    lease: RunWriterLease | undefined,
+    isFirst: boolean,
+    attemptIo: CliIo,
+  ) => Promise<T>;
 }): Promise<T> {
   // #422 single-point resolution + domain validation. NaN would bypass every
   // `attempts >= limit` comparison (always false) — reject here, before any dispatch.
@@ -499,19 +508,6 @@ export async function runWithAutoResumeLoop<
   const retainedErrorFiles: string[] = [];
 
   while (true) {
-    let lease: RunWriterLease;
-    try {
-      lease = await acquireRunWriterLease(options.admitted.runDirectory, (diagnostic) =>
-        options.io.stderr(diagnostic),
-      );
-    } catch (error) {
-      if (error instanceof RunWriterLeaseHeldError) {
-        presentStructuralRejection(error, options.io);
-        return { exitCode: 2 } as T;
-      }
-      throw error;
-    }
-
     let result: T | undefined;
     // Set only when the caught throw is a TurnDispatchedFailure (#840 r9 判词
     // class 1): the host turn genuinely started this attempt even though
@@ -519,13 +515,17 @@ export async function runWithAutoResumeLoop<
     // not a replay of the initial one.
     let turnStartedBeforeThrow = false;
     try {
-      result = await options.dispatch(currentPayload, lease, isFirst, dummyIo);
+      // #987 result 5: auto-resume passes through to the host CLI resume — same
+      // rule as public manual resume (PR #996). Shared acquire remains available
+      // to authorized write paths (e.g. retainDispatchError pointer stage); this
+      // loop must not pre-block the caller's summons on a live holder.
+      result = await options.dispatch(currentPayload, undefined, isFirst, dummyIo);
     } catch (error) {
       // Owner 2026-08-23: 「出了异常，就原地记录错误信息，然后重试。」
       // Retain the whole exception in place (per-attempt full file + dossier
       // pointer); recording failure must not break the retry path (PR #418
-      // diagnostic-sink-isolation precedent). The dispatcher owns lease release
-      // in its own finally, so the retry round starts with the lock free.
+      // diagnostic-sink-isolation precedent). When a lease is held inside
+      // dispatch, that path owns release in its own finally.
       lastThrownError = error;
       turnStartedBeforeThrow = error instanceof TurnDispatchedFailure;
       const attempt = dispatchOrdinal;

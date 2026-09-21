@@ -1048,8 +1048,8 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
 test("#987 same-ticket re-summons reaches host despite live writer lease", async () => {
   // Same-ticket resume into the retained run shares public manual-resume
   // orchestration (#987): package writer lease must not pre-block host CLI.
-  // Shared acquire still fails closed for other authorized writers (covered
-  // by lease unit cases / initial auto-resume loop).
+  // Shared acquire still fails closed for other authorized writers (lease unit
+  // cases); auto-resume loop likewise has no pre-acquire gate.
   const scratch = await openNotaryScratch("home-lease-");
   let heldLease: Awaited<ReturnType<typeof acquireRunWriterLease>> | undefined;
   try {

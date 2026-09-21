@@ -618,18 +618,16 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
 
           if (codex) {
             const observation = codexObserver!.result();
-            if (observation.threadId === undefined || observation.threadId === "") {
-              return terminalFromSpawned(spawned, {
-                cause: "session",
-                identity: { name: "HeadlessMissingThreadId", code: "missing-thread-id" },
-                diagnostic: "codex exec emitted no thread.started thread_id",
-                details: { sessionId, exitCode: spawned.code },
-              });
-            }
-            sessionId = observation.threadId;
-            await config.sessionIdentity.bind(request.principal, sessionId);
+            // #987 result 6 / 失败诚实: host-reported failure wins over a package
+            // missing-thread-id label. Bind only when a thread id actually arrived.
+            const bindCodexThreadIfPresent = async (): Promise<void> => {
+              if (observation.threadId === undefined || observation.threadId === "") return;
+              sessionId = observation.threadId;
+              await config.sessionIdentity.bind(request.principal, sessionId);
+            };
 
             if (observation.failureDiagnostic !== undefined) {
+              await bindCodexThreadIfPresent();
               return terminalFromSpawned(spawned, {
                 cause: "output",
                 identity: { name: "HeadlessCliError", code: "codex-turn-failed" },
@@ -640,6 +638,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
 
             // Non-zero exit without a parseable failure event still fails loud.
             if (spawned.code !== 0 && spawned.code !== null) {
+              await bindCodexThreadIfPresent();
               return terminalFromSpawned(spawned, {
                 cause: "output",
                 identity: { name: "HeadlessCliError", code: "codex-nonzero-exit" },
@@ -647,6 +646,17 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 details: { sessionId, exitCode: spawned.code },
               });
             }
+
+            if (observation.threadId === undefined || observation.threadId === "") {
+              return terminalFromSpawned(spawned, {
+                cause: "session",
+                identity: { name: "HeadlessMissingThreadId", code: "missing-thread-id" },
+                diagnostic: "codex exec emitted no thread.started thread_id",
+                details: { sessionId, exitCode: spawned.code },
+              });
+            }
+            sessionId = observation.threadId;
+            await config.sessionIdentity.bind(request.principal, sessionId);
 
             if (!observation.turnCompleted) {
               return terminalFromSpawned(spawned, {

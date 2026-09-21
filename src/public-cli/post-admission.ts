@@ -1395,12 +1395,13 @@ export function resumeTurnRequestProjectionOptions(
 }
 
 /**
- * Hold the writer lease through after-lease build, then hand off to dispatch.
- * Builder (or any throw before dispatch) must release here — dispatch's finally
- * only runs after this handoff (manual resume and station-child auto-resume).
+ * Build the turn request, then hand off to dispatch. When a writer lease is
+ * held, release it if build throws before handoff — dispatch's finally only
+ * runs after this handoff (manual resume and station-child auto-resume).
+ * #987: lease is optional; auto-resume no longer pre-acquires before host CLI.
  */
 async function dispatchAfterWriterLease<T>(input: {
-  lease: RunWriterLease;
+  lease?: RunWriterLease;
   build: () => Promise<RoleTurnRequest>;
   dispatch: (request: RoleTurnRequest) => Promise<T>;
 }): Promise<T> {
@@ -1410,7 +1411,7 @@ async function dispatchAfterWriterLease<T>(input: {
     handedOffToDispatch = true;
     return await input.dispatch(request);
   } finally {
-    if (!handedOffToDispatch) {
+    if (!handedOffToDispatch && input.lease !== undefined) {
       await input.lease.release();
     }
   }
@@ -1517,7 +1518,7 @@ export async function runPostAdmissionSeatResume<
   // Load once for runDirectory / structural rejection / afterAdmittedLoad.
   // Court identity for public manual resume is judged in the turn builder
   // (#987: no package writer-lease gate before host CLI resume). Station-child
-  // auto-resume still acquires the shared lease in runWithAutoResumeLoop.
+  // auto-resume shares that rule via runWithAutoResumeLoop (no pre-acquire).
   let loaded;
   try {
     loaded = await input.load(request);
@@ -1626,10 +1627,10 @@ export async function runPostAdmissionSeatResume<
     return turnRequest;
   };
 
-  // Court recovery / open, then dispatch. Public manual resume does not take a
-  // package writer lease before the host CLI (#987 / ADR 0080 one-shot).
-  // Station-child same-ticket/same-parent resume is call-local auto-resume
-  // (#840 / #416) and still acquires the shared lease in its loop.
+  // Court recovery / open, then dispatch. Public manual resume and station-child
+  // auto-resume both pass through to the host CLI without a package writer-lease
+  // pre-gate (#987 / ADR 0080). Station-child same-ticket/same-parent resume is
+  // still call-local auto-resume (#840 / #416).
   // afterAdmittedPrepare runs inside this try so mint failure and cleanup share one finally.
   try {
     if (input.afterAdmittedPrepare !== undefined) {
@@ -1664,7 +1665,7 @@ export async function runPostAdmissionSeatResume<
         // redispatch brake (#833). New-court station-child turns still auto-resume.
         dispatch: async (payload, lease, _isFirst, attemptIo) =>
           dispatchAfterWriterLease({
-            lease,
+            ...(lease === undefined ? {} : { lease }),
             build: async () => {
               // #840 r8 判词 class 2: this call-local retry must keep this
               // court's frozen summons / 交卷 body / attachments verbatim
@@ -1698,7 +1699,7 @@ export async function runPostAdmissionSeatResume<
                 env,
                 io: attemptIo,
                 request: turnRequest,
-                lease,
+                ...(lease === undefined ? {} : { lease }),
                 adapters: stationAdapters,
                 persistRunState: false,
                 ...(input.effectiveEngine === undefined
@@ -1836,7 +1837,7 @@ export async function runPostAdmissionResumable<
         },
         io: attemptIo,
         request,
-        lease,
+        ...(lease === undefined ? {} : { lease }),
         adapters,
         persistRunState: false,
         // #600: every attempt (initial + auto-resume) writes seat engine when present.
@@ -1851,8 +1852,8 @@ export async function runPostAdmissionResumable<
  * Manual resume: pass-through to the host CLI resume — no package writer-lease
  * pre-gate (#987), no sealed-accepted short-circuit (#833 / #416). Court open
  * (summons / message / open court) is built when using buildRequestAfterLease;
- * sole-final stays per-attempt. Station-child auto-resume keeps shared lease
- * acquire in runWithAutoResumeLoop + dispatchAfterWriterLease.
+ * sole-final stays per-attempt. Station-child auto-resume shares the same
+ * no-pre-gate rule via runWithAutoResumeLoop + dispatchAfterWriterLease.
  */
 export async function runPostAdmissionManualResume<
   A extends AdmittedRoleInvocation,
