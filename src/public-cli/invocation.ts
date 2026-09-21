@@ -41,7 +41,6 @@ import {
   requireSafePositiveTicketNumber,
 } from "../run-ticket-number.ts";
 import {
-  rewriteRoleRunDurablePages,
   rewriteRunDirectoryPathFields,
   rewriteRunDirectoryPathValue,
 } from "../role-run-relocation.ts";
@@ -643,47 +642,14 @@ export async function relocateAdmittedRunToTicket(
   // Keep that failure before the filesystem commit point.
   const principal = authority.seal(target);
 
-  // Online relocation owns only this run's writer lease. Do not reuse the
-  // offline stock migrator's book-wide rewrite here: peer pages have their own
-  // writers and multiple file rewrites cannot commit atomically with rename.
-  // Rename is the commit point; afterwards every rewritten target path exists.
+  // Rename is the only durable commit. Persisted paths are resolved from typed
+  // run identity on read, so online relocation never writes unleased peers or
+  // pretends a directory rename plus page rewrites form one transaction.
   await rename(oldRunDirectory, target.runDirectory);
 
   // rename moved the open lock inode with the directory. Transfer cleanup
-  // ownership before the fallible durable-page projection.
+  // ownership immediately after the commit.
   heldLease?.relocate(target.runDirectory);
-
-  try {
-    await rewriteRoleRunDurablePages({
-      pagesDirectory: target.runDirectory,
-      oldRunDirectory,
-      newRunDirectory: target.runDirectory,
-    });
-  } catch (error) {
-    const rollbackFailures: unknown[] = [];
-    try {
-      await rewriteRoleRunDurablePages({
-        pagesDirectory: target.runDirectory,
-        oldRunDirectory: target.runDirectory,
-        newRunDirectory: oldRunDirectory,
-      });
-    } catch (rollbackError) {
-      rollbackFailures.push(rollbackError);
-    }
-    try {
-      await rename(target.runDirectory, oldRunDirectory);
-      heldLease?.relocate(oldRunDirectory);
-    } catch (rollbackError) {
-      rollbackFailures.push(rollbackError);
-    }
-    if (rollbackFailures.length > 0) {
-      throw new AggregateError(
-        [error, ...rollbackFailures],
-        "run relocation failed and rollback did not fully converge",
-      );
-    }
-    throw error;
-  }
 
   const admittedRecord = admitted as unknown as Record<string, unknown>;
   rewriteRunDirectoryPathFields(

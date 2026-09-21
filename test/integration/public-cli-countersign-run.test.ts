@@ -49,6 +49,7 @@ import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-princip
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { resolveNotarySourceRunLocator } from "../../src/notary-source-run.ts";
 import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
 import {
   argvFlagValue,
@@ -1621,56 +1622,6 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
         },
       }),
     });
-    const failedCoderId = "01a0sign00-0000-7000-8000-00000000fail";
-    const failedCoderUnboundRun = join(bookRoot, "unbound", "runs", `${failedCoderId}@coder`);
-    const failedCoderTarget = join(bookRoot, "582", "runs", `${failedCoderId}@coder`);
-    const failingSealAuthority = {
-      ...piDurablePrincipalAuthority,
-      seal(coordinates: Parameters<typeof piDurablePrincipalAuthority.seal>[0]) {
-        writeFileSync(
-          join(failedCoderUnboundRun, "session", "current-session.json"),
-          "{ injected post-rename parse failure\n",
-          "utf8",
-        );
-        return piDurablePrincipalAuthority.seal(coordinates);
-      },
-    };
-    const failedCoderBase = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: failingSealAuthority,
-      piRunner: scriptedTerminatingToolSession({
-        role: "coder",
-        toolName: CODER_OUTPUT_TOOL_NAME,
-        details: {
-          status: "completed",
-          report: "work-seat rollback probe",
-          ticketNumber: 582,
-        },
-      }),
-    });
-    const failedCoder = await runAkRole(
-      ["coder", "--model", "test/caller-seat:high", "--project", project, "Probe relocation rollback."],
-      {
-        home,
-        packageRoot,
-        cwd: project,
-        principalAuthority: failingSealAuthority,
-        credentials: { "openai-codex": true, xai: true },
-        io: captureIo().io,
-        createRunId: () => failedCoderId,
-        roleTurnHost: failedCoderBase,
-      },
-    );
-    assert.equal(failedCoder.exitCode, 1);
-    assert.equal(existsSync(failedCoderUnboundRun), true);
-    assert.equal(existsSync(failedCoderTarget), false);
-    assert.equal(existsSync(join(failedCoderUnboundRun, "writer.lock")), false);
-    const failedAdmitted = JSON.parse(
-      await readFile(join(failedCoderUnboundRun, "admitted-request.json"), "utf8"),
-    ) as { runDirectory?: string };
-    assert.equal(failedAdmitted.runDirectory, failedCoderUnboundRun);
-    assert.equal(await readFile(join(peerRun, "admitted-request.json"), "utf8"), peerPage);
-
     let coderAdmissionDirectory = "";
     const coder = await runAkRole(
       ["coder", "--model", "test/caller-seat:high", "--project", project, "Implement ticket work."],
@@ -1710,10 +1661,25 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       await readFile(join(coderTicketRun, "admitted-request.json"), "utf8"),
     ) as { ticketNumber?: number };
     assert.equal(coderAdmitted.ticketNumber, 582);
+    const resumedIdentity = await readRoleRunState(
+      coderTicketRun,
+      piDurablePrincipalAuthority,
+    );
+    assert.equal(resumedIdentity?.runDirectory, coderTicketRun);
     assert.equal(
       await readFile(join(peerRun, "admitted-request.json"), "utf8"),
       peerPage,
       "online relocate must not read or overwrite an unleased peer page",
+    );
+    const relocatedFromDurableLocator = await resolveNotarySourceRunLocator({
+      projectRoot: project,
+      sourceRun: coderUnboundRun,
+      home,
+    });
+    assert.equal(
+      relocatedFromDurableLocator.runDirectory,
+      coderTicketRun,
+      "a typed durable locator must follow the run identity after relocation",
     );
     assert.ok(coder.terminal?.artifacts.length);
     for (const artifact of coder.terminal!.artifacts) {

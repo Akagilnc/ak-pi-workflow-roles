@@ -96,6 +96,15 @@ export async function resolveNotarySourceRunLocator(options: {
       ?? join(bookRunsRoot, `${bare.runId}@${bare.role}`);
   } else {
     candidate = isAbsolute(raw) ? raw : resolve(options.projectRoot, raw);
+    const identity = parseRunDirectoryName(basename(candidate));
+    if (identity !== undefined) {
+      candidate = (await findRunDirectoryById(
+        options.home,
+        identity.runId,
+        bookKey,
+        identity.role,
+      )) ?? candidate;
+    }
   }
 
   const real = await requireRunDirectory(candidate, raw);
