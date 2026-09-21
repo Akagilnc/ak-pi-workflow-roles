@@ -222,7 +222,6 @@ async function settleSeat(
     case "secretariat":
       return trySettleSecretariatTerminalResult(admitted, authority, scope);
     case "reviewer":
-    case "countersign":
       return undefined;
     default:
       if (packagedRoleAcceptedOutputTool(admitted.role) === undefined) {

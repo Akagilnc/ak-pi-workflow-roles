@@ -64,7 +64,7 @@ import {
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   presentStructuralRejection,
-  trySettleCountersignTerminalResult,
+  trySettleAcceptedSeatTerminalResult,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { TerminalResult, TerminalRoleOutcome } from "./terminal.ts";
@@ -809,7 +809,7 @@ function countersignAdapters(options?: {
       admitted: AdmittedCountersignInvocation,
       authority: DurablePrincipalAuthority,
       scope?: { readonly courtAttemptId?: string },
-    ) => trySettleCountersignTerminalResult(admitted, authority, scope),
+    ) => trySettleAcceptedSeatTerminalResult(admitted, authority, scope),
     // Accepted receipts and failure terminals both present via shared path.
     shouldPresentSettled: () => true,
     ...(options?.beforeDispatch === undefined

@@ -235,6 +235,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
+    settlement: "accepted",
     acceptedText: "给事中回执已接受",
     activationStage: "load-and-install",
     receiptStatusKey: "countersignStatus",

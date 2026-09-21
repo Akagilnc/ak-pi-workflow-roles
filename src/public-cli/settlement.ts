@@ -81,9 +81,6 @@ import {
 import {
   MERGER_OUTPUT_TOOL_NAME,
 } from "../merger-contracts.ts";
-import {
-  COUNTERSIGN_OUTPUT_TOOL_NAME,
-} from "../countersign-contracts.ts";
 import { packagedRoleAcceptedOutputTool } from "../packaged-role-registry.ts";
 import {
   SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
@@ -132,7 +129,6 @@ import {
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
-  type AdmittedCountersignInvocation,
   type AdmittedSecretariatInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
@@ -3215,46 +3211,6 @@ export async function trySettleAcceptedSeatTerminalResult(
     toolName,
   }, scope);
 }
-
-/** Lawful Countersign accepted outcome (署/封驳/上呈, #572 / ADR 0074). */
-export type LawfulCountersignRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulCountersignTerminalResult(
-  admitted: AdmittedCountersignInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "countersign",
-    toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-/** Settle a lawful Countersign Terminal from the admitted session. */
-export async function settleCountersignTerminalResult(
-  admitted: AdmittedCountersignInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleLawfulCountersignTerminalResult(admitted, authority, scope);
-  if (settled === undefined) {
-    throw new Error(
-      "Countersign Role run completed without a lawful typed terminal result",
-    );
-  }
-  return settled;
-}
-
-/** Try to settle a lawful Countersign Terminal; undefined only for genuine absence. */
-export async function trySettleCountersignTerminalResult(
-  admitted: AdmittedCountersignInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulCountersignTerminalResult(admitted, authority, scope);
-}
-
-
 
 /**
  * #969 seat projection sole authority: 给事中 terminal (署|上呈) booked as a

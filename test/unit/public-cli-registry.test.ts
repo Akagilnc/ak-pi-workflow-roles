@@ -169,6 +169,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "none",
     phases: [null],
     outputTool: "ak_countersign_output",
+    settlement: "accepted",
     acceptedText: "给事中回执已接受",
     activationStage: "load-and-install",
     receiptStatusKey: "countersignStatus",
