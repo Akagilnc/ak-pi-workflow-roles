@@ -27,6 +27,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
+    receiptStatusKey: "judgeStatus",
   },
   {
     role: "fixer",
@@ -118,6 +119,8 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     inputFlag: "ak-merger-input",
     phaseFlag: undefined,
     activationStage: "prepare-git-and-install",
+    receiptCommitKey: "mergeCommitId",
+    receiptCommitWhen: "completed",
   },
   {
     role: "notary",
@@ -145,6 +148,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
+    receiptStatusKey: "countersignStatus",
   },
   {
     role: "secretariat",
@@ -158,6 +162,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
+    receiptStatusKey: "secretariatStatus",
   },
   {
     role: "gleaner-left",

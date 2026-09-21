@@ -21,6 +21,7 @@ import {
   validateReviewerIntent,
   type ReviewerIntent,
 } from "./reviewer-output.ts";
+import { PACKAGED_ROLE_REGISTRY } from "../packaged-role-registry.ts";
 import { CorrectableSubmissionError } from "../submission-correctable-error.ts";
 import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { GATEKEEPER_ACCEPTED_TEXT, GATEKEEPER_OUTPUT_TOOL_NAME, validateRecordedGatekeeperOutput, type GatekeeperDirectOutput } from "./gatekeeper-output.ts";
@@ -90,24 +91,7 @@ export type {
   SecretariatVerdict,
 };
 
-export const TERMINATING_TOOL_NAMES = [
-  CODER_OUTPUT_TOOL_NAME,
-  FIXER_OUTPUT_TOOL_NAME,
-  REVIEWER_OUTPUT_TOOL_NAME,
-  JUDGE_OUTPUT_TOOL_NAME,
-  COLLECTOR_OUTPUT_TOOL,
-  DOCTOR_OUTPUT_TOOL_NAME,
-  MERGER_OUTPUT_TOOL_NAME,
-  NOTARY_OUTPUT_TOOL_NAME,
-  COUNTERSIGN_OUTPUT_TOOL_NAME,
-  GLEANER_LEFT_OUTPUT_TOOL_NAME,
-  INSPECTOR_OUTPUT_TOOL_NAME,
-  GATEKEEPER_OUTPUT_TOOL_NAME,
-  NAVIGATOR_OUTPUT_TOOL_NAME,
-  AUDITOR_OUTPUT_TOOL_NAME,
-  DIARIST_OUTPUT_TOOL_NAME,
-  SECRETARIAT_OUTPUT_TOOL_NAME,
-] as const;
+export const TERMINATING_TOOL_NAMES = PACKAGED_ROLE_REGISTRY.map((entry) => entry.outputTool);
 
 export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
 
@@ -132,43 +116,6 @@ export function isTerminatingToolName(
   name: string,
 ): name is TerminatingToolName {
   return (TERMINATING_TOOL_NAMES as readonly string[]).includes(name);
-}
-
-export function acceptedTextFor(toolName: TerminatingToolName): string {
-  switch (toolName) {
-    case CODER_OUTPUT_TOOL_NAME:
-      return CODER_ACCEPTED_TEXT;
-    case FIXER_OUTPUT_TOOL_NAME:
-      return FIXER_ACCEPTED_TEXT;
-    case REVIEWER_OUTPUT_TOOL_NAME:
-      return REVIEWER_ACCEPTED_TEXT;
-    case JUDGE_OUTPUT_TOOL_NAME:
-      return JUDGE_ACCEPTED_TEXT;
-    case COLLECTOR_OUTPUT_TOOL:
-      return COLLECTOR_ACCEPTED_TEXT;
-    case DOCTOR_OUTPUT_TOOL_NAME:
-      return DOCTOR_ACCEPTED_TEXT;
-    case MERGER_OUTPUT_TOOL_NAME:
-      return MERGER_ACCEPTED_TEXT;
-    case NOTARY_OUTPUT_TOOL_NAME:
-      return NOTARY_ACCEPTED_TEXT;
-    case COUNTERSIGN_OUTPUT_TOOL_NAME:
-      return COUNTERSIGN_ACCEPTED_TEXT;
-    case GLEANER_LEFT_OUTPUT_TOOL_NAME:
-      return GLEANER_LEFT_ACCEPTED_TEXT;
-    case INSPECTOR_OUTPUT_TOOL_NAME:
-      return INSPECTOR_ACCEPTED_TEXT;
-    case GATEKEEPER_OUTPUT_TOOL_NAME:
-      return GATEKEEPER_ACCEPTED_TEXT;
-    case NAVIGATOR_OUTPUT_TOOL_NAME:
-      return NAVIGATOR_ACCEPTED_TEXT;
-    case AUDITOR_OUTPUT_TOOL_NAME:
-      return AUDITOR_ACCEPTED_TEXT;
-    case DIARIST_OUTPUT_TOOL_NAME:
-      return DIARIST_ACCEPTED_TEXT;
-    case SECRETARIAT_OUTPUT_TOOL_NAME:
-      return SECRETARIAT_ACCEPTED_TEXT;
-  }
 }
 
 export class AcceptedDetailsContractError extends CorrectableSubmissionError {
@@ -215,28 +162,20 @@ export type AcceptedFacts = {
 /** Read status/commit leaves the role wrote — never invent defaults (#836). */
 export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): AcceptedFacts {
   const record = details as Record<string, unknown>;
-  switch (toolName) {
-    case JUDGE_OUTPUT_TOOL_NAME:
-      return typeof record.judgeStatus === "string" ? { status: record.judgeStatus } : {};
-    case COUNTERSIGN_OUTPUT_TOOL_NAME:
-      return typeof record.countersignStatus === "string" ? { status: record.countersignStatus } : {};
-    case SECRETARIAT_OUTPUT_TOOL_NAME:
-      return typeof record.secretariatStatus === "string" ? { status: record.secretariatStatus } : {};
-    case MERGER_OUTPUT_TOOL_NAME: {
-      const status = typeof record.status === "string" ? record.status : undefined;
-      return {
-        ...(status === undefined ? {} : { status }),
-        ...(status === "completed" && typeof record.mergeCommitId === "string"
-          ? { commit: record.mergeCommitId }
-          : {}),
-      };
-    }
-    case COLLECTOR_OUTPUT_TOOL:
-      // Collector has no status leaf — do not invent "collected".
-      return typeof record.status === "string" ? { status: record.status } : {};
-    default:
-      return typeof record.status === "string" ? { status: record.status } : {};
-  }
+  const entry = PACKAGED_ROLE_REGISTRY.find((candidate) => candidate.outputTool === toolName);
+  const statusKey = entry !== undefined && "receiptStatusKey" in entry ? entry.receiptStatusKey : "status";
+  const status = typeof record[statusKey] === "string" ? record[statusKey] : undefined;
+  const commitKey = entry !== undefined && "receiptCommitKey" in entry ? entry.receiptCommitKey : undefined;
+  const commitWhen = entry !== undefined && "receiptCommitWhen" in entry ? entry.receiptCommitWhen : undefined;
+  const commit = commitKey !== undefined
+    && status === commitWhen
+    && typeof record[commitKey] === "string"
+    ? record[commitKey]
+    : undefined;
+  return {
+    ...(status === undefined ? {} : { status }),
+    ...(commit === undefined ? {} : { commit }),
+  };
 }
 
 /** Deep structural equality for lifecycle agreement checks. */

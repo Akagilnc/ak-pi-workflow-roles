@@ -651,6 +651,16 @@ function navigatorOutputTool(role: string): string | undefined {
   return packagedRoleOutputTool(role);
 }
 
+/** Status leaves that are not the shared `status` key, in registry order. */
+function receiptStatusFromRegistry(details: Record<string, unknown>): string | undefined {
+  for (const entry of PACKAGED_ROLE_REGISTRY) {
+    if (!("receiptStatusKey" in entry)) continue;
+    const value = details[entry.receiptStatusKey];
+    if (typeof value === "string") return value;
+  }
+  return undefined;
+}
+
 export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError?: unknown; details: unknown }): NavigatorSettlement | undefined {
   // One shared classifier owns terminal discriminant (lifecycle + settlement + extractors).
   if (event.toolName !== navigatorOutputTool(role)) return undefined;
@@ -670,9 +680,7 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   }
   const status = typeof details.status === "string"
     ? details.status
-    : typeof details.judgeStatus === "string" ? details.judgeStatus
-    : typeof details.countersignStatus === "string" ? details.countersignStatus
-    : typeof details.secretariatStatus === "string" ? details.secretariatStatus : undefined;
+    : receiptStatusFromRegistry(details);
   if (status !== undefined && status === "escalate") {
     return { kind: "human_decision", role, phase, status };
   }

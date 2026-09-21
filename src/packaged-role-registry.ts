@@ -63,6 +63,7 @@ export const PUBLIC_ROLE_RECORDS = [
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
+    receiptStatusKey: "judgeStatus",
     sessionMaterials: [
       "CLAUDE.md",
       "souls/judge.md",
@@ -182,6 +183,8 @@ export const PUBLIC_ROLE_RECORDS = [
     inputFlag: "ak-merger-input",
     phaseFlag: undefined,
     activationStage: "prepare-git-and-install",
+    receiptCommitKey: "mergeCommitId",
+    receiptCommitWhen: "completed",
     sessionMaterials: ["CLAUDE.md", "souls/merger.md"],
   },
   {
@@ -211,6 +214,7 @@ export const PUBLIC_ROLE_RECORDS = [
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
+    receiptStatusKey: "countersignStatus",
     // #924: 公用《票面法》三席同装
     sessionMaterials: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md"],
   },
@@ -226,6 +230,7 @@ export const PUBLIC_ROLE_RECORDS = [
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
+    receiptStatusKey: "secretariatStatus",
     // #924: owner-finalized Soul + 票面法 + 给事中/符宝郎行为指南
     sessionMaterials: [
       "CLAUDE.md",
