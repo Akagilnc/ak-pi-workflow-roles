@@ -36,10 +36,9 @@ import {
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 import {
-  observedMethodSkillOptions,
   presentStructuralRejection,
-  readEngineDetourInfrastructureFailure,
-  trySettleReviewerTerminalResult,
+  seatKnownFailureResolver,
+  trySettlePublicSeat,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import {
@@ -116,30 +115,11 @@ function reviewerAdapters(
   packageRoot: string,
   methodMaterial?: PackagedMethodSkillMaterial,
 ): PostAdmissionAdapters<AdmittedReviewerInvocation> {
+  const resolveRunnerKnownFailure = seatKnownFailureResolver("reviewer");
   return {
     trySettle: (admitted, authority, scope) =>
-      methodMaterial === undefined
-        ? Promise.resolve(undefined)
-        : trySettleReviewerTerminalResult(
-            admitted,
-            authority,
-            observedMethodSkillOptions(packageRoot, methodMaterial),
-            scope,
-          ),
-    resolveRunnerKnownFailure: async ({ result, sessionFile }) => {
-      const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
-      return infrastructureFailure === undefined
-        ? result.knownFailure
-        : {
-            ...(infrastructureFailure.cause === undefined
-              ? {}
-              : { cause: infrastructureFailure.cause }),
-            diagnostic: infrastructureFailure.diagnostic,
-            ...(infrastructureFailure.identity === undefined
-              ? {}
-              : { identity: infrastructureFailure.identity }),
-          };
-    },
+      trySettlePublicSeat(admitted, authority, scope, methodMaterial, packageRoot),
+    ...(resolveRunnerKnownFailure === undefined ? {} : { resolveRunnerKnownFailure }),
   };
 }
 

@@ -237,6 +237,9 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
     settlement: "accepted",
     acceptedText: "给事中回执已接受",
+    activationFlags: [
+      { field: "ticketNumber" },
+    ],
     activationStage: "load-and-install",
     receiptStatusKey: "countersignStatus",
     // #924: 公用《票面法》三席同装
@@ -407,7 +410,7 @@ export function packagedRoleMetadata(role: string): PackagedRoleMetadata | undef
  * `text` writes a number as decimal text on the activation object.
  * `fallback: "gate-pointer"` is the inspector instruction pointer when sourceRunPath is blank.
  * `flag` omitted: the value stays on the activation object and is not a host flag
- * (secretariat ticketNumber).
+ * (secretariat and countersign ticketNumber).
  */
 export type PackagedActivationFlag = {
   readonly field: string;

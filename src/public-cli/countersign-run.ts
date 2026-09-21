@@ -69,6 +69,7 @@ import {
 import type { CliIo } from "./cli-io.ts";
 import type { TerminalResult, TerminalRoleOutcome } from "./terminal.ts";
 import {
+  admittedSeatTurnDetails,
   projectRoleTurnRequest,
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
@@ -114,15 +115,7 @@ export function buildCountersignTurnRequest(
 ): RoleTurnRequest {
   return projectRoleTurnRequest(
     admitted,
-    {
-      activation: {
-        role: "countersign" as const,
-        // Admitted typed binding rides the turn activation seam to the Notary gate.
-        ...(admitted.ticketNumber === undefined
-          ? {}
-          : { ticketNumber: admitted.ticketNumber }),
-      },
-    },
+    admittedSeatTurnDetails(admitted, options.packageRoot),
     options,
   );
 }

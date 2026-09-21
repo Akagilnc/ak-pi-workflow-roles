@@ -12,10 +12,7 @@ import {
   type PackagedMethodSkillMaterial,
 } from "../package-resources/method-skill.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
-import {
-  packagedRoleAcceptedOutputTool,
-  packagedRoleMetadata,
-} from "../packaged-role-registry.ts";
+import { packagedRoleMetadata } from "../packaged-role-registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitPublicRole,
@@ -54,17 +51,8 @@ import {
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   presentStructuralRejection,
-  readCollectorInfrastructureFailure,
-  readEngineDetourInfrastructureFailure,
-  trySettleAcceptedSeatTerminalResult,
-  trySettleCoderTerminalResult,
-  observedMethodSkillOptions,
-  trySettleCollectorTerminalResult,
-  trySettleDoctorTerminalResult,
-  trySettleFixerTerminalResult,
-  trySettleJudgeTerminalResult,
-  trySettleMergerTerminalResult,
-  trySettleSecretariatTerminalResult,
+  seatKnownFailureResolver,
+  trySettlePublicSeat,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import { isLawfulTypedTerminalOutcome, type TerminalResult } from "./terminal.ts";
@@ -128,119 +116,9 @@ function initialPrompt(
   return buildInstructionTransportPrompt(admitted, material);
 }
 
-async function settleSeat(
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  scope: { readonly courtAttemptId?: string } | undefined,
-  material: PackagedMethodSkillMaterial | undefined,
-  packageRoot: string,
-): Promise<TerminalResult | undefined> {
-  switch (admitted.role) {
-    case "judge":
-      return trySettleJudgeTerminalResult(admitted, authority, scope);
-    case "coder":
-      return trySettleCoderTerminalResult(
-        admitted,
-        authority,
-        material === undefined ? {} : { methodProvenance: material.provenance },
-        scope,
-      );
-    case "fixer":
-      return material === undefined
-        ? undefined
-        : trySettleFixerTerminalResult(
-          admitted,
-          authority,
-          observedMethodSkillOptions(packageRoot, material),
-          scope,
-        );
-    case "merger":
-      return material === undefined
-        ? undefined
-        : trySettleMergerTerminalResult(
-          admitted,
-          authority,
-          observedMethodSkillOptions(packageRoot, material),
-          scope,
-        );
-    case "collector":
-      return trySettleCollectorTerminalResult(admitted, authority, scope);
-    case "doctor":
-      return trySettleDoctorTerminalResult(admitted, authority, scope);
-    case "secretariat":
-      return trySettleSecretariatTerminalResult(admitted, authority, scope);
-    case "reviewer":
-      return undefined;
-    default:
-      if (packagedRoleAcceptedOutputTool(admitted.role) === undefined) {
-        throw new Error(`no settlement for ${admitted.role}`);
-      }
-      return trySettleAcceptedSeatTerminalResult(admitted, authority, scope);
-  }
-}
-
 function infraFailure(role: PackagedRole) {
-  if (role === "judge") {
-    return {
-      resolveRunnerKnownFailure: async ({
-        result,
-        sessionFile,
-      }: {
-        result: { knownFailure?: import("../host-contracts.ts").RoleTurnKnownFailure };
-        sessionFile: string;
-      }) => {
-        const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
-        return result.knownFailure ?? (infrastructureFailure === undefined
-          ? undefined
-          : {
-            ...(infrastructureFailure.cause === undefined ? {} : { cause: infrastructureFailure.cause }),
-            diagnostic: infrastructureFailure.diagnostic,
-            ...(infrastructureFailure.identity === undefined ? {} : { identity: infrastructureFailure.identity }),
-          });
-      },
-    };
-  }
-  if (role === "gatekeeper" || role === "navigator" || role === "auditor") {
-    return {
-      resolveRunnerKnownFailure: async ({
-        result,
-        sessionFile,
-      }: {
-        result: { knownFailure?: import("../host-contracts.ts").RoleTurnKnownFailure };
-        sessionFile: string;
-      }) => {
-        const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
-        return infrastructureFailure === undefined
-          ? result.knownFailure
-          : {
-            ...(infrastructureFailure.cause === undefined ? {} : { cause: infrastructureFailure.cause }),
-            diagnostic: infrastructureFailure.diagnostic,
-            ...(infrastructureFailure.identity === undefined ? {} : { identity: infrastructureFailure.identity }),
-          };
-      },
-    };
-  }
-  if (role === "collector") {
-    return {
-      resolveRunnerKnownFailure: async ({
-        result,
-        sessionFile,
-      }: {
-        result: { knownFailure?: import("../host-contracts.ts").RoleTurnKnownFailure };
-        sessionFile: string;
-      }) => {
-        const infrastructureFailure = await readCollectorInfrastructureFailure(sessionFile);
-        return result.knownFailure ?? (infrastructureFailure === undefined
-          ? undefined
-          : {
-            ...(infrastructureFailure.cause === undefined ? {} : { cause: infrastructureFailure.cause }),
-            diagnostic: infrastructureFailure.diagnostic,
-            ...(infrastructureFailure.identity === undefined ? {} : { identity: infrastructureFailure.identity }),
-          });
-      },
-    };
-  }
-  return {};
+  const resolveRunnerKnownFailure = seatKnownFailureResolver(role);
+  return resolveRunnerKnownFailure === undefined ? {} : { resolveRunnerKnownFailure };
 }
 
 async function bindAndRelocateDiarist(
@@ -265,7 +143,7 @@ function seatAdapters(
   const present = "presentSettled" in record ? record.presentSettled : "default";
   return {
     trySettle: (seat, authority, scope) =>
-      settleSeat(seat, authority, scope, material, env.packageRoot),
+      trySettlePublicSeat(seat, authority, scope, material, env.packageRoot),
     ...(present === "always" ? { shouldPresentSettled: () => true } : {}),
     ...(present === "typed"
       ? { shouldPresentSettled: (terminal: TerminalResult) => isLawfulTypedTerminalOutcome(terminal.roleOutcome) }

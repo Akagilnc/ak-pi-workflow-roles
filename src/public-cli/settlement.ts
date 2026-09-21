@@ -81,7 +81,7 @@ import {
 import {
   MERGER_OUTPUT_TOOL_NAME,
 } from "../merger-contracts.ts";
-import { packagedRoleAcceptedOutputTool } from "../packaged-role-registry.ts";
+import { packagedRoleAcceptedOutputTool, type PackagedRole } from "../packaged-role-registry.ts";
 import {
   SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
   SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
@@ -1669,6 +1669,52 @@ export async function readEngineDetourInfrastructureFailure(
   );
 }
 
+function knownFailureFromControlled(failure: ControlledFailure): RoleTurnKnownFailure {
+  return {
+    ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+    diagnostic: failure.diagnostic,
+    ...(failure.identity === undefined ? {} : { identity: failure.identity }),
+  };
+}
+
+/**
+ * Seats whose runner failure is a recorded infrastructure tool result.
+ * Judge and collector keep an earlier known failure. Gate seats and reviewer
+ * let the infrastructure record replace it. Every other seat has no resolver.
+ */
+export function seatKnownFailureResolver(
+  role: PackagedRole,
+): ((input: {
+  result: { knownFailure?: RoleTurnKnownFailure };
+  sessionFile: string;
+}) => Promise<RoleTurnKnownFailure | undefined>) | undefined {
+  if (role === "judge") {
+    return async ({ result, sessionFile }) => {
+      const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
+      return result.knownFailure ?? (
+        infrastructureFailure === undefined ? undefined : knownFailureFromControlled(infrastructureFailure)
+      );
+    };
+  }
+  if (role === "gatekeeper" || role === "navigator" || role === "auditor" || role === "reviewer") {
+    return async ({ result, sessionFile }) => {
+      const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
+      return infrastructureFailure === undefined
+        ? result.knownFailure
+        : knownFailureFromControlled(infrastructureFailure);
+    };
+  }
+  if (role === "collector") {
+    return async ({ result, sessionFile }) => {
+      const infrastructureFailure = await readCollectorInfrastructureFailure(sessionFile);
+      return result.knownFailure ?? (
+        infrastructureFailure === undefined ? undefined : knownFailureFromControlled(infrastructureFailure)
+      );
+    };
+  }
+  return undefined;
+}
+
 function auditToolNameForRole(
   role: (typeof AUDITOR_SOUL_ROLES)[number],
 ): string {
@@ -3234,6 +3280,65 @@ export async function trySettleAcceptedSeatTerminalResult(
     role: admitted.role,
     toolName,
   }, scope);
+}
+
+/** One settlement dispatch. Seat-specific readers stay; the choice is this function. */
+export async function trySettlePublicSeat(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  scope: { readonly courtAttemptId?: string } | undefined,
+  material: PackagedMethodSkillMaterial | undefined,
+  packageRoot: string,
+): Promise<TerminalResult | undefined> {
+  switch (admitted.role) {
+    case "judge":
+      return trySettleJudgeTerminalResult(admitted, authority, scope);
+    case "coder":
+      return trySettleCoderTerminalResult(
+        admitted,
+        authority,
+        material === undefined ? {} : { methodProvenance: material.provenance },
+        scope,
+      );
+    case "fixer":
+      return material === undefined
+        ? undefined
+        : trySettleFixerTerminalResult(
+          admitted,
+          authority,
+          observedMethodSkillOptions(packageRoot, material),
+          scope,
+        );
+    case "merger":
+      return material === undefined
+        ? undefined
+        : trySettleMergerTerminalResult(
+          admitted,
+          authority,
+          observedMethodSkillOptions(packageRoot, material),
+          scope,
+        );
+    case "collector":
+      return trySettleCollectorTerminalResult(admitted, authority, scope);
+    case "doctor":
+      return trySettleDoctorTerminalResult(admitted, authority, scope);
+    case "secretariat":
+      return trySettleSecretariatTerminalResult(admitted, authority, scope);
+    case "reviewer":
+      return material === undefined
+        ? undefined
+        : trySettleReviewerTerminalResult(
+          admitted,
+          authority,
+          observedMethodSkillOptions(packageRoot, material),
+          scope,
+        );
+    default:
+      if (packagedRoleAcceptedOutputTool(admitted.role) === undefined) {
+        throw new Error(`no settlement for ${admitted.role}`);
+      }
+      return trySettleAcceptedSeatTerminalResult(admitted, authority, scope);
+  }
 }
 
 /**
