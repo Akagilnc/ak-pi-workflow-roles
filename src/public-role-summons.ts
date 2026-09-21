@@ -9,23 +9,11 @@
  * (`reading 'dirname'`, `reading 'tryHomeFromAkRolesPath'`). Dynamic import
  * starts after the caller module has finished init, so those slots stay intact.
  */
-import { execFile, spawn } from "node:child_process";
-import {
-  closeSync,
-  constants as fsConstants,
-  existsSync,
-  openSync,
-  readFileSync,
-} from "node:fs";
-import {
-  access,
-  mkdir,
-  mkdtemp,
-  realpath,
-  rm,
-} from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve as resolvePath, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 
 import type { CliIo } from "./public-cli/cli-io.ts";
@@ -683,162 +671,6 @@ function reviewerSandboxPath(worktreeAxis: string, projectRelative: string): str
   return projectRelative === "" ? worktreeAxis : join(worktreeAxis, projectRelative);
 }
 
-/**
- * Ignored dependency trees (node_modules) do not follow `git worktree add`.
- * Give the ephemeral Reviewer sandbox its own install from the resolved
- * project deps root (#983). Host `pnpm` only — no copy of caller
- * `node_modules`, no package-manager selection, no install→copy fallback.
- * Resolve from the sandbox project path up to the worktree root so both
- * repo-root projects and `--project` subdirectories that own
- * package.json + pnpm-lock.yaml are covered by one rule.
- * `--ignore-scripts` + `--ignore-pnpmfile` keep automatic prep from running
- * the target's lifecycle hooks or `.pnpmfile.*` (which can write outside the
- * worktree/tmpdir and escape rollback). Reviewer-driven evidence
- * installs/runs remain unrestricted under audit-law.
- * Only true absence (ENOENT) of both faces through the walk skips install.
- * Other probe failures (EACCES, ENOTDIR, …) keep their cause and enter the
- * existing worktree rollback seam — never washed through existsSync boolean
- * absence. Missing `pnpm` is an honest capability gap; other install
- * failures propagate into the same rollback seam.
- */
-async function reviewerDepsPathPresent(path: string): Promise<boolean> {
-  try {
-    await access(path, fsConstants.F_OK);
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
-  }
-}
-
-/** Walk sandbox project → worktree root; first package.json+pnpm-lock.yaml wins. */
-async function resolveReviewerDepsRoot(
-  worktreeRoot: string,
-  projectRelative: string,
-): Promise<string | undefined> {
-  const root = resolvePath(worktreeRoot);
-  let candidate = resolvePath(reviewerSandboxPath(worktreeRoot, projectRelative));
-  for (;;) {
-    const relToRoot = relative(root, candidate);
-    if (relToRoot.startsWith(`..${sep}`) || relToRoot === "..") {
-      return undefined;
-    }
-    const hasManifest = await reviewerDepsPathPresent(join(candidate, "package.json"));
-    const hasLockfile = await reviewerDepsPathPresent(join(candidate, "pnpm-lock.yaml"));
-    if (hasManifest && hasLockfile) return candidate;
-    if (candidate === root) return undefined;
-    const parent = dirname(candidate);
-    if (parent === candidate) return undefined;
-    candidate = parent;
-  }
-}
-
-/**
- * Single host-pnpm install seam for Reviewer sandboxes: cancel via AbortSignal,
- * redirect install stdout/stderr to a temp file (O(1) memory — no position
- * windows / pipe sampling), attach the full log on non-zero exit (失败诚实 —
- * cause at any offset remains), and launch the Windows `pnpm.cmd` shim through
- * a shell as Node's execFile contract requires. Never use execFile maxBuffer.
- */
-async function runHostPnpmInstall(options: {
-  readonly depsRoot: string;
-  readonly signal?: AbortSignal;
-}): Promise<void> {
-  const args = [
-    "install",
-    "--frozen-lockfile",
-    "--ignore-scripts",
-    "--ignore-pnpmfile",
-  ] as const;
-  const useShell = process.platform === "win32";
-  const diagnosticDir = await mkdtemp(join(tmpdir(), "ak-reviewer-pnpm-"));
-  const diagnosticPath = join(diagnosticDir, "install.log");
-  const diagnosticFd = openSync(diagnosticPath, "w");
-  try {
-    await new Promise<void>((resolve, reject) => {
-      let settled = false;
-      const settle = (next: () => void): void => {
-        if (settled) return;
-        settled = true;
-        try {
-          closeSync(diagnosticFd);
-        } catch {
-          // Already closed.
-        }
-        next();
-      };
-      const child = spawn("pnpm", [...args], {
-        cwd: options.depsRoot,
-        // One fd for both faces: kernel-backed, no in-process log windows.
-        stdio: ["ignore", diagnosticFd, diagnosticFd],
-        env: process.env,
-        windowsHide: true,
-        ...(useShell ? { shell: true } : {}),
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-      });
-      child.once("error", (error) => {
-        settle(() => {
-          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-            reject(new Error(
-              "reviewer worktree deps require host pnpm CLI (packageManager=pnpm); pnpm not found on PATH",
-              { cause: error },
-            ));
-            return;
-          }
-          reject(error instanceof Error ? error : new Error(String(error)));
-        });
-      });
-      child.once("close", (code, signalName) => {
-        settle(() => {
-          if (code === 0) {
-            resolve();
-            return;
-          }
-          const summary =
-            signalName === null || signalName === undefined
-              ? `pnpm install failed with exit code ${code ?? "unknown"}`
-              : `pnpm install failed with signal ${signalName}`;
-          let detail = "";
-          try {
-            detail = readFileSync(diagnosticPath, "utf8").trim();
-          } catch {
-            // Keep exit summary if the log cannot be read.
-          }
-          reject(new Error(detail.length > 0 ? `${summary}\n${detail}` : summary));
-        });
-      });
-    });
-  } finally {
-    try {
-      closeSync(diagnosticFd);
-    } catch {
-      // Closed in settle.
-    }
-    await rm(diagnosticDir, { recursive: true, force: true });
-  }
-}
-
-async function provisionReviewerWorktreeDeps(
-  worktreeRoot: string,
-  projectRelative: string,
-  options: { readonly signal?: AbortSignal } = {},
-): Promise<void> {
-  if (options.signal?.aborted) {
-    throw options.signal.reason instanceof Error
-      ? options.signal.reason
-      : new Error("reviewer worktree deps provisioning aborted", {
-        cause: options.signal.reason,
-      });
-  }
-  const depsRoot = await resolveReviewerDepsRoot(worktreeRoot, projectRelative);
-  if (depsRoot === undefined) return;
-  await runHostPnpmInstall({
-    depsRoot,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-  });
-}
-
-
 export type EphemeralReviewerWorktree = {
   readonly executionCwd: string;
   /** Always safe to call once; delete failure is diagnostic only (#946 10a). */
@@ -852,7 +684,6 @@ export type EphemeralReviewerWorktree = {
  */
 export async function openEphemeralReviewerWorktree(options: {
   readonly projectRoot: string;
-  readonly signal?: AbortSignal;
   readonly onCleanupDiagnostic?: (diagnostic: string) => void;
 }): Promise<EphemeralReviewerWorktree> {
   const { sourceProjectRoot, projectRelative } = await resolveReviewerWorktreeRoots(
@@ -904,10 +735,6 @@ export async function openEphemeralReviewerWorktree(options: {
     if (projectRelative !== "") {
       await mkdir(reviewerSandboxPath(worktreeRoot, projectRelative), { recursive: true });
     }
-    // After registration: provision ignored deps so prep failure still rolls back.
-    await provisionReviewerWorktreeDeps(worktreeRoot, projectRelative, {
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
   } catch (error) {
     await rollback(error);
   }
@@ -919,8 +746,7 @@ export async function openEphemeralReviewerWorktree(options: {
       closed = true;
       const cleanupErrors: unknown[] = [];
       try {
-        // --force: ephemeral sandboxes may carry provisioned ignored deps (#983).
-        await execFileAsync("git", ["worktree", "remove", "--force", worktreeRoot], {
+        await execFileAsync("git", ["worktree", "remove", worktreeRoot], {
           cwd: sourceProjectRoot,
         });
       } catch (error) {
@@ -948,13 +774,11 @@ export async function openEphemeralReviewerWorktree(options: {
  */
 export async function withEphemeralReviewerWorktree<T>(options: {
   readonly projectRoot: string;
-  readonly signal?: AbortSignal;
   readonly run: (executionCwd: string) => Promise<T>;
   readonly onCleanupDiagnostic?: (diagnostic: string) => void;
 }): Promise<T> {
   const sandbox = await openEphemeralReviewerWorktree({
     projectRoot: options.projectRoot,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
     ...(options.onCleanupDiagnostic === undefined
       ? {}
       : { onCleanupDiagnostic: options.onCleanupDiagnostic }),
@@ -1072,15 +896,12 @@ export async function summonParallelReviewerLenses(options: {
         cwd: sourceProjectRoot,
       });
       // Git has registered the worktree — enter the rollback set before any further
-      // prep (mkdir / deps) so a later failure cannot leak the entry.
+      // prep (mkdir of caller subdirectory) so a later failure cannot leak the entry.
       created.add(path);
       // Preserve caller subdirectory even when it is not present in the pinned commit.
       if (projectRelative !== "") {
         await mkdir(reviewerSandboxPath(path, projectRelative), { recursive: true });
       }
-      await provisionReviewerWorktreeDeps(path, projectRelative, {
-        ...(options.signal === undefined ? {} : { signal: options.signal }),
-      });
     }),
   );
   const creationFailures = creation.flatMap((result) =>
@@ -1190,8 +1011,7 @@ export async function summonParallelReviewerLenses(options: {
   // tmp dirs are left to the OS and git worktree prune (#946).
   const cleanup = await Promise.allSettled(
     [...created].map((path) =>
-      // --force: ephemeral sandboxes may carry provisioned ignored deps (#983).
-      execFileAsync("git", ["worktree", "remove", "--force", path], { cwd: sourceProjectRoot })),
+      execFileAsync("git", ["worktree", "remove", path], { cwd: sourceProjectRoot })),
   );
   const cleanupFailures = cleanup.flatMap((result) =>
     result.status === "rejected" ? [result.reason] : []);

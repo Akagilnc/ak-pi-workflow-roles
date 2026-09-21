@@ -94,7 +94,6 @@ async function runReviewerTurnInFreshCopy(
   const { withEphemeralReviewerWorktree } = await import("../public-role-summons.ts");
   return await withEphemeralReviewerWorktree({
     projectRoot,
-    ...(env.signal === undefined ? {} : { signal: env.signal }),
     onCleanupDiagnostic: (diagnostic) => {
       io.stderr(`${diagnostic}\n`);
     },
@@ -464,7 +463,6 @@ export async function runPublicReviewerResume(
       const { openEphemeralReviewerWorktree } = await import("../public-role-summons.ts");
       const opened = await openEphemeralReviewerWorktree({
         projectRoot: admitted.projectRoot,
-        ...(env.signal === undefined ? {} : { signal: env.signal }),
         onCleanupDiagnostic: (diagnostic) => {
           io.stderr(`${diagnostic}\n`);
         },
