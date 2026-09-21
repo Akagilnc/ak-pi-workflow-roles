@@ -20,18 +20,17 @@ import {
 
 /**
  * Sole same-seat → resume decision (#637 / #724 / #747).
- * Officer seats (notary/inspector/auditor) look up by parent run path; countersign
- * / diarist keep ticket-number principal. When found, runs resume with this
- * summons' materials. Lookup/resume failures propagate (失败诚实) — never wash
- * into a fresh mint. Returns undefined when the caller declared an explicit
- * fresh summons (`ak-role new`) or when no prior run exists; both mint new.
+ * Officer seats look up by parent run path. A typed ticket number is a bind
+ * key, not a resume key. When found, runs resume with this summons' materials.
+ * Lookup/resume failures propagate (失败诚实) — never wash into a fresh mint.
+ * Returns undefined when the caller declared an explicit fresh summons
+ * (`ak-role new`) or when no prior run exists; both mint new.
  * freshSummons is required so no seat can drift back into its own skip branch.
  */
 export async function tryResumeSameTicketSeatRun<T>(input: {
   readonly home: string;
   readonly projectRoot: string;
   readonly role: RoleRunRecord["role"];
-  readonly ticketNumber?: number;
   readonly parentRunPath?: string;
   readonly freshSummons: true | undefined;
   readonly summons?: SameTicketSummonsMaterials;
@@ -41,19 +40,12 @@ export async function tryResumeSameTicketSeatRun<T>(input: {
   ) => Promise<T>;
 }): Promise<T | undefined> {
   if (input.freshSummons === true) return undefined;
-  if (input.parentRunPath === undefined && input.ticketNumber === undefined) {
-    return undefined;
-  }
+  if (input.parentRunPath === undefined) return undefined;
   const previousRunId = await findLatestRunIdForSeatTicket({
     home: input.home,
     bookKey: resolveBookKeyFromGit(input.projectRoot),
     role: input.role,
-    ...(input.parentRunPath === undefined
-      ? {}
-      : { parentRunPath: input.parentRunPath }),
-    ...(input.ticketNumber === undefined
-      ? {}
-      : { ticketNumber: input.ticketNumber }),
+    parentRunPath: input.parentRunPath,
   });
   if (previousRunId === undefined) return undefined;
   return await input.resume(previousRunId, input.summons);

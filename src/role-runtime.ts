@@ -1138,13 +1138,21 @@ export function createSecretariatRoleRuntime(
           const summon = dependencies.summonCountersign;
           const summoned = summon === undefined
             ? await (async () => {
+                // Mid-turn summon resumes by parent run directory, same key as
+                // summonGateOfficer countersign. Board ticket only binds.
                 const coordinates = readRoleRunCoordinates(ctx, "secretariat summons");
                 const { summonPublicRole } = await import("./public-role-summons.ts");
+                const { readBoardTicketNumber } = await import("./run-ticket-number.ts");
+                const parentTicket = await readBoardTicketNumber(coordinates.runDirectory);
                 return summonPublicRole({
                   role: "countersign",
                   argv: ["--project", coordinates.projectRoot, "--", instruction],
                   cwd: coordinates.projectRoot,
                   home: coordinates.home,
+                  parentRunPath: coordinates.runDirectory,
+                  ...(parentTicket === undefined
+                    ? {}
+                    : { boundTicketNumber: parentTicket }),
                   ...(signal === undefined ? {} : { signal }),
                   ...(correlationId === undefined ? {} : { correlationId }),
                   ...(dependencies.packageRoot === undefined

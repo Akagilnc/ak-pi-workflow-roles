@@ -673,10 +673,10 @@ test("public secretariat through-line: default summon → continue → same-run 
       gateCalls,
       diaristRunDirectories,
       countersignRequests,
+      // #987 Result 7: no public ticketNumber resume into a pre-seeded run.
+      // First gate summon under this secretariat parent mints; second resumes
+      // via parentRunPath.
       countersignSequence: [
-        {
-          details: { countersignStatus: "converged", note: "先前庭" },
-        },
         {
           details: {
             countersignStatus: "continue",
@@ -699,40 +699,6 @@ test("public secretariat through-line: default summon → continue → same-run 
         },
       ],
     });
-
-    // Seed the real ADR 0079 branch: this ticket already has a countersign run
-    // before Secretariat becomes its caller. The first Secretariat summon must
-    // resume this run while recording the current parent correlation.
-    const priorCountersignRunId = "01a0counter924-0000-7000-8000-000000000001";
-    const prior = await runAkRole(
-      [
-        "countersign",
-        "--model",
-        "test/caller-seat:high",
-        "--project",
-        project,
-        "先前审读 #924。",
-      ],
-      {
-        home,
-        packageRoot,
-        cwd: project,
-        io: capture.io,
-        createRunId: () => priorCountersignRunId,
-        roleTurnHost: host,
-        hostAdapters: [adapter("pi", host)],
-      },
-    );
-    assert.equal(prior.exitCode, 0, capture.stderr.join(""));
-    const priorRunDir = await findRunDirectoryById(home, priorCountersignRunId);
-    assert.ok(priorRunDir, "seed countersign run must exist");
-    const priorAttemptIds = await distinctCourtAttemptIds({
-      cwd: project,
-      home,
-      runId: priorCountersignRunId,
-      runDirectory: priorRunDir,
-    });
-    const priorGateCount = gateCalls.length;
 
     const result = await runAkRole(
       [
@@ -775,27 +741,20 @@ test("public secretariat through-line: default summon → continue → same-run 
     assert.equal(summonDetails[1]!.outcomeKind, "accepted");
     assert.equal(summonDetails[1]!.countersignStatus, "converged");
     const firstRunId = summonDetails[0]!.runId;
-    assert.equal(
-      firstRunId,
-      priorCountersignRunId,
-      "first summon must resume the ticket's pre-existing countersign run",
-    );
+    assert.equal(typeof firstRunId, "string");
+    assert.ok((firstRunId as string).length > 0);
     assert.equal(
       summonDetails[1]!.runId,
       firstRunId,
-      "second summon must resume the same countersign run",
+      "second gate summon must resume the same-parent countersign run",
     );
 
-    // G2: each resumed leg crosses 符宝郎内闸 and creates a new court.
-    const resumedGateCalls = gateCalls.slice(priorGateCount);
-    assert.equal(resumedGateCalls.length, 2);
+    assert.equal(gateCalls.length, 2);
     assert.ok(
-      resumedGateCalls.every((c) => c.kind === "countersign_verdict"),
-      `resumed gate subjects must be countersign_verdict, got ${JSON.stringify(resumedGateCalls)}`,
+      gateCalls.every((c) => c.kind === "countersign_verdict"),
+      `gate subjects must be countersign_verdict, got ${JSON.stringify(gateCalls)}`,
     );
 
-    // Court count via structured attemptId — distinguish both resumed courts
-    // from the court already created by the seed invocation.
     const childRunDir = await findRunDirectoryById(home, firstRunId as string);
     assert.ok(childRunDir, "countersign child run must exist");
     const attemptIds = await distinctCourtAttemptIds({
@@ -805,28 +764,21 @@ test("public secretariat through-line: default summon → continue → same-run 
       runDirectory: childRunDir,
     });
     assert.equal(
-      attemptIds.size - priorAttemptIds.size,
+      attemptIds.size,
       2,
-      `both resumed legs must create a new court; before=${[...priorAttemptIds].join(",") || "(none)"}, after=${[...attemptIds].join(",") || "(none)"}`,
+      `mint + same-parent resume must each create a court; got=${[...attemptIds].join(",") || "(none)"}`,
     );
 
-    const secretariatResumeRequests = countersignRequests.filter(
-      (request) =>
-        request.continuation.kind === "resume" &&
-        request.correlationId === secretariatRunId,
-    );
-    assert.equal(
-      secretariatResumeRequests.length,
-      2,
-      `each resumed countersign leg must carry the current secretariat caller: ${JSON.stringify(countersignRequests.map((request) => ({ kind: request.continuation.kind, correlationId: request.correlationId })))}`,
-    );
+    assert.equal(countersignRequests.length, 2);
+    assert.equal(countersignRequests[0]!.continuation.kind, "initial");
+    assert.equal(countersignRequests[0]!.correlationId, secretariatRunId);
+    assert.equal(countersignRequests[1]!.continuation.kind, "resume");
+    assert.equal(countersignRequests[1]!.correlationId, secretariatRunId);
     assert.ok(
-      secretariatResumeRequests.every((request) =>
-        piDurablePrincipalAuthority
-          .decode(request.principal)
-          .sessionDirectory.includes(priorCountersignRunId)
-      ),
-      "both child legs must resume the pre-existing countersign principal",
+      piDurablePrincipalAuthority
+        .decode(countersignRequests[1]!.principal)
+        .sessionDirectory.includes(firstRunId as string),
+      "second leg must resume the minted countersign principal",
     );
 
     // G3: parent secretariat run bound under ticket, not unbound.

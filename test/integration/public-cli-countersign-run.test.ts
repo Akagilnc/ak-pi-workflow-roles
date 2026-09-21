@@ -6,8 +6,8 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  * #742: court admission auto-runs the public 起居郎 station before the body turn.
  * #771: ticket identity comes from 起居郎 LLM typed assertion (court station),
  * never from mechanical matching of summons text against book records;
- * Public re-summons mint a new run under the typed ticket (#505). Gate handoff
- * with boundTicketNumber may still resume. Explicit ak-role resume takes a runId.
+ * Public re-summons mint a new run under the typed ticket (#505 / #987).
+ * Gate handoff resumes by parent run path. Explicit ak-role resume takes a runId.
  * 起居录 path delivery rides the shared post-admission mount.
  */
 import assert from "node:assert/strict";

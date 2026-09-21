@@ -99,8 +99,10 @@ export type PublicSummonRequest = {
   readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   /** Offline test inject for deterministic run ids (same face as public CLI). */
   readonly createRunId?: () => string;
-  /** Typed ticket number handoff for diarist child run (#840). */
+  /** Typed ticket number handoff. Binds the child; does not select an old run. */
   readonly boundTicketNumber?: number;
+  /** Gate parent run directory. Countersign resume key; absent on a public summons. */
+  readonly parentRunPath?: string;
   /** Caller correlation id for nested leg ledger (ADR 0010 / #924). */
   readonly correlationId?: string;
   /**
@@ -436,6 +438,9 @@ export async function summonPublicRole(
           ...(options.boundTicketNumber === undefined
             ? {}
             : { boundTicketNumber: options.boundTicketNumber }),
+          ...(options.parentRunPath === undefined || options.parentRunPath.trim() === ""
+            ? {}
+            : { parentRunPath: options.parentRunPath }),
           ...(options.correlationId === undefined || options.correlationId.trim() === ""
             ? {}
             : { correlationId: options.correlationId }),
@@ -1041,6 +1046,7 @@ export async function summonGateOfficer(options: {
     // board binding only (readBoardTicketNumber) — receipt ticketNumber is payload
     // content, never the sole identity source; parent true-unbound stays unbound.
     // correlationId only on this officer — notary/auditor/inspector stay untouched.
+    // Gate resume key is the parent run directory. The board ticket only binds.
     const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
     const correlationId = runIdFromRunDirectory(options.sourceRunDirectory);
     if (correlationId === undefined || correlationId.trim() === "") {
@@ -1057,6 +1063,7 @@ export async function summonGateOfficer(options: {
       argv: ["--project", options.cwd, "--", instruction],
       ...common,
       correlationId,
+      parentRunPath: options.sourceRunDirectory,
       ...(parentTicket === undefined ? {} : { boundTicketNumber: parentTicket }),
     });
   }

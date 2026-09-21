@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
@@ -61,6 +61,7 @@ test("#505 every active seat routes, submits, and settles from the public entry"
     });
     let n = 0;
     const failures: string[] = [];
+    const firstRunDirectory = new Map<string, string>();
     for (const record of PUBLIC_ROLE_RECORDS) {
       const routed: string[] = [];
       const stderr: string[] = [];
@@ -142,6 +143,12 @@ test("#505 every active seat routes, submits, and settles from the public entry"
         problems.push(`outcome ${outcome?.kind ?? "missing"}:${outcome && "role" in outcome ? outcome.role : ""}`);
       }
       if (reportRole !== record.role) problems.push(`report role ${String(reportRole)}`);
+      if (
+        report !== undefined
+        && (record.role === "diarist" || record.role === "countersign")
+      ) {
+        firstRunDirectory.set(record.role, dirname(dirname(report.path)));
+      }
       if (record.role === "navigator") {
         const navigator = result.terminal?.navigator;
         if (navigator?.advisoryDiagnostic !== ROUTEBOOK_FAILURE) {
@@ -154,5 +161,40 @@ test("#505 every active seat routes, submits, and settles from the public entry"
       }
     }
     assert.deepEqual(failures, []);
+    for (const role of ["diarist", "countersign"] as const) {
+      const host = roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args, options) => {
+          const argvRole = argvFlagValue(args, "--ak-role");
+          const seat = PUBLIC_ROLE_RECORDS.find((item) => item.role === argvRole);
+          assert.ok(seat);
+          return scriptedTerminatingToolSession({
+            role: seat.role as TerminalRoleName,
+            toolName: seat.outputTool,
+            details: { status: "completed" },
+            acceptedText: seat.acceptedText,
+          })(args, options);
+        },
+      });
+      const again = await runAkRole(
+        publicSeatSummonArgv(role, project, sourceRun, TICKET),
+        {
+          home,
+          packageRoot,
+          cwd: project,
+          io: { stdout() {}, stderr() {} },
+          boundTicketNumber: TICKET,
+          hostAdapters: [{ name: "pi", create: () => ({ ok: true as const, host }) }],
+          principalAuthority: piDurablePrincipalAuthority,
+          createRunId: () => `01a05052-0000-7000-8000-${String(++n).padStart(12, "0")}`,
+        },
+      );
+      const report = again.terminal?.artifacts.find((artifact) => artifact.kind === "report");
+      assert.ok(report, `${role} second public summons produced no report`);
+      const second = dirname(dirname(report.path));
+      assert.notEqual(second, firstRunDirectory.get(role), `${role} public re-summons resumed by ticket`);
+      assert.ok(second.includes(`${join("505", "runs")}`), `${role} second run left the ticket: ${second}`);
+    }
   });
 });

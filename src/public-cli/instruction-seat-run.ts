@@ -405,31 +405,6 @@ export async function runPublicInstructionSeat(
     if (resumed != null) return resumed;
   }
 
-  if (record.sameParent === "diarist") {
-    const handoff = env.boundTicketNumber;
-    if (typeof handoff === "number" && Number.isSafeInteger(handoff) && handoff >= 1) {
-      const summons: SameTicketSummonsMaterials = {
-        instruction: parsed.instruction ?? "",
-        instructionEmpty: (parsed.instruction ?? "").trim() === "",
-        attachmentPaths: parsed.attachmentPaths ?? [],
-      };
-      const resumed = await tryResumeSameTicketSeatRun({
-        home: env.home,
-        projectRoot,
-        role,
-        ticketNumber: handoff,
-        freshSummons: env.freshSummons,
-        summons,
-        resume: (runId, materials) => runPublicInstructionSeatResume(
-          { runId, ...(materials === undefined ? {} : { summons: materials }) },
-          env,
-          io,
-        ),
-      });
-      if (resumed != null) return resumed;
-    }
-  }
-
   let admitted: AdmittedRoleInvocation;
   try {
     admitted = await admitPublicRole(
