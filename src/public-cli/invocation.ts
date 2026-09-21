@@ -41,7 +41,6 @@ import {
   requireSafePositiveTicketNumber,
 } from "../run-ticket-number.ts";
 import {
-  rewriteRoleRunDurablePages,
   rewriteRunDirectoryPathFields,
   rewriteRunDirectoryPathValue,
 } from "../role-run-relocation.ts";
@@ -628,8 +627,8 @@ export async function relocateAdmittedRunToTicket(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   heldLease?: { relocate(runDirectory: string): void },
-): Promise<void> {
-  if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return;
+): Promise<{ oldRunDirectory: string; newRunDirectory: string } | undefined> {
+  if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return undefined;
   const oldRunDirectory = admitted.runDirectory;
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(oldRunDirectory));
   const target = roleRunPlacement(ledgerHome, {
@@ -639,20 +638,18 @@ export async function relocateAdmittedRunToTicket(
     role: admitted.role,
   });
   ensureRoleRunDirectory(ledgerHome, dirname(target.runDirectory));
+  // Host sealing is pure identity projection, but may reject the coordinates.
+  // Keep that failure before the filesystem commit point.
+  const principal = authority.seal(target);
 
-  // Rewrite while still at unbound so parse/write failures leave the source in
-  // place; rename only after the durable-page closure succeeds (#863 P1).
-  await rewriteRoleRunDurablePages({
-    pagesDirectory: oldRunDirectory,
-    oldRunDirectory,
-    newRunDirectory: target.runDirectory,
-  });
-
-  // Disk move first. Publish in-memory admitted/principal identity only after
-  // rename succeeds — otherwise rename failure leaves disk at unbound while
-  // memory already shows the ticket path, and the unbound retry gate whitewashes
-  // the next call (#863 online atomicity).
+  // Rename is the only durable commit. Persisted paths are resolved from typed
+  // run identity on read, so online relocation never writes unleased peers or
+  // pretends a directory rename plus page rewrites form one transaction.
   await rename(oldRunDirectory, target.runDirectory);
+
+  // rename moved the open lock inode with the directory. Transfer cleanup
+  // ownership immediately after the commit.
+  heldLease?.relocate(target.runDirectory);
 
   const admittedRecord = admitted as unknown as Record<string, unknown>;
   rewriteRunDirectoryPathFields(
@@ -676,10 +673,9 @@ export async function relocateAdmittedRunToTicket(
       target.runDirectory,
     ) as string;
   }
-  const principal = authority.seal(target);
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
-  heldLease?.relocate(target.runDirectory);
+  return { oldRunDirectory, newRunDirectory: target.runDirectory };
 }
 
 /**

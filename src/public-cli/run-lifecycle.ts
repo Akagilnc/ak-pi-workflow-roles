@@ -41,6 +41,10 @@ import {
 import type { DoctorCaseIdentity } from "../doctor-contracts.ts";
 import type { NotarySourceRunLocator } from "../notary-contracts.ts";
 import {
+  rewriteAdmittedRoleRunPage,
+  rewriteRunDirectoryPathValue,
+} from "../role-run-relocation.ts";
+import {
   appendEngineSessionMaterial,
   engineSessionMaterialFromOptions,
   pickEngineAxis,
@@ -419,15 +423,20 @@ async function readRoleRunStateDisk(
   if (typeof record.projectRoot !== "string") return undefined;
   if (typeof record.sessionDirectory !== "string") return undefined;
   if (typeof record.admittedRequestPath !== "string") return undefined;
-  const runDir =
+  const storedRunDirectory =
     typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
       ? record.runDirectory
       : runDirectory;
+  const runDir = runDirectory;
   // Principal wire stays uninterpreted — authority owns legacy sessionFile fallback.
   const principalWire: RoleRunPrincipalWire = {
-    sessionDirectory: record.sessionDirectory,
+    sessionDirectory: rewriteRunDirectoryPathValue(
+      record.sessionDirectory,
+      storedRunDirectory,
+      runDirectory,
+    ) as string,
     ...(typeof record.sessionFile === "string"
-      ? { sessionFile: record.sessionFile }
+      ? { sessionFile: rewriteRunDirectoryPathValue(record.sessionFile, storedRunDirectory, runDirectory) as string }
       : {}),
   };
   let resumable: TypedHttp429Observation | undefined;
@@ -458,7 +467,11 @@ async function readRoleRunStateDisk(
     bookKey: record.bookKey,
     projectRoot: record.projectRoot,
     runDirectory: runDir,
-    admittedRequestPath: record.admittedRequestPath,
+    admittedRequestPath: rewriteRunDirectoryPathValue(
+      record.admittedRequestPath,
+      storedRunDirectory,
+      runDirectory,
+    ) as string,
     principalWire,
     ...(phase === undefined ? {} : { phase }),
     ...(resumable === undefined ? {} : { resumable }),
@@ -1433,6 +1446,14 @@ async function loadResumableRunRecord(
     );
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       const record = raw as Record<string, unknown>;
+      const storedRunDirectory =
+        typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
+          ? record.runDirectory
+          : run.runDirectory;
+      rewriteAdmittedRoleRunPage(record, [{
+        oldRunDirectory: storedRunDirectory,
+        newRunDirectory: run.runDirectory,
+      }]);
       if (typeof record.instruction === "string") {
         instruction = record.instruction;
       }
@@ -1648,6 +1669,23 @@ async function loadResumableRunRecord(
     courtTicketNumbersDamage = mergedSet.reason;
   } else if (mergedSet.tickets !== undefined) {
     courtTicketNumbers = mergedSet.tickets;
+  }
+  const sourceRunLeaf = basename(sourceRunPath ?? "").split("@");
+  const referencedRunId = sourceRun?.runId ?? sourceRunLeaf[0];
+  const referencedRole = sourceRun?.role ?? sourceRunLeaf[1];
+  if (referencedRunId !== undefined && referencedRunId !== "") {
+    const currentSourceRunDirectory = await findRunDirectoryById(
+      home,
+      referencedRunId,
+      run.bookKey,
+      referencedRole,
+    );
+    if (currentSourceRunDirectory !== undefined) {
+      sourceRunPath = currentSourceRunDirectory;
+      if (sourceRun !== undefined) {
+        sourceRun = { ...sourceRun, runDirectory: currentSourceRunDirectory };
+      }
+    }
   }
   return {
     run,

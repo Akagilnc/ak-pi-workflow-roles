@@ -196,6 +196,29 @@ function rewriteSummonsMaterials(
   }
 }
 
+/** Project one admitted page in memory after its containing run moved. */
+export function rewriteAdmittedRoleRunPage(
+  page: Record<string, unknown>,
+  rewrites: readonly RunDirectoryPathRewrite[],
+): void {
+  rewriteRunDirectoryPathFieldsAgainstRewrites(page, ADMITTED_PAGE_FIELDS, rewrites);
+  rewriteSourceRunLocator(page.sourceRun, rewrites);
+  if (Array.isArray(page.attachments)) {
+    for (const attachment of page.attachments) {
+      if (isPlainObject(attachment)) {
+        rewriteRunDirectoryPathFieldsAgainstRewrites(attachment, ["frozenPath"], rewrites);
+      }
+    }
+  }
+  if (isPlainObject(page.principal)) {
+    rewriteRunDirectoryPathFieldsAgainstRewrites(
+      page.principal,
+      ["sessionDirectory", "sessionFile"],
+      rewrites,
+    );
+  }
+}
+
 async function rewriteJsonObjectFile(
   path: string,
   fields: readonly string[],
@@ -414,33 +437,7 @@ export async function rewriteRoleRunDurablePages(input: {
       string,
       unknown
     >;
-    rewriteRunDirectoryPathFieldsAgainstRewrites(
-      page,
-      ADMITTED_PAGE_FIELDS,
-      rewrites,
-    );
-    // Nested notary typed locator — same value family as top-level sourceRunPath.
-    rewriteSourceRunLocator(page.sourceRun, rewrites);
-    if (Array.isArray(page.attachments)) {
-      for (const attachment of page.attachments) {
-        if (isPlainObject(attachment)) {
-          // Pointer only — never open or mutate frozen attachment bytes.
-          rewriteRunDirectoryPathFieldsAgainstRewrites(
-            attachment,
-            ["frozenPath"],
-            rewrites,
-          );
-        }
-      }
-    }
-    // Nested principal wire (sessionDirectory/sessionFile) when present.
-    if (isPlainObject(page.principal)) {
-      rewriteRunDirectoryPathFieldsAgainstRewrites(
-        page.principal,
-        ["sessionDirectory", "sessionFile"],
-        rewrites,
-      );
-    }
+    rewriteAdmittedRoleRunPage(page, rewrites);
     await writeFile(admittedPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
   }
 
