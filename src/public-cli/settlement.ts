@@ -81,7 +81,11 @@ import {
 import {
   MERGER_OUTPUT_TOOL_NAME,
 } from "../merger-contracts.ts";
-import { packagedRoleAcceptedOutputTool, type PackagedRole } from "../packaged-role-registry.ts";
+import {
+  packagedRoleAcceptedOutputTool,
+  packagedRoleMetadata,
+  type PackagedRole,
+} from "../packaged-role-registry.ts";
 import {
   SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
   SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
@@ -1677,10 +1681,24 @@ function knownFailureFromControlled(failure: ControlledFailure): RoleTurnKnownFa
   };
 }
 
+const RUNNER_FAILURE_POLICY = {
+  "engine-detour-known-first": {
+    read: readEngineDetourInfrastructureFailure,
+    rank: "known-first",
+  },
+  "engine-detour-record-first": {
+    read: readEngineDetourInfrastructureFailure,
+    rank: "record-first",
+  },
+  "collector-known-first": {
+    read: readCollectorInfrastructureFailure,
+    rank: "known-first",
+  },
+} as const;
+
 /**
- * Seats whose runner failure is a recorded infrastructure tool result.
- * Judge and collector keep an earlier known failure. Gate seats and reviewer
- * let the infrastructure record replace it. Every other seat has no resolver.
+ * Runner-failure rank for one seat. The composition-root `runnerFailure`
+ * leaf is the only seat difference; absent means the runner knownFailure stands.
  */
 export function seatKnownFailureResolver(
   role: PackagedRole,
@@ -1688,31 +1706,20 @@ export function seatKnownFailureResolver(
   result: { knownFailure?: RoleTurnKnownFailure };
   sessionFile: string;
 }) => Promise<RoleTurnKnownFailure | undefined>) | undefined {
-  if (role === "judge") {
-    return async ({ result, sessionFile }) => {
-      const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
-      return result.knownFailure ?? (
-        infrastructureFailure === undefined ? undefined : knownFailureFromControlled(infrastructureFailure)
-      );
-    };
-  }
-  if (role === "gatekeeper" || role === "navigator" || role === "auditor" || role === "reviewer") {
-    return async ({ result, sessionFile }) => {
-      const infrastructureFailure = await readEngineDetourInfrastructureFailure(sessionFile);
+  const record = packagedRoleMetadata(role);
+  if (record === undefined || !("runnerFailure" in record)) return undefined;
+  const policy = RUNNER_FAILURE_POLICY[record.runnerFailure];
+  return async ({ result, sessionFile }) => {
+    const infrastructureFailure = await policy.read(sessionFile);
+    if (policy.rank === "record-first") {
       return infrastructureFailure === undefined
         ? result.knownFailure
         : knownFailureFromControlled(infrastructureFailure);
-    };
-  }
-  if (role === "collector") {
-    return async ({ result, sessionFile }) => {
-      const infrastructureFailure = await readCollectorInfrastructureFailure(sessionFile);
-      return result.knownFailure ?? (
-        infrastructureFailure === undefined ? undefined : knownFailureFromControlled(infrastructureFailure)
-      );
-    };
-  }
-  return undefined;
+    }
+    return result.knownFailure ?? (
+      infrastructureFailure === undefined ? undefined : knownFailureFromControlled(infrastructureFailure)
+    );
+  };
 }
 
 function auditToolNameForRole(

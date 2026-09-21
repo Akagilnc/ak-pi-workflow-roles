@@ -60,6 +60,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: JUDGE_OUTPUT_TOOL_NAME,
+    runnerFailure: "engine-detour-known-first",
     acceptedText: "大理寺回执已接受",
     activationStage: "load-and-install",
     receiptStatusKey: "judgeStatus",
@@ -134,6 +135,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: REVIEWER_OUTPUT_TOOL_NAME,
+    runnerFailure: "engine-detour-record-first",
     acceptedText: "御史台回执已接受",
     activationFlags: [
       { field: "baseRevision", flag: "ak-review-base" },
@@ -160,6 +162,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: COLLECTOR_OUTPUT_TOOL,
+    runnerFailure: "collector-known-first",
     acceptedText: "通进司回执已接受",
     activationFlags: [
       { field: "repo", from: "repository.display", flag: "ak-collector-repo" },
@@ -327,6 +330,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: GATEKEEPER_OUTPUT_TOOL_NAME,
     settlement: "accepted",
+    runnerFailure: "engine-detour-record-first",
     acceptedText: "门下省决议已受理",
     activationStage: "load-and-install",
     // Province materials; officers reuse their own public records below.
@@ -342,6 +346,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
     settlement: "accepted",
+    runnerFailure: "engine-detour-record-first",
     acceptedText: "游奕使建议已受理",
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
@@ -357,6 +362,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: AUDITOR_OUTPUT_TOOL_NAME,
     settlement: "accepted",
+    runnerFailure: "engine-detour-record-first",
     acceptedText: "审刑院回执已接受",
     activationStage: "load-and-install",
     sessionMaterials: AUDITOR_PUBLIC_SESSION_MATERIALS,
