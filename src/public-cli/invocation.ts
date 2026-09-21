@@ -1554,14 +1554,26 @@ export async function admitPublicRole(
           ? {}
           : { deferPersistence: override.deferPersistence }),
       });
-    case "coder":
-      return admitCoderInvocation({
+    case "coder": {
+      if (instruction.trim() === "") {
+        throw new CliUsageError("coder requires a nonblank task instruction");
+      }
+      const phase = parsed.phase ?? "apply";
+      if (!record.phases.some((item) => item === phase)) {
+        throw new CliUsageError("coder phase must be plan or apply");
+      }
+      return admitStandardMaterialInvocation("coder", {
         ...shared,
-        phase: parsed.phase ?? "apply",
         instruction,
         attachmentPaths,
         ...project,
+        placedFields: async (placed) => {
+          const taskPath = join(placed.runDirectory, "task.md");
+          await writeFile(taskPath, instruction, "utf8");
+          return { phase, taskPath };
+        },
       });
+    }
     case "fixer":
       return admitFixerInvocation({
         ...shared,
@@ -1847,9 +1859,10 @@ async function persistPlacedAdmission(
  * Countersign passes deferPersistence so same-ticket lookup can reserve coordinates
  * before materializeCountersignInvocation writes the page.
  * Seats whose extra facts are known before placement pass them as admittedFields.
+ * Seats whose extra facts depend on the placed run pass placedFields (coder writes task.md).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder",
   Extra extends object = {},
 >(
   role: R,
@@ -1860,6 +1873,8 @@ async function admitStandardMaterialInvocation<
     readonly freezeAttachments?: boolean;
     /** Seat facts already validated by admitPublicRole. */
     readonly admittedFields?: Extra;
+    /** Seat facts that exist only after placement. Written before the admitted page. */
+    readonly placedFields?: (placed: PlacedRoleAdmission) => Extra | Promise<Extra>;
   },
 ): Promise<AdmittedRoleInvocationBase & { readonly role: R } & Extra> {
   const defer = options.deferPersistence === true;
@@ -1884,7 +1899,11 @@ async function admitStandardMaterialInvocation<
       : { correlationId: options.correlationId };
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
-  const admittedFields = options.admittedFields ?? ({} as Extra);
+  const placedExtra = options.placedFields === undefined ? undefined : await options.placedFields(placed);
+  const admittedFields = {
+    ...(options.admittedFields ?? ({} as Extra)),
+    ...(placedExtra ?? ({} as Extra)),
+  };
   const admitted = {
     role,
     runId: placed.runId,
@@ -2035,75 +2054,6 @@ export async function ensureRunArtifactsDir(runDirectory: string): Promise<strin
     resolveActivationLedgerHome(homeFromRunDirectory(runDirectory)),
     directory,
   );
-}
-
-export type AdmitCoderInvocationOptions = {
-  home: string;
-  principalAuthority: DurablePrincipalAuthority;
-  cwd: string;
-  phase: CoderPhase;
-  instruction: string;
-  attachmentPaths: readonly string[];
-  project?: string;
-  createRunId?: () => string;
-  /** Effective model for this invocation — written onto invocation.json. */
-  model?: InvocationEffectiveModel;
-  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
-  assertedTicketNumber?: number;
-};
-
-/**
- * Admit a Coder Role run on the common Invocation request.
- * Nonblank task remains authoritative: blank instruction is a structural reject.
- * Phase (default apply / explicit plan) is frozen into the admitted request.
- */
-async function admitCoderInvocation(
-  options: AdmitCoderInvocationOptions,
-): Promise<AdmittedCoderInvocation> {
-  const instruction = options.instruction;
-  if (instruction.trim() === "") {
-    throw new CliUsageError(
-      "coder requires a nonblank task instruction",
-    );
-  }
-  if (options.phase !== "plan" && options.phase !== "apply") {
-    throw new CliUsageError("coder phase must be plan or apply");
-  }
-
-  const placed = await placeRoleAdmission({
-    role: "coder",
-    home: options.home,
-    principalAuthority: options.principalAuthority,
-    cwd: options.cwd,
-    attachmentPaths: options.attachmentPaths,
-    ...(options.project === undefined ? {} : { project: options.project }),
-    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-    ...(options.assertedTicketNumber === undefined
-      ? {}
-      : { assertedTicketNumber: options.assertedTicketNumber }),
-  });
-  const taskPath = join(placed.runDirectory, "task.md");
-  await writeFile(taskPath, instruction, "utf8");
-  const admitted = {
-    role: "coder" as const,
-    phase: options.phase,
-    runId: placed.runId,
-    bookKey: placed.bookKey,
-    projectRoot: placed.projectRoot,
-    runDirectory: placed.runDirectory,
-    principal: placed.principal,
-    instruction,
-    instructionEmpty: false as const,
-    taskPath,
-    attachments: persistedAttachmentRefs(placed.attachments),
-    ...placed.ticketFields,
-  };
-  const admittedRequestPath = await persistPlacedAdmission(admitted, placed, options.model);
-  return {
-    ...admitted,
-    attachments: placed.attachments,
-    admittedRequestPath,
-  };
 }
 
 export type AdmitFixerInvocationOptions = {
