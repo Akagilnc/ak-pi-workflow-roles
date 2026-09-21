@@ -1602,12 +1602,12 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     const coderUnboundRun = join(bookRoot, "unbound", "runs", `${coderId}@coder`);
     const peerRun = join(bookRoot, "unbound", "runs", "01a0sign00-0000-7000-8000-00000000peer@judge");
     await mkdir(peerRun, { recursive: true });
+    const peerPage = `${JSON.stringify({ runDirectory: peerRun, sourceRun: { runDirectory: coderUnboundRun } }, null, 2)}\n`;
     await writeFile(
       join(peerRun, "admitted-request.json"),
-      `${JSON.stringify({ runDirectory: peerRun, sourceRun: { runDirectory: coderUnboundRun } }, null, 2)}\n`,
+      peerPage,
       "utf8",
     );
-    let coderAdmissionDirectory = "";
     const coderBase = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
@@ -1621,6 +1621,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
         },
       }),
     });
+    let coderAdmissionDirectory = "";
     const coder = await runAkRole(
       ["coder", "--model", "test/caller-seat:high", "--project", project, "Implement ticket work."],
       {
@@ -1659,13 +1660,10 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       await readFile(join(coderTicketRun, "admitted-request.json"), "utf8"),
     ) as { ticketNumber?: number };
     assert.equal(coderAdmitted.ticketNumber, 582);
-    const peerAdmitted = JSON.parse(
-      await readFile(join(peerRun, "admitted-request.json"), "utf8"),
-    ) as { sourceRun?: { runDirectory?: string } };
     assert.equal(
-      peerAdmitted.sourceRun?.runDirectory,
-      coderTicketRun,
-      "online relocate must close same-book durable references",
+      await readFile(join(peerRun, "admitted-request.json"), "utf8"),
+      peerPage,
+      "online relocate must not read or overwrite an unleased peer page",
     );
     assert.ok(coder.terminal?.artifacts.length);
     for (const artifact of coder.terminal!.artifacts) {
