@@ -827,7 +827,7 @@ export async function runPublicCountersignResume(
         ),
       );
     },
-    adapters: countersignAdapters({
+    adapters: countersignAdapters(request.summons === undefined ? undefined : {
       beforeDispatch: async (admitted) => {
         // #871 B7: durable set damage already identified at load — settle as
         // station-child exhausted → presentControlledFailure (not structural exit 2).

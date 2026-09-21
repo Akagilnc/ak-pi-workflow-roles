@@ -2144,10 +2144,7 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     const resumed = await runPublicCountersignResume(
       {
         runId: firstRunId,
-        summons: {
-          instruction: "裁：#100 二轮再审，集合不变。",
-          instructionEmpty: false,
-        },
+        message: "裁：#100 二轮再审，集合不变。",
       },
       envBase,
       captureIo().io,
@@ -2157,10 +2154,10 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     assert.equal(resumed.admitted?.ticketNumber, parent);
     assert.deepEqual(resumed.admitted?.courtTicketNumbers, [parent, childA, childB]);
     assert.equal(countersignBodyTurns, 1);
-    assert.deepEqual(
-      boundRefreshTickets,
-      [parent, childA, childB],
-      "resume without new set still refreshes stored set",
+    assert.equal(
+      boundRefreshTickets.length,
+      0,
+      "explicit resume must dispatch without a diarist refresh precondition",
     );
 
     // --- #987 public re-summons mints new with set {parent,A,C}; B not refreshed ---

@@ -11,7 +11,6 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildAutoResumeContinuationPrompt,
-  buildResumeContinuationPrompt,
   RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
@@ -1310,8 +1309,7 @@ export async function dispatchPostAdmissionTurn<
 /**
  * Shared resume continuation projection (#471 / #600 / #633 / #637 / #755 / #879):
  * seat-table model/engine/timeout axes, restored correlation, and either
- * - manual resume (no same-ticket summons): package envelope / optional caller
- *   message, with engine-axis handbook via buildResumeContinuationPrompt, or
+ * - manual resume (no same-ticket summons): caller message bytes, or
  * - same-ticket summons (审核循环续话): caller/peer words + optional frozen
  *   attachment paths only — no「请重读」、no code-authored content substitute,
  *   no engine handbook packaging (#750/#755/#879).
@@ -1351,12 +1349,7 @@ export function resumeTurnRequestProjectionOptions(
       // #755: same-ticket summons without prepared materials — caller words only.
       prompt = request.message;
     } else {
-      // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
-      prompt = buildResumeContinuationPrompt({
-        packageRoot: env.packageRoot,
-        ...pickEngineAxis(env),
-        message: request.message,
-      });
+      prompt = request.message;
     }
   } else if (summonsPrepared !== undefined) {
     // #879 station-child officer: instruction bytes === peer body/reask (no wrap).
@@ -1369,11 +1362,7 @@ export function resumeTurnRequestProjectionOptions(
     // only). Pointer is activation/sourceRun material — not dialogue content.
     prompt = "";
   } else {
-    // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
-    prompt = buildResumeContinuationPrompt({
-      packageRoot: env.packageRoot,
-      ...pickEngineAxis(env),
-    });
+    prompt = "";
   }
   return {
     packageRoot: env.packageRoot,
@@ -1670,9 +1659,8 @@ export async function runPostAdmissionSeatResume<
               // #840 r8 判词 class 2: this call-local retry must keep this
               // court's frozen summons / 交卷 body / attachments verbatim
               // (same object as firstTurn) and project only the minimal
-              // host-needed resume trigger — never the manual-resume engine
-              // handbook (buildResumeContinuationPrompt), which would replace
-              // a 审核循环 same-ticket continuation with a bare outsourcing
+              // host-needed resume trigger — never engine handbook material,
+              // which would replace a 审核循环 same-ticket continuation with a bare outsourcing
               // 「重新读」 envelope (#755 contract, resumeTurnRequestProjectionOptions
               // above). RESUME_TRANSPORT_ENVELOPE is the same package-owned,
               // non-semantic trigger that projection already uses for a

@@ -29,6 +29,7 @@ import {
   type AdmittedRoleInvocation,
 } from "../../src/public-cli/invocation.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import {
   COLLECTOR_OUTPUT_TOOL,
@@ -104,6 +105,7 @@ type SeatTracerSpec = {
   readonly sealedDetails: (admittedRequest: Record<string, unknown>) => unknown;
   /** Instruction bytes that must never ride the resume dispatch as a new prompt. */
   readonly originalInstruction?: string;
+  readonly rejectsCallerMessage?: boolean;
 };
 
 const SEAT_SPECS: readonly SeatTracerSpec[] = [
@@ -185,6 +187,7 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
   },
   {
     role: "notary",
+    rejectsCallerMessage: true,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
     admit: async ({ home, project, runId }) => {
       const sourceRunPath = await seedCanonicalSourceRun(home, project);
@@ -258,9 +261,18 @@ for (const spec of SEAT_SPECS) {
       });
       const openedPrincipals = new Set<string>();
       let resumeSessionFile: string | undefined;
+      let resumePrompt: string | undefined;
 
       const { io, stderr } = captureIo();
-      const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+      const resumed = await runAkRole([
+        "resume",
+        "--model",
+        "test/caller-seat:high",
+        "--engine",
+        "agy",
+        runId,
+        ...(spec.rejectsCallerMessage === true ? [] : ["调用者原话"]),
+      ], {
         packageRoot,
         home,
         cwd: project,
@@ -271,6 +283,7 @@ for (const spec of SEAT_SPECS) {
           principalAuthority: piDurablePrincipalAuthority,
           piRunner: async (args, options) => {
             resumeSessionFile = args[args.indexOf("--session") + 1]!;
+            resumePrompt = readUserDialogueStdin(String(options.stdin ?? ""));
             openedPrincipals.add(resumeSessionFile);
             if (spec.originalInstruction !== undefined) {
               assert.equal(args.includes(spec.originalInstruction), false);
@@ -284,6 +297,10 @@ for (const spec of SEAT_SPECS) {
       // Exact principal reopen — same session, never directory-latest.
       assert.equal(resumeSessionFile, sessionFile);
       assert.deepEqual([...openedPrincipals], [sessionFile]);
+      assert.equal(
+        resumePrompt,
+        spec.rejectsCallerMessage === true ? "" : "调用者原话",
+      );
 
       assert.equal(resumed.exitCode, 0);
       assert.ok(resumed.terminal);
