@@ -227,8 +227,8 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
   diagnostic: string,
   io: CliIo,
 ): Promise<void> {
-  io.stderr(formatCliDiagnostic(diagnostic));
   const payload = { diagnostic, recordedAt: new Date().toISOString() };
+  let retentionFailure: string | undefined;
   try {
     await env.sessionAppender(
       env.principalAuthority,
@@ -236,7 +236,6 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
       POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
       payload,
     );
-    return;
   } catch (appendError) {
     try {
       const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
@@ -246,12 +245,17 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
         { encoding: "utf8", flag: "wx" },
       );
     } catch (artifactError) {
-      io.stderr(
-        formatCliDiagnostic(
-          `post-dispatch diagnostic durable retention failed on both channels (best-effort continue): dossier=${describeErrorIdentity(appendError)}; artifact=${describeErrorIdentity(artifactError)}`,
-        ),
-      );
+      retentionFailure =
+        `post-dispatch diagnostic durable retention failed on both channels (best-effort continue): dossier=${describeErrorIdentity(appendError)}; artifact=${describeErrorIdentity(artifactError)}`;
     }
+  }
+  try {
+    io.stderr(formatCliDiagnostic(diagnostic));
+    if (retentionFailure !== undefined) {
+      io.stderr(formatCliDiagnostic(retentionFailure));
+    }
+  } catch {
+    // Presentation is best-effort beside an already-formed host terminal.
   }
 }
 

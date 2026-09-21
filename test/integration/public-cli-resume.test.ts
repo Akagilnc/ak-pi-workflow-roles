@@ -1612,7 +1612,13 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
     let dispatches = 0;
     await withPrimaryAwareCleanup(
       async () => {
-        const { io: io2 } = captureIo();
+        const { io: capturedIo } = captureIo();
+        const io2 = {
+          ...capturedIo,
+          stderr: () => {
+            throw new Error("stderr sink failed");
+          },
+        };
         const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
           packageRoot,
           home,
