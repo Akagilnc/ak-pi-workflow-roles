@@ -1454,8 +1454,8 @@ export async function prepareSummonsResumeMaterials(
 }
 
 /**
- * Shared manual-resume orchestration for seats whose continuation is the
- * package resume envelope (#599 / #633): load once → structural rejection →
+ * Shared manual-resume orchestration for seats (#599 / #633):
+ * load once → structural rejection →
  * optional seat afterAdmittedLoad (method material / controlled failure) →
  * seat turn projection → station-child auto-resume or public manual resume.
  * Seat-owned loader
@@ -1538,29 +1538,15 @@ export async function runPostAdmissionSeatResume<
 
   const buildRequestAfterLease = async (): Promise<RoleTurnRequest> => {
         let openCourtAttemptId: string | undefined;
-        // Build uses the admitted for this resume (rehydrated when open court
-        // materials ride). Settlement identity stays on the outer admitted.
-        // Name kept for station-child callers that still build under lease.
-        let admittedForBuild = loaded.admitted;
+        // Settlement identity stays on the outer admitted.
+        const admittedForBuild = loaded.admitted;
 
-        // Bare resume: open-court pointer is the continue signal (not ledger seal).
+        // Bare resume keeps the open court's settlement identity, but public resume
+        // never re-delivers the prior summons or its attachments (#987).
         if (request.summons === undefined) {
           const openCourt = await readCurrentCourt(admittedForBuild.runDirectory);
           if (openCourt !== undefined) {
             openCourtAttemptId = openCourt.courtAttemptId;
-            request = {
-              runId: request.runId,
-              ...(request.message === undefined
-                ? {}
-                : { message: request.message }),
-              ...(openCourt.summons === undefined
-                ? {}
-                : { summons: openCourt.summons }),
-            };
-            if (openCourt.summons !== undefined) {
-              const reloaded = await input.load(request);
-              admittedForBuild = reloaded.admitted;
-            }
           }
         }
 

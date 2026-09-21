@@ -781,8 +781,8 @@ function countersignAdapters(options?: {
  * Resume a previously admitted Countersign run (#599 / DK-3 / #637 / #987).
  * Restores role/ticket/session identity. Gate
  * same-parent and explicit `ak-role resume <runId>` share this entry; summons
- * may carry this turn's instruction. Manual resume keeps package-envelope /
- * caller-message semantics and birth attachments. 起居录 path delivery remains
+ * may carry this turn's instruction. Manual resume forwards only the caller's
+ * message bytes. 起居录 path delivery remains
  * post-admission's single mount (#709).
  */
 export async function runPublicCountersignResume(

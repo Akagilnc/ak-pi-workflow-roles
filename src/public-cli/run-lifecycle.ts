@@ -144,7 +144,7 @@ export type PublicResumeRequest = {
   /**
    * Same-ticket re-summons materials (#637). Present only when a public seat
    * re-enters via the summons face — never from `ak-role resume`.
-   * Manual resume keeps package envelope / caller message semantics unchanged.
+   * Manual resume forwards only caller-supplied bytes and never re-delivers them.
    */
   readonly summons?: SameTicketSummonsMaterials;
 };

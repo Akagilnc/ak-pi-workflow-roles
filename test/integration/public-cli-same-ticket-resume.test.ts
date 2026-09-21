@@ -67,6 +67,7 @@ type SeenTurn = {
   model?: RoleTurnRequest["model"];
   sourceRun?: string;
   courtAttemptId?: string;
+  prompt: string;
 };
 
 function seedGitProject(root: string): void {
@@ -187,6 +188,7 @@ function observingSealHost(inner: RoleTurnHost, seen: SeenTurn[]): RoleTurnHost 
         runId: runIdFromDirectory(request.runDirectory),
         runDirectory: request.runDirectory,
         kind: request.continuation.kind,
+        prompt: request.continuation.prompt,
         ...(request.model === undefined ? {} : { model: request.model }),
         ...(sourceRun === undefined ? {} : { sourceRun }),
         ...(request.courtAttemptId === undefined
@@ -504,7 +506,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   }
 });
 
-test("#637 public inspector: freeze-once attachment identity survives a no-seal court and resume-with-message continues the open no-seal court", async () => {
+test("#637/#987 public inspector: resume continues open-court settlement without re-delivering attachments", async () => {
   await mkdir(WORKTREE_SCRATCH, { recursive: true });
   const home = await mkdtemp(join(WORKTREE_SCRATCH, "home-materials-"));
   {
@@ -708,7 +710,12 @@ test("#637 public inspector: freeze-once attachment identity survives a no-seal 
       "resume-with-message continues the still-open no-seal court",
     );
     assert.equal(seen[3]!.runDirectory, runDirectory);
-    assert.equal(resumed.exitCode, 0, "open-court resume on frozen materials must accept");
+    assert.equal(
+      seen[3]!.prompt,
+      "caller-resume-message",
+      "public resume forwards only the caller's message without old court attachments",
+    );
+    assert.equal(resumed.exitCode, 0, "open-court resume must accept");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
 
     // Reuse must not mint another summons freeze directory from the missing external path.
