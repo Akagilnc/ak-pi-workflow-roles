@@ -813,7 +813,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     );
 
     // 1) Same court/attempt via resume+message: bounce then sealed accept → accepted / exit 0.
-    // closedLedgerOutcome reads attempt-scoped rows when courtAttemptId is present.
+    // sealedLedgerOutcome reads attempt-scoped rows when courtAttemptId is present.
     let sawCourtAttemptId = false;
     const { cap, done } = runScripted(
       ["resume", ...seatModel, runId, "再裁"],

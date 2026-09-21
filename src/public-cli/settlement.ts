@@ -328,14 +328,6 @@ export async function settleHostEndedNoReceipt(
   );
 }
 
-async function closedLedgerOutcome(
-  admitted: AdmittedRoleInvocation,
-  role: TerminalRoleName,
-  scope?: SettlementCourtScope,
-): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined> {
-  return sealedLedgerOutcome(admitted, role, scope);
-}
-
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
 function coordinatesFromAdmitted(
   authority: DurablePrincipalAuthority,
@@ -2861,9 +2853,6 @@ type SeatArtifactFace = {
 };
 
 const SEAT_ARTIFACT_FACE: Partial<Record<TerminalRoleName, SeatArtifactFace>> = {
-  judge: {
-    leaves: [],
-  },
   coder: {
     reportPhase: true,
     evidenceRole: true,
@@ -3004,10 +2993,7 @@ async function publishDeclaredSeatArtifacts(
     readonly methodSkillConfiguredPath?: string;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
-  const face = SEAT_ARTIFACT_FACE[admitted.role];
-  if (face === undefined) {
-    throw new Error(`no artifact face for ${admitted.role}`);
-  }
+  const face = SEAT_ARTIFACT_FACE[admitted.role] ?? { leaves: [] };
   const phase = face.reportPhase === true
     ? { phase: readAdmittedPath(admitted, "phase") }
     : {};
@@ -3077,36 +3063,6 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
   return 0;
 }
 
-/**
- * Filed-seat success face via the sole accepted publisher (#953).
- */
-async function publishSeatAcceptedArtifacts(
-  admitted: {
-    readonly role: TerminalRoleName;
-    readonly runId: string;
-    readonly runDirectory: string;
-    readonly admittedRequestPath: string;
-    readonly attachments: readonly AcceptedArtifactAttachment[];
-  },
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: admitted.role,
-      runId: admitted.runId,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-    },
-  });
-}
-
 async function settleLawfulSeatAcceptedTerminalResult(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
@@ -3151,13 +3107,14 @@ async function settleLawfulSeatAcceptedTerminalResult(
       );
     }
   }
-  const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
+  const roleOutcome = await sealedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
   if (roleOutcome !== undefined && (thisAttemptHasSeatSuccess || residual === undefined)) {
     const navigator = extractNavigatorFact(entries);
-    const artifacts = await publishSeatAcceptedArtifacts(
+    const artifacts = await publishDeclaredSeatArtifacts(
       admitted,
       roleOutcome,
       coordinates,
+      entries,
     );
     return withSubmissions(
       await withOptionalGateProjection(
