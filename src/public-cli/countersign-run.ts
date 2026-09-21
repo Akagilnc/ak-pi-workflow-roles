@@ -35,6 +35,7 @@ import { readableGateItem } from "../readable-gate-item.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import {
   admitCountersignInvocation,
+  summonedTicketFields,
   bindAdmittedTicketNumber,
   bindCourtTicketNumbersOnAdmitted,
   buildCountersignTransportPrompt,
@@ -490,6 +491,7 @@ export async function runPublicCountersign(
         ? {}
         : { correlationId: env.correlationId }),
       deferPersistence: true,
+          ...summonedTicketFields(env.boundTicketNumber),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {
@@ -505,12 +507,15 @@ export async function runPublicCountersign(
     return await withPreparedAttachments(
       parsed.attachmentPaths,
       async (preparedAttachments) => {
-        const materializeAdmission = async (): Promise<void> => {
+        const materializeAdmission = async (
+          ticketNumber?: number,
+        ): Promise<void> => {
           await materializeCountersignInvocation(admitted, {
             home: env.home,
             principalAuthority: env.principalAuthority,
             preparedAttachments,
             ...(env.model === undefined ? {} : { model: env.model }),
+            ...(ticketNumber === undefined ? {} : { ticketNumber }),
           });
         };
 
@@ -545,7 +550,11 @@ export async function runPublicCountersign(
               io,
             );
           } catch (error) {
-            await materializeAdmission();
+            await materializeAdmission(
+              isSafePositiveTicketNumber(env.boundTicketNumber)
+                ? env.boundTicketNumber
+                : undefined,
+            );
             await markRunAdmitted(admitted, env.principalAuthority);
             return await presentControlledFailure(
               admitted,
@@ -560,7 +569,11 @@ export async function runPublicCountersign(
           if (outcome.identity.kind === "escalate") {
             // 御批: 识别不了就上抛 — materialize and settle this countersign run.
             // Diagnostic relays diarist escalate payload facts (#953).
-            await materializeAdmission();
+            await materializeAdmission(
+              isSafePositiveTicketNumber(env.boundTicketNumber)
+                ? env.boundTicketNumber
+                : undefined,
+            );
             await markRunAdmitted(admitted, env.principalAuthority);
             return await presentControlledFailure(
               admitted,
@@ -580,7 +593,11 @@ export async function runPublicCountersign(
           // is not 真无票 — settle controlled failure on the admitted run (失败诚实).
           // Only a true missing lawful typed terminal keeps the r5 unbound-continue.
           if (outcome.failedWithoutEscalate !== undefined) {
-            await materializeAdmission();
+            await materializeAdmission(
+              isSafePositiveTicketNumber(env.boundTicketNumber)
+                ? env.boundTicketNumber
+                : undefined,
+            );
             await markRunAdmitted(admitted, env.principalAuthority);
             return await presentControlledFailure(
               admitted,
@@ -613,7 +630,14 @@ export async function runPublicCountersign(
             // resume/bind under the parent key (omitted receipt ticketNumber path).
             typedTicket = env.boundTicketNumber;
           }
-          if (typedTicket !== undefined) {
+          // Public CLI without a caller runId does not search old runs by ticket.
+          // Nested court summons (station child) and a gate handoff that already
+          // carries boundTicketNumber keep same-ticket resume.
+          if (
+            typedTicket !== undefined
+            && (env.stationChild === true
+              || isSafePositiveTicketNumber(env.boundTicketNumber))
+          ) {
             // #969/#879: gate re-ask / parent submission body share summons.instruction
             // (reask wins; argv instruction remains the 起居郎 identity face above).
             const resumeInstruction =
@@ -682,7 +706,7 @@ export async function runPublicCountersign(
 
         // No prior run was selected. Materialize this invocation now; true-unbound,
         // first-ticket and deferred test-seam paths all retain their own durable page.
-        await materializeAdmission();
+        await materializeAdmission(typedTicket);
         await markRunAdmitted(admitted, env.principalAuthority);
 
         if (identityDiaristRan && typedTicket !== undefined) {

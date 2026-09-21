@@ -26,6 +26,7 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitReviewerInvocation,
+  summonedTicketFields,
   buildReviewerTransportPrompt,
   type AdmittedReviewerInvocation,
   type ReviewerLens,
@@ -303,6 +304,7 @@ export async function runPublicReviewer(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
       ...(env.model === undefined ? {} : { model: env.model }),
+          ...summonedTicketFields(env.boundTicketNumber),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

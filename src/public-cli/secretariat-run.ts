@@ -9,6 +9,7 @@ import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-res
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitSecretariatInvocation,
+  summonedTicketFields,
   bindAdmittedTicketNumber,
   buildSecretariatTransportPrompt,
   relocateAdmittedRunToTicket,
@@ -111,6 +112,7 @@ export async function runPublicSecretariat(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+          ...summonedTicketFields(env.boundTicketNumber),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

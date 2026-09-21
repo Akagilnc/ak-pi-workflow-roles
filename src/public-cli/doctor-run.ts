@@ -8,6 +8,7 @@ import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-res
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitDoctorInvocation,
+  summonedTicketFields,
   buildDoctorTransportPrompt,
   type AdmittedDoctorInvocation,
   type ParseDoctorArgvResult
@@ -81,6 +82,7 @@ export async function runPublicDoctor(
       ...(parsed.runs === undefined ? {} : { runs: parsed.runs }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
+          ...summonedTicketFields(env.boundTicketNumber),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

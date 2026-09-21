@@ -16,6 +16,7 @@ import {
   recordAdmittedCorrelation,
   type AdmittedDiaristInvocation,
   type ParseDiaristArgvResult,
+  summonedTicketFields,
 } from "./invocation.ts";
 import {
   prepareSummonsResumeMaterials,
@@ -174,7 +175,9 @@ export async function runPublicDiarist(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-      ...(handoffTicket === undefined ? {} : { assertedTicketNumber: handoffTicket }),
+      ...(handoffTicket === undefined
+        ? summonedTicketFields(env.boundTicketNumber)
+        : { assertedTicketNumber: handoffTicket }),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

@@ -21,6 +21,7 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitFixerInvocation,
+  summonedTicketFields,
   buildFixerTransportPrompt,
   type AdmittedFixerInvocation,
 } from "./invocation.ts";
@@ -145,6 +146,7 @@ export async function runPublicFixer(
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
+          ...summonedTicketFields(env.boundTicketNumber),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

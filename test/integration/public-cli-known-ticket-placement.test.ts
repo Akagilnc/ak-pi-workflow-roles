@@ -1,0 +1,131 @@
+/**
+ * #505 admission tracer: a typed ticket already on the summons places every
+ * active public seat under that ticket. Real entry is runAkRole. Observation
+ * is the run directory the public entry created.
+ */
+import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdir } from "node:fs/promises";
+import { sep } from "node:path";
+import { join } from "node:path";
+import test from "node:test";
+
+import {
+  activationBookDirectory,
+  resolveActivationLedgerHome,
+} from "../../src/activation-ledger-topology.ts";
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
+import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
+import { runAkRole } from "../../src/public-cli/cli.ts";
+import { listBookRunDirectories } from "../../src/role-run-placement.ts";
+import {
+  CANONICAL_SOURCE_RUN_ID,
+  seedCanonicalSourceRun,
+} from "../helpers/notary-fixtures.ts";
+import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+
+const TICKET = 505;
+
+function seedGitProject(root: string): void {
+  execFileSync("git", ["init", "-b", "main"], { cwd: root });
+  execFileSync("git", ["config", "user.email", "placement@test.local"], { cwd: root });
+  execFileSync("git", ["config", "user.name", "Placement Test"], { cwd: root });
+  execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
+}
+
+function argvFor(role: string, project: string, sourceRun: string): string[] {
+  const common = ["--model", "test/caller-seat:high", "--project", project];
+  switch (role) {
+    case "gleaner-left":
+      return [role, ...common, "--base", "HEAD", "note"];
+    case "reviewer":
+      return [
+        role,
+        ...common,
+        "--base",
+        "HEAD",
+        "--lens",
+        "completeness",
+        "--authority-ref",
+        "https://example.com/adr/0082",
+        "review",
+      ];
+    case "doctor":
+      return [role, ...common, "--issue", String(TICKET), "case"];
+    case "collector":
+      return [role, ...common, "--repo", "Akagilnc/ak-pi-workflow-roles", "--pr", "1", "collect"];
+    case "notary":
+    case "auditor":
+      return role === "auditor"
+        ? [role, ...common, "--subject", "judge", "--source-run", sourceRun, "audit"]
+        : [role, ...common, "--source-run", sourceRun];
+    case "merger":
+      return [role, ...common, "merge the current tree"];
+    default:
+      return [role, ...common, "known ticket summons"];
+  }
+}
+
+test("#505 known ticket places every active public seat under that ticket", async () => {
+  await withTempRoot("ak-known-ticket-placement-", async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const sourceRun = await seedCanonicalSourceRun(home, project, { ticketNumber: TICKET });
+    let n = 0;
+    const seen = new Map<string, string[]>();
+    const host: RoleTurnHost = {
+      async executeTurn(request: RoleTurnRequest) {
+        const paths = seen.get(request.activation.role) ?? [];
+        paths.push(request.runDirectory);
+        seen.set(request.activation.role, paths);
+        return { code: 0, stderr: "", timedOut: false };
+      },
+    };
+    const stderr: string[] = [];
+    const io = {
+      stdout: () => {},
+      stderr: (text: string) => {
+        stderr.push(text);
+      },
+    };
+    for (const record of PUBLIC_ROLE_RECORDS) {
+      const result = await runAkRole(argvFor(record.role, project, sourceRun), {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        boundTicketNumber: TICKET,
+        roleTurnHost: host,
+        createRunId: () =>
+          `01a05050-0000-7000-8000-${String(++n).padStart(12, "0")}`,
+      });
+      const book = activationBookDirectory(
+        resolveActivationLedgerHome(home),
+        resolveBookKeyFromGit(project),
+      );
+      const turns = seen.get(record.role) ?? [];
+      const runs = (await listBookRunDirectories(book)).filter(
+        (dir) => dir.endsWith(`@${record.role}`) && !dir.includes(CANONICAL_SOURCE_RUN_ID),
+      );
+      const observed = turns.length > 0 ? turns : runs;
+      assert.ok(
+        observed.length >= 1,
+        `${record.role} exit ${result.exitCode} produced no run stderr=${stderr.at(-1) ?? ""}`,
+      );
+      for (const dir of observed) {
+        assert.ok(
+          dir.includes(`${sep}${TICKET}${sep}runs${sep}`),
+          `${record.role} runDirectory is not under ticket ${TICKET}: ${dir}`,
+        );
+        assert.equal(
+          dir.includes(`${sep}unbound${sep}`),
+          false,
+          `${record.role} placed unbound: ${dir}`,
+        );
+      }
+    }
+  });
+});

@@ -15,6 +15,7 @@ import {
   admitNavigatorInvocation,
   buildInstructionTransportPrompt,
   persistAdmittedSourceRunPath,
+  summonedTicketFields,
   type AdmittedAuditorInvocation,
   type AdmittedGatekeeperInvocation,
   type AdmittedNavigatorInvocation,
@@ -346,7 +347,7 @@ export async function runPublicInstructionSeat(
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
       ...(auditorSourceTicket === undefined
-        ? {}
+        ? summonedTicketFields(env.boundTicketNumber)
         : { assertedTicketNumber: auditorSourceTicket }),
     });
   } catch (error) {

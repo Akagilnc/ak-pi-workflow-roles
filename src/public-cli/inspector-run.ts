@@ -11,6 +11,7 @@ import { CliUsageError } from "./cli-errors.ts";
 import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
 import {
   admitInspectorInvocation,
+  summonedTicketFields,
   buildInspectorTransportPrompt,
   persistAdmittedSourceRunPath,
   type AdmittedInspectorInvocation,
@@ -155,6 +156,7 @@ export async function runPublicInspector(
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
       ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+          ...summonedTicketFields(env.boundTicketNumber),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

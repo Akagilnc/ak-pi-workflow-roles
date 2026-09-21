@@ -304,6 +304,8 @@ export type CliEnv = {
    * skip same-ticket auto-resume. Not a public flag — the verb is the choice.
    */
   freshSummons?: true;
+  /** Typed ticket already on this summons. Not a public argv flag. */
+  boundTicketNumber?: number;
   /**
    * #855: process-level cancel (SIGTERM/SIGINT/SIGHUP). Nested turns receive
    * the same signal so hosts can gracefully stop children.
@@ -417,6 +419,9 @@ function createRoleEnvironment(
       ? {}
       : { autoResumeLimit: options.config.autoResumeLimit }),
     ...(env.freshSummons === true ? { freshSummons: true as const } : {}),
+    ...(env.boundTicketNumber === undefined
+      ? {}
+      : { boundTicketNumber: env.boundTicketNumber }),
     ...(env.signal === undefined ? {} : { signal: env.signal }),
   };
 }

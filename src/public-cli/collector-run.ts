@@ -8,6 +8,7 @@ import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-res
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitCollectorInvocation,
+  summonedTicketFields,
   buildCollectorTransportPrompt,
   type AdmittedCollectorInvocation,
   type ParseCollectorArgvResult,
@@ -87,6 +88,7 @@ export async function runPublicCollector(
       ...(parsed.waitWindowMs === undefined ? {} : { waitWindowMs: parsed.waitWindowMs }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
+          ...summonedTicketFields(env.boundTicketNumber),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

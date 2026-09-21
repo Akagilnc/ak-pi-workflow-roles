@@ -1434,6 +1434,21 @@ function ticketAdmissionFields(
   };
 }
 
+/** Project an already-typed summons ticket into admit options. Absent stays absent. */
+export function summonedTicketFields(
+  ticketNumber: number | undefined,
+): { assertedTicketNumber?: number } {
+  if (ticketNumber === undefined) return {};
+  return { assertedTicketNumber: ticketNumber };
+}
+
+/** One placement subject: a typed ticket already on the summons, otherwise unbound. */
+function admissionSubject(ticketNumber: number | undefined): RoleRunSubject {
+  const fields = ticketAdmissionFields(ticketNumber);
+  if (fields.ticketNumber === undefined) return { unbound: true };
+  return { ticketNumber: fields.ticketNumber };
+}
+
 export type AdmitJudgeInvocationOptions = {
   home: string;
   cwd: string;
@@ -1445,6 +1460,8 @@ export type AdmitJudgeInvocationOptions = {
   principalAuthority: DurablePrincipalAuthority;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed ticket already on this summons (起居录 / parent board). Never parsed from prose. */
+  assertedTicketNumber?: number;
 };
 
 export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
@@ -1490,9 +1507,7 @@ async function admitStandardMaterialInvocation<
     cwd: projectRoot,
     runId,
     role,
-    subject: ticketFields.ticketNumber === undefined
-      ? { unbound: true }
-      : { ticketNumber: ticketFields.ticketNumber },
+    subject: admissionSubject(options.assertedTicketNumber),
     home: options.home,
   });
 
@@ -1669,6 +1684,8 @@ export type AdmitCountersignInvocationOptions = {
   correlationId?: string;
   /** Same-ticket lookup may select an existing run before a new run is persisted. */
   deferPersistence?: boolean;
+  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -1697,7 +1714,7 @@ export async function admitCountersignInvocation(
     cwd: projectRoot,
     runId,
     role: "countersign",
-    subject: { unbound: true },
+    subject: admissionSubject(options.assertedTicketNumber),
     home: options.home,
     materialize: options.deferPersistence !== true,
   });
@@ -1726,6 +1743,7 @@ export async function admitCountersignInvocation(
       sha256: a.sha256,
       mediaKind: a.mediaKind,
     })),
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   if (options.deferPersistence !== true) {
@@ -1748,6 +1766,7 @@ export async function admitCountersignInvocation(
     principal,
     admittedRequestPath,
     ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
 }
 
@@ -1756,15 +1775,27 @@ export async function materializeCountersignInvocation(
   admitted: AdmittedCountersignInvocation,
   options: Pick<AdmitCountersignInvocationOptions, "home" | "principalAuthority" | "model"> & {
     preparedAttachments: readonly PreparedAttachment[];
+    /** Typed ticket known before the deferred run is written. */
+    ticketNumber?: number;
   },
 ): Promise<void> {
   const placement = issueAdmissionPlacement(options.principalAuthority, {
     cwd: admitted.projectRoot,
     runId: admitted.runId,
     role: "countersign",
-    subject: { unbound: true },
+    subject: admissionSubject(options.ticketNumber),
     home: options.home,
   });
+  (admitted as { runDirectory: string }).runDirectory = placement.runDirectory;
+  (admitted as { admittedRequestPath: string }).admittedRequestPath = join(
+    placement.runDirectory,
+    "admitted-request.json",
+  );
+  (admitted as { principal: DurablePrincipal }).principal = placement.principal;
+  const ticketFields = ticketAdmissionFields(options.ticketNumber);
+  if (ticketFields.ticketNumber !== undefined) {
+    (admitted as { ticketNumber?: number }).ticketNumber = ticketFields.ticketNumber;
+  }
   const attachments = await freezePreparedAttachmentsIntoRun(
     options.preparedAttachments,
     admitted.runDirectory,
@@ -1836,6 +1867,8 @@ export type AdmitCoderInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -1873,7 +1906,7 @@ export async function admitCoderInvocation(
     cwd: projectRoot,
     runId,
     role: "coder",
-    subject: { unbound: true },
+    subject: admissionSubject(options.assertedTicketNumber),
     home: options.home,
   });
 
@@ -1900,6 +1933,7 @@ export async function admitCoderInvocation(
       sha256: a.sha256,
       mediaKind: a.mediaKind,
     })),
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
@@ -1921,6 +1955,7 @@ export async function admitCoderInvocation(
     principal,
     admittedRequestPath,
     taskPath,
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
 }
 
@@ -1957,6 +1992,8 @@ export type AdmitFixerInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -2019,7 +2056,7 @@ export async function admitFixerInvocation(
     cwd: projectRoot,
     runId,
     role: "fixer",
-    subject: { unbound: true },
+    subject: admissionSubject(options.assertedTicketNumber),
     home: options.home,
   });
 
@@ -2061,6 +2098,7 @@ export async function admitFixerInvocation(
       sha256: a.sha256,
       mediaKind: a.mediaKind,
     })),
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
@@ -2084,6 +2122,7 @@ export async function admitFixerInvocation(
     packetPath,
     ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
     prerequisites,
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
 }
 
@@ -2263,6 +2302,8 @@ export type AdmitCollectorInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -2325,7 +2366,7 @@ export async function admitCollectorInvocation(
     cwd: projectRoot,
     runId,
     role: "collector",
-    subject: { unbound: true },
+    subject: admissionSubject(options.assertedTicketNumber),
     home: options.home,
   });
 
@@ -2370,6 +2411,7 @@ export async function admitCollectorInvocation(
       sha256: a.sha256,
       mediaKind: a.mediaKind,
     })),
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
@@ -2394,6 +2436,7 @@ export async function admitCollectorInvocation(
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
     ...(options.waitWindowMs === undefined ? {} : { waitWindowMs: options.waitWindowMs }),
     manifestDigest,
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
 }
 
@@ -2516,6 +2559,8 @@ export type AdmitDoctorInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -2624,7 +2669,7 @@ export async function admitDoctorInvocation(
     cwd: projectRoot,
     runId,
     role: "doctor",
-    subject: { unbound: true },
+    subject: admissionSubject(options.assertedTicketNumber),
     home: options.home,
   });
 
@@ -2692,6 +2737,7 @@ export async function admitDoctorInvocation(
       sha256: a.sha256,
       mediaKind: a.mediaKind,
     })),
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
@@ -2714,6 +2760,7 @@ export async function admitDoctorInvocation(
     issueNumber: options.issueNumber,
     caseRunsPath,
     caseIdentity,
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
 }
 
@@ -2803,6 +2850,8 @@ export async function admitNotaryInvocation(options: {
   readonly createRunId?: () => string;
   readonly model?: InvocationEffectiveModel;
   readonly correlationId?: string;
+  /** Typed ticket already on this summons. Source-run board ticket wins when present. */
+  readonly assertedTicketNumber?: number;
 }): Promise<AdmittedNotaryInvocation> {
   if (options.project !== undefined) {
     requireOptionPath("--project", options.project);
@@ -2824,6 +2873,7 @@ export async function admitNotaryInvocation(options: {
 
   // Notary inherits board identity only — migration-derived stays display/placement.
   const inheritedTicketNumber = await readBoardTicketNumber(sourceRun.runDirectory);
+  const knownTicketNumber = inheritedTicketNumber ?? options.assertedTicketNumber;
   const runId = options.createRunId?.() ?? uuidv7();
   const {
     principal,
@@ -2837,12 +2887,10 @@ export async function admitNotaryInvocation(options: {
     cwd: projectRoot,
     runId,
     role: "notary",
-    subject: inheritedTicketNumber === undefined
-      ? { unbound: true }
-      : { ticketNumber: inheritedTicketNumber },
+    subject: admissionSubject(knownTicketNumber),
     home: options.home,
   });
-  const ticketFields = ticketAdmissionFields(inheritedTicketNumber);
+  const ticketFields = ticketAdmissionFields(knownTicketNumber);
 
   const admitted = {
     role: "notary" as const,
@@ -2955,6 +3003,8 @@ export type AdmitGleanerLeftInvocationOptions = {
   createRunId?: () => string;
   model?: InvocationEffectiveModel;
   correlationId?: string;
+  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -2985,7 +3035,7 @@ export async function admitGleanerLeftInvocation(
     cwd: projectRoot,
     runId,
     role: "gleaner-left",
-    subject: { unbound: true },
+    subject: admissionSubject(options.assertedTicketNumber),
     home: options.home,
   });
 
@@ -3002,6 +3052,7 @@ export async function admitGleanerLeftInvocation(
     instructionEmpty,
     baseRevision: options.baseRevision,
     attachments: [] as const,
+    ...ticketAdmissionFields(options.assertedTicketNumber),
     ...(options.correlationId === undefined
       ? {}
       : { correlationId: options.correlationId }),
@@ -3032,6 +3083,7 @@ export async function admitGleanerLeftInvocation(
     ...(options.correlationId === undefined
       ? {}
       : { correlationId: options.correlationId }),
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
 }
 
@@ -3126,6 +3178,8 @@ export type AdmitReviewerInvocationOptions = {
   correlationId?: string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -3162,7 +3216,7 @@ export async function admitReviewerInvocation(
     cwd: projectRoot,
     runId,
     role: "reviewer",
-    subject: { unbound: true },
+    subject: admissionSubject(options.assertedTicketNumber),
     home: options.home,
   });
 
@@ -3183,6 +3237,7 @@ export async function admitReviewerInvocation(
     baseRevision,
     lens,
     authorityRefs: [...authorityRefs],
+    ...ticketAdmissionFields(options.assertedTicketNumber),
     ...(options.correlationId === undefined
       ? {}
       : { correlationId: options.correlationId }),
@@ -3218,6 +3273,7 @@ export async function admitReviewerInvocation(
     ...(options.correlationId === undefined
       ? {}
       : { correlationId: options.correlationId }),
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
 }
 
@@ -3350,6 +3406,8 @@ export type AdmitMergerInvocationOptions = {
   gitState?: MergerGitState;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
+  assertedTicketNumber?: number;
 };
 
 /**
@@ -3388,7 +3446,7 @@ export async function admitMergerInvocation(
     cwd: projectRoot,
     runId,
     role: "merger",
-    subject: { unbound: true },
+    subject: admissionSubject(options.assertedTicketNumber),
     home: options.home,
   });
 
@@ -3451,6 +3509,7 @@ export async function admitMergerInvocation(
       sha256: a.sha256,
       mediaKind: a.mediaKind,
     })),
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
   const admittedRequestPath = join(runDirectory, "admitted-request.json");
   await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
@@ -3472,6 +3531,7 @@ export async function admitMergerInvocation(
     admittedRequestPath,
     mergerInputPath,
     derived: admitted.derived,
+    ...ticketAdmissionFields(options.assertedTicketNumber),
   };
 }
 

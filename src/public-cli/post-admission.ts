@@ -324,6 +324,11 @@ export type PostAdmissionEnv = {
    * and mint a new run. Absent on ordinary role commands and on `ak-role resume`.
    */
   freshSummons?: true;
+  /**
+   * Typed ticket already carried into this summons (parent board / 起居录).
+   * Admission places the run under it. Not a public CLI flag.
+   */
+  boundTicketNumber?: number;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
   /**

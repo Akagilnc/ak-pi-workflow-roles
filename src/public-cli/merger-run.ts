@@ -18,6 +18,7 @@ import {
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitMergerInvocation,
+  summonedTicketFields,
   buildMergerTransportPrompt,
   type AdmittedMergerInvocation,
 } from "./invocation.ts";
@@ -180,6 +181,7 @@ export async function runPublicMerger(
       ...(parsed.project === undefined ? {} : { project: parsed.project }),
       ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
       ...(env.model === undefined ? {} : { model: env.model }),
+          ...summonedTicketFields(env.boundTicketNumber),
     });
   } catch (error) {
     if (error instanceof CliUsageError) {

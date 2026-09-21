@@ -6,14 +6,15 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  * #742: court admission auto-runs the public 起居郎 station before the body turn.
  * #771: ticket identity comes from 起居郎 LLM typed assertion (court station),
  * never from mechanical matching of summons text against book records;
- * ADR 0079: same-ticket re-summons resume prior run via that typed key;
+ * Public re-summons mint a new run under the typed ticket (#505). Gate handoff
+ * with boundTicketNumber may still resume. Explicit ak-role resume takes a runId.
  * 起居录 path delivery rides the shared post-admission mount.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm, writeFile, readFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -1695,13 +1696,17 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     for (const entry of await readdir(bookRoot)) {
       assert.equal(allowedBookEntries.has(entry), true, entry);
     }
+    const countersignLeaves = [
+      ...(await readdir(join(bookRoot, "582", "runs"))),
+      ...(await readdir(join(bookRoot, "unbound", "runs"))),
+    ].filter((entry) => entry.endsWith("@countersign"));
     assert.deepEqual(
+      countersignLeaves.sort(),
       [
-        ...(await readdir(join(bookRoot, "582", "runs"))),
-        ...(await readdir(join(bookRoot, "unbound", "runs"))),
-      ].filter((entry) => entry.endsWith("@countersign")),
-      [`${result.terminal!.runId}@countersign`],
-      "same-ticket resume must not materialize a provisional run in any run partition",
+        `${result.terminal!.runId}@countersign`,
+        "01a0sign00-0000-7000-8000-000000000d46@countersign",
+      ].sort(),
+      "public re-summons mint under the typed ticket and do not leave an unbound countersign run",
     );
   });
 });
@@ -1849,10 +1854,9 @@ test("beforeDispatch ticket-bind failure uses parent call-local auto-resume", as
   });
 });
 
-test("public countersign path: same-ticket re-summons resumes prior run via typed 起居郎 key", async () => {
+test("public countersign path: typed ticket places a new run and does not search an old one", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    // ADR 0079: 给事中同票再传召 = resume 该席上一次 run，不新起 run.
-    // Lookup key is 起居郎's typed assertion only (#771).
+    // #505: public entry without a caller runId mints. It does not resume by ticket.
     ensureTicketProvenanceVolume(582, project, home);
 
     const seen: Array<{ runId: string; kind: string }> = [];
@@ -1914,8 +1918,6 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.equal(seen[0]!.kind, "initial");
     assert.equal(seen[0]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
 
-    // createRunId would mint s002 if auto-resume were skipped — must not fire.
-    // The accepted attachment snapshot must survive source deletion by identity.
     const secondAttachment = join(project, "second-court.md");
     await writeFile(secondAttachment, "second court snapshot", "utf8");
     sourceToDeleteDuringIdentity = secondAttachment;
@@ -1929,34 +1931,26 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
       parseCountersignArgv,
     );
     assert.equal(second.exitCode, 0);
-    assert.equal(
-      second.admitted?.runId,
-      "01a0sign00-0000-7000-8000-00000000s001",
-      "same-ticket re-summons must resume prior run via typed key, not mint s002",
-    );
+    assert.equal(second.admitted?.runId, "01a0sign00-0000-7000-8000-00000000s002");
     assert.equal(second.admitted?.ticketNumber, 582);
-    assert.notEqual(
-      second.admitted?.runId,
-      "01a0sign00-0000-7000-8000-00000000s002",
+    assert.ok(
+      second.admitted?.runDirectory.includes(`${sep}582${sep}runs${sep}`),
+      second.admitted?.runDirectory,
     );
-    // A dispatched body turn on re-summons must be resume on the prior run.
     assert.equal(seen.length, 2);
-    assert.equal(seen[1]!.kind, "resume");
-    assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
-    const retainedAttachmentEntries = await readdir(
-      join(first.admitted!.runDirectory, "attachments"),
+    assert.equal(seen[1]!.kind, "initial");
+    assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s002");
+    const secondEntries = await readdir(
+      join(second.admitted!.runDirectory, "attachments"),
       { recursive: true },
     );
-    const secondSnapshot = retainedAttachmentEntries.find((entry) =>
-      entry.endsWith("00-second-court.md"),
-    );
+    const secondSnapshot = secondEntries.find((entry) => entry.endsWith("00-second-court.md"));
     assert.ok(secondSnapshot);
     assert.equal(
-      await readFile(join(first.admitted!.runDirectory, "attachments", secondSnapshot), "utf8"),
+      await readFile(join(second.admitted!.runDirectory, "attachments", secondSnapshot), "utf8"),
       "second court snapshot",
     );
 
-    // Third summons must continue selecting s001 without materializing s002/s003.
     const third = await runPublicCountersign(
       ["裁：#582 三轮再审。"],
       {
@@ -1967,14 +1961,11 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
       parseCountersignArgv,
     );
     assert.equal(third.exitCode, 0);
-    assert.equal(
-      third.admitted?.runId,
-      "01a0sign00-0000-7000-8000-00000000s001",
-      "third same-ticket summons must skip provisional runs that never formed a principal",
-    );
+    assert.equal(third.admitted?.runId, "01a0sign00-0000-7000-8000-00000000s003");
+    assert.equal(third.admitted?.ticketNumber, 582);
     assert.equal(seen.length, 3);
-    assert.equal(seen[2]!.kind, "resume");
-    assert.equal(seen[2]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
+    assert.equal(seen[2]!.kind, "initial");
+    assert.equal(seen[2]!.runId, "01a0sign00-0000-7000-8000-00000000s003");
   });
 });
 
@@ -2149,14 +2140,14 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
       parseCountersignArgv,
     );
     assert.equal(resumed.exitCode, 0);
-    assert.equal(resumed.admitted?.runId, firstRunId, "same-ticket resume keeps principal run");
+    assert.equal(resumed.admitted?.runId, "01a0sign00-0000-7000-8000-00000000871b");
     assert.equal(resumed.admitted?.ticketNumber, parent);
-    assert.deepEqual(resumed.admitted?.courtTicketNumbers, [parent, childA, childB]);
+    assert.deepEqual(resumed.admitted?.courtTicketNumbers, [parent]);
     assert.equal(countersignBodyTurns, 1);
     assert.deepEqual(
       boundRefreshTickets,
-      [parent, childA, childB],
-      "resume without new set still refreshes stored set",
+      [parent],
+      "a new public summons without a new set does not inherit the previous run's court set",
     );
 
     // --- new summons replaces whole set with {parent,A,C}; B not refreshed ---
@@ -2173,7 +2164,7 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
       parseCountersignArgv,
     );
     assert.equal(replaced.exitCode, 0);
-    assert.equal(replaced.admitted?.runId, firstRunId);
+    assert.equal(replaced.admitted?.runId, "01a0sign00-0000-7000-8000-00000000871c");
     assert.equal(replaced.admitted?.ticketNumber, parent);
     assert.deepEqual(replaced.admitted?.courtTicketNumbers, [parent, childA, childC]);
     assert.equal(countersignBodyTurns, 1);
