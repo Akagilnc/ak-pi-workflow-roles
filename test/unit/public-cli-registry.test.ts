@@ -197,7 +197,8 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "secretariat",
     phases: [null],
     outputTool: "ak_secretariat_output",
-    settlement: "secretariat",
+    settlement: "accepted",
+    projectCountersignTerminal: true,
     acceptedText: "中书省回执已接受",
     activationFlags: [
       { field: "ticketNumber" },

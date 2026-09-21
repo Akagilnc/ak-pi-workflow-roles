@@ -90,7 +90,6 @@ import {
 import {
   SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
   SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
-  SECRETARIAT_OUTPUT_TOOL_NAME,
 } from "../secretariat-contracts.ts";
 import {
   observePackagedMethodSkillInvocation,
@@ -137,7 +136,6 @@ import {
   type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
   type AdmittedMergerInvocation,
-  type AdmittedSecretariatInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
@@ -3257,10 +3255,20 @@ export async function trySettleAcceptedSeatTerminalResult(
   if (toolName === undefined) {
     throw new Error(`accepted-seat settlement is not declared for ${admitted.role}`);
   }
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+  const settled = await settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
     role: admitted.role,
     toolName,
   }, scope);
+  const record = packagedRoleMetadata(admitted.role);
+  if (
+    settled === undefined
+    || record === undefined
+    || !("projectCountersignTerminal" in record)
+    || record.projectCountersignTerminal !== true
+  ) {
+    return settled;
+  }
+  return applySecretariatCountersignTerminal(admitted, authority, settled);
 }
 
 type SettlementReader = (
@@ -3309,8 +3317,6 @@ const SETTLEMENT_READER = {
     trySettleCollectorTerminalResult(admitted as AdmittedCollectorInvocation, authority, scope),
   doctor: (admitted, authority, _material, _packageRoot, scope) =>
     trySettleDoctorTerminalResult(admitted as AdmittedDoctorInvocation, authority, scope),
-  secretariat: (admitted, authority, _material, _packageRoot, scope) =>
-    trySettleSecretariatTerminalResult(admitted as AdmittedSecretariatInvocation, authority, scope),
   reviewer: (admitted, authority, material, packageRoot, scope) =>
     material === undefined
       ? Promise.resolve(undefined)
@@ -3417,16 +3423,11 @@ function acceptedSecretariatDefinesOfficerProjection(
   return false;
 }
 
-async function settleLawfulSecretariatTerminalResult(
-  admitted: AdmittedSecretariatInvocation,
+async function applySecretariatCountersignTerminal(
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  const settled = await settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "secretariat",
-    toolName: SECRETARIAT_OUTPUT_TOOL_NAME,
-  }, scope);
-  if (settled === undefined) return undefined;
+  settled: TerminalResult,
+): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   const officer = countersignTerminalFromEntries(entries);
@@ -3461,17 +3462,6 @@ async function settleLawfulSecretariatTerminalResult(
 
   return settled;
 }
-
-/** Try to settle a lawful Secretariat Terminal; undefined only for genuine absence. */
-export async function trySettleSecretariatTerminalResult(
-  admitted: AdmittedSecretariatInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSecretariatTerminalResult(admitted, authority, scope);
-}
-
-
 
 /** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */
 export async function trySettleCoderTerminalResult(

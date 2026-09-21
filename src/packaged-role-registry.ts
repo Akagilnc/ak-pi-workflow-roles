@@ -267,7 +267,9 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "secretariat",
     phases: [null],
     outputTool: SECRETARIAT_OUTPUT_TOOL_NAME,
-    settlement: "secretariat",
+    settlement: "accepted",
+    /** Project the durable 给事中 officer entry onto the shared accepted-tool settlement. */
+    projectCountersignTerminal: true,
     acceptedText: "中书省回执已接受",
     activationFlags: [
       { field: "ticketNumber" },
