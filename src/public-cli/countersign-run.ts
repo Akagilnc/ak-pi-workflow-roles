@@ -87,12 +87,6 @@ export type CountersignRunEnv = PostAdmissionEnv & {
     admitted: AdmittedCountersignInvocation,
   ) => Promise<void>;
   /**
-   * #871: typed co-review set applied onto a resumed run before bound refresh
-   * (gate / explicit resume handoff). Whole-set replace — never union.
-   * Production leaves unset outside that handoff.
-   */
-  pendingCourtTicketNumbers?: readonly number[];
-  /**
    * #969 gate path: plain-language re-ask when prior 给事中 reply was not three-state.
    * Wins over gateReviewInstruction when both present (notary/inspector precedent).
    */
