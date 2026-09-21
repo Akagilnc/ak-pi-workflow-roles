@@ -171,6 +171,63 @@ test("resume accepts --host and selects that host adapter", async () => {
   });
 });
 
+test("explicit resume hands the stored host session id to the selected host", async () => {
+  await withHermeticHome({ prefix: "ak-resume-host-id-" }, async ({ home }) => {
+    const project = join(home, "work");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "run-explicit-host-id";
+    const nativeId = "native-grok-session";
+    await seedResumableJudge({
+      home,
+      project,
+      runId,
+      afterTurn: async (_runDirectory, sessionDirectory) => {
+        await writeFile(
+          join(sessionDirectory, "grok-acp-session.json"),
+          `${JSON.stringify({ sessionId: nativeId })}\n`,
+        );
+      },
+    });
+    await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], {
+      packageRoot,
+      home,
+      io: captureIo().io,
+    });
+
+    let seen: { readonly hostSessionId?: string; readonly prompt: string } | undefined;
+    const host: RoleTurnHost = {
+      executeTurn: async (request) => {
+        if (seen === undefined && request.continuation.kind === "resume") {
+          seen = {
+            ...(request.continuation.hostSessionId === undefined
+              ? {}
+              : { hostSessionId: request.continuation.hostSessionId }),
+            prompt: request.continuation.prompt,
+          };
+        }
+        return { code: 1, stderr: "stop", timedOut: false };
+      },
+    };
+    const { io } = captureIo();
+    await runAkRole(["resume", "--host", "grok-build", runId, "caller words"], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials,
+      io,
+      principalAuthority: piDurablePrincipalAuthority,
+      hostAdapters: [
+        { name: "pi", create: () => ({ ok: true as const, host: stoppedHost }) },
+        { name: "grok-build", create: () => ({ ok: true as const, host }) },
+      ],
+    });
+    assert.equal(seen?.hostSessionId, nativeId);
+    assert.notEqual(seen?.hostSessionId, runId);
+    assert.equal(seen?.prompt.includes("caller words"), true);
+  });
+});
+
 /** Production composition root (no hostAdapters injection) — #580 / #522 merge precondition. */
 const productionBase = (home: string, roleTurnHost?: RoleTurnHost) => ({
   packageRoot,

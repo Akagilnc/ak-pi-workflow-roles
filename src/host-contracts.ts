@@ -140,7 +140,16 @@ export type RoleTurnActivation =
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }
-  | { readonly kind: "resume"; readonly prompt: string };
+  | {
+      readonly kind: "resume";
+      readonly prompt: string;
+      /**
+       * Stored native host session/thread id for a public explicit resume.
+       * Absent on in-call auto-resume and in-gate retries; those still load
+       * through the host adapter. Never the package run id.
+       */
+      readonly hostSessionId?: string;
+    };
 
 /** Seat model consumed by the turn host (provider/model/thinking). */
 export type RoleTurnModelConfig = {

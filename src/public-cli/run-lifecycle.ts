@@ -1804,7 +1804,8 @@ export type LoadedResumablePublicRole = {
 
 /**
  * One resume load. The caller supplies the package run id; the disk role
- * selects the existing restore checks. Host session identity stays on the host adapter.
+ * selects the existing restore checks. The stored native host session id is
+ * read on the public explicit resume seam, not from this load.
  */
 export async function loadResumablePublicRole(
   home: string,

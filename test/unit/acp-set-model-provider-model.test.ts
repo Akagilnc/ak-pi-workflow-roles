@@ -34,12 +34,14 @@ test("hermes set_model RPC modelId is seat provider:model", async () => {
     notify() {},
     async close() {},
   };
+  let rejectLoad = false;
   const host = createAcpRoleTurnHost({
     hostName: "hermes",
     modelPassing: hermes.modelPassing,
     boundResume: hermes.boundResume,
     sessionIdentity: {
       async load() {
+        if (rejectLoad) throw new Error("explicit resume must use the stored host session id");
         return undefined;
       },
       async bind() {},
@@ -78,6 +80,16 @@ test("hermes set_model RPC modelId is seat provider:model", async () => {
 
   const setModel = calls.filter((c) => c.method === "session/set_model");
   assert.equal(setModel.length, 1);
+
+  rejectLoad = true;
+  calls.length = 0;
+  const resumed = await host.executeTurn({
+    ...request,
+    continuation: { kind: "resume", prompt: "again", hostSessionId: "stored-hermes-session" },
+  });
+  assert.equal(resumed.knownFailure, undefined, JSON.stringify(resumed));
+  const loaded = calls.find((call) => call.method === "session/load");
+  assert.equal(loaded?.params.sessionId, "stored-hermes-session");
   assert.deepEqual(setModel[0]?.params, {
     sessionId: "sess-1",
     modelId: `${provider}:${model}`,

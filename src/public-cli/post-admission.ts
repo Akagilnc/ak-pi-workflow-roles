@@ -27,7 +27,7 @@ import {
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
-import { resolveHostAwareSessionAvailability } from "../session-identity.ts";
+import { readStoredHostSessionId, resolveHostAwareSessionAvailability } from "../session-identity.ts";
 import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
 import type {
@@ -1627,6 +1627,22 @@ export async function runPostAdmissionSeatResume<
         }
 
         let turnRequest = await input.buildTurnRequest(admittedForBuild, request);
+        if (
+          turnRequest.continuation.kind === "resume"
+          && turnRequest.continuation.hostSessionId === undefined
+        ) {
+          const hostSessionId = await readStoredHostSessionId(
+            env.host,
+            env.principalAuthority,
+            admittedForBuild.principal,
+          );
+          if (hostSessionId !== undefined) {
+            turnRequest = {
+              ...turnRequest,
+              continuation: { ...turnRequest.continuation, hostSessionId },
+            };
+          }
+        }
 
         // Open court continue, or new court for summons / message re-review
         // (clause 0 新庭可再交卷; #833). Bare resume without open court omits id.
