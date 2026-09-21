@@ -877,7 +877,7 @@ type SeatArgvScan = {
 /**
  * Shared assignment for the public faces every seat already defines the same way:
  * repeatable `--attach`, optional `--project`, and opaque bare instruction.
- * Seat code only assigns ids that are not those two.
+ * Other option ids are assigned once in `parsePublicSeatArgv`.
  */
 function scanSeatArgv(
   owner: Exclude<OptionOwner, "global">,
@@ -927,52 +927,223 @@ function scanSeatArgv(
   };
 }
 
-function materialResult(
-  scanned: SeatArgvScan,
-): { instruction: string; attachmentPaths: string[]; project?: string } {
-  return {
-    instruction: scanned.positional.join(" "),
-    attachmentPaths: scanned.attachmentPaths,
-    ...(scanned.project === undefined ? {} : { project: scanned.project }),
-  };
+/** LLM public seats. Analyst stays on its own deterministic argv. */
+export type PublicSeatArgvOwner = Exclude<OptionOwner, "global" | "analyst">;
+
+type SeatArgvFields = {
+  attachmentPaths: string[];
+  project?: string;
+  positional: string[];
+  prerequisitesPath?: string;
+  prNumber?: number;
+  repo?: string;
+  requestManifestPath?: string;
+  waitWindowMs?: number;
+  issueNumber?: number;
+  runs?: string;
+  sourceRun?: string;
+  baseRevision?: string;
+  lens?: ReviewerLens;
+  authorityRefs: string[];
+  subject?: "judge" | "doctor";
+};
+
+function isMergerInternalPacketFace(token: string): boolean {
+  return (
+    token === "--targetObjectId" || token.startsWith("--targetObjectId=")
+    || token === "--sourceObjectId" || token.startsWith("--sourceObjectId=")
+    || token === "--expectedConflictPaths" || token.startsWith("--expectedConflictPaths=")
+    || token === "--resolutionScope" || token.startsWith("--resolutionScope=")
+  );
 }
 
-/** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
-function parseInstructionArgv(
+/** One assignment for every public-seat option id. Owner only selects the table. */
+function assignPublicSeatOption(
+  owner: PublicSeatArgvOwner,
+  taken: TakenTypedOption,
+  fields: SeatArgvFields,
+): void {
+  const value = taken.value;
+  switch (taken.def.id) {
+    case "subject": {
+      const raw = typeof value === "string" ? value.trim() : "";
+      if (raw !== "judge" && raw !== "doctor") {
+        throw new CliUsageError(
+          `auditor --subject must be judge|doctor, got ${value ?? "(missing)"}`,
+        );
+      }
+      fields.subject = raw;
+      return;
+    }
+    case "source-run": {
+      const text = typeof value === "string" ? value : "";
+      if (text.trim() === "") {
+        throw new CliUsageError(
+          owner === "notary"
+            ? "notary --source-run requires a run locator"
+            : "auditor --source-run requires a run locator",
+        );
+      }
+      fields.sourceRun = owner === "notary" ? text : text.trim();
+      return;
+    }
+    case "base":
+      fields.baseRevision = owner === "reviewer"
+        ? requireReviewerBaseRevision(value)
+        : requireOptionPath(taken.def.canonical, value);
+      return;
+    case "lens":
+      fields.lens = requireReviewerLens(value);
+      return;
+    case "authority-ref":
+      fields.authorityRefs.push(requireAuthorityRef(value));
+      return;
+    case "prerequisites":
+      fields.prerequisitesPath = requireOptionPath(taken.def.canonical, value);
+      return;
+    case "pr":
+      fields.prNumber = parsePositivePrOption(value);
+      return;
+    case "repo":
+      fields.repo = parseRepoOption(value);
+      return;
+    case "request-manifest":
+      fields.requestManifestPath = requireOptionPath(taken.def.canonical, value);
+      return;
+    case "wait-ms": {
+      if (value === undefined || !/^[1-9]\d*$/.test(value.trim())) {
+        throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
+      }
+      const parsed = Number(value.trim());
+      if (!Number.isSafeInteger(parsed) || parsed < 1) {
+        throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
+      }
+      fields.waitWindowMs = parsed;
+      return;
+    }
+    case "issue": {
+      if (value === undefined || value.trim() === "") {
+        throw new CliUsageError("doctor --issue requires a positive integer");
+      }
+      fields.issueNumber = parseDoctorIssueNumber(value);
+      return;
+    }
+    case "runs": {
+      if (value === undefined || value.trim() === "") {
+        throw new CliUsageError("doctor --runs requires a path");
+      }
+      fields.runs = value;
+      return;
+    }
+    default:
+      throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
+  }
+}
+
+function rejectSeatBareToken(owner: PublicSeatArgvOwner, token: string): void {
+  if (owner === "judge" && isRejectedPublicSpelling(owner, token)) {
+    throw new CliUsageError(
+      "judge does not accept a public burden selector; Judge infers its own burden",
+    );
+  }
+  if (
+    owner === "merger"
+    && (isRejectedPublicSpelling(owner, token) || isMergerInternalPacketFace(token))
+  ) {
+    throw new CliUsageError(
+      "merger does not accept public packet fields; the adapter reads Git merge materials",
+    );
+  }
+  if (owner === "notary") {
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown notary option: ${token}`);
+    }
+    throw new CliUsageError(
+      "notary rejects caller prompt/instruction; only --source-run locator is admitted",
+    );
+  }
+}
+
+/**
+ * Sole public-seat argv parse. Seat rows differ by the option table and by
+ * which result keys that table produces. Analyst does not enter here.
+ */
+export function parsePublicSeatArgv(
+  owner: PublicSeatArgvOwner,
   args: readonly string[],
-  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat",
-): ParseInstructionArgvResult {
-  let subject: "judge" | "doctor" | undefined;
-  let sourceRun: string | undefined;
+): PublicSeatParse {
+  if (owner === "judge") {
+    const dd = args.indexOf("--");
+    const preDd = dd === -1 ? args : args.slice(0, dd);
+    for (const token of preDd) {
+      if (isRejectedPublicSpelling("judge", token)) {
+        throw new CliUsageError(
+          "judge does not accept a public burden selector; Judge infers its own burden",
+        );
+      }
+    }
+  }
+  const fields: SeatArgvFields = {
+    attachmentPaths: [],
+    positional: [],
+    authorityRefs: [],
+  };
   const scanned = scanSeatArgv(owner, args, {
     onSeatOption(taken) {
-      if (taken.def.id === "subject") {
-        const raw = typeof taken.value === "string" ? taken.value.trim() : "";
-        if (raw !== "judge" && raw !== "doctor") {
-          throw new CliUsageError(
-            `auditor --subject must be judge|doctor, got ${taken.value ?? "(missing)"}`,
-          );
-        }
-        subject = raw;
-        return;
+      assignPublicSeatOption(owner, taken, fields);
+    },
+    onBare(token, positional) {
+      rejectSeatBareToken(owner, token);
+      appendBareInstruction(owner, token, positional);
+    },
+    onDoubleDash(rest, positional) {
+      if (owner === "notary" && rest.length > 0) {
+        throw new CliUsageError(
+          "notary rejects caller prompt/instruction; only --source-run locator is admitted",
+        );
       }
-      if (taken.def.id === "source-run") {
-        const raw = typeof taken.value === "string" ? taken.value.trim() : "";
-        if (raw === "") {
-          throw new CliUsageError("auditor --source-run requires a run locator");
-        }
-        sourceRun = raw;
-        return;
-      }
-      throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
+      positional.push(...rest);
     },
   });
+  fields.attachmentPaths = scanned.attachmentPaths;
+  if (scanned.project !== undefined) fields.project = scanned.project;
+  fields.positional = scanned.positional;
 
+  const phaseDef = optionsForOwner(owner).find(
+    (def) => def.id === "phase" && def.form === "positional",
+  );
+  const phase = phaseDef === undefined
+    ? undefined
+    : scanned.options.consumeLeadingPhase(fields.positional);
   scanned.options.assertRequired();
+
+  const project = fields.project === undefined ? {} : { project: fields.project };
+  if (owner === "notary") {
+    const sourceRun = fields.sourceRun;
+    if (sourceRun === undefined || sourceRun.trim() === "") {
+      throw new CliUsageError("notary --source-run requires a run locator");
+    }
+    return { sourceRun, ...project };
+  }
+  const instruction = fields.positional.join(" ");
+  const material = owner === "gleaner-left"
+    ? { instruction, ...project }
+    : { instruction, attachmentPaths: fields.attachmentPaths, ...project };
   return {
-    ...materialResult(scanned),
-    ...(subject === undefined ? {} : { subject }),
-    ...(sourceRun === undefined ? {} : { sourceRun }),
+    ...material,
+    ...(phase === undefined ? {} : { phase }),
+    ...(fields.prerequisitesPath === undefined ? {} : { prerequisitesPath: fields.prerequisitesPath }),
+    ...(fields.prNumber === undefined ? {} : { prNumber: fields.prNumber }),
+    ...(fields.repo === undefined ? {} : { repo: fields.repo }),
+    ...(fields.requestManifestPath === undefined ? {} : { requestManifestPath: fields.requestManifestPath }),
+    ...(fields.waitWindowMs === undefined ? {} : { waitWindowMs: fields.waitWindowMs }),
+    ...(fields.issueNumber === undefined ? {} : { issueNumber: fields.issueNumber }),
+    ...(fields.runs === undefined ? {} : { runs: fields.runs }),
+    ...(fields.sourceRun === undefined ? {} : { sourceRun: fields.sourceRun }),
+    ...(fields.baseRevision === undefined ? {} : { baseRevision: fields.baseRevision }),
+    ...(fields.lens === undefined ? {} : { lens: fields.lens }),
+    ...(owner === "reviewer" ? { authorityRefs: fields.authorityRefs } : {}),
+    ...(fields.subject === undefined ? {} : { subject: fields.subject }),
   };
 }
 
@@ -1181,105 +1352,48 @@ export function requireAuthorityRef(value: string | undefined): string {
   });
 }
 
-/**
- * Parse Judge-specific argv after the `judge` token.
- * Spellings from PUBLIC_OPTION_TABLE.judge; rejects burden family (#342).
- */
 export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
-  // Judge owns burden inference — rejected spellings checked per-token.
-  // `--` ends flag parsing: everything after is opaque instruction.
-  const dd = args.indexOf("--");
-  const preDd = dd === -1 ? args : args.slice(0, dd);
-  for (const token of preDd) {
-    if (isRejectedPublicSpelling("judge", token)) {
-      throw new CliUsageError(
-        "judge does not accept a public burden selector; Judge infers its own burden",
-      );
-    }
-  }
-  return parseInstructionArgv(args, "judge");
+  return parsePublicSeatArgv("judge", args) as ParseJudgeArgvResult;
 }
 
 export function parseCountersignArgv(args: readonly string[]): ParseCountersignArgvResult {
-  return parseInstructionArgv(args, "countersign");
+  return parsePublicSeatArgv("countersign", args) as ParseCountersignArgvResult;
 }
 
 export function parseInspectorArgv(args: readonly string[]): ParseInspectorArgvResult {
-  return parseInstructionArgv(args, "inspector");
+  return parsePublicSeatArgv("inspector", args) as ParseInspectorArgvResult;
 }
 
 export function parseGatekeeperArgv(args: readonly string[]): ParseGatekeeperArgvResult {
-  return parseInstructionArgv(args, "gatekeeper");
+  return parsePublicSeatArgv("gatekeeper", args) as ParseGatekeeperArgvResult;
 }
 
 export function parseNavigatorArgv(args: readonly string[]): ParseNavigatorArgvResult {
-  return parseInstructionArgv(args, "navigator");
+  return parsePublicSeatArgv("navigator", args) as ParseNavigatorArgvResult;
 }
 
 export type ParseAuditorArgvResult = ParseInstructionArgvResult;
 
 export function parseAuditorArgv(args: readonly string[]): ParseAuditorArgvResult {
-  return parseInstructionArgv(args, "auditor");
+  return parsePublicSeatArgv("auditor", args) as ParseAuditorArgvResult;
 }
 
 export function parseDiaristArgv(args: readonly string[]): ParseDiaristArgvResult {
-  return parseInstructionArgv(args, "diarist");
+  return parsePublicSeatArgv("diarist", args) as ParseDiaristArgvResult;
 }
 
 export type ParseSecretariatArgvResult = ParseInstructionArgvResult;
 
 export function parseSecretariatArgv(args: readonly string[]): ParseSecretariatArgvResult {
-  return parseInstructionArgv(args, "secretariat");
+  return parsePublicSeatArgv("secretariat", args) as ParseSecretariatArgvResult;
 }
 
-/**
- * Parse Coder-specific argv after the `coder` token.
- * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.coder (#342).
- */
 export function parseCoderArgv(args: readonly string[]): ParseCoderArgvResult {
-  const scanned = scanSeatArgv("coder", args, {
-    onSeatOption(taken) {
-      throw new CliUsageError(`unknown coder option: ${taken.def.canonical}`);
-    },
-  });
-
-  // Phase aliases + default come solely from the typed coder phase row (#342).
-  const phase = scanned.options.consumeLeadingPhase(scanned.positional);
-  scanned.options.assertRequired();
-
-  return {
-    phase,
-    ...materialResult(scanned),
-  };
+  return parsePublicSeatArgv("coder", args) as ParseCoderArgvResult;
 }
 
-/**
- * Parse Fixer-specific argv after the `fixer` token.
- * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.fixer (#342).
- */
 export function parseFixerArgv(args: readonly string[]): ParseFixerArgvResult {
-  let prerequisitesPath: string | undefined;
-  const scanned = scanSeatArgv("fixer", args, {
-    onSeatOption(taken) {
-      if (taken.def.id === "prerequisites") {
-        prerequisitesPath = requireOptionPath(taken.def.canonical, taken.value);
-        return;
-      }
-      throw new CliUsageError(`unknown fixer option: ${taken.def.canonical}`);
-    },
-  });
-
-  // Phase aliases + default come solely from the typed fixer phase row (#342).
-  const phase = scanned.options.consumeLeadingPhase(scanned.positional);
-  scanned.options.assertRequired();
-
-  return {
-    phase,
-    instruction: scanned.positional.join(" "),
-    attachmentPaths: scanned.attachmentPaths,
-    ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
-    ...(scanned.project === undefined ? {} : { project: scanned.project }),
-  };
+  return parsePublicSeatArgv("fixer", args) as ParseFixerArgvResult;
 }
 
 async function readRegularFileAttachment(
@@ -2327,49 +2441,7 @@ function parseRepoOption(raw: string | undefined): string {
   return raw;
 }
 export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvResult {
-  // Spellings from PUBLIC_OPTION_TABLE.collector (#342).
-  let repo: string | undefined;
-  let prNumber: number | undefined;
-  let requestManifestPath: string | undefined;
-  let waitWindowMs: number | undefined;
-  const scanned = scanSeatArgv("collector", args, {
-    onSeatOption(taken) {
-      if (taken.def.id === "pr") {
-        prNumber = parsePositivePrOption(taken.value);
-        return;
-      }
-      if (taken.def.id === "repo") {
-        repo = parseRepoOption(taken.value);
-        return;
-      }
-      if (taken.def.id === "request-manifest") {
-        requestManifestPath = requireOptionPath(taken.def.canonical, taken.value);
-        return;
-      }
-      if (taken.def.id === "wait-ms") {
-        if (taken.value === undefined || !/^[1-9]\d*$/.test(taken.value.trim())) {
-          throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
-        }
-        const parsed = Number(taken.value.trim());
-        if (!Number.isSafeInteger(parsed) || parsed < 1) {
-          throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
-        }
-        waitWindowMs = parsed;
-        return;
-      }
-      throw new CliUsageError(`unknown collector option: ${taken.def.canonical}`);
-    },
-  });
-  // Unconditional required from typed table via shared consumer (#342).
-  // #676 D1: --pr is optional; ambiguous targets reject at admission, not by guessing.
-  scanned.options.assertRequired();
-  return {
-    ...(prNumber === undefined ? {} : { prNumber }),
-    ...materialResult(scanned),
-    ...(repo === undefined ? {} : { repo }),
-    ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
-    ...(waitWindowMs === undefined ? {} : { waitWindowMs }),
-  };
+  return parsePublicSeatArgv("collector", args) as ParseCollectorArgvResult;
 }
 
 /**
@@ -2451,47 +2523,8 @@ export function parseDoctorIssueNumber(raw: string): number {
   return Number(trimmed);
 }
 
-/**
- * Parse Doctor-specific argv after the `doctor` token.
- * Requires --issue; optional confined --runs override; common --attach/--project.
- */
 export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult {
-  // Spellings from PUBLIC_OPTION_TABLE.doctor (#342).
-  let issueRaw: string | undefined;
-  let runs: string | undefined;
-  const scanned = scanSeatArgv("doctor", args, {
-    onSeatOption(taken) {
-      if (taken.def.id === "issue") {
-        if (taken.value === undefined || taken.value.trim() === "") {
-          throw new CliUsageError("doctor --issue requires a positive integer");
-        }
-        issueRaw = taken.value;
-        return;
-      }
-      if (taken.def.id === "runs") {
-        if (taken.value === undefined || taken.value.trim() === "") {
-          throw new CliUsageError("doctor --runs requires a path");
-        }
-        runs = taken.value;
-        return;
-      }
-      throw new CliUsageError(`unknown doctor option: ${taken.def.canonical}`);
-    },
-  });
-
-  // Unconditional required (e.g. --issue) from typed table via shared consumer (#342).
-  scanned.options.assertRequired();
-  const issueNumber = parseDoctorIssueNumber(issueRaw!);
-
-  if (runs !== undefined && runs.trim() === "") {
-    throw new CliUsageError("doctor --runs requires a path");
-  }
-
-  return {
-    issueNumber,
-    ...materialResult(scanned),
-    ...(runs === undefined ? {} : { runs }),
-  };
+  return parsePublicSeatArgv("doctor", args) as ParseDoctorArgvResult;
 }
 
 /**
@@ -2575,43 +2608,7 @@ export type ParseNotaryArgvResult = {
  * Input contract = zero prompt, zero attachment projection (#448 / #276).
  */
 export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult {
-  let sourceRun: string | undefined;
-  const scanned = scanSeatArgv("notary", args, {
-    onSeatOption(taken) {
-      if (taken.def.id === "source-run") {
-        if (taken.value === undefined || taken.value.trim() === "") {
-          throw new CliUsageError("notary --source-run requires a run locator");
-        }
-        sourceRun = taken.value;
-        return;
-      }
-      throw new CliUsageError(`unknown notary option: ${taken.def.canonical}`);
-    },
-    onBare(token) {
-      if (token.startsWith("-") && token !== "-") {
-        throw new CliUsageError(`unknown notary option: ${token}`);
-      }
-      throw new CliUsageError(
-        "notary rejects caller prompt/instruction; only --source-run locator is admitted",
-      );
-    },
-    onDoubleDash(rest) {
-      if (rest.length > 0) {
-        throw new CliUsageError(
-          "notary rejects caller prompt/instruction; only --source-run locator is admitted",
-        );
-      }
-    },
-  });
-
-  scanned.options.assertRequired();
-  if (sourceRun === undefined || sourceRun.trim() === "") {
-    throw new CliUsageError("notary --source-run requires a run locator");
-  }
-  return {
-    sourceRun,
-    ...(scanned.project === undefined ? {} : { project: scanned.project }),
-  };
+  return parsePublicSeatArgv("notary", args) as ParseNotaryArgvResult;
 }
 
 /** Package-owned fixed kickoff only — never caller instruction/attachments.
@@ -2631,23 +2628,7 @@ export function buildNotaryTransportPrompt(
 export function parseGleanerLeftArgv(
   args: readonly string[],
 ): ParseGleanerLeftArgvResult {
-  let baseRevision: string | undefined;
-  const scanned = scanSeatArgv("gleaner-left", args, {
-    onSeatOption(taken) {
-      if (taken.def.id === "base") {
-        baseRevision = requireOptionPath(taken.def.canonical, taken.value);
-        return;
-      }
-      throw new CliUsageError(`unknown gleaner-left option: ${taken.def.canonical}`);
-    },
-  });
-
-  scanned.options.assertRequired();
-  return {
-    instruction: scanned.positional.join(" "),
-    baseRevision: baseRevision!,
-    ...(scanned.project === undefined ? {} : { project: scanned.project }),
-  };
+  return parsePublicSeatArgv("gleaner-left", args) as ParseGleanerLeftArgvResult;
 }
 
 /** Bound comparison base is a typed fact, not a directional instruction. */
@@ -2667,39 +2648,7 @@ export function buildGleanerLeftTransportPrompt(
 export function parseReviewerArgv(
   args: readonly string[],
 ): ParseReviewerArgvResult {
-  // Spellings from PUBLIC_OPTION_TABLE.reviewer (#342). No --attach face.
-  const authorityRefs: string[] = [];
-  let baseRevision: string | undefined;
-  let lens: ReviewerLens | undefined;
-  const scanned = scanSeatArgv("reviewer", args, {
-    onSeatOption(taken) {
-      if (taken.def.id === "base") {
-        baseRevision = requireReviewerBaseRevision(taken.value);
-        return;
-      }
-      if (taken.def.id === "lens") {
-        // Public override is single-axis only; omission stays undefined for the parallel branch.
-        lens = requireReviewerLens(taken.value);
-        return;
-      }
-      if (taken.def.id === "authority-ref") {
-        authorityRefs.push(requireAuthorityRef(taken.value));
-        return;
-      }
-      throw new CliUsageError(`unknown reviewer option: ${taken.def.canonical}`);
-    },
-  });
-
-  // Base and authority are required; omitted lens selects the parallel two-axis mode.
-  scanned.options.assertRequired();
-  return {
-    instruction: scanned.positional.join(" "),
-    attachmentPaths: scanned.attachmentPaths,
-    baseRevision: baseRevision!,
-    ...(lens === undefined ? {} : { lens }),
-    authorityRefs,
-    ...(scanned.project === undefined ? {} : { project: scanned.project }),
-  };
+  return parsePublicSeatArgv("reviewer", args) as ParseReviewerArgvResult;
 }
 
 export type AdmitReviewerInvocationOptions = {
@@ -2751,38 +2700,8 @@ export function buildReviewerTransportPrompt(
 }
 
 
-/**
- * Parse Merger-specific argv after the `merger` token.
- * Spellings from PUBLIC_OPTION_TABLE.merger; internal packet fields rejected (#342).
- */
 export function parseMergerArgv(args: readonly string[]): ParseMergerArgvResult {
-  const scanned = scanSeatArgv("merger", args, {
-    onSeatOption(taken) {
-      throw new CliUsageError(`unknown merger option: ${taken.def.canonical}`);
-    },
-    onBare(token, positional) {
-      // Rejected public spellings (#342) plus other internal packet field faces.
-      if (
-        isRejectedPublicSpelling("merger", token) ||
-        token === "--targetObjectId" ||
-        token.startsWith("--targetObjectId=") ||
-        token === "--sourceObjectId" ||
-        token.startsWith("--sourceObjectId=") ||
-        token === "--expectedConflictPaths" ||
-        token.startsWith("--expectedConflictPaths=") ||
-        token === "--resolutionScope" ||
-        token.startsWith("--resolutionScope=")
-      ) {
-        throw new CliUsageError(
-          "merger does not accept public packet fields; the adapter reads Git merge materials",
-        );
-      }
-      appendBareInstruction("merger", token, positional);
-    },
-  });
-
-  scanned.options.assertRequired();
-  return materialResult(scanned);
+  return parsePublicSeatArgv("merger", args) as ParseMergerArgvResult;
 }
 
 function mergerMaterialFromUtf8(text: string): MergerInput["materials"]["task"] {

@@ -60,22 +60,8 @@ import {
 } from "./role-turn-host-resolution.ts";
 import {
   parseAnalystArgv,
-  parseCoderArgv,
-  parseCollectorArgv,
-  parseCountersignArgv,
-  parseDiaristArgv,
-  parseSecretariatArgv,
-  parseGleanerLeftArgv,
-  parseDoctorArgv,
-  parseFixerArgv,
-  parseGatekeeperArgv,
-  parseJudgeArgv,
-  parseInspectorArgv,
-  parseMergerArgv,
-  parseNavigatorArgv,
-  parseAuditorArgv,
-  parseNotaryArgv,
-  parseReviewerArgv,
+  parsePublicSeatArgv,
+  type PublicSeatArgvOwner,
   type PublicSeatParse,
 } from "./invocation.ts";
 import {
@@ -121,29 +107,36 @@ export { CliUsageError } from "./cli-errors.ts";
 export type { CliIo } from "./cli-io.ts";
 
 /**
- * Sole production map: public role command → argv parser + option definitions.
- * cli handlers and help consume this table; no parallel spelling set (#342).
+ * Sole production map: public role command → one argv parse + that owner's option row.
+ * Seat option values are assigned in parsePublicSeatArgv. Analyst stays deterministic.
  */
+function publicSeatArgv(owner: PublicSeatArgvOwner) {
+  return {
+    parse: (args: readonly string[]) => parsePublicSeatArgv(owner, args),
+    options: optionsForOwner(owner),
+  };
+}
+
 export const PUBLIC_ROLE_ARGV = {
-  judge: { parse: parseJudgeArgv, options: optionsForOwner("judge") },
-  countersign: { parse: parseCountersignArgv, options: optionsForOwner("countersign") },
-  "gleaner-left": { parse: parseGleanerLeftArgv, options: optionsForOwner("gleaner-left") },
-  coder: { parse: parseCoderArgv, options: optionsForOwner("coder") },
-  fixer: { parse: parseFixerArgv, options: optionsForOwner("fixer") },
-  collector: { parse: parseCollectorArgv, options: optionsForOwner("collector") },
-  doctor: { parse: parseDoctorArgv, options: optionsForOwner("doctor") },
-  merger: { parse: parseMergerArgv, options: optionsForOwner("merger") },
-  notary: { parse: parseNotaryArgv, options: optionsForOwner("notary") },
-  inspector: { parse: parseInspectorArgv, options: optionsForOwner("inspector") },
-  reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
-  gatekeeper: { parse: parseGatekeeperArgv, options: optionsForOwner("gatekeeper") },
-  navigator: { parse: parseNavigatorArgv, options: optionsForOwner("navigator") },
-  auditor: { parse: parseAuditorArgv, options: optionsForOwner("auditor") },
-  diarist: { parse: parseDiaristArgv, options: optionsForOwner("diarist") },
-  secretariat: { parse: parseSecretariatArgv, options: optionsForOwner("secretariat") },
+  judge: publicSeatArgv("judge"),
+  countersign: publicSeatArgv("countersign"),
+  "gleaner-left": publicSeatArgv("gleaner-left"),
+  coder: publicSeatArgv("coder"),
+  fixer: publicSeatArgv("fixer"),
+  collector: publicSeatArgv("collector"),
+  doctor: publicSeatArgv("doctor"),
+  merger: publicSeatArgv("merger"),
+  notary: publicSeatArgv("notary"),
+  inspector: publicSeatArgv("inspector"),
+  reviewer: publicSeatArgv("reviewer"),
+  gatekeeper: publicSeatArgv("gatekeeper"),
+  navigator: publicSeatArgv("navigator"),
+  auditor: publicSeatArgv("auditor"),
+  diarist: publicSeatArgv("diarist"),
+  secretariat: publicSeatArgv("secretariat"),
   /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
   analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
-} as const;
+};
 
 /** Global public options — same typed table as role rows (#342). */
 export const PUBLIC_GLOBAL_OPTIONS: readonly PublicOptionDefinition[] =
