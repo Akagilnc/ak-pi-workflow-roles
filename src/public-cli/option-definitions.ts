@@ -1379,7 +1379,7 @@ const SUPPORT_COMMAND_HELP = {
   resume: {
     command: "resume",
     summary:
-      "Resume a role run under the live seat table (model/host/engine); session principal must still exist. [message] applies only to seats that accept caller instruction; Notary/符宝郎 must omit message and derives evidence from the existing source-run/dossier binding. Global --model/--thinking/--host/--engine must be placed before <runId> (either before `resume` or between `resume` and <runId>); the one argv after <runId> is the opaque message, not a flag position (#471).",
+      "Resume a role run under the live seat table (model/host/engine); session principal must still exist. Every callable seat, including Notary/符宝郎, accepts the optional caller message and passes it through unchanged as the continuation prompt. Notary explicit new still accepts only its source-run locator, not a caller prompt. Global --model/--thinking/--host/--engine must be placed before <runId> (either before `resume` or between `resume` and <runId>); the one argv after <runId> is the opaque message, not a flag position (#471).",
     usage: ["ak-role resume <runId> [message]"],
     examples: [
       "ak-role resume 01abc…",
