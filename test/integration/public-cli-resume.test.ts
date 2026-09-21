@@ -21,6 +21,7 @@ import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
   acquireRunWriterLease,
   loadResumableJudgeRun,
@@ -1618,42 +1619,60 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           io: io2,
-          roleTurnHost: roleTurnHostFromLegacyPiRunner({
-            packageRoot,
-            principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
-              dispatches += 1;
-              const sessionPath = args[args.indexOf("--session") + 1]!;
-              await writeFile(
-                sessionPath,
-                `${JSON.stringify({
-                  type: "message",
-                  message: {
-                    role: "toolResult",
-                    toolName: JUDGE_OUTPUT_TOOL_NAME,
-                    isError: false,
-                    details: { judgeStatus: "converged", note: "resume despite live lease" },
-                  },
-                })}\n`,
-                "utf8",
-              );
-              return {
-                code: 0,
-                stderr: "",
-                timedOut: false,
-                args: [...args],
-                sealedAcceptance: {
-                  role: "judge",
-                  details: { judgeStatus: "converged", note: "resume despite live lease" },
+          roleTurnHost: {
+            executeTurn: async (request) => {
+              const result = await roleTurnHostFromLegacyPiRunner({
+                packageRoot,
+                principalAuthority: piDurablePrincipalAuthority,
+                piRunner: async (args) => {
+                  dispatches += 1;
+                  const sessionPath = args[args.indexOf("--session") + 1]!;
+                  await writeFile(
+                    sessionPath,
+                    `${JSON.stringify({
+                      type: "message",
+                      message: {
+                        role: "toolResult",
+                        toolName: JUDGE_OUTPUT_TOOL_NAME,
+                        isError: false,
+                        details: { judgeStatus: "converged", note: "resume despite live lease" },
+                      },
+                    })}\n`,
+                    "utf8",
+                  );
+                  return {
+                    code: 0,
+                    stderr: "",
+                    timedOut: false,
+                    args: [...args],
+                    sealedAcceptance: {
+                      role: "judge",
+                      details: { judgeStatus: "converged", note: "resume despite live lease" },
+                    },
+                  };
                 },
-              };
+              }).executeTurn(request);
+              const statePath = join(request.runDirectory, "run-state.json");
+              await rm(statePath, { force: true });
+              await mkdir(statePath);
+              return result;
             },
-          }),
+          },
         });
         // #987: live package writer lease must not pre-block host CLI resume.
         assert.equal(dispatches, 1);
         assert.equal(resumed.exitCode, 0);
         assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+        const entries = (await readFile(join(runDirectory, "session", "session.jsonl"), "utf8"))
+          .trim()
+          .split("\n")
+          .filter(Boolean)
+          .map((line) => JSON.parse(line) as { customType?: unknown; data?: { diagnostic?: unknown } });
+        const diagnostic = entries.find(
+          (entry) => entry.customType === POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
+        );
+        assert.equal(typeof diagnostic?.data?.diagnostic, "string");
+        assert.ok((diagnostic?.data?.diagnostic as string).length > 0);
       },
       async () => {
         await lease.release();
