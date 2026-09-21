@@ -39,7 +39,6 @@ import {
 
 
 import {
-  extractMergerMethodInvocations,
   settleMergerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -323,13 +322,6 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       toolCallId: "m1",
     });
 
-    const entries = sessionLines.map((line) => JSON.parse(line));
-    const methodInvocations = extractMergerMethodInvocations(entries, {
-      allowedLocations: [material.skillPath, configuredPath],
-    });
-    assert.equal(methodInvocations.length, 1);
-    assert.equal(methodInvocations[0]!.name, "resolving-merge-conflicts");
-
     const terminal = await settleMergerTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
@@ -369,6 +361,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     ) as {
       methodProvenance: { packageAdaptation: string; upstream: { path: string } };
       methodInvocationObserved: boolean;
+      methodInvocations: Array<{ name: string }>;
       derived: {
         targetObjectId: string;
         sourceObjectId: string;
@@ -383,6 +376,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       "skills/engineering/resolving-merge-conflicts",
     );
     assert.equal(evidence.methodInvocationObserved, true);
+    assert.equal(evidence.methodInvocations[0]?.name, "resolving-merge-conflicts");
     assert.equal(evidence.derived.targetObjectId, fixture.target);
     assert.equal(evidence.derived.sourceObjectId, fixture.source);
     assert.deepEqual(evidence.derived.expectedConflictPaths, [

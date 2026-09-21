@@ -44,7 +44,6 @@ import {
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
-  extractReviewerMethodInvocations,
   formatTerminalResult,
   settleReviewerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
@@ -569,6 +568,16 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
         type: "message",
         message: {
           role: "user",
+          content: [{
+            type: "text",
+            text: `<skill name="ak-cross-m-review" location="${join(home, ".agents/skills/ak-cross-m-review/SKILL.md")}">\nbody\n</skill>\n\nreq`,
+          }],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
           content: [{ type: "text", text: expansion }],
         },
       }),
@@ -611,33 +620,6 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       details: receipt,
       toolCallId: "r1",
     });
-
-    const entries = sessionLines.map((line) => JSON.parse(line));
-    const invocations = extractReviewerMethodInvocations(entries, {
-      allowedLocations: [material.skillPath, skillPath],
-    });
-    assert.equal(invocations.length, 1);
-    assert.equal(invocations[0]?.name, "ak-cross-m-review");
-    assert.equal(invocations[0]?.location, material.skillPath);
-
-    const ambient = extractReviewerMethodInvocations(
-      [
-        {
-          type: "message",
-          message: {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `<skill name="ak-cross-m-review" location="${join(home, ".agents/skills/ak-cross-m-review/SKILL.md")}">\nbody\n</skill>\n\nreq`,
-              },
-            ],
-          },
-        },
-      ],
-      { allowedLocations: [material.skillPath, skillPath] },
-    );
-    assert.equal(ambient.length, 0);
 
     const terminal = await settleReviewerTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
@@ -689,6 +671,8 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     );
     assert.equal(evidence.methodInvocationObserved, true);
     assert.equal(evidence.methodInvocations.length, 1);
+    assert.equal(evidence.methodInvocations[0]?.name, "ak-cross-m-review");
+    assert.equal(evidence.methodInvocations[0]?.location, material.skillPath);
     const evidenceText = JSON.stringify(evidence);
     assert.equal(evidenceText.includes(".agents/skills"), false);
   });

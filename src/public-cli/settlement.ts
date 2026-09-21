@@ -90,6 +90,7 @@ import {
 import {
   observePackagedMethodSkillInvocation,
   type ObservedPackagedMethodSkillInvocation,
+  type PackagedMethodSkillName,
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
 import {
@@ -2671,12 +2672,13 @@ function sessionMessageText(message: SessionMessage | undefined): string {
 }
 
 /**
- * Observe optional Fixer diagnosing-bugs Skill expansions from the session.
- * Availability is always package-bound; invocation is recorded only when observed.
+ * Observe packaged method Skill expansions from the session.
+ * The skill name is the caller's packaged method; home locations never count.
  */
-export function extractFixerMethodInvocations(
+function extractObservedMethodInvocations(
   entries: readonly SessionEntry[],
   options: {
+    readonly name: PackagedMethodSkillName;
     readonly allowedLocations: readonly string[];
   },
 ): readonly ObservedPackagedMethodSkillInvocation[] {
@@ -2688,7 +2690,7 @@ export function extractFixerMethodInvocations(
     const text = sessionMessageText(message);
     if (text.length === 0) continue;
     const hit = observePackagedMethodSkillInvocation(text, {
-      name: "diagnosing-bugs",
+      name: options.name,
       allowedLocations: options.allowedLocations,
     });
     if (hit !== undefined) observed.push(hit);
@@ -2756,7 +2758,8 @@ async function settleLawfulFixerTerminalResult(
   const { sessionDirectory, sessionFile } = coordinates;
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const navigator = extractNavigatorFact(entries);
-  const methodInvocations = extractFixerMethodInvocations(entries, {
+  const methodInvocations = extractObservedMethodInvocations(entries, {
+    name: options.methodProvenance.name,
     allowedLocations: [
       options.methodSkillPath,
       options.methodSkillConfiguredPath,
@@ -3375,32 +3378,6 @@ export async function trySettleFixerTerminalResult(
 }
 
 /**
- * Observe forced Reviewer ak-cross-m-review Skill expansions from the session.
- * Expansion evidence is package-path only; ambient home locations never count.
- */
-export function extractReviewerMethodInvocations(
-  entries: readonly SessionEntry[],
-  options: {
-    readonly allowedLocations: readonly string[];
-  },
-): readonly ObservedPackagedMethodSkillInvocation[] {
-  const observed: ObservedPackagedMethodSkillInvocation[] = [];
-  for (const entry of entries) {
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "user") continue;
-    const text = sessionMessageText(message);
-    if (text.length === 0) continue;
-    const hit = observePackagedMethodSkillInvocation(text, {
-      name: "ak-cross-m-review",
-      allowedLocations: options.allowedLocations,
-    });
-    if (hit !== undefined) observed.push(hit);
-  }
-  return Object.freeze(observed);
-}
-
-/**
  * Publish lawful Reviewer success Artifacts on the shared #106 success interface.
  * Evidence records package ak-cross-m-review provenance and typed expansion
  * observation without ambient home Skill paths.
@@ -3460,7 +3437,8 @@ async function settleLawfulReviewerTerminalResult(
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const roleOutcome: LawfulReviewerRoleOutcome = sealed;
   const navigator = extractNavigatorFact(entries);
-  const methodInvocations = extractReviewerMethodInvocations(entries, {
+  const methodInvocations = extractObservedMethodInvocations(entries, {
+    name: options.methodProvenance.name,
     allowedLocations: [
       options.methodSkillPath,
       options.methodSkillConfiguredPath,
@@ -3519,32 +3497,6 @@ export async function trySettleReviewerTerminalResult(
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleLawfulReviewerTerminalResult(admitted, authority, options, scope);
-}
-
-/**
- * Observe forced Merger resolving-merge-conflicts Skill expansions from the session.
- * Expansion evidence is package-path only; ambient home locations never count.
- */
-export function extractMergerMethodInvocations(
-  entries: readonly SessionEntry[],
-  options: {
-    readonly allowedLocations: readonly string[];
-  },
-): readonly ObservedPackagedMethodSkillInvocation[] {
-  const observed: ObservedPackagedMethodSkillInvocation[] = [];
-  for (const entry of entries) {
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "user") continue;
-    const text = sessionMessageText(message);
-    if (text.length === 0) continue;
-    const hit = observePackagedMethodSkillInvocation(text, {
-      name: "resolving-merge-conflicts",
-      allowedLocations: options.allowedLocations,
-    });
-    if (hit !== undefined) observed.push(hit);
-  }
-  return Object.freeze(observed);
 }
 
 /**
@@ -3624,7 +3576,8 @@ async function settleLawfulMergerTerminalResult(
   }
   const accepted: LawfulMergerRoleOutcome = roleOutcome;
   const navigator = extractNavigatorFact(entries);
-  const methodInvocations = extractMergerMethodInvocations(entries, {
+  const methodInvocations = extractObservedMethodInvocations(entries, {
+    name: options.methodProvenance.name,
     allowedLocations: [options.methodSkillPath, options.methodSkillConfiguredPath],
   });
   const artifacts = await publishMergerArtifacts(

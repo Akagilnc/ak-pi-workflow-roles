@@ -37,7 +37,6 @@ import {
 } from "../../src/public-cli/invocation.ts";
 
 import {
-  extractFixerMethodInvocations,
   settleFixerTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
@@ -274,13 +273,6 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       toolCallId: "f1",
     });
 
-    const entries = sessionLines.map((line) => JSON.parse(line));
-    const invocations = extractFixerMethodInvocations(entries, {
-      allowedLocations: [configuredPath, material.skillPath],
-    });
-    assert.equal(invocations.length, 1);
-    assert.equal(invocations[0]!.name, "diagnosing-bugs");
-
     const terminal = await settleFixerTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
@@ -316,6 +308,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
     assert.equal(evidence.methodProvenance.upstream.attribution, "mattpocock/skills");
     assert.equal(evidence.methodInvocationObserved, true);
     assert.equal(evidence.methodInvocations.length, 1);
+    assert.equal(evidence.methodInvocations[0]?.name, "diagnosing-bugs");
     assert.equal(JSON.stringify(evidence).includes(".agents/skills"), false);
 
     // Without skill expansion, provenance remains and invocation is not forced/observed.
