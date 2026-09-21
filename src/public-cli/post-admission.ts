@@ -326,12 +326,6 @@ export type PostAdmissionEnv = {
   freshSummons?: true;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
-  /**
-   * Ephemeral host-turn cwd for Reviewer fresh-copy execution (#946 统一新副本).
-   * Admission and durable projectRoot stay on the caller project; the host turn
-   * (initial and resume) runs in this sandbox when present.
-   */
-  executionCwd?: string;
 };
 
 /**
@@ -1502,9 +1496,8 @@ export async function runPostAdmissionSeatResume<
   ) => Promise<AfterAdmittedLoadResult<A, T>>;
   /**
    * After the single pre-lease load (and optional afterAdmittedLoad), prepare
-   * call-local execution context. Reviewer fresh-copy (#946) mints an ephemeral
-   * worktree from the admitted projectRoot here — reuses this load, does not
-   * pre-load outside the coordinator. cleanup runs after dispatch settles.
+   * call-local execution context. Reuses this load; does not pre-load outside
+   * the coordinator. cleanup runs after dispatch settles.
    */
   afterAdmittedPrepare?: (admitted: A) => Promise<{
     readonly env?: PostAdmissionEnv;
@@ -1542,7 +1535,7 @@ export async function runPostAdmissionSeatResume<
     adapters = prepared.adapters;
   }
 
-  // Call-local execution env; afterAdmittedPrepare may replace it (Reviewer fresh-copy).
+  // Call-local execution env; afterAdmittedPrepare may replace it.
   let env = input.env;
   let preparedCleanup: (() => Promise<void>) | undefined;
 

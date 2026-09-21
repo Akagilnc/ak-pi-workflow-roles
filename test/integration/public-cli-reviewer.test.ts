@@ -972,11 +972,6 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
-      cwd: project,
-      encoding: "utf8",
-    });
-
     let captured: string[] | undefined;
     let capturedStdin: string | undefined;
     let turnCwd: string | undefined;
@@ -997,8 +992,8 @@ test("explicit single-lens projects admitted lens and optional caller provenance
         captured = [...args];
         capturedStdin = options.stdin;
         turnCwd = options.cwd;
-        // Explicit --lens also runs in a fresh copy (#946 统一新副本).
-        assert.notEqual(realpathSync(options.cwd), realpathSync(project));
+        // Explicit --lens shares the ticket worktree (#997).
+        assert.equal(realpathSync(options.cwd), realpathSync(project));
         // Deliberate receipt/lens mismatch must still land (仓级第 0 条).
         return lawfulChildTurn(args, {
           lens: "completeness",
@@ -1010,13 +1005,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
 
     assert.equal(result.exitCode, 0, stdout.join("") || "reviewer failed");
     assert.equal(typeof turnCwd, "string");
-    assert.equal(
-      execFileSync("git", ["worktree", "list", "--porcelain"], {
-        cwd: project,
-        encoding: "utf8",
-      }),
-      worktreeListBefore,
-    );
+    assert.equal(realpathSync(turnCwd!), realpathSync(project));
     assert.equal(captured!.includes("--ak-review-task"), false);
     assert.equal(captured![captured!.indexOf("--ak-review-lens") + 1], "correctness");
     const okDialogue = readUserDialogueStdin(capturedStdin ?? "");
@@ -1114,7 +1103,7 @@ test("default dual-lens pre-dispatch failures keep dual-child surface without ch
     seedGitProject(project);
     execFileSync("git", ["commit", "--allow-empty", "-m", "review target"], { cwd: project });
 
-    // Dirty target must hard-stop before clean detached copies hide dirt.
+    // Dirty target must hard-stop before dual-lens child turns start.
     await writeFile(join(project, "untracked-review-evidence.txt"), "dirty\n", "utf8");
     {
       let childTurns = 0;
@@ -1313,10 +1302,6 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     assert.equal(admitted.lens, "correctness");
     assert.equal(realpathSync(String(admitted.projectRoot)), realpathSync(project));
 
-    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
-      cwd: project,
-      encoding: "utf8",
-    });
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
@@ -1342,8 +1327,8 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(resumeDialogue.includes("/skill:"), false);
         assert.equal(resumeDialogue.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
-        // Resume runs in a fresh copy of the source tree at resume time (#946 10a).
-        assert.notEqual(realpathSync(options.cwd), realpathSync(project));
+        // Resume shares the ticket worktree (#997); no seat-specific ephemeral copy.
+        assert.equal(realpathSync(options.cwd), realpathSync(project));
         resumeCwd = options.cwd;
         return lawfulChildTurn(args, {
           lens: "correctness",
@@ -1354,14 +1339,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     });
     assert.equal(resumed.exitCode, 0, stdout.join("") || "reviewer resume failed");
     assert.equal(typeof resumeCwd, "string");
-    // Fresh copy is gone after resume returns.
-    assert.equal(
-      execFileSync("git", ["worktree", "list", "--porcelain"], {
-        cwd: project,
-        encoding: "utf8",
-      }),
-      worktreeListBefore,
-    );
+    assert.equal(realpathSync(resumeCwd!), realpathSync(project));
     assert.equal(Array.isArray(resumeArgs), true);
     assert.deepEqual(
       resumed.terminal?.roleOutcome.kind === "accepted"
@@ -1376,7 +1354,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
   });
 });
 
-test("default dual-lens from subdirectory admits caller project and deletes ephemeral worktrees", async () => {
+test("default dual-lens from subdirectory admits caller project and shares ticket worktree", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -1397,10 +1375,6 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
     );
 
     const capturedProviders: string[] = [];
-    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
-      cwd: project,
-      encoding: "utf8",
-    });
 
     const { io, stdout } = captureIo();
     const batch = await runAkRole([
@@ -1415,8 +1389,8 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
       io,
       roleTurnHost: reviewerHost(async (args, options) => {
         assert.equal(options.timeoutMs, 17_777);
-        assert.equal(options.cwd.endsWith(join("nested", "leaf")), true);
-        assert.notEqual(realpathSync(options.cwd), callerProjectRoot);
+        // Dual-lens children share the caller project path (#997).
+        assert.equal(realpathSync(options.cwd), callerProjectRoot);
         if (args.includes("--provider")) {
           capturedProviders.push(args[args.indexOf("--provider") + 1]!);
         }
@@ -1442,13 +1416,6 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
     assert.equal(capturedProviders.length >= 2, true);
     for (const provider of capturedProviders) assert.equal(provider, "test-mapped");
 
-    // Ephemeral worktrees are gone after the batch even when children are resumable.
-    const worktreeListAfter = execFileSync("git", ["worktree", "list", "--porcelain"], {
-      cwd: project,
-      encoding: "utf8",
-    });
-    assert.equal(worktreeListAfter, worktreeListBefore);
-
     // Durable identity matches the caller project (10a); one durable page is enough.
     const bookKey = resolveBookKeyFromGit(project);
     const admitted = JSON.parse(
@@ -1464,7 +1431,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
     assert.equal(admitted.baseRevision, "HEAD~1");
     assert.equal(admitted.lens, "completeness");
 
-    // Resume: fresh copy of source tree at resume time; old batch worktree not required (#946 10a).
+    // Resume: same ticket worktree; no seat-specific ephemeral copy (#997).
     const { io: resumeIo, stdout: resumeStdout } = captureIo();
     let resumeCwd: string | undefined;
     const resumed = await runAkRole(
@@ -1477,9 +1444,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
         io: resumeIo,
         roleTurnHost: reviewerHost(async (args, options) => {
           resumeCwd = options.cwd;
-          // Sandbox keeps the caller subdirectory layout under a new worktree root.
-          assert.equal(options.cwd.endsWith(join("nested", "leaf")), true);
-          assert.notEqual(realpathSync(options.cwd), callerProjectRoot);
+          assert.equal(realpathSync(options.cwd), callerProjectRoot);
           return lawfulChildTurn(args, {
             lens: "completeness",
             toolCallId: "subdir-resume",
@@ -1490,12 +1455,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
     assert.equal(resumed.exitCode, 0, resumeStdout.join(""));
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.equal(typeof resumeCwd, "string");
-    // Resume sandbox is deleted after the call; no ownership residue.
-    const worktreeListAfterResume = execFileSync("git", ["worktree", "list", "--porcelain"], {
-      cwd: project,
-      encoding: "utf8",
-    });
-    assert.equal(worktreeListAfterResume, worktreeListBefore);
+    assert.equal(realpathSync(resumeCwd!), callerProjectRoot);
   });
 });
 
@@ -1525,7 +1485,7 @@ test("default dual-lens relative --project and inline --base fail closed like si
         credentials: { "openai-codex": true, xai: true },
         io: batchIo,
         roleTurnHost: reviewerHost(async (args, options) => {
-          assert.notEqual(realpathSync(options.cwd), expectedProjectRoot);
+          assert.equal(realpathSync(options.cwd), expectedProjectRoot);
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
@@ -1554,11 +1514,8 @@ test("default dual-lens relative --project and inline --base fail closed like si
       assert.equal(admitted.baseRevision, "HEAD~1");
     });
 
-    // Inline --base=value must fail closed before minting worktrees.
-    const worktreeListBefore = execFileSync("git", ["worktree", "list", "--porcelain"], {
-      cwd: project,
-      encoding: "utf8",
-    });
+    // Inline --base=value must fail closed before child turns start.
+    let childTurns = 0;
     const { io: badIo, stdout: badStdout } = captureIo();
     const bad = await runAkRole([
       "reviewer", "--model", "test/caller-seat:high",
@@ -1571,14 +1528,11 @@ test("default dual-lens relative --project and inline --base fail closed like si
       credentials: { "openai-codex": true, xai: true },
       io: badIo,
       roleTurnHost: reviewerHost(async () => {
+        childTurns += 1;
         throw new Error("child turn must not start when base precheck fails");
       }),
     });
     assert.equal(bad.exitCode, 1, badStdout.join(""));
-    const worktreeListAfter = execFileSync("git", ["worktree", "list", "--porcelain"], {
-      cwd: project,
-      encoding: "utf8",
-    });
-    assert.equal(worktreeListAfter, worktreeListBefore);
+    assert.equal(childTurns, 0);
   });
 });
