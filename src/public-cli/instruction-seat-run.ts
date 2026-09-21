@@ -21,10 +21,7 @@ import {
   admitPublicRole,
   bindAdmittedTicketNumber,
   bindCourtTicketNumbersOnAdmitted,
-  buildGleanerLeftTransportPrompt,
   buildInstructionTransportPrompt,
-  buildNotaryTransportPrompt,
-  buildReviewerTransportPrompt,
   materializeCountersignInvocation,
   persistAdmittedSourceRunPath,
   recordAdmittedCorrelation,
@@ -115,21 +112,18 @@ function initialPrompt(
   admitted: AdmittedRoleInvocation,
   env: InstructionSeatRunEnv,
 ): string {
+  const record = roleRecord(admitted.role);
   const reask = env.reviewReask ?? env.gateReviewInstruction;
-  if (
-    reask !== undefined
-    && (admitted.role === "auditor" || admitted.role === "inspector" || admitted.role === "notary")
-  ) {
+  if (reask !== undefined && "reaskPrompt" in record && record.reaskPrompt === true) {
     return reask;
   }
-  const material = engineSessionMaterialFromOptions({
-    ...pickEngineAxis(env),
-    packageRoot: env.packageRoot,
-  });
-  if (admitted.role === "notary") return buildNotaryTransportPrompt(admitted, material);
-  if (admitted.role === "gleaner-left") return buildGleanerLeftTransportPrompt(admitted, material);
-  if (admitted.role === "reviewer") return buildReviewerTransportPrompt(admitted, material);
-  return buildInstructionTransportPrompt(admitted, material);
+  return buildInstructionTransportPrompt(
+    admitted,
+    engineSessionMaterialFromOptions({
+      ...pickEngineAxis(env),
+      packageRoot: env.packageRoot,
+    }),
+  );
 }
 
 function hostTurnCwd(env: InstructionSeatRunEnv): { readonly cwd: string } | undefined {

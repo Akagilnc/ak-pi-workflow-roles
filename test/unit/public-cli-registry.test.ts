@@ -86,6 +86,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_reviewer_output",
     settlement: "sealed",
     sealedAcceptedOnly: true,
+    transportPrompt: "skill-args",
     runnerFailure: "engine-detour-record-first",
     acceptedText: "御史台回执已接受",
     activationFlags: [
@@ -169,6 +170,8 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     bareCommand: false,
     outputTool: "ak_notary_output",
     settlement: "accepted",
+    reaskPrompt: true,
+    transportPrompt: "fixed-kickoff",
     acceptedText: "符宝郎回执已接受",
     activationFlags: [
       { field: "sourceRun", from: "sourceRunPath", flag: "ak-notary-source-run", binds: "input" },
@@ -222,6 +225,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     bareCommand: false,
     outputTool: "ak_gleaner_left_output",
     settlement: "accepted",
+    transportPrompt: "baseline",
     acceptedText: "左拾遗回执已接受",
     activationFlags: [
       { field: "baseRevision", flag: "ak-gleaner-left-base" },
@@ -238,6 +242,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_inspector_output",
     settlement: "accepted",
+    reaskPrompt: true,
     acceptedText: "台院回执已接受",
     activationFlags: [
       {
@@ -288,6 +293,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_auditor_output",
     settlement: "accepted",
+    reaskPrompt: true,
     runnerFailure: "engine-detour-record-first",
     acceptedText: "审刑院回执已接受",
     activationStage: "load-and-install",

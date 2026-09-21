@@ -145,6 +145,8 @@ export const PUBLIC_ROLE_RECORDS = [
     settlement: "sealed",
     /** Publish only an accepted ledger outcome; audit escalation stays unsettled here. */
     sealedAcceptedOnly: true,
+    /** Frozen base/lens/authority become the initial prompt; instruction follows. */
+    transportPrompt: "skill-args",
     runnerFailure: "engine-detour-record-first",
     acceptedText: "御史台回执已接受",
     activationFlags: [
@@ -240,6 +242,9 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
     settlement: "accepted",
+    /** Court reask replaces the initial prompt. Otherwise the fixed kickoff. */
+    reaskPrompt: true,
+    transportPrompt: "fixed-kickoff",
     acceptedText: "符宝郎回执已接受",
     activationFlags: [
       { field: "sourceRun", from: "sourceRunPath", flag: "ak-notary-source-run", binds: "input" },
@@ -305,6 +310,8 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME,
     settlement: "accepted",
+    /** Bound comparison base is the initial prompt; instruction follows. */
+    transportPrompt: "baseline",
     acceptedText: "左拾遗回执已接受",
     activationFlags: [
       { field: "baseRevision", flag: "ak-gleaner-left-base" },
@@ -326,6 +333,8 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: INSPECTOR_OUTPUT_TOOL_NAME,
     settlement: "accepted",
+    /** Court reask replaces the initial prompt. */
+    reaskPrompt: true,
     acceptedText: "台院回执已接受",
     activationFlags: [
       {
@@ -384,6 +393,8 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: AUDITOR_OUTPUT_TOOL_NAME,
     settlement: "accepted",
+    /** Court reask replaces the initial prompt. */
+    reaskPrompt: true,
     runnerFailure: "engine-detour-record-first",
     acceptedText: "审刑院回执已接受",
     activationStage: "load-and-install",

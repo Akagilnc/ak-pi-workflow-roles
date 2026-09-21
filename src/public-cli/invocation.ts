@@ -2249,11 +2249,66 @@ async function admitStandardMaterialInvocation<
 
 export type AdmitAuditorInvocationOptions = AdmitInspectorInvocationOptions;
 
-/** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */
+type InstructionTransportSource = {
+  readonly role?: string;
+  readonly instruction: string;
+  readonly instructionEmpty: boolean;
+  readonly attachments: readonly { readonly frozenPath: string }[];
+  readonly baseRevision?: string;
+  readonly lens?: ReviewerLens;
+  readonly authorityRefs?: readonly string[];
+};
+
+function admittedTransportPromptKind(
+  admitted: InstructionTransportSource,
+): "instruction" | "fixed-kickoff" | "baseline" | "skill-args" {
+  if (admitted.role === undefined) return "instruction";
+  const record = packagedRoleMetadata(admitted.role);
+  if (record !== undefined && "transportPrompt" in record) return record.transportPrompt;
+  return "instruction";
+}
+
+/**
+ * One initial prompt transport. The registry `transportPrompt` leaf selects
+ * a fixed kickoff, a bound baseline, or frozen skill args. Absent means the
+ * caller instruction plus frozen attachment paths.
+ */
 export function buildInstructionTransportPrompt(
-  admitted: { instruction: string; instructionEmpty: boolean; attachments: readonly { frozenPath: string }[] },
+  admitted: InstructionTransportSource,
   engineMaterial?: EngineSessionMaterial,
 ): string {
+  const kind = admittedTransportPromptKind(admitted);
+  if (kind === "fixed-kickoff") {
+    return appendEngineSessionMaterial([NOTARY_FIXED_KICKOFF], engineMaterial).join("\n");
+  }
+  if (kind === "baseline") {
+    if (admitted.baseRevision === undefined) {
+      throw new Error("baseline transport prompt is missing the bound revision");
+    }
+    const lines = [`左拾遗案已受理。比较基线：${admitted.baseRevision}`];
+    if (!admitted.instructionEmpty) {
+      lines.push("", admitted.instruction);
+    }
+    return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  }
+  if (kind === "skill-args") {
+    if (
+      admitted.baseRevision === undefined
+      || admitted.lens === undefined
+      || admitted.authorityRefs === undefined
+    ) {
+      throw new Error("skill-args transport prompt is missing frozen skill args");
+    }
+    const lines = [buildReviewerSkillArgProjection({
+      baseRevision: admitted.baseRevision,
+      lens: admitted.lens,
+      authorityRefs: admitted.authorityRefs,
+    })];
+    if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
+      lines.push("", admitted.instruction);
+    }
+    return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  }
   const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
@@ -2561,15 +2616,6 @@ export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult 
   return parsePublicSeatArgv("notary", args) as ParseNotaryArgvResult;
 }
 
-/** Package-owned fixed kickoff only — never caller instruction/attachments.
- * Ticket rides admitted → activation → agent-start typed bound (not free-text kickoff). */
-export function buildNotaryTransportPrompt(
-  _admitted: AdmittedNotaryInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return appendEngineSessionMaterial([NOTARY_FIXED_KICKOFF], engineMaterial).join("\n");
-}
-
 /**
  * Parse Gleaner-Left argv after the `gleaner-left` token.
  * Public flags: --project, required --base. No --attach / ticket face (unanchored self-fetch).
@@ -2579,20 +2625,6 @@ export function parseGleanerLeftArgv(
   args: readonly string[],
 ): ParseGleanerLeftArgvResult {
   return parsePublicSeatArgv("gleaner-left", args) as ParseGleanerLeftArgvResult;
-}
-
-/** Bound comparison base is a typed fact, not a directional instruction. */
-export function buildGleanerLeftTransportPrompt(
-  admitted: AdmittedGleanerLeftInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines: string[] = [
-    `左拾遗案已受理。比较基线：${admitted.baseRevision}`,
-  ];
-  if (!admitted.instructionEmpty) {
-    lines.push("", admitted.instruction);
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
 
 export function parseReviewerArgv(
@@ -2632,23 +2664,6 @@ export function buildReviewerSkillArgProjection(
     ...admitted.authorityRefs.map((ref) => `--authority ${ref}`),
   ].join(" ");
 }
-
-/**
- * Build the host-neutral prompt transport for an admitted Reviewer request.
- * Typed base/lens/authority project to Skill invocation args (never reverse-parsed from prose).
- * Optional caller words + engine material follow.
- */
-export function buildReviewerTransportPrompt(
-  admitted: AdmittedReviewerInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines = [buildReviewerSkillArgProjection(admitted)];
-  if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
-    lines.push("", admitted.instruction);
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
-}
-
 
 export function parseMergerArgv(args: readonly string[]): ParseMergerArgvResult {
   return parsePublicSeatArgv("merger", args) as ParseMergerArgvResult;

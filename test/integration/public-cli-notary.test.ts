@@ -29,10 +29,7 @@ import {
 } from "../../src/notary-source-run.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import {
-  buildNotaryTransportPrompt,
-  parseNotaryArgv,
-} from "../../src/public-cli/invocation.ts";
+import { parseNotaryArgv } from "../../src/public-cli/invocation.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
