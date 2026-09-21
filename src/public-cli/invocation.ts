@@ -1634,19 +1634,75 @@ export async function admitPublicRole(
         },
       });
     }
-    case "collector":
-      return admitCollectorInvocation({
+    case "collector": {
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      let explicitPrNumber: number | undefined;
+      if (parsed.prNumber !== undefined) {
+        try {
+          explicitPrNumber = parseCollectorPrNumber(parsed.prNumber);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new CliUsageError(detail, { cause: error });
+        }
+      }
+      const projectRoot = resolve(parsed.project ?? shared.cwd);
+      let repository: CollectorRepository;
+      if (parsed.repo !== undefined) {
+        try {
+          repository = parseCollectorRepository(parsed.repo);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new CliUsageError(detail, { cause: error });
+        }
+      } else {
+        repository = resolveGitHubRemoteRepository(projectRoot);
+      }
+      let manifest = emptyCollectorManifest();
+      let manifestCanonicalJson: string | undefined;
+      if (parsed.requestManifestPath !== undefined) {
+        try {
+          manifest = await loadCollectorManifest(parsed.requestManifestPath);
+          manifestCanonicalJson = manifest.canonicalJson;
+        } catch (error) {
+          throw new CliUsageError(
+            error instanceof Error ? error.message : String(error),
+            { cause: error },
+          );
+        }
+      }
+      const manifestDigest = manifest.digest;
+      const admittedCollector = await admitStandardMaterialInvocation("collector", {
         ...shared,
         instruction,
         attachmentPaths,
-        ...(parsed.prNumber === undefined ? {} : { prNumber: parsed.prNumber }),
-        ...(parsed.repo === undefined ? {} : { repo: parsed.repo }),
-        ...(parsed.requestManifestPath === undefined
-          ? {}
-          : { requestManifestPath: parsed.requestManifestPath }),
-        ...(parsed.waitWindowMs === undefined ? {} : { waitWindowMs: parsed.waitWindowMs }),
         ...project,
+        placedFields: async (placed) => {
+          // Task materials are frozen before target resolution (#676 A).
+          const target = await resolveCollectorTarget({
+            projectRoot,
+            repository,
+            ...(explicitPrNumber === undefined ? {} : { explicitPrNumber }),
+          });
+          const prNumber = target.kind === "bound" ? target.prNumber : undefined;
+          let requestManifestPath: string | undefined;
+          if (manifestCanonicalJson !== undefined) {
+            requestManifestPath = join(placed.runDirectory, "request-manifest.json");
+            await writeFile(requestManifestPath, manifestCanonicalJson, "utf8");
+          }
+          return {
+            ...(prNumber === undefined ? {} : { prNumber }),
+            repository: repository.canonical,
+            repositoryDisplay: repository.display,
+            ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
+            ...(parsed.waitWindowMs === undefined ? {} : { waitWindowMs: parsed.waitWindowMs }),
+            manifestDigest,
+          };
+        },
       });
+      return { ...admittedCollector, repository };
+    }
     case "doctor":
       return admitDoctorInvocation({
         ...shared,
@@ -1909,10 +1965,10 @@ async function persistPlacedAdmission(
  * before materializeCountersignInvocation writes the page.
  * Seats whose extra facts are known before placement pass them as admittedFields.
  * Seats whose extra facts depend on the placed run pass placedFields
- * (coder writes task.md; fixer writes fix-packet.md and optional prerequisites.json).
+ * (coder writes task.md; fixer writes fix-packet.md; collector writes request-manifest.json).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder" | "fixer",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder" | "fixer" | "collector",
   Extra extends object = {},
 >(
   role: R,
@@ -2259,129 +2315,6 @@ function isGitRemoteMissing(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const status = (error as { status?: unknown }).status;
   return status === 2;
-}
-
-export type AdmitCollectorInvocationOptions = {
-  home: string;
-  principalAuthority: DurablePrincipalAuthority;
-  cwd: string;
-  /** Explicit PR when provided; resolved from context when absent (#676 D1). */
-  prNumber?: number;
-  instruction?: string;
-  attachmentPaths?: readonly string[];
-  project?: string;
-  /** Explicit owner/repo override; defaults from project origin remote. */
-  repo?: string;
-  /** Optional public request configuration; copied into the admitted run. */
-  requestManifestPath?: string;
-  /** Optional wait-window ms (#678 D4). */
-  waitWindowMs?: number;
-  createRunId?: () => string;
-  /** Effective model for this invocation — written onto invocation.json. */
-  model?: InvocationEffectiveModel;
-  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
-  assertedTicketNumber?: number;
-};
-
-/**
- * Admit a Collector Role run: assemble the retained leg manifest from typed
- * declarations, resolve repository + PR target (#676 D1), and place the session under #78.
- * Explicit PR is not preflighted for existence; context resolution uses online association.
- */
-async function admitCollectorInvocation(
-  options: AdmitCollectorInvocationOptions,
-): Promise<AdmittedCollectorInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  let explicitPrNumber: number | undefined;
-  if (options.prNumber !== undefined) {
-    try {
-      explicitPrNumber = parseCollectorPrNumber(options.prNumber);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new CliUsageError(detail, { cause: error });
-    }
-  }
-
-  const projectRoot = resolve(options.project ?? options.cwd);
-  let repository: CollectorRepository;
-  if (options.repo !== undefined) {
-    try {
-      repository = parseCollectorRepository(options.repo);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new CliUsageError(detail, { cause: error });
-    }
-  } else {
-    repository = resolveGitHubRemoteRepository(projectRoot);
-  }
-
-  // Validate optional request-manifest before freezing request materials.
-  let manifest = emptyCollectorManifest();
-  let manifestCanonicalJson: string | undefined;
-  if (options.requestManifestPath !== undefined) {
-    try {
-      manifest = await loadCollectorManifest(options.requestManifestPath);
-      manifestCanonicalJson = manifest.canonicalJson;
-    } catch (error) {
-      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
-    }
-  }
-  const manifestDigest = manifest.digest;
-
-  const placed = await placeRoleAdmission({
-    role: "collector",
-    home: options.home,
-    principalAuthority: options.principalAuthority,
-    cwd: options.cwd,
-    attachmentPaths: options.attachmentPaths ?? [],
-    ...(options.project === undefined ? {} : { project: options.project }),
-    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-    ...(options.assertedTicketNumber === undefined
-      ? {}
-      : { assertedTicketNumber: options.assertedTicketNumber }),
-  });
-  // #676 A: task materials are frozen before target resolution. Admission binds
-  // only explicit --pr or unique head/commit association.
-  const instruction = options.instruction ?? "";
-  const instructionEmpty = instruction.trim() === "";
-  const target = await resolveCollectorTarget({
-    projectRoot,
-    repository,
-    ...(explicitPrNumber === undefined ? {} : { explicitPrNumber }),
-  });
-  const prNumber = target.kind === "bound" ? target.prNumber : undefined;
-  let requestManifestPath: string | undefined;
-  if (manifestCanonicalJson !== undefined) {
-    requestManifestPath = join(placed.runDirectory, "request-manifest.json");
-    await writeFile(requestManifestPath, manifestCanonicalJson, "utf8");
-  }
-  const admitted = {
-    role: "collector" as const,
-    runId: placed.runId,
-    bookKey: placed.bookKey,
-    projectRoot: placed.projectRoot,
-    runDirectory: placed.runDirectory,
-    principal: placed.principal,
-    instruction,
-    instructionEmpty,
-    ...(prNumber === undefined ? {} : { prNumber }),
-    repository: repository.canonical,
-    repositoryDisplay: repository.display,
-    ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
-    ...(options.waitWindowMs === undefined ? {} : { waitWindowMs: options.waitWindowMs }),
-    manifestDigest,
-    attachments: persistedAttachmentRefs(placed.attachments),
-    ...placed.ticketFields,
-  };
-  const admittedRequestPath = await persistPlacedAdmission(admitted, placed, options.model);
-  return {
-    ...admitted,
-    attachments: placed.attachments,
-    admittedRequestPath,
-    repository,
-  };
 }
 
 /** Positive Issue number grammar shared with Doctor case path identity. */
