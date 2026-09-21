@@ -55,7 +55,7 @@ import {
   StationChildExhaustedError,
 } from "./post-admission.ts";
 import {
-  loadResumableCountersignRun,
+  loadResumablePublicRole,
   markRunAdmitted,
   type PublicResumeRequest,
   type RunWriterLease,
@@ -648,7 +648,7 @@ export async function runPublicCountersign(
               resume: async (runId, materials) => {
                 // Consume the same pre-identity snapshot into the retained run; never
                 // reopen caller paths after identity has run.
-                const retained = await loadResumableCountersignRun(
+                const retained = await loadResumedCountersign(
                   env.home,
                   runId,
                   env.principalAuthority,
@@ -818,6 +818,20 @@ function countersignAdapters(options?: {
   };
 }
 
+async function loadResumedCountersign(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+) {
+  const loaded = await loadResumablePublicRole(home, runId, authority);
+  if (loaded.admitted.role !== "countersign") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.admitted.role}, not countersign`,
+    );
+  }
+  return { ...loaded, admitted: loaded.admitted };
+}
+
 /**
  * Resume a previously admitted Countersign run (#599 / DK-3 / #637).
  * Restores role/ticket/session identity. Bound court re-entry runs the diarist
@@ -841,7 +855,7 @@ export async function runPublicCountersignResume(
     env,
     io,
     load: (effective) =>
-      loadResumableCountersignRun(
+      loadResumedCountersign(
         env.home,
         effective.runId,
         env.principalAuthority,

@@ -32,7 +32,7 @@ import {
   type ReviewerLens,
 } from "./invocation.ts";
 import {
-  loadResumableReviewerRun,
+  loadResumablePublicRole,
   markRunAdmitted,
   RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
@@ -393,6 +393,20 @@ export async function runPublicReviewer(
  * Fresh-copy mint reuses the coordinator's single pre-lease load via
  * afterAdmittedPrepare; does not pre-load outside the coordinator.
  */
+async function loadResumedReviewer(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+) {
+  const loaded = await loadResumablePublicRole(home, runId, authority);
+  if (loaded.admitted.role !== "reviewer") {
+    throw new CliUsageError(
+      `role run ${runId} belongs to ${loaded.admitted.role}, not reviewer`,
+    );
+  }
+  return { ...loaded, admitted: loaded.admitted };
+}
+
 export async function runPublicReviewerResume(
   request: PublicResumeRequest,
   env: ReviewerRunEnv,
@@ -412,7 +426,7 @@ export async function runPublicReviewerResume(
     env,
     io,
     load: (effective) =>
-      loadResumableReviewerRun(env.home, effective.runId, env.principalAuthority),
+      loadResumedReviewer(env.home, effective.runId, env.principalAuthority),
     buildTurnRequest: (admitted, effective) => {
       const activeEnv: ReviewerRunEnv = sandbox.executionCwd === undefined
         ? env

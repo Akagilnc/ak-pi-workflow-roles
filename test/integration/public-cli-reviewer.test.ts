@@ -38,7 +38,7 @@ import {
 } from "../../src/public-cli/invocation.ts";
 
 import {
-  loadResumableReviewerRun,
+  loadResumablePublicRole,
   markRunAdmitted,
   markRunResumable,
   readRoleRunState,
@@ -1229,7 +1229,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     );
 
     await assert.rejects(
-      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
+      () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
@@ -1242,7 +1242,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       "utf8",
     );
     await assert.rejects(
-      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
+      () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
@@ -1255,7 +1255,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       "utf8",
     );
     await assert.rejects(
-      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
+      () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
@@ -1267,7 +1267,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       "utf8",
     );
     await assert.rejects(
-      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
+      () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );

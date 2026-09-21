@@ -24,7 +24,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
   acquireRunWriterLease,
-  loadResumableJudgeRun,
+  loadResumablePublicRole,
   markRunAdmitted,
   markRunResumable,
   markRunTerminal,
@@ -1553,9 +1553,9 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
       assert.equal(dispatches, 0);
     }
 
-    // Unit: loadResumableJudgeRun rejects terminal/non-resumable.
+    // Unit: loadResumablePublicRole rejects terminal/non-resumable.
     await assert.rejects(
-      () => loadResumableJudgeRun(home, "missing", piDurablePrincipalAuthority),
+      () => loadResumablePublicRole(home, "missing", piDurablePrincipalAuthority),
       /unknown role run id/,
     );
   });
@@ -2146,7 +2146,7 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     // Principal path is bound but the file itself is missing.
 
     await assert.rejects(
-      () => loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority),
+      () => loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof Error &&
         error.message.includes("Pi session principal is unavailable"),
