@@ -12,7 +12,7 @@
  */
 
 import { CliUsageError } from "./cli-errors.ts";
-import { PUBLIC_CALLABLE_ROLES } from "./registry.ts";
+import { PUBLIC_CALLABLE_ROLES, type PublicCallableRole } from "./registry.ts";
 
 /** Analyst public query faces (#336/#337/#338/#399). model-groups CLI face disabled (library kernel retained). */
 export type AnalystMode = "issue" | "sweep" | "cohort";
@@ -20,25 +20,8 @@ export type AnalystMode = "issue" | "sweep" | "cohort";
 /** Coder/Fixer public phase tokens. */
 export type RolePhase = "plan" | "apply";
 
-export type OptionOwner =
-  | "global"
-  | "judge"
-  | "countersign"
-  | "coder"
-  | "fixer"
-  | "reviewer"
-  | "collector"
-  | "doctor"
-  | "merger"
-  | "notary"
-  | "gleaner-left"
-  | "inspector"
-  | "gatekeeper"
-  | "navigator"
-  | "auditor"
-  | "diarist"
-  | "secretariat"
-  | "analyst";
+/** global, every composition-root role, and the deterministic analyst command. */
+export type OptionOwner = "global" | PublicCallableRole | "analyst";
 
 /**
  * One public option (or positional mode/phase token) identity.
@@ -796,13 +779,12 @@ const ANALYST_OPTIONS = [
 ] as const satisfies readonly PublicOptionDefinition[];
 
 /**
- * Sole production option tables keyed by PUBLIC_ROLE_ARGV / global owner.
- * Rows are readonly definition lists — parsers look up spellings here.
+ * Seats whose public rows are not the shared project+attach face.
+ * A new project+attach seat needs no entry here.
  */
-export const PUBLIC_OPTION_TABLE = {
-  global: GLOBAL_OPTIONS,
-  judge: projectAndAttach("judge"),
-  countersign: projectAndAttach("countersign"),
+const SEAT_OPTION_ROWS: Partial<
+  Record<PublicCallableRole, readonly PublicOptionDefinition[]>
+> = {
   "gleaner-left": GLEANER_LEFT_OPTIONS,
   coder: CODER_OPTIONS,
   fixer: FIXER_OPTIONS,
@@ -811,14 +793,27 @@ export const PUBLIC_OPTION_TABLE = {
   doctor: DOCTOR_OPTIONS,
   merger: MERGER_OPTIONS,
   notary: NOTARY_OPTIONS,
-  inspector: projectAndAttach("inspector"),
-  gatekeeper: projectAndAttach("gatekeeper"),
-  navigator: projectAndAttach("navigator"),
   auditor: AUDITOR_OPTIONS,
-  diarist: projectAndAttach("diarist"),
-  secretariat: projectAndAttach("secretariat"),
-  analyst: ANALYST_OPTIONS,
-} as const satisfies Record<OptionOwner, readonly PublicOptionDefinition[]>;
+};
+
+function seatOptionRows(role: PublicCallableRole): readonly PublicOptionDefinition[] {
+  return SEAT_OPTION_ROWS[role] ?? projectAndAttach(role);
+}
+
+/**
+ * Sole production option tables keyed by PUBLIC_ROLE_ARGV / global owner.
+ * Rows are readonly definition lists — parsers look up spellings here.
+ * Callable seats come from the composition root; only a different face is listed above.
+ */
+function publicOptionTable(): Record<OptionOwner, readonly PublicOptionDefinition[]> {
+  const roles = {} as Record<PublicCallableRole, readonly PublicOptionDefinition[]>;
+  for (const role of PUBLIC_CALLABLE_ROLES) {
+    roles[role] = seatOptionRows(role);
+  }
+  return { global: GLOBAL_OPTIONS, ...roles, analyst: ANALYST_OPTIONS };
+}
+
+export const PUBLIC_OPTION_TABLE = publicOptionTable();
 
 export type PublicRoleOptionOwner = Exclude<OptionOwner, "global">;
 
