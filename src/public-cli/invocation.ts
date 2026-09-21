@@ -1703,15 +1703,74 @@ export async function admitPublicRole(
       });
       return { ...admittedCollector, repository };
     }
-    case "doctor":
-      return admitDoctorInvocation({
+    case "doctor": {
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      const issueNumber = parsed.issueNumber ?? Number.NaN;
+      if (
+        !Number.isInteger(issueNumber) ||
+        issueNumber < 1 ||
+        !DOCTOR_ISSUE_NUMBER_PATTERN.test(String(issueNumber))
+      ) {
+        throw new CliUsageError(
+          `doctor --issue must be a positive integer, got ${issueNumber}`,
+        );
+      }
+      let frozenAttachments: readonly FrozenAttachment[] = [];
+      const admittedDoctor = await admitStandardMaterialInvocation("doctor", {
         ...shared,
-        issueNumber: parsed.issueNumber ?? Number.NaN,
         instruction,
-        attachmentPaths,
-        ...(parsed.runs === undefined ? {} : { runs: parsed.runs }),
+        attachmentPaths: [],
+        freezeAttachments: false,
         ...project,
+        placedFields: async (placed) => {
+          let caseRunsPath: string;
+          try {
+            caseRunsPath = await resolveDoctorCaseRunsPath({
+              home: shared.home,
+              projectRoot: placed.projectRoot,
+              bookKey: placed.bookKey,
+              issueNumber,
+              ...(parsed.runs === undefined ? {} : { runs: parsed.runs }),
+            });
+          } catch (error) {
+            if (error instanceof CliUsageError) throw error;
+            const detail = error instanceof Error ? error.message : String(error);
+            throw new CliUsageError(detail, { cause: error });
+          }
+          if (parsed.runs === undefined) {
+            ensureRealDirectoryTree(placed.ledgerHome, caseRunsPath);
+          }
+          let caseIdentity: DoctorCaseIdentity;
+          try {
+            const patient = await loadDoctorCase(caseRunsPath);
+            if (patient.identity.issueNumber !== issueNumber) {
+              throw new CliUsageError(
+                `doctor case issue ${patient.identity.issueNumber} does not match --issue ${issueNumber}`,
+              );
+            }
+            caseIdentity = patient.identity;
+            caseRunsPath = await realpath(caseRunsPath);
+          } catch (error) {
+            if (error instanceof CliUsageError) throw error;
+            const detail = error instanceof Error ? error.message : String(error);
+            throw new CliUsageError(
+              `doctor case could not be constructed from retained evidence: ${detail}`,
+              { cause: error },
+            );
+          }
+          frozenAttachments = await freezeAttachments(attachmentPaths, placed.attachmentsDirectory);
+          return {
+            issueNumber,
+            caseRunsPath,
+            caseIdentity,
+            attachments: persistedAttachmentRefs(frozenAttachments),
+          };
+        },
       });
+      return { ...admittedDoctor, attachments: frozenAttachments };
+    }
     case "notary": {
       if (parsed.project !== undefined) {
         requireOptionPath("--project", parsed.project);
@@ -1965,10 +2024,11 @@ async function persistPlacedAdmission(
  * before materializeCountersignInvocation writes the page.
  * Seats whose extra facts are known before placement pass them as admittedFields.
  * Seats whose extra facts depend on the placed run pass placedFields
- * (coder writes task.md; fixer writes fix-packet.md; collector writes request-manifest.json).
+ * (coder writes task.md; fixer writes fix-packet.md; collector writes request-manifest.json;
+ * doctor resolves the case, then freezes attachments).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder" | "fixer" | "collector",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder" | "fixer" | "collector" | "doctor",
   Extra extends object = {},
 >(
   role: R,
@@ -2410,23 +2470,6 @@ export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult 
   };
 }
 
-export type AdmitDoctorInvocationOptions = {
-  home: string;
-  principalAuthority: DurablePrincipalAuthority;
-  cwd: string;
-  issueNumber: number;
-  /** Optional project-relative retained runs root override. */
-  runs?: string;
-  instruction?: string;
-  attachmentPaths?: readonly string[];
-  project?: string;
-  createRunId?: () => string;
-  /** Effective model for this invocation — written onto invocation.json. */
-  model?: InvocationEffectiveModel;
-  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
-  assertedTicketNumber?: number;
-};
-
 /**
  * Resolve the retained Doctor case runs root from Issue identity.
  * Default is the #78 book locator; optional --runs must stay project-confined
@@ -2496,114 +2539,6 @@ export async function resolveDoctorCaseRunsPath(options: {
   }
   return real;
 }
-
-/**
- * Admit a Doctor Role run: resolve Issue → retained runs root via #78 (or a
- * confined override), construct the structurally exact case identity through
- * loadDoctorCase, and place the Doctor session under the book runs lane.
- * Does not copy session content into a second store.
- */
-async function admitDoctorInvocation(
-  options: AdmitDoctorInvocationOptions,
-): Promise<AdmittedDoctorInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  if (
-    !Number.isInteger(options.issueNumber) ||
-    options.issueNumber < 1 ||
-    !DOCTOR_ISSUE_NUMBER_PATTERN.test(String(options.issueNumber))
-  ) {
-    throw new CliUsageError(
-      `doctor --issue must be a positive integer, got ${options.issueNumber}`,
-    );
-  }
-
-  const placed = await placeRoleAdmission({
-    role: "doctor",
-    home: options.home,
-    principalAuthority: options.principalAuthority,
-    cwd: options.cwd,
-    attachmentPaths: [],
-    freezeAttachments: false,
-    ...(options.project === undefined ? {} : { project: options.project }),
-    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-    ...(options.assertedTicketNumber === undefined
-      ? {}
-      : { assertedTicketNumber: options.assertedTicketNumber }),
-  });
-  const projectRoot = placed.projectRoot;
-
-  let caseRunsPath: string;
-  try {
-    caseRunsPath = await resolveDoctorCaseRunsPath({
-      home: options.home,
-      projectRoot,
-      bookKey: placed.bookKey,
-      issueNumber: options.issueNumber,
-      ...(options.runs === undefined ? {} : { runs: options.runs }),
-    });
-  } catch (error) {
-    if (error instanceof CliUsageError) throw error;
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(detail, { cause: error });
-  }
-
-  // Default #78 locator may not exist yet — ensure the empty runs root so
-  // loadDoctorCase can form an empty case and Doctor's refusal owns insufficiency.
-  if (options.runs === undefined) {
-    ensureRealDirectoryTree(placed.ledgerHome, caseRunsPath);
-  }
-
-  let caseIdentity: DoctorCaseIdentity;
-  try {
-    const patient = await loadDoctorCase(caseRunsPath);
-    if (patient.identity.issueNumber !== options.issueNumber) {
-      throw new CliUsageError(
-        `doctor case issue ${patient.identity.issueNumber} does not match --issue ${options.issueNumber}`,
-      );
-    }
-    caseIdentity = patient.identity;
-    caseRunsPath = await realpath(caseRunsPath);
-  } catch (error) {
-    if (error instanceof CliUsageError) throw error;
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(
-      `doctor case could not be constructed from retained evidence: ${detail}`,
-      { cause: error },
-    );
-  }
-
-
-  const attachments = await freezeAttachments(
-    options.attachmentPaths ?? [],
-    placed.attachmentsDirectory,
-  );
-  const instruction = options.instruction ?? "";
-  const instructionEmpty = instruction.trim() === "";
-  const admitted = {
-    role: "doctor" as const,
-    runId: placed.runId,
-    bookKey: placed.bookKey,
-    projectRoot,
-    runDirectory: placed.runDirectory,
-    principal: placed.principal,
-    instruction,
-    instructionEmpty,
-    issueNumber: options.issueNumber,
-    caseRunsPath,
-    caseIdentity,
-    attachments: persistedAttachmentRefs(attachments),
-    ...placed.ticketFields,
-  };
-  const admittedRequestPath = await persistPlacedAdmission(admitted, placed, options.model);
-  return {
-    ...admitted,
-    attachments,
-    admittedRequestPath,
-  };
-}
-
 
 
 export type ParseNotaryArgvResult = {
