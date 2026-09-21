@@ -2567,9 +2567,13 @@ async function settleSealedLedgerTerminal(
     coordinates: DurablePrincipalCoordinates,
     entries: readonly SessionEntry[],
   ) => Promise<TerminalArtifactRef[]>,
+  accept?: (
+    roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
+  ) => boolean,
 ): Promise<TerminalResult | undefined> {
   const roleOutcome = await sealedLedgerOutcome(admitted, admitted.role, scope);
   if (roleOutcome === undefined) return undefined;
+  if (accept !== undefined && !accept(roleOutcome)) return undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   const artifacts = await publish(roleOutcome, coordinates, entries);
@@ -3512,8 +3516,6 @@ export async function publishReviewerArtifacts(
   });
 }
 
-/** Lawful Reviewer accepted outcome extracted from session (no LLM auditor after #495 S6). */
-export type LawfulReviewerRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 async function settleLawfulReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
   authority: DurablePrincipalAuthority,
@@ -3524,38 +3526,24 @@ async function settleLawfulReviewerTerminalResult(
   },
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted, "reviewer", scope);
-  if (sealed?.role !== "reviewer" || sealed.kind !== "accepted") return undefined;
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome: LawfulReviewerRoleOutcome = sealed;
-  const navigator = extractNavigatorFact(entries);
-  const methodInvocations = extractObservedMethodInvocations(entries, {
-    name: options.methodProvenance.name,
-    allowedLocations: [
-      options.methodSkillPath,
-      options.methodSkillConfiguredPath,
-    ],
-  });
-  const artifacts = await publishReviewerArtifacts(
+  return settleSealedLedgerTerminal(
     admitted,
-    roleOutcome,
-    coordinates,
-    {
-      methodProvenance: options.methodProvenance,
-      methodInvocations,
+    authority,
+    scope,
+    (roleOutcome, coordinates, entries) => {
+      const methodInvocations = extractObservedMethodInvocations(entries, {
+        name: options.methodProvenance.name,
+        allowedLocations: [
+          options.methodSkillPath,
+          options.methodSkillConfiguredPath,
+        ],
+      });
+      return publishReviewerArtifacts(admitted, roleOutcome, coordinates, {
+        methodProvenance: options.methodProvenance,
+        methodInvocations,
+      });
     },
-  );
-  return withOptionalGateProjection(
-    {
-      roleOutcome,
-      navigator,
-      artifacts,
-      runId: admitted.runId,
-    },
-    sessionDirectory,
-    detourGateContext(admitted, scope),
+    (roleOutcome) => roleOutcome.role === "reviewer" && roleOutcome.kind === "accepted",
   );
 }
 
