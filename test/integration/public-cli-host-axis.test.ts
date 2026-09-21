@@ -1,15 +1,24 @@
 import assert from "node:assert/strict";
 import { chmod, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 
-import type { DurablePrincipalAuthority, RoleTurnHost } from "../../src/host-contracts.ts";
+import {
+  activationBookDirectory,
+  resolveActivationLedgerHome,
+} from "../../src/activation-ledger-topology.ts";
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import type { DurablePrincipalAuthority, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
+import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
+import { listBookRunDirectories } from "../../src/role-run-placement.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { loadPublicCliConfig, publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
+import { CANONICAL_SOURCE_RUN_ID, seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
+import { publicSeatSummonArgv } from "../helpers/public-seat-summon-argv.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
@@ -176,55 +185,126 @@ test("explicit resume hands the stored host session id to the selected host", as
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const runId = "run-explicit-host-id";
-    const nativeId = "native-grok-session";
-    await seedResumableJudge({
-      home,
-      project,
-      runId,
-      afterTurn: async (_runDirectory, sessionDirectory) => {
-        await writeFile(
-          join(sessionDirectory, "grok-acp-session.json"),
-          `${JSON.stringify({ sessionId: nativeId })}\n`,
-        );
-      },
-    });
-    await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], {
+    const sourceRun = await seedCanonicalSourceRun(home, project, { ticketNumber: 505 });
+    await runAkRole(["config", "set-auto-resume-limit", "0"], {
       packageRoot,
       home,
       io: captureIo().io,
     });
-
-    let seen: { readonly hostSessionId?: string; readonly prompt: string } | undefined;
-    const host: RoleTurnHost = {
-      executeTurn: async (request) => {
-        if (seen === undefined && request.continuation.kind === "resume") {
-          seen = {
-            ...(request.continuation.hostSessionId === undefined
-              ? {}
-              : { hostSessionId: request.continuation.hostSessionId }),
-            prompt: request.continuation.prompt,
-          };
+    const failures: string[] = [];
+    let seq = 0;
+    for (const record of PUBLIC_ROLE_RECORDS) {
+      const nativeId = `native-${record.role}`;
+      let seatRunId: string | undefined;
+      const seedHost: RoleTurnHost = {
+        executeTurn: async (request: RoleTurnRequest) => {
+          const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+          await mkdir(sessionDirectory, { recursive: true });
+          await writeFile(sessionFile, "", "utf8");
+          const dirName = basename(request.runDirectory);
+          const suffix = `@${record.role}`;
+          if (dirName.endsWith(suffix) && !request.runDirectory.includes(CANONICAL_SOURCE_RUN_ID)) {
+            seatRunId = dirName.slice(0, -suffix.length);
+            await writeFile(
+              join(sessionDirectory, "grok-acp-session.json"),
+              `${JSON.stringify({ sessionId: nativeId })}\n`,
+            );
+          }
+          return { code: 1, stderr: "stop", timedOut: false };
+        },
+      };
+      const seedIo = captureIo();
+      const seeded = await runAkRole(publicSeatSummonArgv(record.role, project, sourceRun, 505), {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials,
+        io: seedIo.io,
+        principalAuthority: piDurablePrincipalAuthority,
+        createRunId: () => `01a05051-0000-7000-8000-${String(++seq).padStart(12, "0")}`,
+        hostAdapters: [{ name: "pi", create: () => ({ ok: true as const, host: seedHost }) }],
+      });
+      if (seatRunId === undefined) {
+        const book = activationBookDirectory(
+          resolveActivationLedgerHome(home),
+          resolveBookKeyFromGit(project),
+        );
+        const runs = await listBookRunDirectories(book);
+        let runDirectory: string | undefined;
+        for (let index = runs.length - 1; index >= 0; index -= 1) {
+          const dir = runs[index]!;
+          if (dir.endsWith(`@${record.role}`) && !dir.includes(CANONICAL_SOURCE_RUN_ID)) {
+            runDirectory = dir;
+            break;
+          }
         }
-        return { code: 1, stderr: "stop", timedOut: false };
-      },
-    };
-    const { io } = captureIo();
-    await runAkRole(["resume", "--host", "grok-build", runId, "caller words"], {
-      packageRoot,
-      home,
-      cwd: project,
-      credentials,
-      io,
-      principalAuthority: piDurablePrincipalAuthority,
-      hostAdapters: [
-        { name: "pi", create: () => ({ ok: true as const, host: stoppedHost }) },
-        { name: "grok-build", create: () => ({ ok: true as const, host }) },
-      ],
-    });
-    assert.equal(seen?.hostSessionId, nativeId);
-    assert.notEqual(seen?.hostSessionId, runId);
-    assert.equal(seen?.prompt.includes("caller words"), true);
+        if (runDirectory !== undefined) {
+          const admitted = JSON.parse(
+            await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
+          ) as { sessionDirectory?: unknown; sessionFile?: unknown };
+          if (typeof admitted.sessionDirectory === "string" && typeof admitted.sessionFile === "string") {
+            await mkdir(admitted.sessionDirectory, { recursive: true });
+            await writeFile(admitted.sessionFile, "", "utf8");
+            await writeFile(
+              join(admitted.sessionDirectory, "grok-acp-session.json"),
+              `${JSON.stringify({ sessionId: nativeId })}\n`,
+            );
+            const suffix = `@${record.role}`;
+            seatRunId = basename(runDirectory).slice(0, -suffix.length);
+          }
+        }
+      }
+      if (seatRunId === undefined) {
+        failures.push(`${record.role} seed exit ${seeded.exitCode} wrote no seat run stderr ${seedIo.stderr.at(-1) ?? ""}`);
+        continue;
+      }
+      const runId = seatRunId;
+      await runAkRole(["config", "set", record.role, "openai-codex/gpt-5.6-sol:high"], {
+        packageRoot,
+        home,
+        io: captureIo().io,
+      });
+      let seen: { readonly hostSessionId?: string; readonly prompt: string } | undefined;
+      const host: RoleTurnHost = {
+        executeTurn: async (request) => {
+          if (seen === undefined && request.continuation.kind === "resume") {
+            seen = {
+              ...(request.continuation.hostSessionId === undefined
+                ? {}
+                : { hostSessionId: request.continuation.hostSessionId }),
+              prompt: request.continuation.prompt,
+            };
+          }
+          return { code: 1, stderr: "stop", timedOut: false };
+        },
+      };
+      const resumeArgs = record.role === "notary"
+        ? ["resume", "--host", "grok-build", runId]
+        : ["resume", "--host", "grok-build", runId, "caller words"];
+      const { io, stderr } = captureIo();
+      const resumed = await runAkRole(resumeArgs, {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials,
+        io,
+        principalAuthority: piDurablePrincipalAuthority,
+        hostAdapters: [
+          { name: "pi", create: () => ({ ok: true as const, host: stoppedHost }) },
+          { name: "grok-build", create: () => ({ ok: true as const, host }) },
+        ],
+      });
+      if (seen?.hostSessionId !== nativeId || seen.hostSessionId === runId) {
+        failures.push(
+          `${record.role} resume exit ${resumed.exitCode} hostSessionId ${seen?.hostSessionId ?? "absent"} stderr ${stderr.at(-1) ?? ""}`,
+        );
+        continue;
+      }
+      if (record.role !== "notary" && seen.prompt.includes("caller words") !== true) {
+        failures.push(`${record.role} resume prompt dropped the caller instruction`);
+      }
+    }
+    assert.deepEqual(failures, []);
   });
 });
 

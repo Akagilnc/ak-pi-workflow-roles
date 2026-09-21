@@ -24,6 +24,7 @@ import {
   seedCanonicalSourceRun,
 } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { publicSeatSummonArgv } from "../helpers/public-seat-summon-argv.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const TICKET = 505;
@@ -33,39 +34,6 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["config", "user.email", "placement@test.local"], { cwd: root });
   execFileSync("git", ["config", "user.name", "Placement Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
-}
-
-function argvFor(role: string, project: string, sourceRun: string): string[] {
-  const common = ["--model", "test/caller-seat:high", "--project", project];
-  switch (role) {
-    case "gleaner-left":
-      return [role, ...common, "--base", "HEAD", "note"];
-    case "reviewer":
-      return [
-        role,
-        ...common,
-        "--base",
-        "HEAD",
-        "--lens",
-        "completeness",
-        "--authority-ref",
-        "https://example.com/adr/0082",
-        "review",
-      ];
-    case "doctor":
-      return [role, ...common, "--issue", String(TICKET), "case"];
-    case "collector":
-      return [role, ...common, "--repo", "Akagilnc/ak-pi-workflow-roles", "--pr", "1", "collect"];
-    case "notary":
-    case "auditor":
-      return role === "auditor"
-        ? [role, ...common, "--subject", "judge", "--source-run", sourceRun, "audit"]
-        : [role, ...common, "--source-run", sourceRun];
-    case "merger":
-      return [role, ...common, "merge the current tree"];
-    default:
-      return [role, ...common, "known ticket summons"];
-  }
 }
 
 test("#505 known ticket places every active public seat under that ticket", async () => {
@@ -92,7 +60,7 @@ test("#505 known ticket places every active public seat under that ticket", asyn
       },
     };
     for (const record of PUBLIC_ROLE_RECORDS) {
-      const result = await runAkRole(argvFor(record.role, project, sourceRun), {
+      const result = await runAkRole(publicSeatSummonArgv(record.role, project, sourceRun, TICKET), {
         home,
         packageRoot,
         cwd: project,
