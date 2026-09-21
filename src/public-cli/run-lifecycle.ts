@@ -1670,6 +1670,16 @@ async function loadResumableRunRecord(
   } else if (mergedSet.tickets !== undefined) {
     courtTicketNumbers = mergedSet.tickets;
   }
+  const referencedRunId = sourceRun?.runId ?? basename(sourceRunPath ?? "").split("@")[0];
+  if (referencedRunId !== undefined && referencedRunId !== "") {
+    const currentSourceRunDirectory = await findRunDirectoryById(home, referencedRunId);
+    if (currentSourceRunDirectory !== undefined) {
+      sourceRunPath = currentSourceRunDirectory;
+      if (sourceRun !== undefined) {
+        sourceRun = { ...sourceRun, runDirectory: currentSourceRunDirectory };
+      }
+    }
+  }
   return {
     run,
     principal,
