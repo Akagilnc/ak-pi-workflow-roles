@@ -411,6 +411,10 @@ test("notary keeps its bound source-run ticket over a different receipt assertio
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
+    assert.equal(result.admitted?.role, "notary");
+    if (result.admitted?.role === "notary") {
+      assert.equal(result.admitted.sourceRunPath, sourceRunPath);
+    }
     await assertDurableTicket(result.admitted!.runDirectory, 582);
   });
 });

@@ -1595,12 +1595,42 @@ export async function admitPublicRole(
         ...(parsed.runs === undefined ? {} : { runs: parsed.runs }),
         ...project,
       });
-    case "notary":
-      return admitNotaryInvocation({
+    case "notary": {
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      const projectRoot = resolve(parsed.project ?? shared.cwd);
+      let sourceRun: NotarySourceRunLocator;
+      try {
+        sourceRun = await resolveNotarySourceRunLocator({
+          projectRoot,
+          sourceRun: parsed.sourceRun ?? "",
+          home: shared.home,
+        });
+      } catch (error) {
+        if (error instanceof NotarySourceRunError) {
+          throw new CliUsageError(error.message, { cause: error });
+        }
+        throw error;
+      }
+      // Board ticket on the source run wins; otherwise the summons ticket. Code does not infer one.
+      const inheritedTicketNumber = await readBoardTicketNumber(sourceRun.runDirectory);
+      const knownTicketNumber = inheritedTicketNumber ?? shared.assertedTicketNumber;
+      return admitStandardMaterialInvocation("notary", {
         ...shared,
-        sourceRun: parsed.sourceRun ?? "",
+        ...(knownTicketNumber === undefined
+          ? {}
+          : { assertedTicketNumber: knownTicketNumber }),
+        instruction: "",
+        attachmentPaths: [],
         ...project,
+        freezeAttachments: false,
+        admittedFields: {
+          sourceRunPath: sourceRun.runDirectory,
+          sourceRun,
+        },
       });
+    }
     case "gleaner": {
       if (parsed.project !== undefined) {
         requireOptionPath("--project", parsed.project);
@@ -1819,7 +1849,7 @@ async function persistPlacedAdmission(
  * Seats whose extra facts are known before placement pass them as admittedFields.
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary",
   Extra extends object = {},
 >(
   role: R,
@@ -2800,77 +2830,6 @@ export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult 
   return {
     sourceRun,
     ...(project === undefined ? {} : { project }),
-  };
-}
-
-async function admitNotaryInvocation(options: {
-  readonly home: string;
-  readonly principalAuthority: DurablePrincipalAuthority;
-  readonly cwd: string;
-  readonly sourceRun: string;
-  readonly project?: string;
-  readonly runs?: string;
-  readonly createRunId?: () => string;
-  readonly model?: InvocationEffectiveModel;
-  readonly correlationId?: string;
-  /** Typed ticket already on this summons. Source-run board ticket wins when present. */
-  readonly assertedTicketNumber?: number;
-}): Promise<AdmittedNotaryInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  const projectRoot = resolve(options.project ?? options.cwd);
-  let sourceRun: NotarySourceRunLocator;
-  try {
-    sourceRun = await resolveNotarySourceRunLocator({
-      projectRoot,
-      sourceRun: options.sourceRun,
-      home: options.home,
-    });
-  } catch (error) {
-    if (error instanceof NotarySourceRunError) {
-      throw new CliUsageError(error.message, { cause: error });
-    }
-    throw error;
-  }
-
-  // Notary inherits board identity only — migration-derived stays display/placement.
-  const inheritedTicketNumber = await readBoardTicketNumber(sourceRun.runDirectory);
-  const knownTicketNumber = inheritedTicketNumber ?? options.assertedTicketNumber;
-  const placed = await placeRoleAdmission({
-    role: "notary",
-    home: options.home,
-    principalAuthority: options.principalAuthority,
-    cwd: options.cwd,
-    attachmentPaths: [],
-    freezeAttachments: false,
-    ...(options.project === undefined ? {} : { project: options.project }),
-    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-    ...(knownTicketNumber === undefined ? {} : { assertedTicketNumber: knownTicketNumber }),
-  });
-  const correlationFields = options.correlationId === undefined
-    ? {}
-    : { correlationId: options.correlationId };
-  const admitted = {
-    role: "notary" as const,
-    runId: placed.runId,
-    bookKey: placed.bookKey,
-    projectRoot: placed.projectRoot,
-    runDirectory: placed.runDirectory,
-    principal: placed.principal,
-    instruction: "",
-    instructionEmpty: true as const,
-    attachments: persistedAttachmentRefs(placed.attachments),
-    sourceRunPath: sourceRun.runDirectory,
-    sourceRun,
-    ...placed.ticketFields,
-    ...correlationFields,
-  };
-  const admittedRequestPath = await persistPlacedAdmission(admitted, placed, options.model);
-  return {
-    ...admitted,
-    attachments: placed.attachments,
-    admittedRequestPath,
   };
 }
 
