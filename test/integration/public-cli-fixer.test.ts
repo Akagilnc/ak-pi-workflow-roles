@@ -37,7 +37,7 @@ import {
 } from "../../src/public-cli/invocation.ts";
 
 import {
-  settleFixerTerminalResult,
+  settleSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
   exitCodeForTerminalOutcome,
@@ -273,7 +273,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       toolCallId: "f1",
     });
 
-    const terminal = await settleFixerTerminalResult(admitted, piDurablePrincipalAuthority, {
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -345,7 +345,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       details: receipt,
       toolCallId: "f2",
     });
-    const terminalNoDiag = await settleFixerTerminalResult(noDiag, piDurablePrincipalAuthority, {
+    const terminalNoDiag = await settleSeatTerminalResult(noDiag, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -675,7 +675,7 @@ async function settleFixerSession(
     packageRoot,
     "diagnosing-bugs",
   );
-  return settleFixerTerminalResult(admitted, piDurablePrincipalAuthority, {
+  return settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
     methodProvenance: material.provenance,
     methodSkillPath: material.skillPath,
     methodSkillConfiguredPath: resolvePackagedMethodSkillPath(

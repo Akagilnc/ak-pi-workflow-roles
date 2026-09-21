@@ -45,7 +45,7 @@ import {
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
   formatTerminalResult,
-  settleReviewerTerminalResult,
+  settleSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
   packageRoot,
@@ -621,7 +621,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       toolCallId: "r1",
     });
 
-    const terminal = await settleReviewerTerminalResult(admitted, piDurablePrincipalAuthority, {
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: skillPath,

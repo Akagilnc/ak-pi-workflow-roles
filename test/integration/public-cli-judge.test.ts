@@ -42,7 +42,7 @@ import {
   extractNavigatorFact,
   NAVIGATOR_POST_ROLE_GRACE_MS,
   raceNavigatorGrace,
-  settleJudgeTerminalResult,
+  settleSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
   formatTerminalResult,
@@ -1095,7 +1095,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       "unbound", "runs",
       "run-cli-judge-001@judge",
     );
-    const terminal = await settleJudgeTerminalResult(
+    const terminal = await settleSeatTerminalResult(
       fixtureJudgeAdmitted({
         runId: "run-cli-judge-001",
         runDirectory: runDir,
@@ -1208,7 +1208,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
       "unbound", "runs",
       "run-empty-001@judge",
     );
-    const terminal = await settleJudgeTerminalResult(
+    const terminal = await settleSeatTerminalResult(
       fixtureJudgeAdmitted({
         runId: "run-empty-001",
         runDirectory: runDir,

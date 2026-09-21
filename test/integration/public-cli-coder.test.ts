@@ -32,7 +32,7 @@ import {
   admitPublicRole,
 } from "../../src/public-cli/invocation.ts";
 import {
-  settleCoderTerminalResult,
+  settleSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
@@ -252,7 +252,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       toolCallId: "c1",
     });
 
-    const terminal = await settleCoderTerminalResult(admitted, piDurablePrincipalAuthority, {
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
     });
     assert.equal(terminal.roleOutcome.role, "coder");

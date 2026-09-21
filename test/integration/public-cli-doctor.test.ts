@@ -37,8 +37,8 @@ import {
   admitPublicRole,
 } from "../../src/public-cli/invocation.ts";
 import {
-  settleDoctorTerminalResult,
-  trySettleDoctorTerminalResult,
+  settleSeatTerminalResult,
+  trySettleSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
@@ -501,7 +501,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       caseRunsPath: string;
       caseIdentity: { issueNumber: number; runsPath: string };
     };
-    const settled = await settleDoctorTerminalResult(
+    const settled = await settleSeatTerminalResult(
       fixtureDoctorAdmitted({
         runId: "run-doctor-settle",
         bookKey,
@@ -537,7 +537,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
       })}\n`,
       "utf8",
     );
-    const settledNextAttempt = await settleDoctorTerminalResult(
+    const settledNextAttempt = await settleSeatTerminalResult(
       fixtureDoctorAdmitted({
         runId: "run-doctor-settle",
         bookKey,
@@ -569,7 +569,7 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     );
 
     assert.equal(
-      await trySettleDoctorTerminalResult(
+      await trySettleSeatTerminalResult(
         fixtureDoctorAdmitted({
           runId: "missing",
           bookKey,

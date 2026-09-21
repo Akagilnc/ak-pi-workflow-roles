@@ -39,7 +39,7 @@ import {
 
 
 import {
-  settleMergerTerminalResult,
+  settleSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -322,7 +322,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       toolCallId: "m1",
     });
 
-    const terminal = await settleMergerTerminalResult(admitted, piDurablePrincipalAuthority, {
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -437,7 +437,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       details: escalateReceiptBound,
       toolCallId: "m2",
     });
-    const escalateTerminal = await settleMergerTerminalResult(escalateAdmitted, piDurablePrincipalAuthority, {
+    const escalateTerminal = await settleSeatTerminalResult(escalateAdmitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
