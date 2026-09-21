@@ -619,15 +619,12 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           if (codex) {
             const observation = codexObserver!.result();
             // #987 result 6 / 失败诚实: host-reported failure wins over a package
-            // missing-thread-id label. Bind only when a thread id actually arrived.
-            const bindCodexThreadIfPresent = async (): Promise<void> => {
-              if (observation.threadId === undefined || observation.threadId === "") return;
+            // missing-thread-id label or package persistence failure.
+            if (observation.threadId !== undefined && observation.threadId !== "") {
               sessionId = observation.threadId;
-              await config.sessionIdentity.bind(request.principal, sessionId);
-            };
+            }
 
             if (observation.failureDiagnostic !== undefined) {
-              await bindCodexThreadIfPresent();
               return terminalFromSpawned(spawned, {
                 cause: "output",
                 identity: { name: "HeadlessCliError", code: "codex-turn-failed" },
@@ -638,7 +635,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
 
             // Non-zero exit without a parseable failure event still fails loud.
             if (spawned.code !== 0 && spawned.code !== null) {
-              await bindCodexThreadIfPresent();
               return terminalFromSpawned(spawned, {
                 cause: "output",
                 identity: { name: "HeadlessCliError", code: "codex-nonzero-exit" },

@@ -257,14 +257,18 @@ test("#959 missing host binary stays activation spawn-failed with real path", as
   }
 });
 
-test("#987 codex host failure wins over missing-thread-id label", async () => {
-  // Result 6 / 失败诚实: turn.failed (or nonzero exit) must surface as host
-  // failure even when thread.started never arrived — not HeadlessMissingThreadId.
+test("#987 codex host failure survives session identity persistence failure", async () => {
+  // Result 6 / 失败诚实: once the host reports failure, package persistence
+  // must not replace that terminal with its own error.
   const ledger = createTempPackageHomeLedger({ prefix: "ak-987-codex-fail-", runName: "run@codex" });
   const fakeBin = join(ledger.runDirectory, "fake-codex-turn-failed");
   await writeFile(
     fakeBin,
     `#!/usr/bin/env node
+process.stdout.write(JSON.stringify({
+  type: "thread.started",
+  thread_id: "thread-failed-1",
+}) + "\\n");
 process.stdout.write(JSON.stringify({
   type: "turn.failed",
   error: { message: "thread-store conflict: session already has an active writer (code -32600)" },
@@ -277,7 +281,6 @@ process.exit(1);
   try {
     const description = lookupHeadlessHostDescription("codex");
     assert.ok(description);
-    let bound: string | undefined;
     const host = createHeadlessRoleTurnHost({
       description,
       hostName: "codex",
@@ -286,8 +289,8 @@ process.exit(1);
         async load() {
           return undefined;
         },
-        async bind(_principal, id) {
-          bound = id;
+        async bind() {
+          throw new Error("session identity store is read-only");
         },
         resolveSessionFile: () => join(ledger.runDirectory, "session", "session.jsonl"),
       },
@@ -320,8 +323,10 @@ process.exit(1);
       result.knownFailure?.diagnostic,
       "thread-store conflict: session already has an active writer (code -32600)",
     );
-    assert.notEqual(result.knownFailure?.identity?.code, "missing-thread-id");
-    assert.equal(bound, undefined, "no thread id arrived; bind must not invent one");
+    assert.deepEqual(result.knownFailure?.details, {
+      sessionId: "thread-failed-1",
+      exitCode: 1,
+    });
   } finally {
     ledger.dispose();
   }
