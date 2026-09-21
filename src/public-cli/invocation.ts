@@ -639,6 +639,9 @@ export async function relocateAdmittedRunToTicket(
     role: admitted.role,
   });
   ensureRoleRunDirectory(ledgerHome, dirname(target.runDirectory));
+  // Host sealing is pure identity projection, but may reject the coordinates.
+  // Keep that failure before the filesystem commit point.
+  const principal = authority.seal(target);
 
   // Online relocation owns only this run's writer lease. Do not reuse the
   // offline stock migrator's book-wide rewrite here: peer pages have their own
@@ -647,8 +650,40 @@ export async function relocateAdmittedRunToTicket(
   await rename(oldRunDirectory, target.runDirectory);
 
   // rename moved the open lock inode with the directory. Transfer cleanup
-  // ownership before any subsequent fallible identity projection.
+  // ownership before the fallible durable-page projection.
   heldLease?.relocate(target.runDirectory);
+
+  try {
+    await rewriteRoleRunDurablePages({
+      pagesDirectory: target.runDirectory,
+      oldRunDirectory,
+      newRunDirectory: target.runDirectory,
+    });
+  } catch (error) {
+    const rollbackFailures: unknown[] = [];
+    try {
+      await rewriteRoleRunDurablePages({
+        pagesDirectory: target.runDirectory,
+        oldRunDirectory: target.runDirectory,
+        newRunDirectory: oldRunDirectory,
+      });
+    } catch (rollbackError) {
+      rollbackFailures.push(rollbackError);
+    }
+    try {
+      await rename(target.runDirectory, oldRunDirectory);
+      heldLease?.relocate(oldRunDirectory);
+    } catch (rollbackError) {
+      rollbackFailures.push(rollbackError);
+    }
+    if (rollbackFailures.length > 0) {
+      throw new AggregateError(
+        [error, ...rollbackFailures],
+        "run relocation failed and rollback did not fully converge",
+      );
+    }
+    throw error;
+  }
 
   const admittedRecord = admitted as unknown as Record<string, unknown>;
   rewriteRunDirectoryPathFields(
@@ -672,14 +707,7 @@ export async function relocateAdmittedRunToTicket(
       target.runDirectory,
     ) as string;
   }
-  const principal = authority.seal(target);
   (admitted as { principal: DurablePrincipal }).principal = principal;
-
-  await rewriteRoleRunDurablePages({
-    pagesDirectory: target.runDirectory,
-    oldRunDirectory,
-    newRunDirectory: target.runDirectory,
-  });
 
   return { oldRunDirectory, newRunDirectory: target.runDirectory };
 }

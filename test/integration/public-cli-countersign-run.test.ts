@@ -11,7 +11,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm, writeFile, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import test from "node:test";
@@ -1621,6 +1621,56 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
         },
       }),
     });
+    const failedCoderId = "01a0sign00-0000-7000-8000-00000000fail";
+    const failedCoderUnboundRun = join(bookRoot, "unbound", "runs", `${failedCoderId}@coder`);
+    const failedCoderTarget = join(bookRoot, "582", "runs", `${failedCoderId}@coder`);
+    const failingSealAuthority = {
+      ...piDurablePrincipalAuthority,
+      seal(coordinates: Parameters<typeof piDurablePrincipalAuthority.seal>[0]) {
+        writeFileSync(
+          join(failedCoderUnboundRun, "session", "current-session.json"),
+          "{ injected post-rename parse failure\n",
+          "utf8",
+        );
+        return piDurablePrincipalAuthority.seal(coordinates);
+      },
+    };
+    const failedCoderBase = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: failingSealAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "coder",
+        toolName: CODER_OUTPUT_TOOL_NAME,
+        details: {
+          status: "completed",
+          report: "work-seat rollback probe",
+          ticketNumber: 582,
+        },
+      }),
+    });
+    const failedCoder = await runAkRole(
+      ["coder", "--model", "test/caller-seat:high", "--project", project, "Probe relocation rollback."],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        principalAuthority: failingSealAuthority,
+        credentials: { "openai-codex": true, xai: true },
+        io: captureIo().io,
+        createRunId: () => failedCoderId,
+        roleTurnHost: failedCoderBase,
+      },
+    );
+    assert.equal(failedCoder.exitCode, 1);
+    assert.equal(existsSync(failedCoderUnboundRun), true);
+    assert.equal(existsSync(failedCoderTarget), false);
+    assert.equal(existsSync(join(failedCoderUnboundRun, "writer.lock")), false);
+    const failedAdmitted = JSON.parse(
+      await readFile(join(failedCoderUnboundRun, "admitted-request.json"), "utf8"),
+    ) as { runDirectory?: string };
+    assert.equal(failedAdmitted.runDirectory, failedCoderUnboundRun);
+    assert.equal(await readFile(join(peerRun, "admitted-request.json"), "utf8"), peerPage);
+
     let coderAdmissionDirectory = "";
     const coder = await runAkRole(
       ["coder", "--model", "test/caller-seat:high", "--project", project, "Implement ticket work."],
