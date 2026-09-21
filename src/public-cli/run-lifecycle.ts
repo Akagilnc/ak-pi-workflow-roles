@@ -2355,3 +2355,49 @@ export async function peekRoleRunRole(
   const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
 }
+
+/** One resume load. The disk role selects the existing restore checks. */
+export async function loadResumablePublicRole(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+) {
+  const role = await peekRoleRunRole(home, runId);
+  switch (role) {
+    case "coder":
+      return loadResumableCoderRun(home, runId, authority);
+    case "fixer":
+      return loadResumableFixerRun(home, runId, authority);
+    case "collector":
+      return loadResumableCollectorRun(home, runId, authority);
+    case "doctor":
+      return loadResumableDoctorRun(home, runId, authority);
+    case "reviewer":
+      return loadResumableReviewerRun(home, runId, authority);
+    case "merger":
+      return loadResumableMergerRun(home, runId, authority);
+    case "notary":
+      return loadResumableNotaryRun(home, runId, authority);
+    case "countersign":
+      return loadResumableCountersignRun(home, runId, authority);
+    case "gleaner-left":
+      return loadResumableGleanerLeftRun(home, runId, authority);
+    case "inspector":
+      return loadResumableInspectorRun(home, runId, authority);
+    case "diarist":
+      return loadResumableDiaristRun(home, runId, authority);
+    case "secretariat":
+      return loadResumableSecretariatRun(home, runId, authority);
+    case "gatekeeper":
+    case "navigator":
+    case "auditor":
+      return loadResumableInstructionSeatRun(home, runId, authority);
+    case "judge":
+    case undefined:
+      return loadResumableJudgeRun(home, runId, authority);
+    default: {
+      const unexpected: never = role;
+      throw new CliUsageError(`unknown role run id: ${String(unexpected)}`);
+    }
+  }
+}

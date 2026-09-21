@@ -25,10 +25,10 @@ import {
 } from "../package-resources/method-skill.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
-  admitReviewerInvocation,
-  admissionCallerOptions,
+  admitPublicRole,
   buildReviewerTransportPrompt,
   type AdmittedReviewerInvocation,
+  type PublicSeatParse,
   type ReviewerLens,
 } from "./invocation.ts";
 import {
@@ -185,14 +185,7 @@ export async function runPublicReviewer(
   argv: readonly string[],
   env: ReviewerRunEnv,
   io: CliIo,
-  parseReviewerArgv: (args: readonly string[]) => {
-    instruction: string;
-    attachmentPaths: string[];
-    baseRevision: string;
-    lens?: ReviewerLens;
-    authorityRefs: string[];
-    project?: string;
-  },
+  parseReviewerArgv: (args: readonly string[]) => PublicSeatParse,
 ): Promise<{
   exitCode: number;
   admitted?: AdmittedReviewerInvocation;
@@ -209,6 +202,10 @@ export async function runPublicReviewer(
     throw error;
   }
 
+  if (parsed.baseRevision === undefined) {
+    presentStructuralRejection(new CliUsageError("reviewer requires --base"), io);
+    return { exitCode: 2 };
+  }
   // Omitted public lens is the parallel two-axis branch mark; never admitted as a parent run.
   // Each leg reuses this call's public argv and only adds --lens (#946 / 10a).
   if (parsed.lens === undefined) {
@@ -292,18 +289,11 @@ export async function runPublicReviewer(
 
   let admitted: AdmittedReviewerInvocation;
   try {
-    admitted = await admitReviewerInvocation({
-      instruction: parsed.instruction,
-      attachmentPaths: parsed.attachmentPaths,
-      baseRevision: parsed.baseRevision,
-      lens: parsed.lens,
-      authorityRefs: parsed.authorityRefs,
-      ...(parsed.project === undefined ? {} : { project: parsed.project }),
-      ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-      ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
-      ...(env.model === undefined ? {} : { model: env.model }),
-          ...admissionCallerOptions(env),
-    });
+    const admittedRole = await admitPublicRole("reviewer", parsed, env);
+    if (admittedRole.role !== "reviewer") {
+      throw new Error(`reviewer admission produced ${admittedRole.role}`);
+    }
+    admitted = admittedRole;
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);

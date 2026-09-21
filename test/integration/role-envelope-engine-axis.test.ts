@@ -26,7 +26,7 @@ import {
 } from "../../src/host-contracts.ts";
 import { resolveEngineMaterialPath } from "../../src/package-resources/engine-material.ts";
 import type { AdmittedInspectorInvocation } from "../../src/public-cli/invocation.ts";
-import { buildInspectorTurnRequest } from "../../src/public-cli/inspector-run.ts";
+import { buildInspectorTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
 import { projectActivationFlags } from "../../src/role-activation-flags.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";

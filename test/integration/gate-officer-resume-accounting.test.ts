@@ -26,7 +26,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import type { AdmittedNotaryInvocation } from "../../src/public-cli/invocation.ts";
 import { parseNotaryArgv } from "../../src/public-cli/invocation.ts";
-import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
+import { runPublicNotary } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   attachRecordedSubmissions,
   trySettleNotaryTerminalResult,

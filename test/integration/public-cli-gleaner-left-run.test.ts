@@ -18,7 +18,7 @@ import {
   admitGleanerLeftInvocation,
   parseGleanerLeftArgv,
 } from "../../src/public-cli/invocation.ts";
-import { buildGleanerLeftTurnRequest } from "../../src/public-cli/gleaner-left-run.ts";
+import { buildGleanerLeftTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {

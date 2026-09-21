@@ -34,8 +34,7 @@ import { projectCourtTicketNumbers } from "../diarist-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import {
-  admitCountersignInvocation,
-  admissionCallerOptions,
+  admitPublicRole,
   bindAdmittedTicketNumber,
   bindCourtTicketNumbersOnAdmitted,
   buildCountersignTransportPrompt,
@@ -457,13 +456,13 @@ export async function runPublicCountersign(
   argv: readonly string[],
   env: CountersignRunEnv,
   io: CliIo,
-  parseCountersignArgv: (args: readonly string[]) => ParseCountersignArgvResult,
+  parseCountersignArgv: (args: readonly string[]) => import("./invocation.ts").PublicSeatParse,
 ): Promise<{
   exitCode: number;
   admitted?: AdmittedCountersignInvocation;
   terminal?: TerminalResult;
 }> {
-  let parsed: ParseCountersignArgvResult;
+  let parsed: import("./invocation.ts").PublicSeatParse;
   try {
     parsed = parseCountersignArgv(argv);
   } catch (error) {
@@ -476,20 +475,16 @@ export async function runPublicCountersign(
 
   let admitted: AdmittedCountersignInvocation;
   try {
-    admitted = await admitCountersignInvocation({
-      instruction: parsed.instruction,
-      attachmentPaths: parsed.attachmentPaths,
-      ...(parsed.project === undefined ? {} : { project: parsed.project }),
-      ...(env.createRunId === undefined
-        ? {}
-        : { createRunId: env.createRunId }),
-      ...(env.model === undefined ? {} : { model: env.model }),
-      ...(env.correlationId === undefined
-        ? {}
-        : { correlationId: env.correlationId }),
-      deferPersistence: true,
-          ...admissionCallerOptions(env),
-    });
+    const admittedRole = await admitPublicRole(
+      "countersign",
+      parsed,
+      env,
+      { deferPersistence: true },
+    );
+    if (admittedRole.role !== "countersign") {
+      throw new Error(`countersign admission produced ${admittedRole.role}`);
+    }
+    admitted = admittedRole;
   } catch (error) {
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, io);
@@ -502,7 +497,7 @@ export async function runPublicCountersign(
   // It preserves both causes when its final cleanup also fails.
   try {
     return await withPreparedAttachments(
-      parsed.attachmentPaths,
+      parsed.attachmentPaths ?? [],
       async (preparedAttachments) => {
         const materializeAdmission = async (
           ticketNumber?: number,
@@ -535,7 +530,7 @@ export async function runPublicCountersign(
             // retained run receives its normally correlated refresh child during resume.
             outcome = await invokeCourtDiarist(
               {
-                instruction: parsed.instruction,
+                instruction: parsed.instruction ?? "",
                 projectRoot: admitted.projectRoot,
                 failureLabel: "unbound summons",
                 // #969: parent durable ticket is the resume/bind key (ADR 0079).
@@ -638,7 +633,7 @@ export async function runPublicCountersign(
             // #969/#879: gate re-ask / parent submission body share summons.instruction
             // (reask wins; argv instruction remains the 起居郎 identity face above).
             const resumeInstruction =
-              env.reviewReask ?? env.gateReviewInstruction ?? parsed.instruction;
+              env.reviewReask ?? env.gateReviewInstruction ?? parsed.instruction ?? "";
             const summons: SameTicketSummonsMaterials = {
               instruction: resumeInstruction,
               instructionEmpty: resumeInstruction.trim() === "",

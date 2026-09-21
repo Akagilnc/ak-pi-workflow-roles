@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole, PUBLIC_ROLE_ARGV } from "../../src/public-cli/cli.ts";
-import { runPublicJudge } from "../../src/public-cli/judge-run.ts";
+import { runPublicJudge } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   loadPublicCliConfig,
   publicCliConfigPath,

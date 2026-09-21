@@ -30,7 +30,7 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
-import { buildDiaristTurnRequest } from "../../src/public-cli/diarist-run.ts";
+import { buildDiaristTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   prepareSummonsResumeMaterials,
   resumeTurnRequestProjectionOptions,

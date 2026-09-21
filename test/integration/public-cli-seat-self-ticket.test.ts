@@ -25,10 +25,9 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { runPublicCoder } from "../../src/public-cli/coder-run.ts";
+import { runPublicCoder, runPublicFixer, runPublicJudge, runPublicNotary } from "../../src/public-cli/instruction-seat-run.ts";
 import { runPublicCountersign } from "../../src/public-cli/countersign-run.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { runPublicFixer } from "../../src/public-cli/fixer-run.ts";
 import {
   bindAdmittedTicketNumber,
   parseCoderArgv,
@@ -37,8 +36,6 @@ import {
   parseJudgeArgv,
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";
-import { runPublicJudge } from "../../src/public-cli/judge-run.ts";
-import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import {
   CANONICAL_SOURCE_RUN_ID,

@@ -35,6 +35,8 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
+import type { PackagedRole } from "../packaged-role-registry.ts";
+import { packagedRoleMetadata } from "../packaged-role-registry.ts";
 import {
   isSafePositiveTicketNumber,
   readBoardTicketNumber,
@@ -1474,6 +1476,147 @@ export function admissionCallerOptions(env: {
       : { correlationId: env.correlationId }),
     ...summonedTicketFields(env.boundTicketNumber),
   };
+}
+
+/** Parsed public-seat argv fields the single admit path reads. */
+export type PublicSeatParse = {
+  readonly instruction?: string;
+  readonly attachmentPaths?: readonly string[];
+  readonly project?: string;
+  readonly phase?: "plan" | "apply";
+  readonly prerequisitesPath?: string;
+  readonly prNumber?: number;
+  readonly repo?: string;
+  readonly requestManifestPath?: string;
+  readonly waitWindowMs?: number;
+  readonly issueNumber?: number;
+  readonly runs?: string;
+  readonly sourceRun?: string;
+  readonly baseRevision?: string;
+  readonly lens?: "completeness" | "correctness";
+  readonly authorityRefs?: readonly string[];
+  readonly subject?: "judge" | "doctor";
+};
+
+/**
+ * Sole production admit call. Seat modules do not spread ticket fields.
+ * Kind comes from the composition-root record; placement stays ticketAdmissionFields.
+ */
+export async function admitPublicRole(
+  role: PackagedRole,
+  parsed: PublicSeatParse,
+  env: Parameters<typeof admissionCallerOptions>[0],
+  override?: {
+    readonly assertedTicketNumber?: number;
+    readonly deferPersistence?: boolean;
+  },
+): Promise<AdmittedRoleInvocation> {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined) {
+    throw new CliUsageError(`unknown role: ${role}`);
+  }
+  const shared = {
+    ...admissionCallerOptions(env),
+    ...(override?.assertedTicketNumber === undefined
+      ? {}
+      : { assertedTicketNumber: override.assertedTicketNumber }),
+  };
+  const instruction = parsed.instruction ?? "";
+  const attachmentPaths = parsed.attachmentPaths ?? [];
+  const project = parsed.project === undefined ? {} : { project: parsed.project };
+  switch (record.admission) {
+    case "instruction":
+      return admitStandardMaterialInvocation(
+        role as "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat",
+        {
+          ...shared,
+          instruction,
+          attachmentPaths,
+          ...project,
+        },
+      );
+    case "countersign":
+      return admitCountersignInvocation({
+        ...shared,
+        instruction,
+        attachmentPaths,
+        ...project,
+        ...(override?.deferPersistence === undefined
+          ? {}
+          : { deferPersistence: override.deferPersistence }),
+      });
+    case "coder":
+      return admitCoderInvocation({
+        ...shared,
+        phase: parsed.phase ?? "apply",
+        instruction,
+        attachmentPaths,
+        ...project,
+      });
+    case "fixer":
+      return admitFixerInvocation({
+        ...shared,
+        phase: parsed.phase ?? "apply",
+        instruction,
+        attachmentPaths,
+        ...(parsed.prerequisitesPath === undefined
+          ? {}
+          : { prerequisitesPath: parsed.prerequisitesPath }),
+        ...project,
+      });
+    case "collector":
+      return admitCollectorInvocation({
+        ...shared,
+        instruction,
+        attachmentPaths,
+        ...(parsed.prNumber === undefined ? {} : { prNumber: parsed.prNumber }),
+        ...(parsed.repo === undefined ? {} : { repo: parsed.repo }),
+        ...(parsed.requestManifestPath === undefined
+          ? {}
+          : { requestManifestPath: parsed.requestManifestPath }),
+        ...(parsed.waitWindowMs === undefined ? {} : { waitWindowMs: parsed.waitWindowMs }),
+        ...project,
+      });
+    case "doctor":
+      return admitDoctorInvocation({
+        ...shared,
+        issueNumber: parsed.issueNumber ?? Number.NaN,
+        instruction,
+        attachmentPaths,
+        ...(parsed.runs === undefined ? {} : { runs: parsed.runs }),
+        ...project,
+      });
+    case "notary":
+      return admitNotaryInvocation({
+        ...shared,
+        sourceRun: parsed.sourceRun ?? "",
+        ...project,
+      });
+    case "gleaner":
+      return admitGleanerLeftInvocation({
+        ...shared,
+        instruction,
+        baseRevision: parsed.baseRevision ?? "",
+        ...project,
+      });
+    case "reviewer":
+      return admitReviewerInvocation({
+        ...shared,
+        instruction,
+        attachmentPaths,
+        baseRevision: parsed.baseRevision ?? "",
+        lens: requireReviewerLens(parsed.lens),
+        authorityRefs: [...(parsed.authorityRefs ?? [])],
+        ...project,
+      });
+    case "merger":
+      return admitMergerInvocation({
+        ...shared,
+        instruction,
+        attachmentPaths,
+        ...project,
+      });
+  }
 }
 
 /** One placement subject: a typed ticket already on the summons, otherwise unbound. */
