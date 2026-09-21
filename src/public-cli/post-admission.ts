@@ -702,14 +702,11 @@ export async function dispatchPostAdmissionTurn<
       if (adapters.afterDispatch !== undefined) await adapters.afterDispatch(admitted, lease);
       return result;
     } catch (error) {
-      const primaryFailure =
-        result.terminal !== undefined
-        && !isLawfulTypedTerminalOutcome(result.terminal.roleOutcome);
-      if (primaryFailure) {
+      if (result.terminal !== undefined) {
         await recordBestEffortPostDispatchDiagnostic(
           admitted,
           env,
-          `afterDispatch failed beside primary terminal (best-effort continue): ${describeErrorIdentity(error)}`,
+          `afterDispatch failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
           io,
         );
         return result;
@@ -1082,6 +1079,24 @@ export async function dispatchPostAdmissionTurn<
         };
       }
     } catch (error) {
+      if (
+        settled !== undefined
+        && isLawfulTypedTerminalOutcome(settled.roleOutcome)
+      ) {
+        await recordBestEffortPostDispatchDiagnostic(
+          admitted,
+          env,
+          `post-settlement processing failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
+          io,
+        );
+        return await finishAfterTurn({
+          exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
+          admitted,
+          terminal: settled,
+          turnDispatched: true as const,
+          ...deferredPersist,
+        });
+      }
       // Settle (or its shouldPresent gate, or the failure-fact resolution
       // above) throw is a real failure fact — never swallow into undefined.
       const settledFailure = await settleAfterTurnStarted(
@@ -1122,35 +1137,11 @@ export async function dispatchPostAdmissionTurn<
         try {
           await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
         } catch (error) {
-          // #836: `settledOutcome.terminal` already carries recorded
-          // submissions (attachRecordedSubmissions above). A real run-state
-          // persistence failure here must surface loudly through the same
-          // controlled-failure seam every other dispatch-time failure in
-          // this function uses (ADR 0080: one settlement disposition owner)
-          // — not escape uncaught to auto-resume's dispatch-retry path,
-          // whose exhausted-budget terminal carries no recorded submissions
-          // at all. skipRunStateWrite: the write that just threw is the same
-          // write presentControlledFailure would otherwise retry — don't
-          // call a known-failing operation twice.
-          const failed = await settleAfterTurnStarted(
-          admitted,
-          withEngineDetourInvocationScope({
-              timedOut: false,
-              code: null,
-              stderr: "",
-              thrown: error,
-              skipRunStateWrite: true,
-            }, request.invocationScopeId),
-            adapters,
-            env.principalAuthority,
+          await recordBestEffortPostDispatchDiagnostic(
+            admitted,
+            env,
+            `run-state persistence failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
             io,
-            persistRunState,
-          );
-          return await finishAfterTurn(
-            withProcessCancelSkipAutoResume(
-              { ...failed, turnDispatched: true as const, ...deferredPersist },
-              env.signal,
-            ),
           );
         }
       }
@@ -1251,30 +1242,11 @@ export async function dispatchPostAdmissionTurn<
       try {
         await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
       } catch (error) {
-        // #836: same run-state persistence hazard as the settled/accepted
-        // branch above — route through the shared controlled-failure seam so
-        // the real failure surfaces loudly instead of escaping uncaught to
-        // auto-resume's dispatch-retry path with no recorded submissions.
-        // skipRunStateWrite: don't retry the write that just threw.
-        const failed = await settleAfterTurnStarted(
+        await recordBestEffortPostDispatchDiagnostic(
           admitted,
-          withEngineDetourInvocationScope({
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-            skipRunStateWrite: true,
-          }, request.invocationScopeId),
-          adapters,
-          env.principalAuthority,
+          env,
+          `run-state persistence failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
           io,
-          persistRunState,
-        );
-        return await finishAfterTurn(
-          withProcessCancelSkipAutoResume(
-            { ...failed, turnDispatched: true as const, ...deferredPersist },
-            env.signal,
-          ),
         );
       }
     }
