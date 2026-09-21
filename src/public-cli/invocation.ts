@@ -1848,13 +1848,62 @@ export async function admitPublicRole(
       });
       return { ...admittedReviewer, authorityRefs };
     }
-    case "merger":
-      return admitMergerInvocation({
+    case "merger": {
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      if (instruction.trim() === "") {
+        throw new CliUsageError("merger requires a nonblank task instruction");
+      }
+      const projectRoot = resolve(parsed.project ?? shared.cwd);
+      const derived = await deriveMergerEnvelopeFromActiveMerge(
+        projectRoot,
+        createProductionMergerGitState(projectRoot),
+      );
+      return admitStandardMaterialInvocation("merger", {
         ...shared,
         instruction,
         attachmentPaths,
         ...project,
+        placedFields: async (placed) => {
+          const targetLabel = derived.targetObjectId === "" ? "(none observed)" : derived.targetObjectId;
+          const sourceLabel = derived.sourceObjectId === "" ? "(none observed)" : derived.sourceObjectId;
+          const mergerInput = validateMergerInput({
+            attemptId: placed.runId,
+            targetObjectId: derived.targetObjectId,
+            sourceObjectId: derived.sourceObjectId,
+            materials: {
+              task: mergerMaterialFromUtf8(instruction),
+              authority: mergerMaterialFromUtf8(instruction),
+              targetIntent: mergerMaterialFromUtf8(
+                `Investigate primary sources for target parent ${targetLabel}. Do not invent intent.`,
+              ),
+              sourceIntent: mergerMaterialFromUtf8(
+                `Investigate primary sources for source parent ${sourceLabel}. Do not invent intent.`,
+              ),
+            },
+            expectedConflictPaths: [...derived.expectedConflictPaths],
+            resolutionScope: [...derived.resolutionScope],
+            authorizedChecks: [],
+          });
+          const mergerInputPath = join(placed.runDirectory, "merger-input.json");
+          await writeFile(
+            mergerInputPath,
+            `${JSON.stringify(mergerInput, null, 2)}\n`,
+            "utf8",
+          );
+          return {
+            mergerInputPath,
+            derived: {
+              targetObjectId: derived.targetObjectId,
+              sourceObjectId: derived.sourceObjectId,
+              expectedConflictPaths: [...derived.expectedConflictPaths],
+              resolutionScope: [...derived.resolutionScope],
+            },
+          };
+        },
       });
+    }
   }
 }
 
@@ -2025,10 +2074,10 @@ async function persistPlacedAdmission(
  * Seats whose extra facts are known before placement pass them as admittedFields.
  * Seats whose extra facts depend on the placed run pass placedFields
  * (coder writes task.md; fixer writes fix-packet.md; collector writes request-manifest.json;
- * doctor resolves the case, then freezes attachments).
+ * doctor resolves the case, then freezes attachments; merger writes merger-input.json).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder" | "fixer" | "collector" | "doctor",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder" | "fixer" | "collector" | "doctor" | "merger",
   Extra extends object = {},
 >(
   role: R,
@@ -2878,111 +2927,11 @@ export type AdmitMergerInvocationOptions = {
   attachmentPaths: readonly string[];
   project?: string;
   createRunId?: () => string;
-  /** Test seam; production binds createProductionMergerGitState(projectRoot). */
-  gitState?: MergerGitState;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
   /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
   assertedTicketNumber?: number;
 };
-
-/**
- * Admit a Merger Role run on the common Invocation request.
- * Git materials (parents, conflicts, scope) are read from the worktree and
- * handed to the role as assignment materials — including when empty (#827).
- * Callers never supply public packet fields for those facts.
- */
-async function admitMergerInvocation(
-  options: AdmitMergerInvocationOptions,
-): Promise<AdmittedMergerInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  const instruction = options.instruction;
-  if (instruction.trim() === "") {
-    throw new CliUsageError("merger requires a nonblank task instruction");
-  }
-
-  const projectRoot = resolve(options.project ?? options.cwd);
-  const derived = await deriveMergerEnvelopeFromActiveMerge(
-    projectRoot,
-    options.gitState ?? createProductionMergerGitState(projectRoot),
-  );
-
-  const placed = await placeRoleAdmission({
-    role: "merger",
-    home: options.home,
-    principalAuthority: options.principalAuthority,
-    cwd: options.cwd,
-    attachmentPaths: options.attachmentPaths,
-    ...(options.project === undefined ? {} : { project: options.project }),
-    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-    ...(options.assertedTicketNumber === undefined
-      ? {}
-      : { assertedTicketNumber: options.assertedTicketNumber }),
-  });
-
-  // Intent materials seed primary-source investigation; the method owns the work.
-  const targetLabel = derived.targetObjectId === "" ? "(none observed)" : derived.targetObjectId;
-  const sourceLabel = derived.sourceObjectId === "" ? "(none observed)" : derived.sourceObjectId;
-  const targetIntent = mergerMaterialFromUtf8(
-    `Investigate primary sources for target parent ${targetLabel}. Do not invent intent.`,
-  );
-  const sourceIntent = mergerMaterialFromUtf8(
-    `Investigate primary sources for source parent ${sourceLabel}. Do not invent intent.`,
-  );
-  const taskMaterial = mergerMaterialFromUtf8(instruction);
-  const authorityMaterial = mergerMaterialFromUtf8(instruction);
-
-  const mergerInput = validateMergerInput({
-    attemptId: placed.runId,
-    targetObjectId: derived.targetObjectId,
-    sourceObjectId: derived.sourceObjectId,
-    materials: {
-      task: taskMaterial,
-      authority: authorityMaterial,
-      targetIntent,
-      sourceIntent,
-    },
-    expectedConflictPaths: [...derived.expectedConflictPaths],
-    resolutionScope: [...derived.resolutionScope],
-    authorizedChecks: [],
-  });
-
-  const mergerInputPath = join(placed.runDirectory, "merger-input.json");
-  await writeFile(
-    mergerInputPath,
-    `${JSON.stringify(mergerInput, null, 2)}\n`,
-    "utf8",
-  );
-
-  const admittedDerived = {
-    targetObjectId: derived.targetObjectId,
-    sourceObjectId: derived.sourceObjectId,
-    expectedConflictPaths: [...derived.expectedConflictPaths],
-    resolutionScope: [...derived.resolutionScope],
-  };
-  const admitted = {
-    role: "merger" as const,
-    runId: placed.runId,
-    bookKey: placed.bookKey,
-    projectRoot: placed.projectRoot,
-    runDirectory: placed.runDirectory,
-    principal: placed.principal,
-    instruction,
-    instructionEmpty: false as const,
-    mergerInputPath,
-    derived: admittedDerived,
-    attachments: persistedAttachmentRefs(placed.attachments),
-    ...placed.ticketFields,
-  };
-  const admittedRequestPath = await persistPlacedAdmission(admitted, placed, options.model);
-  return {
-    ...admitted,
-    attachments: placed.attachments,
-    admittedRequestPath,
-  };
-}
 
 const ANALYST_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;
 
