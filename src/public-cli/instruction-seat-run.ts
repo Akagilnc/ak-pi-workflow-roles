@@ -1,8 +1,11 @@
 /**
  * One public role run: admit → turn request → post-admission → settle.
- * Seat differences are composition-root fields. Reviewer parallel axes and
- * countersign deferred identity stay the two lawful specials of this entry.
+ * Seat differences are composition-root fields. An omitted reviewer lens
+ * starts two ordinary single-axis runs here. Countersign deferred identity
+ * stays on its own run module.
  */
+import { resolve } from "node:path";
+
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { readBoardTicketNumber } from "../run-ticket-number.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
@@ -20,6 +23,7 @@ import {
   buildGleanerLeftTransportPrompt,
   buildInstructionTransportPrompt,
   buildNotaryTransportPrompt,
+  buildReviewerTransportPrompt,
   persistAdmittedSourceRunPath,
   recordAdmittedCorrelation,
   relocateAdmittedRunToTicket,
@@ -55,7 +59,11 @@ import {
   trySettlePublicSeat,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import { isLawfulTypedTerminalOutcome, type TerminalResult } from "./terminal.ts";
+import {
+  formatTerminalResult,
+  isLawfulTypedTerminalOutcome,
+  type TerminalResult,
+} from "./terminal.ts";
 import {
   admittedSeatTurnDetails,
   packagedSettleSkill,
@@ -63,7 +71,6 @@ import {
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
 import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
-import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
 
 export type InstructionSeatRunEnv = PostAdmissionEnv & {
   reviewReask?: string;
@@ -113,7 +120,17 @@ function initialPrompt(
   });
   if (admitted.role === "notary") return buildNotaryTransportPrompt(admitted, material);
   if (admitted.role === "gleaner-left") return buildGleanerLeftTransportPrompt(admitted, material);
+  if (admitted.role === "reviewer") return buildReviewerTransportPrompt(admitted, material);
   return buildInstructionTransportPrompt(admitted, material);
+}
+
+function hostTurnCwd(env: InstructionSeatRunEnv): { readonly cwd: string } | undefined {
+  return env.executionCwd === undefined ? undefined : { cwd: env.executionCwd };
+}
+
+function wantsFreshExecutionCopy(role: PackagedRole): boolean {
+  const record = roleRecord(role);
+  return "freshExecutionCopy" in record && record.freshExecutionCopy === true;
 }
 
 function infraFailure(role: PackagedRole) {
@@ -227,41 +244,140 @@ async function dispatchAdmitted(
     }
   }
   const adapters = seatAdapters(admitted, env, material);
-  const auto = "inCallAutoResume" in record && record.inCallAutoResume === true;
-  if (auto) {
-    return await runPostAdmissionResumable({
+  const execute = async (activeEnv: InstructionSeatRunEnv): Promise<SeatRunResult> => {
+    const auto = "inCallAutoResume" in record && record.inCallAutoResume === true;
+    const cwd = hostTurnCwd(activeEnv);
+    if (auto) {
+      return await runPostAdmissionResumable({
+        admitted,
+        env: activeEnv,
+        io,
+        buildInitialRequest: () => buildInstructionSeatTurnRequest(
+          admitted,
+          roleTurnOptions(activeEnv, admitted, { kind: "initial", prompt: initialPrompt(admitted, activeEnv) }, cwd),
+        ),
+        buildResumeRequest: () => buildInstructionSeatTurnRequest(
+          admitted,
+          roleTurnOptions(activeEnv, admitted, {
+            kind: "resume",
+            prompt: buildAutoResumeContinuationPrompt({
+              packageRoot: activeEnv.packageRoot,
+              ...pickEngineAxis(activeEnv),
+            }),
+          }, cwd),
+        ),
+        adapters,
+        ...(activeEnv.engine === undefined ? {} : { effectiveEngine: activeEnv.engine }),
+      });
+    }
+    return await runPostAdmissionOneShot({
       admitted,
-      env,
+      env: activeEnv,
       io,
-      buildInitialRequest: () => buildInstructionSeatTurnRequest(
+      request: buildInstructionSeatTurnRequest(
         admitted,
-        roleTurnOptions(env, admitted, { kind: "initial", prompt: initialPrompt(admitted, env) }),
-      ),
-      buildResumeRequest: () => buildInstructionSeatTurnRequest(
-        admitted,
-        roleTurnOptions(env, admitted, {
-          kind: "resume",
-          prompt: buildAutoResumeContinuationPrompt({
-            packageRoot: env.packageRoot,
-            ...pickEngineAxis(env),
-          }),
-        }),
+        roleTurnOptions(activeEnv, admitted, { kind: "initial", prompt: initialPrompt(admitted, activeEnv) }, cwd),
       ),
       adapters,
-      ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+      ...(activeEnv.engine === undefined ? {} : { effectiveEngine: activeEnv.engine }),
     });
+  };
+  if (!wantsFreshExecutionCopy(admitted.role)) return execute(env);
+  try {
+    if (env.executionCwd !== undefined) return await execute(env);
+    const { withEphemeralReviewerWorktree } = await import("../public-role-summons.ts");
+    return await withEphemeralReviewerWorktree({
+      projectRoot: admitted.projectRoot,
+      onCleanupDiagnostic: (diagnostic) => {
+        io.stderr(`${diagnostic}\n`);
+      },
+      run: (executionCwd) => execute({ ...env, executionCwd }),
+    });
+  } catch (error) {
+    return await presentControlledFailure(admitted, {
+      timedOut: false,
+      code: null,
+      stderr: "",
+      thrown: error,
+    }, adapters, env.principalAuthority, io) as SeatRunResult;
   }
-  return await runPostAdmissionOneShot({
-    admitted,
-    env,
-    io,
-    request: buildInstructionSeatTurnRequest(
-      admitted,
-      roleTurnOptions(env, admitted, { kind: "initial", prompt: initialPrompt(admitted, env) }),
-    ),
-    adapters,
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
+}
+
+/**
+ * Omitted lens on a parallel-lens seat: two ordinary single-axis runs, no parent run.
+ * Each leg reuses this call's argv and only adds `--lens`.
+ */
+async function runOmittedLensBatch(
+  argv: readonly string[],
+  parsed: PublicSeatParse,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult> {
+  const { summonParallelReviewerLenses } = await import("../public-role-summons.ts");
+  const children = await summonParallelReviewerLenses({
+    argv,
+    cwd: env.cwd,
+    projectRoot: resolve(parsed.project ?? env.cwd),
+    baseRevision: parsed.baseRevision ?? "",
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.host === undefined ? {} : { host: env.host }),
+    ...(env.engine === undefined ? {} : { engine: env.engine }),
+    ...(env.engineModel === undefined ? {} : { engineModel: env.engineModel }),
+    packageRoot: env.packageRoot,
+    ...(env.signal === undefined ? {} : { signal: env.signal }),
+    ...(env.correlationId === undefined ? {} : { correlationId: env.correlationId }),
+    roleTurnHost: env.roleTurnHost,
+    ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+    principalAuthority: env.principalAuthority,
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
   });
+  const childResults = [children.completeness, children.correctness] as const;
+  const terminals = childResults
+    .map((child) => child.terminal)
+    .filter((terminal): terminal is TerminalResult => terminal !== undefined);
+  const failedChildren = childResults.filter((child) =>
+    child.terminal === undefined
+    || !isLawfulTypedTerminalOutcome(child.terminal.roleOutcome)).length;
+  const overlayExit = childResults.some((child) => child.exitCode !== 0);
+  const failed = failedChildren > 0 || overlayExit;
+  const overlayDiagnostics = [...new Set(
+    childResults
+      .map((child) => child.stderr)
+      .filter((text): text is string => typeof text === "string" && text !== ""),
+  )];
+  const terminal: TerminalResult = {
+    batch: "reviewer",
+    roleOutcome: failed
+      ? {
+          kind: "failure",
+          role: "reviewer",
+          diagnostic: failedChildren > 0
+            ? "Reviewer batch child failure"
+            : (overlayDiagnostics[0] ?? "Reviewer batch infrastructure failure"),
+          decisiveFacts: { failedChildren },
+          payloads: terminals,
+        }
+      : { kind: "accepted", role: "reviewer", payloads: terminals },
+    reviewerChildren: {
+      ...(children.completeness.terminal === undefined ? {} : { completeness: children.completeness.terminal }),
+      ...(children.correctness.terminal === undefined ? {} : { correctness: children.correctness.terminal }),
+    },
+    reviewerChildOutcomes: {
+      completeness: { exitCode: children.completeness.exitCode, ...(children.completeness.stderr === undefined ? {} : { stderr: children.completeness.stderr }) },
+      correctness: { exitCode: children.correctness.exitCode, ...(children.correctness.stderr === undefined ? {} : { stderr: children.correctness.stderr }) },
+    },
+    navigator: {
+      disposition: "unavailable",
+      source: "unknown",
+      reason: "Reviewer batch has no parent-run Navigator attendance",
+    },
+    artifacts: terminals.flatMap((item) => item.artifacts),
+  };
+  io.stdout(formatTerminalResult(terminal));
+  return { exitCode: failed ? 1 : 0, terminal };
 }
 
 export async function runPublicInstructionSeat(
@@ -272,9 +388,6 @@ export async function runPublicInstructionSeat(
   parseArgv: (args: readonly string[]) => PublicSeatParse,
 ): Promise<SeatRunResult> {
   const record = roleRecord(role);
-  if (record.admission === "reviewer") {
-    return runPublicReviewer(argv, env, io, parseArgv);
-  }
   if (record.admission === "countersign") {
     return runPublicCountersign(argv, env, io, parseArgv);
   }
@@ -286,6 +399,16 @@ export async function runPublicInstructionSeat(
     const rejected = usageExit(error, io);
     if (rejected !== undefined) return rejected;
     throw error;
+  }
+
+  if ("parallelLenses" in record && record.parallelLenses === true) {
+    if (parsed.baseRevision === undefined) {
+      presentStructuralRejection(new CliUsageError("reviewer requires --base"), io);
+      return { exitCode: 2 };
+    }
+    if (parsed.lens === undefined) {
+      return runOmittedLensBatch(argv, parsed, env, io);
+    }
   }
 
   const projectRoot = parsed.project ?? env.cwd;
@@ -493,8 +616,10 @@ export async function runPublicInstructionSeatResume(
   io: CliIo,
 ): Promise<SeatRunResult> {
   const role = await peekRoleRunRole(env.home, request.runId);
-  if (role === "reviewer") return runPublicReviewerResume(request, env, io);
   if (role === "countersign") return runPublicCountersignResume(request, env, io);
+  const execution: { cwd?: string } = {
+    ...(env.executionCwd === undefined ? {} : { cwd: env.executionCwd }),
+  };
   return runPostAdmissionSeatResume<AdmittedRoleInvocation>({
     request,
     env,
@@ -518,10 +643,14 @@ export async function runPublicInstructionSeatResume(
       return loaded;
     },
     buildTurnRequest: async (admitted, effective) => {
+      const activeEnv = execution.cwd === undefined ? env : { ...env, executionCwd: execution.cwd };
       const summonsPrepared = await prepareSummonsResumeMaterials(admitted.runDirectory, effective.summons);
       return buildInstructionSeatTurnRequest(
         admitted,
-        resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
+        {
+          ...resumeTurnRequestProjectionOptions(admitted, effective, activeEnv, summonsPrepared),
+          ...(execution.cwd === undefined ? {} : { cwd: execution.cwd }),
+        },
       );
     },
     adapters: {
@@ -542,6 +671,24 @@ export async function runPublicInstructionSeatResume(
         emptyAdapters: seatAdapters(admitted, env),
         ...(knownCause === undefined ? {} : { knownCause }),
       });
+    },
+    afterAdmittedPrepare: async (admitted) => {
+      if (!wantsFreshExecutionCopy(admitted.role)) return {};
+      if (execution.cwd !== undefined) {
+        return { env: { ...env, executionCwd: execution.cwd } };
+      }
+      const { openEphemeralReviewerWorktree } = await import("../public-role-summons.ts");
+      const opened = await openEphemeralReviewerWorktree({
+        projectRoot: admitted.projectRoot,
+        onCleanupDiagnostic: (diagnostic) => {
+          io.stderr(`${diagnostic}\n`);
+        },
+      });
+      execution.cwd = opened.executionCwd;
+      return {
+        env: { ...env, executionCwd: opened.executionCwd },
+        cleanup: opened.close,
+      };
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
