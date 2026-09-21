@@ -560,7 +560,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               args,
               cwd: request.cwd,
               env,
-              stdin: applyMethodPrompt(prompt),
+              stdin: request.continuation.kind === "resume" ? prompt : applyMethodPrompt(prompt),
               ...(abortSignal === undefined ? {} : { signal: abortSignal }),
               ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
               onStdoutLine(line) {
@@ -574,6 +574,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                   return;
                 }
                 // One bounded live seam owns both recording and host-specific reduction.
+                codexObserver?.observe(event);
                 reportHostSessionEvent({
                   host: config.hostName,
                   cwd: request.cwd,
@@ -581,12 +582,22 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                   source: "headless-host",
                   event,
                 });
-                codexObserver?.observe(event);
               },
             });
           } catch (error) {
             if (isHostAbortedError(error)) throw error;
             const message = error instanceof Error ? error.message : String(error);
+            const observedHostFailure = codexObserver?.result().failureDiagnostic;
+            if (observedHostFailure !== undefined) {
+              return {
+                status: "terminal",
+                result: failure("output", "HeadlessCliError", "codex-turn-failed", {
+                  diagnostic: observedHostFailure,
+                  sessionRecordDiagnostic: message,
+                  sessionId,
+                }, observedHostFailure),
+              };
+            }
             // SitianInfrastructureError.knownCause is session; spawn errno stays activation.
             const isRecordFailure =
               typeof error === "object"
@@ -624,6 +635,51 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
 
           if (codex) {
             const observation = codexObserver!.result();
+            // #987 result 6 / 失败诚实: host-reported failure wins over a package
+            // missing-thread-id label or package persistence failure.
+            if (observation.threadId !== undefined && observation.threadId !== "") {
+              sessionId = observation.threadId;
+            }
+            let sessionBindingDiagnostic: string | undefined;
+            const hostFailed = observation.failureDiagnostic !== undefined
+              || (spawned.code !== 0 && spawned.code !== null);
+            if (hostFailed && observation.threadId !== undefined && observation.threadId !== "") {
+              try {
+                await config.sessionIdentity.bind(request.principal, observation.threadId);
+              } catch (error) {
+                // The host failure remains primary; retain persistence failure as
+                // secondary typed evidence instead of replacing the terminal.
+                sessionBindingDiagnostic = error instanceof Error ? error.message : String(error);
+              }
+            }
+
+            if (observation.failureDiagnostic !== undefined) {
+              return terminalFromSpawned(spawned, {
+                cause: "output",
+                identity: { name: "HeadlessCliError", code: "codex-turn-failed" },
+                diagnostic: observation.failureDiagnostic,
+                details: {
+                  sessionId,
+                  exitCode: spawned.code,
+                  ...(sessionBindingDiagnostic === undefined ? {} : { sessionBindingDiagnostic }),
+                },
+              });
+            }
+
+            // Non-zero exit without a parseable failure event still fails loud.
+            if (spawned.code !== 0 && spawned.code !== null) {
+              return terminalFromSpawned(spawned, {
+                cause: "output",
+                identity: { name: "HeadlessCliError", code: "codex-nonzero-exit" },
+                diagnostic: spawned.stderr.trim() || `codex exec exited ${String(spawned.code)}`,
+                details: {
+                  sessionId,
+                  exitCode: spawned.code,
+                  ...(sessionBindingDiagnostic === undefined ? {} : { sessionBindingDiagnostic }),
+                },
+              });
+            }
+
             if (observation.threadId === undefined || observation.threadId === "") {
               return terminalFromSpawned(spawned, {
                 cause: "session",
@@ -634,25 +690,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             }
             sessionId = observation.threadId;
             await config.sessionIdentity.bind(request.principal, sessionId);
-
-            if (observation.failureDiagnostic !== undefined) {
-              return terminalFromSpawned(spawned, {
-                cause: "output",
-                identity: { name: "HeadlessCliError", code: "codex-turn-failed" },
-                diagnostic: observation.failureDiagnostic,
-                details: { sessionId, exitCode: spawned.code },
-              });
-            }
-
-            // Non-zero exit without a parseable failure event still fails loud.
-            if (spawned.code !== 0 && spawned.code !== null) {
-              return terminalFromSpawned(spawned, {
-                cause: "output",
-                identity: { name: "HeadlessCliError", code: "codex-nonzero-exit" },
-                diagnostic: spawned.stderr.trim() || `codex exec exited ${String(spawned.code)}`,
-                details: { sessionId, exitCode: spawned.code },
-              });
-            }
 
             if (!observation.turnCompleted) {
               return terminalFromSpawned(spawned, {

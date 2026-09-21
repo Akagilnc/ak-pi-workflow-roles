@@ -501,11 +501,6 @@ export async function runPublicInstructionSeatResume(
     io,
     load: async (effective) => {
       const loaded = await loadResumablePublicRole(env.home, effective.runId, env.principalAuthority);
-      if (loaded.admitted.role === "notary" && effective.message !== undefined) {
-        throw new CliUsageError(
-          "notary rejects caller prompt/instruction; only zero caller-prompt continuation admitted",
-        );
-      }
       if (
         loaded.admitted.role === "notary"
         && effective.summons?.sourceRunPath !== undefined

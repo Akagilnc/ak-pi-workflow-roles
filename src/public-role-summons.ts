@@ -99,9 +99,12 @@ export type PublicSummonRequest = {
   readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   /** Offline test inject for deterministic run ids (same face as public CLI). */
   readonly createRunId?: () => string;
-  /** Typed ticket number handoff. Binds the child; does not select an old run. */
+  /** Typed ticket number handoff for diarist child run (#840). Bind only — not a resume key (#987). */
   readonly boundTicketNumber?: number;
-  /** Gate parent run directory. Countersign resume key; absent on a public summons. */
+  /**
+   * Gate / officer same-parent resume key (#747 / #987). Countersign gate re-ask
+   * looks up prior 给事中 by this parent run directory, never by ticket number.
+   */
   readonly parentRunPath?: string;
   /** Caller correlation id for nested leg ledger (ADR 0010 / #924). */
   readonly correlationId?: string;
@@ -958,7 +961,7 @@ export async function summonParallelReviewerLenses(options: {
   return results;
 }
 
-/** Gate officer summons: notary/auditor via --source-run; inspector via pointer; countersign via ticket (#969). */
+/** Gate officer summons: notary/auditor via --source-run; inspector via pointer; countersign via parentRunPath (#969 / #987). */
 export async function summonGateOfficer(options: {
   readonly officer: "inspector" | "notary" | "auditor" | "countersign";
   readonly sourceRunDirectory: string;
@@ -1040,11 +1043,11 @@ export async function summonGateOfficer(options: {
     });
   }
   if (options.officer === "countersign") {
-    // #969: Secretariat submission gate → 给事中.
+    // #969 / #987: Secretariat submission gate → 给事中.
     // Dialogue / identity instruction = parent typed payload 原话 (ADR 0079) or reask;
-    // no code-authored summons prose (#924). Ticket identity = parent run durable
-    // board binding only (readBoardTicketNumber) — receipt ticketNumber is payload
-    // content, never the sole identity source; parent true-unbound stays unbound.
+    // no code-authored summons prose (#924). Gate resume key = parentRunPath
+    // (sourceRunDirectory); board ticket handoff is bind-only, never a resume
+    // lookup (#987 Result 7). Receipt ticketNumber stays payload content.
     // correlationId only on this officer — notary/auditor/inspector stay untouched.
     // Gate resume key is the parent run directory. The board ticket only binds.
     const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");

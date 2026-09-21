@@ -60,8 +60,8 @@ test("#422 loop honors injected effective limit once (N=4 → 5 dispatches, coun
       autoResumeLimit:4,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
-      // Loop contract (#416): the dispatcher owns the per-round lease release.
-      dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
+      // #987: loop no longer supplies a lease; release only when present.
+      dispatch: async(_extraArgs,lease)=>{calls+=1;if(lease!==undefined)await lease.release();return{exitCode:1};},
     });
     assert.equal(calls,5);
     assert.equal(result.exitCode,1);
@@ -81,7 +81,7 @@ test("#422 loop with injected limit 0 disables auto resume (single dispatch)", a
       autoResumeLimit:0,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
-      dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
+      dispatch: async(_extraArgs,lease)=>{calls+=1;if(lease!==undefined)await lease.release();return{exitCode:1};},
     });
     assert.equal(calls,1);
     assert.equal(result.exitCode,1);
@@ -251,7 +251,7 @@ test("#422 loop entry rejects NaN/negative/fractional/Infinity limits loudly bef
           autoResumeLimit:bad,
           buildInitialPayload: ()=>["--initial"],
           buildResumePayload: ()=>["--resume"],
-          dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
+          dispatch: async(_extraArgs,lease)=>{calls+=1;if(lease!==undefined)await lease.release();return{exitCode:1};},
         }),
         /non-negative integer/,
         `expected loud rejection for ${String(bad)}`,

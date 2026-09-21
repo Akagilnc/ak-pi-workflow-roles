@@ -45,7 +45,6 @@ import {
   appendEngineSessionMaterial,
   engineSessionMaterialFromOptions,
   pickEngineAxis,
-  type EngineSessionMaterial,
 } from "../package-resources/engine-material.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 import {
@@ -132,11 +131,8 @@ export type RoleRunRecord = {
  * Package-owned non-empty Chinese neutral resume transport (#959 / ADR 0073).
  * Used by:
  *   - auto-resume (all seats via buildAutoResumeContinuationPrompt) — required so
- *     hosts that reject empty stdin (codex) still receive a prompt;
- *   - reviewer seat manual resume (reviewerResumePrompt) — same non-empty need on
- *     that seat's own manual entry.
- * Generic bare `ak-role resume` stays empty-capable via selectResumeContinuationPrompt
- * / buildResumeContinuationPrompt — ADR 0080 keeps auto and generic-manual entries separate.
+ *     hosts that reject empty stdin (codex) still receive a prompt.
+ * Public manual resume forwards only the caller's bytes (#987).
  */
 export const RESUME_TRANSPORT_ENVELOPE = "继续。" as const;
 
@@ -148,15 +144,15 @@ export type PublicResumeRequest = {
   /**
    * Same-ticket re-summons materials (#637). Present only when a public seat
    * re-enters via the summons face — never from `ak-role resume`.
-   * Manual resume keeps package envelope / caller message semantics unchanged.
+   * Manual resume forwards only caller-supplied bytes and never re-delivers them.
    */
   readonly summons?: SameTicketSummonsMaterials;
 };
 
 /**
  * Open court turn on a retained run (#637).
- * courtAttemptId + the same summons materials shape already used by re-summons.
- * Bare resume rehydrates request.summons and rides existing load/buildTurnRequest.
+ * courtAttemptId identifies settlement across later public manual resume calls.
+ * Summons materials belong only to the internal re-summons face.
  * Cleared when this courtAttemptId seals.
  */
 export type CurrentCourtState = {
@@ -179,40 +175,6 @@ export type SameTicketSummonsMaterials = {
 };
 
 /**
- * Manual resume continuation selector (#471 / #600 / #736 / ADR 0080).
- * Message present → those bytes; absent → engine pointers only (may be empty).
- * Caller message (including blank) still wins verbatim when supplied.
- * Auto-resume must use buildAutoResumeContinuationPrompt — do not fold the
- * non-empty Chinese envelope into this shared manual selector (#959).
- */
-export function selectResumeContinuationPrompt(
-  message?: string,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines = message !== undefined ? [message] : [];
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
-}
-
-/**
- * Manual resume continuation with engine material from the seat env (#600).
- * Bare manual resume stays empty-prompt-capable; auto-resume is a separate entry.
- */
-export function buildResumeContinuationPrompt(options: {
-  packageRoot: string;
-  engine?: string;
-  engineModel?: string;
-  message?: string;
-}): string {
-  return selectResumeContinuationPrompt(
-    options.message,
-    engineSessionMaterialFromOptions({
-      packageRoot: options.packageRoot,
-      ...pickEngineAxis(options),
-    }),
-  );
-}
-
-/**
  * Auto-resume continuation only (#959 / ADR 0080).
  * Always non-empty: Chinese neutral envelope plus optional engine pointers.
  * Never call this from manual `ak-role resume`.
@@ -222,13 +184,13 @@ export function buildAutoResumeContinuationPrompt(options: {
   engine?: string;
   engineModel?: string;
 }): string {
-  return selectResumeContinuationPrompt(
-    RESUME_TRANSPORT_ENVELOPE,
+  return appendEngineSessionMaterial(
+    [RESUME_TRANSPORT_ENVELOPE],
     engineSessionMaterialFromOptions({
       packageRoot: options.packageRoot,
       ...pickEngineAxis(options),
     }),
-  );
+  ).join("\n");
 }
 
 const RUN_STATE_FILE = "run-state.json";
@@ -669,8 +631,7 @@ export async function markRunTerminal(runDirectory: string): Promise<void> {
   if (current === undefined) {
     throw new Error("cannot mark terminal: run state missing");
   }
-  // Preserve open currentCourt: terminal after a failed/incomplete court must still
-  // let bare resume continue that court (#637).
+  // Preserve the open court's settlement identity after a failed/incomplete turn (#637).
   await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,
@@ -1180,9 +1141,11 @@ async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boole
 /**
  * Locate the latest retained run for one seat under a book (#637 / #747).
  * Same walk surface as findRunDirectoryById (listBookRunDirectories). Match by
- * parent run path (officer seats, #747). A typed ticket number does not select
- * a run. runId is UUIDv7 — lexicographic max is latest among runs that formed
- * a session principal. No parallel index.
+ * parent run path (officer / gate seats, #747 / #987). A typed ticket number
+ * does not select a run. runId is UUIDv7 — lexicographic max is latest among
+ * runs that formed a session principal. No parallel index. Public ticket-number
+ * selection of a prior run was deleted (#987 Result 7); callers use explicit
+ * `ak-role resume <runId>`.
  * Only a truly missing book directory means no history; damage/permission errors propagate.
  */
 export async function findLatestRunIdForSeatTicket(input: {
@@ -1191,6 +1154,9 @@ export async function findLatestRunIdForSeatTicket(input: {
   readonly role: RoleRunRecord["role"];
   readonly parentRunPath: string;
 }): Promise<string | undefined> {
+  if (input.parentRunPath.trim() === "") {
+    return undefined;
+  }
   const ledgerHome = resolveActivationLedgerHome(input.home);
   const bookDir = activationBookDirectory(ledgerHome, input.bookKey);
   let runDirectories: string[];

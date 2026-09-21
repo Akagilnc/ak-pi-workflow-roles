@@ -1320,7 +1320,10 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
     let resumeCwd: string | undefined;
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+    const resumed = await runAkRole([
+      "resume", "--model", "test/caller-seat:high", "--engine", "agy", runId,
+      "调用者原话",
+    ], {
       packageRoot,
       home,
       cwd: project,
@@ -1336,8 +1339,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
         const resumeDialogue = readUserDialogueStdin(resumeStdin ?? "");
-        const { RESUME_TRANSPORT_ENVELOPE } = await import("../../src/public-cli/run-lifecycle.ts");
-        assert.equal(resumeDialogue, RESUME_TRANSPORT_ENVELOPE);
+        assert.equal(resumeDialogue, "调用者原话");
         assert.equal(resumeDialogue.includes("/skill:"), false);
         assert.equal(resumeDialogue.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);

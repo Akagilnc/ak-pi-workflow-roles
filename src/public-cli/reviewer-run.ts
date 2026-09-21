@@ -404,7 +404,7 @@ export async function runPublicReviewerResume(
         ...(sandbox.executionCwd === undefined ? {} : { cwd: sandbox.executionCwd }),
         continuation: {
           kind: "resume",
-          prompt: reviewerResumePrompt(activeEnv, effective.message),
+          prompt: effective.message ?? "",
         },
       });
     },

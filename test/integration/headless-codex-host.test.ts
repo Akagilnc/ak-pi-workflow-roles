@@ -175,7 +175,7 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     const prompts = (await readFile(promptLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string);
     assert.deepEqual(prompts.slice(0, 2), [
       "$diagnosing-bugs $tdd work",
-      "$diagnosing-bugs $tdd continue",
+      "continue",
     ]);
     const argv = (await readFile(argvLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
     assert.deepEqual(argv[1]!.slice(0, 4), ["exec", "--approve-for-me", "resume", "thread-fake-1"]);
@@ -264,6 +264,113 @@ test("#959 missing host binary stays activation spawn-failed with real path", as
       (result.knownFailure?.diagnostic ?? "").trim(),
       "",
       "missing-binary diagnostic must stay non-empty",
+    );
+  } finally {
+    ledger.dispose();
+  }
+});
+
+test("#987 codex host failure preserves its diagnostic and resumable thread", async () => {
+  // Result 6 / 失败诚实: host failure wins with or without a thread id;
+  // persistence remains best-effort and cannot replace that terminal.
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-987-codex-fail-", runName: "run@codex" });
+  const fakeBin = join(ledger.runDirectory, "fake-codex-turn-failed");
+  await writeFile(
+    fakeBin,
+    `#!/usr/bin/env node
+let prompt = "";
+for await (const chunk of process.stdin) prompt += chunk;
+if (prompt.includes("with-thread")) {
+  process.stdout.write(JSON.stringify({
+    type: "thread.started",
+    thread_id: "thread-failed-1",
+  }) + "\\n");
+}
+process.stdout.write(JSON.stringify({
+  type: "turn.failed",
+  error: { message: "thread-store conflict: session already has an active writer (code -32600)" },
+}) + "\\n");
+process.exit(1);
+`,
+    "utf8",
+  );
+  await chmod(fakeBin, 0o755);
+  try {
+    const description = lookupHeadlessHostDescription("codex");
+    assert.ok(description);
+    let bound: string | undefined;
+    let rejectBind = false;
+    let sessionParent = join(ledger.runDirectory, "session", "session.jsonl");
+    const host = createHeadlessRoleTurnHost({
+      description,
+      hostName: "codex",
+      binary: fakeBin,
+      sessionIdentity: {
+        async load() {
+          return undefined;
+        },
+        async bind(_principal, id) {
+          if (rejectBind) throw new Error("session identity store is read-only");
+          bound = id;
+        },
+        resolveSessionFile: () => sessionParent,
+      },
+      prepare: async (request) => ({
+        mcpServers: [],
+        systemPrompt: { body: "system", materials: [] },
+        prompt: request.continuation.prompt,
+        jsonSchema: { type: "object", properties: { status: { type: "string" } }, required: ["status"] },
+        terminatingToolName: "ak_probe_output",
+        async ingestStructuredOutput() {},
+        async closeRound() {
+          return { accepted: true as const };
+        },
+      }),
+    });
+    const execute = (prompt: string) => host.executeTurn({
+      principal: fixturePrincipal(join(ledger.runDirectory, "session")),
+      activation: { role: "inspector" },
+      methods: [],
+      continuation: { kind: "initial", prompt },
+      model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
+      cwd: ledger.runDirectory,
+      home: ledger.runDirectory,
+      agentDir: join(ledger.runDirectory, "agent"),
+      runDirectory: ledger.runDirectory,
+    });
+
+    const noThread = await execute("no-thread");
+    assert.equal(noThread.knownFailure?.identity?.code, "codex-turn-failed");
+    assert.equal(
+      noThread.knownFailure?.diagnostic,
+      "thread-store conflict: session already has an active writer (code -32600)",
+    );
+
+    const persisted = await execute("with-thread");
+    assert.equal(persisted.knownFailure?.identity?.code, "codex-turn-failed");
+    assert.equal(bound, "thread-failed-1");
+
+    bound = undefined;
+    rejectBind = true;
+    const bindFailed = await execute("with-thread");
+    assert.equal(bindFailed.knownFailure?.identity?.name, "HeadlessCliError");
+    assert.equal(bindFailed.knownFailure?.identity?.code, "codex-turn-failed");
+    assert.equal(
+      bindFailed.knownFailure?.diagnostic,
+      "thread-store conflict: session already has an active writer (code -32600)",
+    );
+    assert.deepEqual(bindFailed.knownFailure?.details, {
+      sessionId: "thread-failed-1",
+      exitCode: 1,
+      sessionBindingDiagnostic: "session identity store is read-only",
+    });
+    rejectBind = false;
+    sessionParent = "/dev/null/session.jsonl";
+    const recordFailed = await execute("no-thread");
+    assert.equal(recordFailed.knownFailure?.identity?.code, "codex-turn-failed");
+    assert.equal(
+      recordFailed.knownFailure?.diagnostic,
+      "thread-store conflict: session already has an active writer (code -32600)",
     );
   } finally {
     ledger.dispose();

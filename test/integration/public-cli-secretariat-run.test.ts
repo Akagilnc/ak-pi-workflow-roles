@@ -675,7 +675,7 @@ test("public secretariat through-line: default summon → continue → same-run 
       countersignRequests,
       // #987 Result 7: no public ticketNumber resume into a pre-seeded run.
       // First gate summon under this secretariat parent mints; second resumes
-      // via parentRunPath.
+      // via parentRunPath (#747).
       countersignSequence: [
         {
           details: {
@@ -741,14 +741,22 @@ test("public secretariat through-line: default summon → continue → same-run 
     assert.equal(summonDetails[1]!.outcomeKind, "accepted");
     assert.equal(summonDetails[1]!.countersignStatus, "converged");
     const firstRunId = summonDetails[0]!.runId;
-    assert.equal(typeof firstRunId, "string");
-    assert.ok((firstRunId as string).length > 0);
+    assert.equal(
+      typeof firstRunId,
+      "string",
+      "first gate summon must mint a countersign run under this secretariat parent",
+    );
+    assert.ok(
+      (firstRunId as string).length > 0,
+      "minted countersign runId must be non-empty",
+    );
     assert.equal(
       summonDetails[1]!.runId,
       firstRunId,
       "second gate summon must resume the same-parent countersign run",
     );
 
+    // G2: mint + resume each cross 符宝郎内闸 and create a court.
     assert.equal(gateCalls.length, 2);
     assert.ok(
       gateCalls.every((c) => c.kind === "countersign_verdict"),
@@ -769,7 +777,11 @@ test("public secretariat through-line: default summon → continue → same-run 
       `mint + same-parent resume must each create a court; got=${[...attemptIds].join(",") || "(none)"}`,
     );
 
-    assert.equal(countersignRequests.length, 2);
+    assert.equal(
+      countersignRequests.length,
+      2,
+      `expected mint then resume under secretariat caller: ${JSON.stringify(countersignRequests.map((request) => ({ kind: request.continuation.kind, correlationId: request.correlationId })))}`,
+    );
     assert.equal(countersignRequests[0]!.continuation.kind, "initial");
     assert.equal(countersignRequests[0]!.correlationId, secretariatRunId);
     assert.equal(countersignRequests[1]!.continuation.kind, "resume");
@@ -1023,10 +1035,10 @@ test("#969 non-pi converged → shared gate summons 给事中 → bounce → res
       countersignRequests.length >= 1,
       "gate must summon countersign",
     );
-    // Same-ticket resume on second 给事中 leg.
+    // #987: second 给事中 leg resumes via same secretariat parentRunPath.
     assert.ok(
       countersignRequests.some((r) => r.continuation.kind === "resume"),
-      "封驳后给事中 must resume same ticket",
+      "封驳后给事中 must resume same parent",
     );
   });
 });

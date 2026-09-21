@@ -1138,8 +1138,9 @@ export function createSecretariatRoleRuntime(
           const summon = dependencies.summonCountersign;
           const summoned = summon === undefined
             ? await (async () => {
-                // Mid-turn summon resumes by parent run directory, same key as
-                // summonGateOfficer countersign. Board ticket only binds.
+                // #987 Result 7 / #747: mid-turn summon resumes by parentRunPath
+                // (secretariat run dir), same key as summonGateOfficer countersign.
+                // Board ticket is bind-only — never the resume lookup.
                 const coordinates = readRoleRunCoordinates(ctx, "secretariat summons");
                 const { summonPublicRole } = await import("./public-role-summons.ts");
                 const { readBoardTicketNumber } = await import("./run-ticket-number.ts");

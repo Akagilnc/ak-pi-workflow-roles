@@ -157,6 +157,11 @@ export type AdmittedCountersignInvocation = AdmittedRoleInvocationBase & {
    * countersign controlled failure with this text — never structural exit 2 or main-only.
    */
   courtTicketNumbersDamage?: string;
+  /**
+   * Parent run directory (#747 / #987 gate same-parent resume). Persisted on first
+   * mint when gate supplies parentRunPath; independent of ticket-number lookup.
+   */
+  readonly sourceRunPath?: string;
 };
 
 export type AdmittedGleanerLeftInvocation = AdmittedRoleInvocationBase & {
