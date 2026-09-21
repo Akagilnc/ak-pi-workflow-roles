@@ -2495,44 +2495,6 @@ export async function publishJudgeArtifacts(
 }
 
 /**
- * Publish lawful Coder success Artifacts on the shared #106 success interface.
- * Evidence records package method provenance without ambient home Skill paths.
- */
-export async function publishCoderArtifacts(
-  admitted: AdmittedCoderInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-  options: {
-    readonly methodProvenance?: PackagedMethodSkillProvenance;
-  } = {},
-): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: "coder",
-      runId: admitted.runId,
-      phase: admitted.phase,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      role: "coder",
-      phase: admitted.phase,
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      taskPath: admitted.taskPath,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-      ...(options.methodProvenance === undefined
-        ? {}
-        : { methodProvenance: options.methodProvenance }),
-    },
-  });
-}
-
-/** Lawful Coder accepted outcome extracted from session (shared success interface). */
-export type LawfulCoderRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-/**
  * Read session entries for lawful settlement. Missing path → undefined (absence).
  * Malformed JSONL / other read failures throw with knownCause=session.
  */
@@ -2710,11 +2672,13 @@ async function settleLawfulCoderTerminalResult(
     admitted,
     authority,
     scope,
-    (roleOutcome, coordinates) => publishCoderArtifacts(admitted, roleOutcome, coordinates, {
-      ...(options.methodProvenance === undefined
-        ? {}
-        : { methodProvenance: options.methodProvenance }),
-    }),
+    (roleOutcome, coordinates, entries) => publishDeclaredSeatArtifacts(
+      admitted,
+      roleOutcome,
+      coordinates,
+      entries,
+      options,
+    ),
   );
 }
 
@@ -2801,49 +2765,6 @@ function extractObservedMethodInvocations(
   return Object.freeze(observed);
 }
 
-/**
- * Publish lawful Fixer success Artifacts on the shared #106 success interface.
- * Evidence records package diagnosis provenance and optional observed invocation.
- */
-export async function publishFixerArtifacts(
-  admitted: AdmittedFixerInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-  },
-): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: "fixer",
-      runId: admitted.runId,
-      phase: admitted.phase,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      role: "fixer",
-      phase: admitted.phase,
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      packetPath: admitted.packetPath,
-      ...(admitted.prerequisitesPath === undefined
-        ? {}
-        : { prerequisitesPath: admitted.prerequisitesPath }),
-      prerequisites: admitted.prerequisites,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-      methodProvenance: options.methodProvenance,
-      // Optional diagnosis: availability is package-bound; invocation only when observed.
-      methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
-      methodInvocations: options.methodInvocations ?? [],
-    },
-  });
-}
-
-/** Lawful Fixer accepted outcome extracted from session (no LLM auditor after #242). */
-export type LawfulFixerRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 async function settleLawfulFixerTerminalResult(
   admitted: AdmittedFixerInvocation,
   authority: DurablePrincipalAuthority,
@@ -2858,19 +2779,13 @@ async function settleLawfulFixerTerminalResult(
     admitted,
     authority,
     scope,
-    (roleOutcome, coordinates, entries) => {
-      const methodInvocations = extractObservedMethodInvocations(entries, {
-        name: options.methodProvenance.name,
-        allowedLocations: [
-          options.methodSkillPath,
-          options.methodSkillConfiguredPath,
-        ],
-      });
-      return publishFixerArtifacts(admitted, roleOutcome, coordinates, {
-        methodProvenance: options.methodProvenance,
-        methodInvocations,
-      });
-    },
+    (roleOutcome, coordinates, entries) => publishDeclaredSeatArtifacts(
+      admitted,
+      roleOutcome,
+      coordinates,
+      entries,
+      options,
+    ),
   );
 }
 
@@ -2894,31 +2809,6 @@ export async function settleFixerTerminalResult(
   return settled;
 }
 
-export async function publishCollectorArtifacts(
-  admitted: AdmittedCollectorInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: "collector",
-      runId: admitted.runId,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      role: "collector",
-      ...(admitted.prNumber === undefined ? {} : { prNumber: admitted.prNumber }),
-      repository: admitted.repository.canonical,
-      manifestDigest: admitted.manifestDigest,
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-    },
-  });
-}
-
 async function settleLawfulCollectorTerminalResult(
   admitted: AdmittedCollectorInvocation,
   authority: DurablePrincipalAuthority,
@@ -2933,7 +2823,12 @@ async function settleLawfulCollectorTerminalResult(
     "collector",
     COLLECTOR_WAIT_TOOL,
     "current-attempt",
-    (roleOutcome, coordinates) => publishCollectorArtifacts(admitted, roleOutcome, coordinates),
+    (roleOutcome, coordinates, entries) => publishDeclaredSeatArtifacts(
+      admitted,
+      roleOutcome,
+      coordinates,
+      entries,
+    ),
   );
 }
 
@@ -2985,44 +2880,195 @@ function extractDoctorCandidateFacts(
   return {};
 }
 
-export async function publishDoctorArtifacts(
-  admitted: AdmittedDoctorInvocation,
+/**
+ * Success-face fields that still differ by seat. Presence and omission match
+ * the former per-seat publishers. Key order is not part of the contract.
+ */
+type SeatArtifactLeaf = {
+  readonly key: string;
+  readonly from?: string;
+  readonly omitUndefined?: true;
+  readonly copyArray?: true;
+  readonly callerProvenance?: true;
+};
+
+type SeatArtifactFace = {
+  readonly reportPhase?: true;
+  readonly evidenceRole?: true;
+  readonly leaves: readonly SeatArtifactLeaf[];
+  readonly method?: "optional" | "observed";
+  readonly doctorReportFacts?: true;
+};
+
+const SEAT_ARTIFACT_FACE: Partial<Record<TerminalRoleName, SeatArtifactFace>> = {
+  coder: {
+    reportPhase: true,
+    evidenceRole: true,
+    leaves: [
+      { key: "phase" },
+      { key: "taskPath" },
+    ],
+    method: "optional",
+  },
+  fixer: {
+    reportPhase: true,
+    evidenceRole: true,
+    leaves: [
+      { key: "phase" },
+      { key: "packetPath" },
+      { key: "prerequisitesPath", omitUndefined: true },
+      { key: "prerequisites" },
+    ],
+    method: "observed",
+  },
+  collector: {
+    evidenceRole: true,
+    leaves: [
+      { key: "prNumber", omitUndefined: true },
+      { key: "repository", from: "repository.canonical" },
+      { key: "manifestDigest" },
+    ],
+  },
+  doctor: {
+    evidenceRole: true,
+    leaves: [
+      { key: "issueNumber" },
+      { key: "caseRunsPath" },
+      { key: "caseIdentity" },
+    ],
+    doctorReportFacts: true,
+  },
+  reviewer: {
+    evidenceRole: true,
+    leaves: [
+      { key: "baseRevision" },
+      { key: "lens" },
+      { key: "authorityRefs", copyArray: true },
+      { key: "callerProvenance", callerProvenance: true },
+    ],
+    method: "observed",
+  },
+  merger: {
+    evidenceRole: true,
+    leaves: [
+      { key: "mergerInputPath" },
+      { key: "derived" },
+    ],
+    method: "observed",
+  },
+};
+
+function readAdmittedPath(source: object, path: string): unknown {
+  let current: unknown = source;
+  for (const part of path.split(".")) {
+    if (typeof current !== "object" || current === null) return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+function evidenceLeaves(
+  admitted: AdmittedRoleInvocation,
+  leaves: readonly SeatArtifactLeaf[],
+): Record<string, unknown> {
+  const evidence: Record<string, unknown> = {};
+  for (const leaf of leaves) {
+    if (leaf.callerProvenance === true) {
+      if (!admitted.instructionEmpty) evidence[leaf.key] = admitted.instruction;
+      continue;
+    }
+    const value = readAdmittedPath(admitted, leaf.from ?? leaf.key);
+    if (value === undefined && leaf.omitUndefined === true) continue;
+    evidence[leaf.key] = leaf.copyArray === true && Array.isArray(value) ? [...value] : value;
+  }
+  return evidence;
+}
+
+function doctorReportFacts(
+  face: SeatArtifactFace,
+  roleOutcome: TerminalRoleOutcome,
+  entries: readonly SessionEntry[],
+): Record<string, unknown> {
+  if (face.doctorReportFacts !== true || roleOutcome.kind === "audit_escalation") return {};
+  const facts = extractDoctorCandidateFacts(entries);
+  return {
+    ...(facts.cost === undefined ? {} : { cost: facts.cost }),
+    ...(facts.auditNoReceipt === undefined ? {} : { auditNoReceipt: facts.auditNoReceipt }),
+  };
+}
+
+function observedMethodTail(
+  face: SeatArtifactFace,
+  entries: readonly SessionEntry[],
+  options: {
+    readonly methodProvenance?: PackagedMethodSkillProvenance;
+    readonly methodSkillPath?: string;
+    readonly methodSkillConfiguredPath?: string;
+  },
+): Record<string, unknown> {
+  if (face.method === undefined) return {};
+  if (face.method === "optional") {
+    return options.methodProvenance === undefined
+      ? {}
+      : { methodProvenance: options.methodProvenance };
+  }
+  if (
+    options.methodProvenance === undefined
+    || options.methodSkillPath === undefined
+    || options.methodSkillConfiguredPath === undefined
+  ) {
+    throw new Error("observed method publication is missing packaged method coordinates");
+  }
+  const methodInvocations = extractObservedMethodInvocations(entries, {
+    name: options.methodProvenance.name,
+    allowedLocations: [options.methodSkillPath, options.methodSkillConfiguredPath],
+  });
+  return {
+    methodProvenance: options.methodProvenance,
+    methodInvocationObserved: methodInvocations.length > 0,
+    methodInvocations,
+  };
+}
+
+async function publishDeclaredSeatArtifacts(
+  admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
+  entries: readonly SessionEntry[],
   options: {
-    readonly cost?: DoctorCaseCost;
-    readonly auditNoReceipt?: unknown;
+    readonly methodProvenance?: PackagedMethodSkillProvenance;
+    readonly methodSkillPath?: string;
+    readonly methodSkillConfiguredPath?: string;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
+  const face = SEAT_ARTIFACT_FACE[admitted.role];
+  if (face === undefined) {
+    throw new Error(`no artifact face for ${admitted.role}`);
+  }
+  const phase = face.reportPhase === true
+    ? { phase: readAdmittedPath(admitted, "phase") }
+    : {};
   return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
     report: {
-      role: "doctor",
+      role: admitted.role,
       runId: admitted.runId,
+      ...phase,
       outcome: roleOutcome,
-      ...(options.cost === undefined ? {} : { cost: options.cost }),
-      ...(options.auditNoReceipt === undefined
-        ? {}
-        : { auditNoReceipt: options.auditNoReceipt }),
+      ...doctorReportFacts(face, roleOutcome, entries),
     },
     evidence: {
       runId: admitted.runId,
-      role: "doctor",
-      issueNumber: admitted.issueNumber,
-      caseRunsPath: admitted.caseRunsPath,
-      caseIdentity: admitted.caseIdentity,
+      ...(face.evidenceRole === true ? { role: admitted.role } : {}),
+      ...evidenceLeaves(admitted, face.leaves),
       sessionDirectory: coordinates.sessionDirectory,
       sessionFile: coordinates.sessionFile,
       admittedRequestPath: admitted.admittedRequestPath,
       attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+      ...observedMethodTail(face, entries, options),
     },
   });
 }
 
-/** Lawful Doctor accepted/refused/audit_escalation outcome extracted from session. */
-export type LawfulDoctorRoleOutcome = Extract<
-  TerminalRoleOutcome,
-  { kind: "accepted" } | { kind: "audit_escalation" }
->;
 async function settleLawfulDoctorTerminalResult(
   admitted: AdmittedDoctorInvocation,
   authority: DurablePrincipalAuthority,
@@ -3032,13 +3078,11 @@ async function settleLawfulDoctorTerminalResult(
     admitted,
     authority,
     scope,
-    (roleOutcome, coordinates, entries) => publishDoctorArtifacts(
+    (roleOutcome, coordinates, entries) => publishDeclaredSeatArtifacts(
       admitted,
       roleOutcome,
       coordinates,
-      roleOutcome.kind === "audit_escalation"
-        ? {}
-        : extractDoctorCandidateFacts(entries),
+      entries,
     ),
   );
 }
@@ -3455,47 +3499,6 @@ export async function trySettleFixerTerminalResult(
   return settleLawfulFixerTerminalResult(admitted, authority, options, scope);
 }
 
-/**
- * Publish lawful Reviewer success Artifacts on the shared #106 success interface.
- * Evidence records package ak-cross-m-review provenance and typed expansion
- * observation without ambient home Skill paths.
- */
-export async function publishReviewerArtifacts(
-  admitted: AdmittedReviewerInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-  },
-): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: "reviewer",
-      runId: admitted.runId,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      role: "reviewer",
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      baseRevision: admitted.baseRevision,
-      lens: admitted.lens,
-      authorityRefs: [...admitted.authorityRefs],
-      ...(admitted.instructionEmpty
-        ? {}
-        : { callerProvenance: admitted.instruction }),
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-      methodProvenance: options.methodProvenance,
-      // Forced package method: availability is package-bound; expansion only when observed.
-      methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
-      methodInvocations: options.methodInvocations ?? [],
-    },
-  });
-}
-
 async function settleLawfulReviewerTerminalResult(
   admitted: AdmittedReviewerInvocation,
   authority: DurablePrincipalAuthority,
@@ -3510,19 +3513,13 @@ async function settleLawfulReviewerTerminalResult(
     admitted,
     authority,
     scope,
-    (roleOutcome, coordinates, entries) => {
-      const methodInvocations = extractObservedMethodInvocations(entries, {
-        name: options.methodProvenance.name,
-        allowedLocations: [
-          options.methodSkillPath,
-          options.methodSkillConfiguredPath,
-        ],
-      });
-      return publishReviewerArtifacts(admitted, roleOutcome, coordinates, {
-        methodProvenance: options.methodProvenance,
-        methodInvocations,
-      });
-    },
+    (roleOutcome, coordinates, entries) => publishDeclaredSeatArtifacts(
+      admitted,
+      roleOutcome,
+      coordinates,
+      entries,
+      options,
+    ),
     (roleOutcome) => roleOutcome.role === "reviewer" && roleOutcome.kind === "accepted",
   );
 }
@@ -3561,42 +3558,6 @@ export async function trySettleReviewerTerminalResult(
   return settleLawfulReviewerTerminalResult(admitted, authority, options, scope);
 }
 
-/**
- * Publish lawful Merger success Artifacts on the shared #106 success interface.
- * Evidence records package method provenance, forced expansion observation, and
- * adapter-derived mechanical envelope facts without ambient home Skill paths.
- */
-export async function publishMergerArtifacts(
-  admitted: AdmittedMergerInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-  },
-): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: "merger",
-      runId: admitted.runId,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      role: "merger",
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      mergerInputPath: admitted.mergerInputPath,
-      derived: admitted.derived,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-      methodProvenance: options.methodProvenance,
-      methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
-      methodInvocations: options.methodInvocations ?? [],
-    },
-  });
-}
-
 async function settleLawfulMergerTerminalResult(
   admitted: AdmittedMergerInvocation,
   authority: DurablePrincipalAuthority,
@@ -3615,16 +3576,13 @@ async function settleLawfulMergerTerminalResult(
     "merger",
     MERGER_OUTPUT_TOOL_NAME,
     "session",
-    (roleOutcome, coordinates, entries) => {
-      const methodInvocations = extractObservedMethodInvocations(entries, {
-        name: options.methodProvenance.name,
-        allowedLocations: [options.methodSkillPath, options.methodSkillConfiguredPath],
-      });
-      return publishMergerArtifacts(admitted, roleOutcome, coordinates, {
-        methodProvenance: options.methodProvenance,
-        methodInvocations,
-      });
-    },
+    (roleOutcome, coordinates, entries) => publishDeclaredSeatArtifacts(
+      admitted,
+      roleOutcome,
+      coordinates,
+      entries,
+      options,
+    ),
   );
 }
 
