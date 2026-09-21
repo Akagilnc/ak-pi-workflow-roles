@@ -1079,24 +1079,6 @@ export async function dispatchPostAdmissionTurn<
         };
       }
     } catch (error) {
-      if (
-        settled !== undefined
-        && isLawfulTypedTerminalOutcome(settled.roleOutcome)
-      ) {
-        await recordBestEffortPostDispatchDiagnostic(
-          admitted,
-          env,
-          `post-settlement processing failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
-          io,
-        );
-        return await finishAfterTurn({
-          exitCode: exitCodeForTerminalOutcome(settled.roleOutcome),
-          admitted,
-          terminal: settled,
-          turnDispatched: true as const,
-          ...deferredPersist,
-        });
-      }
       // Settle (or its shouldPresent gate, or the failure-fact resolution
       // above) throw is a real failure fact — never swallow into undefined.
       const settledFailure = await settleAfterTurnStarted(
