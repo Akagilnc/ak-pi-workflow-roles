@@ -1545,7 +1545,7 @@ export async function admitPublicRole(
         },
       );
     case "countersign":
-      return admitCountersignInvocation({
+      return admitStandardMaterialInvocation("countersign", {
         ...shared,
         instruction,
         attachmentPaths,
@@ -1790,19 +1790,26 @@ async function persistPlacedAdmission(
 /**
  * Shared instruction-seat admission: project check, placement, attachment freeze,
  * admitted-request and invocation ledger write.
+ * Countersign passes deferPersistence so same-ticket lookup can reserve coordinates
+ * before materializeCountersignInvocation writes the page.
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign",
 >(
   role: R,
-  options: AdmitInspectorInvocationOptions,
+  options: AdmitInspectorInvocationOptions & {
+    /** Reserve coordinates; skip freeze, placement disk, and admitted-request write. */
+    readonly deferPersistence?: boolean;
+  },
 ): Promise<AdmittedRoleInvocationBase & { readonly role: R }> {
+  const defer = options.deferPersistence === true;
   const placed = await placeRoleAdmission({
     role,
     home: options.home,
     principalAuthority: options.principalAuthority,
     cwd: options.cwd,
     attachmentPaths: options.attachmentPaths,
+    ...(defer ? { freezeAttachments: false, materialize: false } : {}),
     ...(options.project === undefined ? {} : { project: options.project }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
     ...(options.assertedTicketNumber === undefined
@@ -1828,7 +1835,9 @@ async function admitStandardMaterialInvocation<
     attachments: persistedAttachmentRefs(placed.attachments),
     ...placed.ticketFields,
   };
-  const admittedRequestPath = await persistPlacedAdmission(admitted, placed, options.model);
+  const admittedRequestPath = defer
+    ? join(placed.runDirectory, "admitted-request.json")
+    : await persistPlacedAdmission(admitted, placed, options.model);
   return {
     role,
     runId: placed.runId,
@@ -1880,56 +1889,6 @@ export type AdmitCountersignInvocationOptions = {
   /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
   assertedTicketNumber?: number;
 };
-
-/**
- * Admit a Countersign run immediately, or reserve its coordinates for deferred
- * materialization after identity lookup (#572 / ADR 0074 / #863).
- */
-async function admitCountersignInvocation(
-  options: AdmitCountersignInvocationOptions,
-): Promise<AdmittedCountersignInvocation> {
-  const defer = options.deferPersistence === true;
-  const placed = await placeRoleAdmission({
-    role: "countersign",
-    home: options.home,
-    principalAuthority: options.principalAuthority,
-    cwd: options.cwd,
-    attachmentPaths: options.attachmentPaths,
-    freezeAttachments: !defer,
-    materialize: !defer,
-    ...(options.project === undefined ? {} : { project: options.project }),
-    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-    ...(options.assertedTicketNumber === undefined
-      ? {}
-      : { assertedTicketNumber: options.assertedTicketNumber }),
-  });
-  const correlationFields = options.correlationId === undefined
-    ? {}
-    : { correlationId: options.correlationId };
-  const instruction = options.instruction;
-  const instructionEmpty = instruction.trim() === "";
-  const admitted = {
-    role: "countersign" as const,
-    runId: placed.runId,
-    bookKey: placed.bookKey,
-    projectRoot: placed.projectRoot,
-    runDirectory: placed.runDirectory,
-    principal: placed.principal,
-    ...correlationFields,
-    instruction,
-    instructionEmpty,
-    attachments: persistedAttachmentRefs(placed.attachments),
-    ...placed.ticketFields,
-  };
-  const admittedRequestPath = defer
-    ? join(placed.runDirectory, "admitted-request.json")
-    : await persistPlacedAdmission(admitted, placed, options.model);
-  return {
-    ...admitted,
-    attachments: placed.attachments,
-    admittedRequestPath,
-  };
-}
 
 /** Persist a deferred Countersign admission after same-ticket lookup found no retained run. */
 export async function materializeCountersignInvocation(
