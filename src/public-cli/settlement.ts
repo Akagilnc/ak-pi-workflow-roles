@@ -1985,11 +1985,6 @@ export async function appendRunAttemptHistory(
   } catch {}
 }
 
-/** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
-export type LawfulJudgeRoleOutcome = Extract<
-  TerminalRoleOutcome,
-  { kind: "accepted" } | { kind: "audit_escalation" }
->;
 /**
  * Minimal attendance provenance against the bound marker (ADR 0043).
  * Keep only invocationId + post-terminal ordering. Runtime-self-produced
@@ -2496,20 +2491,7 @@ export async function publishJudgeArtifacts(
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
 ): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: "judge",
-      runId: admitted.runId,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-    },
-  });
+  return publishSeatAcceptedArtifacts(admitted, roleOutcome, coordinates);
 }
 
 /**
@@ -2571,54 +2553,48 @@ async function readLawfulSettlementEntries(
 }
 
 /**
- * Lawful Judge outcome presence only — no artifact publication.
- * Returns undefined for genuine absence (missing path / no lawful verdict).
- * Session-read failures propagate with typed identity.
+ * Sealed-ledger seats that publish on a lawful outcome and do not scan a
+ * residual tool or attach run-scoped submission history.
+ * Absence stays undefined. Session-read and publication errors keep their identity.
+ * Outcome is read before publication so a later write error cannot erase it.
  */
-export async function readLawfulJudgeRoleOutcome(
-  admitted: AdmittedJudgeInvocation,
+async function settleSealedLedgerTerminal(
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<LawfulJudgeRoleOutcome | undefined> {
-  return sealedLedgerOutcome(admitted, "judge", scope);
-}
-
-/**
- * Single lawful-settlement implementation (session → outcome/Navigator/artifacts).
- *
- * - Returns undefined only for genuine absence (missing session path, or no
- *   lawful verdict in an otherwise readable session).
- * - Malformed JSONL / other session-read failures throw with knownCause=session
- *   and original identity (SyntaxError name retained).
- * - Artifact publication failures propagate with their original typed identity.
- * - Lawful outcome presence is decided before publication so a later write error
- *   cannot erase the fact that a lawful result already exists.
- */
-async function settleLawfulJudgeTerminalResult(
-  admitted: AdmittedJudgeInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
+  scope: SettlementCourtScope | undefined,
+  publish: (
+    roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
+    coordinates: DurablePrincipalCoordinates,
+    entries: readonly SessionEntry[],
+  ) => Promise<TerminalArtifactRef[]>,
 ): Promise<TerminalResult | undefined> {
-  const roleOutcome = await readLawfulJudgeRoleOutcome(admitted, authority, scope);
+  const roleOutcome = await sealedLedgerOutcome(admitted, admitted.role, scope);
   if (roleOutcome === undefined) return undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
-  const navigator = extractNavigatorFact(entries);
-  // Lawful outcome exists — artifact publication keeps original errno/name.
-  const artifacts = await publishJudgeArtifacts(
-    admitted,
-    roleOutcome,
-    coordinates,
-  );
+  const artifacts = await publish(roleOutcome, coordinates, entries);
   return withOptionalGateProjection(
     {
       roleOutcome,
-      navigator,
+      navigator: extractNavigatorFact(entries),
       artifacts,
       runId: admitted.runId,
     },
     coordinates.sessionDirectory,
     detourGateContext(admitted, scope),
+  );
+}
+
+async function settleLawfulJudgeTerminalResult(
+  admitted: AdmittedJudgeInvocation,
+  authority: DurablePrincipalAuthority,
+  scope?: SettlementCourtScope,
+): Promise<TerminalResult | undefined> {
+  return settleSealedLedgerTerminal(
+    admitted,
+    authority,
+    scope,
+    (roleOutcome, coordinates) => publishJudgeArtifacts(admitted, roleOutcome, coordinates),
   );
 }
 
@@ -2662,31 +2638,15 @@ async function settleLawfulCoderTerminalResult(
   } = {},
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const ledgerOutcome = await closedLedgerOutcome(admitted, "coder", scope);
-  if (ledgerOutcome === undefined) return undefined;
-  const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
-  const navigator = extractNavigatorFact(entries);
-  const artifacts = await publishCoderArtifacts(
+  return settleSealedLedgerTerminal(
     admitted,
-    roleOutcome,
-    coordinates,
-    {
+    authority,
+    scope,
+    (roleOutcome, coordinates) => publishCoderArtifacts(admitted, roleOutcome, coordinates, {
       ...(options.methodProvenance === undefined
         ? {}
         : { methodProvenance: options.methodProvenance }),
-    },
-  );
-  return withOptionalGateProjection(
-    {
-      roleOutcome,
-      navigator,
-      artifacts,
-      runId: admitted.runId,
-    },
-    coordinates.sessionDirectory,
-    detourGateContext(admitted, scope),
+    }),
   );
 }
 
@@ -2826,38 +2786,23 @@ async function settleLawfulFixerTerminalResult(
   },
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  const ledgerOutcome = await closedLedgerOutcome(admitted, "fixer", scope);
-  if (ledgerOutcome === undefined) return undefined;
-  const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const navigator = extractNavigatorFact(entries);
-  const methodInvocations = extractObservedMethodInvocations(entries, {
-    name: options.methodProvenance.name,
-    allowedLocations: [
-      options.methodSkillPath,
-      options.methodSkillConfiguredPath,
-    ],
-  });
-  const artifacts = await publishFixerArtifacts(
+  return settleSealedLedgerTerminal(
     admitted,
-    roleOutcome,
-    coordinates,
-    {
-      methodProvenance: options.methodProvenance,
-      methodInvocations,
+    authority,
+    scope,
+    (roleOutcome, coordinates, entries) => {
+      const methodInvocations = extractObservedMethodInvocations(entries, {
+        name: options.methodProvenance.name,
+        allowedLocations: [
+          options.methodSkillPath,
+          options.methodSkillConfiguredPath,
+        ],
+      });
+      return publishFixerArtifacts(admitted, roleOutcome, coordinates, {
+        methodProvenance: options.methodProvenance,
+        methodInvocations,
+      });
     },
-  );
-  return withOptionalGateProjection(
-    {
-      roleOutcome,
-      navigator,
-      artifacts,
-      runId: admitted.runId,
-    },
-    sessionDirectory,
-    detourGateContext(admitted, scope),
   );
 }
 
