@@ -1601,23 +1601,47 @@ export async function admitPublicRole(
         sourceRun: parsed.sourceRun ?? "",
         ...project,
       });
-    case "gleaner":
-      return admitGleanerLeftInvocation({
+    case "gleaner": {
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      const baseRevision = parsed.baseRevision ?? "";
+      if (baseRevision.trim() === "") {
+        throw new CliUsageError("--base requires a nonempty revision");
+      }
+      return admitStandardMaterialInvocation("gleaner-left", {
         ...shared,
         instruction,
-        baseRevision: parsed.baseRevision ?? "",
+        attachmentPaths: [],
         ...project,
+        freezeAttachments: false,
+        admittedFields: { baseRevision },
       });
-    case "reviewer":
-      return admitReviewerInvocation({
+    }
+    case "reviewer": {
+      const lens = requireReviewerLens(parsed.lens);
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      const baseRevision = requireReviewerBaseRevision(parsed.baseRevision);
+      const rawRefs = parsed.authorityRefs ?? [];
+      if (rawRefs.length === 0) {
+        throw new CliUsageError("reviewer requires --authority-ref <ref>");
+      }
+      const authorityRefs = Object.freeze(rawRefs.map((ref) => requireAuthorityRef(ref)));
+      const admittedReviewer = await admitStandardMaterialInvocation("reviewer", {
         ...shared,
         instruction,
         attachmentPaths,
-        baseRevision: parsed.baseRevision ?? "",
-        lens: requireReviewerLens(parsed.lens),
-        authorityRefs: [...(parsed.authorityRefs ?? [])],
         ...project,
+        admittedFields: {
+          baseRevision,
+          lens,
+          authorityRefs: [...authorityRefs],
+        },
       });
+      return { ...admittedReviewer, authorityRefs };
+    }
     case "merger":
       return admitMergerInvocation({
         ...shared,
@@ -1788,28 +1812,36 @@ async function persistPlacedAdmission(
 }
 
 /**
- * Shared instruction-seat admission: project check, placement, attachment freeze,
+ * Shared admission: project check, placement, attachment freeze,
  * admitted-request and invocation ledger write.
  * Countersign passes deferPersistence so same-ticket lookup can reserve coordinates
  * before materializeCountersignInvocation writes the page.
+ * Seats whose extra facts are known before placement pass them as admittedFields.
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign",
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer",
+  Extra extends object = {},
 >(
   role: R,
   options: AdmitInspectorInvocationOptions & {
     /** Reserve coordinates; skip freeze, placement disk, and admitted-request write. */
     readonly deferPersistence?: boolean;
+    /** Skip attachment freeze. Gleaner-left admits no caller attachments. */
+    readonly freezeAttachments?: boolean;
+    /** Seat facts already validated by admitPublicRole. */
+    readonly admittedFields?: Extra;
   },
-): Promise<AdmittedRoleInvocationBase & { readonly role: R }> {
+): Promise<AdmittedRoleInvocationBase & { readonly role: R } & Extra> {
   const defer = options.deferPersistence === true;
+  const skipFreeze = defer || options.freezeAttachments === false;
   const placed = await placeRoleAdmission({
     role,
     home: options.home,
     principalAuthority: options.principalAuthority,
     cwd: options.cwd,
     attachmentPaths: options.attachmentPaths,
-    ...(defer ? { freezeAttachments: false, materialize: false } : {}),
+    ...(skipFreeze ? { freezeAttachments: false } : {}),
+    ...(defer ? { materialize: false } : {}),
     ...(options.project === undefined ? {} : { project: options.project }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
     ...(options.assertedTicketNumber === undefined
@@ -1822,6 +1854,7 @@ async function admitStandardMaterialInvocation<
       : { correlationId: options.correlationId };
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
+  const admittedFields = options.admittedFields ?? ({} as Extra);
   const admitted = {
     role,
     runId: placed.runId,
@@ -1832,6 +1865,7 @@ async function admitStandardMaterialInvocation<
     ...correlationFields,
     instruction,
     instructionEmpty,
+    ...admittedFields,
     attachments: persistedAttachmentRefs(placed.attachments),
     ...placed.ticketFields,
   };
@@ -1851,6 +1885,7 @@ async function admitStandardMaterialInvocation<
     admittedRequestPath,
     ...correlationFields,
     ...placed.ticketFields,
+    ...admittedFields,
   };
 }
 
@@ -2896,74 +2931,6 @@ export function parseGleanerLeftArgv(
   };
 }
 
-export type AdmitGleanerLeftInvocationOptions = {
-  home: string;
-  principalAuthority: DurablePrincipalAuthority;
-  cwd: string;
-  instruction: string;
-  baseRevision: string;
-  project?: string;
-  createRunId?: () => string;
-  model?: InvocationEffectiveModel;
-  correlationId?: string;
-  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
-  assertedTicketNumber?: number;
-};
-
-/**
- * Admit a Gleaner-Left Role run on the fixed comparison base.
- * Empty instruction is the lawful path; no attachment/ticket admission face.
- */
-async function admitGleanerLeftInvocation(
-  options: AdmitGleanerLeftInvocationOptions,
-): Promise<AdmittedGleanerLeftInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  if (options.baseRevision.trim() === "") {
-    throw new CliUsageError("--base requires a nonempty revision");
-  }
-
-  const placed = await placeRoleAdmission({
-    role: "gleaner-left",
-    home: options.home,
-    principalAuthority: options.principalAuthority,
-    cwd: options.cwd,
-    attachmentPaths: [],
-    freezeAttachments: false,
-    ...(options.project === undefined ? {} : { project: options.project }),
-    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-    ...(options.assertedTicketNumber === undefined
-      ? {}
-      : { assertedTicketNumber: options.assertedTicketNumber }),
-  });
-  const correlationFields = options.correlationId === undefined
-    ? {}
-    : { correlationId: options.correlationId };
-  const instruction = options.instruction;
-  const instructionEmpty = instruction.trim() === "";
-  const admitted = {
-    role: "gleaner-left" as const,
-    runId: placed.runId,
-    bookKey: placed.bookKey,
-    projectRoot: placed.projectRoot,
-    runDirectory: placed.runDirectory,
-    principal: placed.principal,
-    instruction,
-    instructionEmpty,
-    baseRevision: options.baseRevision,
-    attachments: persistedAttachmentRefs(placed.attachments),
-    ...placed.ticketFields,
-    ...correlationFields,
-  };
-  const admittedRequestPath = await persistPlacedAdmission(admitted, placed, options.model);
-  return {
-    ...admitted,
-    attachments: placed.attachments,
-    admittedRequestPath,
-  };
-}
-
 /** Bound comparison base is a typed fact, not a directional instruction. */
 export function buildGleanerLeftTransportPrompt(
   admitted: AdmittedGleanerLeftInvocation,
@@ -3058,68 +3025,6 @@ export type AdmitReviewerInvocationOptions = {
   /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
   assertedTicketNumber?: number;
 };
-
-/**
- * Admit a Reviewer Role run on the fixed base + lens + authority set.
- * Caller instruction is optional provenance; typed fields project Skill inputs.
- * authorityRefs are frozen as durable references only — not Spec prose.
- */
-async function admitReviewerInvocation(
-  options: AdmitReviewerInvocationOptions,
-): Promise<AdmittedReviewerInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  const baseRevision = requireReviewerBaseRevision(options.baseRevision);
-  const lens = requireReviewerLens(options.lens);
-  if (options.authorityRefs.length === 0) {
-    throw new CliUsageError("reviewer requires --authority-ref <ref>");
-  }
-  const authorityRefs = Object.freeze(
-    options.authorityRefs.map((ref) => requireAuthorityRef(ref)),
-  );
-
-  const placed = await placeRoleAdmission({
-    role: "reviewer",
-    home: options.home,
-    principalAuthority: options.principalAuthority,
-    cwd: options.cwd,
-    attachmentPaths: options.attachmentPaths,
-    ...(options.project === undefined ? {} : { project: options.project }),
-    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
-    ...(options.assertedTicketNumber === undefined
-      ? {}
-      : { assertedTicketNumber: options.assertedTicketNumber }),
-  });
-  const correlationFields = options.correlationId === undefined
-    ? {}
-    : { correlationId: options.correlationId };
-  const instruction = options.instruction;
-  const instructionEmpty = instruction.trim() === "";
-  const admitted = {
-    role: "reviewer" as const,
-    runId: placed.runId,
-    bookKey: placed.bookKey,
-    projectRoot: placed.projectRoot,
-    runDirectory: placed.runDirectory,
-    principal: placed.principal,
-    instruction,
-    instructionEmpty,
-    baseRevision,
-    lens,
-    authorityRefs: [...authorityRefs],
-    ...placed.ticketFields,
-    ...correlationFields,
-    attachments: persistedAttachmentRefs(placed.attachments),
-  };
-  const admittedRequestPath = await persistPlacedAdmission(admitted, placed, options.model);
-  return {
-    ...admitted,
-    attachments: placed.attachments,
-    admittedRequestPath,
-    authorityRefs,
-  };
-}
 
 /** Frozen Skill arg projection shared by initial and resume (never reverse-parsed). */
 export function buildReviewerSkillArgProjection(
