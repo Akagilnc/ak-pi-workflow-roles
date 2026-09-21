@@ -1716,8 +1716,7 @@ export async function runPostAdmissionSeatResume<
       buildRequestAfterLease,
     });
   } catch (error) {
-    // Open-court rehydrate load under lease may still surface seat structural
-    // rejection (e.g. notary rejects caller message) — same exit face as pre-lease.
+    // Open-court rehydrate load may still surface seat structural rejection.
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, input.io);
       return { exitCode: 2 };

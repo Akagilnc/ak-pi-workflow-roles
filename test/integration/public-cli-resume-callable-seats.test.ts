@@ -105,7 +105,6 @@ type SeatTracerSpec = {
   readonly sealedDetails: (admittedRequest: Record<string, unknown>) => unknown;
   /** Instruction bytes that must never ride the resume dispatch as a new prompt. */
   readonly originalInstruction?: string;
-  readonly rejectsCallerMessage?: boolean;
 };
 
 const SEAT_SPECS: readonly SeatTracerSpec[] = [
@@ -187,7 +186,6 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
   },
   {
     role: "notary",
-    rejectsCallerMessage: true,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
     admit: async ({ home, project, runId }) => {
       const sourceRunPath = await seedCanonicalSourceRun(home, project);
@@ -271,7 +269,7 @@ for (const spec of SEAT_SPECS) {
         "--engine",
         "agy",
         runId,
-        ...(spec.rejectsCallerMessage === true ? [] : ["调用者原话"]),
+        "调用者原话",
       ], {
         packageRoot,
         home,
@@ -297,10 +295,7 @@ for (const spec of SEAT_SPECS) {
       // Exact principal reopen — same session, never directory-latest.
       assert.equal(resumeSessionFile, sessionFile);
       assert.deepEqual([...openedPrincipals], [sessionFile]);
-      assert.equal(
-        resumePrompt,
-        spec.rejectsCallerMessage === true ? "" : "调用者原话",
-      );
+      assert.equal(resumePrompt, "调用者原话");
 
       assert.equal(resumed.exitCode, 0);
       assert.ok(resumed.terminal);

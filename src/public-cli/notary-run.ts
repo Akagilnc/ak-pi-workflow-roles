@@ -231,11 +231,6 @@ export async function runPublicNotaryResume(
     env,
     io,
     load: async (effective) => {
-      if (effective.message !== undefined) {
-        throw new CliUsageError(
-          "notary rejects caller prompt/instruction; only zero caller-prompt continuation admitted",
-        );
-      }
       const loaded = await loadResumableNotaryRun(
         env.home,
         effective.runId,
