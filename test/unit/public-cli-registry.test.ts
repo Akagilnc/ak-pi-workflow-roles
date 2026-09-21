@@ -43,6 +43,17 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: ["plan", "apply"],
     outputTool: "ak_fixer_output",
     settlement: "sealed",
+    artifactFace: {
+      reportPhase: true,
+      evidenceRole: true,
+      leaves: [
+        { key: "phase" },
+        { key: "packetPath" },
+        { key: "prerequisitesPath", omitUndefined: true },
+        { key: "prerequisites" },
+      ],
+      method: "observed",
+    },
     acceptedText: "修内司回执已接受",
     activationFlags: [
       { field: "packetPath", flag: "ak-fix-packet", binds: "input" },
@@ -63,6 +74,15 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: ["plan", "apply"],
     outputTool: "ak_coder_output",
     settlement: "sealed",
+    artifactFace: {
+      reportPhase: true,
+      evidenceRole: true,
+      leaves: [
+        { key: "phase" },
+        { key: "taskPath" },
+      ],
+      method: "optional",
+    },
     acceptedText: "将作监回执已接受",
     activationFlags: [
       { field: "taskPath", flag: "ak-coder-task", binds: "input" },
@@ -86,6 +106,16 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_reviewer_output",
     settlement: "sealed",
     sealedAcceptedOnly: true,
+    artifactFace: {
+      evidenceRole: true,
+      leaves: [
+        { key: "baseRevision" },
+        { key: "lens" },
+        { key: "authorityRefs", copyArray: true },
+        { key: "callerProvenance", callerProvenance: true },
+      ],
+      method: "observed",
+    },
     transportPrompt: "skill-args",
     runnerFailure: "engine-detour-record-first",
     acceptedText: "御史台回执已接受",
@@ -111,6 +141,14 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     residualScan: "current-attempt",
     residualTool: "ak_collector_wait",
     runnerFailure: "collector-known-first",
+    artifactFace: {
+      evidenceRole: true,
+      leaves: [
+        { key: "prNumber", omitUndefined: true },
+        { key: "repository", from: "repository.canonical" },
+        { key: "manifestDigest" },
+      ],
+    },
     acceptedText: "通进司回执已接受",
     activationFlags: [
       { field: "repo", from: "repository.display", flag: "ak-collector-repo" },
@@ -131,6 +169,15 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     bareCommand: false,
     outputTool: "ak_doctor_output",
     settlement: "sealed",
+    artifactFace: {
+      evidenceRole: true,
+      leaves: [
+        { key: "issueNumber" },
+        { key: "caseRunsPath" },
+        { key: "caseIdentity" },
+      ],
+      doctorReportFacts: true,
+    },
     acceptedText: "太医署回执已接受",
     activationFlags: [
       { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
@@ -151,6 +198,14 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settlement: "residual",
     residualScan: "session",
     residualTool: "ak_merger_output",
+    artifactFace: {
+      evidenceRole: true,
+      leaves: [
+        { key: "mergerInputPath" },
+        { key: "derived" },
+      ],
+      method: "observed",
+    },
     acceptedText: "合并回执已接受",
     activationFlags: [
       { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },

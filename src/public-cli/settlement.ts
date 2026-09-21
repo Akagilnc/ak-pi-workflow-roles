@@ -81,6 +81,8 @@ import {
 import {
   packagedRoleAcceptedOutputTool,
   packagedRoleMetadata,
+  type PackagedArtifactFace,
+  type PackagedArtifactLeaf,
   type PackagedRole,
 } from "../packaged-role-registry.ts";
 import {
@@ -2768,83 +2770,16 @@ function extractDoctorCandidateFacts(
   return {};
 }
 
-/**
- * Success-face fields that still differ by seat. Presence and omission match
- * the former per-seat publishers. Key order is not part of the contract.
- */
-type SeatArtifactLeaf = {
-  readonly key: string;
-  readonly from?: string;
-  readonly omitUndefined?: true;
-  readonly copyArray?: true;
-  readonly callerProvenance?: true;
-};
+const EMPTY_ARTIFACT_FACE: PackagedArtifactFace = { leaves: [] };
 
-type SeatArtifactFace = {
-  readonly reportPhase?: true;
-  readonly evidenceRole?: true;
-  readonly leaves: readonly SeatArtifactLeaf[];
-  readonly method?: "optional" | "observed";
-  readonly doctorReportFacts?: true;
-};
-
-const SEAT_ARTIFACT_FACE: Partial<Record<TerminalRoleName, SeatArtifactFace>> = {
-  coder: {
-    reportPhase: true,
-    evidenceRole: true,
-    leaves: [
-      { key: "phase" },
-      { key: "taskPath" },
-    ],
-    method: "optional",
-  },
-  fixer: {
-    reportPhase: true,
-    evidenceRole: true,
-    leaves: [
-      { key: "phase" },
-      { key: "packetPath" },
-      { key: "prerequisitesPath", omitUndefined: true },
-      { key: "prerequisites" },
-    ],
-    method: "observed",
-  },
-  collector: {
-    evidenceRole: true,
-    leaves: [
-      { key: "prNumber", omitUndefined: true },
-      { key: "repository", from: "repository.canonical" },
-      { key: "manifestDigest" },
-    ],
-  },
-  doctor: {
-    evidenceRole: true,
-    leaves: [
-      { key: "issueNumber" },
-      { key: "caseRunsPath" },
-      { key: "caseIdentity" },
-    ],
-    doctorReportFacts: true,
-  },
-  reviewer: {
-    evidenceRole: true,
-    leaves: [
-      { key: "baseRevision" },
-      { key: "lens" },
-      { key: "authorityRefs", copyArray: true },
-      { key: "callerProvenance", callerProvenance: true },
-    ],
-    method: "observed",
-  },
-  merger: {
-    evidenceRole: true,
-    leaves: [
-      { key: "mergerInputPath" },
-      { key: "derived" },
-    ],
-    method: "observed",
-  },
-};
+/** Artifact face for one seat. Absent means report/evidence carry only shared leaves. */
+function seatArtifactFace(role: string): PackagedArtifactFace {
+  const record = packagedRoleMetadata(role);
+  if (record !== undefined && "artifactFace" in record && record.artifactFace !== undefined) {
+    return record.artifactFace;
+  }
+  return EMPTY_ARTIFACT_FACE;
+}
 
 function readAdmittedPath(source: object, path: string): unknown {
   let current: unknown = source;
@@ -2857,7 +2792,7 @@ function readAdmittedPath(source: object, path: string): unknown {
 
 function evidenceLeaves(
   admitted: AdmittedRoleInvocation,
-  leaves: readonly SeatArtifactLeaf[],
+  leaves: readonly PackagedArtifactLeaf[],
 ): Record<string, unknown> {
   const evidence: Record<string, unknown> = {};
   for (const leaf of leaves) {
@@ -2873,7 +2808,7 @@ function evidenceLeaves(
 }
 
 function doctorReportFacts(
-  face: SeatArtifactFace,
+  face: PackagedArtifactFace,
   roleOutcome: TerminalRoleOutcome,
   entries: readonly SessionEntry[],
 ): Record<string, unknown> {
@@ -2886,7 +2821,7 @@ function doctorReportFacts(
 }
 
 function observedMethodTail(
-  face: SeatArtifactFace,
+  face: PackagedArtifactFace,
   entries: readonly SessionEntry[],
   options: {
     readonly methodProvenance?: PackagedMethodSkillProvenance;
@@ -2929,7 +2864,7 @@ async function publishDeclaredSeatArtifacts(
     readonly methodSkillConfiguredPath?: string;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
-  const face = SEAT_ARTIFACT_FACE[admitted.role] ?? { leaves: [] };
+  const face = seatArtifactFace(admitted.role);
   const phase = face.reportPhase === true
     ? { phase: readAdmittedPath(admitted, "phase") }
     : {};
@@ -3095,12 +3030,12 @@ export async function trySettlePublicSeat(
   material: PackagedMethodSkillMaterial | undefined,
   packageRoot: string,
 ): Promise<TerminalResult | undefined> {
-  const face = SEAT_ARTIFACT_FACE[admitted.role];
-  if (face?.method === "observed" && material === undefined) return undefined;
+  const face = seatArtifactFace(admitted.role);
+  if (face.method === "observed" && material === undefined) return undefined;
   const options: MethodPublicationOptions =
-    face?.method === "observed" && material !== undefined
+    face.method === "observed" && material !== undefined
       ? observedMethodSkillOptions(packageRoot, material)
-      : face?.method === "optional" && material !== undefined
+      : face.method === "optional" && material !== undefined
         ? { methodProvenance: material.provenance }
         : {};
   return settleSeat(admitted, authority, scope, options);
