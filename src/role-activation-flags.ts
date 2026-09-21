@@ -19,6 +19,7 @@ export function projectActivationFlags(request: RoleTurnRequest): Map<string, bo
   }
   const values = activation as Record<string, unknown>;
   for (const spec of packagedRoleActivationFlags(activation.role)) {
+    if (spec.flag === undefined) continue;
     const text = activationFlagText(values[spec.field]);
     if (text !== undefined) flags.set(spec.flag, text);
   }

@@ -3,7 +3,7 @@
  * Seat differences are composition-root fields. Reviewer parallel axes and
  * countersign deferred identity stay the two lawful specials of this entry.
  */
-import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
+import type { DurablePrincipalAuthority, RoleTurnActivation, RoleTurnRequest } from "../host-contracts.ts";
 import { readBoardTicketNumber } from "../run-ticket-number.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
@@ -14,7 +14,7 @@ import {
   type PackagedMethodSkillName,
 } from "../package-resources/method-skill.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
-import { packagedRoleMetadata } from "../packaged-role-registry.ts";
+import { packagedRoleActivationFlags, packagedRoleMetadata } from "../packaged-role-registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitPublicRole,
@@ -119,102 +119,49 @@ function methodBindings(admitted: AdmittedRoleInvocation, packageRoot: string) {
   }));
 }
 
+function readAdmittedPath(admitted: AdmittedRoleInvocation, path: string): unknown {
+  let current: unknown = admitted;
+  for (const key of path.split(".")) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
+/** Activation object for one admitted run. Field copies come from the composition-root record. */
+function activationForAdmitted(admitted: AdmittedRoleInvocation): RoleTurnActivation {
+  if (packagedRoleMetadata(admitted.role) === undefined) {
+    throw new Error(`no turn projection for ${admitted.role}`);
+  }
+  const activation: Record<string, unknown> = { role: admitted.role };
+  for (const spec of packagedRoleActivationFlags(admitted.role)) {
+    let value = readAdmittedPath(admitted, spec.from ?? spec.field);
+    if (spec.fallback === "gate-pointer") {
+      const trimmed = typeof value === "string" ? value.trim() : "";
+      value = trimmed !== ""
+        ? trimmed
+        : parentRunPathFromGatePointerInstruction(admitted.instruction);
+      if (typeof value !== "string" || value === "") continue;
+    }
+    if (value === undefined) continue;
+    if (spec.text === true) {
+      if (typeof value !== "number") continue;
+      value = String(value);
+    }
+    activation[spec.field] = value;
+  }
+  return activation as RoleTurnActivation;
+}
+
 /** Project any admitted public role onto the host-neutral turn request. */
 export function buildInstructionSeatTurnRequest(
   admitted: AdmittedRoleInvocation,
   options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
-  const methods = methodBindings(admitted, options.packageRoot);
-  switch (admitted.role) {
-    case "coder":
-      return projectRoleTurnRequest(admitted, {
-        activation: { role: "coder", phase: admitted.phase, taskPath: admitted.taskPath },
-        methods,
-      }, options);
-    case "fixer":
-      return projectRoleTurnRequest(admitted, {
-        activation: {
-          role: "fixer",
-          phase: admitted.phase,
-          packetPath: admitted.packetPath,
-          ...(admitted.prerequisitesPath === undefined ? {} : { prerequisitesPath: admitted.prerequisitesPath }),
-        },
-        methods,
-      }, options);
-    case "reviewer":
-      return projectRoleTurnRequest(admitted, {
-        activation: {
-          role: "reviewer",
-          baseRevision: admitted.baseRevision,
-          lens: admitted.lens,
-          authorityRefs: admitted.authorityRefs,
-          ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
-        },
-        methods,
-      }, options);
-    case "merger":
-      return projectRoleTurnRequest(admitted, {
-        activation: { role: "merger", inputPath: admitted.mergerInputPath },
-        methods,
-      }, options);
-    case "collector":
-      return projectRoleTurnRequest(admitted, {
-        activation: {
-          role: "collector",
-          repo: admitted.repository.display,
-          ...(admitted.prNumber === undefined ? {} : { pr: String(admitted.prNumber) }),
-          ...(admitted.requestManifestPath === undefined ? {} : { requestManifestPath: admitted.requestManifestPath }),
-          ...(admitted.waitWindowMs === undefined ? {} : { waitMs: String(admitted.waitWindowMs) }),
-        },
-      }, options);
-    case "doctor":
-      return projectRoleTurnRequest(admitted, {
-        activation: { role: "doctor", casePath: admitted.caseRunsPath },
-      }, options);
-    case "notary":
-      return projectRoleTurnRequest(admitted, {
-        activation: {
-          role: "notary",
-          sourceRun: admitted.sourceRunPath,
-          ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
-        },
-      }, options);
-    case "gleaner-left":
-      return projectRoleTurnRequest(admitted, {
-        activation: { role: "gleaner-left", baseRevision: admitted.baseRevision },
-      }, options);
-    case "inspector": {
-      const sourceRun = admitted.sourceRunPath?.trim()
-        || parentRunPathFromGatePointerInstruction(admitted.instruction);
-      return projectRoleTurnRequest(admitted, {
-        activation: {
-          role: "inspector",
-          ...(sourceRun === undefined || sourceRun === "" ? {} : { sourceRun }),
-        },
-      }, options);
-    }
-    case "secretariat":
-      return projectRoleTurnRequest(admitted, {
-        activation: {
-          role: "secretariat",
-          ...(admitted.ticketNumber === undefined ? {} : { ticketNumber: admitted.ticketNumber }),
-        },
-      }, options);
-    case "judge":
-    case "gatekeeper":
-    case "navigator":
-    case "auditor":
-    case "diarist":
-    case "countersign":
-      return projectRoleTurnRequest(admitted, {
-        activation: { role: admitted.role },
-        ...(methods.length === 0 ? {} : { methods }),
-      }, options);
-    default: {
-      const unexpected: never = admitted;
-      throw new Error(`no turn projection for ${String(unexpected)}`);
-    }
-  }
+  return projectRoleTurnRequest(admitted, {
+    activation: activationForAdmitted(admitted),
+    methods: methodBindings(admitted, options.packageRoot),
+  }, options);
 }
 
 function initialPrompt(

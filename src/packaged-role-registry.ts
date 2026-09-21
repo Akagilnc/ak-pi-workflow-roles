@@ -162,10 +162,10 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: COLLECTOR_OUTPUT_TOOL,
     acceptedText: "通进司回执已接受",
     activationFlags: [
-      { field: "repo", flag: "ak-collector-repo" },
-      { field: "pr", flag: "ak-collector-pr" },
+      { field: "repo", from: "repository.display", flag: "ak-collector-repo" },
+      { field: "pr", from: "prNumber", text: true, flag: "ak-collector-pr" },
       { field: "requestManifestPath", flag: "ak-collector-request-manifest" },
-      { field: "waitMs", flag: "ak-collector-wait-ms" },
+      { field: "waitMs", from: "waitWindowMs", text: true, flag: "ak-collector-wait-ms" },
     ],
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/collector.md"],
@@ -182,7 +182,7 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: DOCTOR_OUTPUT_TOOL_NAME,
     acceptedText: "太医署回执已接受",
     activationFlags: [
-      { field: "casePath", flag: "ak-doctor-case", binds: "input" },
+      { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
     ],
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/doctor.md"],
@@ -200,7 +200,7 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: MERGER_OUTPUT_TOOL_NAME,
     acceptedText: "合并回执已接受",
     activationFlags: [
-      { field: "inputPath", flag: "ak-merger-input", binds: "input" },
+      { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },
     ],
     activationStage: "prepare-git-and-install",
     receiptCommitKey: "mergeCommitId",
@@ -219,7 +219,7 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
     acceptedText: "符宝郎回执已接受",
     activationFlags: [
-      { field: "sourceRun", flag: "ak-notary-source-run", binds: "input" },
+      { field: "sourceRun", from: "sourceRunPath", flag: "ak-notary-source-run", binds: "input" },
       { field: "ticketNumber", flag: "ak-notary-ticket-number" },
     ],
     activationStage: "load-and-install",
@@ -250,6 +250,9 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: SECRETARIAT_OUTPUT_TOOL_NAME,
     acceptedText: "中书省回执已接受",
+    activationFlags: [
+      { field: "ticketNumber" },
+    ],
     activationStage: "load-and-install",
     receiptStatusKey: "secretariatStatus",
     // #924: owner-finalized Soul + 票面法 + 给事中/符宝郎行为指南
@@ -293,7 +296,13 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: INSPECTOR_OUTPUT_TOOL_NAME,
     acceptedText: "台院回执已接受",
     activationFlags: [
-      { field: "sourceRun", flag: "ak-inspector-source-run", binds: "input" },
+      {
+        field: "sourceRun",
+        from: "sourceRunPath",
+        fallback: "gate-pointer",
+        flag: "ak-inspector-source-run",
+        binds: "input",
+      },
     ],
     activationStage: "load-and-install",
     sessionMaterials: INSPECTOR_SESSION_MATERIALS,
@@ -384,9 +393,20 @@ export function packagedRoleMetadata(role: string): PackagedRoleMetadata | undef
   return PACKAGED_ROLE_REGISTRY.find((entry) => entry.role === role);
 }
 
+/**
+ * One seat's admitted → activation copy.
+ * `field` is the activation key. `from` is the admitted path when it differs.
+ * `text` writes a number as decimal text on the activation object.
+ * `fallback: "gate-pointer"` is the inspector instruction pointer when sourceRunPath is blank.
+ * `flag` omitted: the value stays on the activation object and is not a host flag
+ * (secretariat ticketNumber).
+ */
 export type PackagedActivationFlag = {
   readonly field: string;
-  readonly flag: string;
+  readonly from?: string;
+  readonly text?: true;
+  readonly fallback?: "gate-pointer";
+  readonly flag?: string;
   readonly binds?: "input" | "phase";
 };
 

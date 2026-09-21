@@ -100,10 +100,10 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_collector_output",
     acceptedText: "通进司回执已接受",
     activationFlags: [
-      { field: "repo", flag: "ak-collector-repo" },
-      { field: "pr", flag: "ak-collector-pr" },
+      { field: "repo", from: "repository.display", flag: "ak-collector-repo" },
+      { field: "pr", from: "prNumber", text: true, flag: "ak-collector-pr" },
       { field: "requestManifestPath", flag: "ak-collector-request-manifest" },
-      { field: "waitMs", flag: "ak-collector-wait-ms" },
+      { field: "waitMs", from: "waitWindowMs", text: true, flag: "ak-collector-wait-ms" },
     ],
     activationStage: "load-and-install",
   },
@@ -119,7 +119,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_doctor_output",
     acceptedText: "太医署回执已接受",
     activationFlags: [
-      { field: "casePath", flag: "ak-doctor-case", binds: "input" },
+      { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
     ],
     activationStage: "load-and-install",
   },
@@ -136,7 +136,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_merger_output",
     acceptedText: "合并回执已接受",
     activationFlags: [
-      { field: "inputPath", flag: "ak-merger-input", binds: "input" },
+      { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },
     ],
     activationStage: "prepare-git-and-install",
     receiptCommitKey: "mergeCommitId",
@@ -154,7 +154,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_notary_output",
     acceptedText: "符宝郎回执已接受",
     activationFlags: [
-      { field: "sourceRun", flag: "ak-notary-source-run", binds: "input" },
+      { field: "sourceRun", from: "sourceRunPath", flag: "ak-notary-source-run", binds: "input" },
       { field: "ticketNumber", flag: "ak-notary-ticket-number" },
     ],
     activationStage: "load-and-install",
@@ -182,6 +182,9 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_secretariat_output",
     acceptedText: "中书省回执已接受",
+    activationFlags: [
+      { field: "ticketNumber" },
+    ],
     activationStage: "load-and-install",
     receiptStatusKey: "secretariatStatus",
   },
@@ -212,7 +215,13 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_inspector_output",
     acceptedText: "台院回执已接受",
     activationFlags: [
-      { field: "sourceRun", flag: "ak-inspector-source-run", binds: "input" },
+      {
+        field: "sourceRun",
+        from: "sourceRunPath",
+        fallback: "gate-pointer",
+        flag: "ak-inspector-source-run",
+        binds: "input",
+      },
     ],
     activationStage: "load-and-install",
   },
