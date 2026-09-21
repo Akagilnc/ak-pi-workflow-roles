@@ -15,10 +15,7 @@ import { sampleCompletedDoctorOutput } from "../helpers/doctor-fixtures.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
-  parseCoderArgv,
-  parseCollectorArgv,
-  parseDoctorArgv,
-  parseFixerArgv,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import { formatTerminalResult } from "../../src/public-cli/settlement.ts";
 import {
@@ -45,18 +42,18 @@ test("parseCoderArgv defaults to apply and preserves explicit plan|apply", () =>
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
-  assert.deepEqual(parseCoderArgv(["Implement the slice."]), {
+  assert.deepEqual(parsePublicSeatArgv("coder", ["Implement the slice."]), {
     phase: "apply",
     instruction: "Implement the slice.",
     attachmentPaths: [],
   });
-  assert.deepEqual(parseCoderArgv(["plan", "Propose first cut."]), {
+  assert.deepEqual(parsePublicSeatArgv("coder", ["plan", "Propose first cut."]), {
     phase: "plan",
     instruction: "Propose first cut.",
     attachmentPaths: [],
   });
   assert.deepEqual(
-    parseCoderArgv([
+    parsePublicSeatArgv("coder", [
       "apply",
       "--attach",
       "a.md",
@@ -71,8 +68,8 @@ test("parseCoderArgv defaults to apply and preserves explicit plan|apply", () =>
       project: "/tmp/p",
     },
   );
-  assert.throws(() => parseCoderArgv(["--unknown-flag"]), isUsage);
-  assert.throws(() => parseCoderArgv(["--project", "", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("coder", ["--unknown-flag"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("coder", ["--project", "", "task"]), isUsage);
 });
 
 test("admitCoderInvocation rejects blank task and freezes phase + attachments", async () => {
@@ -129,7 +126,7 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
 });
 
 test("public Collector accepts PR/repository without an observer declaration", () => {
-  assert.deepEqual(parseCollectorArgv(["--pr", "1168", "--repo", "acme/widgets"]), {
+  assert.deepEqual(parsePublicSeatArgv("collector", ["--pr", "1168", "--repo", "acme/widgets"]), {
     prNumber: 1168,
     repo: "acme/widgets",
     instruction: "",
@@ -139,7 +136,7 @@ test("public Collector accepts PR/repository without an observer declaration", (
 
 test("#678 public Collector --wait-ms is caller-configurable without code change", () => {
   assert.deepEqual(
-    parseCollectorArgv(["--pr", "1168", "--repo", "acme/widgets", "--wait-ms", "120000"]),
+    parsePublicSeatArgv("collector", ["--pr", "1168", "--repo", "acme/widgets", "--wait-ms", "120000"]),
     {
       prNumber: 1168,
       repo: "acme/widgets",
@@ -149,23 +146,23 @@ test("#678 public Collector --wait-ms is caller-configurable without code change
     },
   );
   assert.throws(
-    () => parseCollectorArgv(["--wait-ms", "0"]),
+    () => parsePublicSeatArgv("collector", ["--wait-ms", "0"]),
     (error: unknown) => error instanceof Error && error.message.includes("--wait-ms"),
   );
   assert.throws(
-    () => parseCollectorArgv(["--wait-ms", "1.5"]),
+    () => parsePublicSeatArgv("collector", ["--wait-ms", "1.5"]),
     (error: unknown) => error instanceof Error && error.message.includes("--wait-ms"),
   );
 });
 
 test("parseDoctorArgv requires positive issue; accepts optional runs and rejects malformed grammar", () => {
-  assert.deepEqual(parseDoctorArgv(["--issue", "40", "note"]), {
+  assert.deepEqual(parsePublicSeatArgv("doctor", ["--issue", "40", "note"]), {
     issueNumber: 40,
     instruction: "note",
     attachmentPaths: [],
   });
   assert.deepEqual(
-    parseDoctorArgv([
+    parsePublicSeatArgv("doctor", [
       "--issue",
       "7",
       "--runs",
@@ -198,7 +195,7 @@ test("parseDoctorArgv requires positive issue; accepts optional runs and rejects
     ["40"], // bare number is not a typed issue selector
   ] as const;
   for (const raw of rejected) {
-    assert.throws(() => parseDoctorArgv([...raw]), (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE", JSON.stringify(raw));
+    assert.throws(() => parsePublicSeatArgv("doctor", [...raw]), (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE", JSON.stringify(raw));
   }
 });
 
@@ -206,18 +203,18 @@ test("parseFixerArgv defaults to apply and preserves explicit plan|apply plus pr
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
-  assert.deepEqual(parseFixerArgv(["Repair the class."]), {
+  assert.deepEqual(parsePublicSeatArgv("fixer", ["Repair the class."]), {
     phase: "apply",
     instruction: "Repair the class.",
     attachmentPaths: [],
   });
-  assert.deepEqual(parseFixerArgv(["plan", "Propose the repair."]), {
+  assert.deepEqual(parsePublicSeatArgv("fixer", ["plan", "Propose the repair."]), {
     phase: "plan",
     instruction: "Propose the repair.",
     attachmentPaths: [],
   });
   assert.deepEqual(
-    parseFixerArgv([
+    parsePublicSeatArgv("fixer", [
       "apply",
       "--prerequisites",
       "prereq.json",
@@ -235,9 +232,9 @@ test("parseFixerArgv defaults to apply and preserves explicit plan|apply plus pr
       project: "/tmp/p",
     },
   );
-  assert.throws(() => parseFixerArgv(["--unknown-flag"]), isUsage);
-  assert.throws(() => parseFixerArgv(["--prerequisites", ""]), isUsage);
-  assert.throws(() => parseFixerArgv(["--project", "", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("fixer", ["--unknown-flag"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("fixer", ["--prerequisites", ""]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("fixer", ["--project", "", "task"]), isUsage);
 });
 
 test("engine priority: invocation > persistent > unconfigured (judge only)", () => {

@@ -36,7 +36,7 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
   buildInstructionTransportPrompt,
-  parseJudgeArgv,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
   extractNavigatorFact,
@@ -150,8 +150,6 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-
-
 test("S1: judge escalate public CLI keeps decisionGate options on typed payload in order", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -206,11 +204,11 @@ test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
   // Typed structural reject only (AC6) — never freeze human diagnostic phrasing.
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
-  assert.throws(() => parseJudgeArgv(["--burden", "heavy"]), isUsage);
-  assert.throws(() => parseJudgeArgv(["--ak-judge-burden=light"]), isUsage);
-  assert.throws(() => parseJudgeArgv(["--judge-burden", "x"]), isUsage);
-  assert.throws(() => parseJudgeArgv(["--unknown-flag"]), isUsage);
-  const parsed = parseJudgeArgv([
+  assert.throws(() => parsePublicSeatArgv("judge", ["--burden", "heavy"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--ak-judge-burden=light"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--judge-burden", "x"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--unknown-flag"]), isUsage);
+  const parsed = parsePublicSeatArgv("judge", [
     "--attach",
     "a.md",
     "--project",
@@ -227,10 +225,10 @@ test("parseJudgeArgv rejects blank --project/--attach path values", () => {
   // Typed structural reject only (AC6) — path-flag prose is unfrozen presentation.
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
-  assert.throws(() => parseJudgeArgv(["--project=", "task"]), isUsage);
-  assert.throws(() => parseJudgeArgv(["--project", "", "task"]), isUsage);
-  assert.throws(() => parseJudgeArgv(["--project", "   ", "task"]), isUsage);
-  assert.throws(() => parseJudgeArgv(["--attach=", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--project=", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--project", "", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--project", "   ", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--attach=", "task"]), isUsage);
 });
 
 test("admitJudgeInvocation rejects blank project override before resolve", async () => {

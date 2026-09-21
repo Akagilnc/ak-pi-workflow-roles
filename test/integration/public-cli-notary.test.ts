@@ -29,7 +29,7 @@ import {
 } from "../../src/notary-source-run.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { parseNotaryArgv } from "../../src/public-cli/invocation.ts";
+import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
@@ -162,15 +162,15 @@ test("#620 notary public entry injects gatekeeper inheritance into RoleTurnReque
 
 test("notary argv rejects caller prompt and attachment projection", async () => {
   assert.throws(
-    () => parseNotaryArgv(["--source-run", "x@judge", "please bounce lightly"]),
+    () => parsePublicSeatArgv("notary", ["--source-run", "x@judge", "please bounce lightly"]),
     (error: unknown) => error instanceof CliUsageError,
   );
   assert.throws(
-    () => parseNotaryArgv(["--attach", "./note.md", "--source-run", "x@judge"]),
+    () => parsePublicSeatArgv("notary", ["--attach", "./note.md", "--source-run", "x@judge"]),
     (error: unknown) => error instanceof CliUsageError,
   );
   assert.throws(
-    () => parseNotaryArgv([]),
+    () => parsePublicSeatArgv("notary", []),
     (error: unknown) => error instanceof CliUsageError,
   );
 
@@ -442,7 +442,6 @@ test("layer ① lawful pass/bounce/escalate exit 0 via public entry", async () =
     }
   });
 });
-
 
 test("layer ③ no_receipt from shared lifecycle is lawful exit 0", async () => {
   await withTempHome(async (home) => {

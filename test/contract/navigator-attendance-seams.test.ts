@@ -24,7 +24,7 @@ import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
 import { createDefaultGateOfficerSummon } from "../../src/gatekeeper-pass-envelope.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { parseCountersignArgv } from "../../src/public-cli/invocation.ts";
+import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import { projectActivationFlags } from "../../src/role-activation-flags.ts";
 import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
@@ -432,7 +432,6 @@ test("empty authority at prepare is honest context unavailable", async () => {
     });
 });
 
-
 test("public admitted-request projects typed subject/authority; missing/malformed stay source=context", async () => {
   await withTempRoot("navigator-admitted-request-", async (root) => {
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
@@ -680,7 +679,7 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
         },
         { stdout: (text) => stdout.push(text), stderr: (text) => stderr.push(text) },
         "countersign",
-        parseCountersignArgv,
+        (args) => parsePublicSeatArgv("countersign", args),
       );
       assert.equal(countersignResult.exitCode, 0, stderr.join("") || stdout.join(""));
       const topLevel = captured.find((request) => request.activation.role === "countersign");

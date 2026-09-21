@@ -34,7 +34,7 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
   type AdmitReviewerInvocationOptions,
-  parseReviewerArgv,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 
 import {
@@ -107,7 +107,6 @@ function lawfulReviewerReceipt(
   };
 }
 
-
 function admitReviewerInvocation(options: AdmitReviewerInvocationOptions) {
   return admitPublicRole("reviewer", {
     instruction: options.instruction,
@@ -128,23 +127,22 @@ function admitReviewerInvocation(options: AdmitReviewerInvocationOptions) {
     : { assertedTicketNumber: options.assertedTicketNumber });
 }
 
-
 test("parseReviewerArgv defaults to both lenses and accepts an optional single-lens override", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
   assert.throws(
-    () => parseReviewerArgv(["Review the branch since main."]),
+    () => parsePublicSeatArgv("reviewer", ["Review the branch since main."]),
     (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
   );
   // Authority remains required; omitted lens defaults to the parallel two-axis mode.
-  assert.throws(() => parseReviewerArgv(["--base", "main"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["--base", "main"]), isUsage);
   assert.throws(
-    () => parseReviewerArgv(["--base", "main", "--lens", "completeness"]),
+    () => parsePublicSeatArgv("reviewer", ["--base", "main", "--lens", "completeness"]),
     isUsage,
   );
   assert.deepEqual(
-    parseReviewerArgv([
+    parsePublicSeatArgv("reviewer", [
       "--base",
       "main",
       "--authority-ref",
@@ -160,7 +158,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // Public `--lens all` is not an admitted single-axis value.
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -176,7 +174,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // Empty lens shares the enum message (not path-helper "requires a path").
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -190,7 +188,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
       error.message === "--lens requires completeness or correctness",
   );
   assert.deepEqual(
-    parseReviewerArgv([
+    parsePublicSeatArgv("reviewer", [
       "--base",
       "main",
       "--lens",
@@ -211,7 +209,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
     },
   );
   assert.deepEqual(
-    parseReviewerArgv([
+    parsePublicSeatArgv("reviewer", [
       "--base",
       "HEAD~1",
       "--lens",
@@ -228,7 +226,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
     },
   );
   assert.deepEqual(
-    parseReviewerArgv([
+    parsePublicSeatArgv("reviewer", [
       "--base",
       "main",
       "--lens",
@@ -249,12 +247,12 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
       ],
     },
   );
-  assert.throws(() => parseReviewerArgv(["--unknown-flag"]), isUsage);
-  assert.throws(() => parseReviewerArgv(["--base", "", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["--unknown-flag"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["--base", "", "task"]), isUsage);
   // Whitespace-bearing --base smuggles Skill flags; single-token only (same rule as authority-ref).
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main --lens all",
         "--lens",
@@ -270,7 +268,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // Leading `-` is read as the next Skill option; shared token boundary with authority-ref.
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "--not-a-rev",
         "--lens",
@@ -285,7 +283,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   );
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -299,12 +297,12 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
       error.message ===
         "--authority-ref requires a durable reference, not inline Spec prose",
   );
-  assert.throws(() => parseReviewerArgv(["--project", "", "task"]), isUsage);
-  assert.throws(() => parseReviewerArgv(["--attach", "spec.md", "task"]), isUsage);
-  assert.throws(() => parseReviewerArgv(["--attach=spec.md", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["--project", "", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["--attach", "spec.md", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["--attach=spec.md", "task"]), isUsage);
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -316,7 +314,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   );
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -328,7 +326,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // refs-only: representative inline Spec prose is rejected at the public admission seam.
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -343,7 +341,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   );
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -355,7 +353,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   );
   // Durable public reference forms remain accepted with bytes unchanged; extras pass (ADR 0025).
   assert.deepEqual(
-    parseReviewerArgv([
+    parsePublicSeatArgv("reviewer", [
       "--base",
       "main",
       "--lens",

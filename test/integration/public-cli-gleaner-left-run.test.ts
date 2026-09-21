@@ -16,7 +16,7 @@ import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-princip
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   admitPublicRole,
-  parseGleanerLeftArgv,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import { buildInstructionSeatTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
@@ -72,14 +72,14 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
-    assert.throws(() => parseGleanerLeftArgv([]), (error: unknown) => {
+    assert.throws(() => parsePublicSeatArgv("gleaner-left", []), (error: unknown) => {
       return error instanceof CliUsageError;
     });
-    assert.throws(() => parseGleanerLeftArgv(["--bogus"]), (error: unknown) => {
+    assert.throws(() => parsePublicSeatArgv("gleaner-left", ["--bogus"]), (error: unknown) => {
       return error instanceof CliUsageError;
     });
 
-    const parsed = parseGleanerLeftArgv(["--project", project, "--base", "HEAD"]);
+    const parsed = parsePublicSeatArgv("gleaner-left", ["--project", project, "--base", "HEAD"]);
     assert.deepEqual(
       parsed.instruction, "");
     assert.equal(parsed.baseRevision, "HEAD");

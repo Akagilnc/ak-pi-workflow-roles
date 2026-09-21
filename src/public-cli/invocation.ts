@@ -798,24 +798,6 @@ export async function recordLaunchedRolePackageIdentity(
   });
 }
 
-export type ParseInstructionArgvResult = {
-  instruction: string;
-  attachmentPaths: string[];
-  project?: string;
-  /** Auditor only — audited subject selecting soul materials (#675 owner). */
-  subject?: "judge" | "doctor";
-  /** Auditor source-run locator — same input surface for direct and nested (#675). */
-  sourceRun?: string;
-};
-
-/** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
-export type ParseJudgeArgvResult = ParseInstructionArgvResult;
-export type ParseCountersignArgvResult = ParseInstructionArgvResult;
-export type ParseInspectorArgvResult = ParseInstructionArgvResult;
-export type ParseGatekeeperArgvResult = ParseInstructionArgvResult;
-export type ParseNavigatorArgvResult = ParseInstructionArgvResult;
-export type ParseDiaristArgvResult = ParseInstructionArgvResult;
-
 /** Positive ticket number for analyst query-scope face (and shared integer parse). */
 export function parsePositiveTicketNumber(
   raw: string,
@@ -1097,73 +1079,6 @@ export function parsePublicSeatArgv(
   };
 }
 
-export type ParseCoderArgvResult = {
-  phase: CoderPhase;
-  instruction: string;
-  attachmentPaths: string[];
-  project?: string;
-};
-
-export type ParseFixerArgvResult = {
-  phase: FixerPhase;
-  instruction: string;
-  attachmentPaths: string[];
-  /** Optional path to structurally valid prerequisite JSON array. */
-  prerequisitesPath?: string;
-  project?: string;
-};
-
-export type ParseCollectorArgvResult = {
-  /** Explicit --pr when provided; admission resolves from context when absent (#676 D1). */
-  prNumber?: number;
-  instruction: string;
-  attachmentPaths: string[];
-  project?: string;
-  repo?: string;
-  requestManifestPath?: string;
-  /** Optional wait-window ms (#678 D4). */
-  waitWindowMs?: number;
-};
-
-export type ParseDoctorArgvResult = {
-  issueNumber: number;
-  /** Optional project-relative retained runs root override. */
-  runs?: string;
-  instruction: string;
-  attachmentPaths: string[];
-  project?: string;
-};
-
-export type ParseReviewerArgvResult = {
-  /** Optional caller prose retained only as admitted provenance. */
-  instruction: string;
-  attachmentPaths: string[];
-  /** Required fixed base revision for the pinned review target. */
-  baseRevision: string;
-  /**
-   * Explicit single-axis override. Omitted public `--lens` is the internal
-   * parallel two-axis branch mark only — never persisted on an admitted run.
-   */
-  lens?: ReviewerLens;
-  /** Repeatable durable authority references/URLs (exact order preserved; at least one). */
-  authorityRefs: string[];
-  project?: string;
-};
-
-export type ParseGleanerLeftArgvResult = {
-  /** Optional caller prose; empty is the lawful path (无锚定). Must not carry direction. */
-  instruction: string;
-  /** Required comparison-base revision for the unanchored merge-candidate diff. */
-  baseRevision: string;
-  project?: string;
-};
-
-export type ParseMergerArgvResult = {
-  instruction: string;
-  attachmentPaths: string[];
-  project?: string;
-};
-
 /**
  * #336/#337/#338/#399 analyst public argv — three live faces on one registration seam.
  * - issue (default): bare whole-book or --ticket N (cwd git common-dir)
@@ -1300,50 +1215,6 @@ export function requireAuthorityRef(value: string | undefined): string {
     whitespace: "--authority-ref requires a durable reference, not inline Spec prose",
     optionLike: "--authority-ref requires a durable reference, not inline Spec prose",
   });
-}
-
-export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
-  return parsePublicSeatArgv("judge", args) as ParseJudgeArgvResult;
-}
-
-export function parseCountersignArgv(args: readonly string[]): ParseCountersignArgvResult {
-  return parsePublicSeatArgv("countersign", args) as ParseCountersignArgvResult;
-}
-
-export function parseInspectorArgv(args: readonly string[]): ParseInspectorArgvResult {
-  return parsePublicSeatArgv("inspector", args) as ParseInspectorArgvResult;
-}
-
-export function parseGatekeeperArgv(args: readonly string[]): ParseGatekeeperArgvResult {
-  return parsePublicSeatArgv("gatekeeper", args) as ParseGatekeeperArgvResult;
-}
-
-export function parseNavigatorArgv(args: readonly string[]): ParseNavigatorArgvResult {
-  return parsePublicSeatArgv("navigator", args) as ParseNavigatorArgvResult;
-}
-
-export type ParseAuditorArgvResult = ParseInstructionArgvResult;
-
-export function parseAuditorArgv(args: readonly string[]): ParseAuditorArgvResult {
-  return parsePublicSeatArgv("auditor", args) as ParseAuditorArgvResult;
-}
-
-export function parseDiaristArgv(args: readonly string[]): ParseDiaristArgvResult {
-  return parsePublicSeatArgv("diarist", args) as ParseDiaristArgvResult;
-}
-
-export type ParseSecretariatArgvResult = ParseInstructionArgvResult;
-
-export function parseSecretariatArgv(args: readonly string[]): ParseSecretariatArgvResult {
-  return parsePublicSeatArgv("secretariat", args) as ParseSecretariatArgvResult;
-}
-
-export function parseCoderArgv(args: readonly string[]): ParseCoderArgvResult {
-  return parsePublicSeatArgv("coder", args) as ParseCoderArgvResult;
-}
-
-export function parseFixerArgv(args: readonly string[]): ParseFixerArgvResult {
-  return parsePublicSeatArgv("fixer", args) as ParseFixerArgvResult;
 }
 
 async function readRegularFileAttachment(
@@ -2445,10 +2316,6 @@ function parseRepoOption(raw: string | undefined): string {
   if (raw === undefined || raw.trim() === "") throw new CliUsageError("--repo requires owner/repo");
   return raw;
 }
-export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvResult {
-  return parsePublicSeatArgv("collector", args) as ParseCollectorArgvResult;
-}
-
 /**
  * Resolve owner/repo from the project's `origin` remote (github.com only).
  * Supports https and SSH GitHub URL shapes; never scrapes instruction prose.
@@ -2528,10 +2395,6 @@ export function parseDoctorIssueNumber(raw: string): number {
   return Number(trimmed);
 }
 
-export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult {
-  return parsePublicSeatArgv("doctor", args) as ParseDoctorArgvResult;
-}
-
 /**
  * Resolve the retained Doctor case runs root from Issue identity.
  * Default is the #78 book locator; optional --runs must stay project-confined
@@ -2603,36 +2466,6 @@ export async function resolveDoctorCaseRunsPath(options: {
 }
 
 
-export type ParseNotaryArgvResult = {
-  readonly sourceRun: string;
-  readonly project?: string;
-};
-
-/**
- * Parse Notary-specific argv after the `notary` token.
- * Input contract = zero prompt, zero attachment projection (#448 / #276).
- */
-export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult {
-  return parsePublicSeatArgv("notary", args) as ParseNotaryArgvResult;
-}
-
-/**
- * Parse Gleaner-Left argv after the `gleaner-left` token.
- * Public flags: --project, required --base. No --attach / ticket face (unanchored self-fetch).
- * Instruction may be empty; callers must not pass directional instruction.
- */
-export function parseGleanerLeftArgv(
-  args: readonly string[],
-): ParseGleanerLeftArgvResult {
-  return parsePublicSeatArgv("gleaner-left", args) as ParseGleanerLeftArgvResult;
-}
-
-export function parseReviewerArgv(
-  args: readonly string[],
-): ParseReviewerArgvResult {
-  return parsePublicSeatArgv("reviewer", args) as ParseReviewerArgvResult;
-}
-
 export type AdmitReviewerInvocationOptions = {
   home: string;
   principalAuthority: DurablePrincipalAuthority;
@@ -2663,10 +2496,6 @@ export function buildReviewerSkillArgProjection(
     `--lens ${admitted.lens}`,
     ...admitted.authorityRefs.map((ref) => `--authority ${ref}`),
   ].join(" ");
-}
-
-export function parseMergerArgv(args: readonly string[]): ParseMergerArgvResult {
-  return parsePublicSeatArgv("merger", args) as ParseMergerArgvResult;
 }
 
 function mergerMaterialFromUtf8(text: string): MergerInput["materials"]["task"] {

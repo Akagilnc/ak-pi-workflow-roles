@@ -32,9 +32,9 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
   bindAdmittedTicketNumber,
-  parseCountersignArgv,
   type AdmittedCountersignInvocation,
   type AdmittedRoleInvocation,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import { type CountersignRunEnv } from "../../src/public-cli/countersign-run.ts";
 import {
@@ -237,7 +237,7 @@ test("countersign admission ignores attachment frontmatter; --ticket is unknown"
   });
 
   assert.throws(
-    () => parseCountersignArgv(["--ticket", "582", "裁"]),
+    () => parsePublicSeatArgv("countersign", ["--ticket", "582", "裁"]),
     (error: unknown) =>
       error instanceof CliUsageError
       && /unknown countersign option: --ticket/.test(
@@ -248,7 +248,7 @@ test("countersign admission ignores attachment frontmatter; --ticket is unknown"
 
 test("countersign argv rejects unknown options", async () => {
   assert.throws(
-    () => parseCountersignArgv(["--bogus", "裁"]),
+    () => parsePublicSeatArgv("countersign", ["--bogus", "裁"]),
     (error: unknown) => error instanceof CliUsageError,
   );
   await withTempHome(async (home) => {
@@ -1185,7 +1185,7 @@ test("public countersign path: --ticket is unknown-option reject (exit 2)", asyn
         blockTurn: true,
       }),
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 2);
     assert.equal(result.admitted, undefined);
@@ -1208,7 +1208,7 @@ test("public countersign path: invalid attachment rejects before identity or run
         },
       }),
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
 
     assert.equal(result.exitCode, 2);
@@ -1244,7 +1244,7 @@ test("public countersign path: 起居郎 typed handoff binds ticket; dossier vol
         },
       }),
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
@@ -1274,7 +1274,7 @@ test("public countersign path: no 起居郎 handoff stays unbound (真无票 fac
         },
       }),
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
@@ -1305,7 +1305,7 @@ test("public countersign path: summons text alone never mints a ticket without �
         },
       }),
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
@@ -1761,7 +1761,7 @@ test("public countersign path: identity-time source mutation cannot change the a
         host: "pi",
       },
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
 
     assert.equal(result.exitCode, 0);
@@ -1821,7 +1821,7 @@ test("A2: exhausted court diarist station is not re-run by parent auto-resume", 
         host: "pi",
       },
       io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 1);
     assert.equal(parentTurns, 0, "parent body must not run after the station child exhausts");
@@ -1860,7 +1860,7 @@ test("beforeDispatch ticket-bind failure uses parent call-local auto-resume", as
         }),
       },
       io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0, stderr.join("") || stdout.join(""));
     assert.equal(bindAttempts, 2, "parent must retry its own beforeDispatch bind");
@@ -1921,7 +1921,7 @@ test("public countersign path: typed ticket mints a new run; explicit resume con
         createRunId: () => "01a0sign00-0000-7000-8000-00000000s001",
       },
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(first.exitCode, 0);
     assert.equal(first.admitted?.ticketNumber, 582);
@@ -1939,7 +1939,7 @@ test("public countersign path: typed ticket mints a new run; explicit resume con
         createRunId: () => "01a0sign00-0000-7000-8000-00000000s002",
       },
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(second.exitCode, 0);
     assert.equal(
@@ -2018,7 +2018,7 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
         createRunId: () => "01a0sign00-0000-7000-8000-000000000d46",
       },
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
@@ -2148,7 +2148,7 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
         createRunId: () => "01a0sign00-0000-7000-8000-00000000871a",
       },
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(first.exitCode, 0);
     assert.equal(first.admitted?.ticketNumber, parent);
@@ -2207,7 +2207,7 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
         createRunId: () => "01a0sign00-0000-7000-8000-00000000871c",
       },
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(replaced.exitCode, 0);
     assert.notEqual(
@@ -2240,7 +2240,7 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
         createRunId: () => "01a0sign00-0000-7000-8000-00000000871d",
       },
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(single.exitCode, 0);
     assert.equal(single.admitted?.ticketNumber, parent);
@@ -2264,7 +2264,7 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
         createRunId: () => "01a0sign00-0000-7000-8000-00000000871e",
       },
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(unbound.exitCode, 0);
     assert.equal(unbound.admitted?.ticketNumber, undefined);

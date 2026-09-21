@@ -25,7 +25,7 @@ import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import type { AdmittedNotaryInvocation } from "../../src/public-cli/invocation.ts";
-import { parseNotaryArgv } from "../../src/public-cli/invocation.ts";
+import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
 import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   attachRecordedSubmissions,
@@ -307,7 +307,7 @@ test("#879 Nth officer turn receives Nth parent submission — not history array
       },
       captureIo().io,
       "notary",
-      parseNotaryArgv,
+      (args) => parsePublicSeatArgv("notary", args),
     );
     assert.equal(first.exitCode, 0);
     assert.equal(prompts.length, 1);

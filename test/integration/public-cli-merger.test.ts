@@ -34,9 +34,8 @@ import {
   type AdmitMergerInvocationOptions,
   buildInstructionTransportPrompt,
   deriveMergerEnvelopeFromActiveMerge,
-  parseMergerArgv,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
-
 
 import {
   settleSeatTerminalResult,
@@ -108,7 +107,6 @@ async function materializeConflictedRepo(root: string): Promise<{
   return { target, source, conflictPath: "same.txt" };
 }
 
-
 function admitMergerInvocation(options: AdmitMergerInvocationOptions) {
   return admitPublicRole("merger", {
     instruction: options.instruction,
@@ -125,17 +123,16 @@ function admitMergerInvocation(options: AdmitMergerInvocationOptions) {
     : { assertedTicketNumber: options.assertedTicketNumber });
 }
 
-
 test("parseMergerArgv accepts common Invocation flags and rejects unknown options", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
-  assert.deepEqual(parseMergerArgv(["Resolve the active merge."]), {
+  assert.deepEqual(parsePublicSeatArgv("merger", ["Resolve the active merge."]), {
     instruction: "Resolve the active merge.",
     attachmentPaths: [],
   });
   assert.deepEqual(
-    parseMergerArgv([
+    parsePublicSeatArgv("merger", [
       "--attach",
       "a.md",
       "--project",
@@ -148,11 +145,11 @@ test("parseMergerArgv accepts common Invocation flags and rejects unknown option
       project: "/tmp/p",
     },
   );
-  assert.throws(() => parseMergerArgv(["--unknown-flag"]), isUsage);
-  assert.throws(() => parseMergerArgv(["--project", "", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("merger", ["--unknown-flag"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("merger", ["--project", "", "task"]), isUsage);
   // No public packet fields for parents/conflicts/scope.
-  assert.throws(() => parseMergerArgv(["--targetObjectId", "abc"]), isUsage);
-  assert.throws(() => parseMergerArgv(["--ak-merger-input", "x.json"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("merger", ["--targetObjectId", "abc"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("merger", ["--ak-merger-input", "x.json"]), isUsage);
 });
 
 test("deriveMergerEnvelopeFromActiveMerge reads parents and conflicts as materials", async () => {

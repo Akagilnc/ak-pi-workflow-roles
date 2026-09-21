@@ -29,11 +29,7 @@ import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   bindAdmittedTicketNumber,
-  parseCoderArgv,
-  parseCountersignArgv,
-  parseFixerArgv,
-  parseJudgeArgv,
-  parseNotaryArgv,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import {
@@ -227,7 +223,7 @@ test("public coder binds its typed receipt assertion without parsing summons tex
       }),
       captureIo().io,
       "coder",
-      parseCoderArgv,
+      (args) => parsePublicSeatArgv("coder", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
@@ -256,7 +252,7 @@ test("public fixer ignores a malformed ticket assertion without rejecting its re
       }),
       captureIo().io,
       "fixer",
-      parseFixerArgv,
+      (args) => parsePublicSeatArgv("fixer", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
@@ -278,7 +274,7 @@ test("public judge without --ticket: no mechanical bind from summons text", asyn
       }),
       captureIo().io,
       "judge",
-      parseJudgeArgv,
+      (args) => parsePublicSeatArgv("judge", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
@@ -306,7 +302,7 @@ test("public countersign without --ticket: binds only via 起居郎 typed handof
         },
       }),
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
@@ -318,7 +314,7 @@ test("public countersign without --ticket: binds only via 起居郎 typed handof
 
 test("countersign and notary reject --ticket as unknown option (exit 2)", async () => {
   assert.throws(
-    () => parseCountersignArgv(["--ticket", "582", "裁"]),
+    () => parsePublicSeatArgv("countersign", ["--ticket", "582", "裁"]),
     (error: unknown) =>
       error instanceof CliUsageError &&
       /unknown countersign option: --ticket/.test(
@@ -327,7 +323,7 @@ test("countersign and notary reject --ticket as unknown option (exit 2)", async 
   );
   assert.throws(
     () =>
-      parseNotaryArgv([
+      parsePublicSeatArgv("notary", [
         "--source-run",
         "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
         "--ticket",
@@ -361,7 +357,7 @@ test("countersign and notary reject --ticket as unknown option (exit 2)", async 
         createRunId: () => "01a063500-0000-7000-8000-00000000rej1",
       },
       captureIo().io,
-      "countersign", parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(countersign.exitCode, 2);
     assert.equal(countersign.admitted, undefined);
@@ -406,7 +402,7 @@ test("notary keeps its bound source-run ticket over a different receipt assertio
       },
       captureIo().io,
       "notary",
-      parseNotaryArgv,
+      (args) => parsePublicSeatArgv("notary", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
