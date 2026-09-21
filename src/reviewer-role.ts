@@ -5,7 +5,8 @@ import { withTerminatingOutputDeclarations } from "./package-contracts/terminati
 
 import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 export type { CanonicalSkillBinding };
-import { REVIEWER_ACCEPTED_TEXT, REVIEWER_OUTPUT_TOOL_NAME, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
+import { packagedRoleAcceptedText } from "./packaged-role-registry.ts";
+import { REVIEWER_OUTPUT_TOOL_NAME, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
 export type { ReviewerIntent };
@@ -103,7 +104,7 @@ export function createReviewerRoleRuntime(
           async execute(_id: string, parameters: unknown): Promise<HostToolResult<unknown>> {
             if (!soul || !binding) throw new Error("御史台输入未装载");
             return {
-              content: [{ type: "text" as const, text: REVIEWER_ACCEPTED_TEXT }],
+              content: [{ type: "text" as const, text: packagedRoleAcceptedText("reviewer") }],
               details: parameters,
               terminate: true as const,
             };

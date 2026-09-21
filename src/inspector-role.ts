@@ -4,14 +4,12 @@ import { Type } from "typebox";
 import { openToolObject } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 import {
-  INSPECTOR_ACCEPTED_TEXT,
   INSPECTOR_OUTPUT_TOOL_NAME,
   validateRecordedInspectorOutput,
   type InspectorOutput,
 } from "./inspector-contracts.ts";
 
 export {
-  INSPECTOR_ACCEPTED_TEXT,
   INSPECTOR_OUTPUT_TOOL_NAME,
 };
 export { INSPECTOR_OUTPUT_TOOL_NAME as INSPECTOR_OUTPUT_TOOL };

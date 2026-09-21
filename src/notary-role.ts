@@ -6,8 +6,8 @@ import type { RoleHost, HostContext, HostToolResult } from "./host-contracts.ts"
  * This module keeps evidence assembly + projection only.
  */
 
+import { packagedRoleAcceptedText } from "./packaged-role-registry.ts";
 import {
-  NOTARY_ACCEPTED_TEXT,
   NOTARY_OUTPUT_TOOL_NAME,
   NOTARY_SOURCE_RUN_FLAG,
   NOTARY_TICKET_FLAG,
@@ -16,7 +16,6 @@ import {
 } from "./notary-contracts.ts";
 
 export {
-  NOTARY_ACCEPTED_TEXT,
   NOTARY_OUTPUT_TOOL_NAME,
   NOTARY_SOURCE_RUN_FLAG,
   NOTARY_TICKET_FLAG,
@@ -171,7 +170,7 @@ export function createNotaryRoleRuntime(
             // #753: handler only records — params as submitted, no findings/disposition rewrite.
             // #541 infra declaration + sole-final barrier are ledger-owned (#575).
             return {
-              content: [{ type: "text" as const, text: NOTARY_ACCEPTED_TEXT }],
+              content: [{ type: "text" as const, text: packagedRoleAcceptedText("notary") }],
               details: parameters,
               terminate: true as const,
             };

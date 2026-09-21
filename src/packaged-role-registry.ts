@@ -60,6 +60,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: JUDGE_OUTPUT_TOOL_NAME,
+    acceptedText: "大理寺回执已接受",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -84,6 +85,7 @@ export const PUBLIC_ROLE_RECORDS = [
     settleMethod: "diagnosing-bugs",
     phases: ["plan", "apply"],
     outputTool: FIXER_OUTPUT_TOOL_NAME,
+    acceptedText: "修内司回执已接受",
     inputFlag: "ak-fix-packet",
     phaseFlag: "ak-fixer-phase",
     activationStage: "load-and-install",
@@ -105,6 +107,7 @@ export const PUBLIC_ROLE_RECORDS = [
     applyMethod: "tdd",
     phases: ["plan", "apply"],
     outputTool: CODER_OUTPUT_TOOL_NAME,
+    acceptedText: "将作监回执已接受",
     inputFlag: "ak-coder-task",
     phaseFlag: "ak-coder-phase",
     activationStage: "load-and-install",
@@ -128,6 +131,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: REVIEWER_OUTPUT_TOOL_NAME,
+    acceptedText: "御史台回执已接受",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -149,6 +153,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: COLLECTOR_OUTPUT_TOOL,
+    acceptedText: "通进司回执已接受",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -164,6 +169,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: DOCTOR_OUTPUT_TOOL_NAME,
+    acceptedText: "太医署回执已接受",
     inputFlag: "ak-doctor-case",
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -180,6 +186,7 @@ export const PUBLIC_ROLE_RECORDS = [
     settleMethod: "resolving-merge-conflicts",
     phases: [null],
     outputTool: MERGER_OUTPUT_TOOL_NAME,
+    acceptedText: "合并回执已接受",
     inputFlag: "ak-merger-input",
     phaseFlag: undefined,
     activationStage: "prepare-git-and-install",
@@ -197,6 +204,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
+    acceptedText: "符宝郎回执已接受",
     inputFlag: "ak-notary-source-run",
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -211,6 +219,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
+    acceptedText: "给事中回执已接受",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -227,6 +236,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "secretariat",
     phases: [null],
     outputTool: SECRETARIAT_OUTPUT_TOOL_NAME,
+    acceptedText: "中书省回执已接受",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -250,6 +260,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME,
+    acceptedText: "左拾遗回执已接受",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -268,6 +279,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "inspector",
     phases: [null],
     outputTool: INSPECTOR_OUTPUT_TOOL_NAME,
+    acceptedText: "台院回执已接受",
     inputFlag: "ak-inspector-source-run",
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -285,6 +297,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: GATEKEEPER_OUTPUT_TOOL_NAME,
+    acceptedText: "门下省决议已受理",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -300,6 +313,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
+    acceptedText: "游奕使建议已受理",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -315,6 +329,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "auditor",
     phases: [null],
     outputTool: AUDITOR_OUTPUT_TOOL_NAME,
+    acceptedText: "审刑院回执已接受",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -331,6 +346,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "diarist",
     phases: [null],
     outputTool: DIARIST_OUTPUT_TOOL_NAME,
+    acceptedText: "起居郎回执已接受",
     inputFlag: undefined,
     phaseFlag: undefined,
     activationStage: "load-and-install",
@@ -373,4 +389,13 @@ export function packagedRolePhaseFlag(role: string): string | undefined {
 
 export function packagedRoleOutputTool(role: string): string | undefined {
   return packagedRoleMetadata(role)?.outputTool;
+}
+
+/** Accept-face text for a registered seat. One registry leaf; callers do not keep a copy. */
+export function packagedRoleAcceptedText(role: string): string {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined) {
+    throw new Error(`Unsupported workflow role: ${String(role)}`);
+  }
+  return record.acceptedText;
 }

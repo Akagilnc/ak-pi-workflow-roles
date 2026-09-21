@@ -1,7 +1,6 @@
 /** Package-owned independent Coder and Fixer output leaves. */
 
 export {
-  FIXER_ACCEPTED_TEXT,
   FIXER_OUTPUT_TOOL_NAME,
   fixerOutputSchema,
   validateFixerOutput,
@@ -17,7 +16,6 @@ export type { FixerInvocationInput, FixerPrerequisite } from "./fixer-packet.ts"
 import { validateFixerOutput, type FixerOutput } from "./fixer-output.ts";
 
 export const CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
-export const CODER_ACCEPTED_TEXT = "将作监回执已接受";
 export type WorkerRoleLabel = "Coder" | "Fixer";
 export type CoderOutput =
   | { status: "planned"; report: string }

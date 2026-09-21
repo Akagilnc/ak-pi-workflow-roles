@@ -20,6 +20,7 @@ import { transcriptFromContext as productionTranscriptFromContext } from "../../
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
+import { packagedRoleAcceptedText } from "../../src/packaged-role-registry.ts";
 import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import type { HostContext, HostGatekeeperActions } from "../../src/host-contracts.ts";
 import {
@@ -1281,6 +1282,12 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     );
     assert.deepEqual(result.details, fixture.output);
     assert.equal(result.terminate, true);
+    const receiptText = result.content[0];
+    assert.equal(receiptText?.type, "text");
+    assert.equal(
+      receiptText !== undefined && "text" in receiptText ? receiptText.text : undefined,
+      packagedRoleAcceptedText(fixture.role),
+    );
     // #756: judge no longer projects auditor usage onto the parent receipt —
     // nested officer meters live on the officer session; parent accepts as-is.
     assert.equal(result.usage, undefined);

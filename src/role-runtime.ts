@@ -62,17 +62,16 @@ import {
   COUNTERSIGN_TOOL_SPEC,
   type CountersignRuntimeDependencies,
 } from "./countersign-role.ts";
-import { COUNTERSIGN_ACCEPTED_TEXT } from "./countersign-contracts.ts";
 import {
   GLEANER_LEFT_TOOL_SPEC,
   type GleanerLeftRuntimeDependencies,
 } from "./gleaner-left-role.ts";
-import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_BASE_FLAG } from "./gleaner-left-contracts.ts";
+import { GLEANER_LEFT_BASE_FLAG } from "./gleaner-left-contracts.ts";
 import {
   INSPECTOR_TOOL_SPEC,
   type InspectorRuntimeDependencies,
 } from "./inspector-role.ts";
-import { INSPECTOR_ACCEPTED_TEXT, INSPECTOR_SOURCE_RUN_FLAG } from "./inspector-contracts.ts";
+import { INSPECTOR_SOURCE_RUN_FLAG } from "./inspector-contracts.ts";
 import {
   DIARIST_TOOL_SPEC,
   type DiaristRuntimeDependencies,
@@ -85,12 +84,10 @@ import {
   type SecretariatSummonCountersignParameters,
 } from "./secretariat-role.ts";
 import {
-  SECRETARIAT_ACCEPTED_TEXT,
   SECRETARIAT_OUTPUT_TOOL_NAME,
   SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
 } from "./secretariat-contracts.ts";
 import {
-  DIARIST_ACCEPTED_TEXT,
   projectDiaristSessions,
 } from "./diarist-contracts.ts";
 import { commitDiaristProjection } from "./diarist.ts";
@@ -108,9 +105,7 @@ import {
   AUDITOR_TOOL_SPEC,
   type AuditorRuntimeDependencies,
 } from "./auditor-role.ts";
-import { AUDITOR_ACCEPTED_TEXT } from "./package-contracts/auditor-output.ts";
-import { GATEKEEPER_ACCEPTED_TEXT } from "./package-contracts/gatekeeper-output.ts";
-import { NAVIGATOR_ACCEPTED_TEXT } from "./package-contracts/navigator-output.ts";
+
 import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
@@ -121,7 +116,7 @@ import {
 } from "./navigator-invocation-identity.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
-import { PACKAGED_ROLE_REGISTRY, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY, packagedRoleAcceptedText, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
@@ -725,9 +720,8 @@ type FiledOfficerBeforeAccept = (input: {
 function createFiledOfficerRuntime(
   roleHost: RoleHost,
   spec: {
-    role: string;
+    role: PackagedRole;
     tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
-    acceptedText: string;
     soulTag: string;
     beforeAccept?: FiledOfficerBeforeAccept;
   },
@@ -757,7 +751,7 @@ function createFiledOfficerRuntime(
             // Accept-as-is + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
             return {
-              content: [{ type: "text" as const, text: spec.acceptedText }],
+              content: [{ type: "text" as const, text: packagedRoleAcceptedText(spec.role) }],
               details: projected === undefined ? parameters : projected,
               terminate: true as const,
             };
@@ -786,7 +780,6 @@ export function createGleanerLeftRoleRuntime(
     {
       role: "gleaner-left",
       tool: GLEANER_LEFT_TOOL_SPEC,
-      acceptedText: GLEANER_LEFT_ACCEPTED_TEXT,
       soulTag: "gleaner-left",
     },
     dependencies,
@@ -810,7 +803,6 @@ export function createInspectorRoleRuntime(
     {
       role: "inspector",
       tool: INSPECTOR_TOOL_SPEC,
-      acceptedText: INSPECTOR_ACCEPTED_TEXT,
       soulTag: "inspector",
     },
     dependencies,
@@ -827,7 +819,6 @@ export function createGatekeeperRoleRuntime(
     {
       role: "gatekeeper",
       tool: GATEKEEPER_TOOL_SPEC,
-      acceptedText: GATEKEEPER_ACCEPTED_TEXT,
       soulTag: "gatekeeper",
     },
     dependencies,
@@ -844,7 +835,6 @@ export function createNavigatorRoleRuntime(
     {
       role: "navigator",
       tool: NAVIGATOR_TOOL_SPEC,
-      acceptedText: NAVIGATOR_ACCEPTED_TEXT,
       soulTag: "navigator",
     },
     dependencies,
@@ -861,7 +851,6 @@ export function createAuditorRoleRuntime(
     {
       role: "auditor",
       tool: AUDITOR_TOOL_SPEC,
-      acceptedText: AUDITOR_ACCEPTED_TEXT,
       soulTag: "auditor",
     },
     dependencies,
@@ -975,7 +964,6 @@ export function createDiaristRoleRuntime(
     {
       role: "diarist",
       tool: DIARIST_TOOL_SPEC,
-      acceptedText: DIARIST_ACCEPTED_TEXT,
       soulTag: "diarist",
       beforeAccept: async ({ parameters, ctx }) => {
         const submitted =
@@ -1167,7 +1155,6 @@ export function createSecretariatRoleRuntime(
     {
       role: "secretariat",
       tool: SECRETARIAT_OUTPUT_TOOL_SPEC,
-      acceptedText: SECRETARIAT_ACCEPTED_TEXT,
       soulTag: "secretariat",
       ...(beforeAccept === undefined ? {} : { beforeAccept }),
     },
@@ -1332,7 +1319,6 @@ export function createCountersignRoleRuntime(
     {
       role: "countersign",
       tool: COUNTERSIGN_TOOL_SPEC,
-      acceptedText: COUNTERSIGN_ACCEPTED_TEXT,
       soulTag: "countersign",
       ...(beforeAccept === undefined ? {} : { beforeAccept }),
     },

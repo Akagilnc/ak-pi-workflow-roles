@@ -4,57 +4,46 @@
  */
 
 import {
-  COLLECTOR_ACCEPTED_TEXT,
   COLLECTOR_OUTPUT_TOOL,
   validateAcceptedCollectorReceipt,
   type CollectorReceipt,
 } from "./collector-output.ts";
 import {
-  JUDGE_ACCEPTED_TEXT,
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
   type JudgeVerdict,
 } from "./judge-output.ts";
 import {
-  REVIEWER_ACCEPTED_TEXT,
   REVIEWER_OUTPUT_TOOL_NAME,
   validateReviewerIntent,
   type ReviewerIntent,
 } from "./reviewer-output.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../packaged-role-registry.ts";
 import { CorrectableSubmissionError } from "../submission-correctable-error.ts";
-import { DOCTOR_ACCEPTED_TEXT, DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
-import { GATEKEEPER_ACCEPTED_TEXT, GATEKEEPER_OUTPUT_TOOL_NAME, validateRecordedGatekeeperOutput, type GatekeeperDirectOutput } from "./gatekeeper-output.ts";
-import { NAVIGATOR_ACCEPTED_TEXT, NAVIGATOR_OUTPUT_TOOL_NAME, validateRecordedNavigatorOutput, type NavigatorAdvice } from "./navigator-output.ts";
-import { AUDITOR_ACCEPTED_TEXT, AUDITOR_OUTPUT_TOOL_NAME, validateRecordedAuditorOutput, type AuditorOutput } from "./auditor-output.ts";
-import { MERGER_ACCEPTED_TEXT, MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
-import { NOTARY_ACCEPTED_TEXT, NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
-import { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecordedCountersignOutput, type CountersignVerdict } from "../countersign-contracts.ts";
-import { GLEANER_LEFT_ACCEPTED_TEXT, GLEANER_LEFT_OUTPUT_TOOL_NAME, validateRecordedGleanerLeftOutput, type GleanerLeftOutput } from "../gleaner-left-contracts.ts";
-import { INSPECTOR_ACCEPTED_TEXT, INSPECTOR_OUTPUT_TOOL_NAME, validateRecordedInspectorOutput, type InspectorOutput } from "../inspector-contracts.ts";
-import { DIARIST_ACCEPTED_TEXT, DIARIST_OUTPUT_TOOL_NAME, validateRecordedDiaristOutput, type DiaristOutput } from "../diarist-contracts.ts";
-import { SECRETARIAT_ACCEPTED_TEXT, SECRETARIAT_OUTPUT_TOOL_NAME, type SecretariatVerdict } from "../secretariat-contracts.ts";
+import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
+import { GATEKEEPER_OUTPUT_TOOL_NAME, validateRecordedGatekeeperOutput, type GatekeeperDirectOutput } from "./gatekeeper-output.ts";
+import { NAVIGATOR_OUTPUT_TOOL_NAME, validateRecordedNavigatorOutput, type NavigatorAdvice } from "./navigator-output.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME, validateRecordedAuditorOutput, type AuditorOutput } from "./auditor-output.ts";
+import { MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
+import { NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
+import { COUNTERSIGN_OUTPUT_TOOL_NAME, validateRecordedCountersignOutput, type CountersignVerdict } from "../countersign-contracts.ts";
+import { GLEANER_LEFT_OUTPUT_TOOL_NAME, validateRecordedGleanerLeftOutput, type GleanerLeftOutput } from "../gleaner-left-contracts.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME, validateRecordedInspectorOutput, type InspectorOutput } from "../inspector-contracts.ts";
+import { DIARIST_OUTPUT_TOOL_NAME, validateRecordedDiaristOutput, type DiaristOutput } from "../diarist-contracts.ts";
+import { SECRETARIAT_OUTPUT_TOOL_NAME, type SecretariatVerdict } from "../secretariat-contracts.ts";
 import {
-  CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
-  FIXER_ACCEPTED_TEXT,
   FIXER_OUTPUT_TOOL_NAME,
   validateAcceptedWorkerDetails,
   type WorkerOutput,
 } from "./worker-output.ts";
 
 export {
-  CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
-  COLLECTOR_ACCEPTED_TEXT,
   COLLECTOR_OUTPUT_TOOL,
-  FIXER_ACCEPTED_TEXT,
   FIXER_OUTPUT_TOOL_NAME,
-  JUDGE_ACCEPTED_TEXT,
   JUDGE_OUTPUT_TOOL_NAME,
-  REVIEWER_ACCEPTED_TEXT,
   REVIEWER_OUTPUT_TOOL_NAME,
-  MERGER_ACCEPTED_TEXT,
   MERGER_OUTPUT_TOOL_NAME,
   validateAcceptedCollectorReceipt,
   validateAcceptedJudgeDetails,
