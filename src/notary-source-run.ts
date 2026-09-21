@@ -87,7 +87,8 @@ export async function resolveNotarySourceRunLocator(options: {
 
   const ledgerHome = resolveActivationLedgerHome(options.home);
   const bookKey = resolveBookKeyFromGit(options.projectRoot);
-  const bookRunsRoot = join(activationBookDirectory(ledgerHome, bookKey), "runs");
+  const bookDirectory = activationBookDirectory(ledgerHome, bookKey);
+  const bookRunsRoot = join(bookDirectory, "runs");
 
   let candidate: string;
   const bare = parseRunDirectoryName(raw);
@@ -97,7 +98,13 @@ export async function resolveNotarySourceRunLocator(options: {
   } else {
     candidate = isAbsolute(raw) ? raw : resolve(options.projectRoot, raw);
     const identity = parseRunDirectoryName(basename(candidate));
-    if (identity !== undefined) {
+    const subjectDirectory = dirname(dirname(candidate));
+    const isLegacyUnboundLocator =
+      identity !== undefined &&
+      basename(dirname(candidate)) === "runs" &&
+      basename(subjectDirectory) === "unbound" &&
+      resolve(dirname(subjectDirectory)) === resolve(bookDirectory);
+    if (isLegacyUnboundLocator) {
       candidate = (await findRunDirectoryById(
         options.home,
         identity.runId,
@@ -110,7 +117,7 @@ export async function resolveNotarySourceRunLocator(options: {
   const real = await requireRunDirectory(candidate, raw);
   const identity = parseRunDirectoryName(basename(real))!;
 
-  const bookIdentity = physicalPathIdentity(activationBookDirectory(ledgerHome, bookKey));
+  const bookIdentity = physicalPathIdentity(bookDirectory);
   const parentIdentity = physicalPathIdentity(dirname(real));
   const subjectBookIdentity = physicalPathIdentity(dirname(dirname(dirname(real))));
   if (
