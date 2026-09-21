@@ -867,18 +867,31 @@ function appendBareInstruction(
   positional.push(token);
 }
 
-/** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
-function parseInstructionArgv(
+type SeatArgvScan = {
+  readonly attachmentPaths: string[];
+  project?: string;
+  readonly positional: string[];
+  readonly options: TypedOptionConsumer;
+};
+
+/**
+ * Shared assignment for the public faces every seat already defines the same way:
+ * repeatable `--attach`, optional `--project`, and opaque bare instruction.
+ * Seat code only assigns ids that are not those two.
+ */
+function scanSeatArgv(
+  owner: Exclude<OptionOwner, "global">,
   args: readonly string[],
-  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat",
-): ParseInstructionArgvResult {
+  handlers: {
+    readonly onSeatOption: (taken: TakenTypedOption) => void;
+    readonly onBare?: (token: string, positional: string[]) => void;
+    readonly onDoubleDash?: (rest: readonly string[], positional: string[]) => void;
+  },
+): SeatArgvScan {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
-  let subject: "judge" | "doctor" | undefined;
-  let sourceRun: string | undefined;
   const positional: string[] = [];
-  const definitions = roleOptions(owner);
-  const options = createTypedOptionConsumer(definitions);
+  const options = createTypedOptionConsumer(roleOptions(owner));
   scanPublicArgv(args, options, {
     onDashed(taken) {
       if (taken.def.id === "attach") {
@@ -889,6 +902,50 @@ function parseInstructionArgv(
         project = requireOptionPath(taken.def.canonical, taken.value);
         return;
       }
+      handlers.onSeatOption(taken);
+    },
+    onBare(token) {
+      if (handlers.onBare !== undefined) {
+        handlers.onBare(token, positional);
+        return;
+      }
+      appendBareInstruction(owner, token, positional);
+    },
+    onDoubleDash(rest) {
+      if (handlers.onDoubleDash !== undefined) {
+        handlers.onDoubleDash(rest, positional);
+        return;
+      }
+      positional.push(...rest);
+    },
+  });
+  return {
+    attachmentPaths,
+    ...(project === undefined ? {} : { project }),
+    positional,
+    options,
+  };
+}
+
+function materialResult(
+  scanned: SeatArgvScan,
+): { instruction: string; attachmentPaths: string[]; project?: string } {
+  return {
+    instruction: scanned.positional.join(" "),
+    attachmentPaths: scanned.attachmentPaths,
+    ...(scanned.project === undefined ? {} : { project: scanned.project }),
+  };
+}
+
+/** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
+function parseInstructionArgv(
+  args: readonly string[],
+  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat",
+): ParseInstructionArgvResult {
+  let subject: "judge" | "doctor" | undefined;
+  let sourceRun: string | undefined;
+  const scanned = scanSeatArgv(owner, args, {
+    onSeatOption(taken) {
       if (taken.def.id === "subject") {
         const raw = typeof taken.value === "string" ? taken.value.trim() : "";
         if (raw !== "judge" && raw !== "doctor") {
@@ -909,19 +966,11 @@ function parseInstructionArgv(
       }
       throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
     },
-    onBare(token) {
-      appendBareInstruction(owner, token, positional);
-    },
-    onDoubleDash(rest) {
-      positional.push(...rest);
-    },
   });
 
-  options.assertRequired();
+  scanned.options.assertRequired();
   return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
+    ...materialResult(scanned),
     ...(subject === undefined ? {} : { subject }),
     ...(sourceRun === undefined ? {} : { sourceRun }),
   };
@@ -1188,40 +1237,19 @@ export function parseSecretariatArgv(args: readonly string[]): ParseSecretariatA
  * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.coder (#342).
  */
 export function parseCoderArgv(args: readonly string[]): ParseCoderArgvResult {
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
-  const positional: string[] = [];
-  const definitions = roleOptions("coder");
-  const options = createTypedOptionConsumer(definitions);
-  scanPublicArgv(args, options, {
-    onDashed(taken) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        return;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        return;
-      }
+  const scanned = scanSeatArgv("coder", args, {
+    onSeatOption(taken) {
       throw new CliUsageError(`unknown coder option: ${taken.def.canonical}`);
-    },
-    onBare(token) {
-      appendBareInstruction("coder", token, positional);
-    },
-    onDoubleDash(rest) {
-      positional.push(...rest);
     },
   });
 
   // Phase aliases + default come solely from the typed coder phase row (#342).
-  const phase = options.consumeLeadingPhase(positional);
-  options.assertRequired();
+  const phase = scanned.options.consumeLeadingPhase(scanned.positional);
+  scanned.options.assertRequired();
 
   return {
     phase,
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
+    ...materialResult(scanned),
   };
 }
 
@@ -1230,46 +1258,27 @@ export function parseCoderArgv(args: readonly string[]): ParseCoderArgvResult {
  * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.fixer (#342).
  */
 export function parseFixerArgv(args: readonly string[]): ParseFixerArgvResult {
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
   let prerequisitesPath: string | undefined;
-  const positional: string[] = [];
-  const definitions = roleOptions("fixer");
-  const options = createTypedOptionConsumer(definitions);
-  scanPublicArgv(args, options, {
-    onDashed(taken) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        return;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        return;
-      }
+  const scanned = scanSeatArgv("fixer", args, {
+    onSeatOption(taken) {
       if (taken.def.id === "prerequisites") {
         prerequisitesPath = requireOptionPath(taken.def.canonical, taken.value);
         return;
       }
       throw new CliUsageError(`unknown fixer option: ${taken.def.canonical}`);
     },
-    onBare(token) {
-      appendBareInstruction("fixer", token, positional);
-    },
-    onDoubleDash(rest) {
-      positional.push(...rest);
-    },
   });
 
   // Phase aliases + default come solely from the typed fixer phase row (#342).
-  const phase = options.consumeLeadingPhase(positional);
-  options.assertRequired();
+  const phase = scanned.options.consumeLeadingPhase(scanned.positional);
+  scanned.options.assertRequired();
 
   return {
     phase,
-    instruction: positional.join(" "),
-    attachmentPaths,
+    instruction: scanned.positional.join(" "),
+    attachmentPaths: scanned.attachmentPaths,
     ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
-    ...(project === undefined ? {} : { project }),
+    ...(scanned.project === undefined ? {} : { project: scanned.project }),
   };
 }
 
@@ -2319,25 +2328,12 @@ function parseRepoOption(raw: string | undefined): string {
 }
 export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvResult {
   // Spellings from PUBLIC_OPTION_TABLE.collector (#342).
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
   let repo: string | undefined;
   let prNumber: number | undefined;
   let requestManifestPath: string | undefined;
   let waitWindowMs: number | undefined;
-  const positional: string[] = [];
-  const definitions = roleOptions("collector");
-  const options = createTypedOptionConsumer(definitions);
-  scanPublicArgv(args, options, {
-    onDashed(taken) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        return;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        return;
-      }
+  const scanned = scanSeatArgv("collector", args, {
+    onSeatOption(taken) {
       if (taken.def.id === "pr") {
         prNumber = parsePositivePrOption(taken.value);
         return;
@@ -2363,21 +2359,13 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
       }
       throw new CliUsageError(`unknown collector option: ${taken.def.canonical}`);
     },
-    onBare(token) {
-      appendBareInstruction("collector", token, positional);
-    },
-    onDoubleDash(rest) {
-      positional.push(...rest);
-    },
   });
   // Unconditional required from typed table via shared consumer (#342).
   // #676 D1: --pr is optional; ambiguous targets reject at admission, not by guessing.
-  options.assertRequired();
+  scanned.options.assertRequired();
   return {
     ...(prNumber === undefined ? {} : { prNumber }),
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
+    ...materialResult(scanned),
     ...(repo === undefined ? {} : { repo }),
     ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
     ...(waitWindowMs === undefined ? {} : { waitWindowMs }),
@@ -2469,15 +2457,10 @@ export function parseDoctorIssueNumber(raw: string): number {
  */
 export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult {
   // Spellings from PUBLIC_OPTION_TABLE.doctor (#342).
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
   let issueRaw: string | undefined;
   let runs: string | undefined;
-  const positional: string[] = [];
-  const definitions = roleOptions("doctor");
-  const options = createTypedOptionConsumer(definitions);
-  scanPublicArgv(args, options, {
-    onDashed(taken) {
+  const scanned = scanSeatArgv("doctor", args, {
+    onSeatOption(taken) {
       if (taken.def.id === "issue") {
         if (taken.value === undefined || taken.value.trim() === "") {
           throw new CliUsageError("doctor --issue requires a positive integer");
@@ -2492,26 +2475,12 @@ export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult 
         runs = taken.value;
         return;
       }
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        return;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        return;
-      }
       throw new CliUsageError(`unknown doctor option: ${taken.def.canonical}`);
-    },
-    onBare(token) {
-      appendBareInstruction("doctor", token, positional);
-    },
-    onDoubleDash(rest) {
-      positional.push(...rest);
     },
   });
 
   // Unconditional required (e.g. --issue) from typed table via shared consumer (#342).
-  options.assertRequired();
+  scanned.options.assertRequired();
   const issueNumber = parseDoctorIssueNumber(issueRaw!);
 
   if (runs !== undefined && runs.trim() === "") {
@@ -2520,9 +2489,7 @@ export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult 
 
   return {
     issueNumber,
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
+    ...materialResult(scanned),
     ...(runs === undefined ? {} : { runs }),
   };
 }
@@ -2608,16 +2575,9 @@ export type ParseNotaryArgvResult = {
  * Input contract = zero prompt, zero attachment projection (#448 / #276).
  */
 export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult {
-  let project: string | undefined;
   let sourceRun: string | undefined;
-  const definitions = roleOptions("notary");
-  const options = createTypedOptionConsumer(definitions);
-  scanPublicArgv(args, options, {
-    onDashed(taken) {
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        return;
-      }
+  const scanned = scanSeatArgv("notary", args, {
+    onSeatOption(taken) {
       if (taken.def.id === "source-run") {
         if (taken.value === undefined || taken.value.trim() === "") {
           throw new CliUsageError("notary --source-run requires a run locator");
@@ -2644,13 +2604,13 @@ export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult 
     },
   });
 
-  options.assertRequired();
+  scanned.options.assertRequired();
   if (sourceRun === undefined || sourceRun.trim() === "") {
     throw new CliUsageError("notary --source-run requires a run locator");
   }
   return {
     sourceRun,
-    ...(project === undefined ? {} : { project }),
+    ...(scanned.project === undefined ? {} : { project: scanned.project }),
   };
 }
 
@@ -2671,36 +2631,22 @@ export function buildNotaryTransportPrompt(
 export function parseGleanerLeftArgv(
   args: readonly string[],
 ): ParseGleanerLeftArgvResult {
-  let project: string | undefined;
   let baseRevision: string | undefined;
-  const positional: string[] = [];
-  const definitions = roleOptions("gleaner-left");
-  const options = createTypedOptionConsumer(definitions);
-  scanPublicArgv(args, options, {
-    onDashed(taken) {
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        return;
-      }
+  const scanned = scanSeatArgv("gleaner-left", args, {
+    onSeatOption(taken) {
       if (taken.def.id === "base") {
         baseRevision = requireOptionPath(taken.def.canonical, taken.value);
         return;
       }
       throw new CliUsageError(`unknown gleaner-left option: ${taken.def.canonical}`);
     },
-    onBare(token) {
-      appendBareInstruction("gleaner-left", token, positional);
-    },
-    onDoubleDash(rest) {
-      positional.push(...rest);
-    },
   });
 
-  options.assertRequired();
+  scanned.options.assertRequired();
   return {
-    instruction: positional.join(" "),
+    instruction: scanned.positional.join(" "),
     baseRevision: baseRevision!,
-    ...(project === undefined ? {} : { project }),
+    ...(scanned.project === undefined ? {} : { project: scanned.project }),
   };
 }
 
@@ -2722,20 +2668,11 @@ export function parseReviewerArgv(
   args: readonly string[],
 ): ParseReviewerArgvResult {
   // Spellings from PUBLIC_OPTION_TABLE.reviewer (#342). No --attach face.
-  const attachmentPaths: string[] = [];
   const authorityRefs: string[] = [];
-  let project: string | undefined;
   let baseRevision: string | undefined;
   let lens: ReviewerLens | undefined;
-  const positional: string[] = [];
-  const definitions = roleOptions("reviewer");
-  const options = createTypedOptionConsumer(definitions);
-  scanPublicArgv(args, options, {
-    onDashed(taken) {
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        return;
-      }
+  const scanned = scanSeatArgv("reviewer", args, {
+    onSeatOption(taken) {
       if (taken.def.id === "base") {
         baseRevision = requireReviewerBaseRevision(taken.value);
         return;
@@ -2751,23 +2688,17 @@ export function parseReviewerArgv(
       }
       throw new CliUsageError(`unknown reviewer option: ${taken.def.canonical}`);
     },
-    onBare(token) {
-      appendBareInstruction("reviewer", token, positional);
-    },
-    onDoubleDash(rest) {
-      positional.push(...rest);
-    },
   });
 
   // Base and authority are required; omitted lens selects the parallel two-axis mode.
-  options.assertRequired();
+  scanned.options.assertRequired();
   return {
-    instruction: positional.join(" "),
-    attachmentPaths,
+    instruction: scanned.positional.join(" "),
+    attachmentPaths: scanned.attachmentPaths,
     baseRevision: baseRevision!,
     ...(lens === undefined ? {} : { lens }),
     authorityRefs,
-    ...(project === undefined ? {} : { project }),
+    ...(scanned.project === undefined ? {} : { project: scanned.project }),
   };
 }
 
@@ -2825,24 +2756,11 @@ export function buildReviewerTransportPrompt(
  * Spellings from PUBLIC_OPTION_TABLE.merger; internal packet fields rejected (#342).
  */
 export function parseMergerArgv(args: readonly string[]): ParseMergerArgvResult {
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
-  const positional: string[] = [];
-  const definitions = roleOptions("merger");
-  const options = createTypedOptionConsumer(definitions);
-  scanPublicArgv(args, options, {
-    onDashed(taken) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        return;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        return;
-      }
+  const scanned = scanSeatArgv("merger", args, {
+    onSeatOption(taken) {
       throw new CliUsageError(`unknown merger option: ${taken.def.canonical}`);
     },
-    onBare(token) {
+    onBare(token, positional) {
       // Rejected public spellings (#342) plus other internal packet field faces.
       if (
         isRejectedPublicSpelling("merger", token) ||
@@ -2861,17 +2779,10 @@ export function parseMergerArgv(args: readonly string[]): ParseMergerArgvResult 
       }
       appendBareInstruction("merger", token, positional);
     },
-    onDoubleDash(rest) {
-      positional.push(...rest);
-    },
   });
 
-  options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
-  };
+  scanned.options.assertRequired();
+  return materialResult(scanned);
 }
 
 function mergerMaterialFromUtf8(text: string): MergerInput["materials"]["task"] {
