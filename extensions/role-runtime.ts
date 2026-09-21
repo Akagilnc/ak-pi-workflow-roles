@@ -1,8 +1,5 @@
-import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { loadDoctorCase } from "../src/doctor-evidence.ts";
-import { loadNotarySourceRunLocator } from "../src/notary-source-run.ts";
 import { createPiRoleRuntimeExtension } from "../src/pi/adapter.ts";
 
 import {
@@ -14,35 +11,21 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Message } from "@earendil-works/pi-ai";
 
-import { createGhCollectorGitHubTransport } from "../src/collector-github.ts";
-import { createPiDoctorAuditor } from "../src/doctor-auditor.ts";
 import {
-  createNativeNavigatorSessionFactory,
-  createNavigatorAttendance,
   registerNavigatorModelCommand,
   resolveNavigatorAuthorityMaterial,
   type NavigatorTargetRole,
 } from "../src/navigator-attendance.ts";
 import { loadNavigatorWorkContext as loadHostNeutralNavigatorWorkContext } from "../src/navigator-work-context.ts";
 export { resolveNavigatorAuthorityMaterial };
-import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "../src/canonical-skill-binding.ts";
-import { loadPackagedCanonicalSkillBinding } from "../src/package-resources/method-skill-binding.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
 import { readOAuthKeepaliveProviders } from "../src/oauth-keepalive.ts";
 import {
   formatNavigatorRoleHelp,
   type RoleRuntimeDependencies,
 } from "../src/role-runtime.ts";
-import { loadAuditorSoulFromSubjectInput } from "../src/auditor-soul.ts";
-import { loadPackagedRoleReferenceMaterials } from "../src/role-runtime-dependencies.ts";
-import {
-  loadGatekeeperSessionMaterials,
-  loadMainRoleSessionMaterials,
-} from "../src/session-opening-materials.ts";
-const extensionPath = fileURLToPath(import.meta.url);
+import { createRoleRuntimeDependencies } from "../src/role-runtime-dependencies.ts";
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
-const navigatorRoutePlaybookPath = fileURLToPath(new URL("../resources/navigator-route-playbook.md", import.meta.url));
-const collectorHandbookSeedPath = fileURLToPath(new URL("../resources/collector-bot-handbook.md", import.meta.url));
 // #675: nested public summons (gate/auditor) resolve root via env under jiti.
 if (process.env.AK_ROLE_PACKAGE_ROOT === undefined || process.env.AK_ROLE_PACKAGE_ROOT.trim() === "") {
   process.env.AK_ROLE_PACKAGE_ROOT = packageRoot;
@@ -110,68 +93,11 @@ export async function loadNavigatorWorkContext(
   });
 }
 
-export function createPiRoleRuntimeDependencies(pi: ExtensionAPI): RoleRuntimeDependencies {
-  const navigatorSessionFactory = createNativeNavigatorSessionFactory();
-  return {
-    packageRoot,
-    loadRoleReferenceMaterials: loadPackagedRoleReferenceMaterials,
-    loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
-    loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
-    loadFixPacket: (path) => readFile(path, "utf8"),
-    loadCoderSoul: () => loadMainRoleSessionMaterials("coder"),
-    loadCoderTask: (path) => readFile(path, "utf8"),
-    loadReviewerSoul: () => loadMainRoleSessionMaterials("reviewer"),
-    loadCollectorSoul: () => loadMainRoleSessionMaterials("collector"),
-    loadCollectorHandbookSeed: () => readFile(collectorHandbookSeedPath, "utf8"),
-    createCollectorTransport: () => createGhCollectorGitHubTransport(),
-    loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
-    loadDoctorCase,
-    // #590: auditors / navigator / reviewer consume HostContext directly (no Pi WeakMap recover).
-    auditDoctorCompliance: (options) => createPiDoctorAuditor()(options),
-    loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
-    loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
-    loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),
-    loadDiaristSoul: () => loadMainRoleSessionMaterials("diarist"),
-    loadSecretariatSoul: () => loadMainRoleSessionMaterials("secretariat"),
-    loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
-    loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
-    loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
-    loadAuditorSoul: () => loadAuditorSoulFromSubjectInput(),
-    loadNotarySourceRun: loadNotarySourceRunLocator,
-    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext(pi, options),
-    createNavigatorAttendance: (options) => {
-      return createNavigatorAttendance({
-        context: options.context,
-        role: options.role,
-        phase: options.phase,
-        subjectKey: options.subjectKey,
-        subject: options.subject,
-        authority: options.authority,
-        invocationId: options.invocationId,
-        loadSoul: () => loadMainRoleSessionMaterials("navigator"),
-        loadRoutePlaybook: () => readFile(navigatorRoutePlaybookPath, "utf8"),
-        // In-process help: subprocess pi --help is reserved for cold-install proofs.
-        // N child pi processes cannot fit the accepted 3s post-role grace under CI load.
-        loadRoleHelp: async (role) => formatNavigatorRoleHelp(role),
-        createSession: navigatorSessionFactory,
-        contextError: options.contextError,
-        onEvent: options.onEvent,
-      });
-    },
-    loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
-    loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
-    async loadCanonicalSkillBinding(name) {
-      // Coder TDD (#109) and Reviewer ak-cross-m-review (#917) are package-owned.
-      // Optional Fixer diagnosing-bugs is available via --skill without this binding.
-      if (name === "tdd") {
-        return loadPackagedCanonicalSkillBinding(packageRoot, "tdd");
-      }
-      if (name === "ak-cross-m-review") {
-        return loadPackagedCanonicalSkillBinding(packageRoot, "ak-cross-m-review");
-      }
-      return loadHomeCanonicalSkillBinding(name);
-    },
-  };
+/** Pi extension deps are the shared packaged factory. Host flags stay on the envelope. */
+export function createPiRoleRuntimeDependencies(
+  _pi: ExtensionAPI,
+): RoleRuntimeDependencies {
+  return createRoleRuntimeDependencies(packageRoot);
 }
 
 export default function roleRuntime(pi: ExtensionAPI): void {

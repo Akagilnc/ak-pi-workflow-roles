@@ -1,7 +1,8 @@
 /**
- * #505 admission tracer: a typed ticket already on the summons places every
- * active public seat under that ticket. Real entry is runAkRole. Observation
- * is the run directory the public entry created.
+ * #505 admission and load tracer. Real entry is runAkRole.
+ * A typed ticket already on the summons places every active public seat under
+ * that ticket. When that entry builds a host turn, its method paths are the
+ * packaged skill files named by the seat record.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -16,7 +17,8 @@ import {
 } from "../../src/activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
-import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
+import { resolvePackagedMethodSkillPath, type PackagedMethodSkillName } from "../../src/package-resources/method-skill.ts";
+import { PUBLIC_ROLE_RECORDS, type PublicRoleRecord } from "../../src/packaged-role-registry.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { listBookRunDirectories } from "../../src/role-run-placement.ts";
 import {
@@ -28,6 +30,18 @@ import { publicSeatSummonArgv } from "../helpers/public-seat-summon-argv.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const TICKET = 505;
+
+/** Turn-request skill paths for one registry record. Coder's public argv defaults to apply. */
+function packagedTurnMethodPaths(record: PublicRoleRecord): string[] {
+  const names: PackagedMethodSkillName[] = [];
+  if ("methodSkills" in record && record.methodSkills !== undefined) {
+    names.push(...record.methodSkills);
+  }
+  if ("applyMethod" in record && record.applyMethod !== undefined && !names.includes(record.applyMethod)) {
+    names.push(record.applyMethod);
+  }
+  return names.map((name) => resolvePackagedMethodSkillPath(packageRoot, name));
+}
 
 function seedGitProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root });
@@ -43,12 +57,12 @@ test("#505 known ticket places every active public seat under that ticket", asyn
     seedGitProject(project);
     const sourceRun = await seedCanonicalSourceRun(home, project, { ticketNumber: TICKET });
     let n = 0;
-    const seen = new Map<string, string[]>();
+    const seen = new Map<string, RoleTurnRequest[]>();
     const host: RoleTurnHost = {
       async executeTurn(request: RoleTurnRequest) {
-        const paths = seen.get(request.activation.role) ?? [];
-        paths.push(request.runDirectory);
-        seen.set(request.activation.role, paths);
+        const turns = seen.get(request.activation.role) ?? [];
+        turns.push(request);
+        seen.set(request.activation.role, turns);
         return { code: 0, stderr: "", timedOut: false };
       },
     };
@@ -78,7 +92,15 @@ test("#505 known ticket places every active public seat under that ticket", asyn
       const runs = (await listBookRunDirectories(book)).filter(
         (dir) => dir.endsWith(`@${record.role}`) && !dir.includes(CANONICAL_SOURCE_RUN_ID),
       );
-      const observed = turns.length > 0 ? turns : runs;
+      const observed = turns.length > 0 ? turns.map((turn) => turn.runDirectory) : runs;
+      const methodPaths = packagedTurnMethodPaths(record);
+      for (const turn of turns) {
+        assert.deepEqual(
+          turn.methods.map((method) => method.path),
+          methodPaths,
+          `${record.role} turn methods are not the packaged skill paths`,
+        );
+      }
       assert.ok(
         observed.length >= 1,
         `${record.role} exit ${result.exitCode} produced no run stderr=${stderr.at(-1) ?? ""}`,

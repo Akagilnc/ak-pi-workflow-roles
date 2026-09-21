@@ -15,7 +15,19 @@ test("loadCollectorHandbookSeed reads only under injected packageRoot", async ()
   await withTempRoot("ak-962-resources-", async (root) => {
     const deps = createRoleRuntimeDependencies(root);
 
-    // Empty packageRoot must not fall back to the real install tree via import.meta.url.
+    // Empty packageRoot must not fall back to the real install tree or ~/.agents.
+    await assert.rejects(
+      () => deps.loadCanonicalSkillBinding!("tdd"),
+      (error: unknown) =>
+        error instanceof Error
+        && error.message.includes(join(root, "resources/methods/tdd")),
+    );
+    await assert.rejects(
+      () => deps.loadCanonicalSkillBinding!("ak-cross-m-review"),
+      (error: unknown) =>
+        error instanceof Error
+        && error.message.includes(join(root, "resources/methods/ak-cross-m-review")),
+    );
     await assert.rejects(
       () => deps.loadCollectorHandbookSeed!(),
       (error: unknown) =>

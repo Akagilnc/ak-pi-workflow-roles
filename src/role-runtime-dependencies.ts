@@ -1,7 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
-import { loadCanonicalSkillBinding as loadHomeCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import { createGhCollectorGitHubTransport } from "./collector-github.ts";
 import { createPiDoctorAuditor } from "./doctor-auditor.ts";
 import { loadDoctorCase } from "./doctor-evidence.ts";
@@ -63,13 +62,16 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
     async loadCanonicalSkillBinding(name) {
-      if (name === "tdd") {
-        return loadPackagedCanonicalSkillBinding(packageRoot, "tdd");
+      switch (name) {
+        case "tdd":
+          return loadPackagedCanonicalSkillBinding(packageRoot, name);
+        case "ak-cross-m-review":
+          return loadPackagedCanonicalSkillBinding(packageRoot, name);
+        default: {
+          const unexpected: never = name;
+          throw new Error(`Canonical skill is not packaged: ${String(unexpected)}`);
+        }
       }
-      if (name === "ak-cross-m-review") {
-        return loadPackagedCanonicalSkillBinding(packageRoot, "ak-cross-m-review");
-      }
-      return loadHomeCanonicalSkillBinding(name);
     },
     // #590: doctor compliance still on disposeCompliance path; judge→auditor is gate queue (#756).
     auditDoctorCompliance: (options) => doctorAuditor(options),
