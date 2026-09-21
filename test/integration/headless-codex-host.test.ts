@@ -257,18 +257,22 @@ test("#959 missing host binary stays activation spawn-failed with real path", as
   }
 });
 
-test("#987 codex host failure survives session identity persistence failure", async () => {
-  // Result 6 / 失败诚实: once the host reports failure, package persistence
-  // must not replace that terminal with its own error.
+test("#987 codex host failure preserves its diagnostic and resumable thread", async () => {
+  // Result 6 / 失败诚实: host failure wins with or without a thread id;
+  // persistence remains best-effort and cannot replace that terminal.
   const ledger = createTempPackageHomeLedger({ prefix: "ak-987-codex-fail-", runName: "run@codex" });
   const fakeBin = join(ledger.runDirectory, "fake-codex-turn-failed");
   await writeFile(
     fakeBin,
     `#!/usr/bin/env node
-process.stdout.write(JSON.stringify({
-  type: "thread.started",
-  thread_id: "thread-failed-1",
-}) + "\\n");
+let prompt = "";
+for await (const chunk of process.stdin) prompt += chunk;
+if (prompt.includes("with-thread")) {
+  process.stdout.write(JSON.stringify({
+    type: "thread.started",
+    thread_id: "thread-failed-1",
+  }) + "\\n");
+}
 process.stdout.write(JSON.stringify({
   type: "turn.failed",
   error: { message: "thread-store conflict: session already has an active writer (code -32600)" },
@@ -281,6 +285,8 @@ process.exit(1);
   try {
     const description = lookupHeadlessHostDescription("codex");
     assert.ok(description);
+    let bound: string | undefined;
+    let rejectBind = false;
     const host = createHeadlessRoleTurnHost({
       description,
       hostName: "codex",
@@ -289,15 +295,16 @@ process.exit(1);
         async load() {
           return undefined;
         },
-        async bind() {
-          throw new Error("session identity store is read-only");
+        async bind(_principal, id) {
+          if (rejectBind) throw new Error("session identity store is read-only");
+          bound = id;
         },
         resolveSessionFile: () => join(ledger.runDirectory, "session", "session.jsonl"),
       },
-      prepare: async () => ({
+      prepare: async (request) => ({
         mcpServers: [],
         systemPrompt: { body: "system", materials: [] },
-        prompt: "probe",
+        prompt: request.continuation.prompt,
         jsonSchema: { type: "object", properties: { status: { type: "string" } }, required: ["status"] },
         terminatingToolName: "ak_probe_output",
         async ingestStructuredOutput() {},
@@ -306,26 +313,42 @@ process.exit(1);
         },
       }),
     });
-    const result = await host.executeTurn({
+    const execute = (prompt: string) => host.executeTurn({
       principal: fixturePrincipal(join(ledger.runDirectory, "session")),
       activation: { role: "inspector" },
       methods: [],
-      continuation: { kind: "initial", prompt: "probe" },
+      continuation: { kind: "initial", prompt },
       model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
       cwd: ledger.runDirectory,
       home: ledger.runDirectory,
       agentDir: join(ledger.runDirectory, "agent"),
       runDirectory: ledger.runDirectory,
     });
-    assert.equal(result.knownFailure?.identity?.name, "HeadlessCliError");
-    assert.equal(result.knownFailure?.identity?.code, "codex-turn-failed");
+
+    const noThread = await execute("no-thread");
+    assert.equal(noThread.knownFailure?.identity?.code, "codex-turn-failed");
     assert.equal(
-      result.knownFailure?.diagnostic,
+      noThread.knownFailure?.diagnostic,
       "thread-store conflict: session already has an active writer (code -32600)",
     );
-    assert.deepEqual(result.knownFailure?.details, {
+
+    const persisted = await execute("with-thread");
+    assert.equal(persisted.knownFailure?.identity?.code, "codex-turn-failed");
+    assert.equal(bound, "thread-failed-1");
+
+    bound = undefined;
+    rejectBind = true;
+    const bindFailed = await execute("with-thread");
+    assert.equal(bindFailed.knownFailure?.identity?.name, "HeadlessCliError");
+    assert.equal(bindFailed.knownFailure?.identity?.code, "codex-turn-failed");
+    assert.equal(
+      bindFailed.knownFailure?.diagnostic,
+      "thread-store conflict: session already has an active writer (code -32600)",
+    );
+    assert.deepEqual(bindFailed.knownFailure?.details, {
       sessionId: "thread-failed-1",
       exitCode: 1,
+      sessionBindingDiagnostic: "session identity store is read-only",
     });
   } finally {
     ledger.dispose();

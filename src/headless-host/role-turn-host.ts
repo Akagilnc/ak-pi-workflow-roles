@@ -623,13 +623,29 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
             if (observation.threadId !== undefined && observation.threadId !== "") {
               sessionId = observation.threadId;
             }
+            let sessionBindingDiagnostic: string | undefined;
+            const hostFailed = observation.failureDiagnostic !== undefined
+              || (spawned.code !== 0 && spawned.code !== null);
+            if (hostFailed && observation.threadId !== undefined && observation.threadId !== "") {
+              try {
+                await config.sessionIdentity.bind(request.principal, observation.threadId);
+              } catch (error) {
+                // The host failure remains primary; retain persistence failure as
+                // secondary typed evidence instead of replacing the terminal.
+                sessionBindingDiagnostic = error instanceof Error ? error.message : String(error);
+              }
+            }
 
             if (observation.failureDiagnostic !== undefined) {
               return terminalFromSpawned(spawned, {
                 cause: "output",
                 identity: { name: "HeadlessCliError", code: "codex-turn-failed" },
                 diagnostic: observation.failureDiagnostic,
-                details: { sessionId, exitCode: spawned.code },
+                details: {
+                  sessionId,
+                  exitCode: spawned.code,
+                  ...(sessionBindingDiagnostic === undefined ? {} : { sessionBindingDiagnostic }),
+                },
               });
             }
 
@@ -639,7 +655,11 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 cause: "output",
                 identity: { name: "HeadlessCliError", code: "codex-nonzero-exit" },
                 diagnostic: spawned.stderr.trim() || `codex exec exited ${String(spawned.code)}`,
-                details: { sessionId, exitCode: spawned.code },
+                details: {
+                  sessionId,
+                  exitCode: spawned.code,
+                  ...(sessionBindingDiagnostic === undefined ? {} : { sessionBindingDiagnostic }),
+                },
               });
             }
 
