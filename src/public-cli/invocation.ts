@@ -95,6 +95,8 @@ import {
   resolveAnalystMode,
   type OptionOwner,
   type PublicOptionDefinition,
+  type TakenTypedOption,
+  type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 
@@ -825,6 +827,46 @@ export function parsePositiveTicketNumber(
   return value;
 }
 
+/**
+ * One token scan for every public seat parser.
+ * Seat code only assigns values; `--` still ends flag parsing.
+ */
+function scanPublicArgv(
+  args: readonly string[],
+  options: TypedOptionConsumer,
+  handlers: {
+    readonly onDashed: (taken: TakenTypedOption) => void;
+    readonly onBare: (token: string) => void;
+    readonly onDoubleDash: (rest: readonly string[]) => void;
+  },
+): void {
+  const tokens = [...args];
+  while (tokens.length > 0) {
+    if (tokens[0] === "--") {
+      tokens.shift();
+      handlers.onDoubleDash(tokens);
+      return;
+    }
+    const taken = options.takeDashed(tokens);
+    if (taken !== undefined) {
+      handlers.onDashed(taken);
+      continue;
+    }
+    handlers.onBare(tokens.shift()!);
+  }
+}
+
+function appendBareInstruction(
+  owner: string,
+  token: string,
+  positional: string[],
+): void {
+  if (token.startsWith("-") && token !== "-") {
+    throw new CliUsageError(`unknown ${owner} option: ${token}`);
+  }
+  positional.push(token);
+}
+
 /** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
 function parseInstructionArgv(
   args: readonly string[],
@@ -835,25 +877,17 @@ function parseInstructionArgv(
   let subject: "judge" | "doctor" | undefined;
   let sourceRun: string | undefined;
   const positional: string[] = [];
-  const tokens = [...args];
   const definitions = roleOptions(owner);
   const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
+        return;
       }
       if (taken.def.id === "project") {
         project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "subject") {
         const raw = typeof taken.value === "string" ? taken.value.trim() : "";
@@ -863,7 +897,7 @@ function parseInstructionArgv(
           );
         }
         subject = raw;
-        continue;
+        return;
       }
       if (taken.def.id === "source-run") {
         const raw = typeof taken.value === "string" ? taken.value.trim() : "";
@@ -871,16 +905,17 @@ function parseInstructionArgv(
           throw new CliUsageError("auditor --source-run requires a run locator");
         }
         sourceRun = raw;
-        continue;
+        return;
       }
       throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown ${owner} option: ${token}`);
-    }
-    positional.push(token);
-  }
+    },
+    onBare(token) {
+      appendBareInstruction(owner, token, positional);
+    },
+    onDoubleDash(rest) {
+      positional.push(...rest);
+    },
+  });
 
   options.assertRequired();
   return {
@@ -1156,34 +1191,27 @@ export function parseCoderArgv(args: readonly string[]): ParseCoderArgvResult {
   const attachmentPaths: string[] = [];
   let project: string | undefined;
   const positional: string[] = [];
-  const tokens = [...args];
   const definitions = roleOptions("coder");
   const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
+        return;
       }
       if (taken.def.id === "project") {
         project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
+        return;
       }
       throw new CliUsageError(`unknown coder option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown coder option: ${token}`);
-    }
-    positional.push(token);
-  }
+    },
+    onBare(token) {
+      appendBareInstruction("coder", token, positional);
+    },
+    onDoubleDash(rest) {
+      positional.push(...rest);
+    },
+  });
 
   // Phase aliases + default come solely from the typed coder phase row (#342).
   const phase = options.consumeLeadingPhase(positional);
@@ -1206,38 +1234,31 @@ export function parseFixerArgv(args: readonly string[]): ParseFixerArgvResult {
   let project: string | undefined;
   let prerequisitesPath: string | undefined;
   const positional: string[] = [];
-  const tokens = [...args];
   const definitions = roleOptions("fixer");
   const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
+        return;
       }
       if (taken.def.id === "project") {
         project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "prerequisites") {
         prerequisitesPath = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
+        return;
       }
       throw new CliUsageError(`unknown fixer option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown fixer option: ${token}`);
-    }
-    positional.push(token);
-  }
+    },
+    onBare(token) {
+      appendBareInstruction("fixer", token, positional);
+    },
+    onDoubleDash(rest) {
+      positional.push(...rest);
+    },
+  });
 
   // Phase aliases + default come solely from the typed fixer phase row (#342).
   const phase = options.consumeLeadingPhase(positional);
@@ -2305,36 +2326,29 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
   let requestManifestPath: string | undefined;
   let waitWindowMs: number | undefined;
   const positional: string[] = [];
-  const tokens = [...args];
   const definitions = roleOptions("collector");
   const options = createTypedOptionConsumer(definitions);
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
+        return;
       }
       if (taken.def.id === "project") {
         project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "pr") {
         prNumber = parsePositivePrOption(taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "repo") {
         repo = parseRepoOption(taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "request-manifest") {
         requestManifestPath = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "wait-ms") {
         if (taken.value === undefined || !/^[1-9]\d*$/.test(taken.value.trim())) {
@@ -2345,16 +2359,17 @@ export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvR
           throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
         }
         waitWindowMs = parsed;
-        continue;
+        return;
       }
       throw new CliUsageError(`unknown collector option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown collector option: ${token}`);
-    }
-    positional.push(token);
-  }
+    },
+    onBare(token) {
+      appendBareInstruction("collector", token, positional);
+    },
+    onDoubleDash(rest) {
+      positional.push(...rest);
+    },
+  });
   // Unconditional required from typed table via shared consumer (#342).
   // #676 D1: --pr is optional; ambiguous targets reject at admission, not by guessing.
   options.assertRequired();
@@ -2459,48 +2474,41 @@ export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult 
   let issueRaw: string | undefined;
   let runs: string | undefined;
   const positional: string[] = [];
-  const tokens = [...args];
   const definitions = roleOptions("doctor");
   const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
       if (taken.def.id === "issue") {
         if (taken.value === undefined || taken.value.trim() === "") {
           throw new CliUsageError("doctor --issue requires a positive integer");
         }
         issueRaw = taken.value;
-        continue;
+        return;
       }
       if (taken.def.id === "runs") {
         if (taken.value === undefined || taken.value.trim() === "") {
           throw new CliUsageError("doctor --runs requires a path");
         }
         runs = taken.value;
-        continue;
+        return;
       }
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
+        return;
       }
       if (taken.def.id === "project") {
         project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
+        return;
       }
       throw new CliUsageError(`unknown doctor option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown doctor option: ${token}`);
-    }
-    positional.push(token);
-  }
+    },
+    onBare(token) {
+      appendBareInstruction("doctor", token, positional);
+    },
+    onDoubleDash(rest) {
+      positional.push(...rest);
+    },
+  });
 
   // Unconditional required (e.g. --issue) from typed table via shared consumer (#342).
   options.assertRequired();
@@ -2602,43 +2610,39 @@ export type ParseNotaryArgvResult = {
 export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult {
   let project: string | undefined;
   let sourceRun: string | undefined;
-  const tokens = [...args];
   const definitions = roleOptions("notary");
   const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      if (tokens.length > 0) {
-        throw new CliUsageError(
-          "notary rejects caller prompt/instruction; only --source-run locator is admitted",
-        );
-      }
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
       if (taken.def.id === "project") {
         project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "source-run") {
         if (taken.value === undefined || taken.value.trim() === "") {
           throw new CliUsageError("notary --source-run requires a run locator");
         }
         sourceRun = taken.value;
-        continue;
+        return;
       }
       throw new CliUsageError(`unknown notary option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown notary option: ${token}`);
-    }
-    throw new CliUsageError(
-      "notary rejects caller prompt/instruction; only --source-run locator is admitted",
-    );
-  }
+    },
+    onBare(token) {
+      if (token.startsWith("-") && token !== "-") {
+        throw new CliUsageError(`unknown notary option: ${token}`);
+      }
+      throw new CliUsageError(
+        "notary rejects caller prompt/instruction; only --source-run locator is admitted",
+      );
+    },
+    onDoubleDash(rest) {
+      if (rest.length > 0) {
+        throw new CliUsageError(
+          "notary rejects caller prompt/instruction; only --source-run locator is admitted",
+        );
+      }
+    },
+  });
 
   options.assertRequired();
   if (sourceRun === undefined || sourceRun.trim() === "") {
@@ -2670,34 +2674,27 @@ export function parseGleanerLeftArgv(
   let project: string | undefined;
   let baseRevision: string | undefined;
   const positional: string[] = [];
-  const tokens = [...args];
   const definitions = roleOptions("gleaner-left");
   const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
       if (taken.def.id === "project") {
         project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "base") {
         baseRevision = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
+        return;
       }
       throw new CliUsageError(`unknown gleaner-left option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown gleaner-left option: ${token}`);
-    }
-    positional.push(token);
-  }
+    },
+    onBare(token) {
+      appendBareInstruction("gleaner-left", token, positional);
+    },
+    onDoubleDash(rest) {
+      positional.push(...rest);
+    },
+  });
 
   options.assertRequired();
   return {
@@ -2731,43 +2728,36 @@ export function parseReviewerArgv(
   let baseRevision: string | undefined;
   let lens: ReviewerLens | undefined;
   const positional: string[] = [];
-  const tokens = [...args];
   const definitions = roleOptions("reviewer");
   const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
       if (taken.def.id === "project") {
         project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "base") {
         baseRevision = requireReviewerBaseRevision(taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "lens") {
         // Public override is single-axis only; omission stays undefined for the parallel branch.
         lens = requireReviewerLens(taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "authority-ref") {
         authorityRefs.push(requireAuthorityRef(taken.value));
-        continue;
+        return;
       }
       throw new CliUsageError(`unknown reviewer option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown reviewer option: ${token}`);
-    }
-    positional.push(token);
-  }
+    },
+    onBare(token) {
+      appendBareInstruction("reviewer", token, positional);
+    },
+    onDoubleDash(rest) {
+      positional.push(...rest);
+    },
+  });
 
   // Base and authority are required; omitted lens selects the parallel two-axis mode.
   options.assertRequired();
@@ -2838,50 +2828,43 @@ export function parseMergerArgv(args: readonly string[]): ParseMergerArgvResult 
   const attachmentPaths: string[] = [];
   let project: string | undefined;
   const positional: string[] = [];
-  const tokens = [...args];
   const definitions = roleOptions("merger");
   const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
       if (taken.def.id === "attach") {
         attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
+        return;
       }
       if (taken.def.id === "project") {
         project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
+        return;
       }
       throw new CliUsageError(`unknown merger option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    // Rejected public spellings (#342) plus other internal packet field faces.
-    if (
-      isRejectedPublicSpelling("merger", token) ||
-      token === "--targetObjectId" ||
-      token.startsWith("--targetObjectId=") ||
-      token === "--sourceObjectId" ||
-      token.startsWith("--sourceObjectId=") ||
-      token === "--expectedConflictPaths" ||
-      token.startsWith("--expectedConflictPaths=") ||
-      token === "--resolutionScope" ||
-      token.startsWith("--resolutionScope=")
-    ) {
-      throw new CliUsageError(
-        "merger does not accept public packet fields; the adapter reads Git merge materials",
-      );
-    }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown merger option: ${token}`);
-    }
-    positional.push(token);
-  }
+    },
+    onBare(token) {
+      // Rejected public spellings (#342) plus other internal packet field faces.
+      if (
+        isRejectedPublicSpelling("merger", token) ||
+        token === "--targetObjectId" ||
+        token.startsWith("--targetObjectId=") ||
+        token === "--sourceObjectId" ||
+        token.startsWith("--sourceObjectId=") ||
+        token === "--expectedConflictPaths" ||
+        token.startsWith("--expectedConflictPaths=") ||
+        token === "--resolutionScope" ||
+        token.startsWith("--resolutionScope=")
+      ) {
+        throw new CliUsageError(
+          "merger does not accept public packet fields; the adapter reads Git merge materials",
+        );
+      }
+      appendBareInstruction("merger", token, positional);
+    },
+    onDoubleDash(rest) {
+      positional.push(...rest);
+    },
+  });
 
   options.assertRequired();
   return {
@@ -3084,7 +3067,6 @@ function requireOptionValue(
  */
 export function parseAnalystArgv(args: readonly string[]): ParseAnalystArgvResult {
   const valueLists = new Map<string, string[]>();
-  const tokens = [...args];
   const definitions = roleOptions("analyst");
   // Shared typed consumer: dashed + positional take, repeatable, required (#342).
   const options = createTypedOptionConsumer(definitions);
@@ -3095,40 +3077,32 @@ export function parseAnalystArgv(args: readonly string[]): ParseAnalystArgvResul
     else existing.push(value);
   };
 
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      if (tokens.length > 0) {
-        throw new CliUsageError(`unexpected analyst argument: ${tokens[0]}`);
-      }
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
       if (taken.def.valueMetavar === null) {
         pushValue(taken.def.id, "");
-        continue;
+        return;
       }
       if (taken.def.id === "ticket") {
         if (taken.value === undefined || taken.value.trim() === "") {
           throw new CliUsageError("analyst --ticket requires a positive integer");
         }
         pushValue("ticket", taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "attach") {
         pushValue(
           "attach",
           requireOptionPath(taken.def.canonical, taken.value),
         );
-        continue;
+        return;
       }
       if (taken.def.id === "group-a-label" || taken.def.id === "group-b-label") {
         pushValue(
           taken.def.id,
           requireOptionValue(taken.def.canonical, taken.value, "a label"),
         );
-        continue;
+        return;
       }
       if (
         taken.def.id === "group-a-issues" || taken.def.id === "group-b-issues"
@@ -3141,36 +3115,42 @@ export function parseAnalystArgv(args: readonly string[]): ParseAnalystArgvResul
             "a comma-separated list of N or book:N",
           ),
         );
-        continue;
+        return;
       }
       throw new CliUsageError(`unknown analyst option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    // #399: deleted --project-root; disabled --model-groups public face.
-    if (isRejectedPublicSpelling("analyst", token)) {
-      if (token === "--project-root" || token.startsWith("--project-root=")) {
-        throw new CliUsageError(
-          "analyst no longer accepts --project-root (deleted); use bare call for whole book or --ticket N (cwd git common-dir selects the book)",
-        );
+    },
+    onBare(token) {
+      // #399: deleted --project-root; disabled --model-groups public face.
+      if (isRejectedPublicSpelling("analyst", token)) {
+        if (token === "--project-root" || token.startsWith("--project-root=")) {
+          throw new CliUsageError(
+            "analyst no longer accepts --project-root (deleted); use bare call for whole book or --ticket N (cwd git common-dir selects the book)",
+          );
+        }
+        if (token === "--model-groups" || token.startsWith("--model-groups=")) {
+          throw new CliUsageError(
+            "analyst --model-groups public CLI face is disabled; input face is being redesigned for multi-issue comparison (see follow-up ticket)",
+          );
+        }
+        throw new CliUsageError(`unknown analyst option: ${token}`);
       }
-      if (token === "--model-groups" || token.startsWith("--model-groups=")) {
-        throw new CliUsageError(
-          "analyst --model-groups public CLI face is disabled; input face is being redesigned for multi-issue comparison (see follow-up ticket)",
-        );
+      if (token.startsWith("-") && token !== "-") {
+        throw new CliUsageError(`unknown analyst option: ${token}`);
       }
-      throw new CliUsageError(`unknown analyst option: ${token}`);
-    }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown analyst option: ${token}`);
-    }
-    // Positional selectors (e.g. sweep) via shared typed consumer — not a parallel list.
-    const positional = options.takePositional(token);
-    if (positional !== undefined) {
-      pushValue(positional.id, "");
-      continue;
-    }
-    throw new CliUsageError(`unexpected analyst argument: ${token}`);
-  }
+      // Positional selectors (e.g. sweep) via shared typed consumer — not a parallel list.
+      const positional = options.takePositional(token);
+      if (positional !== undefined) {
+        pushValue(positional.id, "");
+        return;
+      }
+      throw new CliUsageError(`unexpected analyst argument: ${token}`);
+    },
+    onDoubleDash(rest) {
+      if (rest.length > 0) {
+        throw new CliUsageError(`unexpected analyst argument: ${rest[0]}`);
+      }
+    },
+  });
 
   const counts = new Map<string, number>();
   for (const [id, values] of valueLists) {
