@@ -151,8 +151,8 @@ export type PublicResumeRequest = {
 
 /**
  * Open court turn on a retained run (#637).
- * courtAttemptId + the same summons materials shape already used by re-summons.
- * Bare resume rehydrates request.summons and rides existing load/buildTurnRequest.
+ * courtAttemptId identifies settlement across later public manual resume calls.
+ * Summons materials belong only to the internal re-summons face.
  * Cleared when this courtAttemptId seals.
  */
 export type CurrentCourtState = {
@@ -631,8 +631,7 @@ export async function markRunTerminal(runDirectory: string): Promise<void> {
   if (current === undefined) {
     throw new Error("cannot mark terminal: run state missing");
   }
-  // Preserve open currentCourt: terminal after a failed/incomplete court must still
-  // let bare resume continue that court (#637).
+  // Preserve the open court's settlement identity after a failed/incomplete turn (#637).
   await writeRoleRunStateDisk(runDirectory, {
     runId: current.runId,
     role: current.role,

@@ -1102,11 +1102,8 @@ export async function dispatchPostAdmissionTurn<
             // Settlement already sealed accepted — a cleanup failure here must
             // not erase that fact or make the caller replay this court's
             // summons over already-delivered work (#840 已交劳动只整理终局不重做).
-            // A later bare resume self-heals: buildRequestAfterLease finds the
-            // open court already sealed and clears it then (documented
-            // continue-under-failure contract, not a swallow — 失败诚实宪法 真因
-            // 必须落痕) — durably, since every auto-resume attempt's io here is
-            // dummyIo (#840 r9 判词 class 1).
+            // Preserve the cleanup failure as a post-dispatch diagnostic; the
+            // accepted settlement remains authoritative (#840 r9 判词 class 1).
             await recordBestEffortPostDispatchDiagnostic(
               admitted,
               env,
@@ -1420,7 +1417,7 @@ function isAlreadyFrozenSummonsAttachment(
  * Freeze same-ticket summons attachments into the retained run directory (#637).
  * No-op materials (no paths / instruction-only) skip the freeze.
  * Paths already under this run's attachments/ are the accepted freeze identity —
- * reuse them; do not re-freeze from external originals on bare resume.
+ * reuse them for the same internal re-summons flow.
  * Manual resume never calls this — old attachment semantics stay intact.
  */
 export async function prepareSummonsResumeMaterials(
@@ -1461,9 +1458,8 @@ export async function prepareSummonsResumeMaterials(
  * Seat-owned loader
  * validation, turn builder, and adapters stay on the seat.
  *
- * Court open/recovery transaction (#637): under the existing writer lease,
- * read currentCourt, judge seal, clear (bound to the judged court id), freeze,
- * and record. No pre-lease clear or stale court-snapshot consumption.
+ * Court handling (#637): public manual resume reads only the open court's
+ * settlement identity; internal re-summons may freeze and record its materials.
  */
 export async function runPostAdmissionSeatResume<
   A extends AdmittedRoleInvocation,
@@ -1472,7 +1468,7 @@ export async function runPostAdmissionSeatResume<
   request: PublicResumeRequest;
   env: PostAdmissionEnv;
   io: CliIo;
-  /** Load admitted state; receives the effective resume request (may carry rehydrated summons). */
+  /** Load admitted state from the caller's resume request. */
   load: (request: PublicResumeRequest) => Promise<{ admitted: A }>;
   /** Build turn from admitted + effective request (summons ride existing projection). */
   buildTurnRequest: (
@@ -1484,8 +1480,7 @@ export async function runPostAdmissionSeatResume<
    * After the single pre-lease load. Factory seats resolve method-material
    * adapters here via resolveResumeMethodMaterialAdapters (or short-circuit
    * with the same controlled-failure face as initial). Must not re-load the
-   * same admitted; under-lease summons rehydrate remains the only second load,
-   * and only when materials change.
+   * same admitted.
    */
   afterAdmittedLoad?: (
     admitted: A,
@@ -1550,8 +1545,7 @@ export async function runPostAdmissionSeatResume<
           }
         }
 
-        // Freeze external paths once; rewrite summons to the frozen identity so
-        // currentCourt + later bare resume reuse the accepted snapshot.
+        // Internal re-summons freezes external paths once and records that identity.
         if (request.summons !== undefined) {
           const prepared = await prepareSummonsResumeMaterials(
             admittedForBuild.runDirectory,
@@ -1702,7 +1696,7 @@ export async function runPostAdmissionSeatResume<
       buildRequestAfterLease,
     });
   } catch (error) {
-    // Open-court rehydrate load may still surface seat structural rejection.
+    // Seat preparation may still surface structural rejection.
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, input.io);
       return { exitCode: 2 };
