@@ -85,6 +85,7 @@ import {
   packagedRoleAcceptedOutputTool,
   packagedRoleMetadata,
   type PackagedRole,
+  type PublicRoleRecord,
 } from "../packaged-role-registry.ts";
 import {
   SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
@@ -3289,7 +3290,66 @@ export async function trySettleAcceptedSeatTerminalResult(
   }, scope);
 }
 
-/** One settlement dispatch. Seat-specific readers stay; the choice is this function. */
+type SettlementReader = (
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  material: PackagedMethodSkillMaterial | undefined,
+  packageRoot: string,
+  scope: SettlementCourtScope | undefined,
+) => Promise<TerminalResult | undefined>;
+
+/**
+ * Readers stay seat-specific. The composition-root `settlement` leaf is the
+ * only choice; `trySettlePublicSeat` does not branch on the role name.
+ */
+const SETTLEMENT_READER = {
+  accepted: (admitted, authority, _material, _packageRoot, scope) =>
+    trySettleAcceptedSeatTerminalResult(admitted, authority, scope),
+  judge: (admitted, authority, _material, _packageRoot, scope) =>
+    trySettleJudgeTerminalResult(admitted as AdmittedJudgeInvocation, authority, scope),
+  coder: (admitted, authority, material, _packageRoot, scope) =>
+    trySettleCoderTerminalResult(
+      admitted as AdmittedCoderInvocation,
+      authority,
+      material === undefined ? {} : { methodProvenance: material.provenance },
+      scope,
+    ),
+  fixer: (admitted, authority, material, packageRoot, scope) =>
+    material === undefined
+      ? Promise.resolve(undefined)
+      : trySettleFixerTerminalResult(
+        admitted as AdmittedFixerInvocation,
+        authority,
+        observedMethodSkillOptions(packageRoot, material),
+        scope,
+      ),
+  merger: (admitted, authority, material, packageRoot, scope) =>
+    material === undefined
+      ? Promise.resolve(undefined)
+      : trySettleMergerTerminalResult(
+        admitted as AdmittedMergerInvocation,
+        authority,
+        observedMethodSkillOptions(packageRoot, material),
+        scope,
+      ),
+  collector: (admitted, authority, _material, _packageRoot, scope) =>
+    trySettleCollectorTerminalResult(admitted as AdmittedCollectorInvocation, authority, scope),
+  doctor: (admitted, authority, _material, _packageRoot, scope) =>
+    trySettleDoctorTerminalResult(admitted as AdmittedDoctorInvocation, authority, scope),
+  secretariat: (admitted, authority, _material, _packageRoot, scope) =>
+    trySettleSecretariatTerminalResult(admitted as AdmittedSecretariatInvocation, authority, scope),
+  reviewer: (admitted, authority, material, packageRoot, scope) =>
+    material === undefined
+      ? Promise.resolve(undefined)
+      : trySettleReviewerTerminalResult(
+        admitted as AdmittedReviewerInvocation,
+        authority,
+        observedMethodSkillOptions(packageRoot, material),
+        scope,
+      ),
+} satisfies Record<PublicRoleRecord["settlement"], SettlementReader>;
+
+/** One settlement dispatch. The registry `settlement` leaf selects the reader. */
 export async function trySettlePublicSeat(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
@@ -3297,55 +3357,11 @@ export async function trySettlePublicSeat(
   material: PackagedMethodSkillMaterial | undefined,
   packageRoot: string,
 ): Promise<TerminalResult | undefined> {
-  switch (admitted.role) {
-    case "judge":
-      return trySettleJudgeTerminalResult(admitted, authority, scope);
-    case "coder":
-      return trySettleCoderTerminalResult(
-        admitted,
-        authority,
-        material === undefined ? {} : { methodProvenance: material.provenance },
-        scope,
-      );
-    case "fixer":
-      return material === undefined
-        ? undefined
-        : trySettleFixerTerminalResult(
-          admitted,
-          authority,
-          observedMethodSkillOptions(packageRoot, material),
-          scope,
-        );
-    case "merger":
-      return material === undefined
-        ? undefined
-        : trySettleMergerTerminalResult(
-          admitted,
-          authority,
-          observedMethodSkillOptions(packageRoot, material),
-          scope,
-        );
-    case "collector":
-      return trySettleCollectorTerminalResult(admitted, authority, scope);
-    case "doctor":
-      return trySettleDoctorTerminalResult(admitted, authority, scope);
-    case "secretariat":
-      return trySettleSecretariatTerminalResult(admitted, authority, scope);
-    case "reviewer":
-      return material === undefined
-        ? undefined
-        : trySettleReviewerTerminalResult(
-          admitted,
-          authority,
-          observedMethodSkillOptions(packageRoot, material),
-          scope,
-        );
-    default:
-      if (packagedRoleAcceptedOutputTool(admitted.role) === undefined) {
-        throw new Error(`no settlement for ${admitted.role}`);
-      }
-      return trySettleAcceptedSeatTerminalResult(admitted, authority, scope);
+  const record = packagedRoleMetadata(admitted.role);
+  if (record === undefined) {
+    throw new Error(`no settlement for ${admitted.role}`);
   }
+  return SETTLEMENT_READER[record.settlement](admitted, authority, material, packageRoot, scope);
 }
 
 /**

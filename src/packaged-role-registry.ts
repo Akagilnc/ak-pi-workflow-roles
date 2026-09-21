@@ -60,6 +60,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     phases: [null],
     outputTool: JUDGE_OUTPUT_TOOL_NAME,
+    settlement: "judge",
     runnerFailure: "engine-detour-known-first",
     acceptedText: "大理寺回执已接受",
     activationStage: "load-and-install",
@@ -84,6 +85,7 @@ export const PUBLIC_ROLE_RECORDS = [
     settleMethod: "diagnosing-bugs",
     phases: ["plan", "apply"],
     outputTool: FIXER_OUTPUT_TOOL_NAME,
+    settlement: "fixer",
     acceptedText: "修内司回执已接受",
     activationFlags: [
       { field: "packetPath", flag: "ak-fix-packet", binds: "input" },
@@ -109,6 +111,7 @@ export const PUBLIC_ROLE_RECORDS = [
     applyMethod: "tdd",
     phases: ["plan", "apply"],
     outputTool: CODER_OUTPUT_TOOL_NAME,
+    settlement: "coder",
     acceptedText: "将作监回执已接受",
     activationFlags: [
       { field: "taskPath", flag: "ak-coder-task", binds: "input" },
@@ -135,6 +138,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: REVIEWER_OUTPUT_TOOL_NAME,
+    settlement: "reviewer",
     runnerFailure: "engine-detour-record-first",
     acceptedText: "御史台回执已接受",
     activationFlags: [
@@ -162,6 +166,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: COLLECTOR_OUTPUT_TOOL,
+    settlement: "collector",
     runnerFailure: "collector-known-first",
     acceptedText: "通进司回执已接受",
     activationFlags: [
@@ -183,6 +188,7 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     bareCommand: false,
     outputTool: DOCTOR_OUTPUT_TOOL_NAME,
+    settlement: "doctor",
     acceptedText: "太医署回执已接受",
     activationFlags: [
       { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
@@ -201,6 +207,7 @@ export const PUBLIC_ROLE_RECORDS = [
     settleMethod: "resolving-merge-conflicts",
     phases: [null],
     outputTool: MERGER_OUTPUT_TOOL_NAME,
+    settlement: "merger",
     acceptedText: "合并回执已接受",
     activationFlags: [
       { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },
@@ -257,6 +264,7 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "secretariat",
     phases: [null],
     outputTool: SECRETARIAT_OUTPUT_TOOL_NAME,
+    settlement: "secretariat",
     acceptedText: "中书省回执已接受",
     activationFlags: [
       { field: "ticketNumber" },
@@ -428,8 +436,8 @@ export type PackagedActivationFlag = {
 };
 
 /**
- * Output tool for seats whose settlement is the shared accepted-tool scan.
- * Absent means this seat has its own settlement function.
+ * Output tool for seats whose settlement leaf is the shared accepted-tool scan.
+ * Any other settlement leaf names that seat's own reader.
  */
 export function packagedRoleAcceptedOutputTool(role: string): string | undefined {
   const record = packagedRoleMetadata(role);
