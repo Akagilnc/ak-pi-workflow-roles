@@ -228,9 +228,10 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
   env: PostAdmissionEnv,
   diagnostic: string,
   io: CliIo,
+  facts?: { readonly cause: string; readonly relatedFailure: string },
 ): Promise<void> {
   io.stderr(formatCliDiagnostic(diagnostic));
-  const payload = { diagnostic, recordedAt: new Date().toISOString() };
+  const payload = { diagnostic, recordedAt: new Date().toISOString(), ...(facts === undefined ? {} : facts) };
   try {
     await env.sessionAppender(
       env.principalAuthority,
@@ -804,10 +805,23 @@ export async function dispatchPostAdmissionTurn<
       } catch (error) {
         // The native host is already live. Always observe it before settling
         // the package-side failure so its rejection cannot escape unhandled.
+        let hostRejection: unknown;
         try {
           await input.startedTurn;
-        } catch {
-          // The deferred-write failure remains the controlling package cause.
+        } catch (error) {
+          hostRejection = error;
+        }
+        if (hostRejection !== undefined) {
+          await recordBestEffortPostDispatchDiagnostic(
+            admitted,
+            env,
+            `host turn failed beside deferred package write failure: ${describeErrorIdentity(hostRejection)}`,
+            io,
+            {
+              cause: "host_rejection_beside_deferred_write",
+              relatedFailure: describeErrorIdentity(hostRejection),
+            },
+          );
         }
         const settled = await settleAfterTurnStarted(
           admitted,
