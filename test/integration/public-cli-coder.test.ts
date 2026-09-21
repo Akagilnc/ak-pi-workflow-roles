@@ -29,7 +29,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 
 import {
-  admitCoderInvocation,
+  admitPublicRole,
 } from "../../src/public-cli/invocation.ts";
 import {
   settleCoderTerminalResult,
@@ -193,13 +193,14 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const admitted = await admitCoderInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
+    const admitted = await admitPublicRole("coder", {
       phase: "apply",
       instruction: "Implement and verify.",
       attachmentPaths: [],
+    }, {
+      principalAuthority: piDurablePrincipalAuthority,
+      home,
+      cwd: project,
       createRunId: () => "run-coder-settle-001",
     });
     await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });

@@ -30,7 +30,7 @@ import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/c
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitCountersignInvocation,
+  admitPublicRole,
   bindAdmittedTicketNumber,
   parseCountersignArgv,
   type AdmittedCountersignInvocation,
@@ -170,12 +170,13 @@ test("countersign admission freezes attachments and binds the countersign role",
     const ticket = join(project, "ticket.md");
     await writeFile(ticket, "# 票面\n五问裁决。", "utf8");
 
-    const admitted = await admitCountersignInvocation({
+    const admitted = await admitPublicRole("countersign", {
+      instruction: "裁：本票是否足以开工。",
+      attachmentPaths: [ticket],
+    }, {
       home,
       principalAuthority: piDurablePrincipalAuthority,
       cwd: project,
-      instruction: "裁：本票是否足以开工。",
-      attachmentPaths: [ticket],
       createRunId: () => "01a0sign00-0000-7000-8000-000000000001",
     });
 
@@ -208,12 +209,13 @@ test("countersign admission ignores attachment frontmatter; --ticket is unknown"
     const ticket = join(project, "ticket.md");
     await writeFile(ticket, "---\nticketNumber: 100\n---\n\n五问。\n", "utf8");
 
-    const admitted = await admitCountersignInvocation({
+    const admitted = await admitPublicRole("countersign", {
+      instruction: "裁",
+      attachmentPaths: [ticket],
+    }, {
       home,
       principalAuthority: piDurablePrincipalAuthority,
       cwd: project,
-      instruction: "裁",
-      attachmentPaths: [ticket],
       createRunId: () => "01a0sign00-0000-7000-8000-000000000582",
     });
     assert.equal(admitted.ticketNumber, undefined);

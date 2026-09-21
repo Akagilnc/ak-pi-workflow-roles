@@ -34,7 +34,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitJudgeInvocation,
+  admitPublicRole,
   buildJudgeTransportPrompt,
   parseJudgeArgv,
 } from "../../src/public-cli/invocation.ts";
@@ -237,13 +237,14 @@ test("admitJudgeInvocation rejects blank project override before resolve", async
   await withTempHome(async (home) => {
     await assert.rejects(
       () =>
-        admitJudgeInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-          home,
-          cwd: home,
+        admitPublicRole("judge", {
           instruction: "task",
           attachmentPaths: [],
           project: "",
+        }, {
+          principalAuthority: piDurablePrincipalAuthority,
+          home,
+          cwd: home,
         }),
       // Typed structural reject only (AC6) — do not freeze diagnostic phrasing.
       (error: unknown) =>
@@ -260,12 +261,13 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
     const source = join(home, "evidence.txt");
     await writeFile(source, "admitted-bytes-v1", "utf8");
 
-    const admitted = await admitJudgeInvocation({
+    const admitted = await admitPublicRole("judge", {
+      instruction: "review the attachment",
+      attachmentPaths: [source],
+    }, {
       principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
-      instruction: "review the attachment",
-      attachmentPaths: [source],
       createRunId: () => "run-freeze-001",
     });
 

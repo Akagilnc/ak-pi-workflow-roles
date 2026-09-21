@@ -1499,9 +1499,18 @@ export type PublicSeatParse = {
 };
 
 /**
- * Sole production admit call. Seat modules do not spread ticket fields.
- * Kind comes from the composition-root record; placement stays ticketAdmissionFields.
+ * Sole admit call. Kind comes from the composition-root record.
+ * Placement stays ticketAdmissionFields. Seat field checks live in this function only.
  */
+export function admitPublicRole<R extends PackagedRole>(
+  role: R,
+  parsed: PublicSeatParse,
+  env: Parameters<typeof admissionCallerOptions>[0],
+  override?: {
+    readonly assertedTicketNumber?: number;
+    readonly deferPersistence?: boolean;
+  },
+): Promise<Extract<AdmittedRoleInvocation, { readonly role: R }>>;
 export async function admitPublicRole(
   role: PackagedRole,
   parsed: PublicSeatParse,
@@ -1836,71 +1845,7 @@ async function admitStandardMaterialInvocation<
   };
 }
 
-/**
- * Atomically admit a Judge Role run: freeze Attachments, persist the request,
- * and reserve session placement under the #78 ledger book.
- */
-export async function admitJudgeInvocation(
-  options: AdmitJudgeInvocationOptions,
-): Promise<AdmittedJudgeInvocation> {
-  return admitStandardMaterialInvocation("judge", options);
-}
-
-/**
- * Admit a direct Inspector (台院) run: freeze attachments, persist the request,
- * and reserve session placement. Same instruction-seat face as Judge (#568).
- */
-export async function admitInspectorInvocation(
-  options: AdmitInspectorInvocationOptions,
-): Promise<AdmittedInspectorInvocation> {
-  return admitStandardMaterialInvocation("inspector", options);
-}
-
-/**
- * Admit a direct Gatekeeper (门下省) run (#639): freeze attachments, persist
- * the request, reserve session placement — same instruction-seat face.
- */
-export async function admitGatekeeperInvocation(
-  options: AdmitGatekeeperInvocationOptions,
-): Promise<AdmittedGatekeeperInvocation> {
-  return admitStandardMaterialInvocation("gatekeeper", options);
-}
-
-/**
- * Admit a direct Navigator (游奕使) run (#639): freeze attachments, persist
- * the request, reserve session placement — same instruction-seat face.
- */
-export async function admitNavigatorInvocation(
-  options: AdmitNavigatorInvocationOptions,
-): Promise<AdmittedNavigatorInvocation> {
-  return admitStandardMaterialInvocation("navigator", options);
-}
-
 export type AdmitAuditorInvocationOptions = AdmitInspectorInvocationOptions;
-
-/** Admit a public 审刑院 run (#675). */
-export async function admitAuditorInvocation(
-  options: AdmitAuditorInvocationOptions,
-): Promise<AdmittedAuditorInvocation> {
-  return admitStandardMaterialInvocation("auditor", options);
-}
-
-/**
- * Admit a direct Diarist (起居郎) run (#708): freeze attachments, persist the
- * request, reserve session placement — same instruction-seat face.
- */
-export async function admitDiaristInvocation(
-  options: AdmitDiaristInvocationOptions,
-): Promise<AdmittedDiaristInvocation> {
-  return admitStandardMaterialInvocation("diarist", options);
-}
-
-/** Admit a public Secretariat (中书省) run (#924). */
-export async function admitSecretariatInvocation(
-  options: AdmitSecretariatInvocationOptions,
-): Promise<AdmittedSecretariatInvocation> {
-  return admitStandardMaterialInvocation("secretariat", options);
-}
 
 /** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */
 export function buildInstructionTransportPrompt(
@@ -1963,7 +1908,7 @@ export type AdmitCountersignInvocationOptions = {
  * Admit a Countersign run immediately, or reserve its coordinates for deferred
  * materialization after identity lookup (#572 / ADR 0074 / #863).
  */
-export async function admitCountersignInvocation(
+async function admitCountersignInvocation(
   options: AdmitCountersignInvocationOptions,
 ): Promise<AdmittedCountersignInvocation> {
   const defer = options.deferPersistence === true;
@@ -2119,7 +2064,7 @@ export type AdmitCoderInvocationOptions = {
  * Nonblank task remains authoritative: blank instruction is a structural reject.
  * Phase (default apply / explicit plan) is frozen into the admitted request.
  */
-export async function admitCoderInvocation(
+async function admitCoderInvocation(
   options: AdmitCoderInvocationOptions,
 ): Promise<AdmittedCoderInvocation> {
   const instruction = options.instruction;
@@ -2210,7 +2155,7 @@ export type AdmitFixerInvocationOptions = {
  * Nonblank instruction remains authoritative. Phase defaults to apply at parse time.
  * Prerequisite grammar is structural; unmet/insufficient prerequisites stay Fixer judgments.
  */
-export async function admitFixerInvocation(
+async function admitFixerInvocation(
   options: AdmitFixerInvocationOptions,
 ): Promise<AdmittedFixerInvocation> {
   if (options.project !== undefined) {
@@ -2490,7 +2435,7 @@ export type AdmitCollectorInvocationOptions = {
  * declarations, resolve repository + PR target (#676 D1), and place the session under #78.
  * Explicit PR is not preflighted for existence; context resolution uses online association.
  */
-export async function admitCollectorInvocation(
+async function admitCollectorInvocation(
   options: AdmitCollectorInvocationOptions,
 ): Promise<AdmittedCollectorInvocation> {
   if (options.project !== undefined) {
@@ -2785,7 +2730,7 @@ export async function resolveDoctorCaseRunsPath(options: {
  * loadDoctorCase, and place the Doctor session under the book runs lane.
  * Does not copy session content into a second store.
  */
-export async function admitDoctorInvocation(
+async function admitDoctorInvocation(
   options: AdmitDoctorInvocationOptions,
 ): Promise<AdmittedDoctorInvocation> {
   if (options.project !== undefined) {
@@ -2962,7 +2907,7 @@ export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult 
   };
 }
 
-export async function admitNotaryInvocation(options: {
+async function admitNotaryInvocation(options: {
   readonly home: string;
   readonly principalAuthority: DurablePrincipalAuthority;
   readonly cwd: string;
@@ -3108,7 +3053,7 @@ export type AdmitGleanerLeftInvocationOptions = {
  * Admit a Gleaner-Left Role run on the fixed comparison base.
  * Empty instruction is the lawful path; no attachment/ticket admission face.
  */
-export async function admitGleanerLeftInvocation(
+async function admitGleanerLeftInvocation(
   options: AdmitGleanerLeftInvocationOptions,
 ): Promise<AdmittedGleanerLeftInvocation> {
   if (options.project !== undefined) {
@@ -3258,7 +3203,7 @@ export type AdmitReviewerInvocationOptions = {
  * Caller instruction is optional provenance; typed fields project Skill inputs.
  * authorityRefs are frozen as durable references only — not Spec prose.
  */
-export async function admitReviewerInvocation(
+async function admitReviewerInvocation(
   options: AdmitReviewerInvocationOptions,
 ): Promise<AdmittedReviewerInvocation> {
   if (options.project !== undefined) {
@@ -3454,7 +3399,7 @@ export type AdmitMergerInvocationOptions = {
  * handed to the role as assignment materials — including when empty (#827).
  * Callers never supply public packet fields for those facts.
  */
-export async function admitMergerInvocation(
+async function admitMergerInvocation(
   options: AdmitMergerInvocationOptions,
 ): Promise<AdmittedMergerInvocation> {
   if (options.project !== undefined) {

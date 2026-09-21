@@ -14,7 +14,7 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { sampleCompletedDoctorOutput } from "../helpers/doctor-fixtures.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitCoderInvocation,
+  admitPublicRole,
   parseCoderArgv,
   parseCollectorArgv,
   parseDoctorArgv,
@@ -83,13 +83,14 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
 
     await assert.rejects(
       () =>
-        admitCoderInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-          home,
-          cwd: project,
+        admitPublicRole("coder", {
           phase: "apply",
           instruction: "   ",
           attachmentPaths: [],
+        }, {
+          principalAuthority: piDurablePrincipalAuthority,
+          home,
+          cwd: project,
         }),
       (error: unknown) =>
         error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
@@ -97,13 +98,14 @@ test("admitCoderInvocation rejects blank task and freezes phase + attachments", 
 
     const source = join(home, "notes.txt");
     await writeFile(source, "attachment-v1", "utf8");
-    const admitted = await admitCoderInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-      home,
-      cwd: project,
+    const admitted = await admitPublicRole("coder", {
       phase: "plan",
       instruction: "Plan the first vertical slice.",
       attachmentPaths: [source],
+    }, {
+      principalAuthority: piDurablePrincipalAuthority,
+      home,
+      cwd: project,
       createRunId: () => "run-coder-plan-001",
     });
     assert.equal(admitted.role, "coder");

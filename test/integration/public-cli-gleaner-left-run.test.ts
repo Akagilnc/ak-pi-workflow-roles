@@ -15,7 +15,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
-  admitGleanerLeftInvocation,
+  admitPublicRole,
   parseGleanerLeftArgv,
 } from "../../src/public-cli/invocation.ts";
 import { buildGleanerLeftTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
@@ -84,12 +84,13 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
       parsed.instruction, "");
     assert.equal(parsed.baseRevision, "HEAD");
 
-    const admitted = await admitGleanerLeftInvocation({
+    const admitted = await admitPublicRole("gleaner-left", {
+      instruction: "",
+      baseRevision: parsed.baseRevision,
+    }, {
       home,
       principalAuthority: piDurablePrincipalAuthority,
       cwd: project,
-      instruction: "",
-      baseRevision: parsed.baseRevision,
       createRunId: () => "01a0glean00-0000-7000-8000-000000000001",
     });
 

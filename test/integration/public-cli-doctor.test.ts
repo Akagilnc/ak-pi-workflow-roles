@@ -34,7 +34,7 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 
 import {
-  admitDoctorInvocation,
+  admitPublicRole,
 } from "../../src/public-cli/invocation.ts";
 import {
   settleDoctorTerminalResult,
@@ -83,6 +83,25 @@ function isUsage(error: unknown): boolean {
   return error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 }
 
+function admitDoctor(options: {
+  readonly principalAuthority: typeof piDurablePrincipalAuthority;
+  readonly home: string;
+  readonly cwd: string;
+  readonly issueNumber: number;
+  readonly runs?: string;
+  readonly createRunId?: () => string;
+}) {
+  return admitPublicRole("doctor", {
+    issueNumber: options.issueNumber,
+    ...(options.runs === undefined ? {} : { runs: options.runs }),
+  }, {
+    principalAuthority: options.principalAuthority,
+    home: options.home,
+    cwd: options.cwd,
+    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+  });
+}
+
 test("admitDoctorInvocation builds #78 issue runs case and freezes identity without a second content store", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
@@ -92,7 +111,7 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     const seededRuns = await seedDoctorIssueRuns(home, bookKey, 40);
     const expectedPatient = await loadDoctorCase(seededRuns);
 
-    const admitted = await admitDoctorInvocation({
+    const admitted = await admitDoctor({
       principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
@@ -131,7 +150,7 @@ test("admitDoctorInvocation builds #78 issue runs case and freezes identity with
     // Empty retained root still admits — Doctor's refusal boundary owns insufficiency.
     // Default admit creates canonical <ticket>/runs; no need to pre-seed issues/.
     const emptyIssue = 41;
-    const emptyAdmitted = await admitDoctorInvocation({
+    const emptyAdmitted = await admitDoctor({
       principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
@@ -156,7 +175,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
     // Absolute escape / missing path
     await assert.rejects(
       () =>
-        admitDoctorInvocation({
+        admitDoctor({
       principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
@@ -171,7 +190,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
     await mkdir(join(project, "random-runs"), { recursive: true });
     await assert.rejects(
       () =>
-        admitDoctorInvocation({
+        admitDoctor({
       principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
@@ -195,7 +214,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
     await mkdir(wrongIssueRuns, { recursive: true });
     await assert.rejects(
       () =>
-        admitDoctorInvocation({
+        admitDoctor({
       principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
@@ -221,7 +240,7 @@ test("admitDoctorInvocation rejects missing/malformed runs override before admis
       `${doctorSessionRows.map((row) => JSON.stringify(row)).join("\n")}\n`,
       "utf8",
     );
-    const admitted = await admitDoctorInvocation({
+    const admitted = await admitDoctor({
       principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,

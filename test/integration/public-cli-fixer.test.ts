@@ -32,7 +32,8 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 
 import {
-  admitFixerInvocation as admitFixerInvocationRaw,
+  admitPublicRole,
+  type AdmitFixerInvocationOptions,
 } from "../../src/public-cli/invocation.ts";
 
 import {
@@ -81,10 +82,22 @@ function seedGitProject(root: string): void {
 }
 
 
-async function admitFixerInvocation(
-  options: Parameters<typeof admitFixerInvocationRaw>[0],
-): ReturnType<typeof admitFixerInvocationRaw> {
-  return admitFixerInvocationRaw(options);
+function admitFixerInvocation(options: AdmitFixerInvocationOptions) {
+  return admitPublicRole("fixer", {
+    phase: options.phase,
+    instruction: options.instruction,
+    attachmentPaths: options.attachmentPaths,
+    ...(options.prerequisitesPath === undefined ? {} : { prerequisitesPath: options.prerequisitesPath }),
+    ...(options.project === undefined ? {} : { project: options.project }),
+  }, {
+    home: options.home,
+    principalAuthority: options.principalAuthority,
+    cwd: options.cwd,
+    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+    ...(options.model === undefined ? {} : { model: options.model }),
+  }, options.assertedTicketNumber === undefined
+    ? undefined
+    : { assertedTicketNumber: options.assertedTicketNumber });
 }
 
 
@@ -96,7 +109,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
 
     await assert.rejects(
       () =>
-        admitFixerInvocationRaw({
+        admitFixerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,

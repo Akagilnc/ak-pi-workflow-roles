@@ -30,7 +30,6 @@ import {
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitNotaryInvocation,
   buildNotaryTransportPrompt,
   parseNotaryArgv,
 } from "../../src/public-cli/invocation.ts";

@@ -32,7 +32,8 @@ import {
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitReviewerInvocation as admitReviewerInvocationRaw,
+  admitPublicRole,
+  type AdmitReviewerInvocationOptions,
   parseReviewerArgv,
 } from "../../src/public-cli/invocation.ts";
 
@@ -108,10 +109,24 @@ function lawfulReviewerReceipt(
 }
 
 
-async function admitReviewerInvocation(
-  options: Parameters<typeof admitReviewerInvocationRaw>[0],
-): ReturnType<typeof admitReviewerInvocationRaw> {
-  return admitReviewerInvocationRaw(options);
+function admitReviewerInvocation(options: AdmitReviewerInvocationOptions) {
+  return admitPublicRole("reviewer", {
+    instruction: options.instruction,
+    attachmentPaths: options.attachmentPaths,
+    baseRevision: options.baseRevision,
+    lens: options.lens,
+    authorityRefs: options.authorityRefs,
+    ...(options.project === undefined ? {} : { project: options.project }),
+  }, {
+    home: options.home,
+    principalAuthority: options.principalAuthority,
+    cwd: options.cwd,
+    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
+  }, options.assertedTicketNumber === undefined
+    ? undefined
+    : { assertedTicketNumber: options.assertedTicketNumber });
 }
 
 
@@ -1184,7 +1199,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const admitted = await admitReviewerInvocationRaw({
+    const admitted = await admitReviewerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,

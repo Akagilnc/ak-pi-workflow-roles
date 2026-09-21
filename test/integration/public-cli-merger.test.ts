@@ -30,7 +30,8 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitMergerInvocation as admitMergerInvocationRaw,
+  admitPublicRole,
+  type AdmitMergerInvocationOptions,
   buildMergerTransportPrompt,
   deriveMergerEnvelopeFromActiveMerge,
   parseMergerArgv,
@@ -109,10 +110,20 @@ async function materializeConflictedRepo(root: string): Promise<{
 }
 
 
-async function admitMergerInvocation(
-  options: Parameters<typeof admitMergerInvocationRaw>[0],
-): ReturnType<typeof admitMergerInvocationRaw> {
-  return admitMergerInvocationRaw(options);
+function admitMergerInvocation(options: AdmitMergerInvocationOptions) {
+  return admitPublicRole("merger", {
+    instruction: options.instruction,
+    attachmentPaths: options.attachmentPaths,
+    ...(options.project === undefined ? {} : { project: options.project }),
+  }, {
+    home: options.home,
+    principalAuthority: options.principalAuthority,
+    cwd: options.cwd,
+    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+    ...(options.model === undefined ? {} : { model: options.model }),
+  }, options.assertedTicketNumber === undefined
+    ? undefined
+    : { assertedTicketNumber: options.assertedTicketNumber });
 }
 
 
@@ -176,7 +187,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
 
     await assert.rejects(
       () =>
-        admitMergerInvocationRaw({
+        admitMergerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
