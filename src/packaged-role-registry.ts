@@ -61,8 +61,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: JUDGE_OUTPUT_TOOL_NAME,
     acceptedText: "大理寺回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
     receiptStatusKey: "judgeStatus",
     sessionMaterials: [
@@ -86,8 +84,11 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: ["plan", "apply"],
     outputTool: FIXER_OUTPUT_TOOL_NAME,
     acceptedText: "修内司回执已接受",
-    inputFlag: "ak-fix-packet",
-    phaseFlag: "ak-fixer-phase",
+    activationFlags: [
+      { field: "packetPath", flag: "ak-fix-packet", binds: "input" },
+      { field: "phase", flag: "ak-fixer-phase", binds: "phase" },
+      { field: "prerequisitesPath", flag: "ak-fixer-prerequisites" },
+    ],
     activationStage: "load-and-install",
     sessionMaterials: [
       "CLAUDE.md",
@@ -108,8 +109,10 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: ["plan", "apply"],
     outputTool: CODER_OUTPUT_TOOL_NAME,
     acceptedText: "将作监回执已接受",
-    inputFlag: "ak-coder-task",
-    phaseFlag: "ak-coder-phase",
+    activationFlags: [
+      { field: "taskPath", flag: "ak-coder-task", binds: "input" },
+      { field: "phase", flag: "ak-coder-phase", binds: "phase" },
+    ],
     activationStage: "load-and-install",
     sessionMaterials: [
       "CLAUDE.md",
@@ -132,8 +135,12 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: REVIEWER_OUTPUT_TOOL_NAME,
     acceptedText: "御史台回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "baseRevision", flag: "ak-review-base" },
+      { field: "lens", flag: "ak-review-lens" },
+      { field: "authorityRefs", flag: "ak-review-authority-refs" },
+      { field: "ticketNumber", flag: "ak-review-ticket-number" },
+    ],
     activationStage: "load-and-install",
     sessionMaterials: [
       "CLAUDE.md",
@@ -154,8 +161,12 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: COLLECTOR_OUTPUT_TOOL,
     acceptedText: "通进司回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "repo", flag: "ak-collector-repo" },
+      { field: "pr", flag: "ak-collector-pr" },
+      { field: "requestManifestPath", flag: "ak-collector-request-manifest" },
+      { field: "waitMs", flag: "ak-collector-wait-ms" },
+    ],
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/collector.md"],
   },
@@ -170,8 +181,9 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: DOCTOR_OUTPUT_TOOL_NAME,
     acceptedText: "太医署回执已接受",
-    inputFlag: "ak-doctor-case",
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "casePath", flag: "ak-doctor-case", binds: "input" },
+    ],
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/doctor.md"],
   },
@@ -187,8 +199,9 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: MERGER_OUTPUT_TOOL_NAME,
     acceptedText: "合并回执已接受",
-    inputFlag: "ak-merger-input",
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "inputPath", flag: "ak-merger-input", binds: "input" },
+    ],
     activationStage: "prepare-git-and-install",
     receiptCommitKey: "mergeCommitId",
     receiptCommitWhen: "completed",
@@ -205,8 +218,10 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
     acceptedText: "符宝郎回执已接受",
-    inputFlag: "ak-notary-source-run",
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "sourceRun", flag: "ak-notary-source-run", binds: "input" },
+      { field: "ticketNumber", flag: "ak-notary-ticket-number" },
+    ],
     activationStage: "load-and-install",
     sessionMaterials: NOTARY_SESSION_MATERIALS,
   },
@@ -220,8 +235,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
     acceptedText: "给事中回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
     receiptStatusKey: "countersignStatus",
     // #924: 公用《票面法》三席同装
@@ -237,8 +250,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: SECRETARIAT_OUTPUT_TOOL_NAME,
     acceptedText: "中书省回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
     receiptStatusKey: "secretariatStatus",
     // #924: owner-finalized Soul + 票面法 + 给事中/符宝郎行为指南
@@ -261,8 +272,9 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: GLEANER_LEFT_OUTPUT_TOOL_NAME,
     acceptedText: "左拾遗回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "baseRevision", flag: "ak-gleaner-left-base" },
+    ],
     activationStage: "load-and-install",
     sessionMaterials: [
       "CLAUDE.md",
@@ -280,8 +292,9 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: INSPECTOR_OUTPUT_TOOL_NAME,
     acceptedText: "台院回执已接受",
-    inputFlag: "ak-inspector-source-run",
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "sourceRun", flag: "ak-inspector-source-run", binds: "input" },
+    ],
     activationStage: "load-and-install",
     sessionMaterials: INSPECTOR_SESSION_MATERIALS,
   },
@@ -298,8 +311,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: GATEKEEPER_OUTPUT_TOOL_NAME,
     acceptedText: "门下省决议已受理",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
     // Province materials; officers reuse their own public records below.
     sessionMaterials: ["CLAUDE.md", "souls/gatekeeper.md", "souls/quality-law.md", "souls/gate-output-guide.md"],
@@ -314,8 +325,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
     acceptedText: "游奕使建议已受理",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
   },
@@ -330,8 +339,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: AUDITOR_OUTPUT_TOOL_NAME,
     acceptedText: "审刑院回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
     sessionMaterials: AUDITOR_PUBLIC_SESSION_MATERIALS,
   },
@@ -347,8 +354,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: DIARIST_OUTPUT_TOOL_NAME,
     acceptedText: "起居郎回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
     sessionMaterials: [
       "CLAUDE.md",
@@ -379,12 +384,25 @@ export function packagedRoleMetadata(role: string): PackagedRoleMetadata | undef
   return PACKAGED_ROLE_REGISTRY.find((entry) => entry.role === role);
 }
 
+export type PackagedActivationFlag = {
+  readonly field: string;
+  readonly flag: string;
+  readonly binds?: "input" | "phase";
+};
+
+/** Host flags for one seat. Absent means this seat publishes only `ak-role`. */
+export function packagedRoleActivationFlags(role: string): readonly PackagedActivationFlag[] {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined || !("activationFlags" in record)) return [];
+  return record.activationFlags;
+}
+
 export function packagedRoleInputFlag(role: string): string | undefined {
-  return packagedRoleMetadata(role)?.inputFlag;
+  return packagedRoleActivationFlags(role).find((spec) => spec.binds === "input")?.flag;
 }
 
 export function packagedRolePhaseFlag(role: string): string | undefined {
-  return packagedRoleMetadata(role)?.phaseFlag;
+  return packagedRoleActivationFlags(role).find((spec) => spec.binds === "phase")?.flag;
 }
 
 export function packagedRoleOutputTool(role: string): string | undefined {

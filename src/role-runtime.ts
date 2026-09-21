@@ -116,7 +116,7 @@ import {
 } from "./navigator-invocation-identity.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
-import { PACKAGED_ROLE_REGISTRY, packagedRoleAcceptedText, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY, packagedRoleAcceptedText, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
@@ -540,12 +540,14 @@ export function formatNavigatorRoleHelp(role: NavigatorTargetRole): string {
     `Usage: ak-role ${role}`,
     ROLE_FLAG.definition.description,
   ];
-  if (metadata?.inputFlag !== undefined) {
-    lines.push(`  --${metadata.inputFlag} <value>    ${role} input material`);
+  const inputFlag = packagedRoleInputFlag(role);
+  if (inputFlag !== undefined) {
+    lines.push(`  --${inputFlag} <value>    ${role} input material`);
   }
-  if (metadata?.phaseFlag !== undefined) {
+  const phaseFlag = packagedRolePhaseFlag(role);
+  if (phaseFlag !== undefined && metadata !== undefined) {
     lines.push(
-      `  --${metadata.phaseFlag} <value>    ${role} phase: ${(metadata.phases.filter((p) => p !== null) as string[]).join(" | ")}`,
+      `  --${phaseFlag} <value>    ${role} phase: ${(metadata.phases.filter((p) => p !== null) as string[]).join(" | ")}`,
     );
   }
   lines.push(`Public next-command form: ak-role ${role}`);

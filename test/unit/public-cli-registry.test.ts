@@ -25,8 +25,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_judge_output",
     acceptedText: "大理寺回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
     receiptStatusKey: "judgeStatus",
   },
@@ -43,8 +41,11 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: ["plan", "apply"],
     outputTool: "ak_fixer_output",
     acceptedText: "修内司回执已接受",
-    inputFlag: "ak-fix-packet",
-    phaseFlag: "ak-fixer-phase",
+    activationFlags: [
+      { field: "packetPath", flag: "ak-fix-packet", binds: "input" },
+      { field: "phase", flag: "ak-fixer-phase", binds: "phase" },
+      { field: "prerequisitesPath", flag: "ak-fixer-prerequisites" },
+    ],
     activationStage: "load-and-install",
   },
   {
@@ -59,8 +60,10 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: ["plan", "apply"],
     outputTool: "ak_coder_output",
     acceptedText: "将作监回执已接受",
-    inputFlag: "ak-coder-task",
-    phaseFlag: "ak-coder-phase",
+    activationFlags: [
+      { field: "taskPath", flag: "ak-coder-task", binds: "input" },
+      { field: "phase", flag: "ak-coder-phase", binds: "phase" },
+    ],
     activationStage: "load-and-install",
   },
   {
@@ -77,8 +80,12 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     bareCommand: false,
     outputTool: "ak_reviewer_output",
     acceptedText: "御史台回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "baseRevision", flag: "ak-review-base" },
+      { field: "lens", flag: "ak-review-lens" },
+      { field: "authorityRefs", flag: "ak-review-authority-refs" },
+      { field: "ticketNumber", flag: "ak-review-ticket-number" },
+    ],
     activationStage: "load-and-install",
   },
   {
@@ -92,8 +99,12 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     bareCommand: false,
     outputTool: "ak_collector_output",
     acceptedText: "通进司回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "repo", flag: "ak-collector-repo" },
+      { field: "pr", flag: "ak-collector-pr" },
+      { field: "requestManifestPath", flag: "ak-collector-request-manifest" },
+      { field: "waitMs", flag: "ak-collector-wait-ms" },
+    ],
     activationStage: "load-and-install",
   },
   {
@@ -107,8 +118,9 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     bareCommand: false,
     outputTool: "ak_doctor_output",
     acceptedText: "太医署回执已接受",
-    inputFlag: "ak-doctor-case",
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "casePath", flag: "ak-doctor-case", binds: "input" },
+    ],
     activationStage: "load-and-install",
   },
   {
@@ -123,8 +135,9 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_merger_output",
     acceptedText: "合并回执已接受",
-    inputFlag: "ak-merger-input",
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "inputPath", flag: "ak-merger-input", binds: "input" },
+    ],
     activationStage: "prepare-git-and-install",
     receiptCommitKey: "mergeCommitId",
     receiptCommitWhen: "completed",
@@ -140,8 +153,10 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     bareCommand: false,
     outputTool: "ak_notary_output",
     acceptedText: "符宝郎回执已接受",
-    inputFlag: "ak-notary-source-run",
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "sourceRun", flag: "ak-notary-source-run", binds: "input" },
+      { field: "ticketNumber", flag: "ak-notary-ticket-number" },
+    ],
     activationStage: "load-and-install",
   },
   {
@@ -154,8 +169,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_countersign_output",
     acceptedText: "给事中回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
     receiptStatusKey: "countersignStatus",
   },
@@ -169,8 +182,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_secretariat_output",
     acceptedText: "中书省回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
     receiptStatusKey: "secretariatStatus",
   },
@@ -185,8 +196,9 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     bareCommand: false,
     outputTool: "ak_gleaner_left_output",
     acceptedText: "左拾遗回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "baseRevision", flag: "ak-gleaner-left-base" },
+    ],
     activationStage: "load-and-install",
   },
   {
@@ -199,8 +211,9 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_inspector_output",
     acceptedText: "台院回执已接受",
-    inputFlag: "ak-inspector-source-run",
-    phaseFlag: undefined,
+    activationFlags: [
+      { field: "sourceRun", flag: "ak-inspector-source-run", binds: "input" },
+    ],
     activationStage: "load-and-install",
   },
   {
@@ -213,8 +226,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_gatekeeper_output",
     acceptedText: "门下省决议已受理",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
   },
   {
@@ -227,8 +238,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_navigator_output",
     acceptedText: "游奕使建议已受理",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
   },
   {
@@ -241,8 +250,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_auditor_output",
     acceptedText: "审刑院回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
   },
   {
@@ -255,8 +262,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_diarist_output",
     acceptedText: "起居郎回执已接受",
-    inputFlag: undefined,
-    phaseFlag: undefined,
     activationStage: "load-and-install",
   },
 ] as const;
