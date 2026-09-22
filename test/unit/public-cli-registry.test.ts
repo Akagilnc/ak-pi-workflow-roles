@@ -242,6 +242,8 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     transportPrompt: "fixed-kickoff",
     acceptedText: "符宝郎回执已接受",
     navigatorSubject: "source-run",
+    gateStageLabel: "符宝郎",
+    gateSummon: "source-run",
     activationFlags: [
       { field: "sourceRun", from: "sourceRunPath", flag: "ak-notary-source-run", binds: "input" },
       { field: "ticketNumber", flag: "ak-notary-ticket-number" },
@@ -259,6 +261,9 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_countersign_output",
     settlement: "accepted",
     acceptedText: "给事中回执已接受",
+    gateStageLabel: "给事中",
+    gateDecision: "countersign-status",
+    gateSummon: "parent-instruction",
     activationFlags: [
       { field: "ticketNumber" },
     ],
@@ -316,6 +321,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settlement: "accepted",
     reaskPrompt: true,
     acceptedText: "台院回执已接受",
+    gateStageLabel: "台院",
     activationFlags: [
       {
         field: "sourceRun",
@@ -371,6 +377,8 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     reaskPrompt: true,
     runnerFailure: "engine-detour-record-first",
     acceptedText: "审刑院回执已接受",
+    gateStageLabel: "审刑院",
+    gateSummon: "subject-source",
     activationStage: "load-and-install",
   },
   {

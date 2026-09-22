@@ -2,6 +2,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
+import { packagedGateDecision, packagedGateStageLabel } from "./packaged-role-registry.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
@@ -82,18 +83,21 @@ export type GatekeeperNonPassResult = Extract<
 >;
 
 function gateSeatLabel(stage: GateOfficer): string {
-  if (stage === "inspector") return "台院";
-  if (stage === "auditor") return "审刑院";
-  if (stage === "countersign") return "给事中";
-  return "符宝郎";
+  return packagedGateStageLabel(stage) ?? stage;
 }
+
+/** Subject kind → review officer. One table; default is notary. */
+const GATE_OFFICER_BY_SUBJECT = {
+  worker_completion: "inspector",
+  judge_compliance: "auditor",
+  judge_draft: "notary",
+  countersign_verdict: "notary",
+  secretariat_verdict: "countersign",
+} as const satisfies Record<GatekeeperSubject["kind"], GateOfficer>;
 
 /** Subject kind → review officer (#753 countersign/notary, #756 judge/auditor + worker/inspector, #969 secretariat/countersign). */
 export function gateOfficerForSubject(subject: GatekeeperSubject): GateOfficer {
-  if (subject.kind === "worker_completion") return "inspector";
-  if (subject.kind === "judge_compliance") return "auditor";
-  if (subject.kind === "secretariat_verdict") return "countersign";
-  return "notary";
+  return GATE_OFFICER_BY_SUBJECT[subject.kind];
 }
 
 export { GatekeeperDecisionError } from "./submission-errors.ts";
@@ -222,7 +226,7 @@ function projectOfficerDecision(
   const record = readRecord(decision);
   // 给事中: only countersignStatus, strict three-word map; never generic status,
   // never unmapped raw word, never fallbackStatus (#969 / ADR 0040/0055).
-  if (officer === "countersign") {
+  if (packagedGateDecision(officer) === "countersign-status") {
     const countersignStatus =
       record !== undefined && typeof record.countersignStatus === "string"
         ? record.countersignStatus
@@ -417,7 +421,9 @@ export const COUNTERSIGN_CONCLUSION_REASK =
 
 /** Pick the re-ask line for the officer under review. */
 export function officerConclusionReask(officer: GateOfficer): string {
-  return officer === "countersign" ? COUNTERSIGN_CONCLUSION_REASK : OFFICER_CONCLUSION_REASK;
+  return packagedGateDecision(officer) === "countersign-status"
+    ? COUNTERSIGN_CONCLUSION_REASK
+    : OFFICER_CONCLUSION_REASK;
 }
 
 /**

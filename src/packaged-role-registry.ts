@@ -341,6 +341,9 @@ export const PUBLIC_ROLE_RECORDS = [
     reaskPrompt: true,
     transportPrompt: "fixed-kickoff",
     acceptedText: "符宝郎回执已接受",
+    gateStageLabel: "符宝郎",
+    /** Gate summon binds --source-run and keeps dialogue off the argv. */
+    gateSummon: "source-run",
     /** Navigator subject is the source-run locator, not the path file bytes. */
     navigatorSubject: "source-run",
     activationFlags: [
@@ -361,6 +364,11 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
     settlement: "accepted",
     acceptedText: "给事中回执已接受",
+    gateStageLabel: "给事中",
+    /** Gate queue reads countersignStatus, not the shared three-state status. */
+    gateDecision: "countersign-status",
+    /** Gate summon carries the parent payload as the instruction and a parent run id. */
+    gateSummon: "parent-instruction",
     activationFlags: [
       { field: "ticketNumber" },
     ],
@@ -437,6 +445,7 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Court reask replaces the initial prompt. */
     reaskPrompt: true,
     acceptedText: "台院回执已接受",
+    gateStageLabel: "台院",
     activationFlags: [
       {
         field: "sourceRun",
@@ -504,6 +513,9 @@ export const PUBLIC_ROLE_RECORDS = [
     reaskPrompt: true,
     runnerFailure: "engine-detour-record-first",
     acceptedText: "审刑院回执已接受",
+    gateStageLabel: "审刑院",
+    /** Gate summon binds --subject judge and --source-run. */
+    gateSummon: "subject-source",
     activationStage: "load-and-install",
     sessionMaterials: AUDITOR_PUBLIC_SESSION_MATERIALS,
   },
@@ -682,4 +694,29 @@ export function packagedRoleSessionMaterials(role: string): readonly string[] | 
 
 export function isNavigatorSeat(role: string): boolean {
   return packagedRoleOutputTool(role) === NAVIGATOR_OUTPUT_TOOL_NAME;
+}
+
+/** Gate-province display label. Absent when the seat is not a gate stage. */
+export function packagedGateStageLabel(role: string): string | undefined {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined || !("gateStageLabel" in record)) return undefined;
+  return record.gateStageLabel;
+}
+
+/** Countersign gate queue reads countersignStatus. Every other officer uses the shared three-state. */
+export type PackagedGateSummon = "source-run" | "subject-source" | "parent-instruction" | "pointer";
+
+/** How the gate caller builds one officer summons. Pointer is the inspector face. */
+export function packagedGateSummon(role: string): PackagedGateSummon {
+  const record = packagedRoleMetadata(role);
+  if (record !== undefined && "gateSummon" in record) return record.gateSummon;
+  return "pointer";
+}
+
+export function packagedGateDecision(role: string): "countersign-status" | "three-state" {
+  const record = packagedRoleMetadata(role);
+  if (record !== undefined && "gateDecision" in record && record.gateDecision === "countersign-status") {
+    return "countersign-status";
+  }
+  return "three-state";
 }

@@ -1018,20 +1018,22 @@ export async function summonGateOfficer(options: {
     ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
   } as const;
-  if (options.officer === "notary") {
+  const { packagedGateSummon } = await import("./packaged-role-registry.ts");
+  const gateSummon = packagedGateSummon(options.officer);
+  if (gateSummon === "source-run") {
     // #753/#879: reask or verbatim body rides summons.instruction / first-mint prompt.
     // Binding stays --source-run (never folded into content).
     return summonPublicRole({
-      role: "notary",
+      role: options.officer,
       argv: ["--source-run", options.sourceRunDirectory, "--project", options.cwd],
       ...common,
     });
   }
-  if (options.officer === "auditor") {
+  if (gateSummon === "subject-source") {
     // #756: judge compliance path — same queue law as notary/inspector.
     // Binding pointer on argv; dialogue content rides gateReviewInstruction.
     return summonPublicRole({
-      role: "auditor",
+      role: options.officer,
       argv: [
         "--subject",
         "judge",
@@ -1042,7 +1044,7 @@ export async function summonGateOfficer(options: {
       ...common,
     });
   }
-  if (options.officer === "countersign") {
+  if (gateSummon === "parent-instruction") {
     // #969 / #987: Secretariat submission gate → 给事中.
     // Dialogue / identity instruction = parent typed payload 原话 (ADR 0079) or reask;
     // no code-authored summons prose (#924). Gate resume key = parentRunPath
@@ -1062,7 +1064,7 @@ export async function summonGateOfficer(options: {
     // Argv instruction = reask or parent payload bytes only (never a fabricated line).
     const instruction = options.reask ?? gateReviewInstruction ?? "";
     return summonPublicRole({
-      role: "countersign",
+      role: options.officer,
       argv: ["--project", options.cwd, "--", instruction],
       ...common,
       correlationId,
@@ -1073,7 +1075,7 @@ export async function summonGateOfficer(options: {
   // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath lookup key).
   // Content (body/reask) rides env → summons.instruction / first-mint prompt.
   return summonPublicRole({
-    role: "inspector",
+    role: options.officer,
     argv: [`卷宗指针：${options.sourceRunDirectory}`],
     ...common,
   });
