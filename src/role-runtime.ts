@@ -57,7 +57,7 @@ import {
   projectNotaryBoundFromFlags,
   readNotaryTicketFlag,
 } from "./notary-role.ts";
-import { NOTARY_TICKET_FLAG } from "./notary-contracts.ts";
+import { NOTARY_SOURCE_RUN_FLAG, NOTARY_TICKET_FLAG } from "./notary-contracts.ts";
 import {
   COUNTERSIGN_TOOL_SPEC,
   type CountersignRuntimeDependencies,
@@ -116,7 +116,7 @@ import {
 } from "./navigator-invocation-identity.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
-import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleAcceptedText, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleAcceptedText, packagedRoleActivationFlags, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
@@ -693,6 +693,11 @@ function createFiledOfficerRuntime(
   };
 }
 
+function activationPublishesFlag(role: unknown, flagName: string): boolean {
+  if (typeof role !== "string") return false;
+  return packagedRoleActivationFlags(role).some((spec) => spec.flag === flagName);
+}
+
 export function createGleanerLeftRoleRuntime(
   roleHost: RoleHost,
   dependencies: GleanerLeftRuntimeDependencies,
@@ -1202,6 +1207,7 @@ export function createSecretariatRoleRuntime(
         }
       }
     },
+    claimsEngineDetour: true,
   };
 }
 
@@ -1441,9 +1447,9 @@ export function createRoleRuntimeExtension(
       if (role !== undefined && !admitted) return { action: "handled" as const };
       // Reviewer: recover original request; Pi argv may already carry native form.
       if (
-        role === "reviewer"
-        && admitted
+        admitted
         && activeReviewerParent !== undefined
+        && selectedRole === role
         && reviewerOriginalRequest === undefined
       ) {
         reviewerOriginalRequest =
@@ -1468,7 +1474,7 @@ export function createRoleRuntimeExtension(
       }
       // Notary session bound: envelope-owned lifecycle write (ADR 0018 / #582).
       // Ticket flag register/read + session entry live here; role projects admitted bound only.
-      if (role === "notary") {
+      if (activationPublishesFlag(role, NOTARY_SOURCE_RUN_FLAG.name)) {
         const bound = projectNotaryBoundFromFlags((name) => roleHost.getFlag(name));
         if (bound !== undefined) {
           ctx.sessionManager.appendCustomEntry?.(NOTARY_SESSION_BOUND_ENTRY, bound);
@@ -1506,7 +1512,7 @@ export function createRoleRuntimeExtension(
       }
       navigatorAttendance?.prepare();
       // Envelope-owned Reviewer expansion capture + parent prompt assembly (no role-module callback).
-      if (role === "reviewer" && activeReviewerParent !== undefined) {
+      if (activeReviewerParent !== undefined && selectedRole === role) {
         if (!reviewerExpansionCaptured) {
           if (reviewerOriginalRequest !== undefined) {
             activeReviewerParent.skillBinding.captureExpansion(
@@ -1524,7 +1530,7 @@ export function createRoleRuntimeExtension(
         };
       }
       // #676 E / J1: collector materials + drift gates share this envelope hook (no parallel register).
-      if (role === "collector" && activeCollector !== undefined) {
+      if (activeCollector !== undefined && selectedRole === role) {
         if (!collectorFirstDispatchDone) {
           collectorFirstDispatchDone = true;
           activeCollector.ledger.recordActivation(activeCollector.clock);
@@ -1586,7 +1592,7 @@ export function createRoleRuntimeExtension(
       const role = selectedRole;
       if (role === undefined) return;
       // #676 E / J1: collector operational bookkeeping on the shared tool_result seam.
-      if (role === "collector" && activeCollector !== undefined) {
+      if (activeCollector !== undefined && selectedRole === roleHost.getFlag(ROLE_FLAG.name)) {
         collectorBusiness.onToolResult(activeCollector, event);
       }
       const pendingInfra = pendingInfrastructureFailures.get(event.toolCallId);
@@ -1644,7 +1650,11 @@ export function createRoleRuntimeExtension(
       const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
       // #959: navigator prose exit — final assistant text is the receipt.
       // No typed-tool 催交; no JSON required. Tool path still wins when already accepted.
-      if (role === "navigator" && receiptDelivery.nextAction() !== "accepted") {
+      if (
+        typeof role === "string"
+        && packagedRoleOutputTool(role) === NAVIGATOR_TOOL_SPEC.name
+        && receiptDelivery.nextAction() !== "accepted"
+      ) {
         const prose = lastAssistantProse(event.messages);
         if (prose !== undefined && prose.trim() !== "") {
           const accepted = { prose };
@@ -1755,11 +1765,7 @@ export function createRoleRuntimeExtension(
         fetchWrapped = false;
       }
       // #676 J4: collector fatal latch must surface nonzero exit on shutdown (envelope-owned).
-      if (
-        selectedRole === "collector"
-        && activeCollector !== undefined
-        && activeCollector.ledger.fatal
-      ) {
+      if (activeCollector !== undefined && activeCollector.ledger.fatal) {
         if (process.exitCode === undefined || process.exitCode === 0) {
           process.exitCode = 1;
         }
@@ -2020,7 +2026,8 @@ export function createRoleRuntimeExtension(
         if (!collectorToolCallRegistered) {
           collectorToolCallRegistered = true;
           roleHost.on("tool_call", (toolEvent) => {
-            if (activeCollector === undefined || selectedRole !== "collector") return;
+            const liveRole = roleHost.getFlag(ROLE_FLAG.name);
+            if (activeCollector === undefined || selectedRole === undefined || selectedRole !== liveRole) return;
             if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(toolEvent.toolName)) {
               return {
                 block: true,
@@ -2142,6 +2149,8 @@ export function createRoleRuntimeExtension(
       selectedRole = undefined;
       roleReferenceMaterials = "";
       activeReviewerParent = undefined;
+      activeCollector = undefined;
+      collectorFirstDispatchDone = false;
       reviewerOriginalRequest = undefined;
       reviewerExpansionCaptured = false;
       receiptDelivery = createReceiptDeliveryPolicy();
@@ -2205,7 +2214,7 @@ export function createRoleRuntimeExtension(
         const isStationChild = roleHost.getFlag(STATION_CHILD_FLAG.name) === true;
         if (
           dependencies.createNavigatorAttendance !== undefined
-          && entry.role !== "navigator"
+          && entry.outputTool !== NAVIGATOR_TOOL_SPEC.name
           && !isStationChild
         ) {
           navigatorSessionParent = ctx.sessionManager.getSessionFile();
@@ -2300,7 +2309,7 @@ export function createRoleRuntimeExtension(
         // Secretariat owns a declared active surface. The shared engine detour is
         // registered after role activation, so include it here rather than leave
         // a newly registered optional tool unreachable until a later reload.
-        if (entry.role === "secretariat" && engineDetourRegistered) {
+        if (secretariat.claimsEngineDetour === true && engineDetourRegistered) {
           roleHost.setActiveTools([
             ...new Set([...roleHost.getActiveTools(), ENGINE_DETOUR_TOOL_NAME]),
           ]);

@@ -84,6 +84,10 @@ export const PUBLIC_ROLE_RECORDS = [
     settlement: "sealed",
     runnerFailure: "engine-detour-known-first",
     acceptedText: "大理寺回执已接受",
+    /** Factory board: court until another station has started, then marshal. */
+    boardPlacement: "judge-history",
+    /** Navigator subject is the public admitted instruction when the run is bound. */
+    navigatorSubject: "public-instruction",
     activationStage: "load-and-install",
     receiptStatusKey: "judgeStatus",
     sessionMaterials: [
@@ -119,6 +123,7 @@ export const PUBLIC_ROLE_RECORDS = [
       method: "observed",
     },
     acceptedText: "修内司回执已接受",
+    boardPlacement: "marshal",
     activationFlags: [
       { field: "packetPath", flag: "ak-fix-packet", binds: "input" },
       { field: "phase", flag: "ak-fixer-phase", binds: "phase" },
@@ -141,6 +146,9 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     worker: true,
     applyMethod: "tdd",
+    /** Method-material load failure keeps the activation cause (not reviewer/fixer). */
+    methodLoadFailureCause: "activation",
+    boardPlacement: "coder",
     phases: ["plan", "apply"],
     outputTool: CODER_OUTPUT_TOOL_NAME,
     settlement: "sealed",
@@ -199,6 +207,7 @@ export const PUBLIC_ROLE_RECORDS = [
     transportPrompt: "skill-args",
     runnerFailure: "engine-detour-record-first",
     acceptedText: "御史台回执已接受",
+    boardPlacement: "marshal",
     activationFlags: [
       { field: "baseRevision", flag: "ak-review-base" },
       { field: "lens", flag: "ak-review-lens" },
@@ -238,6 +247,9 @@ export const PUBLIC_ROLE_RECORDS = [
       ],
     },
     acceptedText: "通进司回执已接受",
+    boardPlacement: "collector",
+    /** Taishi acceptance is a typed groups array, not a status leaf. */
+    analystTerminal: "groups",
     activationFlags: [
       { field: "repo", from: "repository.display", flag: "ak-collector-repo" },
       { field: "pr", from: "prNumber", text: true, flag: "ak-collector-pr" },
@@ -268,6 +280,8 @@ export const PUBLIC_ROLE_RECORDS = [
       doctorReportFacts: true,
     },
     acceptedText: "太医署回执已接受",
+    /** Navigator subject is the doctor case, not the case-path file bytes. */
+    navigatorSubject: "case",
     activationFlags: [
       { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
     ],
@@ -283,6 +297,8 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "none",
     methodSkills: ["resolving-merge-conflicts"],
     settleMethod: "resolving-merge-conflicts",
+    /** Method-material load failure keeps the activation cause (not reviewer/fixer). */
+    methodLoadFailureCause: "activation",
     phases: [null],
     outputTool: MERGER_OUTPUT_TOOL_NAME,
     settlement: "residual",
@@ -325,6 +341,8 @@ export const PUBLIC_ROLE_RECORDS = [
     reaskPrompt: true,
     transportPrompt: "fixed-kickoff",
     acceptedText: "符宝郎回执已接受",
+    /** Navigator subject is the source-run locator, not the path file bytes. */
+    navigatorSubject: "source-run",
     activationFlags: [
       { field: "sourceRun", from: "sourceRunPath", flag: "ak-notary-source-run", binds: "input" },
       { field: "ticketNumber", flag: "ak-notary-ticket-number" },
@@ -609,4 +627,59 @@ export function packagedRoleAcceptedText(role: string): string {
     throw new Error(`Unsupported workflow role: ${String(role)}`);
   }
   return record.acceptedText;
+}
+
+/** Method-material load failure cause declared on the seat. Absent means no typed cause. */
+export function packagedMethodLoadFailureCause(role: string): "activation" | undefined {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined || !("methodLoadFailureCause" in record)) return undefined;
+  return record.methodLoadFailureCause;
+}
+
+/** Diarist binds a board ticket onto its own run. Other seats do not. */
+export function packagedBindsBoardTicket(role: string): boolean {
+  const record = packagedRoleMetadata(role);
+  return record?.sameParent === "diarist";
+}
+
+/** Notary resume may replace the stored source-run locator from the summons. */
+export function packagedRebindSourceOnResume(role: string): boolean {
+  return packagedRoleMetadata(role)?.admission === "notary";
+}
+
+/** Countersign admission keeps deferred court identity on the public entry. */
+export function packagedAdmitsCountersign(role: string): boolean {
+  return packagedRoleMetadata(role)?.admission === "countersign";
+}
+
+export function packagedNavigatorSubject(
+  role: string,
+): "file" | "case" | "source-run" | "public-instruction" {
+  const record = packagedRoleMetadata(role);
+  if (record !== undefined && "navigatorSubject" in record) return record.navigatorSubject;
+  return "file";
+}
+
+export type PackagedBoardPlacement = "judge-history" | "coder" | "marshal" | "collector";
+
+/** Factory-board column for a packaged seat. Absent seats use the board's other bucket. */
+export function packagedBoardPlacement(role: string): PackagedBoardPlacement | undefined {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined || !("boardPlacement" in record)) return undefined;
+  return record.boardPlacement;
+}
+
+/** Taishi terminal discriminator declared on the seat. Absent means the shared status leaf. */
+export function packagedAnalystTerminal(role: string): "groups" | undefined {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined || !("analystTerminal" in record)) return undefined;
+  return record.analystTerminal;
+}
+
+export function packagedRoleSessionMaterials(role: string): readonly string[] | undefined {
+  return PUBLIC_ROLE_RECORDS.find((entry) => entry.role === role)?.sessionMaterials;
+}
+
+export function isNavigatorSeat(role: string): boolean {
+  return packagedRoleOutputTool(role) === NAVIGATOR_OUTPUT_TOOL_NAME;
 }

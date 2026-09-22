@@ -15,7 +15,14 @@ import {
   type PackagedMethodSkillMaterial,
 } from "../package-resources/method-skill.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
-import { packagedRoleMetadata } from "../packaged-role-registry.ts";
+import {
+  packagedAdmitsCountersign,
+  packagedBindsBoardTicket,
+  packagedMethodLoadFailureCause,
+  packagedRebindSourceOnResume,
+  packagedRoleMetadata,
+} from "../packaged-role-registry.ts";
+import { isAuditorSoulRole } from "../auditor-soul.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitPublicRole,
@@ -47,7 +54,6 @@ import {
   buildAutoResumeContinuationPrompt,
   loadResumablePublicRole,
   markRunAdmitted,
-  peekRoleRunRole,
   parentRunPathFromGatePointerInstruction,
   type PublicResumeRequest,
   type RunWriterLease,
@@ -140,6 +146,12 @@ function infraFailure(role: PackagedRole) {
   return resolveRunnerKnownFailure === undefined ? {} : { resolveRunnerKnownFailure };
 }
 
+function isBoardTicketSeat(
+  seat: AdmittedRoleInvocation,
+): seat is AdmittedRoleInvocation & { role: "diarist" } {
+  return packagedBindsBoardTicket(seat.role);
+}
+
 async function bindAndRelocateDiarist(
   admitted: AdmittedRoleInvocation & { role: "diarist" },
   authority: DurablePrincipalAuthority,
@@ -168,17 +180,17 @@ function seatAdapters(
       ? { shouldPresentSettled: (terminal: TerminalResult) => isLawfulTypedTerminalOutcome(terminal.roleOutcome) }
       : {}),
     ...infraFailure(admitted.role),
-    ...(admitted.role === "diarist"
+    ...(packagedBindsBoardTicket(admitted.role)
       ? {
         beforeDispatch: async (seat: AdmittedRoleInvocation, lease?: RunWriterLease) => {
-          if (seat.role !== "diarist") return;
+          if (!isBoardTicketSeat(seat)) return;
           if (env.correlationId !== undefined && env.correlationId.trim() !== "") {
             await recordAdmittedCorrelation(seat, env.correlationId);
           }
           await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
         },
         afterDispatch: async (seat: AdmittedRoleInvocation, lease?: RunWriterLease) => {
-          if (seat.role !== "diarist") return;
+          if (!isBoardTicketSeat(seat)) return;
           await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
         },
       }
@@ -235,7 +247,7 @@ async function dispatchAdmitted(
     try {
       material = await loadPackagedMethodSkillMaterial(env.packageRoot, skill);
     } catch (error) {
-      const knownCause = admitted.role === "coder" || admitted.role === "merger" ? "activation" as const : undefined;
+      const knownCause = packagedMethodLoadFailureCause(admitted.role);
       return await presentControlledFailure(admitted, {
         timedOut: false,
         code: null,
@@ -420,11 +432,7 @@ async function runCountersignBody(
 
   let admitted: AdmittedCountersignInvocation;
   try {
-    const admittedRole = await admitPublicRole("countersign", parsed, env, { deferPersistence: true });
-    if (admittedRole.role !== "countersign") {
-      throw new Error(`countersign admission produced ${admittedRole.role}`);
-    }
-    admitted = admittedRole;
+    admitted = await admitPublicRole("countersign", parsed, env, { deferPersistence: true });
   } catch (error) {
     const rejected = usageExit(error, io);
     if (rejected !== undefined) return rejected;
@@ -546,7 +554,7 @@ async function runCountersignBody(
         adapters: {
           ...seatAdapters(admitted, env),
           beforeDispatch: async (admittedSeat, lease) => {
-            if (admittedSeat.role !== "countersign") return;
+            if (!packagedAdmitsCountersign(admittedSeat.role)) return;
             if (!identityDiaristRan || typedTicket !== undefined) {
               await runCountersignCourtDiaristStation(admittedSeat, env, io);
             }
@@ -582,7 +590,7 @@ export async function runPublicInstructionSeat(
     if (rejected !== undefined) return rejected;
     throw error;
   }
-  if (record.admission === "countersign") {
+  if (packagedAdmitsCountersign(role)) {
     return runCountersignBody(parsed, env, io);
   }
 
@@ -601,7 +609,7 @@ export async function runPublicInstructionSeat(
   let auditorSource: string | undefined;
   let auditorTicket: number | undefined;
   if (record.sameParent === "auditor") {
-    if (parsed.subject !== "judge" && parsed.subject !== "doctor") {
+    if (!isAuditorSoulRole(parsed.subject)) {
       presentStructuralRejection(new CliUsageError("auditor --subject requires judge|doctor"), io);
       return { exitCode: 2 };
     }
@@ -729,9 +737,10 @@ export async function runPublicInstructionSeat(
 
   if (record.sameParent === "inspector") {
     const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction ?? "");
-    if (parentRunPath !== undefined && admitted.role === "inspector") {
+    if (parentRunPath !== undefined) {
       await persistAdmittedSourceRunPath(admitted, parentRunPath);
-      admitted = { ...admitted, sourceRunPath: parentRunPath };
+      const sourcePatch = { sourceRunPath: parentRunPath };
+      admitted = { ...admitted, ...sourcePatch };
     }
   }
   if (record.sameParent === "auditor" && auditorSource !== undefined) {
@@ -800,7 +809,6 @@ export async function runPublicInstructionSeatResume(
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<SeatRunResult> {
-  const role = await peekRoleRunRole(env.home, request.runId);
   const execution: { cwd?: string } = {
     ...(env.executionCwd === undefined ? {} : { cwd: env.executionCwd }),
   };
@@ -810,13 +818,8 @@ export async function runPublicInstructionSeatResume(
     io,
     load: async (effective) => {
       const loaded = await loadResumablePublicRole(env.home, effective.runId, env.principalAuthority);
-      if (role === "countersign" && loaded.admitted.role !== "countersign") {
-        throw new CliUsageError(
-          `role run ${effective.runId} belongs to ${loaded.admitted.role}, not countersign`,
-        );
-      }
       if (
-        loaded.admitted.role === "notary"
+        packagedRebindSourceOnResume(loaded.admitted.role)
         && effective.summons?.sourceRunPath !== undefined
         && effective.summons.sourceRun !== undefined
       ) {
@@ -850,7 +853,7 @@ export async function runPublicInstructionSeatResume(
       if (skill === undefined) {
         return Promise.resolve({ kind: "continue" as const, adapters: seatAdapters(admitted, env) });
       }
-      const knownCause = admitted.role === "coder" || admitted.role === "merger" ? "activation" as const : undefined;
+      const knownCause = packagedMethodLoadFailureCause(admitted.role);
       return resolveResumeMethodMaterialAdapters({
         admitted,
         authority: env.principalAuthority,

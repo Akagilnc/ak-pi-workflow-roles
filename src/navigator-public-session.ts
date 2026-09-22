@@ -22,6 +22,7 @@ import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
+import { isNavigatorSeat } from "./packaged-role-registry.ts";
 
 /**
  * Ledger process home for navigator attendance: admitted HostContext.runDirectory
@@ -85,7 +86,7 @@ export async function navigatorHostRunResumable(home: string, runId: string): Pr
   const { loadResumablePublicRole } = await import("./public-cli/run-lifecycle.ts");
   try {
     const loaded = await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
-    return loaded.admitted.role === "navigator";
+    return isNavigatorSeat(loaded.admitted.role);
   } catch (error) {
     if (error instanceof CliUsageError) return false;
     throw error;

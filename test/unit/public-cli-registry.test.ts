@@ -27,6 +27,8 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settlement: "sealed",
     runnerFailure: "engine-detour-known-first",
     acceptedText: "大理寺回执已接受",
+    boardPlacement: "judge-history",
+    navigatorSubject: "public-instruction",
     activationStage: "load-and-install",
     receiptStatusKey: "judgeStatus",
   },
@@ -55,6 +57,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
       method: "observed",
     },
     acceptedText: "修内司回执已接受",
+    boardPlacement: "marshal",
     activationFlags: [
       { field: "packetPath", flag: "ak-fix-packet", binds: "input" },
       { field: "phase", flag: "ak-fixer-phase", binds: "phase" },
@@ -71,6 +74,8 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "none",
     worker: true,
     applyMethod: "tdd",
+    methodLoadFailureCause: "activation",
+    boardPlacement: "coder",
     phases: ["plan", "apply"],
     outputTool: "ak_coder_output",
     settlement: "sealed",
@@ -119,6 +124,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     transportPrompt: "skill-args",
     runnerFailure: "engine-detour-record-first",
     acceptedText: "御史台回执已接受",
+    boardPlacement: "marshal",
     activationFlags: [
       { field: "baseRevision", flag: "ak-review-base" },
       { field: "lens", flag: "ak-review-lens" },
@@ -150,6 +156,8 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
       ],
     },
     acceptedText: "通进司回执已接受",
+    boardPlacement: "collector",
+    analystTerminal: "groups",
     activationFlags: [
       { field: "repo", from: "repository.display", flag: "ak-collector-repo" },
       { field: "pr", from: "prNumber", text: true, flag: "ak-collector-pr" },
@@ -179,6 +187,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
       doctorReportFacts: true,
     },
     acceptedText: "太医署回执已接受",
+    navigatorSubject: "case",
     activationFlags: [
       { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
     ],
@@ -193,6 +202,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "none",
     methodSkills: ["resolving-merge-conflicts"],
     settleMethod: "resolving-merge-conflicts",
+    methodLoadFailureCause: "activation",
     phases: [null],
     outputTool: "ak_merger_output",
     settlement: "residual",
@@ -231,6 +241,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     reaskPrompt: true,
     transportPrompt: "fixed-kickoff",
     acceptedText: "符宝郎回执已接受",
+    navigatorSubject: "source-run",
     activationFlags: [
       { field: "sourceRun", from: "sourceRunPath", flag: "ak-notary-source-run", binds: "input" },
       { field: "ticketNumber", flag: "ak-notary-ticket-number" },
