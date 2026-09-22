@@ -21,7 +21,8 @@ import type {
   RoleTurnRequest,
   RoleTurnResult,
 } from "../host-contracts.ts";
-import { ExplicitInternalActivationError, isOfficerReviewSeat } from "../host-contracts.ts";
+import { ExplicitInternalActivationError } from "../host-contracts.ts";
+import { isOfficerReviewSeat } from "../packaged-role-registry.ts";
 import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from "../engine-detour.ts";
 import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";

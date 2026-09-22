@@ -313,6 +313,10 @@ export const PUBLIC_ROLE_RECORDS = [
     summonResume: false,
     admission: "notary",
     sameParent: "notary",
+    /** 符宝郎 is a review officer and inherits the gatekeeper model. */
+    reviewOfficer: true,
+    provinceConfig: true,
+    modelInheritsFrom: "gatekeeper",
     phases: [null],
     bareCommand: false,
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
@@ -405,6 +409,10 @@ export const PUBLIC_ROLE_RECORDS = [
     summonResume: false,
     admission: "instruction",
     sameParent: "inspector",
+    /** 台院 is a review officer and inherits the gatekeeper model. */
+    reviewOfficer: true,
+    provinceConfig: true,
+    modelInheritsFrom: "gatekeeper",
     phases: [null],
     outputTool: INSPECTOR_OUTPUT_TOOL_NAME,
     settlement: "accepted",
@@ -433,6 +441,8 @@ export const PUBLIC_ROLE_RECORDS = [
     summonResume: true,
     admission: "instruction",
     sameParent: "none",
+    /** Province model root. Officers name this seat via modelInheritsFrom. */
+    provinceConfig: true,
     phases: [null],
     outputTool: GATEKEEPER_OUTPUT_TOOL_NAME,
     settlement: "accepted",
@@ -465,6 +475,8 @@ export const PUBLIC_ROLE_RECORDS = [
     summonResume: true,
     admission: "instruction",
     sameParent: "auditor",
+    /** 审刑院 is a review officer. Model stays on its own seat row. */
+    reviewOfficer: true,
     phases: [null],
     outputTool: AUDITOR_OUTPUT_TOOL_NAME,
     settlement: "accepted",
@@ -516,6 +528,28 @@ export const PACKAGED_ROLE_REGISTRY: readonly PackagedRoleMetadata[] =
 
 export function packagedRoleMetadata(role: string): PackagedRoleMetadata | undefined {
   return PACKAGED_ROLE_REGISTRY.find((entry) => entry.role === role);
+}
+
+/** Review officers (台院 / 符宝郎 / 审刑院). Absent on every other seat. */
+export function isOfficerReviewSeat(role: string): boolean {
+  const record = packagedRoleMetadata(role);
+  return record !== undefined && "reviewOfficer" in record && record.reviewOfficer === true;
+}
+
+/** Province seats that may carry a persistent model override. */
+export function packagedProvinceConfig(role: string): boolean {
+  const record = packagedRoleMetadata(role);
+  return record !== undefined && "provinceConfig" in record && record.provinceConfig === true;
+}
+
+/**
+ * Model parent for a subordinate province officer.
+ * The province root has none and does not inherit from itself.
+ */
+export function packagedModelParent(role: string): PackagedRole | undefined {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined || !("modelInheritsFrom" in record)) return undefined;
+  return record.modelInheritsFrom;
 }
 
 /**

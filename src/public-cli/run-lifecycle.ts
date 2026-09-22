@@ -47,7 +47,7 @@ import {
   pickEngineAxis,
 } from "../package-resources/engine-material.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
-import { packagedRoleMetadata } from "../packaged-role-registry.ts";
+import { packagedRoleMetadata, type PackagedRole } from "../packaged-role-registry.ts";
 import {
   recordEffectiveInvocationModel,
   requireAuthorityRef,
@@ -91,23 +91,7 @@ export const AUTO_RESUME_LIMIT = 2 as const;
 
 export type RoleRunRecord = {
   readonly runId: string;
-  readonly role:
-    | "judge"
-    | "coder"
-    | "fixer"
-    | "collector"
-    | "doctor"
-    | "reviewer"
-    | "merger"
-    | "notary"
-    | "countersign"
-    | "gleaner-left"
-    | "inspector"
-    | "gatekeeper"
-    | "navigator"
-    | "auditor"
-    | "diarist"
-    | "secretariat";
+  readonly role: PackagedRole;
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -347,24 +331,8 @@ async function readRoleRunStateDisk(
   if (typeof record.runId !== "string" || record.runId.trim() === "") {
     return undefined;
   }
-  if (
-    record.role !== "judge" &&
-    record.role !== "coder" &&
-    record.role !== "fixer" &&
-    record.role !== "collector" &&
-    record.role !== "doctor" &&
-    record.role !== "reviewer" &&
-    record.role !== "merger" &&
-    record.role !== "notary" &&
-    record.role !== "countersign" &&
-    record.role !== "gleaner-left" &&
-    record.role !== "inspector" &&
-    record.role !== "gatekeeper" &&
-    record.role !== "navigator" &&
-    record.role !== "auditor" &&
-    record.role !== "diarist" &&
-    record.role !== "secretariat"
-  ) {
+  const role = typeof record.role === "string" ? packagedRoleMetadata(record.role)?.role : undefined;
+  if (role === undefined) {
     return undefined;
   }
   if (
@@ -418,7 +386,7 @@ async function readRoleRunStateDisk(
   const currentCourt = parseCurrentCourtState(record.currentCourt);
   return {
     runId: record.runId,
-    role: record.role,
+    role,
     state: record.state,
     bookKey: record.bookKey,
     projectRoot: record.projectRoot,
@@ -535,6 +503,10 @@ export async function markRunAdmitted(
   authority: DurablePrincipalAuthority,
 ): Promise<void> {
   const { sessionDirectory, sessionFile } = authority.decode(admitted.principal);
+  const record = packagedRoleMetadata(admitted.role);
+  const workerPhase = record !== undefined && "worker" in record && record.worker === true && "phase" in admitted
+    ? admitted.phase
+    : undefined;
   await writeRoleRunState(admitted.runDirectory, {
     runId: admitted.runId,
     role: admitted.role,
@@ -544,11 +516,7 @@ export async function markRunAdmitted(
     sessionDirectory,
     sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
-    ...(
-      admitted.role === "coder" || admitted.role === "fixer"
-        ? { phase: admitted.phase }
-        : {}
-    ),
+    ...(workerPhase === undefined ? {} : { phase: workerPhase }),
   });
 }
 

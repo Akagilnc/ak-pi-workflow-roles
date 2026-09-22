@@ -44,6 +44,7 @@ import {
   projectHostFacingProvider,
   renderHostProvidersTable,
 } from "./host-providers.ts";
+import { packagedModelParent } from "../packaged-role-registry.ts";
 import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -86,6 +87,7 @@ import {
 
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
+  PUBLIC_CALLABLE_ROLES,
   isPublicCallableRole,
   isPublicCliSupportCommand,
   isPublicConfigurableSeat,
@@ -769,7 +771,7 @@ export function projectConfigSeatDisplay(
   seat: PublicConfigurableSeat,
 ): ConfigDisplaySeat {
   const disk = config.seats[seat];
-  if (seat === "notary" || seat === "inspector") {
+  if (packagedModelParent(seat) !== undefined) {
     const resolved = resolveConfiguredProvinceOfficer(config, seat);
     return {
       seat,
@@ -804,8 +806,8 @@ export function projectConfigDisplaySeats(
   for (const seat of diskSeats) {
     rows.set(seat, projectConfigSeatDisplay(config, seat));
   }
-  for (const seat of ["notary", "inspector"] as const) {
-    if (rows.has(seat)) continue;
+  for (const seat of PUBLIC_CALLABLE_ROLES) {
+    if (packagedModelParent(seat) === undefined || rows.has(seat)) continue;
     const projected = projectConfigSeatDisplay(config, seat);
     if (projected.source === "inherit-gatekeeper") {
       rows.set(seat, projected);

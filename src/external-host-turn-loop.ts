@@ -9,7 +9,7 @@ import type {
   RoleTurnRequest,
   RoleTurnResult,
 } from "./host-contracts.ts";
-import { isOfficerReviewSeat } from "./host-contracts.ts";
+import { isOfficerReviewSeat } from "./packaged-role-registry.ts";
 
 export const EXTERNAL_ROLE_TURN_ROUND_LIMIT = 8 as const;
 
