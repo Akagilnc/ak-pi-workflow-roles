@@ -6,7 +6,7 @@ import { NAVIGATOR_OUTPUT_TOOL_NAME } from "./package-contracts/navigator-output
 import { JUDGE_OUTPUT_TOOL_NAME } from "./package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "./package-contracts/reviewer-output.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "./package-contracts/worker-output.ts";
-import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
+import { DOCTOR_AUDIT_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
 import { MERGER_OUTPUT_TOOL_NAME } from "./merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "./notary-contracts.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.ts";
@@ -16,7 +16,6 @@ import { AUDITOR_OUTPUT_TOOL_NAME } from "./package-contracts/auditor-output.ts"
 import { DIARIST_OUTPUT_TOOL_NAME } from "./diarist-contracts.ts";
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "./secretariat-contracts.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "./judge-auditor.ts";
-import { DOCTOR_AUDIT_TOOL_NAME } from "./doctor-auditor.ts";
 
 /**
  * Success-face fields that still differ by seat. Presence and omission match
