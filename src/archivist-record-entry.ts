@@ -353,6 +353,14 @@ function assertRecentFinalFileUnderSessionDir(
   }
 }
 
+/** Pi may migrate a selected legacy session while opening it, so reject escapes before host entry. */
+function assertNativeContinuationCandidatesStayInNest(sessionDir: string): void {
+  for (const entry of readdirSync(sessionDir, { withFileTypes: true })) {
+    if (!entry.name.endsWith(".jsonl") || !entry.isSymbolicLink()) continue;
+    assertRecentFinalFileUnderSessionDir(sessionDir, join(sessionDir, entry.name));
+  }
+}
+
 /** Open result including the sole continuation fact. */
 export type RecordSessionOpen = {
   readonly session: HostRecordSession;
@@ -435,6 +443,7 @@ export function createRecordSessionOpen(
       }
       // No sidecar and no cwd-matching session — mint fresh in the existing nest.
     } else {
+      assertNativeContinuationCandidatesStayInNest(sessionDir);
       const continued = host.continueRecentRecordSession({ cwd, sessionDir });
       if (continued.resumed) {
         const recentFile = continued.session.getSessionFile();

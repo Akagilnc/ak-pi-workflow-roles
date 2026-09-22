@@ -106,7 +106,14 @@ test("worker gate native continuation refuses a session symlink outside its auth
     const gateDir = join(parentDir, WORKER_SUBMISSION_GATE_KIND);
     await mkdir(gateDir, { recursive: true });
     const outside = join(home, "outside.jsonl");
-    await writeFile(outside, sessionJsonl("outside", project, "outside"));
+    const outsideBefore = `${JSON.stringify({
+      type: "session",
+      version: 1,
+      id: "outside",
+      timestamp: "2026-09-01T00:00:00.000Z",
+      cwd: project,
+    })}\n`;
+    await writeFile(outside, outsideBefore);
     await symlink(outside, join(gateDir, "recent.jsonl"));
 
     assert.throws(
@@ -115,6 +122,7 @@ test("worker gate native continuation refuses a session symlink outside its auth
         error instanceof ActivationLedgerError
         && error.message.includes("must be under the authorized nest"),
     );
+    assert.equal(await readFile(outside, "utf8"), outsideBefore);
   });
 });
 
