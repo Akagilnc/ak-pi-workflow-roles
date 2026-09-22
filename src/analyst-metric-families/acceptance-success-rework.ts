@@ -12,6 +12,7 @@
 import type { AnalystReadableRunFacts, AnalystRunTerminalFace } from "../analyst-ledger.ts";
 import { medianNumber } from "../analyst-median.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
+import { packagedAnalystTerminal } from "../packaged-role-registry.ts";
 
 const WORKER_ROLES = new Set(["coder", "fixer"]);
 
@@ -153,8 +154,8 @@ function mapTerminal(
 
   const body = terminal.body;
 
-  // Collector: typed groups array presence is the sole acceptance discriminator.
-  if (role === "collector") {
+  // Seat-declared terminal: typed groups array presence is the sole acceptance discriminator.
+  if (packagedAnalystTerminal(role) === "groups") {
     const groups = findCollectorGroups(body);
     if (Array.isArray(groups)) {
       return {

@@ -464,7 +464,13 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
     let outcome: RoleTurnResult = failure("session", "HeadlessNoOutcome", "no-outcome");
     try {
       // Claude mints a package UUID for --session-id; codex waits for thread.started.
-      let sessionId = await config.sessionIdentity.load(request.principal);
+      // Public explicit resume already read the stored native id. Auto-resume omits it.
+      const explicitHostSessionId = request.continuation.kind === "resume"
+        ? request.continuation.hostSessionId
+        : undefined;
+      let sessionId = explicitHostSessionId !== undefined && explicitHostSessionId !== ""
+        ? explicitHostSessionId
+        : await config.sessionIdentity.load(request.principal);
       let sessionKind: "new" | "resume" =
         request.continuation.kind === "resume" && sessionId !== undefined && sessionId !== ""
           ? "resume"

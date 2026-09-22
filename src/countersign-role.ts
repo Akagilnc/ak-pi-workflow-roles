@@ -8,7 +8,7 @@ import {
   type CountersignVerdict,
 } from "./countersign-contracts.ts";
 
-export { COUNTERSIGN_ACCEPTED_TEXT, COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.ts";
+export { COUNTERSIGN_OUTPUT_TOOL_NAME } from "./countersign-contracts.ts";
 export type { CountersignVerdict };
 
 // #836 r16 class 1: fix/note/decisionGate are LLM/human-read narrative content —

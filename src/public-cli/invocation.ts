@@ -35,6 +35,18 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
+import type { PackagedRole } from "../packaged-role-registry.ts";
+import {
+  packagedAdmittedSubject,
+  packagedArgvResult,
+  packagedBareToken,
+  packagedBaseIsRevision,
+  packagedEmitsAuthorityRefs,
+  packagedPublicInstructionSubject,
+  packagedRoleMetadata,
+  packagedStoresSourceRunRaw,
+  packagedSubjectChoices,
+} from "../packaged-role-registry.ts";
 import {
   isSafePositiveTicketNumber,
   readBoardTicketNumber,
@@ -93,6 +105,8 @@ import {
   resolveAnalystMode,
   type OptionOwner,
   type PublicOptionDefinition,
+  type TakenTypedOption,
+  type TypedOptionConsumer,
 } from "./option-definitions.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 
@@ -794,24 +808,6 @@ export async function recordLaunchedRolePackageIdentity(
   });
 }
 
-export type ParseInstructionArgvResult = {
-  instruction: string;
-  attachmentPaths: string[];
-  project?: string;
-  /** Auditor only — audited subject selecting soul materials (#675 owner). */
-  subject?: "judge" | "doctor";
-  /** Auditor source-run locator — same input surface for direct and nested (#675). */
-  sourceRun?: string;
-};
-
-/** Judge/Countersign 命令面同形：--project/--attach/opaque instruction。 */
-export type ParseJudgeArgvResult = ParseInstructionArgvResult;
-export type ParseCountersignArgvResult = ParseInstructionArgvResult;
-export type ParseInspectorArgvResult = ParseInstructionArgvResult;
-export type ParseGatekeeperArgvResult = ParseInstructionArgvResult;
-export type ParseNavigatorArgvResult = ParseInstructionArgvResult;
-export type ParseDiaristArgvResult = ParseInstructionArgvResult;
-
 /** Positive ticket number for analyst query-scope face (and shared integer parse). */
 export function parsePositiveTicketNumber(
   raw: string,
@@ -828,139 +824,269 @@ export function parsePositiveTicketNumber(
   return value;
 }
 
-/** 共享解析体：同形 owner 的 argv → instruction/attachments/project。 */
-function parseInstructionArgv(
+/**
+ * One token scan for public argv.
+ * Callers assign values; `--` still ends flag parsing.
+ * Analyst keeps its own assignment. Public seats assign in `parsePublicSeatArgv`.
+ */
+function scanPublicArgv(
   args: readonly string[],
-  owner: "judge" | "countersign" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat",
-): ParseInstructionArgvResult {
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
-  let subject: "judge" | "doctor" | undefined;
-  let sourceRun: string | undefined;
-  const positional: string[] = [];
+  options: TypedOptionConsumer,
+  handlers: {
+    readonly onDashed: (taken: TakenTypedOption) => void;
+    readonly onBare: (token: string) => void;
+    readonly onDoubleDash: (rest: readonly string[]) => void;
+  },
+): void {
   const tokens = [...args];
-  const definitions = roleOptions(owner);
-  const options = createTypedOptionConsumer(definitions);
-
   while (tokens.length > 0) {
     if (tokens[0] === "--") {
       tokens.shift();
-      positional.push(...tokens);
-      break;
+      handlers.onDoubleDash(tokens);
+      return;
     }
     const taken = options.takeDashed(tokens);
     if (taken !== undefined) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      if (taken.def.id === "subject") {
-        const raw = typeof taken.value === "string" ? taken.value.trim() : "";
-        if (raw !== "judge" && raw !== "doctor") {
-          throw new CliUsageError(
-            `auditor --subject must be judge|doctor, got ${taken.value ?? "(missing)"}`,
-          );
-        }
-        subject = raw;
-        continue;
-      }
-      if (taken.def.id === "source-run") {
-        const raw = typeof taken.value === "string" ? taken.value.trim() : "";
-        if (raw === "") {
-          throw new CliUsageError("auditor --source-run requires a run locator");
-        }
-        sourceRun = raw;
-        continue;
-      }
-      throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
+      handlers.onDashed(taken);
+      continue;
     }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown ${owner} option: ${token}`);
-    }
-    positional.push(token);
+    handlers.onBare(tokens.shift()!);
   }
-
-  options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
-    ...(subject === undefined ? {} : { subject }),
-    ...(sourceRun === undefined ? {} : { sourceRun }),
-  };
 }
 
-export type ParseCoderArgvResult = {
-  phase: CoderPhase;
-  instruction: string;
+function appendBareInstruction(
+  owner: string,
+  token: string,
+  positional: string[],
+): void {
+  if (token.startsWith("-") && token !== "-") {
+    throw new CliUsageError(`unknown ${owner} option: ${token}`);
+  }
+  positional.push(token);
+}
+
+/** LLM public seats. Analyst stays on its own deterministic argv. */
+export type PublicSeatArgvOwner = Exclude<OptionOwner, "global" | "analyst">;
+
+type SeatArgvFields = {
   attachmentPaths: string[];
   project?: string;
-};
-
-export type ParseFixerArgvResult = {
-  phase: FixerPhase;
-  instruction: string;
-  attachmentPaths: string[];
-  /** Optional path to structurally valid prerequisite JSON array. */
+  positional: string[];
   prerequisitesPath?: string;
-  project?: string;
-};
-
-export type ParseCollectorArgvResult = {
-  /** Explicit --pr when provided; admission resolves from context when absent (#676 D1). */
   prNumber?: number;
-  instruction: string;
-  attachmentPaths: string[];
-  project?: string;
   repo?: string;
   requestManifestPath?: string;
-  /** Optional wait-window ms (#678 D4). */
   waitWindowMs?: number;
-};
-
-export type ParseDoctorArgvResult = {
-  issueNumber: number;
-  /** Optional project-relative retained runs root override. */
+  issueNumber?: number;
   runs?: string;
-  instruction: string;
-  attachmentPaths: string[];
-  project?: string;
-};
-
-export type ParseReviewerArgvResult = {
-  /** Optional caller prose retained only as admitted provenance. */
-  instruction: string;
-  attachmentPaths: string[];
-  /** Required fixed base revision for the pinned review target. */
-  baseRevision: string;
-  /**
-   * Explicit single-axis override. Omitted public `--lens` is the internal
-   * parallel two-axis branch mark only — never persisted on an admitted run.
-   */
+  sourceRun?: string;
+  baseRevision?: string;
   lens?: ReviewerLens;
-  /** Repeatable durable authority references/URLs (exact order preserved; at least one). */
   authorityRefs: string[];
-  project?: string;
+  subject?: "judge" | "doctor";
 };
 
-export type ParseGleanerLeftArgvResult = {
-  /** Optional caller prose; empty is the lawful path (无锚定). Must not carry direction. */
-  instruction: string;
-  /** Required comparison-base revision for the unanchored merge-candidate diff. */
-  baseRevision: string;
-  project?: string;
-};
+function isMergerInternalPacketFace(token: string): boolean {
+  return (
+    token === "--targetObjectId" || token.startsWith("--targetObjectId=")
+    || token === "--sourceObjectId" || token.startsWith("--sourceObjectId=")
+    || token === "--expectedConflictPaths" || token.startsWith("--expectedConflictPaths=")
+    || token === "--resolutionScope" || token.startsWith("--resolutionScope=")
+  );
+}
 
-export type ParseMergerArgvResult = {
-  instruction: string;
-  attachmentPaths: string[];
-  project?: string;
-};
+/** One assignment for every public-seat option id. Owner only selects the table. */
+function assignPublicSeatOption(
+  owner: PublicSeatArgvOwner,
+  taken: TakenTypedOption,
+  fields: SeatArgvFields,
+): void {
+  const value = taken.value;
+  switch (taken.def.id) {
+    case "attach":
+      fields.attachmentPaths.push(requireOptionPath(taken.def.canonical, value));
+      return;
+    case "project":
+      fields.project = requireOptionPath(taken.def.canonical, value);
+      return;
+    case "subject": {
+      const raw = typeof value === "string" ? value.trim() : "";
+      const subject = packagedAdmittedSubject(owner, raw);
+      if (subject === undefined) {
+        const allowed = packagedSubjectChoices(owner)?.join("|") ?? "";
+        throw new CliUsageError(
+          `${owner} --subject must be ${allowed}, got ${value ?? "(missing)"}`,
+        );
+      }
+      fields.subject = subject;
+      return;
+    }
+    case "source-run": {
+      const text = typeof value === "string" ? value : "";
+      if (text.trim() === "") {
+        throw new CliUsageError(`${owner} --source-run requires a run locator`);
+      }
+      fields.sourceRun = packagedStoresSourceRunRaw(owner) ? text : text.trim();
+      return;
+    }
+    case "base":
+      fields.baseRevision = packagedBaseIsRevision(owner)
+        ? requireReviewerBaseRevision(value)
+        : requireOptionPath(taken.def.canonical, value);
+      return;
+    case "lens":
+      fields.lens = requireReviewerLens(value);
+      return;
+    case "authority-ref":
+      fields.authorityRefs.push(requireAuthorityRef(value));
+      return;
+    case "prerequisites":
+      fields.prerequisitesPath = requireOptionPath(taken.def.canonical, value);
+      return;
+    case "pr":
+      fields.prNumber = parsePositivePrOption(value);
+      return;
+    case "repo":
+      fields.repo = parseRepoOption(value);
+      return;
+    case "request-manifest":
+      fields.requestManifestPath = requireOptionPath(taken.def.canonical, value);
+      return;
+    case "wait-ms": {
+      if (value === undefined || !/^[1-9]\d*$/.test(value.trim())) {
+        throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
+      }
+      const parsed = Number(value.trim());
+      if (!Number.isSafeInteger(parsed) || parsed < 1) {
+        throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
+      }
+      fields.waitWindowMs = parsed;
+      return;
+    }
+    case "issue": {
+      if (value === undefined || value.trim() === "") {
+        throw new CliUsageError("doctor --issue requires a positive integer");
+      }
+      fields.issueNumber = parseDoctorIssueNumber(value);
+      return;
+    }
+    case "runs": {
+      if (value === undefined || value.trim() === "") {
+        throw new CliUsageError("doctor --runs requires a path");
+      }
+      fields.runs = value;
+      return;
+    }
+    default:
+      throw new CliUsageError(`unknown ${owner} option: ${taken.def.canonical}`);
+  }
+}
+
+function rejectSeatBareToken(owner: PublicSeatArgvOwner, token: string): void {
+  const bare = packagedBareToken(owner);
+  if (bare === "burden" && isRejectedPublicSpelling(owner, token)) {
+    throw new CliUsageError(
+      "judge does not accept a public burden selector; Judge infers its own burden",
+    );
+  }
+  if (
+    bare === "packet"
+    && (isRejectedPublicSpelling(owner, token) || isMergerInternalPacketFace(token))
+  ) {
+    throw new CliUsageError(
+      "merger does not accept public packet fields; the adapter reads Git merge materials",
+    );
+  }
+  if (bare === "instruction") {
+    if (token.startsWith("-") && token !== "-") {
+      throw new CliUsageError(`unknown notary option: ${token}`);
+    }
+    throw new CliUsageError(
+      "notary rejects caller prompt/instruction; only --source-run locator is admitted",
+    );
+  }
+}
+
+/**
+ * Sole public-seat argv parse. Seat rows differ by the option table and by
+ * which result keys that table produces. Analyst does not enter here.
+ */
+export function parsePublicSeatArgv(
+  owner: PublicSeatArgvOwner,
+  args: readonly string[],
+): PublicSeatParse {
+  if (packagedBareToken(owner) === "burden") {
+    const dd = args.indexOf("--");
+    const preDd = dd === -1 ? args : args.slice(0, dd);
+    for (const token of preDd) {
+      if (isRejectedPublicSpelling(owner, token)) {
+        throw new CliUsageError(
+          "judge does not accept a public burden selector; Judge infers its own burden",
+        );
+      }
+    }
+  }
+  const fields: SeatArgvFields = {
+    attachmentPaths: [],
+    positional: [],
+    authorityRefs: [],
+  };
+  const options = createTypedOptionConsumer(roleOptions(owner));
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
+      assignPublicSeatOption(owner, taken, fields);
+    },
+    onBare(token) {
+      rejectSeatBareToken(owner, token);
+      appendBareInstruction(owner, token, fields.positional);
+    },
+    onDoubleDash(rest) {
+      if (packagedBareToken(owner) === "instruction" && rest.length > 0) {
+        throw new CliUsageError(
+          "notary rejects caller prompt/instruction; only --source-run locator is admitted",
+        );
+      }
+      fields.positional.push(...rest);
+    },
+  });
+
+  const phaseDef = optionsForOwner(owner).find(
+    (def) => def.id === "phase" && def.form === "positional",
+  );
+  const phase = phaseDef === undefined
+    ? undefined
+    : options.consumeLeadingPhase(fields.positional);
+  options.assertRequired();
+
+  const project = fields.project === undefined ? {} : { project: fields.project };
+  if (packagedArgvResult(owner) === "source-run") {
+    const sourceRun = fields.sourceRun;
+    if (sourceRun === undefined || sourceRun.trim() === "") {
+      throw new CliUsageError(`${owner} --source-run requires a run locator`);
+    }
+    return { sourceRun, ...project };
+  }
+  const instruction = fields.positional.join(" ");
+  const material = packagedArgvResult(owner) === "instruction"
+    ? { instruction, ...project }
+    : { instruction, attachmentPaths: fields.attachmentPaths, ...project };
+  return {
+    ...material,
+    ...(phase === undefined ? {} : { phase }),
+    ...(fields.prerequisitesPath === undefined ? {} : { prerequisitesPath: fields.prerequisitesPath }),
+    ...(fields.prNumber === undefined ? {} : { prNumber: fields.prNumber }),
+    ...(fields.repo === undefined ? {} : { repo: fields.repo }),
+    ...(fields.requestManifestPath === undefined ? {} : { requestManifestPath: fields.requestManifestPath }),
+    ...(fields.waitWindowMs === undefined ? {} : { waitWindowMs: fields.waitWindowMs }),
+    ...(fields.issueNumber === undefined ? {} : { issueNumber: fields.issueNumber }),
+    ...(fields.runs === undefined ? {} : { runs: fields.runs }),
+    ...(fields.sourceRun === undefined ? {} : { sourceRun: fields.sourceRun }),
+    ...(fields.baseRevision === undefined ? {} : { baseRevision: fields.baseRevision }),
+    ...(fields.lens === undefined ? {} : { lens: fields.lens }),
+    ...(packagedEmitsAuthorityRefs(owner) ? { authorityRefs: fields.authorityRefs } : {}),
+    ...(fields.subject === undefined ? {} : { subject: fields.subject }),
+  };
+}
 
 /**
  * #336/#337/#338/#399 analyst public argv — three live faces on one registration seam.
@@ -1098,161 +1224,6 @@ export function requireAuthorityRef(value: string | undefined): string {
     whitespace: "--authority-ref requires a durable reference, not inline Spec prose",
     optionLike: "--authority-ref requires a durable reference, not inline Spec prose",
   });
-}
-
-/**
- * Parse Judge-specific argv after the `judge` token.
- * Spellings from PUBLIC_OPTION_TABLE.judge; rejects burden family (#342).
- */
-export function parseJudgeArgv(args: readonly string[]): ParseJudgeArgvResult {
-  // Judge owns burden inference — rejected spellings checked per-token.
-  // `--` ends flag parsing: everything after is opaque instruction.
-  const dd = args.indexOf("--");
-  const preDd = dd === -1 ? args : args.slice(0, dd);
-  for (const token of preDd) {
-    if (isRejectedPublicSpelling("judge", token)) {
-      throw new CliUsageError(
-        "judge does not accept a public burden selector; Judge infers its own burden",
-      );
-    }
-  }
-  return parseInstructionArgv(args, "judge");
-}
-
-export function parseCountersignArgv(args: readonly string[]): ParseCountersignArgvResult {
-  return parseInstructionArgv(args, "countersign");
-}
-
-export function parseInspectorArgv(args: readonly string[]): ParseInspectorArgvResult {
-  return parseInstructionArgv(args, "inspector");
-}
-
-export function parseGatekeeperArgv(args: readonly string[]): ParseGatekeeperArgvResult {
-  return parseInstructionArgv(args, "gatekeeper");
-}
-
-export function parseNavigatorArgv(args: readonly string[]): ParseNavigatorArgvResult {
-  return parseInstructionArgv(args, "navigator");
-}
-
-export type ParseAuditorArgvResult = ParseInstructionArgvResult;
-
-export function parseAuditorArgv(args: readonly string[]): ParseAuditorArgvResult {
-  return parseInstructionArgv(args, "auditor");
-}
-
-export function parseDiaristArgv(args: readonly string[]): ParseDiaristArgvResult {
-  return parseInstructionArgv(args, "diarist");
-}
-
-export type ParseSecretariatArgvResult = ParseInstructionArgvResult;
-
-export function parseSecretariatArgv(args: readonly string[]): ParseSecretariatArgvResult {
-  return parseInstructionArgv(args, "secretariat");
-}
-
-/**
- * Parse Coder-specific argv after the `coder` token.
- * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.coder (#342).
- */
-export function parseCoderArgv(args: readonly string[]): ParseCoderArgvResult {
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
-  const positional: string[] = [];
-  const tokens = [...args];
-  const definitions = roleOptions("coder");
-  const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown coder option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown coder option: ${token}`);
-    }
-    positional.push(token);
-  }
-
-  // Phase aliases + default come solely from the typed coder phase row (#342).
-  const phase = options.consumeLeadingPhase(positional);
-  options.assertRequired();
-
-  return {
-    phase,
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
-  };
-}
-
-/**
- * Parse Fixer-specific argv after the `fixer` token.
- * Phase defaults to apply; spellings from PUBLIC_OPTION_TABLE.fixer (#342).
- */
-export function parseFixerArgv(args: readonly string[]): ParseFixerArgvResult {
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
-  let prerequisitesPath: string | undefined;
-  const positional: string[] = [];
-  const tokens = [...args];
-  const definitions = roleOptions("fixer");
-  const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      if (taken.def.id === "prerequisites") {
-        prerequisitesPath = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown fixer option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown fixer option: ${token}`);
-    }
-    positional.push(token);
-  }
-
-  // Phase aliases + default come solely from the typed fixer phase row (#342).
-  const phase = options.consumeLeadingPhase(positional);
-  options.assertRequired();
-
-  return {
-    phase,
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
-    ...(project === undefined ? {} : { project }),
-  };
 }
 
 async function readRegularFileAttachment(
@@ -1439,6 +1410,484 @@ function ticketAdmissionFields(
   };
 }
 
+/** Project an already-typed summons ticket into admit options. Absent stays absent. */
+export function summonedTicketFields(
+  ticketNumber: number | undefined,
+): { assertedTicketNumber?: number } {
+  if (ticketNumber === undefined) return {};
+  return { assertedTicketNumber: ticketNumber };
+}
+
+/**
+ * Fields every public admit call shares, including the summons ticket.
+ * Seat runners spread this once; they do not restate ticket placement.
+ */
+export function admissionCallerOptions(env: {
+  readonly home: string;
+  readonly principalAuthority: DurablePrincipalAuthority;
+  readonly cwd: string;
+  readonly createRunId?: () => string;
+  readonly model?: InvocationEffectiveModel;
+  readonly correlationId?: string;
+  readonly boundTicketNumber?: number;
+}): {
+  readonly home: string;
+  readonly principalAuthority: DurablePrincipalAuthority;
+  readonly cwd: string;
+  readonly createRunId?: () => string;
+  readonly model?: InvocationEffectiveModel;
+  readonly correlationId?: string;
+  readonly assertedTicketNumber?: number;
+} {
+  return {
+    home: env.home,
+    principalAuthority: env.principalAuthority,
+    cwd: env.cwd,
+    ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...(env.correlationId === undefined || env.correlationId.trim() === ""
+      ? {}
+      : { correlationId: env.correlationId }),
+    ...summonedTicketFields(env.boundTicketNumber),
+  };
+}
+
+/** Parsed public-seat argv fields the single admit path reads. */
+export type PublicSeatParse = {
+  readonly instruction?: string;
+  readonly attachmentPaths?: readonly string[];
+  readonly project?: string;
+  readonly phase?: "plan" | "apply";
+  readonly prerequisitesPath?: string;
+  readonly prNumber?: number;
+  readonly repo?: string;
+  readonly requestManifestPath?: string;
+  readonly waitWindowMs?: number;
+  readonly issueNumber?: number;
+  readonly runs?: string;
+  readonly sourceRun?: string;
+  readonly baseRevision?: string;
+  readonly lens?: "completeness" | "correctness";
+  readonly authorityRefs?: readonly string[];
+  readonly subject?: "judge" | "doctor";
+};
+
+/**
+ * Sole admit call. Kind comes from the composition-root record.
+ * Placement stays ticketAdmissionFields. Seat field checks live in this function only.
+ */
+export function admitPublicRole<R extends PackagedRole>(
+  role: R,
+  parsed: PublicSeatParse,
+  env: Parameters<typeof admissionCallerOptions>[0],
+  override?: {
+    readonly assertedTicketNumber?: number;
+    readonly deferPersistence?: boolean;
+  },
+): Promise<Extract<AdmittedRoleInvocation, { readonly role: R }>>;
+export async function admitPublicRole(
+  role: PackagedRole,
+  parsed: PublicSeatParse,
+  env: Parameters<typeof admissionCallerOptions>[0],
+  override?: {
+    readonly assertedTicketNumber?: number;
+    readonly deferPersistence?: boolean;
+  },
+): Promise<AdmittedRoleInvocation> {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined) {
+    throw new CliUsageError(`unknown role: ${role}`);
+  }
+  const shared = {
+    ...admissionCallerOptions(env),
+    ...(override?.assertedTicketNumber === undefined
+      ? {}
+      : { assertedTicketNumber: override.assertedTicketNumber }),
+  };
+  const instruction = parsed.instruction ?? "";
+  const attachmentPaths = parsed.attachmentPaths ?? [];
+  const project = parsed.project === undefined ? {} : { project: parsed.project };
+  switch (record.admission) {
+    case "instruction":
+      return admitStandardMaterialInvocation(
+        role as "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat",
+        {
+          ...shared,
+          instruction,
+          attachmentPaths,
+          ...project,
+        },
+      );
+    case "court-materials":
+      return admitStandardMaterialInvocation("countersign", {
+        ...shared,
+        instruction,
+        attachmentPaths,
+        ...project,
+        ...(override?.deferPersistence === undefined
+          ? {}
+          : { deferPersistence: override.deferPersistence }),
+      });
+    case "worker-task": {
+      if (instruction.trim() === "") {
+        throw new CliUsageError("coder requires a nonblank task instruction");
+      }
+      const phase = parsed.phase ?? "apply";
+      if (!record.phases.some((item) => item === phase)) {
+        throw new CliUsageError("coder phase must be plan or apply");
+      }
+      return admitStandardMaterialInvocation("coder", {
+        ...shared,
+        instruction,
+        attachmentPaths,
+        ...project,
+        placedFields: async (placed) => {
+          const taskPath = join(placed.runDirectory, "task.md");
+          await writeFile(taskPath, instruction, "utf8");
+          return { phase, taskPath };
+        },
+      });
+    }
+    case "worker-packet": {
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      if (instruction.trim() === "") {
+        throw new CliUsageError("fixer requires a nonblank repair instruction");
+      }
+      const phase = parsed.phase ?? "apply";
+      if (!record.phases.some((item) => item === phase)) {
+        throw new CliUsageError("fixer phase must be plan or apply");
+      }
+      let prerequisites: readonly FixerPrerequisite[] = Object.freeze([]);
+      let prerequisitesSource: string | undefined;
+      if (parsed.prerequisitesPath !== undefined) {
+        const absolutePrereq = isAbsolute(parsed.prerequisitesPath)
+          ? parsed.prerequisitesPath
+          : resolve(parsed.prerequisitesPath);
+        try {
+          prerequisitesSource = await readFile(absolutePrereq, "utf8");
+        } catch (error) {
+          throw new CliUsageError(
+            `fixer prerequisites path is unreadable: ${parsed.prerequisitesPath}`,
+            { cause: error },
+          );
+        }
+        try {
+          prerequisites = parseFixerPrerequisites(prerequisitesSource);
+        } catch (error) {
+          if (error instanceof FixerPacketValidationError) {
+            throw new CliUsageError(error.message, { cause: error });
+          }
+          throw error;
+        }
+      }
+      return admitStandardMaterialInvocation("fixer", {
+        ...shared,
+        instruction,
+        attachmentPaths,
+        ...project,
+        placedFields: async (placed) => {
+          let prerequisitesPath: string | undefined;
+          if (prerequisitesSource !== undefined) {
+            prerequisitesPath = join(placed.runDirectory, "prerequisites.json");
+            await writeFile(
+              prerequisitesPath,
+              `${JSON.stringify(prerequisites, null, 2)}\n`,
+              "utf8",
+            );
+          }
+          const packetPath = join(placed.runDirectory, "fix-packet.md");
+          await writeFile(packetPath, instruction, "utf8");
+          return {
+            phase,
+            packetPath,
+            prerequisites,
+            ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
+          };
+        },
+      });
+    }
+    case "collect-target": {
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      let explicitPrNumber: number | undefined;
+      if (parsed.prNumber !== undefined) {
+        try {
+          explicitPrNumber = parseCollectorPrNumber(parsed.prNumber);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new CliUsageError(detail, { cause: error });
+        }
+      }
+      const projectRoot = resolve(parsed.project ?? shared.cwd);
+      let repository: CollectorRepository;
+      if (parsed.repo !== undefined) {
+        try {
+          repository = parseCollectorRepository(parsed.repo);
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          throw new CliUsageError(detail, { cause: error });
+        }
+      } else {
+        repository = resolveGitHubRemoteRepository(projectRoot);
+      }
+      let manifest = emptyCollectorManifest();
+      let manifestCanonicalJson: string | undefined;
+      if (parsed.requestManifestPath !== undefined) {
+        try {
+          manifest = await loadCollectorManifest(parsed.requestManifestPath);
+          manifestCanonicalJson = manifest.canonicalJson;
+        } catch (error) {
+          throw new CliUsageError(
+            error instanceof Error ? error.message : String(error),
+            { cause: error },
+          );
+        }
+      }
+      const manifestDigest = manifest.digest;
+      const admittedCollector = await admitStandardMaterialInvocation("collector", {
+        ...shared,
+        instruction,
+        attachmentPaths,
+        ...project,
+        placedFields: async (placed) => {
+          // Task materials are frozen before target resolution (#676 A).
+          const target = await resolveCollectorTarget({
+            projectRoot,
+            repository,
+            ...(explicitPrNumber === undefined ? {} : { explicitPrNumber }),
+          });
+          const prNumber = target.kind === "bound" ? target.prNumber : undefined;
+          let requestManifestPath: string | undefined;
+          if (manifestCanonicalJson !== undefined) {
+            requestManifestPath = join(placed.runDirectory, "request-manifest.json");
+            await writeFile(requestManifestPath, manifestCanonicalJson, "utf8");
+          }
+          return {
+            ...(prNumber === undefined ? {} : { prNumber }),
+            repository: repository.canonical,
+            repositoryDisplay: repository.display,
+            ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
+            ...(parsed.waitWindowMs === undefined ? {} : { waitWindowMs: parsed.waitWindowMs }),
+            manifestDigest,
+          };
+        },
+      });
+      return { ...admittedCollector, repository };
+    }
+    case "case-identity": {
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      const issueNumber = parsed.issueNumber ?? Number.NaN;
+      if (
+        !Number.isInteger(issueNumber) ||
+        issueNumber < 1 ||
+        !DOCTOR_ISSUE_NUMBER_PATTERN.test(String(issueNumber))
+      ) {
+        throw new CliUsageError(
+          `doctor --issue must be a positive integer, got ${issueNumber}`,
+        );
+      }
+      let frozenAttachments: readonly FrozenAttachment[] = [];
+      const admittedDoctor = await admitStandardMaterialInvocation("doctor", {
+        ...shared,
+        instruction,
+        attachmentPaths: [],
+        freezeAttachments: false,
+        ...project,
+        placedFields: async (placed) => {
+          let caseRunsPath: string;
+          try {
+            caseRunsPath = await resolveDoctorCaseRunsPath({
+              home: shared.home,
+              projectRoot: placed.projectRoot,
+              bookKey: placed.bookKey,
+              issueNumber,
+              ...(parsed.runs === undefined ? {} : { runs: parsed.runs }),
+            });
+          } catch (error) {
+            if (error instanceof CliUsageError) throw error;
+            const detail = error instanceof Error ? error.message : String(error);
+            throw new CliUsageError(detail, { cause: error });
+          }
+          if (parsed.runs === undefined) {
+            ensureRealDirectoryTree(placed.ledgerHome, caseRunsPath);
+          }
+          let caseIdentity: DoctorCaseIdentity;
+          try {
+            const patient = await loadDoctorCase(caseRunsPath);
+            if (patient.identity.issueNumber !== issueNumber) {
+              throw new CliUsageError(
+                `doctor case issue ${patient.identity.issueNumber} does not match --issue ${issueNumber}`,
+              );
+            }
+            caseIdentity = patient.identity;
+            caseRunsPath = await realpath(caseRunsPath);
+          } catch (error) {
+            if (error instanceof CliUsageError) throw error;
+            const detail = error instanceof Error ? error.message : String(error);
+            throw new CliUsageError(
+              `doctor case could not be constructed from retained evidence: ${detail}`,
+              { cause: error },
+            );
+          }
+          frozenAttachments = await freezeAttachments(attachmentPaths, placed.attachmentsDirectory);
+          return {
+            issueNumber,
+            caseRunsPath,
+            caseIdentity,
+            attachments: persistedAttachmentRefs(frozenAttachments),
+          };
+        },
+      });
+      return { ...admittedDoctor, attachments: frozenAttachments };
+    }
+    case "source-locator": {
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      const projectRoot = resolve(parsed.project ?? shared.cwd);
+      let sourceRun: NotarySourceRunLocator;
+      try {
+        sourceRun = await resolveNotarySourceRunLocator({
+          projectRoot,
+          sourceRun: parsed.sourceRun ?? "",
+          home: shared.home,
+        });
+      } catch (error) {
+        if (error instanceof NotarySourceRunError) {
+          throw new CliUsageError(error.message, { cause: error });
+        }
+        throw error;
+      }
+      // Board ticket on the source run wins; otherwise the summons ticket. Code does not infer one.
+      const inheritedTicketNumber = await readBoardTicketNumber(sourceRun.runDirectory);
+      const knownTicketNumber = inheritedTicketNumber ?? shared.assertedTicketNumber;
+      return admitStandardMaterialInvocation("notary", {
+        ...shared,
+        ...(knownTicketNumber === undefined
+          ? {}
+          : { assertedTicketNumber: knownTicketNumber }),
+        instruction: "",
+        attachmentPaths: [],
+        ...project,
+        freezeAttachments: false,
+        admittedFields: {
+          sourceRunPath: sourceRun.runDirectory,
+          sourceRun,
+        },
+      });
+    }
+    case "gleaner": {
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      const baseRevision = parsed.baseRevision ?? "";
+      if (baseRevision.trim() === "") {
+        throw new CliUsageError("--base requires a nonempty revision");
+      }
+      return admitStandardMaterialInvocation("gleaner-left", {
+        ...shared,
+        instruction,
+        attachmentPaths: [],
+        ...project,
+        freezeAttachments: false,
+        admittedFields: { baseRevision },
+      });
+    }
+    case "review-basis": {
+      const lens = requireReviewerLens(parsed.lens);
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      const baseRevision = requireReviewerBaseRevision(parsed.baseRevision);
+      const rawRefs = parsed.authorityRefs ?? [];
+      if (rawRefs.length === 0) {
+        throw new CliUsageError("reviewer requires --authority-ref <ref>");
+      }
+      const authorityRefs = Object.freeze(rawRefs.map((ref) => requireAuthorityRef(ref)));
+      const admittedReviewer = await admitStandardMaterialInvocation("reviewer", {
+        ...shared,
+        instruction,
+        attachmentPaths,
+        ...project,
+        admittedFields: {
+          baseRevision,
+          lens,
+          authorityRefs: [...authorityRefs],
+        },
+      });
+      return { ...admittedReviewer, authorityRefs };
+    }
+    case "merge-envelope": {
+      if (parsed.project !== undefined) {
+        requireOptionPath("--project", parsed.project);
+      }
+      if (instruction.trim() === "") {
+        throw new CliUsageError("merger requires a nonblank task instruction");
+      }
+      const projectRoot = resolve(parsed.project ?? shared.cwd);
+      const derived = await deriveMergerEnvelopeFromActiveMerge(
+        projectRoot,
+        createProductionMergerGitState(projectRoot),
+      );
+      return admitStandardMaterialInvocation("merger", {
+        ...shared,
+        instruction,
+        attachmentPaths,
+        ...project,
+        placedFields: async (placed) => {
+          const targetLabel = derived.targetObjectId === "" ? "(none observed)" : derived.targetObjectId;
+          const sourceLabel = derived.sourceObjectId === "" ? "(none observed)" : derived.sourceObjectId;
+          const mergerInput = validateMergerInput({
+            attemptId: placed.runId,
+            targetObjectId: derived.targetObjectId,
+            sourceObjectId: derived.sourceObjectId,
+            materials: {
+              task: mergerMaterialFromUtf8(instruction),
+              authority: mergerMaterialFromUtf8(instruction),
+              targetIntent: mergerMaterialFromUtf8(
+                `Investigate primary sources for target parent ${targetLabel}. Do not invent intent.`,
+              ),
+              sourceIntent: mergerMaterialFromUtf8(
+                `Investigate primary sources for source parent ${sourceLabel}. Do not invent intent.`,
+              ),
+            },
+            expectedConflictPaths: [...derived.expectedConflictPaths],
+            resolutionScope: [...derived.resolutionScope],
+            authorizedChecks: [],
+          });
+          const mergerInputPath = join(placed.runDirectory, "merger-input.json");
+          await writeFile(
+            mergerInputPath,
+            `${JSON.stringify(mergerInput, null, 2)}\n`,
+            "utf8",
+          );
+          return {
+            mergerInputPath,
+            derived: {
+              targetObjectId: derived.targetObjectId,
+              sourceObjectId: derived.sourceObjectId,
+              expectedConflictPaths: [...derived.expectedConflictPaths],
+              resolutionScope: [...derived.resolutionScope],
+            },
+          };
+        },
+      });
+    }
+  }
+}
+
+/** One placement subject: a typed ticket already on the summons, otherwise unbound. */
+function admissionSubject(ticketNumber: number | undefined): RoleRunSubject {
+  const fields = ticketAdmissionFields(ticketNumber);
+  if (fields.ticketNumber === undefined) return { unbound: true };
+  return { ticketNumber: fields.ticketNumber };
+}
+
 export type AdmitJudgeInvocationOptions = {
   home: string;
   cwd: string;
@@ -1450,6 +1899,8 @@ export type AdmitJudgeInvocationOptions = {
   principalAuthority: DurablePrincipalAuthority;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed ticket already on this summons (起居录 / parent board). Never parsed from prose. */
+  assertedTicketNumber?: number;
 };
 
 export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
@@ -1463,25 +1914,45 @@ export type AdmitNavigatorInvocationOptions = AdmitInspectorInvocationOptions;
 export type AdmitDiaristInvocationOptions = AdmitInspectorInvocationOptions;
 export type AdmitSecretariatInvocationOptions = AdmitInspectorInvocationOptions;
 
+type PlacedRoleAdmission = {
+  readonly runId: string;
+  readonly bookKey: string;
+  readonly projectRoot: string;
+  readonly runDirectory: string;
+  readonly principal: DurablePrincipal;
+  readonly sessionDirectory: string;
+  readonly sessionFile: string;
+  readonly attachments: readonly FrozenAttachment[];
+  readonly attachmentsDirectory: string;
+  readonly ledgerHome: string;
+  readonly ticketFields: ReturnType<typeof ticketAdmissionFields>;
+};
+
 /**
- * Shared instruction-seat admission for Judge and Inspector: project check,
- * principal/placement issue, attachment freeze, admitted-request and invocation
- * ledger write. CorrelationId is projected only when supplied (Inspector).
- * Ticket binding is post-admission via shared seat LLM path (#635).
+ * One admission placement (#505): typed ticket already on the summons, otherwise unbound.
+ * Every public seat persists through this function. Seat-only fields are supplied by the caller.
  */
-async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat",
->(
-  role: R,
-  options: AdmitInspectorInvocationOptions,
-): Promise<AdmittedRoleInvocationBase & { readonly role: R }> {
-  // Empty project override must not reach resolve("") → cwd (silent default).
+async function placeRoleAdmission(options: {
+  readonly role: AdmittedRoleInvocation["role"];
+  readonly home: string;
+  readonly principalAuthority: DurablePrincipalAuthority;
+  readonly cwd: string;
+  readonly project?: string;
+  readonly createRunId?: () => string;
+  /** Reuse a reserved run id (deferred countersign materialization). */
+  readonly runId?: string;
+  readonly assertedTicketNumber?: number;
+  readonly attachmentPaths: readonly string[];
+  /** Gleaner-left admits no caller attachments. */
+  readonly freezeAttachments?: boolean;
+  /** Countersign reserves coordinates, then materializes after identity lookup. */
+  readonly materialize?: boolean;
+}): Promise<PlacedRoleAdmission> {
   if (options.project !== undefined) {
     requireOptionPath("--project", options.project);
   }
   const projectRoot = resolve(options.project ?? options.cwd);
-  const runId = (options.createRunId ?? uuidv7)();
-  // Validate asserted ticket before placement so 0/NaN never become subjects.
+  const runId = options.runId ?? (options.createRunId ?? uuidv7)();
   const ticketFields = ticketAdmissionFields(options.assertedTicketNumber);
   const {
     principal,
@@ -1494,138 +1965,230 @@ async function admitStandardMaterialInvocation<
   } = issueAdmissionPlacement(options.principalAuthority, {
     cwd: projectRoot,
     runId,
-    role,
-    subject: ticketFields.ticketNumber === undefined
-      ? { unbound: true }
-      : { ticketNumber: ticketFields.ticketNumber },
+    role: options.role,
+    subject: admissionSubject(options.assertedTicketNumber),
     home: options.home,
+    ...(options.materialize === undefined ? {} : { materialize: options.materialize }),
   });
+  const attachments = options.freezeAttachments === false
+    ? []
+    : await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
+  return {
+    runId,
+    bookKey,
+    projectRoot,
+    runDirectory,
+    principal,
+    sessionDirectory,
+    sessionFile,
+    attachments,
+    attachmentsDirectory,
+    ledgerHome,
+    ticketFields,
+  };
+}
 
-  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
+function persistedAttachmentRefs(
+  attachments: readonly FrozenAttachment[],
+): ReadonlyArray<{
+  provenancePath: string;
+  frozenPath: string;
+  byteLength: number;
+  sha256: string;
+  mediaKind: FrozenAttachment["mediaKind"];
+}> {
+  return attachments.map((attachment) => ({
+    provenancePath: attachment.provenancePath,
+    frozenPath: attachment.frozenPath,
+    byteLength: attachment.byteLength,
+    sha256: attachment.sha256,
+    mediaKind: attachment.mediaKind,
+  }));
+}
+
+async function persistPlacedAdmission(
+  admitted: {
+    readonly role: AdmittedRoleInvocation["role"];
+    readonly runId: string;
+    readonly bookKey: string;
+    readonly projectRoot: string;
+    readonly runDirectory: string;
+    readonly principal: DurablePrincipal;
+    readonly instruction: string;
+    readonly instructionEmpty: boolean;
+    readonly correlationId?: string;
+    readonly ticketNumber?: number;
+    readonly attachments: ReturnType<typeof persistedAttachmentRefs>;
+  },
+  placed: PlacedRoleAdmission,
+  model: InvocationEffectiveModel | undefined,
+): Promise<string> {
+  const admittedRequestPath = join(placed.runDirectory, "admitted-request.json");
+  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
+    sessionDirectory: placed.sessionDirectory,
+    sessionFile: placed.sessionFile,
+  });
+  await writeRoleInvocationLedger(
+    {
+      ...admitted,
+      sessionDirectory: placed.sessionDirectory,
+      sessionFile: placed.sessionFile,
+    },
+    admitted.role,
+    model,
+  );
+  return admittedRequestPath;
+}
+
+/**
+ * Shared admission: project check, placement, attachment freeze,
+ * admitted-request and invocation ledger write.
+ * Countersign passes deferPersistence so same-ticket lookup can reserve coordinates
+ * before materializeCountersignInvocation writes the page.
+ * Seats whose extra facts are known before placement pass them as admittedFields.
+ * Seats whose extra facts depend on the placed run pass placedFields
+ * (coder writes task.md; fixer writes fix-packet.md; collector writes request-manifest.json;
+ * doctor resolves the case, then freezes attachments; merger writes merger-input.json).
+ */
+async function admitStandardMaterialInvocation<
+  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder" | "fixer" | "collector" | "doctor" | "merger",
+  Extra extends object = {},
+>(
+  role: R,
+  options: AdmitInspectorInvocationOptions & {
+    /** Reserve coordinates; skip freeze, placement disk, and admitted-request write. */
+    readonly deferPersistence?: boolean;
+    /** Skip attachment freeze. Gleaner-left admits no caller attachments. */
+    readonly freezeAttachments?: boolean;
+    /** Seat facts already validated by admitPublicRole. */
+    readonly admittedFields?: Extra;
+    /** Seat facts that exist only after placement. Written before the admitted page. */
+    readonly placedFields?: (placed: PlacedRoleAdmission) => Extra | Promise<Extra>;
+  },
+): Promise<AdmittedRoleInvocationBase & { readonly role: R } & Extra> {
+  const defer = options.deferPersistence === true;
+  const skipFreeze = defer || options.freezeAttachments === false;
+  const placed = await placeRoleAdmission({
+    role,
+    home: options.home,
+    principalAuthority: options.principalAuthority,
+    cwd: options.cwd,
+    attachmentPaths: options.attachmentPaths,
+    ...(skipFreeze ? { freezeAttachments: false } : {}),
+    ...(defer ? { materialize: false } : {}),
+    ...(options.project === undefined ? {} : { project: options.project }),
+    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+    ...(options.assertedTicketNumber === undefined
+      ? {}
+      : { assertedTicketNumber: options.assertedTicketNumber }),
+  });
   const correlationFields =
     options.correlationId === undefined
       ? {}
       : { correlationId: options.correlationId };
-
   const instruction = options.instruction;
   const instructionEmpty = instruction.trim() === "";
+  const placedExtra = options.placedFields === undefined ? undefined : await options.placedFields(placed);
+  const admittedFields = {
+    ...(options.admittedFields ?? ({} as Extra)),
+    ...(placedExtra ?? ({} as Extra)),
+  };
   const admitted = {
     role,
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    principal,
+    runId: placed.runId,
+    bookKey: placed.bookKey,
+    projectRoot: placed.projectRoot,
+    runDirectory: placed.runDirectory,
+    principal: placed.principal,
     ...correlationFields,
     instruction,
     instructionEmpty,
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind,
-    })),
-    ...ticketFields,
+    ...admittedFields,
+    attachments: persistedAttachmentRefs(placed.attachments),
+    ...placed.ticketFields,
   };
-  const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-    sessionDirectory,
-    sessionFile,
-  });
-  await writeRoleInvocationLedger(
-    { ...admitted, sessionDirectory, sessionFile },
-    admitted.role,
-    options.model,
-  );
-
+  const admittedRequestPath = defer
+    ? join(placed.runDirectory, "admitted-request.json")
+    : await persistPlacedAdmission(admitted, placed, options.model);
   return {
     role,
-    runId,
-    bookKey,
-    projectRoot,
+    runId: placed.runId,
+    bookKey: placed.bookKey,
+    projectRoot: placed.projectRoot,
     instruction,
     instructionEmpty,
-    attachments,
-    runDirectory,
-    principal,
+    attachments: placed.attachments,
+    runDirectory: placed.runDirectory,
+    principal: placed.principal,
     admittedRequestPath,
     ...correlationFields,
-    ...ticketFields,
+    ...placed.ticketFields,
+    ...admittedFields,
   };
-}
-
-/**
- * Atomically admit a Judge Role run: freeze Attachments, persist the request,
- * and reserve session placement under the #78 ledger book.
- */
-export async function admitJudgeInvocation(
-  options: AdmitJudgeInvocationOptions,
-): Promise<AdmittedJudgeInvocation> {
-  return admitStandardMaterialInvocation("judge", options);
-}
-
-/**
- * Admit a direct Inspector (台院) run: freeze attachments, persist the request,
- * and reserve session placement. Same instruction-seat face as Judge (#568).
- */
-export async function admitInspectorInvocation(
-  options: AdmitInspectorInvocationOptions,
-): Promise<AdmittedInspectorInvocation> {
-  return admitStandardMaterialInvocation("inspector", options);
-}
-
-/**
- * Admit a direct Gatekeeper (门下省) run (#639): freeze attachments, persist
- * the request, reserve session placement — same instruction-seat face.
- */
-export async function admitGatekeeperInvocation(
-  options: AdmitGatekeeperInvocationOptions,
-): Promise<AdmittedGatekeeperInvocation> {
-  return admitStandardMaterialInvocation("gatekeeper", options);
-}
-
-/**
- * Admit a direct Navigator (游奕使) run (#639): freeze attachments, persist
- * the request, reserve session placement — same instruction-seat face.
- */
-export async function admitNavigatorInvocation(
-  options: AdmitNavigatorInvocationOptions,
-): Promise<AdmittedNavigatorInvocation> {
-  return admitStandardMaterialInvocation("navigator", options);
 }
 
 export type AdmitAuditorInvocationOptions = AdmitInspectorInvocationOptions;
 
-/** Admit a public 审刑院 run (#675). */
-export async function admitAuditorInvocation(
-  options: AdmitAuditorInvocationOptions,
-): Promise<AdmittedAuditorInvocation> {
-  return admitStandardMaterialInvocation("auditor", options);
+type InstructionTransportSource = {
+  readonly role?: string;
+  readonly instruction: string;
+  readonly instructionEmpty: boolean;
+  readonly attachments: readonly { readonly frozenPath: string }[];
+  readonly baseRevision?: string;
+  readonly lens?: ReviewerLens;
+  readonly authorityRefs?: readonly string[];
+};
+
+function admittedTransportPromptKind(
+  admitted: InstructionTransportSource,
+): "instruction" | "fixed-kickoff" | "baseline" | "skill-args" {
+  if (admitted.role === undefined) return "instruction";
+  const record = packagedRoleMetadata(admitted.role);
+  if (record !== undefined && "transportPrompt" in record) return record.transportPrompt;
+  return "instruction";
 }
 
 /**
- * Admit a direct Diarist (起居郎) run (#708): freeze attachments, persist the
- * request, reserve session placement — same instruction-seat face.
+ * One initial prompt transport. The registry `transportPrompt` leaf selects
+ * a fixed kickoff, a bound baseline, or frozen skill args. Absent means the
+ * caller instruction plus frozen attachment paths.
  */
-export async function admitDiaristInvocation(
-  options: AdmitDiaristInvocationOptions,
-): Promise<AdmittedDiaristInvocation> {
-  return admitStandardMaterialInvocation("diarist", options);
-}
-
-/** Admit a public Secretariat (中书省) run (#924). */
-export async function admitSecretariatInvocation(
-  options: AdmitSecretariatInvocationOptions,
-): Promise<AdmittedSecretariatInvocation> {
-  return admitStandardMaterialInvocation("secretariat", options);
-}
-
-/** Shared prompt transport for instruction-seat roles (judge/countersign/inspector). */
 export function buildInstructionTransportPrompt(
-  admitted: { instruction: string; instructionEmpty: boolean; attachments: readonly { frozenPath: string }[] },
+  admitted: InstructionTransportSource,
   engineMaterial?: EngineSessionMaterial,
 ): string {
+  const kind = admittedTransportPromptKind(admitted);
+  if (kind === "fixed-kickoff") {
+    return appendEngineSessionMaterial([NOTARY_FIXED_KICKOFF], engineMaterial).join("\n");
+  }
+  if (kind === "baseline") {
+    if (admitted.baseRevision === undefined) {
+      throw new Error("baseline transport prompt is missing the bound revision");
+    }
+    const lines = [`左拾遗案已受理。比较基线：${admitted.baseRevision}`];
+    if (!admitted.instructionEmpty) {
+      lines.push("", admitted.instruction);
+    }
+    return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  }
+  if (kind === "skill-args") {
+    if (
+      admitted.baseRevision === undefined
+      || admitted.lens === undefined
+      || admitted.authorityRefs === undefined
+    ) {
+      throw new Error("skill-args transport prompt is missing frozen skill args");
+    }
+    const lines = [buildReviewerSkillArgProjection({
+      baseRevision: admitted.baseRevision,
+      lens: admitted.lens,
+      authorityRefs: admitted.authorityRefs,
+    })];
+    if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
+      lines.push("", admitted.instruction);
+    }
+    return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
+  }
   const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
   if (admitted.attachments.length > 0) {
     lines.push("");
@@ -1636,29 +2199,6 @@ export function buildInstructionTransportPrompt(
   }
   return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
 }
-
-/** Build the Pi prompt transport for an admitted Judge request. */
-export function buildJudgeTransportPrompt(
-  admitted: AdmittedJudgeInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return buildInstructionTransportPrompt(admitted, engineMaterial);
-}
-
-export function buildSecretariatTransportPrompt(
-  admitted: AdmittedSecretariatInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return buildInstructionTransportPrompt(admitted, engineMaterial);
-}
-
-export function buildInspectorTransportPrompt(
-  admitted: AdmittedInspectorInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return buildInstructionTransportPrompt(admitted, engineMaterial);
-}
-
 
 export type AdmitCountersignInvocationOptions = {
   home: string;
@@ -1674,102 +2214,40 @@ export type AdmitCountersignInvocationOptions = {
   correlationId?: string;
   /** Same-ticket lookup may select an existing run before a new run is persisted. */
   deferPersistence?: boolean;
+  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
+  assertedTicketNumber?: number;
 };
-
-/**
- * Admit a Countersign run immediately, or reserve its coordinates for deferred
- * materialization after identity lookup (#572 / ADR 0074 / #863).
- */
-export async function admitCountersignInvocation(
-  options: AdmitCountersignInvocationOptions,
-): Promise<AdmittedCountersignInvocation> {
-  // Same shared freeze/coordinate body as judge but role: "countersign" so
-  // the ledger and session coordinates use the correct role from the start.
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  const projectRoot = resolve(options.project ?? options.cwd);
-  const runId = (options.createRunId ?? uuidv7)();
-  const {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
-    attachmentsDirectory,
-    ledgerHome,
-    bookKey,
-  } = issueAdmissionPlacement(options.principalAuthority, {
-    cwd: projectRoot,
-    runId,
-    role: "countersign",
-    subject: { unbound: true },
-    home: options.home,
-    materialize: options.deferPersistence !== true,
-  });
-
-  const attachments = options.deferPersistence === true
-    ? []
-    : await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
-  // Ticket binding is LLM-only post-admission (#635); admission stays unbound.
-
-  const instruction = options.instruction;
-  const instructionEmpty = instruction.trim() === "";
-  const admitted = {
-    role: "countersign" as const,
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    principal,
-    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
-    instruction,
-    instructionEmpty,
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind,
-    })),
-  };
-  const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  if (options.deferPersistence !== true) {
-    await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-      sessionDirectory,
-      sessionFile,
-    });
-    await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
-  }
-
-  return {
-    role: "countersign",
-    runId,
-    bookKey,
-    projectRoot,
-    instruction,
-    instructionEmpty,
-    attachments,
-    runDirectory,
-    principal,
-    admittedRequestPath,
-    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
-  };
-}
 
 /** Persist a deferred Countersign admission after same-ticket lookup found no retained run. */
 export async function materializeCountersignInvocation(
   admitted: AdmittedCountersignInvocation,
   options: Pick<AdmitCountersignInvocationOptions, "home" | "principalAuthority" | "model"> & {
     preparedAttachments: readonly PreparedAttachment[];
+    /** Typed ticket known before the deferred run is written. */
+    ticketNumber?: number;
   },
 ): Promise<void> {
-  const placement = issueAdmissionPlacement(options.principalAuthority, {
-    cwd: admitted.projectRoot,
-    runId: admitted.runId,
+  const placed = await placeRoleAdmission({
     role: "countersign",
-    subject: { unbound: true },
     home: options.home,
+    principalAuthority: options.principalAuthority,
+    cwd: admitted.projectRoot,
+    attachmentPaths: [],
+    freezeAttachments: false,
+    runId: admitted.runId,
+    ...(options.ticketNumber === undefined ? {} : { assertedTicketNumber: options.ticketNumber }),
   });
+  const placement = placed;
+  (admitted as { runDirectory: string }).runDirectory = placement.runDirectory;
+  (admitted as { admittedRequestPath: string }).admittedRequestPath = join(
+    placement.runDirectory,
+    "admitted-request.json",
+  );
+  (admitted as { principal: DurablePrincipal }).principal = placement.principal;
+  const ticketFields = ticketAdmissionFields(options.ticketNumber);
+  if (ticketFields.ticketNumber !== undefined) {
+    (admitted as { ticketNumber?: number }).ticketNumber = ticketFields.ticketNumber;
+  }
   const attachments = await freezePreparedAttachmentsIntoRun(
     options.preparedAttachments,
     admitted.runDirectory,
@@ -1786,14 +2264,6 @@ export async function materializeCountersignInvocation(
   );
 }
 
-/** Build the Pi prompt transport for an admitted Countersign request. */
-export function buildCountersignTransportPrompt(
-  admitted: AdmittedCountersignInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return buildInstructionTransportPrompt(admitted, engineMaterial);
-}
-
 /** Load admitted-request.json written at admission (Navigator work-context seam). */
 export async function loadAdmittedJudgeRequest(
   runDirectory: string,
@@ -1808,7 +2278,7 @@ export async function loadAdmittedJudgeRequest(
     ) as unknown;
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
     const record = raw as Record<string, unknown>;
-    if (record.role !== "judge") return undefined;
+    if (!packagedPublicInstructionSubject(record.role)) return undefined;
     if (typeof record.instruction !== "string") return undefined;
     if (typeof record.instructionEmpty !== "boolean") return undefined;
     if (!Array.isArray(record.attachments)) return undefined;
@@ -1830,125 +2300,6 @@ export async function ensureRunArtifactsDir(runDirectory: string): Promise<strin
   );
 }
 
-export type AdmitCoderInvocationOptions = {
-  home: string;
-  principalAuthority: DurablePrincipalAuthority;
-  cwd: string;
-  phase: CoderPhase;
-  instruction: string;
-  attachmentPaths: readonly string[];
-  project?: string;
-  createRunId?: () => string;
-  /** Effective model for this invocation — written onto invocation.json. */
-  model?: InvocationEffectiveModel;
-};
-
-/**
- * Admit a Coder Role run on the common Invocation request.
- * Nonblank task remains authoritative: blank instruction is a structural reject.
- * Phase (default apply / explicit plan) is frozen into the admitted request.
- */
-export async function admitCoderInvocation(
-  options: AdmitCoderInvocationOptions,
-): Promise<AdmittedCoderInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  const instruction = options.instruction;
-  if (instruction.trim() === "") {
-    throw new CliUsageError(
-      "coder requires a nonblank task instruction",
-    );
-  }
-  if (options.phase !== "plan" && options.phase !== "apply") {
-    throw new CliUsageError("coder phase must be plan or apply");
-  }
-
-  const projectRoot = resolve(options.project ?? options.cwd);
-  const runId = (options.createRunId ?? uuidv7)();
-  const {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
-    attachmentsDirectory,
-    ledgerHome,
-    bookKey,
-  } = issueAdmissionPlacement(options.principalAuthority, {
-    cwd: projectRoot,
-    runId,
-    role: "coder",
-    subject: { unbound: true },
-    home: options.home,
-  });
-
-  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
-
-  const taskPath = join(runDirectory, "task.md");
-  await writeFile(taskPath, instruction, "utf8");
-
-  const admitted = {
-    role: "coder" as const,
-    phase: options.phase,
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    principal,
-    instruction,
-    instructionEmpty: false,
-    taskPath,
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind,
-    })),
-  };
-  const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-    sessionDirectory,
-    sessionFile,
-  });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
-
-  return {
-    role: "coder",
-    phase: options.phase,
-    runId,
-    bookKey,
-    projectRoot,
-    instruction,
-    instructionEmpty: false,
-    attachments,
-    runDirectory,
-    principal,
-    admittedRequestPath,
-    taskPath,
-  };
-}
-
-/**
- * Build the Pi prompt transport for an admitted Coder request.
- * Task bytes already live at taskPath for --ak-coder-task; the prompt carries
- * the same instruction plus frozen Attachment paths.
- */
-export function buildCoderTransportPrompt(
-  admitted: AdmittedCoderInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines: string[] = [admitted.instruction];
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("已受理附件（冻结快照路径）：");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
-}
-
 export type AdmitFixerInvocationOptions = {
   home: string;
   principalAuthority: DurablePrincipalAuthority;
@@ -1962,155 +2313,9 @@ export type AdmitFixerInvocationOptions = {
   createRunId?: () => string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
+  assertedTicketNumber?: number;
 };
-
-/**
- * Admit a Fixer Role run on the common Invocation request plus optional prerequisites.
- * Nonblank instruction remains authoritative. Phase defaults to apply at parse time.
- * Prerequisite grammar is structural; unmet/insufficient prerequisites stay Fixer judgments.
- */
-export async function admitFixerInvocation(
-  options: AdmitFixerInvocationOptions,
-): Promise<AdmittedFixerInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  const instruction = options.instruction;
-  if (instruction.trim() === "") {
-    throw new CliUsageError(
-      "fixer requires a nonblank repair instruction",
-    );
-  }
-  if (options.phase !== "plan" && options.phase !== "apply") {
-    throw new CliUsageError("fixer phase must be plan or apply");
-  }
-
-  // Validate/read prerequisites before freezing request materials.
-  let prerequisites: readonly FixerPrerequisite[] = Object.freeze([]);
-  let prerequisitesSource: string | undefined;
-  if (options.prerequisitesPath !== undefined) {
-    const absolutePrereq = isAbsolute(options.prerequisitesPath)
-      ? options.prerequisitesPath
-      : resolve(options.prerequisitesPath);
-    try {
-      prerequisitesSource = await readFile(absolutePrereq, "utf8");
-    } catch (error) {
-      throw new CliUsageError(
-        `fixer prerequisites path is unreadable: ${options.prerequisitesPath}`,
-        { cause: error },
-      );
-    }
-    try {
-      prerequisites = parseFixerPrerequisites(prerequisitesSource);
-    } catch (error) {
-      if (error instanceof FixerPacketValidationError) {
-        throw new CliUsageError(error.message, { cause: error });
-      }
-      throw error;
-    }
-  }
-
-  const projectRoot = resolve(options.project ?? options.cwd);
-  const runId = (options.createRunId ?? uuidv7)();
-  const {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
-    attachmentsDirectory,
-    ledgerHome,
-    bookKey,
-  } = issueAdmissionPlacement(options.principalAuthority, {
-    cwd: projectRoot,
-    runId,
-    role: "fixer",
-    subject: { unbound: true },
-    home: options.home,
-  });
-
-  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
-
-  let prerequisitesPath: string | undefined;
-  if (prerequisitesSource !== undefined) {
-    prerequisitesPath = join(runDirectory, "prerequisites.json");
-    await writeFile(
-      prerequisitesPath,
-      `${JSON.stringify(prerequisites, null, 2)}\n`,
-      "utf8",
-    );
-  }
-
-  const packetPath = join(runDirectory, "fix-packet.md");
-  await writeFile(packetPath, instruction, "utf8");
-
-  const admitted = {
-    role: "fixer" as const,
-    phase: options.phase,
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    principal,
-    instruction,
-    instructionEmpty: false,
-    packetPath,
-    ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
-    prerequisites: prerequisites.map((entry) => ({
-      id: entry.id,
-      requirement: entry.requirement,
-    })),
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind,
-    })),
-  };
-  const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-    sessionDirectory,
-    sessionFile,
-  });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
-
-  return {
-    role: "fixer",
-    phase: options.phase,
-    runId,
-    bookKey,
-    projectRoot,
-    instruction,
-    instructionEmpty: false,
-    attachments,
-    runDirectory,
-    principal,
-    admittedRequestPath,
-    packetPath,
-    ...(prerequisitesPath === undefined ? {} : { prerequisitesPath }),
-    prerequisites,
-  };
-}
-
-/**
- * Build the Pi prompt transport for an admitted Fixer request.
- * Instruction bytes live at packetPath; prerequisites at optional path.
- * Diagnosis method is available via package --skill, not forced into this prompt.
- */
-export function buildFixerTransportPrompt(
-  admitted: AdmittedFixerInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines: string[] = [admitted.instruction];
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("已受理附件（冻结快照路径）：");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
-}
 
 function parsePositivePrOption(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === "") throw new CliUsageError("--pr requires a positive pull request number");
@@ -2120,79 +2325,6 @@ function parseRepoOption(raw: string | undefined): string {
   if (raw === undefined || raw.trim() === "") throw new CliUsageError("--repo requires owner/repo");
   return raw;
 }
-export function parseCollectorArgv(args: readonly string[]): ParseCollectorArgvResult {
-  // Spellings from PUBLIC_OPTION_TABLE.collector (#342).
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
-  let repo: string | undefined;
-  let prNumber: number | undefined;
-  let requestManifestPath: string | undefined;
-  let waitWindowMs: number | undefined;
-  const positional: string[] = [];
-  const tokens = [...args];
-  const definitions = roleOptions("collector");
-  const options = createTypedOptionConsumer(definitions);
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      if (taken.def.id === "pr") {
-        prNumber = parsePositivePrOption(taken.value);
-        continue;
-      }
-      if (taken.def.id === "repo") {
-        repo = parseRepoOption(taken.value);
-        continue;
-      }
-      if (taken.def.id === "request-manifest") {
-        requestManifestPath = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      if (taken.def.id === "wait-ms") {
-        if (taken.value === undefined || !/^[1-9]\d*$/.test(taken.value.trim())) {
-          throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
-        }
-        const parsed = Number(taken.value.trim());
-        if (!Number.isSafeInteger(parsed) || parsed < 1) {
-          throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
-        }
-        waitWindowMs = parsed;
-        continue;
-      }
-      throw new CliUsageError(`unknown collector option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown collector option: ${token}`);
-    }
-    positional.push(token);
-  }
-  // Unconditional required from typed table via shared consumer (#342).
-  // #676 D1: --pr is optional; ambiguous targets reject at admission, not by guessing.
-  options.assertRequired();
-  return {
-    ...(prNumber === undefined ? {} : { prNumber }),
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
-    ...(repo === undefined ? {} : { repo }),
-    ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
-    ...(waitWindowMs === undefined ? {} : { waitWindowMs }),
-  };
-}
-
 /**
  * Resolve owner/repo from the project's `origin` remote (github.com only).
  * Supports https and SSH GitHub URL shapes; never scrapes instruction prose.
@@ -2250,171 +2382,6 @@ function isGitRemoteMissing(error: unknown): boolean {
   return status === 2;
 }
 
-export type AdmitCollectorInvocationOptions = {
-  home: string;
-  principalAuthority: DurablePrincipalAuthority;
-  cwd: string;
-  /** Explicit PR when provided; resolved from context when absent (#676 D1). */
-  prNumber?: number;
-  instruction?: string;
-  attachmentPaths?: readonly string[];
-  project?: string;
-  /** Explicit owner/repo override; defaults from project origin remote. */
-  repo?: string;
-  /** Optional public request configuration; copied into the admitted run. */
-  requestManifestPath?: string;
-  /** Optional wait-window ms (#678 D4). */
-  waitWindowMs?: number;
-  createRunId?: () => string;
-  /** Effective model for this invocation — written onto invocation.json. */
-  model?: InvocationEffectiveModel;
-};
-
-/**
- * Admit a Collector Role run: assemble the retained leg manifest from typed
- * declarations, resolve repository + PR target (#676 D1), and place the session under #78.
- * Explicit PR is not preflighted for existence; context resolution uses online association.
- */
-export async function admitCollectorInvocation(
-  options: AdmitCollectorInvocationOptions,
-): Promise<AdmittedCollectorInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  let explicitPrNumber: number | undefined;
-  if (options.prNumber !== undefined) {
-    try {
-      explicitPrNumber = parseCollectorPrNumber(options.prNumber);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new CliUsageError(detail, { cause: error });
-    }
-  }
-
-  const projectRoot = resolve(options.project ?? options.cwd);
-  let repository: CollectorRepository;
-  if (options.repo !== undefined) {
-    try {
-      repository = parseCollectorRepository(options.repo);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new CliUsageError(detail, { cause: error });
-    }
-  } else {
-    repository = resolveGitHubRemoteRepository(projectRoot);
-  }
-
-  // Validate optional request-manifest before freezing request materials.
-  let manifest = emptyCollectorManifest();
-  let manifestCanonicalJson: string | undefined;
-  if (options.requestManifestPath !== undefined) {
-    try {
-      manifest = await loadCollectorManifest(options.requestManifestPath);
-      manifestCanonicalJson = manifest.canonicalJson;
-    } catch (error) {
-      throw new CliUsageError(error instanceof Error ? error.message : String(error), { cause: error });
-    }
-  }
-  const manifestDigest = manifest.digest;
-
-  const runId = (options.createRunId ?? uuidv7)();
-  const {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
-    attachmentsDirectory,
-    ledgerHome,
-    bookKey,
-  } = issueAdmissionPlacement(options.principalAuthority, {
-    cwd: projectRoot,
-    runId,
-    role: "collector",
-    subject: { unbound: true },
-    home: options.home,
-  });
-
-  // #676 A: freeze task materials BEFORE target resolution so the role receives
-  // real instruction + attachments. Admission binds only explicit --pr or unique
-  // head/commit association — task-text scrape is not a target lock.
-  const attachments = await freezeAttachments(options.attachmentPaths ?? [], attachmentsDirectory);
-  const instruction = options.instruction ?? "";
-  const instructionEmpty = instruction.trim() === "";
-
-  const target = await resolveCollectorTarget({
-    projectRoot,
-    repository,
-    ...(explicitPrNumber === undefined ? {} : { explicitPrNumber }),
-  });
-  const prNumber = target.kind === "bound" ? target.prNumber : undefined;
-
-  let requestManifestPath: string | undefined;
-  if (manifestCanonicalJson !== undefined) {
-    requestManifestPath = join(runDirectory, "request-manifest.json");
-    await writeFile(requestManifestPath, manifestCanonicalJson, "utf8");
-  }
-  const admitted = {
-    role: "collector" as const,
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    principal,
-    instruction,
-    instructionEmpty,
-    ...(prNumber === undefined ? {} : { prNumber }),
-    repository: repository.canonical,
-    repositoryDisplay: repository.display,
-    ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
-    ...(options.waitWindowMs === undefined ? {} : { waitWindowMs: options.waitWindowMs }),
-    manifestDigest,
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind,
-    })),
-  };
-  const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-    sessionDirectory,
-    sessionFile,
-  });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
-
-  return {
-    role: "collector",
-    runId,
-    bookKey,
-    projectRoot,
-    instruction,
-    instructionEmpty,
-    attachments,
-    runDirectory,
-    principal,
-    admittedRequestPath,
-    ...(prNumber === undefined ? {} : { prNumber }),
-    repository,
-    ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
-    ...(options.waitWindowMs === undefined ? {} : { waitWindowMs: options.waitWindowMs }),
-    manifestDigest,
-  };
-}
-
-/**
- * #676 A: Collector consumes the real call task + frozen attachments so the role
- * can identify issue/PR from materials via ak_collector_bind_target. Explicit --pr
- * still wins at admission; unique head/commit association also binds. No fixed
- * kickoff rewrite of the caller task; no mechanical task-text target lock.
- */
-export function buildCollectorTransportPrompt(
-  admitted: AdmittedCollectorInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return buildInstructionTransportPrompt(admitted, engineMaterial);
-}
-
 /** Positive Issue number grammar shared with Doctor case path identity. */
 const DOCTOR_ISSUE_NUMBER_PATTERN = /^[1-9]\d*$/;
 
@@ -2436,92 +2403,6 @@ export function parseDoctorIssueNumber(raw: string): number {
   }
   return Number(trimmed);
 }
-
-/**
- * Parse Doctor-specific argv after the `doctor` token.
- * Requires --issue; optional confined --runs override; common --attach/--project.
- */
-export function parseDoctorArgv(args: readonly string[]): ParseDoctorArgvResult {
-  // Spellings from PUBLIC_OPTION_TABLE.doctor (#342).
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
-  let issueRaw: string | undefined;
-  let runs: string | undefined;
-  const positional: string[] = [];
-  const tokens = [...args];
-  const definitions = roleOptions("doctor");
-  const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
-      if (taken.def.id === "issue") {
-        if (taken.value === undefined || taken.value.trim() === "") {
-          throw new CliUsageError("doctor --issue requires a positive integer");
-        }
-        issueRaw = taken.value;
-        continue;
-      }
-      if (taken.def.id === "runs") {
-        if (taken.value === undefined || taken.value.trim() === "") {
-          throw new CliUsageError("doctor --runs requires a path");
-        }
-        runs = taken.value;
-        continue;
-      }
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown doctor option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown doctor option: ${token}`);
-    }
-    positional.push(token);
-  }
-
-  // Unconditional required (e.g. --issue) from typed table via shared consumer (#342).
-  options.assertRequired();
-  const issueNumber = parseDoctorIssueNumber(issueRaw!);
-
-  if (runs !== undefined && runs.trim() === "") {
-    throw new CliUsageError("doctor --runs requires a path");
-  }
-
-  return {
-    issueNumber,
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
-    ...(runs === undefined ? {} : { runs }),
-  };
-}
-
-export type AdmitDoctorInvocationOptions = {
-  home: string;
-  principalAuthority: DurablePrincipalAuthority;
-  cwd: string;
-  issueNumber: number;
-  /** Optional project-relative retained runs root override. */
-  runs?: string;
-  instruction?: string;
-  attachmentPaths?: readonly string[];
-  project?: string;
-  createRunId?: () => string;
-  /** Effective model for this invocation — written onto invocation.json. */
-  model?: InvocationEffectiveModel;
-};
 
 /**
  * Resolve the retained Doctor case runs root from Issue identity.
@@ -2593,526 +2474,6 @@ export async function resolveDoctorCaseRunsPath(options: {
   return real;
 }
 
-/**
- * Admit a Doctor Role run: resolve Issue → retained runs root via #78 (or a
- * confined override), construct the structurally exact case identity through
- * loadDoctorCase, and place the Doctor session under the book runs lane.
- * Does not copy session content into a second store.
- */
-export async function admitDoctorInvocation(
-  options: AdmitDoctorInvocationOptions,
-): Promise<AdmittedDoctorInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  if (
-    !Number.isInteger(options.issueNumber) ||
-    options.issueNumber < 1 ||
-    !DOCTOR_ISSUE_NUMBER_PATTERN.test(String(options.issueNumber))
-  ) {
-    throw new CliUsageError(
-      `doctor --issue must be a positive integer, got ${options.issueNumber}`,
-    );
-  }
-
-  const projectRoot = resolve(options.project ?? options.cwd);
-  const runId = (options.createRunId ?? uuidv7)();
-  const {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
-    attachmentsDirectory,
-    ledgerHome,
-    bookKey,
-  } = issueAdmissionPlacement(options.principalAuthority, {
-    cwd: projectRoot,
-    runId,
-    role: "doctor",
-    subject: { unbound: true },
-    home: options.home,
-  });
-
-  let caseRunsPath: string;
-  try {
-    caseRunsPath = await resolveDoctorCaseRunsPath({
-      home: options.home,
-      projectRoot,
-      bookKey,
-      issueNumber: options.issueNumber,
-      ...(options.runs === undefined ? {} : { runs: options.runs }),
-    });
-  } catch (error) {
-    if (error instanceof CliUsageError) throw error;
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(detail, { cause: error });
-  }
-
-  // Default #78 locator may not exist yet — ensure the empty runs root so
-  // loadDoctorCase can form an empty case and Doctor's refusal owns insufficiency.
-  if (options.runs === undefined) {
-    ensureRealDirectoryTree(ledgerHome, caseRunsPath);
-  }
-
-  let caseIdentity: DoctorCaseIdentity;
-  try {
-    const patient = await loadDoctorCase(caseRunsPath);
-    if (patient.identity.issueNumber !== options.issueNumber) {
-      throw new CliUsageError(
-        `doctor case issue ${patient.identity.issueNumber} does not match --issue ${options.issueNumber}`,
-      );
-    }
-    caseIdentity = patient.identity;
-    caseRunsPath = await realpath(caseRunsPath);
-  } catch (error) {
-    if (error instanceof CliUsageError) throw error;
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(
-      `doctor case could not be constructed from retained evidence: ${detail}`,
-      { cause: error },
-    );
-  }
-
-
-  const attachments = await freezeAttachments(options.attachmentPaths ?? [], attachmentsDirectory);
-
-  const instruction = options.instruction ?? "";
-  const instructionEmpty = instruction.trim() === "";
-  const admitted = {
-    role: "doctor" as const,
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    principal,
-    instruction,
-    instructionEmpty,
-    issueNumber: options.issueNumber,
-    caseRunsPath,
-    caseIdentity,
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind,
-    })),
-  };
-  const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-    sessionDirectory,
-    sessionFile,
-  });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
-
-  return {
-    role: "doctor",
-    runId,
-    bookKey,
-    projectRoot,
-    instruction,
-    instructionEmpty,
-    attachments,
-    runDirectory,
-    principal,
-    admittedRequestPath,
-    issueNumber: options.issueNumber,
-    caseRunsPath,
-    caseIdentity,
-  };
-}
-
-/** Build the Pi prompt transport for an admitted Doctor request. */
-export function buildDoctorTransportPrompt(
-  admitted: AdmittedDoctorInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines: string[] = [admitted.instructionEmpty ? "" : admitted.instruction];
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("已受理附件（冻结快照路径）：");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
-}
-
-export type ParseNotaryArgvResult = {
-  readonly sourceRun: string;
-  readonly project?: string;
-};
-
-/**
- * Parse Notary-specific argv after the `notary` token.
- * Input contract = zero prompt, zero attachment projection (#448 / #276).
- */
-export function parseNotaryArgv(args: readonly string[]): ParseNotaryArgvResult {
-  let project: string | undefined;
-  let sourceRun: string | undefined;
-  const tokens = [...args];
-  const definitions = roleOptions("notary");
-  const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      if (tokens.length > 0) {
-        throw new CliUsageError(
-          "notary rejects caller prompt/instruction; only --source-run locator is admitted",
-        );
-      }
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      if (taken.def.id === "source-run") {
-        if (taken.value === undefined || taken.value.trim() === "") {
-          throw new CliUsageError("notary --source-run requires a run locator");
-        }
-        sourceRun = taken.value;
-        continue;
-      }
-      throw new CliUsageError(`unknown notary option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown notary option: ${token}`);
-    }
-    throw new CliUsageError(
-      "notary rejects caller prompt/instruction; only --source-run locator is admitted",
-    );
-  }
-
-  options.assertRequired();
-  if (sourceRun === undefined || sourceRun.trim() === "") {
-    throw new CliUsageError("notary --source-run requires a run locator");
-  }
-  return {
-    sourceRun,
-    ...(project === undefined ? {} : { project }),
-  };
-}
-
-export async function admitNotaryInvocation(options: {
-  readonly home: string;
-  readonly principalAuthority: DurablePrincipalAuthority;
-  readonly cwd: string;
-  readonly sourceRun: string;
-  readonly project?: string;
-  readonly runs?: string;
-  readonly createRunId?: () => string;
-  readonly model?: InvocationEffectiveModel;
-  readonly correlationId?: string;
-}): Promise<AdmittedNotaryInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  const projectRoot = resolve(options.project ?? options.cwd);
-  let sourceRun: NotarySourceRunLocator;
-  try {
-    sourceRun = await resolveNotarySourceRunLocator({
-      projectRoot,
-      sourceRun: options.sourceRun,
-      home: options.home,
-    });
-  } catch (error) {
-    if (error instanceof NotarySourceRunError) {
-      throw new CliUsageError(error.message, { cause: error });
-    }
-    throw error;
-  }
-
-  // Notary inherits board identity only — migration-derived stays display/placement.
-  const inheritedTicketNumber = await readBoardTicketNumber(sourceRun.runDirectory);
-  const runId = options.createRunId?.() ?? uuidv7();
-  const {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
-    attachmentsDirectory,
-    ledgerHome,
-    bookKey,
-  } = issueAdmissionPlacement(options.principalAuthority, {
-    cwd: projectRoot,
-    runId,
-    role: "notary",
-    subject: inheritedTicketNumber === undefined
-      ? { unbound: true }
-      : { ticketNumber: inheritedTicketNumber },
-    home: options.home,
-  });
-  const ticketFields = ticketAdmissionFields(inheritedTicketNumber);
-
-  const admitted = {
-    role: "notary" as const,
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    principal,
-    instruction: "",
-    instructionEmpty: true,
-    attachments: [] as const,
-    sourceRunPath: sourceRun.runDirectory,
-    sourceRun,
-    ...ticketFields,
-    ...(options.correlationId === undefined
-      ? {}
-      : { correlationId: options.correlationId }),
-  };
-  const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-    sessionDirectory,
-    sessionFile,
-  });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
-
-  return {
-    role: "notary",
-    runId,
-    bookKey,
-    projectRoot,
-    instruction: "",
-    instructionEmpty: true,
-    attachments: [],
-    runDirectory,
-    principal,
-    admittedRequestPath,
-    sourceRunPath: sourceRun.runDirectory,
-    sourceRun,
-    ...ticketFields,
-    ...(options.correlationId === undefined
-      ? {}
-      : { correlationId: options.correlationId }),
-  };
-}
-
-/** Package-owned fixed kickoff only — never caller instruction/attachments.
- * Ticket rides admitted → activation → agent-start typed bound (not free-text kickoff). */
-export function buildNotaryTransportPrompt(
-  _admitted: AdmittedNotaryInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  return appendEngineSessionMaterial([NOTARY_FIXED_KICKOFF], engineMaterial).join("\n");
-}
-
-/**
- * Parse Gleaner-Left argv after the `gleaner-left` token.
- * Public flags: --project, required --base. No --attach / ticket face (unanchored self-fetch).
- * Instruction may be empty; callers must not pass directional instruction.
- */
-export function parseGleanerLeftArgv(
-  args: readonly string[],
-): ParseGleanerLeftArgvResult {
-  let project: string | undefined;
-  let baseRevision: string | undefined;
-  const positional: string[] = [];
-  const tokens = [...args];
-  const definitions = roleOptions("gleaner-left");
-  const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      if (taken.def.id === "base") {
-        baseRevision = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown gleaner-left option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown gleaner-left option: ${token}`);
-    }
-    positional.push(token);
-  }
-
-  options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    baseRevision: baseRevision!,
-    ...(project === undefined ? {} : { project }),
-  };
-}
-
-export type AdmitGleanerLeftInvocationOptions = {
-  home: string;
-  principalAuthority: DurablePrincipalAuthority;
-  cwd: string;
-  instruction: string;
-  baseRevision: string;
-  project?: string;
-  createRunId?: () => string;
-  model?: InvocationEffectiveModel;
-  correlationId?: string;
-};
-
-/**
- * Admit a Gleaner-Left Role run on the fixed comparison base.
- * Empty instruction is the lawful path; no attachment/ticket admission face.
- */
-export async function admitGleanerLeftInvocation(
-  options: AdmitGleanerLeftInvocationOptions,
-): Promise<AdmittedGleanerLeftInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  if (options.baseRevision.trim() === "") {
-    throw new CliUsageError("--base requires a nonempty revision");
-  }
-
-  const projectRoot = resolve(options.project ?? options.cwd);
-  const runId = (options.createRunId ?? uuidv7)();
-  const {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
-    attachmentsDirectory,
-    ledgerHome,
-    bookKey,
-  } = issueAdmissionPlacement(options.principalAuthority, {
-    cwd: projectRoot,
-    runId,
-    role: "gleaner-left",
-    subject: { unbound: true },
-    home: options.home,
-  });
-
-  const instruction = options.instruction;
-  const instructionEmpty = instruction.trim() === "";
-  const admitted = {
-    role: "gleaner-left" as const,
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    principal,
-    instruction,
-    instructionEmpty,
-    baseRevision: options.baseRevision,
-    attachments: [] as const,
-    ...(options.correlationId === undefined
-      ? {}
-      : { correlationId: options.correlationId }),
-  };
-  const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-    sessionDirectory,
-    sessionFile,
-  });
-  await writeRoleInvocationLedger(
-    { ...admitted, sessionDirectory, sessionFile },
-    admitted.role,
-    options.model,
-  );
-
-  return {
-    role: "gleaner-left",
-    runId,
-    bookKey,
-    projectRoot,
-    instruction,
-    instructionEmpty,
-    attachments: [],
-    runDirectory,
-    principal,
-    admittedRequestPath,
-    baseRevision: options.baseRevision,
-    ...(options.correlationId === undefined
-      ? {}
-      : { correlationId: options.correlationId }),
-  };
-}
-
-/** Bound comparison base is a typed fact, not a directional instruction. */
-export function buildGleanerLeftTransportPrompt(
-  admitted: AdmittedGleanerLeftInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines: string[] = [
-    `左拾遗案已受理。比较基线：${admitted.baseRevision}`,
-  ];
-  if (!admitted.instructionEmpty) {
-    lines.push("", admitted.instruction);
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
-}
-
-export function parseReviewerArgv(
-  args: readonly string[],
-): ParseReviewerArgvResult {
-  // Spellings from PUBLIC_OPTION_TABLE.reviewer (#342). No --attach face.
-  const attachmentPaths: string[] = [];
-  const authorityRefs: string[] = [];
-  let project: string | undefined;
-  let baseRevision: string | undefined;
-  let lens: ReviewerLens | undefined;
-  const positional: string[] = [];
-  const tokens = [...args];
-  const definitions = roleOptions("reviewer");
-  const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      if (taken.def.id === "base") {
-        baseRevision = requireReviewerBaseRevision(taken.value);
-        continue;
-      }
-      if (taken.def.id === "lens") {
-        // Public override is single-axis only; omission stays undefined for the parallel branch.
-        lens = requireReviewerLens(taken.value);
-        continue;
-      }
-      if (taken.def.id === "authority-ref") {
-        authorityRefs.push(requireAuthorityRef(taken.value));
-        continue;
-      }
-      throw new CliUsageError(`unknown reviewer option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown reviewer option: ${token}`);
-    }
-    positional.push(token);
-  }
-
-  // Base and authority are required; omitted lens selects the parallel two-axis mode.
-  options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    baseRevision: baseRevision!,
-    ...(lens === undefined ? {} : { lens }),
-    authorityRefs,
-    ...(project === undefined ? {} : { project }),
-  };
-}
 
 export type AdmitReviewerInvocationOptions = {
   home: string;
@@ -3131,100 +2492,9 @@ export type AdmitReviewerInvocationOptions = {
   correlationId?: string;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
+  assertedTicketNumber?: number;
 };
-
-/**
- * Admit a Reviewer Role run on the fixed base + lens + authority set.
- * Caller instruction is optional provenance; typed fields project Skill inputs.
- * authorityRefs are frozen as durable references only — not Spec prose.
- */
-export async function admitReviewerInvocation(
-  options: AdmitReviewerInvocationOptions,
-): Promise<AdmittedReviewerInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  const baseRevision = requireReviewerBaseRevision(options.baseRevision);
-  const lens = requireReviewerLens(options.lens);
-  if (options.authorityRefs.length === 0) {
-    throw new CliUsageError("reviewer requires --authority-ref <ref>");
-  }
-  const authorityRefs = Object.freeze(
-    options.authorityRefs.map((ref) => requireAuthorityRef(ref)),
-  );
-
-  const projectRoot = resolve(options.project ?? options.cwd);
-  const runId = (options.createRunId ?? uuidv7)();
-  const {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
-    attachmentsDirectory,
-    ledgerHome,
-    bookKey,
-  } = issueAdmissionPlacement(options.principalAuthority, {
-    cwd: projectRoot,
-    runId,
-    role: "reviewer",
-    subject: { unbound: true },
-    home: options.home,
-  });
-
-  // Public parse already rejects attachments; keep freeze loop for structural symmetry.
-  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
-
-  const instruction = options.instruction;
-  const instructionEmpty = instruction.trim() === "";
-  const admitted = {
-    role: "reviewer" as const,
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    principal,
-    instruction,
-    instructionEmpty,
-    baseRevision,
-    lens,
-    authorityRefs: [...authorityRefs],
-    ...(options.correlationId === undefined
-      ? {}
-      : { correlationId: options.correlationId }),
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind,
-    })),
-  };
-  const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-    sessionDirectory,
-    sessionFile,
-  });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
-
-  return {
-    role: "reviewer",
-    runId,
-    bookKey,
-    projectRoot,
-    instruction,
-    instructionEmpty,
-    attachments,
-    runDirectory,
-    principal,
-    admittedRequestPath,
-    baseRevision,
-    lens,
-    authorityRefs,
-    ...(options.correlationId === undefined
-      ? {}
-      : { correlationId: options.correlationId }),
-  };
-}
 
 /** Frozen Skill arg projection shared by initial and resume (never reverse-parsed). */
 export function buildReviewerSkillArgProjection(
@@ -3235,84 +2505,6 @@ export function buildReviewerSkillArgProjection(
     `--lens ${admitted.lens}`,
     ...admitted.authorityRefs.map((ref) => `--authority ${ref}`),
   ].join(" ");
-}
-
-/**
- * Build the host-neutral prompt transport for an admitted Reviewer request.
- * Typed base/lens/authority project to Skill invocation args (never reverse-parsed from prose).
- * Optional caller words + engine material follow.
- */
-export function buildReviewerTransportPrompt(
-  admitted: AdmittedReviewerInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines = [buildReviewerSkillArgProjection(admitted)];
-  if (!admitted.instructionEmpty && admitted.instruction.trim() !== "") {
-    lines.push("", admitted.instruction);
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
-}
-
-
-/**
- * Parse Merger-specific argv after the `merger` token.
- * Spellings from PUBLIC_OPTION_TABLE.merger; internal packet fields rejected (#342).
- */
-export function parseMergerArgv(args: readonly string[]): ParseMergerArgvResult {
-  const attachmentPaths: string[] = [];
-  let project: string | undefined;
-  const positional: string[] = [];
-  const tokens = [...args];
-  const definitions = roleOptions("merger");
-  const options = createTypedOptionConsumer(definitions);
-
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      positional.push(...tokens);
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
-      if (taken.def.id === "attach") {
-        attachmentPaths.push(requireOptionPath(taken.def.canonical, taken.value));
-        continue;
-      }
-      if (taken.def.id === "project") {
-        project = requireOptionPath(taken.def.canonical, taken.value);
-        continue;
-      }
-      throw new CliUsageError(`unknown merger option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    // Rejected public spellings (#342) plus other internal packet field faces.
-    if (
-      isRejectedPublicSpelling("merger", token) ||
-      token === "--targetObjectId" ||
-      token.startsWith("--targetObjectId=") ||
-      token === "--sourceObjectId" ||
-      token.startsWith("--sourceObjectId=") ||
-      token === "--expectedConflictPaths" ||
-      token.startsWith("--expectedConflictPaths=") ||
-      token === "--resolutionScope" ||
-      token.startsWith("--resolutionScope=")
-    ) {
-      throw new CliUsageError(
-        "merger does not accept public packet fields; the adapter reads Git merge materials",
-      );
-    }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown merger option: ${token}`);
-    }
-    positional.push(token);
-  }
-
-  options.assertRequired();
-  return {
-    instruction: positional.join(" "),
-    attachmentPaths,
-    ...(project === undefined ? {} : { project }),
-  };
 }
 
 function mergerMaterialFromUtf8(text: string): MergerInput["materials"]["task"] {
@@ -3351,154 +2543,11 @@ export type AdmitMergerInvocationOptions = {
   attachmentPaths: readonly string[];
   project?: string;
   createRunId?: () => string;
-  /** Test seam; production binds createProductionMergerGitState(projectRoot). */
-  gitState?: MergerGitState;
   /** Effective model for this invocation — written onto invocation.json. */
   model?: InvocationEffectiveModel;
+  /** Typed ticket already on this summons. Placement uses it; code does not infer one. */
+  assertedTicketNumber?: number;
 };
-
-/**
- * Admit a Merger Role run on the common Invocation request.
- * Git materials (parents, conflicts, scope) are read from the worktree and
- * handed to the role as assignment materials — including when empty (#827).
- * Callers never supply public packet fields for those facts.
- */
-export async function admitMergerInvocation(
-  options: AdmitMergerInvocationOptions,
-): Promise<AdmittedMergerInvocation> {
-  if (options.project !== undefined) {
-    requireOptionPath("--project", options.project);
-  }
-  const instruction = options.instruction;
-  if (instruction.trim() === "") {
-    throw new CliUsageError("merger requires a nonblank task instruction");
-  }
-
-  const projectRoot = resolve(options.project ?? options.cwd);
-  const derived = await deriveMergerEnvelopeFromActiveMerge(
-    projectRoot,
-    options.gitState ?? createProductionMergerGitState(projectRoot),
-  );
-
-  const runId = (options.createRunId ?? uuidv7)();
-  const {
-    principal,
-    sessionDirectory,
-    sessionFile,
-    runDirectory,
-    attachmentsDirectory,
-    ledgerHome,
-    bookKey,
-  } = issueAdmissionPlacement(options.principalAuthority, {
-    cwd: projectRoot,
-    runId,
-    role: "merger",
-    subject: { unbound: true },
-    home: options.home,
-  });
-
-  const attachments = await freezeAttachments(options.attachmentPaths, attachmentsDirectory);
-
-  // Intent materials seed primary-source investigation; the method owns the work.
-  const targetLabel = derived.targetObjectId === "" ? "(none observed)" : derived.targetObjectId;
-  const sourceLabel = derived.sourceObjectId === "" ? "(none observed)" : derived.sourceObjectId;
-  const targetIntent = mergerMaterialFromUtf8(
-    `Investigate primary sources for target parent ${targetLabel}. Do not invent intent.`,
-  );
-  const sourceIntent = mergerMaterialFromUtf8(
-    `Investigate primary sources for source parent ${sourceLabel}. Do not invent intent.`,
-  );
-  const taskMaterial = mergerMaterialFromUtf8(instruction);
-  const authorityMaterial = mergerMaterialFromUtf8(instruction);
-
-  const mergerInput = validateMergerInput({
-    attemptId: runId,
-    targetObjectId: derived.targetObjectId,
-    sourceObjectId: derived.sourceObjectId,
-    materials: {
-      task: taskMaterial,
-      authority: authorityMaterial,
-      targetIntent,
-      sourceIntent,
-    },
-    expectedConflictPaths: [...derived.expectedConflictPaths],
-    resolutionScope: [...derived.resolutionScope],
-    authorizedChecks: [],
-  });
-
-  const mergerInputPath = join(runDirectory, "merger-input.json");
-  await writeFile(
-    mergerInputPath,
-    `${JSON.stringify(mergerInput, null, 2)}\n`,
-    "utf8",
-  );
-
-  const admitted = {
-    role: "merger" as const,
-    runId,
-    bookKey,
-    projectRoot,
-    runDirectory,
-    principal,
-    instruction,
-    instructionEmpty: false,
-    mergerInputPath,
-    derived: {
-      targetObjectId: derived.targetObjectId,
-      sourceObjectId: derived.sourceObjectId,
-      expectedConflictPaths: [...derived.expectedConflictPaths],
-      resolutionScope: [...derived.resolutionScope],
-    },
-    attachments: attachments.map((a) => ({
-      provenancePath: a.provenancePath,
-      frozenPath: a.frozenPath,
-      byteLength: a.byteLength,
-      sha256: a.sha256,
-      mediaKind: a.mediaKind,
-    })),
-  };
-  const admittedRequestPath = join(runDirectory, "admitted-request.json");
-  await writeAdmittedRequestPersistence(admittedRequestPath, admitted, {
-    sessionDirectory,
-    sessionFile,
-  });
-  await writeRoleInvocationLedger({ ...admitted, sessionDirectory, sessionFile }, admitted.role, options.model);
-
-  return {
-    role: "merger",
-    runId,
-    bookKey,
-    projectRoot,
-    instruction,
-    instructionEmpty: false,
-    attachments,
-    runDirectory,
-    principal,
-    admittedRequestPath,
-    mergerInputPath,
-    derived: admitted.derived,
-  };
-}
-
-/**
- * Build the host-neutral prompt transport for an admitted Merger request.
- * Method material binds on RoleTurnRequest.methods; Pi-native `/skill:` form
- * is adapter-internal only (ADR 0082).
- */
-export function buildMergerTransportPrompt(
-  admitted: AdmittedMergerInvocation,
-  engineMaterial?: EngineSessionMaterial,
-): string {
-  const lines: string[] = [admitted.instruction];
-  if (admitted.attachments.length > 0) {
-    lines.push("");
-    lines.push("已受理附件（冻结快照路径）：");
-    for (const attachment of admitted.attachments) {
-      lines.push(`- ${attachment.frozenPath}`);
-    }
-  }
-  return appendEngineSessionMaterial(lines, engineMaterial).join("\n");
-}
 
 const ANALYST_TICKET_NUMBER_PATTERN = /^[1-9]\d*$/;
 
@@ -3651,7 +2700,6 @@ function requireOptionValue(
  */
 export function parseAnalystArgv(args: readonly string[]): ParseAnalystArgvResult {
   const valueLists = new Map<string, string[]>();
-  const tokens = [...args];
   const definitions = roleOptions("analyst");
   // Shared typed consumer: dashed + positional take, repeatable, required (#342).
   const options = createTypedOptionConsumer(definitions);
@@ -3662,40 +2710,32 @@ export function parseAnalystArgv(args: readonly string[]): ParseAnalystArgvResul
     else existing.push(value);
   };
 
-  while (tokens.length > 0) {
-    if (tokens[0] === "--") {
-      tokens.shift();
-      if (tokens.length > 0) {
-        throw new CliUsageError(`unexpected analyst argument: ${tokens[0]}`);
-      }
-      break;
-    }
-    const taken = options.takeDashed(tokens);
-    if (taken !== undefined) {
+  scanPublicArgv(args, options, {
+    onDashed(taken) {
       if (taken.def.valueMetavar === null) {
         pushValue(taken.def.id, "");
-        continue;
+        return;
       }
       if (taken.def.id === "ticket") {
         if (taken.value === undefined || taken.value.trim() === "") {
           throw new CliUsageError("analyst --ticket requires a positive integer");
         }
         pushValue("ticket", taken.value);
-        continue;
+        return;
       }
       if (taken.def.id === "attach") {
         pushValue(
           "attach",
           requireOptionPath(taken.def.canonical, taken.value),
         );
-        continue;
+        return;
       }
       if (taken.def.id === "group-a-label" || taken.def.id === "group-b-label") {
         pushValue(
           taken.def.id,
           requireOptionValue(taken.def.canonical, taken.value, "a label"),
         );
-        continue;
+        return;
       }
       if (
         taken.def.id === "group-a-issues" || taken.def.id === "group-b-issues"
@@ -3708,36 +2748,42 @@ export function parseAnalystArgv(args: readonly string[]): ParseAnalystArgvResul
             "a comma-separated list of N or book:N",
           ),
         );
-        continue;
+        return;
       }
       throw new CliUsageError(`unknown analyst option: ${taken.def.canonical}`);
-    }
-    const token = tokens.shift()!;
-    // #399: deleted --project-root; disabled --model-groups public face.
-    if (isRejectedPublicSpelling("analyst", token)) {
-      if (token === "--project-root" || token.startsWith("--project-root=")) {
-        throw new CliUsageError(
-          "analyst no longer accepts --project-root (deleted); use bare call for whole book or --ticket N (cwd git common-dir selects the book)",
-        );
+    },
+    onBare(token) {
+      // #399: deleted --project-root; disabled --model-groups public face.
+      if (isRejectedPublicSpelling("analyst", token)) {
+        if (token === "--project-root" || token.startsWith("--project-root=")) {
+          throw new CliUsageError(
+            "analyst no longer accepts --project-root (deleted); use bare call for whole book or --ticket N (cwd git common-dir selects the book)",
+          );
+        }
+        if (token === "--model-groups" || token.startsWith("--model-groups=")) {
+          throw new CliUsageError(
+            "analyst --model-groups public CLI face is disabled; input face is being redesigned for multi-issue comparison (see follow-up ticket)",
+          );
+        }
+        throw new CliUsageError(`unknown analyst option: ${token}`);
       }
-      if (token === "--model-groups" || token.startsWith("--model-groups=")) {
-        throw new CliUsageError(
-          "analyst --model-groups public CLI face is disabled; input face is being redesigned for multi-issue comparison (see follow-up ticket)",
-        );
+      if (token.startsWith("-") && token !== "-") {
+        throw new CliUsageError(`unknown analyst option: ${token}`);
       }
-      throw new CliUsageError(`unknown analyst option: ${token}`);
-    }
-    if (token.startsWith("-") && token !== "-") {
-      throw new CliUsageError(`unknown analyst option: ${token}`);
-    }
-    // Positional selectors (e.g. sweep) via shared typed consumer — not a parallel list.
-    const positional = options.takePositional(token);
-    if (positional !== undefined) {
-      pushValue(positional.id, "");
-      continue;
-    }
-    throw new CliUsageError(`unexpected analyst argument: ${token}`);
-  }
+      // Positional selectors (e.g. sweep) via shared typed consumer — not a parallel list.
+      const positional = options.takePositional(token);
+      if (positional !== undefined) {
+        pushValue(positional.id, "");
+        return;
+      }
+      throw new CliUsageError(`unexpected analyst argument: ${token}`);
+    },
+    onDoubleDash(rest) {
+      if (rest.length > 0) {
+        throw new CliUsageError(`unexpected analyst argument: ${rest[0]}`);
+      }
+    },
+  });
 
   const counts = new Map<string, number>();
   for (const [id, values] of valueLists) {

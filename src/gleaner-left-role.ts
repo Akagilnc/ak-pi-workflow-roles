@@ -10,7 +10,6 @@ import {
 } from "./gleaner-left-contracts.ts";
 
 export {
-  GLEANER_LEFT_ACCEPTED_TEXT,
   GLEANER_LEFT_OUTPUT_TOOL_NAME,
 } from "./gleaner-left-contracts.ts";
 export type { GleanerLeftOutput };

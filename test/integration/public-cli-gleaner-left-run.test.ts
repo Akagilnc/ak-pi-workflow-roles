@@ -15,10 +15,10 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
-  admitGleanerLeftInvocation,
-  parseGleanerLeftArgv,
+  admitPublicRole,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
-import { buildGleanerLeftTurnRequest } from "../../src/public-cli/gleaner-left-run.ts";
+import { buildInstructionSeatTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -72,24 +72,25 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
-    assert.throws(() => parseGleanerLeftArgv([]), (error: unknown) => {
+    assert.throws(() => parsePublicSeatArgv("gleaner-left", []), (error: unknown) => {
       return error instanceof CliUsageError;
     });
-    assert.throws(() => parseGleanerLeftArgv(["--bogus"]), (error: unknown) => {
+    assert.throws(() => parsePublicSeatArgv("gleaner-left", ["--bogus"]), (error: unknown) => {
       return error instanceof CliUsageError;
     });
 
-    const parsed = parseGleanerLeftArgv(["--project", project, "--base", "HEAD"]);
+    const parsed = parsePublicSeatArgv("gleaner-left", ["--project", project, "--base", "HEAD"]);
     assert.deepEqual(
       parsed.instruction, "");
     assert.equal(parsed.baseRevision, "HEAD");
 
-    const admitted = await admitGleanerLeftInvocation({
+    const admitted = await admitPublicRole("gleaner-left", {
+      instruction: "",
+      baseRevision: parsed.baseRevision,
+    }, {
       home,
       principalAuthority: piDurablePrincipalAuthority,
       cwd: project,
-      instruction: "",
-      baseRevision: parsed.baseRevision,
       createRunId: () => "01a0glean00-0000-7000-8000-000000000001",
     });
 
@@ -99,7 +100,7 @@ test("gleaner-left requires --base and admits empty instruction", async () => {
     assert.equal(admitted.attachments.length, 0);
     assert.equal(admitted.ticketNumber, undefined);
 
-    const turn = buildGleanerLeftTurnRequest(admitted, {
+    const turn = buildInstructionSeatTurnRequest(admitted, {
       packageRoot,
       home,
       agentDir: join(home, ".pi"),

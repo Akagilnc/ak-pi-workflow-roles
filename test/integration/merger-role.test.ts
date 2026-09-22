@@ -27,7 +27,7 @@ test("role extension activates Merger without Git state dependency", async () =>
   await withHermeticHome({ prefix: "ak-merger-bind-cwd-" }, async ({ home }) => {
     const h = harness();
     h.pi.getFlag = (name: string) => name === "ak-role" ? "merger" : name === "ak-merger-input" ? "/input.json" : undefined;
-    createPiRoleRuntimeExtension({ loadJudgeSoul: async () => "unused", loadMergerSoul: async () => "MERGER LAW", loadMergerInput: async () => input })(h.pi as unknown as ExtensionAPI);
+    createPiRoleRuntimeExtension({ loadRoleSoul: async (role) => role === "merger" ? "MERGER LAW" : "unused", loadMergerInput: async () => input })(h.pi as unknown as ExtensionAPI);
     const repoA = join(home, "repository-a");
     mkdirSync(repoA, { recursive: true });
     execFileSync("git", ["init", "-b", "main"], { cwd: repoA, stdio: "ignore" });

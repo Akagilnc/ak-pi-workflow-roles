@@ -379,7 +379,10 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             : bindSessionId;
         };
         if (request.continuation.kind === "resume" && config.boundResume === "session/load") {
-          const boundSessionId = await config.sessionIdentity.load(request.principal);
+          const explicitHostSessionId = request.continuation.hostSessionId;
+          const boundSessionId = explicitHostSessionId !== undefined && explicitHostSessionId !== ""
+            ? explicitHostSessionId
+            : await config.sessionIdentity.load(request.principal);
           if (boundSessionId !== undefined && boundSessionId !== "") {
             sessionId = await loadSession(boundSessionId);
           }

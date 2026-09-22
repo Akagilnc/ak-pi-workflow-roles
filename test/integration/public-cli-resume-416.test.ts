@@ -30,15 +30,14 @@ import {
 } from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
-import { buildDiaristTurnRequest } from "../../src/public-cli/diarist-run.ts";
+import { buildInstructionSeatTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   prepareSummonsResumeMaterials,
   resumeTurnRequestProjectionOptions,
   runPostAdmissionSeatResume,
 } from "../../src/public-cli/post-admission.ts";
 import {
-  loadResumableDiaristRun,
-  loadResumableJudgeRun,
+  loadResumablePublicRole,
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
@@ -82,7 +81,7 @@ test("block1: terminal without accepted is now resumable", async()=>{
         return{code:1,stderr:"boom\n",timedOut:false,args:[...args]};},
       })});
     assert.equal(first.exitCode,1);
-    const loaded=await loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority);
+    const loaded=await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.run.runId,runId);
     let dispatched=false;let seenEnvelope=false;let seenSessionFile="";
     const {io:io2}=captureIo();
@@ -116,7 +115,7 @@ test("S5: terminal with accepted receipt stays loadable; bare sealed resume reac
     assert.equal(first.terminal?.roleOutcome.kind,"accepted");
     // #416: load stays open (no terminal/resumable gate). #833: sealed bare resume
     // is pass-through — host is reached; no re-seal so prior acceptance still settles.
-    const loaded=await loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority);
+    const loaded=await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.run.runId,runId);
     let calls=0;
     const {io:io2}=captureIo();
@@ -155,7 +154,7 @@ test("S5: resumable (typed 429) state also resumable", async()=>{
       })});
     // After per-call auto retries, final terminal will have autoResumeCount 2 but still be loadable
     assert.equal(first.exitCode,1);
-    const loaded=await loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority);
+    const loaded=await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
     assert.equal(loaded.run.runId,runId);
     let calls=0;
     const {io:io2}=captureIo();
@@ -173,7 +172,7 @@ test("S5: resumable (typed 429) state also resumable", async()=>{
 test("block1: unknown runId still rejects", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
-    await assert.rejects(()=>loadResumableJudgeRun(home, "missing-416", piDurablePrincipalAuthority),/unknown role run id/);
+    await assert.rejects(()=>loadResumablePublicRole(home, "missing-416", piDurablePrincipalAuthority),/unknown role run id/);
     const {io}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high","missing-416"],{packageRoot,home,cwd:project,io,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                           packageRoot,
@@ -198,7 +197,7 @@ test("block1: session principal unavailable still fails honestly", async()=>{
     const bookKey=resolveBookKeyFromGit(project);
     const runDir=join(home,".ak-roles","books",bookKey,"unbound","runs",`${runId}@judge`);
     await rm(join(runDir,"session","session.jsonl"),{force:true});
-    await assert.rejects(()=>loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority),/Pi session principal is unavailable/);
+    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),/Pi session principal is unavailable/);
     const {io:io2,stderr}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,io:io2,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                       packageRoot,
@@ -445,7 +444,7 @@ test("A2: station-child after-lease build failure releases the lock and retries 
       env,
       io,
       load: (effective) =>
-        loadResumableDiaristRun(home, effective.runId, piDurablePrincipalAuthority),
+        loadResumablePublicRole(home, effective.runId, piDurablePrincipalAuthority),
       buildTurnRequest: async (admitted, effective) => {
         builds += 1;
         if (builds === 1) throw new Error("after-lease boom");
@@ -453,7 +452,7 @@ test("A2: station-child after-lease build failure releases the lock and retries 
           admitted.runDirectory,
           effective.summons,
         );
-        return buildDiaristTurnRequest(
+        return buildInstructionSeatTurnRequest(
           admitted,
           resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
         );

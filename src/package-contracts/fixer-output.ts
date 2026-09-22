@@ -3,7 +3,6 @@ import { openToolObjectFromUnion } from "../open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
 
 export const FIXER_OUTPUT_TOOL_NAME = "ak_fixer_output";
-export const FIXER_ACCEPTED_TEXT = "修内司回执已接受";
 
 // #836 r16 class 1: these are LLM/human-read narrative content — the candidate
 // row lands on the ledger as submitted (src/submission-ledger.ts:351-390) and no

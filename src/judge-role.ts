@@ -4,8 +4,8 @@ import { Type, type Static } from "typebox";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 import { ParentQueueReaskError } from "./submission-errors.ts";
 
+import { packagedRoleAcceptedText } from "./packaged-role-registry.ts";
 import {
-  JUDGE_ACCEPTED_TEXT,
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
   type JudgeVerdict,
@@ -107,7 +107,7 @@ export function createJudgeRoleRuntime(
               // Parent escalate → throw to caller as-is; officers do not attend (#753 / #756).
               const verdict = validateVerdict(parameters);
               return {
-                content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],
+                content: [{ type: "text" as const, text: packagedRoleAcceptedText("judge") }],
                 details: verdict,
                 terminate: true as const,
               };
@@ -138,7 +138,7 @@ export function createJudgeRoleRuntime(
               submission: parameters,
             });
             return {
-              content: [{ type: "text" as const, text: JUDGE_ACCEPTED_TEXT }],
+              content: [{ type: "text" as const, text: packagedRoleAcceptedText("judge") }],
               details: verdict,
               terminate: true as const,
             };

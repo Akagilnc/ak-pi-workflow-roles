@@ -7,11 +7,20 @@ import type {
   DurablePrincipal,
   MethodBinding,
   RoleTurnActivation,
-  RoleTurnModelConfig,
   RoleTurnRequest,
 } from "../host-contracts.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
+import {
+  resolvePackagedMethodSkillPath,
+  type PackagedMethodSkillName,
+} from "../package-resources/method-skill.ts";
+import {
+  packagedRoleActivationFlags,
+  packagedRoleMetadata,
+} from "../packaged-role-registry.ts";
 import type { SeatModelConfig } from "./config.ts";
+import type { AdmittedRoleInvocation } from "./invocation.ts";
+import { parentRunPathFromGatePointerInstruction } from "./run-lifecycle.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 
 /** Structural model shape shared by the seam so seat/env sources fit. */
@@ -91,5 +100,87 @@ export function projectRoleTurnRequest(
       ? {}
       : { invocationScopeId: options.invocationScopeId }),
     ...(options.stationChild === undefined ? {} : { stationChild: options.stationChild }),
+  };
+}
+
+/**
+ * Packaged method this admitted run settles with.
+ * Coder carries one only on apply. Other seats read `settleMethod`.
+ */
+export function packagedSettleSkill(
+  admitted: AdmittedRoleInvocation,
+): PackagedMethodSkillName | undefined {
+  const record = packagedRoleMetadata(admitted.role);
+  if (record === undefined) return undefined;
+  if ("applyMethod" in record && record.applyMethod !== undefined) {
+    return "phase" in admitted && admitted.phase === "apply" ? record.applyMethod : undefined;
+  }
+  if ("settleMethod" in record && record.settleMethod !== undefined) return record.settleMethod;
+  return undefined;
+}
+
+function readAdmittedPath(admitted: AdmittedRoleInvocation, path: string): unknown {
+  let current: unknown = admitted;
+  for (const key of path.split(".")) {
+    if (current === null || typeof current !== "object") return undefined;
+    current = (current as Record<string, unknown>)[key];
+  }
+  return current;
+}
+
+/** Activation object for one admitted run. Field copies come from the composition-root record. */
+function activationForAdmitted(admitted: AdmittedRoleInvocation): RoleTurnActivation {
+  if (packagedRoleMetadata(admitted.role) === undefined) {
+    throw new Error(`no turn projection for ${admitted.role}`);
+  }
+  const activation: Record<string, unknown> = { role: admitted.role };
+  for (const spec of packagedRoleActivationFlags(admitted.role)) {
+    let value = readAdmittedPath(admitted, spec.from ?? spec.field);
+    if (spec.fallback === "gate-pointer") {
+      const trimmed = typeof value === "string" ? value.trim() : "";
+      value = trimmed !== ""
+        ? trimmed
+        : parentRunPathFromGatePointerInstruction(admitted.instruction);
+      if (typeof value !== "string" || value === "") continue;
+    }
+    if (value === undefined) continue;
+    if (spec.text === true) {
+      if (typeof value !== "number") continue;
+      value = String(value);
+    }
+    activation[spec.field] = value;
+  }
+  return activation as RoleTurnActivation;
+}
+
+/** Skill bindings declared on the composition-root record for this admitted run. */
+function methodBindings(
+  admitted: AdmittedRoleInvocation,
+  packageRoot: string,
+): readonly MethodBinding[] {
+  const record = packagedRoleMetadata(admitted.role);
+  const names: PackagedMethodSkillName[] = [];
+  if (record !== undefined && "methodSkills" in record && record.methodSkills !== undefined) {
+    names.push(...record.methodSkills);
+  }
+  const apply = packagedSettleSkill(admitted);
+  if (apply !== undefined && !names.includes(apply)) names.push(apply);
+  return names.map((name) => ({
+    kind: "skill" as const,
+    path: resolvePackagedMethodSkillPath(packageRoot, name),
+  }));
+}
+
+/** Registry activation and method bindings for one admitted public seat. */
+export function admittedSeatTurnDetails(
+  admitted: AdmittedRoleInvocation,
+  packageRoot: string,
+): {
+  readonly activation: RoleTurnActivation;
+  readonly methods: readonly MethodBinding[];
+} {
+  return {
+    activation: activationForAdmitted(admitted),
+    methods: methodBindings(admitted, packageRoot),
   };
 }

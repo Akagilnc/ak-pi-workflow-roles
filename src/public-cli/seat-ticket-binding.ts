@@ -18,6 +18,12 @@ import {
 
 /**
  * Sole same-seat → resume decision by parent run path (#637 / #724 / #747 / #987).
+ * A typed ticket number is a bind key, not a resume key. When a prior run is
+ * found, resume carries this summons' materials. Lookup/resume failures
+ * propagate (失败诚实) — never wash into a fresh mint. Returns undefined when
+ * the caller declared an explicit fresh summons (`ak-role new`), the parent
+ * path is blank, or no prior run exists; those mint new. freshSummons is
+ * required so no seat can drift back into its own skip branch.
  */
 export async function tryResumeSameTicketSeatRun<T>(input: {
   readonly home: string;

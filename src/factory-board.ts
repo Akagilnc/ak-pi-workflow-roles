@@ -20,6 +20,7 @@ import { randomUUID } from "node:crypto";
 import { lstat, mkdir, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 
+import { packagedBoardPlacement } from "./packaged-role-registry.ts";
 import {
   formatDurationZh,
   formatLocalDateTime,
@@ -187,16 +188,18 @@ function placeTicket(prepared: PreparedTicket): BoardPlacement {
   const sorted = sortRunsByStart(prepared.runs);
   const latest = sorted.at(-1)!;
   if (latest.station === "unknown") return "unknown";
-  if (latest.station === "judge") {
+  // ADR 0053: marshal-driven runs land in 尚书省. Marshal is not a packaged seat.
+  if (latest.station === "marshal") return "marshal";
+  const placement = packagedBoardPlacement(latest.station);
+  if (placement === "judge-history") {
     // Unknown history never counts as construction evidence.
-    const started = sorted.some((run) => run.station !== "unknown" && run.station !== "judge");
+    const started = sorted.some((run) => {
+      if (run.station === "unknown") return false;
+      return packagedBoardPlacement(run.station) !== "judge-history";
+    });
     return started ? "marshal" : "court";
   }
-  if (latest.station === "coder") return "coder";
-  if (latest.station === "fixer" || latest.station === "reviewer") return "marshal";
-  // ADR 0053: marshal-driven runs land in 尚书省 once the seat ships (station maps now).
-  if (latest.station === "marshal") return "marshal";
-  if (latest.station === "collector") return "collector";
+  if (placement !== undefined) return placement;
   return `other:${latest.station}`;
 }
 

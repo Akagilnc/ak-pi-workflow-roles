@@ -6,10 +6,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  parseCountersignArgv,
-  parseNotaryArgv,
   parsePositiveTicketNumber,
   parseAnalystArgv,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 
@@ -22,11 +21,11 @@ test("parsePositiveTicketNumber rejects non-positive and leading junk", () => {
 
 test("parseCountersignArgv rejects --ticket as unknown option", () => {
   assert.throws(
-    () => parseCountersignArgv(["--ticket", "582", "--attach", "./t.md", "裁：开工？"]),
+    () => parsePublicSeatArgv("countersign", ["--ticket", "582", "--attach", "./t.md", "裁：开工？"]),
     (err: unknown) =>
       err instanceof CliUsageError && /unknown countersign option: --ticket/.test(err.message),
   );
-  const parsed = parseCountersignArgv([
+  const parsed = parsePublicSeatArgv("countersign", [
     "--attach",
     "./t.md",
     "裁：开工？",
@@ -39,7 +38,7 @@ test("parseCountersignArgv rejects --ticket as unknown option", () => {
 test("parseNotaryArgv rejects --ticket; keeps required --source-run", () => {
   assert.throws(
     () =>
-      parseNotaryArgv([
+      parsePublicSeatArgv("notary", [
         "--source-run",
         "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
         "--ticket",
@@ -48,7 +47,7 @@ test("parseNotaryArgv rejects --ticket; keeps required --source-run", () => {
     (err: unknown) =>
       err instanceof CliUsageError && /unknown notary option: --ticket/.test(err.message),
   );
-  const parsed = parseNotaryArgv([
+  const parsed = parsePublicSeatArgv("notary", [
     "--source-run",
     "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
   ]);

@@ -1,80 +1,28 @@
 /**
- * Public Countersign Role run: admit ticket materials → court-pipeline prior
- * station (起居郎) → shared post-admission coordinator → settle Terminal result
- * (#572 / ADR 0074 / ADR 0075 / #742 / #771). #599: manual resume continues the
- * exact session via explicit package runId. #987 Result 7: public entry no longer
- * selects a prior run by ticket number; gate same-parent re-summons keep
- * parentRunPath resume (#747 / ADR 0079 gate face). Explicit `ak-role new` mints
- * fresh; explicit `ak-role resume <runId>` continues a named run.
+ * Court diarist station for the shared countersign entry (#572 / ADR 0074 /
+ * ADR 0075 / #742 / #771). The public seat itself admits and settles through
+ * instruction-seat-run. This module only summons 起居郎 and refreshes a bound
+ * court diary.
  *
  * Court admission auto-runs 起居郎 so the 起居郎 LLM asserts the court target;
  * mechanical layer only verifies; countersign reuses that typed identity for bind
  * (ADR 0075 / 0081). Code never matches instruction text against book-known
  * numbers. Who may call 起居郎 and in what order is not written into law
- * (ADR 0075 不规定谁调用起居郎、顺序归调用者); the present admission effect is what this
- * seat currently does. 起居录 path delivery is owned once by post-admission
- * (#709 / ADR 0081). Court refresh may run on resume; it is not a resume
- * precondition and does not rewrite or reject host resume (#987).
- *
- * Wiring (#771 / #863 / #987): gate parentRunPath resume (when present) runs
- * before identity mint; public path without parentRunPath always materializes a
- * new run after identity. 起居郎 escalate (认不出) and typed failure terminals
- * (incl. verification failure) settle as countersign controlled failure — never
- * wash into 真无票. Only a true missing lawful typed terminal stays unbound and
- * continues the body (r5 unbound-continue). Bound refresh hands the typed key to
- * 起居郎 so freeze loads issue face (ADR 0075: 每次过庭都跑是调用者用法 / typed handoff).
+ * (ADR 0075 不规定谁调用起居郎、顺序归调用者). 起居录 path delivery is owned once by
+ * post-admission (#709 / ADR 0081). Bound refresh hands the typed key to 起居郎
+ * so freeze loads issue face (ADR 0075: 每次过庭都跑是调用者用法 / typed handoff).
  */
-import { resolve } from "node:path";
-import type {
-  DurablePrincipalAuthority,
-  RoleTurnRequest,
-} from "../host-contracts.ts";
-import {
-  engineSessionMaterialFromOptions,
-  pickEngineAxis,
-} from "../package-resources/engine-material.ts";
-import { CliUsageError } from "./cli-errors.ts";
+import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 import { projectCourtTicketNumbers } from "../diarist-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
+import type { AdmittedCountersignInvocation } from "./invocation.ts";
 import {
-  admitCountersignInvocation,
-  bindAdmittedTicketNumber,
-  bindCourtTicketNumbersOnAdmitted,
-  buildCountersignTransportPrompt,
-  materializeCountersignInvocation,
-  persistAdmittedSourceRunPath,
-  relocateAdmittedRunToTicket,
-  withPreparedAttachments,
-  type AdmittedCountersignInvocation,
-  type ParseCountersignArgvResult,
-} from "./invocation.ts";
-import {
-  prepareSummonsResumeMaterials,
-  presentControlledFailure,
-  runPostAdmissionOneShot,
   type PostAdmissionEnv,
-  runPostAdmissionSeatResume,
-  resumeTurnRequestProjectionOptions,
   StationChildExhaustedError,
 } from "./post-admission.ts";
-import {
-  loadResumableCountersignRun,
-  markRunAdmitted,
-  type PublicResumeRequest,
-  type RunWriterLease,
-} from "./run-lifecycle.ts";
-import { tryResumeSameTicketSeatRun } from "./seat-ticket-binding.ts";
-import {
-  presentStructuralRejection,
-  trySettleCountersignTerminalResult,
-} from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import type { TerminalResult, TerminalRoleOutcome } from "./terminal.ts";
-import {
-  projectRoleTurnRequest,
-  type RoleTurnRequestProjectionOptions,
-} from "./turn-request.ts";
+import type { TerminalRoleOutcome } from "./terminal.ts";
 
 export type CountersignRunEnv = PostAdmissionEnv & {
   principalAuthority: DurablePrincipalAuthority;
@@ -104,29 +52,10 @@ export type CountersignRunEnv = PostAdmissionEnv & {
   /**
    * #747 / #987 gate same-parent resume key (Secretariat source run directory).
    * When set, re-summons resume the prior 给事中 under this parent before mint.
+   * Absent on an ordinary public summons, which always mints.
    */
   parentRunPath?: string;
 };
-
-/** Project admitted invocation onto the host-neutral turn request. */
-export function buildCountersignTurnRequest(
-  admitted: AdmittedCountersignInvocation,
-  options: RoleTurnRequestProjectionOptions,
-): RoleTurnRequest {
-  return projectRoleTurnRequest(
-    admitted,
-    {
-      activation: {
-        role: "countersign" as const,
-        // Admitted typed binding rides the turn activation seam to the Notary gate.
-        ...(admitted.ticketNumber === undefined
-          ? {}
-          : { ticketNumber: admitted.ticketNumber }),
-      },
-    },
-    options,
-  );
-}
 
 /** 起居郎 identity outcome — escalate stays distinct from missing terminal. */
 export type CourtDiaristIdentity =
@@ -393,8 +322,8 @@ export async function invokeCourtDiarist(
  *
  * Missing ticketNumber (true-unbound / identity deferred) skips the refresh
  * station — no diary is minted for a true-unbound run. First-entry identity
- * lives on `runPublicCountersign` (typed 起居郎 key for bind + same-ticket
- * resume). Bound refresh: 起居郎 failure propagates (失败诚实).
+ * lives on the shared countersign entry (typed 起居郎 key for bind). Bound refresh:
+ * 起居郎 failure propagates (失败诚实).
  * Path delivery onto materials is not this station's job — post-admission owns it.
  */
 export async function runCountersignCourtDiaristStation(
@@ -407,7 +336,7 @@ export async function runCountersignCourtDiaristStation(
     return;
   }
   // Production court refresh (ADR 0075: 每次过庭都跑是调用者用法) only under a known ticket identity.
-  // First-entry unbound identity is owned by runPublicCountersign.
+  // First-entry unbound identity is owned by the shared countersign entry.
   if (admitted.ticketNumber === undefined) return;
 
   // #871: refresh every member of the typed co-review set; single-ticket face
@@ -451,368 +380,4 @@ export async function runCountersignCourtDiaristStation(
       );
     }
   }
-}
-
-export async function runPublicCountersign(
-  argv: readonly string[],
-  env: CountersignRunEnv,
-  io: CliIo,
-  parseCountersignArgv: (args: readonly string[]) => ParseCountersignArgvResult,
-): Promise<{
-  exitCode: number;
-  admitted?: AdmittedCountersignInvocation;
-  terminal?: TerminalResult;
-}> {
-  let parsed: ParseCountersignArgvResult;
-  try {
-    parsed = parseCountersignArgv(argv);
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  let admitted: AdmittedCountersignInvocation;
-  const gateParentRunPath =
-    typeof env.parentRunPath === "string" && env.parentRunPath.trim() !== ""
-      ? env.parentRunPath
-      : undefined;
-  if (gateParentRunPath !== undefined) {
-    const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction ?? parsed.instruction;
-    const resumed = await tryResumeSameTicketSeatRun({
-      home: env.home,
-      projectRoot: resolve(parsed.project ?? env.cwd),
-      role: "countersign",
-      parentRunPath: gateParentRunPath,
-      freshSummons: env.freshSummons,
-      summons: {
-        sourceRunPath: gateParentRunPath,
-        instruction: resumeInstruction,
-        instructionEmpty: resumeInstruction.trim() === "",
-      },
-      resume: (runId, materials) =>
-        runPublicCountersignResume(
-          { runId, ...(materials === undefined ? {} : { summons: materials }) },
-          env,
-          io,
-        ),
-    });
-    if (resumed !== undefined) return resumed;
-  }
-
-  try {
-    admitted = await admitCountersignInvocation({
-      home: env.home,
-      principalAuthority: env.principalAuthority,
-      cwd: env.cwd,
-      instruction: parsed.instruction,
-      attachmentPaths: parsed.attachmentPaths,
-      ...(parsed.project === undefined ? {} : { project: parsed.project }),
-      ...(env.createRunId === undefined
-        ? {}
-        : { createRunId: env.createRunId }),
-      ...(env.model === undefined ? {} : { model: env.model }),
-      ...(env.correlationId === undefined
-        ? {}
-        : { correlationId: env.correlationId }),
-      deferPersistence: true,
-    });
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-
-  // One owner spans prepare, lookup/load/resume or new-run materialization.
-  // It preserves both causes when its final cleanup also fails.
-  try {
-    return await withPreparedAttachments(
-      parsed.attachmentPaths,
-      async (preparedAttachments) => {
-        const materializeAdmission = async (): Promise<void> => {
-          await materializeCountersignInvocation(admitted, {
-            home: env.home,
-            principalAuthority: env.principalAuthority,
-            preparedAttachments,
-            ...(env.model === undefined ? {} : { model: env.model }),
-          });
-        };
-
-        // #747 / #987: gate same-parent resume before identity mint. Public entry
-        // without parentRunPath never selects a prior run by ticket number.
-        // #637 / #771: ticket identity is the 起居郎 LLM typed assertion (never
-        // mechanical matching of summons text). Resolve that typed key before
-        // materializing a first-mint run. Controlled failures materialize below so
-        // they still have a durable page. The test seam `runCourtDiaristStation`
-        // defers identity to beforeDispatch; generic hook failures stay on the
-        // parent call-local budget, exhausted nested station children still skip
-        // parent auto-resume (#840 父子不层叠).
-        let typedTicket: number | undefined;
-        let typedCourtTicketNumbers: readonly number[] | undefined;
-        let identityDiaristRan = false;
-
-        if (env.runCourtDiaristStation === undefined) {
-          let outcome: CourtDiaristInvocationResult;
-          try {
-            outcome = await invokeCourtDiarist(
-              {
-                instruction: parsed.instruction,
-                projectRoot: admitted.projectRoot,
-                failureLabel: "unbound summons",
-                // #969: parent durable ticket is the bind key (not a resume lookup).
-                ...(env.boundTicketNumber === undefined
-                  ? {}
-                  : { boundTicketNumber: env.boundTicketNumber }),
-              },
-              env,
-              io,
-            );
-          } catch (error) {
-            await materializeAdmission();
-            await markRunAdmitted(admitted, env.principalAuthority);
-            return await presentControlledFailure(
-              admitted,
-              { timedOut: false, code: null, stderr: "", thrown: error },
-              countersignAdapters(),
-              env.principalAuthority,
-              io,
-            );
-          }
-          identityDiaristRan = true;
-
-          if (outcome.identity.kind === "escalate") {
-            // 御批: 识别不了就上抛 — materialize and settle this countersign run.
-            // Diagnostic relays diarist escalate payload facts (#953).
-            await materializeAdmission();
-            await markRunAdmitted(admitted, env.principalAuthority);
-            return await presentControlledFailure(
-              admitted,
-              {
-                timedOut: false,
-                code: null,
-                stderr: "",
-                thrown: new Error(outcome.identity.diagnostic),
-              },
-              countersignAdapters(),
-              env.principalAuthority,
-              io,
-            );
-          }
-
-          // Typed failure terminal (verification / infra / non-zero without escalate)
-          // is not 真无票 — settle controlled failure on the admitted run (失败诚实).
-          // Only a true missing lawful typed terminal keeps the r5 unbound-continue.
-          if (outcome.failedWithoutEscalate !== undefined) {
-            await materializeAdmission();
-            await markRunAdmitted(admitted, env.principalAuthority);
-            return await presentControlledFailure(
-              admitted,
-              {
-                timedOut: false,
-                code: null,
-                stderr: "",
-                thrown: new Error(outcome.failedWithoutEscalate.diagnostic),
-              },
-              countersignAdapters(),
-              env.principalAuthority,
-              io,
-            );
-          }
-
-          // Missing lawful 起居郎 terminal is not countersign body failure: leave
-          // unbound and continue (true-unbound face) — unless parent gate handoff
-          // already carries the durable board ticket (#969). Escalate / typed
-          // failure above; bound refresh still fails honest via station.
-          if (outcome.identity.kind === "ticket") {
-            // #969: parent durable handoff wins over 起居郎 re-assert when both
-            // present (receipt/assert mismatch → parent bind key).
-            typedTicket = isSafePositiveTicketNumber(env.boundTicketNumber)
-              ? env.boundTicketNumber
-              : outcome.identity.ticketNumber;
-            // #871: identity may hand a co-review set; absent field defaults to [main].
-            typedCourtTicketNumbers = outcome.identity.courtTicketNumbers;
-          } else if (isSafePositiveTicketNumber(env.boundTicketNumber)) {
-            // Parent board handoff present; 起居郎 returned true-unbound — still
-            // bind under the parent key (omitted receipt ticketNumber path).
-            typedTicket = env.boundTicketNumber;
-          }
-        }
-
-        // No prior same-parent run was selected. Materialize this invocation now;
-        // true-unbound, first-ticket and deferred test-seam paths all retain their
-        // own durable page. Public re-summons without parentRunPath always mint.
-        await materializeAdmission();
-        await markRunAdmitted(admitted, env.principalAuthority);
-
-        if (gateParentRunPath !== undefined) {
-          await persistAdmittedSourceRunPath(admitted, gateParentRunPath);
-          admitted = { ...admitted, sourceRunPath: gateParentRunPath };
-        }
-
-        if (identityDiaristRan && typedTicket !== undefined) {
-          try {
-            await bindAdmittedTicketNumber(admitted, typedTicket);
-            await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-            // First court: explicit set wins; omitted field → single-ticket face [main].
-            // Set persistence is outside beforeDispatch — route write failures into the
-            // same controlled-failure settlement as station children (#871 B7).
-            await bindCourtTicketNumbersOnAdmitted(
-              admitted,
-              typedCourtTicketNumbers ?? [typedTicket],
-            );
-          } catch (error) {
-            return await presentControlledFailure(
-              admitted,
-              {
-                timedOut: false,
-                code: null,
-                stderr: "",
-                thrown: error,
-              },
-              countersignAdapters(),
-              env.principalAuthority,
-              io,
-            );
-          }
-        }
-
-        const turnProjection: RoleTurnRequestProjectionOptions = {
-          packageRoot: env.packageRoot,
-          home: env.home,
-          agentDir: env.agentDir,
-          ...(env.model === undefined ? {} : { model: env.model }),
-          ...pickEngineAxis(env),
-          ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
-          ...(env.correlationId === undefined || env.correlationId.trim() === ""
-            ? {}
-            : { correlationId: env.correlationId }),
-          continuation: {
-            kind: "initial",
-            // #969/#879: gate path first mint carries parent payload as dialogue content;
-            // ordinary public entry keeps package transport prompt.
-            prompt: (env.reviewReask ?? env.gateReviewInstruction)
-              ?? buildCountersignTransportPrompt(
-                admitted,
-                engineSessionMaterialFromOptions({
-                  ...pickEngineAxis(env),
-                  packageRoot: env.packageRoot,
-                }),
-              ),
-          },
-        };
-        // Mutable shell: ticket bind re-projects activation before executeTurn.
-        const turnRequest = buildCountersignTurnRequest(
-          admitted,
-          turnProjection,
-        );
-
-        const result = await runPostAdmissionOneShot({
-          admitted,
-          env,
-          io,
-          request: turnRequest,
-          adapters: countersignAdapters({
-            beforeDispatch: async (admittedSeat, lease) => {
-              // Dossier pointer delivery rides post-admission after this hook (#709).
-              if (!identityDiaristRan) {
-                // Test seam (or any deferred identity): station owns assert + bind.
-                await runCountersignCourtDiaristStation(admittedSeat, env, io);
-              } else if (typedTicket !== undefined) {
-                await runCountersignCourtDiaristStation(admittedSeat, env, io);
-              }
-              await relocateAdmittedRunToTicket(
-                admittedSeat,
-                env.principalAuthority,
-                lease,
-              );
-              Object.assign(
-                turnRequest,
-                buildCountersignTurnRequest(admittedSeat, turnProjection),
-              );
-            },
-          }),
-          ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
-        });
-        await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-        return result;
-      },
-    );
-  } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, io);
-      return { exitCode: 2 };
-    }
-    throw error;
-  }
-}
-
-function countersignAdapters(options?: {
-  beforeDispatch?: (
-    admitted: AdmittedCountersignInvocation,
-    lease?: RunWriterLease,
-  ) => void | Promise<void>;
-}) {
-  return {
-    trySettle: (
-      admitted: AdmittedCountersignInvocation,
-      authority: DurablePrincipalAuthority,
-      scope?: { readonly courtAttemptId?: string },
-    ) => trySettleCountersignTerminalResult(admitted, authority, scope),
-    // Accepted receipts and failure terminals both present via shared path.
-    shouldPresentSettled: () => true,
-    ...(options?.beforeDispatch === undefined
-      ? {}
-      : { beforeDispatch: options.beforeDispatch }),
-  };
-}
-
-/**
- * Resume a previously admitted Countersign run (#599 / DK-3 / #637 / #987).
- * Restores role/ticket/session identity. Gate
- * same-parent and explicit `ak-role resume <runId>` share this entry; summons
- * may carry this turn's instruction. Manual resume forwards only the caller's
- * message bytes. 起居录 path delivery remains
- * post-admission's single mount (#709).
- */
-export async function runPublicCountersignResume(
-  request: PublicResumeRequest,
-  env: CountersignRunEnv,
-  io: CliIo,
-): Promise<{
-  exitCode: number;
-  admitted?: AdmittedCountersignInvocation;
-  terminal?: TerminalResult;
-}> {
-  return await runPostAdmissionSeatResume({
-    request,
-    env,
-    io,
-    load: (effective) =>
-      loadResumableCountersignRun(
-        env.home,
-        effective.runId,
-        env.principalAuthority,
-      ),
-    buildTurnRequest: async (admitted, effective) => {
-      const summonsPrepared = await prepareSummonsResumeMaterials(
-        admitted.runDirectory,
-        effective.summons,
-      );
-      return buildCountersignTurnRequest(
-        admitted,
-        resumeTurnRequestProjectionOptions(
-          admitted,
-          effective,
-          env,
-          summonsPrepared,
-        ),
-      );
-    },
-    adapters: countersignAdapters(),
-    ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
-  });
 }

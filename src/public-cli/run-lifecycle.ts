@@ -48,21 +48,22 @@ import {
 } from "../package-resources/engine-material.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 import {
+  packagedResumeSourcePath,
+  packagedRoleMetadata,
+  type PackagedRole,
+} from "../packaged-role-registry.ts";
+import {
   recordEffectiveInvocationModel,
   requireAuthorityRef,
   isReviewerLens,
   type AdmittedCoderInvocation,
   type AdmittedCountersignInvocation,
   type AdmittedCollectorInvocation,
-  type AdmittedDiaristInvocation,
   type AdmittedDoctorInvocation,
   type AdmittedInspectorInvocation,
   type AdmittedNotaryInvocation,
   type AdmittedFixerInvocation,
   type AdmittedGleanerLeftInvocation,
-  type AdmittedGatekeeperInvocation,
-  type AdmittedJudgeInvocation,
-  type AdmittedNavigatorInvocation,
   type AdmittedMergerInvocation,
   type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
@@ -94,23 +95,7 @@ export const AUTO_RESUME_LIMIT = 2 as const;
 
 export type RoleRunRecord = {
   readonly runId: string;
-  readonly role:
-    | "judge"
-    | "coder"
-    | "fixer"
-    | "collector"
-    | "doctor"
-    | "reviewer"
-    | "merger"
-    | "notary"
-    | "countersign"
-    | "gleaner-left"
-    | "inspector"
-    | "gatekeeper"
-    | "navigator"
-    | "auditor"
-    | "diarist"
-    | "secretariat";
+  readonly role: PackagedRole;
   readonly state: RoleRunState;
   readonly bookKey: string;
   readonly projectRoot: string;
@@ -350,24 +335,8 @@ async function readRoleRunStateDisk(
   if (typeof record.runId !== "string" || record.runId.trim() === "") {
     return undefined;
   }
-  if (
-    record.role !== "judge" &&
-    record.role !== "coder" &&
-    record.role !== "fixer" &&
-    record.role !== "collector" &&
-    record.role !== "doctor" &&
-    record.role !== "reviewer" &&
-    record.role !== "merger" &&
-    record.role !== "notary" &&
-    record.role !== "countersign" &&
-    record.role !== "gleaner-left" &&
-    record.role !== "inspector" &&
-    record.role !== "gatekeeper" &&
-    record.role !== "navigator" &&
-    record.role !== "auditor" &&
-    record.role !== "diarist" &&
-    record.role !== "secretariat"
-  ) {
+  const role = typeof record.role === "string" ? packagedRoleMetadata(record.role)?.role : undefined;
+  if (role === undefined) {
     return undefined;
   }
   if (
@@ -421,7 +390,7 @@ async function readRoleRunStateDisk(
   const currentCourt = parseCurrentCourtState(record.currentCourt);
   return {
     runId: record.runId,
-    role: record.role,
+    role,
     state: record.state,
     bookKey: record.bookKey,
     projectRoot: record.projectRoot,
@@ -538,6 +507,10 @@ export async function markRunAdmitted(
   authority: DurablePrincipalAuthority,
 ): Promise<void> {
   const { sessionDirectory, sessionFile } = authority.decode(admitted.principal);
+  const record = packagedRoleMetadata(admitted.role);
+  const workerPhase = record !== undefined && "worker" in record && record.worker === true && "phase" in admitted
+    ? admitted.phase
+    : undefined;
   await writeRoleRunState(admitted.runDirectory, {
     runId: admitted.runId,
     role: admitted.role,
@@ -547,11 +520,7 @@ export async function markRunAdmitted(
     sessionDirectory,
     sessionFile,
     admittedRequestPath: admitted.admittedRequestPath,
-    ...(
-      admitted.role === "coder" || admitted.role === "fixer"
-        ? { phase: admitted.phase }
-        : {}
-    ),
+    ...(workerPhase === undefined ? {} : { phase: workerPhase }),
   });
 }
 
@@ -1141,10 +1110,11 @@ async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boole
 /**
  * Locate the latest retained run for one seat under a book (#637 / #747).
  * Same walk surface as findRunDirectoryById (listBookRunDirectories). Match by
- * parent run path (officer / gate seats, #747 / #987). runId is UUIDv7 —
- * lexicographic max is latest among runs that formed a session principal. No
- * parallel index. Public ticket-number selection of a prior run was deleted
- * (#987 Result 7); callers use explicit `ak-role resume <runId>`.
+ * parent run path (officer / gate seats, #747 / #987). A typed ticket number
+ * does not select a run. runId is UUIDv7 — lexicographic max is latest among
+ * runs that formed a session principal. No parallel index. Public ticket-number
+ * selection of a prior run was deleted (#987 Result 7); callers use explicit
+ * `ak-role resume <runId>`.
  * Only a truly missing book directory means no history; damage/permission errors propagate.
  */
 export async function findLatestRunIdForSeatTicket(input: {
@@ -1679,68 +1649,9 @@ async function loadResumableRunRecord(
   };
 }
 
-export type LoadedResumableJudgeRun = {
-  readonly admitted: AdmittedJudgeInvocation;
-  readonly run: RoleRunRecord;
-  /** @deprecated #416: resumable observation no longer gates resume; may be undefined. */
-  readonly observation?: TypedHttp429Observation;
-};
-
-export type LoadedResumableCoderRun = {
-  readonly admitted: AdmittedCoderInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-export type LoadedResumableFixerRun = {
-  readonly admitted: AdmittedFixerInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-export type LoadedResumableReviewerRun = {
-  readonly admitted: AdmittedReviewerInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-export type LoadedResumableCountersignRun = {
-  readonly admitted: AdmittedCountersignInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-export type LoadedResumableGleanerLeftRun = {
-  readonly admitted: AdmittedGleanerLeftInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-export type LoadedResumableDiaristRun = {
-  readonly admitted: AdmittedDiaristInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-export type LoadedResumableSecretariatRun = {
-  readonly admitted: import("./invocation.ts").AdmittedSecretariatInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-export type LoadedResumableInstructionSeatRun = {
-  readonly admitted:
-    | AdmittedGatekeeperInvocation
-    | AdmittedNavigatorInvocation
-    | import("./invocation.ts").AdmittedAuditorInvocation
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
 /**
- * Base admitted projection shared by every seat loader: durable identity +
- * instruction/attachments + principal + restored ticket identity + model (#633).
- * Seat loaders add only their seat-specific fields on top.
+ * Base admitted projection: durable identity, instruction, attachments, principal, ticket, and model.
+ * Seat restore adds only that seat's fields.
  */
 function resumedBaseAdmitted(loaded: {
   readonly run: RoleRunRecord;
@@ -1762,7 +1673,7 @@ function resumedBaseAdmitted(loaded: {
   };
 }
 
-/** Loaded-run envelope projection; seat loaders add only their seat fields. */
+/** Loaded-run envelope. */
 function seatLoadedResult<R extends AdmittedRoleInvocation>(
   loaded: {
     readonly run: RoleRunRecord;
@@ -1777,508 +1688,6 @@ function seatLoadedResult<R extends AdmittedRoleInvocation>(
   };
 }
 
-/**
- * Load a resumable Judge run for resume. Rejects unknown, terminal,
- * non-resumable, and non-Judge IDs without replaying dispatch.
- */
-export async function loadResumableJudgeRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableJudgeRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "judge") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not judge`,
-    );
-  }
-  const admitted: AdmittedJudgeInvocation = {
-    role: "judge",
-    ...resumedBaseAdmitted(loaded),
-  };
-  return seatLoadedResult(loaded, admitted);
-}
-
-/**
- * Load a resumable Coder run for resume. Phase and task path are restored from
- * the admitted request so continuation stays role-correct (#109).
- */
-export async function loadResumableCoderRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableCoderRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "coder") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not coder`,
-    );
-  }
-  const phase = loaded.admittedFields.phase ?? loaded.run.phase;
-  if (phase !== "plan" && phase !== "apply") {
-    throw new CliUsageError(
-      `role run admitted coder phase is missing: ${runId}`,
-    );
-  }
-  const taskPath = loaded.admittedFields.taskPath;
-  if (taskPath === undefined) {
-    throw new CliUsageError(
-      `role run admitted coder task path is missing: ${runId}`,
-    );
-  }
-  if (loaded.admittedFields.instruction.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted coder task is blank: ${runId}`,
-    );
-  }
-  const admitted: AdmittedCoderInvocation = {
-    role: "coder",
-    phase,
-    ...resumedBaseAdmitted(loaded),
-    instructionEmpty: false,
-    taskPath,
-  };
-  return seatLoadedResult(loaded, admitted);
-}
-
-/**
- * Load a resumable Fixer run for resume. Phase, packet, and prerequisites are
- * restored from the admitted request so continuation stays role-correct (#110).
- */
-export async function loadResumableFixerRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableFixerRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "fixer") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not fixer`,
-    );
-  }
-  const phase = loaded.admittedFields.phase ?? loaded.run.phase;
-  if (phase !== "plan" && phase !== "apply") {
-    throw new CliUsageError(
-      `role run admitted fixer phase is missing: ${runId}`,
-    );
-  }
-  const packetPath = loaded.admittedFields.packetPath;
-  if (packetPath === undefined) {
-    throw new CliUsageError(
-      `role run admitted fixer packet path is missing: ${runId}`,
-    );
-  }
-  if (loaded.admittedFields.instruction.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted fixer instruction is blank: ${runId}`,
-    );
-  }
-  const prerequisites = loaded.admittedFields.prerequisites ?? Object.freeze([]);
-  const admitted: AdmittedFixerInvocation = {
-    role: "fixer",
-    phase,
-    ...resumedBaseAdmitted(loaded),
-    instructionEmpty: false,
-    packetPath,
-    ...(loaded.admittedFields.prerequisitesPath === undefined
-      ? {}
-      : { prerequisitesPath: loaded.admittedFields.prerequisitesPath }),
-    prerequisites,
-  };
-  return seatLoadedResult(loaded, admitted);
-}
-
-/**
- * Peek the durable role of a run id without enforcing resumable state.
- * Used by public resume dispatch to pick the role-correct seat and path.
- */
-/**
- * Load a resumable Reviewer run for resume. Fixed base is restored from the
- * admitted request; caller instruction remains optional provenance only.
- */
-export async function loadResumableReviewerRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableReviewerRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "reviewer") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not reviewer`,
-    );
-  }
-  // Durable restore keeps run identity — never rebrand record damage as fresh --base/--lens.
-  const rawBase = loaded.admittedFields.baseRevision;
-  if (rawBase === undefined || rawBase.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted reviewer base revision is missing: ${runId}`,
-    );
-  }
-  if (/\s/.test(rawBase) || rawBase.startsWith("-")) {
-    throw new CliUsageError(
-      `role run admitted reviewer base revision is damaged: ${runId}`,
-    );
-  }
-  const baseRevision = rawBase;
-  const lens = loaded.admittedFields.lens;
-  if (!isReviewerLens(lens)) {
-    throw new CliUsageError(
-      `role run admitted reviewer lens is missing: ${runId}`,
-    );
-  }
-  const authorityRefs = Object.freeze([
-    ...(loaded.admittedFields.authorityRefs ?? []),
-  ]);
-  if (authorityRefs.length === 0) {
-    throw new CliUsageError(
-      `role run admitted reviewer authority refs are missing: ${runId}`,
-    );
-  }
-  const admitted: AdmittedReviewerInvocation = {
-    role: "reviewer",
-    ...resumedBaseAdmitted(loaded),
-    baseRevision,
-    lens,
-    authorityRefs,
-  };
-  return seatLoadedResult(loaded, admitted);
-}
-
-/**
- * Load a resumable Countersign run for resume (#599). Ticket binding and
- * attachments restore from the admitted request.
- */
-export async function loadResumableCountersignRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableCountersignRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "countersign") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not countersign`,
-    );
-  }
-  const base = resumedBaseAdmitted(loaded);
-  const admitted: AdmittedCountersignInvocation = {
-    role: "countersign",
-    ...base,
-    ...(base.courtTicketNumbers === undefined
-      ? {}
-      : { courtTicketNumbers: base.courtTicketNumbers }),
-    ...(loaded.admittedFields.courtTicketNumbersDamage === undefined
-      ? {}
-      : {
-          courtTicketNumbersDamage:
-            loaded.admittedFields.courtTicketNumbersDamage,
-        }),
-  };
-  return seatLoadedResult(loaded, admitted);
-}
-
-/**
- * Load a resumable Gleaner-Left run for resume (#599). Fixed base restores from
- * the admitted request so continuation stays comparison-correct.
- */
-export async function loadResumableInstructionSeatRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableInstructionSeatRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (
-    loaded.run.role !== "gatekeeper"
-    && loaded.run.role !== "navigator"
-    && loaded.run.role !== "auditor"
-  ) {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not an instruction seat`,
-    );
-  }
-  const admitted = {
-    role: loaded.run.role,
-    ...resumedBaseAdmitted(loaded),
-  } as
-    | AdmittedGatekeeperInvocation
-    | AdmittedNavigatorInvocation
-    | import("./invocation.ts").AdmittedAuditorInvocation
-  return seatLoadedResult(loaded, admitted);
-}
-
-export async function loadResumableGleanerLeftRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableGleanerLeftRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "gleaner-left") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not gleaner-left`,
-    );
-  }
-  const baseRevision = loaded.admittedFields.baseRevision;
-  if (baseRevision === undefined || baseRevision.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted gleaner-left base revision is missing: ${runId}`,
-    );
-  }
-  const admitted: AdmittedGleanerLeftInvocation = {
-    role: "gleaner-left",
-    ...resumedBaseAdmitted(loaded),
-    baseRevision,
-  };
-  return seatLoadedResult(loaded, admitted);
-}
-
-export async function loadResumableDiaristRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableDiaristRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "diarist") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not diarist`,
-    );
-  }
-  const admitted: AdmittedDiaristInvocation = {
-    role: "diarist",
-    ...resumedBaseAdmitted(loaded),
-  };
-  return seatLoadedResult(loaded, admitted);
-}
-
-export async function loadResumableSecretariatRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableSecretariatRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "secretariat") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not secretariat`,
-    );
-  }
-  const admitted: import("./invocation.ts").AdmittedSecretariatInvocation = {
-    role: "secretariat",
-    ...resumedBaseAdmitted(loaded),
-  };
-  return seatLoadedResult(loaded, admitted);
-}
-
-export type LoadedResumableMergerRun = {
-  readonly admitted: AdmittedMergerInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-/**
- * Load a resumable Merger run for resume. Derived envelope + internal input path
- * are restored from the admitted request (#114).
- */
-export async function loadResumableMergerRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableMergerRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "merger") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not merger`,
-    );
-  }
-  const mergerInputPath = loaded.admittedFields.mergerInputPath;
-  if (mergerInputPath === undefined) {
-    throw new CliUsageError(
-      `role run admitted merger input path is missing: ${runId}`,
-    );
-  }
-  const derived = loaded.admittedFields.derived;
-  if (derived === undefined) {
-    throw new CliUsageError(
-      `role run admitted merger envelope is missing: ${runId}`,
-    );
-  }
-  if (loaded.admittedFields.instruction.trim() === "") {
-    throw new CliUsageError(
-      `role run admitted merger task is blank: ${runId}`,
-    );
-  }
-  const admitted: AdmittedMergerInvocation = {
-    role: "merger",
-    ...resumedBaseAdmitted(loaded),
-    instructionEmpty: false,
-    mergerInputPath,
-    derived,
-  };
-  return seatLoadedResult(loaded, admitted);
-}
-
-export type LoadedResumableCollectorRun = {
-  readonly admitted: AdmittedCollectorInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-/**
- * Load a resumable Collector run for resume (#633). Admitted repository/PR
- * identity restores from the durable admitted request so the continuation
- * stays binding-correct.
- */
-export async function loadResumableCollectorRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableCollectorRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "collector") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not collector`,
-    );
-  }
-  const { prNumber, repository, repositoryDisplay, manifestDigest } = loaded.admittedFields;
-  // #676 A: prNumber may be unbound at admission (role bind-target). Repository is required.
-  if (
-    repository === undefined ||
-    repositoryDisplay === undefined ||
-    manifestDigest === undefined
-  ) {
-    throw new CliUsageError(
-      `role run admitted collector repository identity is missing: ${runId}`,
-    );
-  }
-  let parsedRepository;
-  try {
-    parsedRepository = parseCollectorRepository(repositoryDisplay);
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new CliUsageError(detail, { cause: error });
-  }
-  if (parsedRepository.canonical !== repository) {
-    throw new CliUsageError(
-      `role run admitted collector repository does not match its canonical form: ${runId}`,
-    );
-  }
-  const admitted: AdmittedCollectorInvocation = {
-    role: "collector",
-    ...resumedBaseAdmitted(loaded),
-    ...(prNumber === undefined ? {} : { prNumber }),
-    repository: parsedRepository,
-    ...(loaded.admittedFields.requestManifestPath === undefined
-      ? {}
-      : { requestManifestPath: loaded.admittedFields.requestManifestPath }),
-    ...(loaded.admittedFields.waitWindowMs === undefined
-      ? {}
-      : { waitWindowMs: loaded.admittedFields.waitWindowMs }),
-    manifestDigest,
-  };
-  return seatLoadedResult(loaded, admitted);
-}
-
-export type LoadedResumableDoctorRun = {
-  readonly admitted: AdmittedDoctorInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-/**
- * Load a resumable Doctor run for resume (#633). Issue + retained case
- * identity restore from the durable admitted request.
- */
-export async function loadResumableDoctorRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableDoctorRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "doctor") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not doctor`,
-    );
-  }
-  const { issueNumber, caseRunsPath, caseIdentity } = loaded.admittedFields;
-  if (
-    issueNumber === undefined ||
-    caseRunsPath === undefined ||
-    caseIdentity === undefined
-  ) {
-    throw new CliUsageError(
-      `role run admitted doctor case identity is missing: ${runId}`,
-    );
-  }
-  const admitted: AdmittedDoctorInvocation = {
-    role: "doctor",
-    ...resumedBaseAdmitted(loaded),
-    issueNumber,
-    caseRunsPath,
-    caseIdentity,
-  };
-  return seatLoadedResult(loaded, admitted);
-}
-
-export type LoadedResumableNotaryRun = {
-  readonly admitted: AdmittedNotaryInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-/**
- * Load a resumable Notary run for resume (#633). Source-run locator restores
- * from the durable admitted request; the locator is not re-resolved.
- */
-export async function loadResumableNotaryRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableNotaryRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "notary") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not notary`,
-    );
-  }
-  const { sourceRunPath, sourceRun } = loaded.admittedFields;
-  if (sourceRunPath === undefined || sourceRun === undefined) {
-    throw new CliUsageError(
-      `role run admitted notary source-run locator is missing: ${runId}`,
-    );
-  }
-  const admitted: AdmittedNotaryInvocation = {
-    role: "notary",
-    ...resumedBaseAdmitted(loaded),
-    sourceRunPath,
-    sourceRun,
-  };
-  return seatLoadedResult(loaded, admitted);
-}
-
-export type LoadedResumableInspectorRun = {
-  readonly admitted: AdmittedInspectorInvocation;
-  readonly run: RoleRunRecord;
-  readonly observation?: TypedHttp429Observation;
-};
-
-/** Load a resumable Inspector run for resume (#633); base admitted identity only. */
-export async function loadResumableInspectorRun(
-  home: string,
-  runId: string,
-  authority: DurablePrincipalAuthority,
-): Promise<LoadedResumableInspectorRun> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
-  if (loaded.run.role !== "inspector") {
-    throw new CliUsageError(
-      `role run ${runId} belongs to ${loaded.run.role}, not inspector`,
-    );
-  }
-  const admitted: AdmittedInspectorInvocation = {
-    role: "inspector",
-    ...resumedBaseAdmitted(loaded),
-    ...(loaded.admittedFields.sourceRunPath === undefined
-      ? {}
-      : { sourceRunPath: loaded.admittedFields.sourceRunPath }),
-  };
-  return seatLoadedResult(loaded, admitted);
-}
 
 export async function peekRoleRunRole(
   home: string,
@@ -2306,4 +1715,285 @@ export async function peekRoleRunRole(
   if (runDirectory === undefined) return undefined;
   const run = await readRoleRunIdentity(runDirectory);
   return run?.role;
+}
+
+
+export type LoadedResumablePublicRole = {
+  readonly admitted: AdmittedRoleInvocation;
+  readonly run: RoleRunRecord;
+  readonly observation?: TypedHttp429Observation;
+};
+
+/**
+ * One resume load. The caller supplies the package run id; the disk role
+ * selects the existing restore checks. The stored native host session id is
+ * read on the public explicit resume seam, not from this load.
+ */
+export async function loadResumablePublicRole(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+): Promise<LoadedResumablePublicRole> {
+  const loaded = await loadResumableRunRecord(home, runId, authority);
+  return seatLoadedResult(loaded, admitResumedRole(loaded));
+}
+
+/**
+ * One resume restore. Admission kind comes from the composition-root record;
+ * seat-only required fields stay on that kind. Instruction seats share one face.
+ */
+function admitResumedRole(loaded: {
+  readonly run: RoleRunRecord;
+  readonly principal: DurablePrincipal;
+  readonly observation?: TypedHttp429Observation;
+  readonly admittedFields: LoadedAdmittedRequestFields;
+}): AdmittedRoleInvocation {
+  const role = loaded.run.role;
+  const runId = loaded.run.runId;
+  const record = packagedRoleMetadata(role);
+  if (record === undefined) {
+    throw new CliUsageError(`unknown role: ${role}`);
+  }
+  const fields = loaded.admittedFields;
+  const base = resumedBaseAdmitted(loaded);
+  switch (record.admission) {
+    case "instruction": {
+      if (packagedResumeSourcePath(role)) {
+        const admitted: AdmittedInspectorInvocation = {
+          role: "inspector",
+          ...base,
+          ...(fields.sourceRunPath === undefined
+            ? {}
+            : { sourceRunPath: fields.sourceRunPath }),
+        };
+        return admitted;
+      }
+      return {
+        role,
+        ...base,
+      } as AdmittedRoleInvocation;
+    }
+    case "court-materials": {
+      const admitted: AdmittedCountersignInvocation = {
+        role: "countersign",
+        ...base,
+        ...(base.courtTicketNumbers === undefined
+          ? {}
+          : { courtTicketNumbers: base.courtTicketNumbers }),
+        ...(fields.courtTicketNumbersDamage === undefined
+          ? {}
+          : { courtTicketNumbersDamage: fields.courtTicketNumbersDamage }),
+      };
+      return admitted;
+    }
+    case "worker-task": {
+      const phase = resumedWorkerPhase(fields.phase ?? loaded.run.phase, record.phases, role, runId);
+      const taskPath = fields.taskPath;
+      if (taskPath === undefined) {
+        throw new CliUsageError(
+          `role run admitted coder task path is missing: ${runId}`,
+        );
+      }
+      if (fields.instruction.trim() === "") {
+        throw new CliUsageError(
+          `role run admitted coder task is blank: ${runId}`,
+        );
+      }
+      const admitted: AdmittedCoderInvocation = {
+        role: "coder",
+        phase,
+        ...base,
+        instructionEmpty: false,
+        taskPath,
+      };
+      return admitted;
+    }
+    case "worker-packet": {
+      const phase = resumedWorkerPhase(fields.phase ?? loaded.run.phase, record.phases, role, runId);
+      const packetPath = fields.packetPath;
+      if (packetPath === undefined) {
+        throw new CliUsageError(
+          `role run admitted fixer packet path is missing: ${runId}`,
+        );
+      }
+      if (fields.instruction.trim() === "") {
+        throw new CliUsageError(
+          `role run admitted fixer instruction is blank: ${runId}`,
+        );
+      }
+      const prerequisites = fields.prerequisites ?? Object.freeze([]);
+      const admitted: AdmittedFixerInvocation = {
+        role: "fixer",
+        phase,
+        ...base,
+        instructionEmpty: false,
+        packetPath,
+        ...(fields.prerequisitesPath === undefined
+          ? {}
+          : { prerequisitesPath: fields.prerequisitesPath }),
+        prerequisites,
+      };
+      return admitted;
+    }
+    case "review-basis": {
+      const rawBase = fields.baseRevision;
+      if (rawBase === undefined || rawBase.trim() === "") {
+        throw new CliUsageError(
+          `role run admitted reviewer base revision is missing: ${runId}`,
+        );
+      }
+      if (/\s/.test(rawBase) || rawBase.startsWith("-")) {
+        throw new CliUsageError(
+          `role run admitted reviewer base revision is damaged: ${runId}`,
+        );
+      }
+      const lens = fields.lens;
+      if (!isReviewerLens(lens)) {
+        throw new CliUsageError(
+          `role run admitted reviewer lens is missing: ${runId}`,
+        );
+      }
+      const authorityRefs = Object.freeze([...(fields.authorityRefs ?? [])]);
+      if (authorityRefs.length === 0) {
+        throw new CliUsageError(
+          `role run admitted reviewer authority refs are missing: ${runId}`,
+        );
+      }
+      const admitted: AdmittedReviewerInvocation = {
+        role: "reviewer",
+        ...base,
+        baseRevision: rawBase,
+        lens,
+        authorityRefs,
+      };
+      return admitted;
+    }
+    case "gleaner": {
+      const baseRevision = fields.baseRevision;
+      if (baseRevision === undefined || baseRevision.trim() === "") {
+        throw new CliUsageError(
+          `role run admitted gleaner-left base revision is missing: ${runId}`,
+        );
+      }
+      const admitted: AdmittedGleanerLeftInvocation = {
+        role: "gleaner-left",
+        ...base,
+        baseRevision,
+      };
+      return admitted;
+    }
+    case "merge-envelope": {
+      const mergerInputPath = fields.mergerInputPath;
+      if (mergerInputPath === undefined) {
+        throw new CliUsageError(
+          `role run admitted merger input path is missing: ${runId}`,
+        );
+      }
+      const derived = fields.derived;
+      if (derived === undefined) {
+        throw new CliUsageError(
+          `role run admitted merger envelope is missing: ${runId}`,
+        );
+      }
+      if (fields.instruction.trim() === "") {
+        throw new CliUsageError(
+          `role run admitted merger task is blank: ${runId}`,
+        );
+      }
+      const admitted: AdmittedMergerInvocation = {
+        role: "merger",
+        ...base,
+        instructionEmpty: false,
+        mergerInputPath,
+        derived,
+      };
+      return admitted;
+    }
+    case "collect-target": {
+      const { prNumber, repository, repositoryDisplay, manifestDigest } = fields;
+      if (
+        repository === undefined ||
+        repositoryDisplay === undefined ||
+        manifestDigest === undefined
+      ) {
+        throw new CliUsageError(
+          `role run admitted collector repository identity is missing: ${runId}`,
+        );
+      }
+      let parsedRepository;
+      try {
+        parsedRepository = parseCollectorRepository(repositoryDisplay);
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        throw new CliUsageError(detail, { cause: error });
+      }
+      if (parsedRepository.canonical !== repository) {
+        throw new CliUsageError(
+          `role run admitted collector repository does not match its canonical form: ${runId}`,
+        );
+      }
+      const admitted: AdmittedCollectorInvocation = {
+        role: "collector",
+        ...base,
+        ...(prNumber === undefined ? {} : { prNumber }),
+        repository: parsedRepository,
+        ...(fields.requestManifestPath === undefined
+          ? {}
+          : { requestManifestPath: fields.requestManifestPath }),
+        ...(fields.waitWindowMs === undefined ? {} : { waitWindowMs: fields.waitWindowMs }),
+        manifestDigest,
+      };
+      return admitted;
+    }
+    case "case-identity": {
+      const { issueNumber, caseRunsPath, caseIdentity } = fields;
+      if (
+        issueNumber === undefined ||
+        caseRunsPath === undefined ||
+        caseIdentity === undefined
+      ) {
+        throw new CliUsageError(
+          `role run admitted doctor case identity is missing: ${runId}`,
+        );
+      }
+      const admitted: AdmittedDoctorInvocation = {
+        role: "doctor",
+        ...base,
+        issueNumber,
+        caseRunsPath,
+        caseIdentity,
+      };
+      return admitted;
+    }
+    case "source-locator": {
+      const { sourceRunPath, sourceRun } = fields;
+      if (sourceRunPath === undefined || sourceRun === undefined) {
+        throw new CliUsageError(
+          `role run admitted notary source-run locator is missing: ${runId}`,
+        );
+      }
+      const admitted: AdmittedNotaryInvocation = {
+        role: "notary",
+        ...base,
+        sourceRunPath,
+        sourceRun,
+      };
+      return admitted;
+    }
+  }
+}
+
+/** Worker phase on resume: value must belong to the registry phase set. */
+function resumedWorkerPhase(
+  phase: string | undefined,
+  phases: readonly (string | null)[],
+  role: string,
+  runId: string,
+): "plan" | "apply" {
+  if (phase === "plan" || phase === "apply") {
+    if (phases.some((item) => item === phase)) {
+      return phase;
+    }
+  }
+  throw new CliUsageError(`role run admitted ${role} phase is missing: ${runId}`);
 }

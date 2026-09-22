@@ -52,12 +52,16 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     assert.ok(description);
     let bound: string | undefined;
     let receipt: unknown;
+    let rejectLoad = false;
     const host = createHeadlessRoleTurnHost({
       description,
       hostName: "codex",
       binary: fakeBin,
       sessionIdentity: {
-        async load() { return bound; },
+        async load() {
+          if (rejectLoad) throw new Error("explicit resume must use the stored host session id");
+          return bound;
+        },
         async bind(_principal, id) { bound = id; },
         resolveSessionFile: () => join(root, "session", "session.jsonl"),
       },
@@ -175,6 +179,15 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     ]);
     const argv = (await readFile(argvLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
     assert.deepEqual(argv[1]!.slice(0, 4), ["exec", "--approve-for-me", "resume", "thread-fake-1"]);
+    rejectLoad = true;
+    const explicit = await host.executeTurn({
+      ...request,
+      continuation: { kind: "resume", prompt: "from-package", hostSessionId: "thread-from-package" },
+    });
+    assert.equal(explicit.knownFailure, undefined, JSON.stringify(explicit));
+    const explicitArgv = (await readFile(argvLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
+    assert.deepEqual(explicitArgv.at(-1)!.slice(0, 4), ["exec", "--approve-for-me", "resume", "thread-from-package"]);
+    rejectLoad = false;
     assert.ok(argv[1]!.includes("--output-schema"));
     assert.ok(argv[1]!.some((arg) => arg === "mcp_servers.ak-probe.required=true"));
 

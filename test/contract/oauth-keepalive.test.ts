@@ -136,7 +136,7 @@ function minimalRoleExtension(oauthKeepalive: {
   scheduler?: OAuthKeepaliveScheduler;
 }) {
   return createPiRoleRuntimeExtension({
-    loadJudgeSoul: async () => "judge",
+    loadRoleSoul: async () => "judge",
   }, { oauthKeepalive });
 }
 

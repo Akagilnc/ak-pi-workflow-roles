@@ -26,7 +26,7 @@ import {
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
-import { resolveHostAwareSessionAvailability } from "../session-identity.ts";
+import { readStoredHostSessionId, resolveHostAwareSessionAvailability } from "../session-identity.ts";
 import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
 import type {
@@ -39,7 +39,7 @@ import type {
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
-import { isOfficerReviewSeat } from "../host-contracts.ts";
+import { isOfficerReviewSeat } from "../packaged-role-registry.ts";
 import { deliverCaseDossierAsAttachment } from "./case-dossier-delivery.ts";
 
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
@@ -323,6 +323,11 @@ export type PostAdmissionEnv = {
    * and mint a new run. Absent on ordinary role commands and on `ak-role resume`.
    */
   freshSummons?: true;
+  /**
+   * Typed ticket already carried into this summons (parent board / 起居录).
+   * Admission places the run under it. Not a public CLI flag.
+   */
+  boundTicketNumber?: number;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
   /**
@@ -1380,6 +1385,30 @@ export function resumeTurnRequestProjectionOptions(
   };
 }
 
+/** Shared new-turn and in-call auto-resume projection. Seat code supplies prompt and activation. */
+export function roleTurnOptions(
+  env: PostAdmissionEnv,
+  admitted: { readonly correlationId?: string },
+  continuation: RoleTurnRequest["continuation"],
+  extra?: { readonly cwd?: string },
+): RoleTurnRequestProjectionOptions {
+  const correlationId = admitted.correlationId ?? env.correlationId;
+  return {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...pickEngineAxis(env),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(correlationId === undefined || correlationId.trim() === ""
+      ? {}
+      : { correlationId }),
+    continuation,
+    ...(extra?.cwd === undefined ? {} : { cwd: extra.cwd }),
+    ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
+  };
+}
+
 /**
  * Build the turn request, then hand off to dispatch. When a writer lease is
  * held, release it if build throws before handoff — dispatch's finally only
@@ -1568,6 +1597,22 @@ export async function runPostAdmissionSeatResume<
         }
 
         let turnRequest = await input.buildTurnRequest(admittedForBuild, request);
+        if (
+          turnRequest.continuation.kind === "resume"
+          && turnRequest.continuation.hostSessionId === undefined
+        ) {
+          const hostSessionId = await readStoredHostSessionId(
+            env.host,
+            env.principalAuthority,
+            admittedForBuild.principal,
+          );
+          if (hostSessionId !== undefined) {
+            turnRequest = {
+              ...turnRequest,
+              continuation: { ...turnRequest.continuation, hostSessionId },
+            };
+          }
+        }
 
         // Open court continue, or new court for summons / message re-review
         // (clause 0 新庭可再交卷; #833). Bare resume without open court omits id.

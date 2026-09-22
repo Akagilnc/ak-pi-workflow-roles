@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole, PUBLIC_ROLE_ARGV } from "../../src/public-cli/cli.ts";
-import { runPublicJudge } from "../../src/public-cli/judge-run.ts";
+import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   loadPublicCliConfig,
   publicCliConfigPath,
@@ -267,7 +267,7 @@ test("#422 NaN injected via role entry (judge) terminates the whole call loudly 
     const runId="422-nan-role-entry";let calls=0;
     const {io,stderr}=captureIo();
     await assert.rejects(
-      ()=>runPublicJudge(["--project",project,"auto"],{
+      ()=>runPublicInstructionSeat(["--project",project,"auto"],{
         home,
         principalAuthority: piDurablePrincipalAuthority,
         sessionAppender: appendPiSessionCustomEntry,
@@ -282,7 +282,7 @@ test("#422 NaN injected via role entry (judge) terminates the whole call loudly 
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async(args)=>{calls+=1;return{code:0,stderr:"",timedOut:false,args:[...args]};},
           }),
-      },io,PUBLIC_ROLE_ARGV.judge.parse),
+      },io,"judge",PUBLIC_ROLE_ARGV.judge.parse),
       (error:unknown)=>error instanceof Error &&
         /non-negative integer/.test(error.message) &&
         // NaN serializes as null in the diagnostic (JSON.stringify) — still loud, not silent.

@@ -14,6 +14,7 @@ import {
   INSPECTOR_SESSION_MATERIALS,
   NOTARY_SESSION_MATERIALS,
   PUBLIC_ROLE_RECORDS,
+  packagedRoleSessionMaterials,
   type PackagedRole,
 } from "./packaged-role-registry.ts";
 
@@ -99,7 +100,7 @@ export function loadMainRoleReferenceMaterials(role: MainRoleSession): Promise<s
 /** Gatekeeper province; notary reuses the public notary materials definition. */
 export const GATEKEEPER_SESSION_MATERIALS = {
   // #639: single authority — the public gatekeeper record owns the province list.
-  gatekeeper: PUBLIC_ROLE_RECORDS.find((entry) => entry.role === "gatekeeper")!.sessionMaterials,
+  gatekeeper: packagedRoleSessionMaterials("gatekeeper")!,
   inspector: INSPECTOR_SESSION_MATERIALS,
   notary: NOTARY_SESSION_MATERIALS,
 } as const;

@@ -36,14 +36,8 @@ import {
   type StructuredOptionProjection,
 } from "../../src/public-cli/option-definitions.ts";
 import {
-  parseCoderArgv,
-  parseCollectorArgv,
-  parseDoctorArgv,
-  parseFixerArgv,
-  parseJudgeArgv,
-  parseMergerArgv,
-  parseReviewerArgv,
   parseAnalystArgv,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 
 const isUsage = (error: unknown): boolean =>
@@ -129,13 +123,13 @@ test("unconditional required: table required:true is the sole missing-option gat
     "reviewer/authority-ref",
     "reviewer/base",
   ]);
-  assert.throws(() => parseReviewerArgv(["task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["task"]), isUsage);
   // #676 D1: collector --pr is optional at parse; ambiguity rejects at admission.
-  assert.deepEqual(parseCollectorArgv(["task"]), {
+  assert.deepEqual(parsePublicSeatArgv("collector", ["task"]), {
     instruction: "task",
     attachmentPaths: [],
   });
-  assert.throws(() => parseDoctorArgv(["task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("doctor", ["task"]), isUsage);
 
   // Flip required on the shared seam → behavior flips (table is the gate).
   const base = {
@@ -162,11 +156,11 @@ test("unconditional required: table required:true is the sole missing-option gat
 });
 
 test("real parsers: phase from table; repeatable:false rejects; repeatable:true admits", () => {
-  assert.equal(parseCoderArgv(["task"]).phase, "apply");
-  assert.equal(parseCoderArgv(["plan", "task"]).phase, "plan");
-  assert.equal(parseCoderArgv(["apply", "task"]).phase, "apply");
-  assert.equal(parseFixerArgv(["plan", "fix it"]).phase, "plan");
-  assert.equal(parseFixerArgv(["just fix"]).phase, "apply");
+  assert.equal(parsePublicSeatArgv("coder", ["task"]).phase, "apply");
+  assert.equal(parsePublicSeatArgv("coder", ["plan", "task"]).phase, "plan");
+  assert.equal(parsePublicSeatArgv("coder", ["apply", "task"]).phase, "apply");
+  assert.equal(parsePublicSeatArgv("fixer", ["plan", "fix it"]).phase, "plan");
+  assert.equal(parsePublicSeatArgv("fixer", ["just fix"]).phase, "apply");
 
   const dups: Array<{
     name: string;
@@ -176,43 +170,43 @@ test("real parsers: phase from table; repeatable:false rejects; repeatable:true 
   }> = [
     {
       name: "judge/--project",
-      parse: parseJudgeArgv,
+      parse: (args) => parsePublicSeatArgv("judge", args),
       argv: ["--project", "/a", "--project", "/b", "task"],
       flag: "--project",
     },
     {
       name: "coder/--project",
-      parse: parseCoderArgv,
+      parse: (args) => parsePublicSeatArgv("coder", args),
       argv: ["--project", "/a", "--project", "/b", "task"],
       flag: "--project",
     },
     {
       name: "fixer/--project",
-      parse: parseFixerArgv,
+      parse: (args) => parsePublicSeatArgv("fixer", args),
       argv: ["--project", "/a", "--project", "/b", "task"],
       flag: "--project",
     },
     {
       name: "reviewer/--base",
-      parse: parseReviewerArgv,
+      parse: (args) => parsePublicSeatArgv("reviewer", args),
       argv: ["--base", "main", "--base", "dev", "task"],
       flag: "--base",
     },
     {
       name: "doctor/--issue",
-      parse: parseDoctorArgv,
+      parse: (args) => parsePublicSeatArgv("doctor", args),
       argv: ["--issue", "1", "--issue", "2"],
       flag: "--issue",
     },
     {
       name: "collector/--pr",
-      parse: parseCollectorArgv,
+      parse: (args) => parsePublicSeatArgv("collector", args),
       argv: ["--pr", "1", "--pr", "2", "--repo", "acme/x"],
       flag: "--pr",
     },
     {
       name: "merger/--project",
-      parse: parseMergerArgv,
+      parse: (args) => parsePublicSeatArgv("merger", args),
       argv: ["--project", "/a", "--project", "/b", "task"],
       flag: "--project",
     },
@@ -235,11 +229,11 @@ test("real parsers: phase from table; repeatable:false rejects; repeatable:true 
   }
 
   assert.deepEqual(
-    parseCoderArgv(["--attach", "/a", "--attach", "/b", "task"]).attachmentPaths,
+    parsePublicSeatArgv("coder", ["--attach", "/a", "--attach", "/b", "task"]).attachmentPaths,
     ["/a", "/b"],
   );
   assert.deepEqual(
-    parseReviewerArgv([
+    parsePublicSeatArgv("reviewer", [
       "--base",
       "main",
       "--lens",
@@ -303,7 +297,7 @@ test("rejected spellings: absent from public surfaces; parsers refuse them", () 
     for (const spelling of entry.spellings) {
       if (entry.owner === "judge") {
         assert.throws(
-          () => parseJudgeArgv([spelling, "x", "task"]),
+          () => parsePublicSeatArgv("judge", [spelling, "x", "task"]),
           (e: unknown) =>
             e instanceof Error
             && e.message.includes("burden")
@@ -312,7 +306,7 @@ test("rejected spellings: absent from public surfaces; parsers refuse them", () 
       }
       if (entry.owner === "merger") {
         assert.throws(
-          () => parseMergerArgv([spelling, "x", "task"]),
+          () => parsePublicSeatArgv("merger", [spelling, "x", "task"]),
           (e: unknown) =>
             e instanceof Error
             && (e.message.includes("ak-merger-input")
@@ -533,22 +527,22 @@ test("public dashed options admitted; shared project/attach owner-binding preser
   const cases: Case[] = [
     {
       owner: "judge",
-      parse: parseJudgeArgv,
+      parse: (args) => parsePublicSeatArgv("judge", args),
       build: (f) => [...f, "task"],
     },
     {
       owner: "coder",
-      parse: parseCoderArgv,
+      parse: (args) => parsePublicSeatArgv("coder", args),
       build: (f) => [...f, "task"],
     },
     {
       owner: "fixer",
-      parse: parseFixerArgv,
+      parse: (args) => parsePublicSeatArgv("fixer", args),
       build: (f) => [...f, "task"],
     },
     {
       owner: "reviewer",
-      parse: parseReviewerArgv,
+      parse: (args) => parsePublicSeatArgv("reviewer", args),
       build: (f) =>
         f.some((t) => t === "--base" || t.startsWith("--base="))
           ? [...f, "task"]
@@ -556,7 +550,7 @@ test("public dashed options admitted; shared project/attach owner-binding preser
     },
     {
       owner: "collector",
-      parse: parseCollectorArgv,
+      parse: (args) => parsePublicSeatArgv("collector", args),
       build: (f) =>
         f.some((t) => t === "--pr" || t.startsWith("--pr="))
           ? [...f, "--repo", "acme/widgets"]
@@ -564,7 +558,7 @@ test("public dashed options admitted; shared project/attach owner-binding preser
     },
     {
       owner: "doctor",
-      parse: parseDoctorArgv,
+      parse: (args) => parsePublicSeatArgv("doctor", args),
       build: (f) =>
         f.some((t) => t === "--issue" || t.startsWith("--issue="))
           ? [...f]
@@ -572,7 +566,7 @@ test("public dashed options admitted; shared project/attach owner-binding preser
     },
     {
       owner: "merger",
-      parse: parseMergerArgv,
+      parse: (args) => parsePublicSeatArgv("merger", args),
       build: (f) => [...f, "task"],
     },
   ];

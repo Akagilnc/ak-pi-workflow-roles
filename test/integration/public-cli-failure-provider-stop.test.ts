@@ -82,6 +82,128 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
     assert.equal(terminal.roleOutcome.kind, "failure", `${role}: no Receipt outcome`);
   });
 });
+test("runnerFailure registry rank is the public settlement principal", async () => {
+  const detourDiagnostic = "ENGINE_DETOUR_HARD_FAIL_505_RECORD";
+  const knownDiagnostic = "KNOWN_FAILURE_505_STANDS";
+  const collectorDiagnostic = "COLLECTOR_OBSERVE_HARD_FAIL_505";
+  const cases = [
+    {
+      label: "judge known-first still reads a lone engine-detour record",
+      argv: (project: string) => ["--model", "openai-codex/faux-1:off", "judge", "--project", project, "rank"],
+      session: "detour" as const,
+      known: false,
+      cause: "output" as const,
+      diagnostic: detourDiagnostic,
+    },
+    {
+      label: "reviewer record-first lets the engine-detour record replace knownFailure",
+      argv: (project: string) => ["--model", "openai-codex/faux-1:off", "reviewer", "--project", project, "--base", "HEAD", "--lens", "correctness", "--authority-ref", "CLAUDE.md"],
+      session: "detour" as const,
+      known: true,
+      cause: "output" as const,
+      diagnostic: detourDiagnostic,
+    },
+    {
+      label: "gatekeeper shares the record-first engine-detour leaf",
+      argv: (project: string) => ["--model", "openai-codex/faux-1:off", "gatekeeper", "--project", project, "rank"],
+      session: "detour" as const,
+      known: true,
+      cause: "output" as const,
+      diagnostic: detourDiagnostic,
+    },
+    {
+      label: "collector known-first reads its own infrastructure tool",
+      argv: (project: string) => ["--model", "openai-codex/faux-1:off", "collector", "--project", project, "--pr", "7", "--repo", "acme/widgets"],
+      session: "collector" as const,
+      known: false,
+      cause: "activation" as const,
+      diagnostic: collectorDiagnostic,
+    },
+    {
+      label: "gleaner-left has no runnerFailure leaf so knownFailure stands",
+      argv: (project: string) => ["--model", "openai-codex/faux-1:off", "gleaner-left", "--project", project, "--base", "HEAD", "rank"],
+      session: "detour" as const,
+      known: true,
+      cause: "provider" as const,
+      diagnostic: knownDiagnostic,
+    },
+  ];
+  for (const [index, row] of cases.entries()) {
+    await withTempHome(async (home) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const { io, stdout, stderr } = captureIo();
+      const toolName = row.session === "collector" ? "ak_collector_observe" : ENGINE_DETOUR_TOOL_NAME;
+      const toolText = row.session === "collector" ? collectorDiagnostic : detourDiagnostic;
+      const result = await runAkRole(row.argv(project), {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => `run-505-rank-${index}`,
+        io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            const sessionIndex = args.indexOf("--session");
+            const sessionFile = args[sessionIndex + 1];
+            if (sessionIndex === -1 || sessionFile === undefined) {
+              throw new Error(`${row.label}: runner args have no --session`);
+            }
+            await mkdir(dirname(sessionFile), { recursive: true });
+            await writeFile(sessionFile, [
+              JSON.stringify({ type: "session", id: "parent-session" }),
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "assistant",
+                  content: [{ type: "toolCall", id: "infra-505", name: toolName, arguments: {} }],
+                  stopReason: "toolUse",
+                },
+              }),
+              JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "infra-505",
+                  toolName,
+                  isError: true,
+                  content: [{ type: "text", text: toolText }],
+                },
+              }),
+            ].join("\n") + "\n", "utf8");
+            return {
+              code: 1,
+              stderr: "rank\n",
+              timedOut: false,
+              args: [...args],
+              ...(row.known
+                ? {
+                  knownFailure: {
+                    cause: "provider" as const,
+                    diagnostic: knownDiagnostic,
+                    identity: { name: "SecondaryProviderStop" },
+                  },
+                }
+                : {}),
+            };
+          },
+        }),
+      });
+      const { terminal } = await assertPublicFailureSettlement({
+        result,
+        stdout,
+        stderr,
+        expectedCause: row.cause,
+        diagnosticEquals: row.diagnostic,
+      });
+      assert.equal(terminal.roleOutcome.kind, "failure", row.label);
+    });
+  }
+});
+
 test("#380: soft engine-detour failure is not infrastructure and does not outrank knownFailure", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
