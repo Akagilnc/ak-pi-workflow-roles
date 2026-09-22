@@ -374,10 +374,10 @@ export type RecordSessionOpen = {
  *
  * `resumed` is the sole open-or-continue fact — callers must not re-probe nest existence.
  */
-export async function createRecordSessionOpen(
+export function createRecordSessionOpen(
   options: CreateRecordSessionOptions,
   host: RecordSessionHost = piRecordSessionHost,
-): Promise<RecordSessionOpen> {
+): RecordSessionOpen {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
 
@@ -435,20 +435,8 @@ export async function createRecordSessionOpen(
       }
       // No sidecar and no cwd-matching session — mint fresh in the existing nest.
     } else {
-      // Candidate discovery/filtering remains host-owned. Validate every host candidate
-      // before continueRecent can open and migrate a selected legacy session.
-      for (const candidate of await host.listRecentRecordSessionCandidates({ cwd, sessionDir })) {
-        assertRecentFinalFileUnderSessionDir(sessionDir, candidate);
-      }
       const continued = host.continueRecentRecordSession({ cwd, sessionDir });
       if (continued.resumed) {
-        const recentFile = continued.session.getSessionFile();
-        if (recentFile === undefined) {
-          throw new ActivationLedgerError(
-            "archivist host reported a resumed record session without a session file",
-          );
-        }
-        assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
         return continued;
       }
       // Pi's native continuation falls back to an unparented fresh session. The
@@ -482,10 +470,8 @@ export async function createRecordSessionOpen(
 }
 
 /** Session-only facade — most callers only need the manager. */
-export async function createRecordSession(
-  options: CreateRecordSessionOptions,
-): Promise<HostRecordSession> {
-  return (await createRecordSessionOpen(options)).session;
+export function createRecordSession(options: CreateRecordSessionOptions): HostRecordSession {
+  return createRecordSessionOpen(options).session;
 }
 
 

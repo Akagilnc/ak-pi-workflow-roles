@@ -95,7 +95,7 @@ test("worker gate native continuation reports and materializes an empty-nest fal
   });
 });
 
-test("worker gate native continuation checks only host candidates before opening", async () => {
+test("worker gate delegates native continuation without package path checks", async () => {
   await withHermeticHome({ prefix: "ak-archivist-gate-escape-" }, async ({ home }) => {
     const project = join(home, "proj");
     const parentDir = join(machineLedgerHome(home), "books", "proj", "1003", "runs", "r@coder", "session");
@@ -105,37 +105,31 @@ test("worker gate native continuation checks only host candidates before opening
     const parent = SessionManager.open(parentFile, parentDir, project);
     const gateDir = join(parentDir, WORKER_SUBMISSION_GATE_KIND);
     await mkdir(gateDir, { recursive: true });
-    const valid = join(gateDir, "valid.jsonl");
-    await writeFile(valid, sessionJsonl("valid", project, "valid"));
     const outside = join(home, "outside.jsonl");
-    const outsideBefore = `${JSON.stringify({
-      type: "session",
-      version: 1,
-      id: "outside",
-      timestamp: "2026-09-01T00:00:00.000Z",
-      cwd: join(home, "different-project"),
-    })}\n`;
-    await writeFile(outside, outsideBefore);
-    await symlink(outside, join(gateDir, "recent.jsonl"));
+    await writeFile(outside, sessionJsonl("outside", project, "outside"));
+    const continued = SessionManager.open(outside, gateDir, project);
+    const host = {
+      openRecordSession: ({ sessionFile, sessionDir, cwd }: {
+        sessionFile: string;
+        sessionDir: string;
+        cwd: string;
+      }) => SessionManager.open(sessionFile, sessionDir, cwd),
+      createRecordSession: ({ cwd, sessionDir, parentSession }: {
+        cwd: string;
+        sessionDir: string;
+        parentSession?: string;
+      }) => SessionManager.create(cwd, sessionDir, parentSession === undefined ? undefined : { parentSession }),
+      continueRecentRecordSession: () => ({ session: continued, resumed: true }),
+      inMemoryRecordSession: (cwd: string) => SessionManager.inMemory(cwd),
+    };
 
     const opened = await createRecordSessionOpen({
       cwd: project,
       kind: WORKER_SUBMISSION_GATE_KIND,
       parent,
-    });
+    }, host);
     assert.equal(opened.resumed, true);
-    assert.equal(opened.session.getSessionFile(), valid);
-    assert.equal(await readFile(outside, "utf8"), outsideBefore);
-
-    const candidateBefore = outsideBefore.replace(join(home, "different-project"), project);
-    await writeFile(outside, candidateBefore);
-    await assert.rejects(
-      () => createRecordSessionOpen({ cwd: project, kind: WORKER_SUBMISSION_GATE_KIND, parent }),
-      (error: unknown) =>
-        error instanceof ActivationLedgerError
-        && error.message.includes("must be under the authorized nest"),
-    );
-    assert.equal(await readFile(outside, "utf8"), candidateBefore);
+    assert.equal(opened.session.getSessionFile(), outside);
   });
 });
 

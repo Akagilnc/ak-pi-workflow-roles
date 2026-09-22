@@ -231,7 +231,7 @@ export function createWorkerSubmissionGate(
   options: CreateWorkerSubmissionGateOptions = {},
 ): {
   /** Durable parent is required — ownership must be known at arm (#857 loud failure). */
-  arm(cwd: string, parent: WorkerSubmissionGateParent): Promise<void>;
+  arm(cwd: string, parent: WorkerSubmissionGateParent): void;
   assertAcceptable(status: string, details?: unknown): void;
 } {
   let baseline: string | null | undefined;
@@ -264,11 +264,11 @@ export function createWorkerSubmissionGate(
     });
   };
   return {
-    async arm(cwd, parent) {
+    arm(cwd, parent) {
       uninstallPackageWorkerHooks(cwd);
       root = cwd;
       sessionParent = parent.getSessionFile();
-      record = await createRecordSession({
+      record = createRecordSession({
         cwd,
         kind: WORKER_SUBMISSION_GATE_RECORD_KIND,
         parent,

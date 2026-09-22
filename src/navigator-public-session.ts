@@ -120,7 +120,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
     // Home comes from HostContext.runDirectory (or ledger parent path) — never context.home.
     const { createRecordSession, NAVIGATOR_RECORD_KIND } = await import("./archivist-record-entry.ts");
     const home = await resolveNavigatorLedgerHome(context);
-    const sessionManager = await createRecordSession({
+    const sessionManager = createRecordSession({
       cwd: context.cwd,
       kind: NAVIGATOR_RECORD_KIND,
       subject,
