@@ -27,6 +27,10 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
+import {
+  createWorkerSubmissionGate,
+  WorkerCommitReminderError,
+} from "../../src/worker-submission-gates.ts";
 
 import {
   admitPublicRole,
@@ -500,7 +504,7 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
   });
 });
 
-test("ak-role resume continues coder with preserved plan phase and exact session", async () => {
+test("ak-role resume continues a relocated coder gate despite its stale session pointer", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -524,14 +528,35 @@ test("ak-role resume continues coder with preserved plan phase and exact session
             piRunner: async (args) => {
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
-            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
-            await observeTyped429ViaProductionHandler({
-              runDirectory: join(sessionDir, ".."),
-              provider: "xai",
-            });
+            const sessionFile = join(sessionDir, "session.jsonl");
+            await writeFile(sessionFile, "", "utf8");
+            const gate = createWorkerSubmissionGate({ home });
+            gate.arm(project, { getSessionFile: () => sessionFile });
+            assert.throws(() => gate.assertAcceptable("completed"), WorkerCommitReminderError);
+            const details = {
+              status: "partially_completed",
+              report: "Initial turn binds the ticket before resume.",
+              remainingScope: "Resume the same gate session.",
+              ticketNumber: 1003,
+            };
+            await writeFile(
+              sessionFile,
+              `${JSON.stringify({
+                type: "message",
+                message: {
+                  role: "toolResult",
+                  toolCallId: "first",
+                  toolName: CODER_OUTPUT_TOOL_NAME,
+                  isError: false,
+                  details,
+                },
+              })}\n`,
+              "utf8",
+            );
             return {
-              code: 1,
-              stderr: "quota",
+              code: 0,
+              sealedAcceptance: { role: "coder" as const, details, toolCallId: "first" },
+              stderr: "",
               timedOut: false,
               args: [...args],
             };
@@ -539,7 +564,6 @@ test("ak-role resume continues coder with preserved plan phase and exact session
           }),
         },
       );
-      assert.ok(first.terminal?.resume, "coder plan 429 must be resumable");
       assert.equal(first.terminal?.roleOutcome.role, "coder");
     }
 
@@ -549,7 +573,7 @@ test("ak-role resume continues coder with preserved plan phase and exact session
       ".ak-roles",
       "books",
       bookKey,
-      "unbound", "runs",
+      "1003", "runs",
       `${runId}@coder`,
     );
     const sessionDirectory = join(runDirectory, "session");
@@ -558,7 +582,23 @@ test("ak-role resume continues coder with preserved plan phase and exact session
     ) as { phase: string; role: string; taskPath: string; ticketNumber?: number };
     assert.equal(admitted.role, "coder");
     assert.equal(admitted.phase, "plan");
-    assert.equal(admitted.ticketNumber, undefined);
+    assert.equal(admitted.ticketNumber, 1003);
+
+    const gateDirectory = join(sessionDirectory, "worker-submission-gate");
+    const stalePointer = join(gateDirectory, "current-session.json");
+    const staleUnboundFile = join(
+      home,
+      ".ak-roles",
+      "books",
+      bookKey,
+      "unbound",
+      "runs",
+      `${runId}@coder`,
+      "session",
+      "worker-submission-gate",
+      "stale.jsonl",
+    );
+    await writeFile(stalePointer, `${JSON.stringify({ sessionFile: staleUnboundFile })}\n`, "utf8");
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
@@ -575,10 +615,13 @@ test("ak-role resume continues coder with preserved plan phase and exact session
         resumeArgs = [...args];
         assert.equal(args[args.indexOf("--ak-role") + 1], "coder");
         assert.equal(args[args.indexOf("--ak-coder-phase") + 1], "plan");
-        assert.equal(args[args.indexOf("--ak-coder-task") + 1], admitted.taskPath);
+        assert.equal(args[args.indexOf("--ak-coder-task") + 1], join(runDirectory, "task.md"));
         assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
+        const gate = createWorkerSubmissionGate({ home });
+        gate.arm(project, { getSessionFile: () => join(sessionDirectory, "session.jsonl") });
+        assert.doesNotThrow(() => gate.assertAcceptable("completed"));
         const details = {
                 status: "planned",
                 report: "Resumed plan remains plan phase.",
@@ -614,7 +657,7 @@ test("ak-role resume continues coder with preserved plan phase and exact session
       resumed.terminal?.roleOutcome.kind === "accepted"
         ? payloadStatusSequence(resumed.terminal.roleOutcome)
         : [],
-      ["planned"],
+      ["partially_completed", "planned"],
     );
   });
 });

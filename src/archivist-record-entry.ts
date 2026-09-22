@@ -17,8 +17,6 @@ import {
 } from "node:fs";
 import { dirname, resolve, join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
-
 import {
   ActivationLedgerError,
   ensureRealDirectoryTree,
@@ -32,6 +30,8 @@ import {
   NAVIGATOR_RECORD_KIND,
   resolveNavigatorWorkSubjectPlacement,
 } from "./archivist-record-topology.ts";
+import type { HostRecordSession, RecordSessionHost } from "./host-contracts.ts";
+import { piRecordSessionHost } from "./pi/record-session-host.ts";
 
 export {
   NAVIGATOR_RECORD_KIND,
@@ -355,27 +355,29 @@ function assertRecentFinalFileUnderSessionDir(
 
 /** Open result including the sole continuation fact. */
 export type RecordSessionOpen = {
-  readonly session: SessionManager;
-  /** True when an existing navigator work-subject or worker-submission-gate volume was reopened. */
+  readonly session: HostRecordSession;
+  /** True when an existing navigator work-subject or worker-submission-gate volume was continued. */
   readonly resumed: boolean;
 };
 
 /**
  * Sole package entry that constructs a durable Pi session record (ADR 0065).
  * No destination/path parameters — location is computed from ledger topology only.
- * SessionDir placement is owned by ensureRealDirectoryTree; resumed recent final-file
- * identity is checked once before SessionManager.open (directory walk cannot see a
- * trailing .jsonl symlink). New principals mint under the already-validated sessionDir
- * via destination-free SessionManager.create — no derived postcondition.
- * Resume via the AK-owned current-session ledger is limited to navigator work-subject
- * nests and the authorized worker-submission-gate durable path (ADR 0066 / #852).
+ * SessionDir placement is owned by ensureRealDirectoryTree. Navigator sidecar targets
+ * are checked once before host open (the directory walk cannot see a trailing .jsonl
+ * symlink). New principals mint under the already-validated sessionDir.
+ * Navigator work-subject nests use their AK ledger; worker-submission-gate asks the
+ * host to continue its recent native session without selecting a stored file path.
  * Other ordinary no-subject children (auditor-roles, …) always mint fresh.
  * New persisted principals materialize their deferred session header before return so
  * custom-entry-only writers do not need a parallel delayed-header helper.
  *
  * `resumed` is the sole open-or-continue fact — callers must not re-probe nest existence.
  */
-export function createRecordSessionOpen(options: CreateRecordSessionOptions): RecordSessionOpen {
+export function createRecordSessionOpen(
+  options: CreateRecordSessionOptions,
+  host: RecordSessionHost = piRecordSessionHost,
+): RecordSessionOpen {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
 
@@ -402,7 +404,7 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
   } else if (parentFile === undefined || parentFile.length === 0) {
     if (options.subject === undefined) {
       // No durable principal requested: preserve prior in-memory child behavior.
-      return { session: SessionManager.inMemory(cwd), resumed: false };
+      return { session: host.inMemoryRecordSession(cwd), resumed: false };
     }
     throw new Error("Durable record ownership requires a parent session inside the ledger home");
   } else {
@@ -427,26 +429,24 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
       const recentFile = resolveNavigatorNestContinuation(sessionDir, cwd);
       if (recentFile !== undefined) {
         return {
-          session: SessionManager.open(recentFile, sessionDir, cwd),
+          session: host.openRecordSession({ sessionFile: recentFile, sessionDir, cwd }),
           resumed: true,
         };
       }
       // No sidecar and no cwd-matching session — mint fresh in the existing nest.
     } else {
-      const recentFile = readCurrentSession(sessionDir);
-      assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
       return {
-        session: SessionManager.open(recentFile, sessionDir, cwd),
+        session: host.continueRecentRecordSession({ cwd, sessionDir }),
         resumed: true,
       };
     }
   }
 
-  const session = SessionManager.create(
+  const session = host.createRecordSession({
     cwd,
     sessionDir,
-    parentSession === undefined ? undefined : { parentSession },
-  );
+    ...(parentSession === undefined ? {} : { parentSession }),
+  });
   // Pi defers session-file create until the first assistant message. Custom-entry-only
   // records never get that turn, so the sole record entry materializes the in-memory
   // header onto the UUIDv7 path before returning. Existing path → early return.
@@ -460,7 +460,7 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
         session.setSessionFile(file);
       }
     }
-    if (mayResumeSameNest && file !== undefined) {
+    if (options.kind === NAVIGATOR_RECORD_KIND && mayResumeSameNest && file !== undefined) {
       writeCurrentSession(sessionDir, file);
     }
   }
@@ -468,7 +468,7 @@ export function createRecordSessionOpen(options: CreateRecordSessionOptions): Re
 }
 
 /** Session-only facade — most callers only need the manager. */
-export function createRecordSession(options: CreateRecordSessionOptions): SessionManager {
+export function createRecordSession(options: CreateRecordSessionOptions): HostRecordSession {
   return createRecordSessionOpen(options).session;
 }
 
