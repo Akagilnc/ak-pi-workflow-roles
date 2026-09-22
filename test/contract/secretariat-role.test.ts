@@ -451,6 +451,43 @@ test("#969 host trigger boundary: codex/claude/grok-build arm gate; pi does not"
     assert.deepEqual(await arm("pi"), []);
     assert.deepEqual(await arm(undefined), []);
 
+    const ungated = new Map<string, { execute: Function }>();
+    const ungatedHost = {
+      registerTool(tool: { name: string; execute: Function }) {
+        ungated.set(tool.name, tool);
+      },
+      on() {},
+      getAllTools: () => [...ungated.keys()].map((name) => ({ name })),
+      setActiveTools() {},
+      getActiveTools: () => [...ungated.keys()],
+      getFlag() { return undefined; },
+    };
+    await createSecretariatRoleRuntime(
+      ungatedHost as never,
+      { loadSoul: async () => "中书省" },
+      {
+        failInfrastructure(): never { throw new Error("fail"); },
+        bindSubmissionNonPass() {},
+      },
+    ).activate();
+    await assert.rejects(() =>
+      ungated.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+        "c",
+        { secretariatStatus: "converged", ticketNumber: 969 },
+        undefined,
+        undefined,
+        {
+          cwd: "/tmp",
+          mode: "json",
+          model: undefined,
+          sessionManager: {} as never,
+          runDirectory: "/tmp/run",
+          host: "codex",
+          abort() {},
+        },
+      ),
+    );
+
     // Unknown status on non-pi reasks parent (ADR 0055).
     const tools = new Map<string, { execute: Function }>();
     const roleHost = {

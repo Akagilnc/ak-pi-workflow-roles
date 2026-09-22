@@ -931,12 +931,17 @@ test("public secretariat escalate branch: countersign escalate → secretariat e
   });
 });
 
-test("#969 non-pi converged → shared gate summons 给事中 → bounce → resubmit → 署", async () => {
+for (const hostName of ["codex", "claude", "grok-build"] as const) {
+test(`#969 ${hostName} public entry: converged enters the shared gate`, async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const runId = "01a0sec969-gate-7000-8000-000000000001";
+    const runId = hostName === "codex"
+      ? "01a0sec969-gate-7000-8000-000000000001"
+      : hostName === "claude"
+        ? "01a0sec969-gate-7000-8000-000000000011"
+        : "01a0sec969-gate-7000-8000-000000000021";
     const capture = captureIo();
     const gateCalls: Array<{ kind: string }> = [];
     const countersignRequests: RoleTurnRequest[] = [];
@@ -945,7 +950,7 @@ test("#969 non-pi converged → shared gate summons 给事中 → bounce → res
       home,
       gateCalls,
       countersignRequests,
-      submissionGateHost: "codex",
+      submissionGateHost: hostName,
       countersignSequence: [
         {
           details: {
@@ -1042,6 +1047,7 @@ test("#969 non-pi converged → shared gate summons 给事中 → bounce → res
     );
   });
 });
+}
 
 test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)", async () => {
   await withTempHome(async (home) => {

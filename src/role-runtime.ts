@@ -979,7 +979,7 @@ export function createSecretariatRoleRuntime(
   let parentInstruction = "";
   // #969: non-pi submission gate only — pi mid-turn summon path stays untouched.
   const beforeAccept: FiledOfficerBeforeAccept | undefined =
-    hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
+    hostActions !== undefined
       ? async ({ toolCallId, parameters, signal, ctx }) => {
           const host =
             typeof ctx.host === "string" && ctx.host.trim() !== ""
@@ -987,6 +987,9 @@ export function createSecretariatRoleRuntime(
               : undefined;
           if (host === undefined || !SECRETARIAT_SUBMISSION_GATE_HOSTS.has(host)) {
             return undefined;
+          }
+          if (roleHost.requireGatekeeperPass === undefined) {
+            throw new Error(`host ${host} cannot mount the secretariat submission gate`);
           }
           const record =
             parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
@@ -1221,7 +1224,7 @@ export function createCountersignRoleRuntime(
   // #753 queue: read countersignStatus only — escalate skips gate (thrown to caller);
   // unreadable status returns to countersign; else notary inner gate.
   const beforeAccept: FiledOfficerBeforeAccept | undefined =
-    hostActions !== undefined && roleHost.requireGatekeeperPass !== undefined
+    hostActions !== undefined
       ? async ({ toolCallId, parameters, signal, ctx }) => {
           const record =
             parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
@@ -1240,7 +1243,10 @@ export function createCountersignRoleRuntime(
             // Parent escalate → throw to caller as-is; notary does not attend (#753).
             return undefined;
           }
-          await roleHost.requireGatekeeperPass!({
+          if (roleHost.requireGatekeeperPass === undefined) {
+            throw new Error("host cannot mount the countersign gate");
+          }
+          await roleHost.requireGatekeeperPass({
             context: ctx,
             subject: { kind: "countersign_verdict" },
             ...(signal === undefined ? {} : { signal }),
