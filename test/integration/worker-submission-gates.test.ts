@@ -229,10 +229,8 @@ test("② missing prefix bounces once then confirm; open set + merge exempt; unr
       "feat: conventional type is not blacklisted",
       `${FACTORY} factory sample`,
     ]) {
-      assert.doesNotThrow(
-        async () => (await armThenCommit(root, home, subject)).assertAcceptable("completed"),
-        subject,
-      );
+      const prefixed = await armThenCommit(root, home, subject);
+      assert.doesNotThrow(() => prefixed.assertAcceptable("completed"), subject);
     }
 
     // Merge commit exempt (GitHub merge shape, unprefixed subject).
