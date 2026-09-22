@@ -32,6 +32,7 @@ import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { migrateBookTopology } from "../../src/book-topology-migration.ts";
 import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
+import { BOOK_TOPOLOGY_MIXED_VOLUME_MIGRATORS } from "../../src/book-topology-mixed-volume-migrators.ts";
 import { relocateBoardBoundUnboundRunsInBooks } from "../../src/book-topology-runs-migrator.ts";
 import { findPlacedMigratingRun } from "../../src/book-topology-migration-placement.ts";
 import {
@@ -54,6 +55,42 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const TICKET = 708;
+
+test("worker gate topology migration ignores the retired current-session pointer", async () => {
+  await withTempRoot("ak-book-topology-gate-", async (home) => {
+    const ledgerHome = join(home, ".ak-roles");
+    const sourceDir = join(
+      ledgerHome,
+      "books",
+      "demo-book",
+      "worker-submission-gate",
+    );
+    const volume = join(sourceDir, "gate-session.jsonl");
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(volume, `${JSON.stringify({ type: "session" })}\n`, "utf8");
+    await writeFile(
+      join(sourceDir, "current-session.json"),
+      `${JSON.stringify({ sessionFile: volume })}\n`,
+      "utf8",
+    );
+
+    const report = await migrateBookTopology({
+      ledgerHome,
+      migrators: BOOK_TOPOLOGY_MIXED_VOLUME_MIGRATORS,
+      env: {},
+      now: new Date("2026-09-22T00:00:00.000Z"),
+    });
+
+    const destination = join(
+      report.booksDirectory,
+      "demo-book",
+      "unbound",
+      "worker-submission-gate",
+    );
+    assert.equal(existsSync(join(destination, "gate-session.jsonl")), true);
+    assert.equal(existsSync(join(destination, "current-session.json")), false);
+  });
+});
 
 const immutablePrincipalAuthority: DurablePrincipalAuthority = {
   issue(request) {
