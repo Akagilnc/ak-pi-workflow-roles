@@ -2328,7 +2328,7 @@ export function createRoleRuntimeExtension(
         // Parent session feeds #216 createRecordSession so baseline/bounce survive resume.
         if ("worker" in entry && entry.worker === true) {
           const workerArms = { coder, fixer } as const;
-          workerArms[entry.role].armSubmissionGate(ctx.cwd, ctx.sessionManager);
+          await workerArms[entry.role].armSubmissionGate(ctx.cwd, ctx.sessionManager);
         }
         admitted = true;
       } catch (error) {

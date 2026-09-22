@@ -533,7 +533,7 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
             const sessionFile = join(sessionDir, "session.jsonl");
             await writeFile(sessionFile, "", "utf8");
             const gate = createWorkerSubmissionGate({ home });
-            gate.arm(project, { getSessionFile: () => sessionFile });
+            await gate.arm(project, { getSessionFile: () => sessionFile });
             assert.throws(() => gate.assertAcceptable("completed"), WorkerCommitReminderError);
             const unboundGateDirectory = join(sessionDir, "worker-submission-gate");
             const gateFiles = (await readdir(unboundGateDirectory)).filter(
@@ -625,7 +625,7 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
         assert.equal(args.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         const gate = createWorkerSubmissionGate({ home });
-        gate.arm(project, { getSessionFile: () => join(sessionDirectory, "session.jsonl") });
+        await gate.arm(project, { getSessionFile: () => join(sessionDirectory, "session.jsonl") });
         assert.doesNotThrow(() => gate.assertAcceptable("completed"));
         const details = {
                 status: "planned",

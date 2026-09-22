@@ -595,14 +595,14 @@ export async function openPiInProcessSession(
     if (options.sessionManager !== undefined) {
       sessionManager = options.sessionManager as SessionManager;
     } else if (options.sessionIdentity !== undefined) {
-      sessionManager = createRecordSession({
+      sessionManager = await createRecordSession({
         cwd: options.cwd,
         kind: options.sessionIdentity.kind,
         ...(options.sessionIdentity.subject === undefined ? {} : { subject: options.sessionIdentity.subject }),
         ...(options.sessionIdentity.parent === undefined ? {} : { parent: options.sessionIdentity.parent }),
       }) as SessionManager;
     } else {
-      sessionManager = createRecordSession({
+      sessionManager = await createRecordSession({
         cwd: options.cwd,
         kind: "institutional",
       }) as SessionManager;

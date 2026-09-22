@@ -24,6 +24,9 @@ export const piRecordSessionHost: RecordSessionHost = {
       resumed: sessionFile !== undefined && existsSync(sessionFile),
     };
   },
+  async listRecentRecordSessionCandidates({ cwd, sessionDir }) {
+    return (await SessionManager.list(cwd, sessionDir)).map((session) => session.path);
+  },
   inMemoryRecordSession(cwd) {
     return SessionManager.inMemory(cwd);
   },

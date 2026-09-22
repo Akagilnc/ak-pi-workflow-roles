@@ -567,5 +567,10 @@ export interface RecordSessionHost {
     /** Whether the host continued an existing session rather than falling back to a new one. */
     readonly resumed: boolean;
   };
+  /** Host-native continuation candidates, already filtered by host rules. */
+  listRecentRecordSessionCandidates(options: {
+    readonly cwd: string;
+    readonly sessionDir: string;
+  }): Promise<readonly string[]>;
   inMemoryRecordSession(cwd: string): HostRecordSession;
 }

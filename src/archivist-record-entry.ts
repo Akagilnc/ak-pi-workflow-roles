@@ -353,14 +353,6 @@ function assertRecentFinalFileUnderSessionDir(
   }
 }
 
-/** Pi may migrate a selected legacy session while opening it, so reject escapes before host entry. */
-function assertNativeContinuationCandidatesStayInNest(sessionDir: string): void {
-  for (const entry of readdirSync(sessionDir, { withFileTypes: true })) {
-    if (!entry.name.endsWith(".jsonl") || !entry.isSymbolicLink()) continue;
-    assertRecentFinalFileUnderSessionDir(sessionDir, join(sessionDir, entry.name));
-  }
-}
-
 /** Open result including the sole continuation fact. */
 export type RecordSessionOpen = {
   readonly session: HostRecordSession;
@@ -382,10 +374,10 @@ export type RecordSessionOpen = {
  *
  * `resumed` is the sole open-or-continue fact — callers must not re-probe nest existence.
  */
-export function createRecordSessionOpen(
+export async function createRecordSessionOpen(
   options: CreateRecordSessionOptions,
   host: RecordSessionHost = piRecordSessionHost,
-): RecordSessionOpen {
+): Promise<RecordSessionOpen> {
   const cwd = options.cwd;
   const parentFile = options.parent?.getSessionFile();
 
@@ -443,7 +435,11 @@ export function createRecordSessionOpen(
       }
       // No sidecar and no cwd-matching session — mint fresh in the existing nest.
     } else {
-      assertNativeContinuationCandidatesStayInNest(sessionDir);
+      // Candidate discovery/filtering remains host-owned. Validate every host candidate
+      // before continueRecent can open and migrate a selected legacy session.
+      for (const candidate of await host.listRecentRecordSessionCandidates({ cwd, sessionDir })) {
+        assertRecentFinalFileUnderSessionDir(sessionDir, candidate);
+      }
       const continued = host.continueRecentRecordSession({ cwd, sessionDir });
       if (continued.resumed) {
         const recentFile = continued.session.getSessionFile();
@@ -486,8 +482,10 @@ export function createRecordSessionOpen(
 }
 
 /** Session-only facade — most callers only need the manager. */
-export function createRecordSession(options: CreateRecordSessionOptions): HostRecordSession {
-  return createRecordSessionOpen(options).session;
+export async function createRecordSession(
+  options: CreateRecordSessionOptions,
+): Promise<HostRecordSession> {
+  return (await createRecordSessionOpen(options)).session;
 }
 
 
