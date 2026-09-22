@@ -532,3 +532,40 @@ export interface InstitutionalSessionHost {
   ): Promise<HostInstitutionalSessionHandle>;
 }
 
+/** Host-owned durable record session used by AK ledger placement. */
+export interface HostRecordSession {
+  getSessionFile(): string | undefined;
+  getSessionDir(): string;
+  getEntries(): readonly {
+    readonly type: string;
+    readonly customType?: string;
+    readonly data?: unknown;
+  }[];
+  getHeader(): { readonly type: string } | null;
+  isPersisted(): boolean;
+  setSessionFile(path: string): void;
+  appendCustomEntry(customType: string, data?: unknown): unknown;
+}
+
+/** Host session lifecycle seam; native selection stays inside its adapter. */
+export interface RecordSessionHost {
+  openRecordSession(options: {
+    readonly sessionFile: string;
+    readonly sessionDir: string;
+    readonly cwd: string;
+  }): HostRecordSession;
+  createRecordSession(options: {
+    readonly cwd: string;
+    readonly sessionDir: string;
+    readonly parentSession?: string;
+  }): HostRecordSession;
+  continueRecentRecordSession(options: {
+    readonly cwd: string;
+    readonly sessionDir: string;
+  }): {
+    readonly session: HostRecordSession;
+    /** Whether the host continued an existing session rather than falling back to a new one. */
+    readonly resumed: boolean;
+  };
+  inMemoryRecordSession(cwd: string): HostRecordSession;
+}

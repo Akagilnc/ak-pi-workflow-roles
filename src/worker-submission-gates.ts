@@ -2,13 +2,13 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, lstatSync, readdirSync, readFileSync, rmdirSync, rmSync } from "node:fs";
 import { resolve } from "node:path";
-import type { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import {
   createRecordSession,
   type RecordSessionParent,
   WORKER_SUBMISSION_GATE_KIND,
 } from "./archivist-record-entry.ts";
+import type { HostRecordSession } from "./host-contracts.ts";
 import { sitianReport } from "./sitian-facade.ts";
 import {
   WorkerCommitReminderError,
@@ -162,7 +162,7 @@ function unfinishedReasonPresent(details?: unknown): boolean {
   return typeof reason === "string" && reason.trim().length > 0;
 }
 
-function readGateState(session: SessionManager): {
+function readGateState(session: HostRecordSession): {
   baseline: string | null | undefined;
   reminded: boolean;
   prefixReminded: boolean;
@@ -239,7 +239,7 @@ export function createWorkerSubmissionGate(
   let reminded = false;
   let prefixReminded = false;
   let unfinishedReasonBounces = 0;
-  let record: SessionManager | undefined;
+  let record: HostRecordSession | undefined;
   /** Parent session file retained so every gate sitian write path-derives the same ledger home. */
   let sessionParent: string | undefined;
   const explicitHome =
