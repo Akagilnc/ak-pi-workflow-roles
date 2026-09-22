@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import type { RecordSessionHost } from "../host-contracts.ts";
@@ -15,7 +17,12 @@ export const piRecordSessionHost: RecordSessionHost = {
     );
   },
   continueRecentRecordSession({ cwd, sessionDir }) {
-    return SessionManager.continueRecent(cwd, sessionDir);
+    const session = SessionManager.continueRecent(cwd, sessionDir);
+    const sessionFile = session.getSessionFile();
+    return {
+      session,
+      resumed: sessionFile !== undefined && existsSync(sessionFile),
+    };
   },
   inMemoryRecordSession(cwd) {
     return SessionManager.inMemory(cwd);

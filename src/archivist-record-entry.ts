@@ -435,10 +435,19 @@ export function createRecordSessionOpen(
       }
       // No sidecar and no cwd-matching session — mint fresh in the existing nest.
     } else {
-      return {
-        session: host.continueRecentRecordSession({ cwd, sessionDir }),
-        resumed: true,
-      };
+      const continued = host.continueRecentRecordSession({ cwd, sessionDir });
+      if (continued.resumed) {
+        const recentFile = continued.session.getSessionFile();
+        if (recentFile === undefined) {
+          throw new ActivationLedgerError(
+            "archivist host reported a resumed record session without a session file",
+          );
+        }
+        assertRecentFinalFileUnderSessionDir(sessionDir, recentFile);
+        return continued;
+      }
+      // Pi's native continuation falls back to an unparented fresh session. The
+      // archivist owns the durable parent, so mint through the ordinary fresh path.
     }
   }
 

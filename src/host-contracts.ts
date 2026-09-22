@@ -562,6 +562,10 @@ export interface RecordSessionHost {
   continueRecentRecordSession(options: {
     readonly cwd: string;
     readonly sessionDir: string;
-  }): HostRecordSession;
+  }): {
+    readonly session: HostRecordSession;
+    /** Whether the host continued an existing session rather than falling back to a new one. */
+    readonly resumed: boolean;
+  };
   inMemoryRecordSession(cwd: string): HostRecordSession;
 }

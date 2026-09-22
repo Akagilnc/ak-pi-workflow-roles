@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, symlink, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, symlink, utimes, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
@@ -14,7 +14,11 @@ import {
   ActivationLedgerError,
   physicalPathIdentity,
 } from "../../src/activation-ledger-topology.ts";
-import { createRecordSession } from "../../src/archivist-record-entry.ts";
+import {
+  createRecordSession,
+  createRecordSessionOpen,
+  WORKER_SUBMISSION_GATE_KIND,
+} from "../../src/archivist-record-entry.ts";
 import { createNativeNavigatorSessionFactory } from "../../src/navigator-public-session.ts";
 import {
   machineLedgerHome,
@@ -60,6 +64,56 @@ test("createRecordSession nests by the durable parent file", async () => {
     assert.equal(
       physicalPathIdentity(child.getSessionDir()),
       physicalPathIdentity(join(dirname(parent.getSessionFile()!), "auditor-roles")),
+    );
+  });
+});
+
+test("worker gate native continuation reports and materializes an empty-nest fallback as fresh", async () => {
+  await withHermeticHome({ prefix: "ak-archivist-gate-fresh-" }, async ({ home }) => {
+    const project = join(home, "proj");
+    const parentDir = join(machineLedgerHome(home), "books", "proj", "1003", "runs", "r@coder", "session");
+    await mkdir(parentDir, { recursive: true });
+    const parentFile = join(parentDir, "session.jsonl");
+    await writeFile(parentFile, sessionJsonl("parent", project, "parent"));
+    const parent = SessionManager.open(parentFile, parentDir, project);
+    const gateDir = join(parentDir, WORKER_SUBMISSION_GATE_KIND);
+    await mkdir(gateDir, { recursive: true });
+
+    const opened = createRecordSessionOpen({
+      cwd: project,
+      kind: WORKER_SUBMISSION_GATE_KIND,
+      parent,
+    });
+
+    assert.equal(opened.resumed, false);
+    const file = opened.session.getSessionFile();
+    assert.ok(file);
+    const header = JSON.parse((await readFile(file, "utf8")).split("\n")[0]!) as {
+      parentSession?: string;
+    };
+    assert.equal(header.parentSession, parentFile);
+  });
+});
+
+test("worker gate native continuation refuses a session symlink outside its authorized nest", async () => {
+  await withHermeticHome({ prefix: "ak-archivist-gate-escape-" }, async ({ home }) => {
+    const project = join(home, "proj");
+    const parentDir = join(machineLedgerHome(home), "books", "proj", "1003", "runs", "r@coder", "session");
+    await mkdir(parentDir, { recursive: true });
+    const parentFile = join(parentDir, "session.jsonl");
+    await writeFile(parentFile, sessionJsonl("parent", project, "parent"));
+    const parent = SessionManager.open(parentFile, parentDir, project);
+    const gateDir = join(parentDir, WORKER_SUBMISSION_GATE_KIND);
+    await mkdir(gateDir, { recursive: true });
+    const outside = join(home, "outside.jsonl");
+    await writeFile(outside, sessionJsonl("outside", project, "outside"));
+    await symlink(outside, join(gateDir, "recent.jsonl"));
+
+    assert.throws(
+      () => createRecordSessionOpen({ cwd: project, kind: WORKER_SUBMISSION_GATE_KIND, parent }),
+      (error: unknown) =>
+        error instanceof ActivationLedgerError
+        && error.message.includes("must be under the authorized nest"),
     );
   });
 });
