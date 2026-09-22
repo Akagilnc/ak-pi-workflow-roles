@@ -477,6 +477,8 @@ export const PUBLIC_ROLE_RECORDS = [
     sameParent: "auditor",
     /** 审刑院 is a review officer. Model stays on its own seat row. */
     reviewOfficer: true,
+    /** Subject input selects the soul. The public materials list is the ship roster. */
+    soulSource: "subject",
     phases: [null],
     outputTool: AUDITOR_OUTPUT_TOOL_NAME,
     settlement: "accepted",

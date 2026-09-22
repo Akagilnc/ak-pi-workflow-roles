@@ -80,7 +80,7 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
   const law = async () => "LAW";
   const oid = (ch: string) => ch.repeat(40);
   const base = {
-    loadJudgeSoul: law,
+    loadRoleSoul: law,
     activationClock: () => "2025-06-01T12:00:00.000Z",
     activationTraceWriter: () => {},
   };
@@ -88,13 +88,12 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
     case "judge":
       return base;
     case "fixer":
-      return { ...base, loadFixerSoul: law, loadFixPacket: async () => "Repair the findings.\n" };
+      return { ...base, loadFixPacket: async () => "Repair the findings.\n" };
     case "coder":
-      return { ...base, loadCoderSoul: law, loadCoderTask: async () => "Build it.\n" };
+      return { ...base, loadCoderTask: async () => "Build it.\n" };
     case "reviewer":
       return {
         ...base,
-        loadReviewerSoul: law,
         loadCanonicalSkillBinding: async (name) => {
           const raw = "# skill\n";
           return {
@@ -113,7 +112,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
     case "collector":
       return {
         ...base,
-        loadCollectorSoul: law,
         createCollectorTransport: () => createFakeGitHubTransport({
           user: sampleUser(),
           pullRequest: samplePull(),
@@ -125,7 +123,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
     case "doctor":
       return {
         ...base,
-        loadDoctorSoul: law,
         loadDoctorCase: async () => ({
           version: 1 as const,
           identity: { issueNumber: 1, runsPath: "/lawful/case" },
@@ -151,14 +148,12 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
       };
       return {
         ...base,
-        loadMergerSoul: law,
         loadMergerInput: async () => mergerInput,
       };
     }
     case "notary":
       return {
         ...base,
-        loadNotarySoul: law,
         loadNotarySourceRun: async (path: string) => ({
           runDirectory: path,
           runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
@@ -166,17 +161,12 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
         }),
       };
     case "countersign":
-      return { ...base, loadCountersignSoul: law };
     case "secretariat":
-      return { ...base, loadSecretariatSoul: law };
     case "gleaner-left":
-      return { ...base, loadGleanerLeftSoul: law };
     case "inspector":
-      return { ...base, loadInspectorSoul: law };
     case "gatekeeper":
-      return { ...base, loadGatekeeperSoul: law };
     case "navigator":
-      return { ...base, loadNavigatorSoul: law };
+      return base;
     default:
       throw new Error(`unexpected packaged role: ${role}`);
   }

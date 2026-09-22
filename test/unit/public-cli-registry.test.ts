@@ -353,6 +353,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     admission: "instruction",
     sameParent: "auditor",
     reviewOfficer: true,
+    soulSource: "subject",
     phases: [null],
     outputTool: "ak_auditor_output",
     settlement: "accepted",

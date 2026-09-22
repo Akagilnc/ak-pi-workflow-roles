@@ -503,29 +503,15 @@ export type RoleRuntimeDependencies = {
   hostAdapters?: readonly import("./public-cli/role-turn-host-resolution.ts").NamedRoleTurnHostAdapter[];
   /** Non-identity opening materials delivered in the ordinary role brief. */
   loadRoleReferenceMaterials?(role: PackagedRole): Promise<string>;
-  loadJudgeSoul(): Promise<string>;
-  loadFixerSoul?(): Promise<string>;
+  /** One soul loader. The role argument selects the registry record. */
+  loadRoleSoul(role: PackagedRole): Promise<string>;
   loadFixPacket?(path: string): Promise<string>;
-  loadCoderSoul?(): Promise<string>;
   loadCoderTask?(path: string): Promise<string>;
-  loadReviewerSoul?(): Promise<string>;
-  loadCollectorSoul?(): Promise<string>;
   /** #677: optional packaged seed for first-use general bot handbook. */
   loadCollectorHandbookSeed?(): Promise<string>;
   createCollectorTransport?(): CollectorGitHubTransport;
-  loadDoctorSoul?(): Promise<string>;
-  loadNotarySoul?(): Promise<string>;
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
-  loadCountersignSoul?(): Promise<string>;
-  loadGleanerLeftSoul?(): Promise<string>;
-  loadInspectorSoul?(): Promise<string>;
-  loadGatekeeperSoul?(): Promise<string>;
-  loadNavigatorSoul?(): Promise<string>;
-  loadAuditorSoul?(): Promise<string>;
-  loadDiaristSoul?(): Promise<string>;
-  loadSecretariatSoul?(): Promise<string>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
-  loadMergerSoul?(): Promise<string>;
   loadMergerInput?(path: string): Promise<unknown>;
   auditDoctorCompliance?(options: { context: HostContext; signal?: AbortSignal }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
@@ -1816,22 +1802,18 @@ export function createRoleRuntimeExtension(
         pendingSubmissionNonPassByToolCallId.set(toolCallId, result);
       },
     };
+    const requireRoleSoul = (role: PackagedRole): Promise<string> => dependencies.loadRoleSoul(role);
     const judge = createJudgeRoleRuntime(
       roleHost,
       {
-        loadSoul: dependencies.loadJudgeSoul,
+        loadSoul: () => requireRoleSoul("judge"),
       },
       hostActions,
     );
     const fixer = createFixerRoleRuntime(
       roleHost,
       {
-        async loadSoul() {
-          if (dependencies.loadFixerSoul === undefined) {
-            throw new Error("fixer soul loader is not configured");
-          }
-          return dependencies.loadFixerSoul();
-        },
+        loadSoul: () => requireRoleSoul("fixer"),
         async loadPacket(path) {
           if (dependencies.loadFixPacket === undefined) {
             throw new Error("Fixer packet loader is not configured");
@@ -1844,12 +1826,7 @@ export function createRoleRuntimeExtension(
     const coder = createCoderRoleRuntime(
       roleHost,
       {
-        async loadSoul() {
-          if (dependencies.loadCoderSoul === undefined) {
-            throw new Error("coder soul loader is not configured");
-          }
-          return dependencies.loadCoderSoul();
-        },
+        loadSoul: () => requireRoleSoul("coder"),
         async loadTask(path) {
           if (dependencies.loadCoderTask === undefined) {
             throw new Error("Coder task loader is not configured");
@@ -1868,12 +1845,7 @@ export function createRoleRuntimeExtension(
     const reviewer = createReviewerRoleRuntime(
       roleHost,
       {
-        async loadSoul() {
-          if (dependencies.loadReviewerSoul === undefined) {
-            throw new Error("reviewer soul loader is not configured");
-          }
-          return dependencies.loadReviewerSoul();
-        },
+        loadSoul: () => requireRoleSoul("reviewer"),
         async loadCanonicalSkillBinding(name) {
           if (dependencies.loadCanonicalSkillBinding === undefined) {
             throw new Error("Reviewer runtime dependencies are not configured");
@@ -1884,31 +1856,22 @@ export function createRoleRuntimeExtension(
       hostActions,
     );
     const doctor = createDoctorRoleRuntime(roleHost, {
-      async loadSoul() { if (!dependencies.loadDoctorSoul) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorSoul(); },
+      loadSoul: () => requireRoleSoul("doctor"),
       async loadCase(path) { if (!dependencies.loadDoctorCase) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorCase(path); },
       async auditCompliance(options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(options); },
     }, hostActions);
     const notary = createNotaryRoleRuntime(roleHost, {
-      async loadSoul() {
-        if (!dependencies.loadNotarySoul) throw new Error("Notary runtime dependencies are not configured");
-        return dependencies.loadNotarySoul();
-      },
+      loadSoul: () => requireRoleSoul("notary"),
       async loadSourceRunLocator(path) {
         if (!dependencies.loadNotarySourceRun) throw new Error("Notary runtime dependencies are not configured");
         return dependencies.loadNotarySourceRun(path);
       },
     }, hostActions);
     const countersign = createCountersignRoleRuntime(roleHost, {
-      async loadSoul() {
-        if (!dependencies.loadCountersignSoul) throw new Error("Countersign runtime dependencies are not configured");
-        return dependencies.loadCountersignSoul();
-      },
+      loadSoul: () => requireRoleSoul("countersign"),
     }, hostActions);
     const gleanerLeftRuntime = createGleanerLeftRoleRuntime(roleHost, {
-      async loadSoul() {
-        if (!dependencies.loadGleanerLeftSoul) throw new Error("Gleaner-left runtime dependencies are not configured");
-        return dependencies.loadGleanerLeftSoul();
-      },
+      loadSoul: () => requireRoleSoul("gleaner-left"),
     });
     const gleanerLeft = {
       async activate() {
@@ -1917,43 +1880,25 @@ export function createRoleRuntimeExtension(
       },
     };
     const inspector = createInspectorRoleRuntime(roleHost, {
-      async loadSoul() {
-        if (!dependencies.loadInspectorSoul) throw new Error("Inspector runtime dependencies are not configured");
-        return dependencies.loadInspectorSoul();
-      },
+      loadSoul: () => requireRoleSoul("inspector"),
     });
     const gatekeeper = createGatekeeperRoleRuntime(roleHost, {
-      async loadSoul() {
-        if (!dependencies.loadGatekeeperSoul) throw new Error("Gatekeeper runtime dependencies are not configured");
-        return dependencies.loadGatekeeperSoul();
-      },
+      loadSoul: () => requireRoleSoul("gatekeeper"),
     });
     const navigator = createNavigatorRoleRuntime(roleHost, {
-      async loadSoul() {
-        if (!dependencies.loadNavigatorSoul) throw new Error("Navigator runtime dependencies are not configured");
-        return dependencies.loadNavigatorSoul();
-      },
+      loadSoul: () => requireRoleSoul("navigator"),
     });
     const auditor = createAuditorRoleRuntime(roleHost, {
-      async loadSoul() {
-        if (!dependencies.loadAuditorSoul) throw new Error("Auditor runtime dependencies are not configured");
-        return dependencies.loadAuditorSoul();
-      },
+      loadSoul: () => requireRoleSoul("auditor"),
     });
     const diarist = createDiaristRoleRuntime(
       roleHost,
       {
-        async loadSoul() {
-          if (!dependencies.loadDiaristSoul) throw new Error("Diarist runtime dependencies are not configured");
-          return dependencies.loadDiaristSoul();
-        },
+        loadSoul: () => requireRoleSoul("diarist"),
       },
     );
     const secretariat = createSecretariatRoleRuntime(roleHost, {
-      async loadSoul() {
-        if (!dependencies.loadSecretariatSoul) throw new Error("Secretariat runtime dependencies are not configured");
-        return dependencies.loadSecretariatSoul();
-      },
+      loadSoul: () => requireRoleSoul("secretariat"),
       ...(dependencies.packageRoot === undefined
         ? {}
         : { packageRoot: dependencies.packageRoot }),
@@ -1962,7 +1907,7 @@ export function createRoleRuntimeExtension(
         : { hostAdapters: dependencies.hostAdapters }),
     }, hostActions);
     const merger = createMergerRoleRuntime(roleHost, {
-      async loadSoul() { if (!dependencies.loadMergerSoul) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerSoul(); },
+      loadSoul: () => requireRoleSoul("merger"),
       async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
     });
     // #676 E: shared envelope owns collector lifecycle (mode/fork, tool surface,
@@ -1972,12 +1917,7 @@ export function createRoleRuntimeExtension(
     const collectorBusiness = createCollectorRoleRuntime(
       roleHost,
       {
-        async loadSoul() {
-          if (dependencies.loadCollectorSoul === undefined) {
-            throw new Error("collector soul loader is not configured");
-          }
-          return dependencies.loadCollectorSoul();
-        },
+        loadSoul: () => requireRoleSoul("collector"),
         createTransport() {
           if (dependencies.createCollectorTransport === undefined) {
             throw new Error("Collector GitHub transport is not configured");

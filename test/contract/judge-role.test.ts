@@ -802,7 +802,7 @@ async function startJudge(
   return withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     const harness = extensionHarness("judge");
     installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-      loadJudgeSoul: async () => "JUDGE LAW\nApply the law.",
+      loadRoleSoul: async () => "JUDGE LAW\nApply the law.",
     }, { transcriptFromContext });
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
     const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
@@ -815,10 +815,7 @@ test("stable factory stays inert without a role", async () => {
   let loads = 0;
   const harness = extensionHarness(undefined);
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-    loadJudgeSoul: async () => { loads += 1; return "judge"; },
-    loadFixerSoul: async () => { loads += 1; return "fixer"; },
-    loadCoderSoul: async () => { loads += 1; return "coder"; },
-    loadReviewerSoul: async () => { loads += 1; return "reviewer"; },
+    loadRoleSoul: async (role) => { loads += 1; return role; },
   });
 
   assert.deepEqual(new Set(harness.handlers.keys()), new Set([
@@ -856,7 +853,7 @@ test("after_provider_response production handler writes typed 429 into resumable
 
     const harness = extensionHarness(undefined);
     installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-      loadJudgeSoul: async () => "judge",
+      loadRoleSoul: async () => "judge",
     });
 
     const handler = harness.handlers.get("after_provider_response");
@@ -971,8 +968,7 @@ test("#959 navigator agent_end prose exit seals without typed delivery prompt", 
       sentMessages.push({ customType: message.customType, content: message.content });
     };
     installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-      loadJudgeSoul: async () => "judge",
-      loadNavigatorSoul: async () => "route judgment",
+      loadRoleSoul: async (role) => role === "navigator" ? "route judgment" : "judge",
     });
 
     const previous = process.env.AK_ROLE_RUN_DIR;
@@ -1065,10 +1061,7 @@ test("unsupported role fails with the frozen diagnostic before any loader runs",
   let loads = 0;
   const harness = extensionHarness("router");
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-    loadJudgeSoul: async () => { loads += 1; return "judge"; },
-    loadFixerSoul: async () => { loads += 1; return "fixer"; },
-    loadCoderSoul: async () => { loads += 1; return "coder"; },
-    loadReviewerSoul: async () => { loads += 1; return "reviewer"; },
+    loadRoleSoul: async (role) => { loads += 1; return role; },
   });
 
   await assert.rejects(
@@ -1486,7 +1479,7 @@ test("judge returns auditor transport failures on the failure channel with abort
 test("judge role fails before adjudication when its soul is empty", async () => {
   const harness = extensionHarness("judge");
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-    loadJudgeSoul: async () => "   \n",
+    loadRoleSoul: async () => "   \n",
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await assert.rejects(
@@ -1504,8 +1497,7 @@ test("coder plan loads its task without construction skill and returns planned",
     "ak-coder-phase": "plan",
   });
   installRoleRuntime(harness.pi, {
-    loadJudgeSoul: async () => "JUDGE LAW",
-    loadCoderSoul: async () => "CODER LAW",
+    loadRoleSoul: async (role) => role === "coder" ? "CODER LAW" : "JUDGE LAW",
     loadCoderTask: async (path) => {
       loadedTasks.push(path);
       return "IMPLEMENT THE VERTICAL SLICE";
@@ -1561,8 +1553,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     "ak-coder-phase": "apply",
   });
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-    loadJudgeSoul: async () => "JUDGE LAW",
-    loadCoderSoul: async () => "CODER LAW",
+    loadRoleSoul: async (role) => role === "coder" ? "CODER LAW" : "JUDGE LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
     loadCanonicalSkillBinding: async () => tddBinding(),
   });
@@ -1613,8 +1604,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     "ak-coder-phase": "apply",
   });
   installRoleRuntime(harness2.pi as unknown as ExtensionAPI, {
-    loadJudgeSoul: async () => "JUDGE LAW",
-    loadCoderSoul: async () => "CODER LAW",
+    loadRoleSoul: async (role) => role === "coder" ? "CODER LAW" : "JUDGE LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
     loadCanonicalSkillBinding: async () => tddBinding(),
   });
@@ -1651,7 +1641,7 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
   // Real entry: judge output → requireGatekeeperPass binds via envelope hostActions → tool_result projects.
   const harness = extensionHarness("judge");
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-    loadJudgeSoul: async () => "JUDGE LAW",
+    loadRoleSoul: async () => "JUDGE LAW",
   });
   await withActivationHome({ prefix: "ak-gatekeeper-tool-result-" }, async ({ home }) => {
     const ctx = activationCtx(home);
@@ -2019,8 +2009,7 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
   for (const row of rows) {
     const harness = extensionHarness("fixer", row.flags);
     installRoleRuntime(harness.pi, {
-      loadJudgeSoul: async () => "judge",
-      loadFixerSoul: async () => "fixer",
+      loadRoleSoul: async (role) => role,
       loadFixPacket: async () => row.packet,
     });
     await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
@@ -2037,7 +2026,7 @@ test("Fixer activation rejects malformed prerequisites and blank instructions be
 test("undeclared prerequisite ids are recorded as-is; declared references still pass Gatekeeper", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "apply" });
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-    loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer", loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n"
+    loadRoleSoul: async (role) => role, loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n"
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -2120,7 +2109,7 @@ test("undeclared prerequisite ids are recorded as-is; declared references still 
 test("declared plan refusal passes structure then Gatekeeper", async () => {
   const harness = extensionHarness("fixer", { "ak-fix-packet": "/packet.md", "ak-fixer-prerequisites": "/prerequisites.json", "ak-fixer-phase": "plan" });
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-    loadJudgeSoul: async () => "judge", loadFixerSoul: async () => "fixer",
+    loadRoleSoul: async (role) => role,
     loadFixPacket: async (path) => path.endsWith("prerequisites.json") ? declaredFixPrerequisites : "# Repair prose\n"
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
@@ -2148,8 +2137,7 @@ test("fixer role loads opaque instructions and returns a thin report envelope", 
     "ak-fixer-phase": "apply",
   });
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-    loadJudgeSoul: async () => "JUDGE LAW",
-    loadFixerSoul: async () => "FIXER LAW\nCreate one forward commit.",
+    loadRoleSoul: async (role) => role === "fixer" ? "FIXER LAW\nCreate one forward commit." : "JUDGE LAW",
     loadFixPacket: async (path) => {
       loadedPaths.push(path);
       return instructionBytes;
@@ -2203,8 +2191,7 @@ test("fixer activation leaves its tool surface unchanged", async () => {
     ["read", "bash", "write", "edit", "arbitrary_sibling"],
   );
   installRoleRuntime(harness.pi, {
-    loadJudgeSoul: async () => "JUDGE LAW",
-    loadFixerSoul: async () => "FIXER LAW",
+    loadRoleSoul: async (role) => role === "fixer" ? "FIXER LAW" : "JUDGE LAW",
     loadFixPacket: async () => emptyFixPacket,
   });
 

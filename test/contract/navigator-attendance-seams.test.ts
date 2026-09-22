@@ -582,10 +582,12 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
           stopKeepalive() {},
         };
         createRoleRuntimeExtension({
-          loadJudgeSoul: async () => "JUDGE LAW",
-          loadCountersignSoul: async () => "COUNTERSIGN LAW",
-          loadDiaristSoul: async () => "DIARIST LAW",
-          loadNotarySoul: async () => "NOTARY LAW",
+          loadRoleSoul: async (role) => {
+            if (role === "countersign") return "COUNTERSIGN LAW";
+            if (role === "diarist") return "DIARIST LAW";
+            if (role === "notary") return "NOTARY LAW";
+            return "JUDGE LAW";
+          },
           loadNotarySourceRun: async (path: string) => ({
             runDirectory: path,
             runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
@@ -794,7 +796,7 @@ test("host-neutral envelope drives shared registration and session lifecycle", a
         startKeepalive() {},
         stopKeepalive() {} };
       createRoleRuntimeExtension({
-        loadJudgeSoul: async () => "JUDGE LAW",
+        loadRoleSoul: async () => "JUDGE LAW",
         loadNavigatorWorkContext: async () => ({
           subjectKey: `${runDir}/work`,
           subject: prose,
@@ -870,7 +872,7 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
     const setContexts: Array<Record<string, unknown>> = [];
 
     createPiRoleRuntimeExtension({
-      loadJudgeSoul: async () => "JUDGE LAW",
+      loadRoleSoul: async () => "JUDGE LAW",
       // Production soft miss: session_start has no materials yet (no throw/poison).
       loadNavigatorWorkContext: async () => ({
         subjectKey: join(home, ".ak/work"),
@@ -1078,7 +1080,7 @@ async function withNavigatorInfraGraceEnvelope(
       stopKeepalive() {},
     };
     createRoleRuntimeExtension({
-      loadJudgeSoul: async () => "JUDGE LAW",
+      loadRoleSoul: async () => "JUDGE LAW",
       loadNavigatorWorkContext: async () => ({
         // Placeholder skips warm prepare on session_start so the hung nest is
         // only the settlement-feed summon under post-role grace (#959).

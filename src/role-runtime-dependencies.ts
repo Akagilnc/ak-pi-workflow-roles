@@ -13,17 +13,29 @@ import {
   loadAuditorReferenceMaterialsFromSubjectInput,
   loadAuditorSoulFromSubjectInput,
 } from "./auditor-soul.ts";
+import { packagedRoleMetadata, type PackagedRole } from "./packaged-role-registry.ts";
 import {
-  loadGatekeeperSessionMaterials,
   loadMainRoleReferenceMaterials,
   loadMainRoleSessionMaterials,
 } from "./session-opening-materials.ts";
 
+function usesSubjectSoul(role: string): boolean {
+  const record = packagedRoleMetadata(role);
+  return record !== undefined && "soulSource" in record && record.soulSource === "subject";
+}
+
 /** Single packaged source for reference materials across production composition roots. */
 export function loadPackagedRoleReferenceMaterials(role: Parameters<NonNullable<RoleRuntimeDependencies["loadRoleReferenceMaterials"]>>[0]): Promise<string> {
-  return role === "auditor"
+  return usesSubjectSoul(role)
     ? loadAuditorReferenceMaterialsFromSubjectInput()
     : loadMainRoleReferenceMaterials(role);
+}
+
+/** One production soul loader. Subject seats read the subject input; every other seat reads its record. */
+export function loadRegisteredRoleSoul(role: PackagedRole): Promise<string> {
+  return usesSubjectSoul(role)
+    ? loadAuditorSoulFromSubjectInput()
+    : loadMainRoleSessionMaterials(role);
 }
 
 /** Host-neutral packaged role runtime deps for the parent-process envelope. */
@@ -38,28 +50,13 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
   return {
     packageRoot,
     loadRoleReferenceMaterials: loadPackagedRoleReferenceMaterials,
-    loadJudgeSoul: () => loadMainRoleSessionMaterials("judge"),
-    loadFixerSoul: () => loadMainRoleSessionMaterials("fixer"),
+    loadRoleSoul: loadRegisteredRoleSoul,
     loadFixPacket: (path) => readFile(path, "utf8"),
-    loadCoderSoul: () => loadMainRoleSessionMaterials("coder"),
     loadCoderTask: (path) => readFile(path, "utf8"),
-    loadReviewerSoul: () => loadMainRoleSessionMaterials("reviewer"),
-    loadCollectorSoul: () => loadMainRoleSessionMaterials("collector"),
     loadCollectorHandbookSeed: () => readFile(collectorHandbookSeedPath, "utf8"),
     createCollectorTransport: () => createGhCollectorGitHubTransport(),
-    loadDoctorSoul: () => loadMainRoleSessionMaterials("doctor"),
     loadDoctorCase,
-    loadInspectorSoul: () => loadMainRoleSessionMaterials("inspector"),
-    loadGatekeeperSoul: () => loadGatekeeperSessionMaterials("gatekeeper"),
-    loadNavigatorSoul: () => loadMainRoleSessionMaterials("navigator"),
-    loadAuditorSoul: () => loadAuditorSoulFromSubjectInput(),
-    loadNotarySoul: () => loadMainRoleSessionMaterials("notary"),
-    loadCountersignSoul: () => loadMainRoleSessionMaterials("countersign"),
-    loadGleanerLeftSoul: () => loadMainRoleSessionMaterials("gleaner-left"),
-    loadDiaristSoul: () => loadMainRoleSessionMaterials("diarist"),
-    loadSecretariatSoul: () => loadMainRoleSessionMaterials("secretariat"),
     loadNotarySourceRun: loadNotarySourceRunLocator,
-    loadMergerSoul: () => loadMainRoleSessionMaterials("merger"),
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
     async loadCanonicalSkillBinding(name) {
       switch (name) {
@@ -88,7 +85,7 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
       subject: options.subject,
       authority: options.authority,
       invocationId: options.invocationId,
-      loadSoul: () => loadMainRoleSessionMaterials("navigator"),
+      loadSoul: () => loadRegisteredRoleSoul("navigator"),
       loadRoutePlaybook: () => readFile(navigatorRoutePlaybookPath, "utf8"),
       loadRoleHelp: async (role) => formatNavigatorRoleHelp(role),
       createSession: navigatorSessionFactory,

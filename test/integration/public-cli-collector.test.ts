@@ -245,8 +245,7 @@ async function executeBindViaProductionEnvelope(input: {
     "ak-collector-repo": "acme/widgets",
   });
   createPiRoleRuntimeExtension({
-    loadJudgeSoul: async () => "judge",
-    loadCollectorSoul: async () => "# Collector\nBind and collect.",
+    loadRoleSoul: async (role) => role === "collector" ? "# Collector\nBind and collect." : "judge",
     createCollectorTransport: () => createFakeGitHubTransport({
       user: sampleUser(),
       pullRequest: samplePull({ headOid: "head-1" }),
@@ -501,8 +500,7 @@ test("#676 K2 envelope collector hooks: activation journal + tool_result release
       "ak-collector-repo": "acme/widgets",
     });
     createPiRoleRuntimeExtension({
-      loadJudgeSoul: async () => "judge",
-      loadCollectorSoul: async () => "# Collector\nBind and collect.",
+      loadRoleSoul: async (role) => role === "collector" ? "# Collector\nBind and collect." : "judge",
       createCollectorTransport: () => createFakeGitHubTransport({
         user: sampleUser(),
         pullRequest: samplePull({ headOid: "head-1" }),
@@ -700,8 +698,7 @@ test("#677 production envelope handbook write survives second activation", async
       "ak-collector-pr": "42",
     });
     createPiRoleRuntimeExtension({
-      loadJudgeSoul: async () => "judge",
-      loadCollectorSoul: async () => "# Collector\nHandbook and collect.",
+      loadRoleSoul: async (role) => role === "collector" ? "# Collector\nHandbook and collect." : "judge",
       loadCollectorHandbookSeed: async () => "seed-trigger-notes",
       createCollectorTransport: () => createFakeGitHubTransport({
         user: sampleUser(),
@@ -743,8 +740,7 @@ test("#677 production envelope handbook write survives second activation", async
       "ak-collector-pr": "42",
     });
     createPiRoleRuntimeExtension({
-      loadJudgeSoul: async () => "judge",
-      loadCollectorSoul: async () => "# Collector\nHandbook and collect.",
+      loadRoleSoul: async (role) => role === "collector" ? "# Collector\nHandbook and collect." : "judge",
       loadCollectorHandbookSeed: async () => "seed-trigger-notes",
       createCollectorTransport: () => createFakeGitHubTransport({
         user: sampleUser(),
@@ -800,8 +796,7 @@ test("#678 production envelope wait-ms config and open-wait-window work step", a
       "ak-collector-wait-ms": "120000",
     });
     createPiRoleRuntimeExtension({
-      loadJudgeSoul: async () => "judge",
-      loadCollectorSoul: async () => "# Collector\nCollect.",
+      loadRoleSoul: async (role) => role === "collector" ? "# Collector\nCollect." : "judge",
       createCollectorTransport: () => createFakeGitHubTransport({
         user: sampleUser(),
         pullRequest: samplePull({ headOid: "head-wait", number: 42 }),

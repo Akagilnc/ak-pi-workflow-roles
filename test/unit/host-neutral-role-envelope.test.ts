@@ -28,7 +28,7 @@ test("shared envelope configures every public seat on a non-Pi host", () => {
   };
 
   createRoleRuntimeExtension({
-    loadJudgeSoul: async () => "judge",
+    loadRoleSoul: async () => "judge",
   })(envelopeHost);
 
   assert.ok(flags.has("ak-role"));
@@ -61,7 +61,7 @@ test("#879 default Pi empty ak-engine flag must not block AK_ROLE_ENGINE", () =>
     on() {},
   };
   createRoleRuntimeExtension({
-    loadJudgeSoul: async () => "judge",
+    loadRoleSoul: async () => "judge",
   })({
     host,
     appendEntry() {},
