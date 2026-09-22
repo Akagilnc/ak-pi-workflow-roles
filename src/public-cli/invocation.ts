@@ -36,7 +36,17 @@ import type {
   DurablePrincipalAuthority,
 } from "../host-contracts.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
-import { packagedRoleMetadata } from "../packaged-role-registry.ts";
+import {
+  packagedAdmittedSubject,
+  packagedArgvResult,
+  packagedBareToken,
+  packagedBaseIsRevision,
+  packagedEmitsAuthorityRefs,
+  packagedPublicInstructionSubject,
+  packagedRoleMetadata,
+  packagedStoresSourceRunRaw,
+  packagedSubjectChoices,
+} from "../packaged-role-registry.ts";
 import {
   isSafePositiveTicketNumber,
   readBoardTicketNumber,
@@ -901,28 +911,26 @@ function assignPublicSeatOption(
       return;
     case "subject": {
       const raw = typeof value === "string" ? value.trim() : "";
-      if (raw !== "judge" && raw !== "doctor") {
+      const subject = packagedAdmittedSubject(owner, raw);
+      if (subject === undefined) {
+        const allowed = packagedSubjectChoices(owner)?.join("|") ?? "";
         throw new CliUsageError(
-          `auditor --subject must be judge|doctor, got ${value ?? "(missing)"}`,
+          `${owner} --subject must be ${allowed}, got ${value ?? "(missing)"}`,
         );
       }
-      fields.subject = raw;
+      fields.subject = subject;
       return;
     }
     case "source-run": {
       const text = typeof value === "string" ? value : "";
       if (text.trim() === "") {
-        throw new CliUsageError(
-          owner === "notary"
-            ? "notary --source-run requires a run locator"
-            : "auditor --source-run requires a run locator",
-        );
+        throw new CliUsageError(`${owner} --source-run requires a run locator`);
       }
-      fields.sourceRun = owner === "notary" ? text : text.trim();
+      fields.sourceRun = packagedStoresSourceRunRaw(owner) ? text : text.trim();
       return;
     }
     case "base":
-      fields.baseRevision = owner === "reviewer"
+      fields.baseRevision = packagedBaseIsRevision(owner)
         ? requireReviewerBaseRevision(value)
         : requireOptionPath(taken.def.canonical, value);
       return;
@@ -975,20 +983,21 @@ function assignPublicSeatOption(
 }
 
 function rejectSeatBareToken(owner: PublicSeatArgvOwner, token: string): void {
-  if (owner === "judge" && isRejectedPublicSpelling(owner, token)) {
+  const bare = packagedBareToken(owner);
+  if (bare === "burden" && isRejectedPublicSpelling(owner, token)) {
     throw new CliUsageError(
       "judge does not accept a public burden selector; Judge infers its own burden",
     );
   }
   if (
-    owner === "merger"
+    bare === "packet"
     && (isRejectedPublicSpelling(owner, token) || isMergerInternalPacketFace(token))
   ) {
     throw new CliUsageError(
       "merger does not accept public packet fields; the adapter reads Git merge materials",
     );
   }
-  if (owner === "notary") {
+  if (bare === "instruction") {
     if (token.startsWith("-") && token !== "-") {
       throw new CliUsageError(`unknown notary option: ${token}`);
     }
@@ -1006,11 +1015,11 @@ export function parsePublicSeatArgv(
   owner: PublicSeatArgvOwner,
   args: readonly string[],
 ): PublicSeatParse {
-  if (owner === "judge") {
+  if (packagedBareToken(owner) === "burden") {
     const dd = args.indexOf("--");
     const preDd = dd === -1 ? args : args.slice(0, dd);
     for (const token of preDd) {
-      if (isRejectedPublicSpelling("judge", token)) {
+      if (isRejectedPublicSpelling(owner, token)) {
         throw new CliUsageError(
           "judge does not accept a public burden selector; Judge infers its own burden",
         );
@@ -1032,7 +1041,7 @@ export function parsePublicSeatArgv(
       appendBareInstruction(owner, token, fields.positional);
     },
     onDoubleDash(rest) {
-      if (owner === "notary" && rest.length > 0) {
+      if (packagedBareToken(owner) === "instruction" && rest.length > 0) {
         throw new CliUsageError(
           "notary rejects caller prompt/instruction; only --source-run locator is admitted",
         );
@@ -1050,15 +1059,15 @@ export function parsePublicSeatArgv(
   options.assertRequired();
 
   const project = fields.project === undefined ? {} : { project: fields.project };
-  if (owner === "notary") {
+  if (packagedArgvResult(owner) === "source-run") {
     const sourceRun = fields.sourceRun;
     if (sourceRun === undefined || sourceRun.trim() === "") {
-      throw new CliUsageError("notary --source-run requires a run locator");
+      throw new CliUsageError(`${owner} --source-run requires a run locator`);
     }
     return { sourceRun, ...project };
   }
   const instruction = fields.positional.join(" ");
-  const material = owner === "gleaner-left"
+  const material = packagedArgvResult(owner) === "instruction"
     ? { instruction, ...project }
     : { instruction, attachmentPaths: fields.attachmentPaths, ...project };
   return {
@@ -1074,7 +1083,7 @@ export function parsePublicSeatArgv(
     ...(fields.sourceRun === undefined ? {} : { sourceRun: fields.sourceRun }),
     ...(fields.baseRevision === undefined ? {} : { baseRevision: fields.baseRevision }),
     ...(fields.lens === undefined ? {} : { lens: fields.lens }),
-    ...(owner === "reviewer" ? { authorityRefs: fields.authorityRefs } : {}),
+    ...(packagedEmitsAuthorityRefs(owner) ? { authorityRefs: fields.authorityRefs } : {}),
     ...(fields.subject === undefined ? {} : { subject: fields.subject }),
   };
 }
@@ -1509,7 +1518,7 @@ export async function admitPublicRole(
           ...project,
         },
       );
-    case "countersign":
+    case "court-materials":
       return admitStandardMaterialInvocation("countersign", {
         ...shared,
         instruction,
@@ -1519,7 +1528,7 @@ export async function admitPublicRole(
           ? {}
           : { deferPersistence: override.deferPersistence }),
       });
-    case "coder": {
+    case "worker-task": {
       if (instruction.trim() === "") {
         throw new CliUsageError("coder requires a nonblank task instruction");
       }
@@ -1539,7 +1548,7 @@ export async function admitPublicRole(
         },
       });
     }
-    case "fixer": {
+    case "worker-packet": {
       if (parsed.project !== undefined) {
         requireOptionPath("--project", parsed.project);
       }
@@ -1599,7 +1608,7 @@ export async function admitPublicRole(
         },
       });
     }
-    case "collector": {
+    case "collect-target": {
       if (parsed.project !== undefined) {
         requireOptionPath("--project", parsed.project);
       }
@@ -1668,7 +1677,7 @@ export async function admitPublicRole(
       });
       return { ...admittedCollector, repository };
     }
-    case "doctor": {
+    case "case-identity": {
       if (parsed.project !== undefined) {
         requireOptionPath("--project", parsed.project);
       }
@@ -1736,7 +1745,7 @@ export async function admitPublicRole(
       });
       return { ...admittedDoctor, attachments: frozenAttachments };
     }
-    case "notary": {
+    case "source-locator": {
       if (parsed.project !== undefined) {
         requireOptionPath("--project", parsed.project);
       }
@@ -1789,7 +1798,7 @@ export async function admitPublicRole(
         admittedFields: { baseRevision },
       });
     }
-    case "reviewer": {
+    case "review-basis": {
       const lens = requireReviewerLens(parsed.lens);
       if (parsed.project !== undefined) {
         requireOptionPath("--project", parsed.project);
@@ -1813,7 +1822,7 @@ export async function admitPublicRole(
       });
       return { ...admittedReviewer, authorityRefs };
     }
-    case "merger": {
+    case "merge-envelope": {
       if (parsed.project !== undefined) {
         requireOptionPath("--project", parsed.project);
       }
@@ -2269,7 +2278,7 @@ export async function loadAdmittedJudgeRequest(
     ) as unknown;
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
     const record = raw as Record<string, unknown>;
-    if (record.role !== "judge") return undefined;
+    if (!packagedPublicInstructionSubject(record.role)) return undefined;
     if (typeof record.instruction !== "string") return undefined;
     if (typeof record.instructionEmpty !== "boolean") return undefined;
     if (!Array.isArray(record.attachments)) return undefined;

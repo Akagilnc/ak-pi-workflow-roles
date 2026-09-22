@@ -15,6 +15,8 @@ import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "./package-contracts/auditor-output.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "./diarist-contracts.ts";
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "./secretariat-contracts.ts";
+import { JUDGE_AUDIT_TOOL_NAME } from "./judge-auditor.ts";
+import { DOCTOR_AUDIT_TOOL_NAME } from "./doctor-auditor.ts";
 
 /**
  * Success-face fields that still differ by seat. Presence and omission match
@@ -78,9 +80,12 @@ export const PUBLIC_ROLE_RECORDS = [
     presentSettled: "default",
     summonResume: false,
     admission: "instruction",
+    /** Public argv rejects a burden selector. */
+    bareToken: "burden",
     sameParent: "none",
     phases: [null],
     outputTool: JUDGE_OUTPUT_TOOL_NAME,
+    auditTool: JUDGE_AUDIT_TOOL_NAME,
     settlement: "sealed",
     runnerFailure: "engine-detour-known-first",
     acceptedText: "大理寺回执已接受",
@@ -103,7 +108,7 @@ export const PUBLIC_ROLE_RECORDS = [
     inCallAutoResume: true,
     presentSettled: "default",
     summonResume: false,
-    admission: "fixer",
+    admission: "worker-packet",
     sameParent: "none",
     worker: true,
     methodSkills: ["diagnosing-bugs", "tdd"],
@@ -142,7 +147,7 @@ export const PUBLIC_ROLE_RECORDS = [
     inCallAutoResume: true,
     presentSettled: "default",
     summonResume: false,
-    admission: "coder",
+    admission: "worker-task",
     sameParent: "none",
     worker: true,
     applyMethod: "tdd",
@@ -179,7 +184,10 @@ export const PUBLIC_ROLE_RECORDS = [
     inCallAutoResume: true,
     presentSettled: "default",
     summonResume: false,
-    admission: "reviewer",
+    admission: "review-basis",
+    /** --base is a single Skill-arg token, and authority refs are always emitted. */
+    baseValue: "revision",
+    emitAuthorityRefs: true,
     sameParent: "none",
     methodSkills: ["ak-cross-m-review"],
     settleMethod: "ak-cross-m-review",
@@ -228,7 +236,9 @@ export const PUBLIC_ROLE_RECORDS = [
     inCallAutoResume: false,
     presentSettled: "always",
     summonResume: false,
-    admission: "collector",
+    admission: "collect-target",
+    /** Public no_receipt projects a durable bind-target rejection. */
+    projectTargetBindRejection: true,
     sameParent: "none",
     phases: [null],
     bareCommand: false,
@@ -264,11 +274,12 @@ export const PUBLIC_ROLE_RECORDS = [
     inCallAutoResume: false,
     presentSettled: "typed",
     summonResume: false,
-    admission: "doctor",
+    admission: "case-identity",
     sameParent: "none",
     phases: [null],
     bareCommand: false,
     outputTool: DOCTOR_OUTPUT_TOOL_NAME,
+    auditTool: DOCTOR_AUDIT_TOOL_NAME,
     settlement: "sealed",
     artifactFace: {
       evidenceRole: true,
@@ -293,7 +304,9 @@ export const PUBLIC_ROLE_RECORDS = [
     inCallAutoResume: true,
     presentSettled: "typed",
     summonResume: false,
-    admission: "merger",
+    admission: "merge-envelope",
+    /** Public argv rejects packet fields the adapter reads from Git. */
+    bareToken: "packet",
     sameParent: "none",
     methodSkills: ["resolving-merge-conflicts"],
     settleMethod: "resolving-merge-conflicts",
@@ -327,8 +340,14 @@ export const PUBLIC_ROLE_RECORDS = [
     inCallAutoResume: false,
     presentSettled: "always",
     summonResume: false,
-    admission: "notary",
-    sameParent: "notary",
+    admission: "source-locator",
+    /** Public argv is only the source-run locator; stored text is not trimmed. */
+    bareToken: "instruction",
+    sourceRunStored: "raw",
+    argvResult: "source-run",
+    sameParent: "source-locator",
+    /** Infrastructure failure at this stage has no accepted gate cycle to project. */
+    skipGateOnInfrastructureStage: true,
     /** 符宝郎 is a review officer and inherits the gatekeeper model. */
     reviewOfficer: true,
     provinceConfig: true,
@@ -358,7 +377,9 @@ export const PUBLIC_ROLE_RECORDS = [
     inCallAutoResume: false,
     presentSettled: "always",
     summonResume: false,
-    admission: "countersign",
+    admission: "court-materials",
+    /** Durable custom entry names this officer. */
+    durableOfficerEntry: true,
     sameParent: "none",
     phases: [null],
     outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
@@ -383,7 +404,7 @@ export const PUBLIC_ROLE_RECORDS = [
     presentSettled: "always",
     summonResume: false,
     admission: "instruction",
-    sameParent: "secretariat",
+    sameParent: "court-diarist",
     phases: [null],
     outputTool: SECRETARIAT_OUTPUT_TOOL_NAME,
     settlement: "accepted",
@@ -410,6 +431,8 @@ export const PUBLIC_ROLE_RECORDS = [
     presentSettled: "always",
     summonResume: false,
     admission: "gleaner",
+    /** Public argv keeps the instruction and drops attachment paths. */
+    argvResult: "instruction",
     sameParent: "none",
     phases: [null],
     bareCommand: false,
@@ -434,7 +457,11 @@ export const PUBLIC_ROLE_RECORDS = [
     presentSettled: "always",
     summonResume: false,
     admission: "instruction",
-    sameParent: "inspector",
+    sameParent: "gate-pointer",
+    /** Resume restores an optional source-run path onto the admitted face. */
+    resumeSourcePath: true,
+    /** Infrastructure failure at this stage has no accepted gate cycle to project. */
+    skipGateOnInfrastructureStage: true,
     /** 台院 is a review officer and inherits the gatekeeper model. */
     reviewOfficer: true,
     provinceConfig: true,
@@ -467,6 +494,8 @@ export const PUBLIC_ROLE_RECORDS = [
     presentSettled: "always",
     summonResume: true,
     admission: "instruction",
+    /** Infrastructure failure at this stage has no accepted gate cycle to project. */
+    skipGateOnInfrastructureStage: true,
     sameParent: "none",
     /** Province model root. Officers name this seat via modelInheritsFrom. */
     provinceConfig: true,
@@ -501,7 +530,9 @@ export const PUBLIC_ROLE_RECORDS = [
     presentSettled: "always",
     summonResume: true,
     admission: "instruction",
-    sameParent: "auditor",
+    sameParent: "subject-source",
+    /** --subject chooses which audited seat the soul comes from. */
+    subjectChoices: ["judge", "doctor"],
     /** 审刑院 is a review officer. Model stays on its own seat row. */
     reviewOfficer: true,
     /** Subject input selects the soul. The public materials list is the ship roster. */
@@ -527,7 +558,7 @@ export const PUBLIC_ROLE_RECORDS = [
     presentSettled: "always",
     summonResume: false,
     admission: "instruction",
-    sameParent: "diarist",
+    sameParent: "board-ticket",
     phases: [null],
     outputTool: DIARIST_OUTPUT_TOOL_NAME,
     settlement: "accepted",
@@ -651,17 +682,115 @@ export function packagedMethodLoadFailureCause(role: string): "activation" | und
 /** Diarist binds a board ticket onto its own run. Other seats do not. */
 export function packagedBindsBoardTicket(role: string): boolean {
   const record = packagedRoleMetadata(role);
-  return record?.sameParent === "diarist";
+  return record?.sameParent === "board-ticket";
 }
 
 /** Notary resume may replace the stored source-run locator from the summons. */
 export function packagedRebindSourceOnResume(role: string): boolean {
-  return packagedRoleMetadata(role)?.admission === "notary";
+  return packagedRoleMetadata(role)?.admission === "source-locator";
 }
 
 /** Countersign admission keeps deferred court identity on the public entry. */
 export function packagedAdmitsCountersign(role: string): boolean {
-  return packagedRoleMetadata(role)?.admission === "countersign";
+  return packagedRoleMetadata(role)?.admission === "court-materials";
+}
+
+export type PackagedBareToken = "burden" | "packet" | "instruction";
+
+/** Public argv bare-token face. Absent means a bare token is instruction text. */
+export function packagedBareToken(role: string): PackagedBareToken | undefined {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined || !("bareToken" in record)) return undefined;
+  return record.bareToken;
+}
+
+/** Public argv result shape. Absent means instruction plus attachment paths. */
+export function packagedArgvResult(role: string): "source-run" | "instruction" | "material" {
+  const record = packagedRoleMetadata(role);
+  if (record !== undefined && "argvResult" in record) return record.argvResult;
+  return "material";
+}
+
+/** Source-run text is stored without trim. Absent means trim. */
+export function packagedStoresSourceRunRaw(role: string): boolean {
+  const record = packagedRoleMetadata(role);
+  return record !== undefined && "sourceRunStored" in record && record.sourceRunStored === "raw";
+}
+
+/** --base is a single Skill-arg token. Absent means a path. */
+export function packagedBaseIsRevision(role: string): boolean {
+  const record = packagedRoleMetadata(role);
+  return record !== undefined && "baseValue" in record && record.baseValue === "revision";
+}
+
+/** Authority refs are present on the parse result even when empty. */
+export function packagedEmitsAuthorityRefs(role: string): boolean {
+  const record = packagedRoleMetadata(role);
+  return record !== undefined && "emitAuthorityRefs" in record && record.emitAuthorityRefs === true;
+}
+
+/** Allowed --subject values. Absent means the seat has no subject option. */
+export function packagedSubjectChoices(role: string): readonly string[] | undefined {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined || !("subjectChoices" in record)) return undefined;
+  return record.subjectChoices;
+}
+
+/** Admitted --subject when the value is one of the seat's declared choices. */
+export function packagedAdmittedSubject(role: string, value: string): "judge" | "doctor" | undefined {
+  const choices = packagedSubjectChoices(role);
+  if (choices === undefined || !choices.includes(value)) return undefined;
+  const match = choices.find((choice) => choice === value);
+  if (match === "judge" || match === "doctor") return match;
+  return undefined;
+}
+
+/** Audit decision tool declared on the audited seat. */
+export function packagedAuditToolName(role: string): string | undefined {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined || !("auditTool" in record)) return undefined;
+  return record.auditTool;
+}
+
+/** Infrastructure-failure stage that must not be re-read as an accepted gate cycle. */
+export function packagedSkipsGateOnInfrastructureStage(stage: unknown): boolean {
+  return typeof stage === "string" && PUBLIC_ROLE_RECORDS.some((record) =>
+    "skipGateOnInfrastructureStage" in record
+    && record.skipGateOnInfrastructureStage === true
+    && record.role === stage
+  );
+}
+
+/** Durable officer entry whose name is the seat role. */
+export function packagedDurableOfficerEntry(officer: unknown): boolean {
+  return typeof officer === "string" && PUBLIC_ROLE_RECORDS.some((record) =>
+    "durableOfficerEntry" in record
+    && record.durableOfficerEntry === true
+    && record.role === officer
+  );
+}
+
+/** Admitted-request role whose navigator subject is the public instruction. */
+export function packagedPublicInstructionSubject(role: unknown): boolean {
+  return typeof role === "string" && PUBLIC_ROLE_RECORDS.some((record) =>
+    "navigatorSubject" in record
+    && record.navigatorSubject === "public-instruction"
+    && record.role === role
+  );
+}
+
+/** Resume restores an optional source-run path. */
+export function packagedResumeSourcePath(role: string): boolean {
+  const record = packagedRoleMetadata(role);
+  return record !== undefined && "resumeSourcePath" in record && record.resumeSourcePath === true;
+}
+
+/** Public no_receipt projects a durable bind-target rejection. */
+export function packagedProjectsTargetBindRejection(role: string): boolean {
+  const record = packagedRoleMetadata(role);
+  return record !== undefined
+    && "projectTargetBindRejection" in record
+    && record.projectTargetBindRejection === true;
 }
 
 export function packagedNavigatorSubject(

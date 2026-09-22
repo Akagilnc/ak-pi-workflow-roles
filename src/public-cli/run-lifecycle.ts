@@ -47,7 +47,11 @@ import {
   pickEngineAxis,
 } from "../package-resources/engine-material.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
-import { packagedRoleMetadata, type PackagedRole } from "../packaged-role-registry.ts";
+import {
+  packagedResumeSourcePath,
+  packagedRoleMetadata,
+  type PackagedRole,
+} from "../packaged-role-registry.ts";
 import {
   recordEffectiveInvocationModel,
   requireAuthorityRef,
@@ -1754,7 +1758,7 @@ function admitResumedRole(loaded: {
   const base = resumedBaseAdmitted(loaded);
   switch (record.admission) {
     case "instruction": {
-      if (role === "inspector") {
+      if (packagedResumeSourcePath(role)) {
         const admitted: AdmittedInspectorInvocation = {
           role: "inspector",
           ...base,
@@ -1769,7 +1773,7 @@ function admitResumedRole(loaded: {
         ...base,
       } as AdmittedRoleInvocation;
     }
-    case "countersign": {
+    case "court-materials": {
       const admitted: AdmittedCountersignInvocation = {
         role: "countersign",
         ...base,
@@ -1782,7 +1786,7 @@ function admitResumedRole(loaded: {
       };
       return admitted;
     }
-    case "coder": {
+    case "worker-task": {
       const phase = resumedWorkerPhase(fields.phase ?? loaded.run.phase, record.phases, role, runId);
       const taskPath = fields.taskPath;
       if (taskPath === undefined) {
@@ -1804,7 +1808,7 @@ function admitResumedRole(loaded: {
       };
       return admitted;
     }
-    case "fixer": {
+    case "worker-packet": {
       const phase = resumedWorkerPhase(fields.phase ?? loaded.run.phase, record.phases, role, runId);
       const packetPath = fields.packetPath;
       if (packetPath === undefined) {
@@ -1831,7 +1835,7 @@ function admitResumedRole(loaded: {
       };
       return admitted;
     }
-    case "reviewer": {
+    case "review-basis": {
       const rawBase = fields.baseRevision;
       if (rawBase === undefined || rawBase.trim() === "") {
         throw new CliUsageError(
@@ -1878,7 +1882,7 @@ function admitResumedRole(loaded: {
       };
       return admitted;
     }
-    case "merger": {
+    case "merge-envelope": {
       const mergerInputPath = fields.mergerInputPath;
       if (mergerInputPath === undefined) {
         throw new CliUsageError(
@@ -1905,7 +1909,7 @@ function admitResumedRole(loaded: {
       };
       return admitted;
     }
-    case "collector": {
+    case "collect-target": {
       const { prNumber, repository, repositoryDisplay, manifestDigest } = fields;
       if (
         repository === undefined ||
@@ -1941,7 +1945,7 @@ function admitResumedRole(loaded: {
       };
       return admitted;
     }
-    case "doctor": {
+    case "case-identity": {
       const { issueNumber, caseRunsPath, caseIdentity } = fields;
       if (
         issueNumber === undefined ||
@@ -1961,7 +1965,7 @@ function admitResumedRole(loaded: {
       };
       return admitted;
     }
-    case "notary": {
+    case "source-locator": {
       const { sourceRunPath, sourceRun } = fields;
       if (sourceRunPath === undefined || sourceRun === undefined) {
         throw new CliUsageError(

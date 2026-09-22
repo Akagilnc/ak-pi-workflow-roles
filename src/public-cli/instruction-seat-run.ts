@@ -608,7 +608,7 @@ export async function runPublicInstructionSeat(
   let auditorSubject: "judge" | "doctor" | undefined;
   let auditorSource: string | undefined;
   let auditorTicket: number | undefined;
-  if (record.sameParent === "auditor") {
+  if (record.sameParent === "subject-source") {
     if (!isAuditorSoulRole(parsed.subject)) {
       presentStructuralRejection(new CliUsageError("auditor --subject requires judge|doctor"), io);
       return { exitCode: 2 };
@@ -656,7 +656,7 @@ export async function runPublicInstructionSeat(
     if (resumed != null) return resumed;
   }
 
-  if (record.sameParent === "inspector") {
+  if (record.sameParent === "gate-pointer") {
     const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction ?? "");
     if (parentRunPath !== undefined) {
       const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
@@ -684,7 +684,7 @@ export async function runPublicInstructionSeat(
     }
   }
 
-  if (record.sameParent === "notary") {
+  if (record.sameParent === "source-locator") {
     let source;
     try {
       source = await resolveNotarySourceRunLocator({
@@ -735,7 +735,7 @@ export async function runPublicInstructionSeat(
     throw error;
   }
 
-  if (record.sameParent === "inspector") {
+  if (record.sameParent === "gate-pointer") {
     const parentRunPath = parentRunPathFromGatePointerInstruction(parsed.instruction ?? "");
     if (parentRunPath !== undefined) {
       await persistAdmittedSourceRunPath(admitted, parentRunPath);
@@ -743,13 +743,13 @@ export async function runPublicInstructionSeat(
       admitted = { ...admitted, ...sourcePatch };
     }
   }
-  if (record.sameParent === "auditor" && auditorSource !== undefined) {
+  if (record.sameParent === "subject-source" && auditorSource !== undefined) {
     await persistAdmittedSourceRunPath(admitted, auditorSource);
   }
 
   const runAdmitted = async (): Promise<SeatRunResult> => {
     await markRunAdmitted(admitted, env.principalAuthority);
-    if (record.sameParent === "secretariat") {
+    if (record.sameParent === "court-diarist") {
       const { invokeCourtDiarist } = await import("./countersign-run.ts");
       const outcome = await invokeCourtDiarist({
         instruction: parsed.instruction ?? "",
@@ -794,7 +794,7 @@ export async function runPublicInstructionSeat(
     return dispatchAdmitted(admitted, env, io);
   };
 
-  if (record.sameParent === "auditor") {
+  if (record.sameParent === "subject-source") {
     return withAuditorSoulEnv({
       ...(auditorSubject === undefined ? {} : { subject: auditorSubject }),
       ...(auditorSource === undefined ? {} : { sourceRunDirectory: auditorSource }),

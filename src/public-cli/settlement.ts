@@ -22,8 +22,6 @@ import {
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
-import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
-import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import type { RoleTurnKnownFailure } from "../host-contracts.ts";
 import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
 import {
@@ -79,8 +77,12 @@ import {
   REVIEWER_OUTPUT_TOOL_NAME,
 } from "../package-contracts/reviewer-output.ts";
 import {
+  packagedAuditToolName,
+  packagedDurableOfficerEntry,
+  packagedProjectsTargetBindRejection,
   packagedRoleAcceptedOutputTool,
   packagedRoleMetadata,
+  packagedSkipsGateOnInfrastructureStage,
   type PackagedArtifactFace,
   type PackagedArtifactLeaf,
   type PackagedRole,
@@ -1708,12 +1710,11 @@ export function seatKnownFailureResolver(
 function auditToolNameForRole(
   role: (typeof AUDITOR_SOUL_ROLES)[number],
 ): string {
-  switch (role) {
-    case "judge":
-      return JUDGE_AUDIT_TOOL_NAME;
-    case "doctor":
-      return DOCTOR_AUDIT_TOOL_NAME;
+  const name = packagedAuditToolName(role);
+  if (name === undefined) {
+    throw new Error(`audit tool is not declared for ${role}`);
   }
+  return name;
 }
 
 type BoundRoleToolCall = {
@@ -2227,11 +2228,7 @@ async function withOptionalGateProjection<
   const skipGate =
     isRecord(secondaryEvidence)
     && secondaryEvidence.kind === "role_infrastructure_failure"
-    && (
-      secondaryEvidence.stage === "gatekeeper"
-      || secondaryEvidence.stage === "inspector"
-      || secondaryEvidence.stage === "notary"
-    );
+    && packagedSkipsGateOnInfrastructureStage(secondaryEvidence.stage);
 
   let next: T & { gate?: TerminalGateFact } = base;
   if (!skipGate) {
@@ -3064,7 +3061,7 @@ function countersignTerminalFromEntries(
       entry.data !== null && typeof entry.data === "object" && !Array.isArray(entry.data)
         ? (entry.data as Record<string, unknown>)
         : undefined;
-    if (data?.officer !== "countersign") continue;
+    if (data === undefined || !packagedDurableOfficerEntry(data.officer)) continue;
     if (data.receipt === undefined) continue;
     const runId =
       typeof data.runId === "string" && data.runId.trim() !== ""
@@ -3437,7 +3434,7 @@ export async function settleFailureTerminalResult(
         ) {
           let decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
           // #676 D1/J3: project durable bind-target rejection onto public no_receipt facts.
-          if (admitted.role === "collector") {
+          if (packagedProjectsTargetBindRejection(admitted.role)) {
             const bindRejection = extractCollectorTargetBindRejection(entries.slice(attemptStart));
             if (bindRejection !== undefined) {
               decisiveFacts = {
