@@ -1752,7 +1752,7 @@ function admitResumedRole(loaded: {
   const runId = loaded.run.runId;
   const record = packagedRoleMetadata(role);
   if (record === undefined) {
-    throw new CliUsageError(`unknown role run id: ${role}`);
+    throw new CliUsageError(`unknown role: ${role}`);
   }
   const fields = loaded.admittedFields;
   const base = resumedBaseAdmitted(loaded);
@@ -1979,9 +1979,6 @@ function admitResumedRole(loaded: {
         sourceRun,
       };
       return admitted;
-    }
-    default: {
-      throw new CliUsageError(`unknown role run id: ${role}`);
     }
   }
 }
