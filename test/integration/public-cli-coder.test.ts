@@ -15,6 +15,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   writeFile,
 } from "node:fs/promises";
@@ -511,6 +512,7 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
     seedGitProject(project);
     const runId = "run-cli-coder-resume-plan";
     const instruction = "Propose the first implementation plan for resume.";
+    let staleUnboundFile: string | undefined;
 
     {
       const { io } = captureIo();
@@ -533,6 +535,17 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
             const gate = createWorkerSubmissionGate({ home });
             gate.arm(project, { getSessionFile: () => sessionFile });
             assert.throws(() => gate.assertAcceptable("completed"), WorkerCommitReminderError);
+            const unboundGateDirectory = join(sessionDir, "worker-submission-gate");
+            const gateFiles = (await readdir(unboundGateDirectory)).filter(
+              (file) => file.endsWith(".jsonl"),
+            );
+            assert.equal(gateFiles.length, 1);
+            staleUnboundFile = join(unboundGateDirectory, gateFiles[0]!);
+            await writeFile(
+              join(unboundGateDirectory, "current-session.json"),
+              `${JSON.stringify({ sessionFile: staleUnboundFile })}\n`,
+              "utf8",
+            );
             const details = {
               status: "partially_completed",
               report: "Initial turn binds the ticket before resume.",
@@ -586,19 +599,11 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
 
     const gateDirectory = join(sessionDirectory, "worker-submission-gate");
     const stalePointer = join(gateDirectory, "current-session.json");
-    const staleUnboundFile = join(
-      home,
-      ".ak-roles",
-      "books",
-      bookKey,
-      "unbound",
-      "runs",
-      `${runId}@coder`,
-      "session",
-      "worker-submission-gate",
-      "stale.jsonl",
+    assert.ok(staleUnboundFile?.includes(join("unbound", "runs")));
+    assert.deepEqual(
+      JSON.parse(await readFile(stalePointer, "utf8")),
+      { sessionFile: staleUnboundFile },
     );
-    await writeFile(stalePointer, `${JSON.stringify({ sessionFile: staleUnboundFile })}\n`, "utf8");
 
     const { io, stdout } = captureIo();
     let resumeArgs: string[] | undefined;
