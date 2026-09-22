@@ -53,7 +53,7 @@ test("createRecordSession nests by the durable parent file", async () => {
     assert.equal(parent.getSessionFile(), parentFile);
     assert.notEqual(dirname(parent.getSessionFile()!), parent.getSessionDir());
 
-    const child = await createRecordSession({
+    const child = createRecordSession({
       cwd: project,
       kind: "auditor-roles",
       parent,
@@ -79,7 +79,7 @@ test("worker gate native continuation reports and materializes an empty-nest fal
     const gateDir = join(parentDir, WORKER_SUBMISSION_GATE_KIND);
     await mkdir(gateDir, { recursive: true });
 
-    const opened = await createRecordSessionOpen({
+    const opened = createRecordSessionOpen({
       cwd: project,
       kind: WORKER_SUBMISSION_GATE_KIND,
       parent,
@@ -123,7 +123,7 @@ test("worker gate delegates native continuation without package path checks", as
       inMemoryRecordSession: (cwd: string) => SessionManager.inMemory(cwd),
     };
 
-    const opened = await createRecordSessionOpen({
+    const opened = createRecordSessionOpen({
       cwd: project,
       kind: WORKER_SUBMISSION_GATE_KIND,
       parent,
