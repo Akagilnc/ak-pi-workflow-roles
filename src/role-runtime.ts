@@ -989,7 +989,9 @@ export function createSecretariatRoleRuntime(
             return undefined;
           }
           if (roleHost.requireGatekeeperPass === undefined) {
-            throw new Error(`host ${host} cannot mount the secretariat submission gate`);
+            const error = new Error(`host ${host} cannot mount the secretariat submission gate`);
+            error.name = "InfrastructureFailure";
+            return hostActions.failInfrastructure(error, ctx, toolCallId);
           }
           const record =
             parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
@@ -1244,7 +1246,9 @@ export function createCountersignRoleRuntime(
             return undefined;
           }
           if (roleHost.requireGatekeeperPass === undefined) {
-            throw new Error("host cannot mount the countersign gate");
+            const error = new Error("host cannot mount the countersign gate");
+            error.name = "InfrastructureFailure";
+            return hostActions.failInfrastructure(error, ctx, toolCallId);
           }
           await roleHost.requireGatekeeperPass({
             context: ctx,

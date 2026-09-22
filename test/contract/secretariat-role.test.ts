@@ -2,6 +2,7 @@
  * #924 Secretariat (中书省) — envelope-assembled tools + nested countersign summon.
  */
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -10,6 +11,11 @@ import {
   projectSecretariatSummonResult,
 } from "../../src/secretariat-role.ts";
 import { createSecretariatRoleRuntime } from "../../src/role-runtime.ts";
+import {
+  createSubmissionLedgerHost,
+  readRecordedSubmissionRows,
+} from "../../src/submission-ledger.ts";
+import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 
@@ -451,42 +457,65 @@ test("#969 host trigger boundary: codex/claude/grok-build arm gate; pi does not"
     assert.deepEqual(await arm("pi"), []);
     assert.deepEqual(await arm(undefined), []);
 
-    const ungated = new Map<string, { execute: Function }>();
-    const ungatedHost = {
-      registerTool(tool: { name: string; execute: Function }) {
-        ungated.set(tool.name, tool);
-      },
-      on() {},
-      getAllTools: () => [...ungated.keys()].map((name) => ({ name })),
-      setActiveTools() {},
-      getActiveTools: () => [...ungated.keys()],
-      getFlag() { return undefined; },
-    };
-    await createSecretariatRoleRuntime(
-      ungatedHost as never,
-      { loadSoul: async () => "中书省" },
-      {
-        failInfrastructure(): never { throw new Error("fail"); },
-        bindSubmissionNonPass() {},
-      },
-    ).activate();
-    await assert.rejects(() =>
-      ungated.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
-        "c",
-        { secretariatStatus: "converged", ticketNumber: 969 },
-        undefined,
-        undefined,
-        {
-          cwd: "/tmp",
-          mode: "json",
-          model: undefined,
-          sessionManager: {} as never,
-          runDirectory: "/tmp/run",
-          host: "codex",
-          abort() {},
+    await withTempRoot("ak-sec-gate-", async (root) => {
+      const ungated = new Map<string, { execute: Function }>();
+      const rawHost = {
+        registerTool(tool: { name: string; execute: Function }) {
+          ungated.set(tool.name, tool);
         },
-      ),
-    );
+        on() {},
+        getAllTools: () => [...ungated.keys()].map((name) => ({ name })),
+        setActiveTools() {},
+        getActiveTools: () => [...ungated.keys()],
+        getFlag() { return undefined; },
+      };
+      const ledgerHost = createSubmissionLedgerHost(
+        rawHost as never,
+        new Map([[SECRETARIAT_OUTPUT_TOOL_NAME, "secretariat"]]),
+        (error) => { throw error; },
+        undefined,
+        { home: root },
+      );
+      await createSecretariatRoleRuntime(
+        ledgerHost,
+        { loadSoul: async () => "中书省" },
+        {
+          failInfrastructure(error): never { throw error; },
+          bindSubmissionNonPass() {},
+        },
+      ).activate();
+      const params = { secretariatStatus: "converged", ticketNumber: 969 };
+      const runDirectory = `${root}/.ak-roles/books/fixture/unbound/runs/run-ledger@secretariat`;
+      mkdirSync(`${runDirectory}/session`, { recursive: true });
+      writeFileSync(`${runDirectory}/session/session.jsonl`, "");
+      const context = {
+        cwd: root,
+        mode: "json",
+        model: undefined,
+        runDirectory,
+        host: "codex",
+        sessionManager: {
+          getHeader: () => ({ type: "session", id: "run-ledger:attempt" }),
+          getLeafEntry: () => undefined,
+          getLeafId: () => null,
+          getEntries: () => [],
+          getSessionDir: () => `${runDirectory}/session`,
+          getSessionFile: () => `${runDirectory}/session/session.jsonl`,
+        },
+        abort() {},
+      };
+      await assert.rejects(
+        () => ungated.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute("c", params, undefined, undefined, context),
+      );
+      assert.deepEqual(await readRecordedSubmissionRows(root, "run-ledger", root), [
+        {
+          role: "secretariat",
+          kind: "infrastructure",
+          accepted: params,
+          toolCallId: "c",
+        },
+      ]);
+    });
 
     // Unknown status on non-pi reasks parent (ADR 0055).
     const tools = new Map<string, { execute: Function }>();
