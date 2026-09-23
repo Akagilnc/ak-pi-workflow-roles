@@ -1254,6 +1254,7 @@ export function createRoleRuntimeExtension(
     const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
     // Envelope-owned execute→tool_result bridge for submission non-pass (ADR 0018 / #525).
     const pendingSubmissionNonPassByToolCallId = new Map<string, SubmissionNonPassResult>();
+    const pendingPriorGatePassByToolCallId = new Map<string, unknown>();
     let engineDetourRegistered = false;
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
@@ -1497,6 +1498,11 @@ export function createRoleRuntimeExtension(
       return { readingMaterial: caseDossier };
     });
     roleHost.on("tool_result", async (event) => {
+      const priorGatePass = pendingPriorGatePassByToolCallId.get(event.toolCallId);
+      pendingPriorGatePassByToolCallId.delete(event.toolCallId);
+      const priorPassContent = priorGatePass !== undefined && event.isError
+        ? [{ type: "text" as const, text: readableGateItem(priorGatePass) }, ...(event.content ?? [])]
+        : undefined;
       const role = selectedRole;
       if (role === undefined) return;
       // #676 E / J1: collector operational bookkeeping on the shared tool_result seam.
@@ -1531,15 +1537,16 @@ export function createRoleRuntimeExtension(
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {
-        return { isError: true };
+        return { isError: true, ...(priorPassContent === undefined ? {} : { content: priorPassContent }) };
       }
       // Submission non-pass: throw kept message text for the model; project the
       // envelope-bound structured result onto session details at this tool_result seam.
       const submissionNonPass = pendingSubmissionNonPassByToolCallId.get(event.toolCallId);
       if (submissionNonPass !== undefined) {
         pendingSubmissionNonPassByToolCallId.delete(event.toolCallId);
-        return { details: submissionNonPass, isError: true };
+        return { details: submissionNonPass, isError: true, ...(priorPassContent === undefined ? {} : { content: priorPassContent }) };
       }
+      if (priorPassContent !== undefined) return { content: priorPassContent, isError: true };
     });
     // Queue receipt delivery before `agent_settled`: that event means Pi has
     // already decided no queued continuation will run, so a triggerTurn there is
@@ -1702,6 +1709,7 @@ export function createRoleRuntimeExtension(
       disposeNavigatorAttendanceNonBlocking(attendanceToDispose);
       pendingInfrastructureFailures.clear();
       pendingSubmissionNonPassByToolCallId.clear();
+      pendingPriorGatePassByToolCallId.clear();
       observationFace.reset();
     });
 
@@ -1714,6 +1722,9 @@ export function createRoleRuntimeExtension(
       },
       bindSubmissionNonPass(toolCallId: string, result: SubmissionNonPassResult): void {
         pendingSubmissionNonPassByToolCallId.set(toolCallId, result);
+      },
+      bindPriorGatePass(toolCallId: string, receipt: unknown): void {
+        pendingPriorGatePassByToolCallId.set(toolCallId, receipt);
       },
     };
     const requireRoleSoul = (role: PackagedRole): Promise<string> => dependencies.loadRoleSoul(role);
@@ -2062,6 +2073,7 @@ export function createRoleRuntimeExtension(
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
       pendingSubmissionNonPassByToolCallId.clear();
+      pendingPriorGatePassByToolCallId.clear();
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.

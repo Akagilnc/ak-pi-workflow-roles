@@ -19,9 +19,9 @@ import {
 import { transcriptFromContext as productionTranscriptFromContext } from "../../extensions/role-runtime.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
-import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
+import { createJudgeRoleRuntime, type JudgeRoleHostActions } from "../../src/judge-role.ts";
 import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
-import type { HostContext, HostGatekeeperActions } from "../../src/host-contracts.ts";
+import type { HostContext } from "../../src/host-contracts.ts";
 import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
@@ -348,10 +348,11 @@ function testHostActions(
   fail: (error: unknown) => never = (error): never => {
     throw error instanceof Error ? error : new Error(String(error));
   },
-): HostGatekeeperActions {
+): JudgeRoleHostActions {
   return {
     failInfrastructure(error) { fail(error); },
     bindSubmissionNonPass() {},
+    bindPriorGatePass() {},
   };
 }
 
@@ -1707,6 +1708,32 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
       details: {},
     }, ctx);
     assert.equal(second, undefined);
+
+    const notaryPass = { status: "pass", reason: "draft accepted" };
+    const auditorBounce = { status: "bounce", violations: ["revise evidence"] };
+    defaultGateSummon = async (officer) => ({
+      exitCode: 0,
+      terminal: {
+        roleOutcome: {
+          kind: "accepted", role: officer,
+          status: officer === "notary" ? "pass" : "bounce",
+          payloads: [officer === "notary" ? notaryPass : auditorBounce],
+          decisiveFacts: officer === "notary" ? notaryPass : auditorBounce,
+        },
+        navigator: { disposition: "no-advice" }, artifacts: [], runId: `test-${officer}`,
+      },
+    });
+    const twoGateCallId = "judge-two-gates";
+    const twoGateContext = Object.assign(toolCallContext([{ id: twoGateCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
+      cwd: process.cwd(), model, modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider), thinkingLevel: "off",
+    });
+    await assert.rejects(tool.execute(twoGateCallId, { judgeStatus: "converged" }, undefined, undefined, twoGateContext), GatekeeperDecisionError);
+    const twoGateProjection = await harness.handlers.get("tool_result")?.({
+      toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: twoGateCallId, isError: true,
+      content: [{ type: "text", text: JSON.stringify(auditorBounce) }], details: {},
+    }, ctx);
+    const delivered = twoGateProjection as { content?: Array<{ type: string; text: string }> } | undefined;
+    assert.deepEqual(delivered?.content?.map((part) => JSON.parse(part.text)), [notaryPass, auditorBounce]);
   });
 });
 

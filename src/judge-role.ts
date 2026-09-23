@@ -65,7 +65,10 @@ export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;
 };
 
-export type JudgeRoleHostActions = HostGatekeeperActions;
+export type JudgeRoleHostActions = HostGatekeeperActions & {
+  /** Preserve the first officer's pass as a separate model-visible result item if the second gate fails. */
+  bindPriorGatePass(toolCallId: string, receipt: unknown): void;
+};
 
 export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   return validateAcceptedJudgeDetails(verdict);
@@ -129,6 +132,7 @@ export function createJudgeRoleRuntime(
                 submission: parameters,
               });
               draftPass = obtainedDraftPass || undefined;
+              if (draftPass !== undefined) hostActions.bindPriorGatePass(toolCallId, draftPass.receipt);
               // #756: 审刑院合规路径 — same review-queue law as 符宝郎/台院.
               // pass → accept; bounce → raw auditor receipt; escalate → pause;
               // not three-state → resume auditor; no round cap; no disposeCompliance mapping.
