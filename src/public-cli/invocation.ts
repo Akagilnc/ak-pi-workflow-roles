@@ -664,12 +664,14 @@ export async function relocateAdmittedRunToTicket(
 
   if (admitted.role !== "diarist") {
     const parentPage = JSON.parse(await readFile(admitted.admittedRequestPath, "utf8")) as Record<string, unknown>;
-    if (typeof parentPage.childDiaristRunId === "string") {
-      const childDirectory = join(dirname(oldRunDirectory), `${parentPage.childDiaristRunId}@diarist`);
+    const childRunIds = parentPage.childDiaristRunIds;
+    for (const childRunId of Array.isArray(childRunIds) ? childRunIds : []) {
+      if (typeof childRunId !== "string") continue;
+      const childDirectory = join(dirname(oldRunDirectory), `${childRunId}@diarist`);
       const childTarget = roleRunPlacement(ledgerHome, {
         bookKey: admitted.bookKey,
         subject: { ticketNumber: admitted.ticketNumber },
-        runId: parentPage.childDiaristRunId,
+        runId: childRunId,
         role: "diarist",
       });
       authority.seal(childTarget);
@@ -728,7 +730,11 @@ export async function recordChildDiaristRun(
   childRunId: string,
 ): Promise<void> {
   const page = JSON.parse(await readFile(parent.admittedRequestPath, "utf8")) as Record<string, unknown>;
-  await writeFile(parent.admittedRequestPath, `${JSON.stringify({ ...page, childDiaristRunId: childRunId }, null, 2)}\n`, "utf8");
+  const existing = Array.isArray(page.childDiaristRunIds)
+    ? page.childDiaristRunIds.filter((runId): runId is string => typeof runId === "string")
+    : [];
+  const childDiaristRunIds = existing.includes(childRunId) ? existing : [...existing, childRunId];
+  await writeFile(parent.admittedRequestPath, `${JSON.stringify({ ...page, childDiaristRunIds }, null, 2)}\n`, "utf8");
 }
 
 /**

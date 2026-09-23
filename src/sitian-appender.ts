@@ -59,6 +59,24 @@ function sealTornTail(recordFile: string): void {
   }
 }
 
+/** Assign an already-recorded volume without changing any of its rows. */
+export function appendSitianRecordBlock(input: SitianRecordInput, block: string): void {
+  if (block === "") return;
+  try {
+    const { sessionDir, recordFile, ledgerHome } = resolveSitianRecordPath(input);
+    ensureRealDirectoryTree(ledgerHome, sessionDir);
+    appendFileSync(recordFile, "", "utf8");
+    sealTornTail(recordFile);
+    appendFileSync(recordFile, block, "utf8");
+  } catch (error) {
+    if (error instanceof SitianInfrastructureError) throw error;
+    throw new SitianInfrastructureError(
+      `Sitian appender persistence failure: ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+}
+
 function findIdentityPointer(
   recordFile: string,
   identity: string,

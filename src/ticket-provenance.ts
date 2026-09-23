@@ -25,6 +25,7 @@ import {
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 import { adaptSessionDialogue, nativeEventId } from "./session-dialogue.ts";
 import {
+  appendSitianRecordBlock,
   appendSitianRecord,
   resolveSitianRecordPath,
   type SitianRecordInput,
@@ -40,7 +41,6 @@ import {
   type TicketProvenanceRange,
   type TicketProvenanceSession,
 } from "./ticket-provenance-contracts.ts";
-import type { SitianRecord } from "./sitian-contracts.ts";
 
 /**
  * Typed input failure for diarist bounds/session path (reask, not infrastructure).
@@ -370,7 +370,7 @@ export function ensureTicketProvenanceVolume(
   return { recordFile: path.recordFile, volumeDir: path.sessionDir };
 }
 
-/** Assign a run-owned unbound diary to the ticket through the same Sitian entry. */
+/** Assign a run-owned unbound diary as its original block through Sitian. */
 export async function rehomeUnboundTicketProvenance(
   runDirectory: string,
   ticketNumber: number,
@@ -385,24 +385,7 @@ export async function rehomeUnboundTicketProvenance(
     if (errnoCode(error) === "ENOENT") return;
     throw error;
   }
-  for (const line of content.split("\n")) {
-    if (line === "") continue;
-    let row: SitianRecord;
-    try {
-      row = JSON.parse(line) as SitianRecord;
-    } catch {
-      // The ledger reader retains malformed physical rows. Assignment keeps
-      // them in the destination volume too, without inventing a record.
-      appendFileSync(ensureTicketProvenanceVolume(ticketNumber, cwd, home).recordFile, `${line}\n`, "utf8");
-      continue;
-    }
-    appendSitianRecord({
-      ...row,
-      subject: ticketProvenanceSubject(ticketNumber),
-      cwd,
-      home,
-    });
-  }
+  appendSitianRecordBlock(ticketProvenanceRecordInput(ticketNumber, cwd, home), content);
   await unlink(source);
 }
 

@@ -1301,6 +1301,10 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
     const book = join(home, ".ak-roles", "books", "project");
     const unrelatedRun = join(book, "unbound", "runs", "unfinished@diarist");
     const diaristRuns: string[] = [];
+    const prior = '{"identity":"prior"}';
+    await mkdir(join(book, "924"), { recursive: true });
+    await writeFile(join(book, "924", "records.jsonl"), prior, "utf8");
+    let sourceContent = "";
     const host = secretariatHostDrivingRealTools({
       packageRoot,
       home,
@@ -1310,11 +1314,13 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
         await mkdir(unrelatedRun, { recursive: true });
         await writeFile(join(unrelatedRun, "admitted-request.json"), "", "utf8");
         await writeFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), "{broken\n", "utf8");
-        return courtDiaristWithDetails({
+        const result = await courtDiaristWithDetails({
           status: "completed",
           ticketNumber: null,
           sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
         })(args, options);
+        sourceContent = await readFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), "utf8");
+        return result;
       },
       countersignSequence: [{ details: { countersignStatus: "converged", note: "署" } }],
       steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
@@ -1327,11 +1333,12 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
     assert.ok((await readdir(dirname(unrelatedRun))).includes("unfinished@diarist"));
     assert.equal(await readFile(join(unrelatedRun, "admitted-request.json"), "utf8"), "");
     const record = join(book, "924", "records.jsonl");
+    assert.equal(await readFile(record, "utf8"), `${prior}\n${sourceContent}`);
     const recordLines = (await readFile(record, "utf8")).trim().split("\n");
     assert.ok(recordLines.includes("{broken"));
     const rows = recordLines.filter((line) => line !== "{broken").map((row) => JSON.parse(row));
-    assert.equal(rows[0]?.subject, "924");
-    assert.equal(rows[0]?.payload?.lines?.[0]?.speaker, "owner");
+    assert.equal(rows[1]?.subject, undefined);
+    assert.equal(rows[1]?.payload?.lines?.[0]?.speaker, "owner");
     assert.equal((await readTicketProvenance(924, project, home)).header?.ticket, 924);
     assert.ok(diaristRuns.length > 0);
     assert.equal(dirname(diaristRuns[0]!), dirname(unrelatedRun));
