@@ -1435,6 +1435,7 @@ test("judge role returns auditor bounce as raw receipt without aborting (#756)",
       if (error.result.status === "bounce") {
         assert.equal(error.result.officer, "auditor");
         assert.deepEqual(error.result.receipt, bounceReceipt);
+        assert.equal(error.message.startsWith(JSON.stringify({ status: "pass", findings: [] })), true);
         // #775 acceptance: parent-visible text carries every structured field + string items.
         assert.match(error.message, /evidence-required/);
         assert.match(error.message, /No authority clause was applied/);

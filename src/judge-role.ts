@@ -117,8 +117,9 @@ export function createJudgeRoleRuntime(
             // Candidate verdict is already on the parent session books as this
             // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
             // #753: 符宝郎内闸 — bounce returns raw receipt; escalate pauses.
+            let draftPass: { receipt: unknown } | undefined;
             try {
-              const draftPass = await pi.requireGatekeeperPass!({
+              const obtainedDraftPass = await pi.requireGatekeeperPass!({
                 context: ctx,
                 subject: { kind: "judge_draft" },
                 ...(signal === undefined ? {} : { signal }),
@@ -127,6 +128,7 @@ export function createJudgeRoleRuntime(
                 // #879: this-turn typed payload — identity-bound at submit site.
                 submission: parameters,
               });
+              draftPass = obtainedDraftPass || undefined;
               // #756: 审刑院合规路径 — same review-queue law as 符宝郎/台院.
               // pass → accept; bounce → raw auditor receipt; escalate → pause;
               // not three-state → resume auditor; no round cap; no disposeCompliance mapping.
@@ -147,6 +149,9 @@ export function createJudgeRoleRuntime(
             } catch (error) {
               if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
                 return projectAuditEscalation({ status: "escalate", conflicts: error.result.receipt }, verdict);
+              }
+              if (error instanceof GatekeeperDecisionError && draftPass !== undefined) {
+                throw new GatekeeperDecisionError(error.result, `${readableGateItem(draftPass.receipt)}\n${error.message}`);
               }
               throw error;
             }
