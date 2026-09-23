@@ -78,6 +78,7 @@ export type CourtDiaristIdentity =
 
 export type CourtDiaristInvocationResult = {
   readonly identity: CourtDiaristIdentity;
+  readonly admitted?: import("./invocation.ts").AdmittedRoleInvocation;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
 
@@ -278,6 +279,7 @@ export async function invokeCourtDiarist(
         kind: "escalate",
         diagnostic: courtDiaristEscalateDiagnostic(roleOutcome, submissions),
       },
+      ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
     };
   }
 
@@ -288,6 +290,7 @@ export async function invokeCourtDiarist(
         : result.stderr?.trim() || `exit ${result.exitCode}`;
     return {
       identity: { kind: "unbound" },
+      ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
       failedWithoutEscalate: {
         diagnostic: `court diarist station failed for ${input.failureLabel}: ${diagnostic}`,
       },
@@ -308,10 +311,12 @@ export async function invokeCourtDiarist(
         ticketNumber: asserted,
         ...(courtTicketNumbers === undefined ? {} : { courtTicketNumbers }),
       },
+      ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
     };
   }
   return {
     identity: { kind: "unbound" },
+    ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
   };
 }
 

@@ -6,7 +6,7 @@
  */
 import { createHash } from "node:crypto";
 import { appendFileSync } from "node:fs";
-import { readFile } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -25,6 +25,7 @@ import {
 import { isSafePositiveTicketNumber } from "./run-ticket-number.ts";
 import { adaptSessionDialogue, nativeEventId } from "./session-dialogue.ts";
 import {
+  appendSitianRecordBlock,
   appendSitianRecord,
   resolveSitianRecordPath,
   type SitianRecordInput,
@@ -113,14 +114,16 @@ export function ticketProvenanceSubject(ticketNumber: number): string {
 
 /** Topology input only — no destination parameter (ADR 0065 record-entry). */
 function ticketProvenanceRecordInput(
-  ticketNumber: number,
+  ticketNumber: number | null,
   cwd: string,
   home?: string,
+  runDirectory?: string,
 ): SitianRecordInput {
   return {
     level: "event",
     kind: TICKET_PROVENANCE_KIND,
-    subject: ticketProvenanceSubject(ticketNumber),
+    ...(ticketNumber === null ? {} : { subject: ticketProvenanceSubject(ticketNumber) }),
+    ...(runDirectory === undefined ? {} : { runDirectory }),
     cwd,
     ...(home === undefined ? {} : { home }),
   };
@@ -215,11 +218,14 @@ export type ReadTicketProvenanceResult = {
 
 /** Read the unique diary file (empty/absent → no header, no lines). */
 export async function readTicketProvenance(
-  ticketNumber: number,
+  ticketNumber: number | null,
   cwd: string,
   home?: string,
+  runDirectory?: string,
 ): Promise<ReadTicketProvenanceResult> {
-  const { recordFile } = resolveTicketProvenanceVolume(ticketNumber, cwd, home);
+  const { recordFile } = ticketNumber === null
+    ? resolveSitianRecordPath(ticketProvenanceRecordInput(null, cwd, home, runDirectory))
+    : resolveTicketProvenanceVolume(ticketNumber, cwd, home);
   let text: string;
   try {
     text = await readFile(recordFile, "utf8");
@@ -320,7 +326,7 @@ export async function readTicketProvenance(
         repo: header?.repo ?? resolveBookKeyFromGit(cwd),
         ticket: ticketNumber,
         createdAt: header?.createdAt ?? now,
-        updatedAt: now,
+        updatedAt: header?.updatedAt !== undefined && header.updatedAt > now ? header.updatedAt : now,
         sessions: merged.sessions,
       };
       const carried = lines.map((entry) => ({
@@ -362,6 +368,25 @@ export function ensureTicketProvenanceVolume(
   ensureRealDirectoryTree(path.ledgerHome, path.sessionDir);
   appendFileSync(path.recordFile, "", "utf8");
   return { recordFile: path.recordFile, volumeDir: path.sessionDir };
+}
+
+/** Assign a run-owned unbound diary as its original block through Sitian. */
+export async function rehomeUnboundTicketProvenance(
+  runDirectory: string,
+  ticketNumber: number,
+  cwd: string,
+  home: string,
+): Promise<void> {
+  const source = join(runDirectory, "records.jsonl");
+  let content: string;
+  try {
+    content = await readFile(source, "utf8");
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") return;
+    throw error;
+  }
+  appendSitianRecordBlock(ticketProvenanceRecordInput(ticketNumber, cwd, home), content);
+  await unlink(source);
 }
 
 export type ReprojectTicketProvenanceResult = {
@@ -713,12 +738,13 @@ async function projectSessionRanges(input: {
  * Persistence appends one immutable commit through the Sitian appender seam.
  */
 export async function reprojectTicketProvenance(input: {
-  readonly ticketNumber: number;
+  readonly ticketNumber: number | null;
   readonly cwd: string;
   readonly home?: string;
+  readonly runDirectory?: string;
   readonly sessions: readonly TicketProvenanceSession[];
 }): Promise<ReprojectTicketProvenanceResult> {
-  const prior = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
+  const prior = await readTicketProvenance(input.ticketNumber, input.cwd, input.home, input.runDirectory);
   if (input.sessions.length === 0) {
     const now = new Date().toISOString();
     return {
@@ -802,7 +828,7 @@ export async function reprojectTicketProvenance(input: {
   });
   const identity = `ticket-provenance:${createHash("sha256").update(identityMaterial).digest("hex")}`;
   const pointer = appendSitianRecord({
-    ...ticketProvenanceRecordInput(input.ticketNumber, input.cwd, input.home),
+    ...ticketProvenanceRecordInput(input.ticketNumber, input.cwd, input.home, input.runDirectory),
     identity,
     payload: {
       type: "ticket-provenance-append",
@@ -810,7 +836,7 @@ export async function reprojectTicketProvenance(input: {
       lines: [...fresh, ...raw],
     },
   });
-  const folded = await readTicketProvenance(input.ticketNumber, input.cwd, input.home);
+  const folded = await readTicketProvenance(input.ticketNumber, input.cwd, input.home, input.runDirectory);
   return {
     recordFile: pointer.recordFile,
     header: folded.header ?? header,

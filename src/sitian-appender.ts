@@ -59,6 +59,38 @@ function sealTornTail(recordFile: string): void {
   }
 }
 
+/** Assign already-recorded lines, preserving their original text and malformed lines. */
+export function appendSitianRecordBlock(input: SitianRecordInput, block: string): void {
+  if (block === "") return;
+  try {
+    const { sessionDir, recordFile, ledgerHome } = resolveSitianRecordPath(input);
+    ensureRealDirectoryTree(ledgerHome, sessionDir);
+    appendFileSync(recordFile, "", "utf8");
+    sealTornTail(recordFile);
+    const identityOf = (line: string): string | undefined => {
+      try {
+        const row: unknown = JSON.parse(line);
+        return isRecord(row) && typeof row.identity === "string" ? row.identity : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    const identities = new Set(readFileSync(recordFile, "utf8").split("\n").map(identityOf).filter((id): id is string => id !== undefined));
+    for (const line of block.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+      const identity = identityOf(line);
+      if (identity !== undefined && identities.has(identity)) continue;
+      appendFileSync(recordFile, line, "utf8");
+      if (identity !== undefined) identities.add(identity);
+    }
+  } catch (error) {
+    if (error instanceof SitianInfrastructureError) throw error;
+    throw new SitianInfrastructureError(
+      `Sitian appender persistence failure: ${errorText(error)}`,
+      { cause: error },
+    );
+  }
+}
+
 function findIdentityPointer(
   recordFile: string,
   identity: string,
@@ -254,6 +286,9 @@ export function resolveSitianRecordPathInLedger(
     );
     sessionDir = paths.sessionDir;
     recordFile = paths.recordFile;
+  } else if (category === "ticket-provenance" && input.runDirectory !== undefined) {
+    sessionDir = input.runDirectory;
+    recordFile = join(sessionDir, SITIAN_RECORDS_LEAF);
   } else {
     if (
       input.sessionParent === undefined
@@ -264,6 +299,9 @@ export function resolveSitianRecordPathInLedger(
     }
     sessionDir = join(dirname(input.sessionParent), category);
     recordFile = join(sessionDir, SITIAN_RECORDS_LEAF);
+  }
+  if (!physicallyContainedIn(ledgerHome, sessionDir)) {
+    throw new Error("Sitian record ownership requires a directory inside the ledger home");
   }
 
   return { sessionDir, recordFile, ledgerHome };
@@ -288,7 +326,7 @@ export function resolveSitianRecordPath(input: SitianRecordInput): SitianRecordP
   const ledgerHome =
     input.home !== undefined && input.home.length > 0
       ? resolveActivationLedgerHome(input.home)
-      : resolveActivationLedgerHomeForPath(input.sessionParent);
+      : resolveActivationLedgerHomeForPath(input.runDirectory ?? input.sessionParent);
   return resolveSitianRecordPathInLedger(input, ledgerHome);
 }
 

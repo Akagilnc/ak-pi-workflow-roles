@@ -63,6 +63,8 @@ export type SitianRecordInput = {
   readonly identity?: string | undefined;
   readonly subject?: SitianSubject | undefined;
   readonly sessionParent?: string | undefined;
+  /** Run owner for ticket provenance before a ticket is known. */
+  readonly runDirectory?: string | undefined;
   readonly priorEventId?: string | undefined;
   readonly timestamp?: string | undefined;
   readonly host?: string | undefined;

@@ -522,7 +522,7 @@ function tryBareTicketProvenanceVolume(
   // Legacy SitianRecord rows carry a typed kind — leave them to line placement.
   if (recordClassOfKind(first.value.kind) !== undefined) return undefined;
   const header = projectTicketProvenanceHeader(first.value);
-  if (header === undefined) return undefined;
+  if (header === undefined || header.ticket === null) return undefined;
   return { ticket: header.ticket, body };
 }
 

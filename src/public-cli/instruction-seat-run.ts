@@ -4,7 +4,7 @@
  * starts two ordinary single-axis runs here. Countersign keeps deferred
  * identity on this entry; the court diarist station stays in countersign-run.
  */
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
@@ -32,6 +32,7 @@ import {
   materializeCountersignInvocation,
   persistAdmittedSourceRunPath,
   recordAdmittedCorrelation,
+  recordChildDiaristRun,
   relocateAdmittedRunToTicket,
   withPreparedAttachments,
   type AdmittedCountersignInvocation,
@@ -429,6 +430,7 @@ async function runCountersignBody(
       let typedTicket: number | undefined;
       let typedCourtTicketNumbers: readonly number[] | undefined;
       let identityDiaristRan = false;
+      let unboundDiaristRunId: string | undefined;
 
       if (env.runCourtDiaristStation === undefined) {
         let outcome: Awaited<ReturnType<typeof invokeCourtDiarist>>;
@@ -452,6 +454,9 @@ async function runCountersignBody(
           }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
         }
         identityDiaristRan = true;
+        if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
+          unboundDiaristRunId = outcome.admitted.runId;
+        }
         if (outcome.identity.kind === "escalate" || outcome.failedWithoutEscalate !== undefined) {
           const diagnostic = outcome.identity.kind === "escalate"
             ? outcome.identity.diagnostic
@@ -459,6 +464,7 @@ async function runCountersignBody(
           await materializeAdmission(
             isSafePositiveTicketNumber(env.boundTicketNumber) ? env.boundTicketNumber : undefined,
           );
+          if (unboundDiaristRunId !== undefined) await recordChildDiaristRun(admitted, unboundDiaristRunId);
           await markRunAdmitted(admitted, env.principalAuthority);
           return await presentControlledFailure(admitted, {
             timedOut: false,
@@ -479,6 +485,9 @@ async function runCountersignBody(
 
       await materializeAdmission(typedTicket);
       await markRunAdmitted(admitted, env.principalAuthority);
+      if (unboundDiaristRunId !== undefined) {
+        await recordChildDiaristRun(admitted, unboundDiaristRunId);
+      }
       if (gateParentRunPath !== undefined) {
         await persistAdmittedSourceRunPath(admitted, gateParentRunPath);
         admitted = { ...admitted, sourceRunPath: gateParentRunPath };
@@ -745,6 +754,9 @@ export async function runPublicInstructionSeat(
         ...(env.signal === undefined ? {} : { signal: env.signal }),
         ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
       }, io);
+      if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
+        await recordChildDiaristRun(admitted, outcome.admitted.runId);
+      }
       if (outcome.identity.kind === "escalate" || outcome.failedWithoutEscalate !== undefined) {
         const diagnostic = outcome.identity.kind === "escalate"
           ? outcome.identity.diagnostic
@@ -758,6 +770,9 @@ export async function runPublicInstructionSeat(
       }
       if (outcome.identity.kind === "ticket") {
         try {
+          if (outcome.admitted === undefined) throw new Error("court diarist ticket has no admitted run");
+          await bindAdmittedTicketNumber(outcome.admitted, outcome.identity.ticketNumber);
+          await relocateAdmittedRunToTicket(outcome.admitted, env.principalAuthority);
           await bindAdmittedTicketNumber(admitted, outcome.identity.ticketNumber);
           await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
         } catch (error) {

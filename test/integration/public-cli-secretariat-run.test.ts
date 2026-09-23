@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -72,6 +72,7 @@ import {
   resolveActivationLedgerHome,
 } from "../../src/activation-ledger-topology.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { readTicketProvenance } from "../../src/ticket-provenance.ts";
 import {
   readSitianRecords,
   resolveSitianRecordPathInLedger,
@@ -367,6 +368,7 @@ function secretariatHostDrivingRealTools(input: {
    * sole identity source under test.
    */
   nestedDiaristRunner?: LegacyFauxPiRunner;
+  parentDiaristRunner?: LegacyFauxPiRunner;
 }): RoleTurnHost {
   // Parent identity 起居郎 always asserts #924 so the secretariat board is bound
   // before the gate; nested 给事中 identity may be overridden (unbound).
@@ -377,7 +379,7 @@ function secretariatHostDrivingRealTools(input: {
       const role = argvFlagValue(args, "--ak-role");
       if (role === "diarist") {
         input.diaristRunDirectories?.push(options.env.AK_ROLE_RUN_DIR ?? "");
-        return courtDiaristFor924()(args, options);
+        return (input.parentDiaristRunner ?? courtDiaristFor924())(args, options);
       }
       throw new Error(`parent diarist host unexpected role: ${role}`);
     },
@@ -478,6 +480,9 @@ function secretariatHostDrivingRealTools(input: {
   const hostAdapters = [adapter("pi", nested)];
   return {
     async executeTurn(request: RoleTurnRequest) {
+      if (request.activation.role === "diarist" && input.parentDiaristRunner !== undefined) {
+        return parentDiaristHost.executeTurn(request);
+      }
       if (request.activation.role !== "secretariat") {
         return nested.executeTurn(request);
       }
@@ -1373,6 +1378,85 @@ test("#969 omitted receipt ticketNumber still hands parent board identity to 给
       )}`,
     );
   });
+});
+
+test("public secretariat moves its unbound 起居录 to the ticket after typed assignment", async () => {
+  for (const scenario of ["first", "existing-identity", "failed-child"] as const) {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const sessionPath = join(home, ".claude", "projects", "draft", "session.jsonl");
+    await mkdir(dirname(sessionPath), { recursive: true });
+    await writeFile(sessionPath, `${JSON.stringify({ type: "user", uuid: "draft-owner", message: { role: "user", content: "请拟票" }, origin: { kind: "human" } })}\n`, "utf8");
+    const book = join(home, ".ak-roles", "books", "project");
+    const parentRun = "01a0sec1010-0000-7000-8000-000000000001@secretariat";
+    const unrelatedRun = join(book, "unbound", "runs", "unfinished@diarist");
+    const diaristRuns: string[] = [];
+    const prior = '{"identity":"prior"}';
+    await mkdir(join(book, "924"), { recursive: true });
+    await writeFile(join(book, "924", "records.jsonl"), prior, "utf8");
+    let sourceContent = "";
+    const host = secretariatHostDrivingRealTools({
+      packageRoot,
+      home,
+      gateCalls: [],
+      diaristRunDirectories: diaristRuns,
+      parentDiaristRunner: async (args, options) => {
+        await mkdir(unrelatedRun, { recursive: true });
+        await writeFile(join(unrelatedRun, "admitted-request.json"), "", "utf8");
+        await writeFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), "{broken\n", "utf8");
+        const result = await courtDiaristWithDetails({
+          status: "completed",
+          ticketNumber: null,
+          sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+        })(args, options);
+        sourceContent = await readFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), "utf8");
+        if (scenario === "failed-child") throw new Error("host failed after diarist recorded");
+        if (scenario === "existing-identity") {
+          await writeFile(join(book, "924", "records.jsonl"), `${prior}\n${sourceContent.split("\n")[1]}\n`, "utf8");
+          const parentPagePath = join(book, "unbound", "runs", parentRun, "admitted-request.json");
+          const parentPage = JSON.parse(await readFile(parentPagePath, "utf8"));
+          await writeFile(parentPagePath, `${JSON.stringify({ ...parentPage, childDiaristRunIds: ["already-moved"] })}\n`, "utf8");
+          await mkdir(join(book, "924", "runs", "already-moved@diarist"), { recursive: true });
+        }
+        return result;
+      },
+      countersignSequence: [{ details: { countersignStatus: "converged", note: "署" } }],
+      steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
+    });
+    const result = await runAkRole(
+      ["secretariat", "--model", "test/caller-seat:high", "--project", project, "拟票"],
+      { home, packageRoot, cwd: project, io: captureIo().io, createRunId: () => "01a0sec1010-0000-7000-8000-000000000001", roleTurnHost: host, hostAdapters: [adapter("pi", host)] },
+    );
+    if (scenario === "failed-child") {
+      assert.notEqual(result.exitCode, 0);
+      const parentPage = JSON.parse(await readFile(join(book, "unbound", "runs", parentRun, "admitted-request.json"), "utf8"));
+      assert.deepEqual(parentPage.childDiaristRunIds, [diaristRuns[0]?.split("/").at(-1)?.replace(/@diarist$/, "")]);
+      assert.equal(await readFile(join(diaristRuns[0]!, "records.jsonl"), "utf8"), sourceContent);
+      return;
+    }
+    assert.equal(result.exitCode, 0);
+    assert.ok((await readdir(dirname(unrelatedRun))).includes("unfinished@diarist"));
+    assert.equal(await readFile(join(unrelatedRun, "admitted-request.json"), "utf8"), "");
+    const record = join(book, "924", "records.jsonl");
+    assert.equal(await readFile(record, "utf8"), scenario === "first" ? `${prior}\n${sourceContent}` : `${prior}\n${sourceContent.split("\n")[1]}\n{broken\n`);
+    const recordLines = (await readFile(record, "utf8")).trim().split("\n");
+    assert.ok(recordLines.includes("{broken"));
+    const rows = recordLines.filter((line) => line !== "{broken").map((row) => JSON.parse(row));
+    assert.equal(rows[1]?.subject, undefined);
+    assert.equal(rows[1]?.payload?.lines?.[0]?.speaker, "owner");
+    assert.equal((await readTicketProvenance(924, project, home)).header?.ticket, 924);
+    assert.ok(diaristRuns.length > 0);
+    assert.equal(dirname(diaristRuns[0]!), dirname(unrelatedRun));
+    assert.ok((await readdir(join(book, "924", "runs"))).includes(parentRun));
+    assert.equal((await readFile(join(diaristRuns[0]!, "records.jsonl"), "utf8").catch((error: NodeJS.ErrnoException) => error.code)), "ENOENT");
+    const diaristRun = join(book, "924", "runs", diaristRuns[0]!.split("/").at(-1)!);
+    assert.equal(JSON.parse(await readFile(join(diaristRun, "admitted-request.json"), "utf8")).ticketNumber, 924);
+    assert.equal(JSON.parse(await readFile(join(diaristRun, "invocation.json"), "utf8")).ticketNumber, 924);
+    assert.equal((await readFile(join(diaristRuns[0]!, "admitted-request.json"), "utf8").catch((error: NodeJS.ErrnoException) => error.code)), "ENOENT");
+  });
+  }
 });
 
 /** Distinct court attempt ids from ledger subject.attemptId (not row count). */

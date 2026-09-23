@@ -23,7 +23,7 @@ export type DiaristOutput =
       readonly status: "completed";
       /**
        * Typed court-target assertion (ADR 0075 `diarist-resolves-ticket-llm-layer`).
-       * Positive integer = 本庭对象=票N; null/absent = true-unbound (真无票→无录).
+       * Positive integer = 本庭对象=票N; null/absent = true-unbound (先录入 unbound).
        * LLM owns recognition; mechanical layer does not re-judge the number.
        */
       readonly ticketNumber?: number | null;

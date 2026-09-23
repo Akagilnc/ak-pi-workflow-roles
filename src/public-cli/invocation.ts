@@ -83,6 +83,7 @@ import {
   type MergerInput,
 } from "../merger-contracts.ts";
 import { sha256Hex } from "../sha256.ts";
+import { rehomeUnboundTicketProvenance } from "../ticket-provenance.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import {
   NOTARY_FIXED_KICKOFF,
@@ -661,9 +662,36 @@ export async function relocateAdmittedRunToTicket(
   // Keep that failure before the filesystem commit point.
   const principal = authority.seal(target);
 
-  // Rename is the only durable commit. Persisted paths are resolved from typed
-  // run identity on read, so online relocation never writes unleased peers or
-  // pretends a directory rename plus page rewrites form one transaction.
+  if (admitted.role !== "diarist") {
+    const parentPage = JSON.parse(await readFile(admitted.admittedRequestPath, "utf8")) as Record<string, unknown>;
+    const childRunIds = parentPage.childDiaristRunIds;
+    for (const childRunId of Array.isArray(childRunIds) ? childRunIds : []) {
+      if (typeof childRunId !== "string") continue;
+      const childDirectory = join(dirname(oldRunDirectory), `${childRunId}@diarist`);
+      const childTarget = roleRunPlacement(ledgerHome, {
+        bookKey: admitted.bookKey,
+        subject: { ticketNumber: admitted.ticketNumber },
+        runId: childRunId,
+        role: "diarist",
+      });
+      authority.seal(childTarget);
+      if (!existsSync(childDirectory) && existsSync(childTarget.runDirectory)) continue;
+      await bindTicketNumberOnRunDirectory(childDirectory, admitted.ticketNumber);
+      await rehomeUnboundTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
+      ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));
+      await rename(childDirectory, childTarget.runDirectory);
+    }
+  }
+
+  // An identity diarist can file before its caller obtains a ticket. Both its
+  // own bind and the caller's later bind use this existing relocation seam.
+  if (admitted.role === "diarist") {
+    await rehomeUnboundTicketProvenance(oldRunDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
+  }
+
+  // Rename commits the run placement. Diary assignment above is an idempotent
+  // Sitian append, not part of an atomic transaction with this directory move.
+  // Persisted paths are resolved from typed run identity on read.
   await rename(oldRunDirectory, target.runDirectory);
 
   // rename moved the open lock inode with the directory. Transfer cleanup
@@ -695,6 +723,19 @@ export async function relocateAdmittedRunToTicket(
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
   return { oldRunDirectory, newRunDirectory: target.runDirectory };
+}
+
+/** Persist the exact child identity; later parent binding never inspects siblings. */
+export async function recordChildDiaristRun(
+  parent: AdmittedRoleInvocation,
+  childRunId: string,
+): Promise<void> {
+  const page = JSON.parse(await readFile(parent.admittedRequestPath, "utf8")) as Record<string, unknown>;
+  const existing = Array.isArray(page.childDiaristRunIds)
+    ? page.childDiaristRunIds.filter((runId): runId is string => typeof runId === "string")
+    : [];
+  const childDiaristRunIds = existing.includes(childRunId) ? existing : [...existing, childRunId];
+  await writeFile(parent.admittedRequestPath, `${JSON.stringify({ ...page, childDiaristRunIds }, null, 2)}\n`, "utf8");
 }
 
 /**

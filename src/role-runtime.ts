@@ -905,29 +905,30 @@ export function createDiaristRoleRuntime(
           if (coords.boundTicketNumber === undefined) {
             await bindTicketNumberOnRunDirectory(coords.runDirectory, ticketNumber);
           }
-          const sessions = projectDiaristSessions(parameters);
-          if (sessions === undefined) {
-            throw new ParentQueueReaskError(DIARIST_BOUNDS_REASK);
+        }
+        const sessions = projectDiaristSessions(parameters);
+        if (sessions === undefined) {
+          throw new ParentQueueReaskError(DIARIST_BOUNDS_REASK);
+        }
+        let facts;
+        try {
+          facts = await commitDiaristProjection({
+            ticketNumber: ticketNumber ?? null,
+            cwd: coords.projectRoot,
+            home: coords.home,
+            runDirectory: coords.runDirectory,
+            sessions,
+          });
+        } catch (error) {
+          // Bound/session input failures → reask via typed identity (not message prefix).
+          // Unexpected infrastructure keeps its own identity (do not wash).
+          if (error instanceof ParentQueueReaskError) throw error;
+          if (error instanceof TicketProvenanceInputError) {
+            throw new ParentQueueReaskError(
+              `${DIARIST_BOUNDS_REASK}\n${error.message}`,
+            );
           }
-          let facts;
-          try {
-            facts = await commitDiaristProjection({
-              ticketNumber,
-              cwd: coords.projectRoot,
-              home: coords.home,
-              sessions,
-            });
-          } catch (error) {
-            // Bound/session input failures → reask via typed identity (not message prefix).
-            // Unexpected infrastructure keeps its own identity (do not wash).
-            if (error instanceof ParentQueueReaskError) throw error;
-            if (error instanceof TicketProvenanceInputError) {
-              throw new ParentQueueReaskError(
-                `${DIARIST_BOUNDS_REASK}\n${error.message}`,
-              );
-            }
-            throw error;
-          }
+          throw error;
         }
         return parameters;
       },
