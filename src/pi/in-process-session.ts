@@ -27,6 +27,7 @@ import {
   type Model,
   type Provider,
   type ProviderStreamOptions,
+  type TranscriptContext,
   type Usage,
 } from "@earendil-works/pi-ai";
 
@@ -414,8 +415,8 @@ export async function openPiInProcessSession(
             }
 
             const source = simple
-              ? childProvider.streamSimple(model, context, retriedRequest as any)
-              : childProvider.stream(model, context, retriedRequest as any);
+              ? childProvider.streamSimple(model, context as TranscriptContext, retriedRequest as any)
+              : childProvider.stream(model, context as TranscriptContext, retriedRequest as any);
             let sawEvent = false;
             const attemptEvents: any[] = [];
             const iterator = source[Symbol.asyncIterator]();

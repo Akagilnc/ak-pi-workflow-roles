@@ -191,7 +191,12 @@ export function createPiRoleHostAdapter(
         return text.trim();
       },
     },
-    registerFlag: (name, definition) => pi.registerFlag(name, definition),
+    registerFlag: (name, definition) => {
+      const { description, default: defaultValue } = definition;
+      pi.registerFlag(name, definition.type === "boolean"
+        ? { description, type: "boolean", ...(typeof defaultValue === "boolean" ? { default: defaultValue } : {}) }
+        : { description, type: "string", ...(typeof defaultValue === "string" ? { default: defaultValue } : {}) });
+    },
     getFlag: (name) => pi.getFlag(name),
     registerTool: (tool) => pi.registerTool(toPiToolDefinition(
       tool,
