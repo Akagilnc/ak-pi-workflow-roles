@@ -20,7 +20,7 @@ authority delivered?) or `correctness` (is what exists right?).
 _Avoid_: axis, gate, mode, pass
 
 **Leg**:
-One independent sub-agent running exactly one lens in `TARGET_ROOT` at `PRE_HEAD`, dispatched only by `all`; each leg manages its own probe side effects. A single-lens invocation has no leg: the invoking session applies the lens itself.
+One independent sub-agent running exactly one lens inside an independent copy of the target at `PRE_HEAD`, dispatched only by `all`; the copy is provided by the harness when it can, otherwise created by the caller. A single-lens invocation has no leg: the invoking session applies the lens itself.
 _Avoid_: panel, member, reviewer squad, vendor leg
 
 **Candidate**:

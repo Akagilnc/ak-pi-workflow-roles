@@ -194,9 +194,9 @@ test("packaged ak-cross-m-review loads verbatim upstream single-lens method", as
     assert.equal(material.provenance.upstream.path, ".");
     assert.equal(
       material.provenance.upstream.commit,
-      "2c54e69d522ff0c41ec1f3cf134976cb64645584",
+      "57b10e2cea9ff008e2b36b98b55610e58cdfd512",
     );
-    assert.equal(material.provenance.upstream.version, "0.5.3.0");
+    assert.equal(material.provenance.upstream.version, "0.5.2.0");
     assert.equal(
       material.provenance.upstream.repository,
       "https://github.com/Akagilnc/ak-cross-m-review",
