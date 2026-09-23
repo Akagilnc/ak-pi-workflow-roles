@@ -28,7 +28,8 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { isAuditEscalationResult, projectAuditEscalation } from "../../src/audit-escalation.ts";
+import { disposeComplianceDecision, isAuditEscalationResult, projectAuditEscalation } from "../../src/audit-escalation.ts";
+import { readComplianceCandidate } from "../../src/compliance-transport.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -227,6 +228,42 @@ test("judge gate escalation reaches the public terminal without replacing the ro
       }),
     });
     assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
+    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts?.auditEscalationReceipt, receipt);
+    assert.deepEqual(result.terminal?.roleOutcome.payloads, [submission]);
+  });
+});
+
+test("auditor escalation delivers its complete raw verdict through the public terminal", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io } = captureIo();
+    const submission = { judgeStatus: "converged", note: "原判词" };
+    const receipt = { status: "escalate", decisionGate: { question: "请陛下裁决" }, explanation: "完整审刑院原话" };
+    const escalation = await disposeComplianceDecision(readComplianceCandidate(receipt), {
+      pass: () => { throw new Error("unexpected pass"); },
+      bounce: () => { throw new Error("unexpected bounce"); },
+      escalate: (result) => result,
+    }, submission);
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "review"], {
+      packageRoot, home, cwd: project, io,
+      createRunId: () => "run-auditor-gate-escalation",
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(join(sessionDir, "session.jsonl"), sessionToolResultLine(JUDGE_OUTPUT_TOOL_NAME, escalation.details), "utf8");
+          return {
+            code: 0, stderr: "", timedOut: false, args: [...args],
+            sealedAcceptance: { role: "judge" as const, details: submission, outputDetails: escalation.details },
+          };
+        },
+      }),
+    });
     assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
     assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts?.auditEscalationReceipt, receipt);
     assert.deepEqual(result.terminal?.roleOutcome.payloads, [submission]);

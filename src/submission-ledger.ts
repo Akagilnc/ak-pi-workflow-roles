@@ -706,6 +706,11 @@ export function createSubmissionLedgerHost(
           // #836: ledger authority is the LLM tool-call params as-is (角色原话), never result.details.
           // Machine facts on result.details stay on the tool-result face returned to the model.
           if (isAuditEscalationProjection(result.details) || isAuditEscalationProjection(params)) {
+            const audit = isAuditEscalationProjection(result.details)
+              && typeof result.details.audit === "object"
+              && result.details.audit !== null
+              ? result.details.audit as Record<string, unknown>
+              : undefined;
             const closed: ClosedSubmission = {
               role,
               kind: "audit_escalation",
@@ -718,11 +723,8 @@ export function createSubmissionLedgerHost(
               outcome: "audit-escalation",
               role,
               accepted: params,
-              ...(isAuditEscalationProjection(result.details)
-                && typeof result.details.audit === "object"
-                && result.details.audit !== null
-                && Object.hasOwn(result.details.audit, "conflicts")
-                ? { auditReceipt: (result.details.audit as Record<string, unknown>).conflicts }
+              ...(audit !== undefined && (Object.hasOwn(audit, "receipt") || Object.hasOwn(audit, "conflicts"))
+                ? { auditReceipt: Object.hasOwn(audit, "receipt") ? audit.receipt : audit.conflicts }
                 : {}),
             });
             await projectClosure(closed, context);

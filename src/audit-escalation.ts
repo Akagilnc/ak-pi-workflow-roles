@@ -65,6 +65,9 @@ export function buildAuditEscalationResult(
   const auditOwned: Record<string, unknown> = {
     kind: AUDIT_ESCALATION_KIND,
   };
+  if (Object.hasOwn(decision, "receipt")) {
+    auditOwned.receipt = (decision as { receipt?: unknown }).receipt;
+  }
   if (Object.hasOwn(decision, "conflicts")) {
     auditOwned.conflicts = (decision as { conflicts?: unknown }).conflicts;
   }
