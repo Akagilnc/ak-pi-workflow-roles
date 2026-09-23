@@ -6,6 +6,7 @@ import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { OFFICER_CONCLUSION_REASK } from "./gatekeeper-role.ts";
 import { coalesceSubmissionRows } from "./public-cli/terminal.ts";
+import { readableGateItem } from "./readable-gate-item.ts";
 
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
 /**
@@ -34,7 +35,7 @@ export type ComplianceDecision =
   | ComplianceNoReceipt
   | ComplianceReceived
   | ComplianceTransportFailure;
-/** Zero-projection kickoff — soul already carries dossier-fetch duty; no hand-delivered materials. */
+/** Source-run pointer remains the binding locator; parent body rides the separate instruction. */
 export const AUDITOR_DOSSIER_PROMPT = "卷宗指针：" as const;
 
 export const COMPLIANCE_RESPONSE_ENTRY_TYPE = "ak_compliance_response" as const;
@@ -106,12 +107,15 @@ export type AuditorSummon = (
   signal?: AbortSignal,
   /** Plain-language re-ask when the prior reply was not a three-state conclusion. */
   reask?: string,
+  /** Parent's verbatim current submission, serialized when structured. */
+  submission?: string,
 ) => Promise<PublicSummonResult>;
 
 export type RunComplianceAuditOptions = {
   /** Who is being audited — selects judge-auditor.md / doctor-auditor.md. */
   readonly subject: AuditorSoulRole;
   context: HostContext;
+  submission?: unknown;
   runDirectory?: string | undefined;
   signal?: AbortSignal;
   /** Test seam — production uses summonPublicRole({ role: "auditor", argv: ["--subject", subject, "--source-run", …] }). */
@@ -194,6 +198,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     throw new Error("Compliance audit requires a parent run directory pointer");
   }
   const subject = options.subject;
+  const submission = options.submission === undefined ? undefined : readableGateItem(options.submission);
   const summon =
     options.summonAuditor
     ?? (async (
@@ -221,11 +226,12 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
         home,
         ...(auditSignal === undefined ? {} : { signal: auditSignal }),
         ...(reask === undefined ? {} : { reviewReask: reask }),
+        ...(submission === undefined ? {} : { gateReviewInstruction: submission }),
       });
     });
   let reask: string | undefined;
   for (;;) {
-    const summoned = await summon(subject, runDirectory, options.signal, reask);
+    const summoned = await summon(subject, runDirectory, options.signal, reask, submission);
     const decision = await projectAuditorTerminal(summoned);
     if (decision.status === "received") {
       reask = OFFICER_CONCLUSION_REASK;

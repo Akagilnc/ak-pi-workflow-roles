@@ -2329,7 +2329,7 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         let auditCalls = 0;
         let selectedDecision = decision;
         // Doctor keeps disposeCompliance path; judge auditor is gate queue (#756).
-        const auditCompliance = async (options: { context: HostContext; signal?: AbortSignal }) => {
+        const auditCompliance = async (options: { context: HostContext; signal?: AbortSignal; submission: unknown }) => {
           auditCalls += 1;
           const summonAuditor: AuditorSummon = async (_subject) => ({
             exitCode: 0,

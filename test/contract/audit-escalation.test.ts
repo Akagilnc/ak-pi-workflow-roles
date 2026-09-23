@@ -280,12 +280,15 @@ test("runComplianceAudit keeps host failure beside recorded auditor payloads", a
 
 test("#836 auditor non-three-state then pass converges; both original rows kept", async () => {
   let summons = 0;
+  const testimony = { status: "completed", findings: [{ reason: "original" }] };
   const decision = await runComplianceAudit({
     subject: "doctor",
+    submission: testimony,
     context: { cwd: process.cwd() } as never,
     runDirectory: "/tmp/parent-run",
-    summonAuditor: async (_subject, _dir, _signal, reask) => {
+    summonAuditor: async (_subject, _dir, _signal, reask, submission) => {
       summons += 1;
+      assert.equal(submission, JSON.stringify(testimony));
       if (summons === 1) {
         assert.equal(reask, undefined);
         return {

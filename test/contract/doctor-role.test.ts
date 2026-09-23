@@ -42,6 +42,7 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
   let decision: "pass" | "bounce" | "failure" | "no-receipt" = "bounce";
   let aborts = 0;
   let auditCalls = 0;
+  const auditedSubmissions: unknown[] = [];
   // #775: structured violations must reach the parent seat with field content intact.
   const structuredViolation = {
     article: "method-proof",
@@ -67,6 +68,7 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
     async auditCompliance(options) {
       auditCalls += 1;
       assert.ok(options.context);
+      auditedSubmissions.push(options.submission);
       if (decision === "failure") throw new Error("provider unavailable");
       if (decision === "no-receipt") return auditNoReceiptFacts;
       return decision === "bounce"
@@ -101,6 +103,7 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
   // Runtime cost is still a fact — recorded beside the testimony in the
   // candidate audit entry, not folded into the accepted payload.
   assert.deepEqual(candidates, [{ version: 1, testimony, cost: patient.cost, readRecord: [], patientIdentity: patient.identity }]);
+  assert.deepEqual(auditedSubmissions, [refusal, refusal, testimony]);
   assert.equal(auditCalls, 3);
   decision = "no-receipt";
   const noReceiptCandidates: unknown[] = [];
