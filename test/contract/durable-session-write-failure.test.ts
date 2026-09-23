@@ -173,7 +173,7 @@ test("#959 durable flush failure outranks correctable rejection retry", async ()
         ...base,
         // Doctor path: appendCandidate (package durable) then GatekeeperDecisionError bounce.
         auditDoctorCompliance: async () => ({
-          status: "bounce" as const,
+          status: "continue" as const,
           violations: [{ article: "method-proof", reason: "missing proof" }],
         }),
       },

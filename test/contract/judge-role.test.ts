@@ -2171,7 +2171,7 @@ test("fixer activation leaves its tool surface unchanged", async () => {
 // 纯进程内模块逻辑（Source-tree imports，无任何装包边界），性质属快档。
 // Judge/doctor：bounce→errored / pass→terminate / escalate 全矩阵。
 // Fixer (#242) / Reviewer (#495 S6)：无审刑院闸，typed validate 即受理。
-test("role outputs run nested audits through pass, bounce, and escalation", async () => {
+test("role outputs run nested audits through converged, continue, and escalation", async () => {
   // Source-tree imports: cold-install boundary is owned by neighbouring install tests;
   // this carrier owns bounce→errored / pass→terminate / escalate per audited role output tool.
   const root = packageRoot;
@@ -2213,14 +2213,14 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         conflicts: [],
         decisionGate: null,
       };
-      const doctorBounce = { ...bounce, status: "bounce" as const };
+      const doctorBounce = bounce;
       const pass = {
         status: "converged" as const,
         violations: [],
         conflicts: [],
         decisionGate: null,
       };
-      const doctorPass = { ...pass, status: "pass" as const };
+      const doctorPass = pass;
       const outputs = {
         judge: { status: "converged" },
         fixer: { status: "completed", report: "done", classResults: [
@@ -2430,11 +2430,11 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
           const continued = await tool.execute(`${role}-continue`, outputs[role], undefined, undefined, await submissionContext(`${role}-continue`));
           assert.equal(continued.terminate, false);
           assert.deepEqual(continued.details, outputs[role]);
+          assert.equal(continued.content.length, 2, "both review gate receipts remain separately visible");
         } else {
-          await assert.rejects(
-            tool.execute(`${role}-bounce`, outputs[role], undefined, undefined, await submissionContext(`${role}-bounce`)),
-            /violation|violates its|closed contract/,
-          );
+          const continued = await tool.execute(`${role}-continue`, outputs[role], undefined, undefined, await submissionContext(`${role}-continue`));
+          assert.equal(continued.terminate, false);
+          assert.deepEqual(continued.details, outputs[role]);
         }
         retriable.setDecision(role === "doctor" ? doctorPass : pass);
         const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, await submissionContext(`${role}-pass`));

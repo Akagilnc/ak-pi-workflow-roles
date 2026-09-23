@@ -120,7 +120,7 @@ export function createJudgeRoleRuntime(
               });
               if (compliancePass?.status === "continue") {
                 return {
-                  content: [{ type: "text" as const, text: readableGateItem(compliancePass.receipt) }],
+                  content: [draftPass, compliancePass].filter((pass) => pass !== undefined).map((pass) => ({ type: "text" as const, text: readableGateItem(pass.receipt) })),
                   details: verdict,
                   terminate: false,
                 };

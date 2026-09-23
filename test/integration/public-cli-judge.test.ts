@@ -244,8 +244,8 @@ test("auditor escalation delivers its complete raw verdict through the public te
     const submission = { status: "converged", note: "原判词" };
     const receipt = { status: "escalate", decisionGate: { question: "请陛下裁决" }, explanation: "完整审刑院原话" };
     const escalation = await disposeComplianceDecision(readComplianceCandidate(receipt), {
-      pass: () => { throw new Error("unexpected pass"); },
-      bounce: () => { throw new Error("unexpected bounce"); },
+      converged: () => { throw new Error("unexpected pass"); },
+      continue: () => { throw new Error("unexpected bounce"); },
       escalate: (result) => result,
     }, submission);
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "review"], {

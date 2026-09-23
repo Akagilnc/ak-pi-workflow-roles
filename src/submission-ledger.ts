@@ -744,7 +744,8 @@ export function createSubmissionLedgerHost(
             await projectClosure(closed, context);
             return result;
           }
-          // Terminating-tool wrap records every call; terminate flag does not withhold params.
+          // A continuing gate leaves the candidate recorded but has not accepted it.
+          if (result.terminate === false) return result;
           const closed: ClosedSubmission = {
             role,
             kind: "accepted",

@@ -223,6 +223,19 @@ test("one turn two submissions → two ledger rows; original payload returned; n
   });
 });
 
+test("continuing gate records candidate without sealing acceptance", async () => {
+  await withLedgerFixture(async (f) => {
+    const continuing = registerTool(f.root, async (params) => ({ content: [], details: params, terminate: false }));
+    await continuing.start("continue");
+    const candidate = { status: "continue" };
+    const result = await continuing.tool().execute("continue", candidate, undefined, undefined, continuing.context);
+    assert.equal(result.terminate, false);
+    assert.deepEqual(await readRecordedSubmissions(f.root, "run-ledger", f.root), [candidate]);
+    assert.deepEqual(await readRecordedSubmissionRows(f.root, "run-ledger", f.root), [{ role: "judge", kind: "candidate", accepted: candidate, toolCallId: "continue" }]);
+    assert.deepEqual(continuing.closedSubmissions, []);
+  });
+});
+
 test("mixed tools in one turn still record every terminating submission (#836 no sole)", async () => {
   await withLedgerFixture(async (f) => {
     await f.start("a");

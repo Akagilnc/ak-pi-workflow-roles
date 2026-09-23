@@ -147,7 +147,7 @@ export function isAuditEscalationResult(
 }
 
 export type ComplianceDecisionHandlers<T> = {
-  pass: (usage: Usage | undefined) => T | PromiseLike<T>;
+  converged: (usage: Usage | undefined) => T | PromiseLike<T>;
   /** Project the accepted parent candidate beside the typed audit-leg facts. */
   noReceipt?: (
     facts: Extract<ComplianceDecision, { status: "no-receipt" }>,
@@ -161,7 +161,7 @@ export type ComplianceDecisionHandlers<T> = {
     facts: Extract<ComplianceDecision, { status: "received" }>,
     usageProjection: { usage?: Usage },
   ) => T | PromiseLike<T>;
-  bounce: (violations: readonly unknown[]) => T | PromiseLike<T>;
+  continue: (violations: readonly unknown[]) => T | PromiseLike<T>;
   escalate: (result: AuditEscalationToolResult) => T | PromiseLike<T>;
   /** Host failure beside any recorded auditor payloads — parent is not accepted. */
   transportFailure?: (
@@ -179,8 +179,8 @@ export async function disposeComplianceDecision<T>(
   deliveredOutput?: unknown,
 ): Promise<Awaited<T>> {
   switch (decision.status) {
-    case "pass":
-      return await handlers.pass(decision.usage);
+    case "converged":
+      return await handlers.converged(decision.usage);
     case "no-receipt":
       // The parent candidate remains accepted, but its parallel audit leg is a
       // public typed fact and must not be collapsed into an ordinary pass.
@@ -200,8 +200,8 @@ export async function disposeComplianceDecision<T>(
         decision,
         decision.usage === undefined ? {} : { usage: decision.usage },
       );
-    case "bounce":
-      return await handlers.bounce(decision.violations);
+    case "continue":
+      return await handlers.continue(decision.violations);
     case "escalate":
       return await handlers.escalate(
         projectAuditEscalation(decision, deliveredOutput),
