@@ -6,8 +6,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
+  closeSync,
   existsSync,
+  openSync,
   readFileSync,
+  readSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -60,18 +64,31 @@ function sealTornTail(recordFile: string): void {
 }
 
 /** Assign an already-recorded volume without changing any of its rows. */
-export function appendSitianRecordBlock(input: SitianRecordInput, block: string): void {
+export function appendSitianRecordBlock(input: SitianRecordInput, block: string, sourceRunDirectory: string): void {
   if (block === "") return;
   try {
     const { sessionDir, recordFile, ledgerHome } = resolveSitianRecordPath(input);
     ensureRealDirectoryTree(ledgerHome, sessionDir);
     appendFileSync(recordFile, "", "utf8");
     sealTornTail(recordFile);
-    // The source survives until the caller unlinks it. If that unlink failed,
-    // the exact block is already durable and a retry must not repeat it.
-    if (!readFileSync(recordFile, "utf8").includes(block)) {
-      appendFileSync(recordFile, block, "utf8");
+    const marker = `${recordFile}.block-${createHash("sha256").update(sourceRunDirectory).digest("hex")}`;
+    const bytes = Buffer.from(block, "utf8");
+    if (existsSync(marker)) {
+      const offset = Number(readFileSync(marker, "utf8"));
+      if (!Number.isSafeInteger(offset) || offset < 0) {
+        throw new Error(`Invalid Sitian block offset in ${marker}`);
+      }
+      const actual = Buffer.alloc(bytes.length);
+      const fd = openSync(recordFile, "r");
+      try {
+        if (readSync(fd, actual, 0, actual.length, offset) === bytes.length && actual.equals(bytes)) return;
+      } finally {
+        closeSync(fd);
+      }
     }
+    const offset = statSync(recordFile).size;
+    writeFileSync(marker, String(offset), "utf8");
+    appendFileSync(recordFile, bytes);
   } catch (error) {
     if (error instanceof SitianInfrastructureError) throw error;
     throw new SitianInfrastructureError(

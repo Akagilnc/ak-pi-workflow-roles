@@ -385,7 +385,7 @@ export async function rehomeUnboundTicketProvenance(
     if (errnoCode(error) === "ENOENT") return;
     throw error;
   }
-  appendSitianRecordBlock(ticketProvenanceRecordInput(ticketNumber, cwd, home), content);
+  appendSitianRecordBlock(ticketProvenanceRecordInput(ticketNumber, cwd, home), content, runDirectory);
   await unlink(source);
 }
 

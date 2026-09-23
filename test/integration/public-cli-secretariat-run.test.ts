@@ -67,7 +67,7 @@ import {
 } from "../helpers/terminal-payload.ts";
 import { MAIN_ROLE_SESSION_MATERIALS } from "../../src/session-opening-materials.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
-import { readTicketProvenance } from "../../src/ticket-provenance.ts";
+import { readTicketProvenance, rehomeUnboundTicketProvenance } from "../../src/ticket-provenance.ts";
 import {
   readSitianRecords,
   resolveSitianRecordPathInLedger,
@@ -1291,7 +1291,7 @@ test("#969 omitted receipt ticketNumber still hands parent board identity to 给
 });
 
 test("public secretariat moves its unbound 起居录 to the ticket after typed assignment", async () => {
-  for (const preAppended of [false, true]) {
+  for (const scenario of ["first", "retry", "other-source-same-content"] as const) {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -1322,8 +1322,13 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
           sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
         })(args, options);
         sourceContent = await readFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), "utf8");
-        if (preAppended) {
-          await writeFile(join(book, "924", "records.jsonl"), `${prior}\n${sourceContent}`, "utf8");
+        if (scenario !== "first") {
+          if (scenario === "retry") {
+            await rehomeUnboundTicketProvenance(options.env.AK_ROLE_RUN_DIR!, 924, project, home);
+            await writeFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), sourceContent, "utf8");
+          } else {
+            await writeFile(join(book, "924", "records.jsonl"), `${prior}\n${sourceContent}`, "utf8");
+          }
           const parentPagePath = join(book, "unbound", "runs", parentRun, "admitted-request.json");
           const parentPage = JSON.parse(await readFile(parentPagePath, "utf8"));
           await writeFile(parentPagePath, `${JSON.stringify({ ...parentPage, childDiaristRunIds: ["already-moved"] })}\n`, "utf8");
@@ -1342,7 +1347,7 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
     assert.ok((await readdir(dirname(unrelatedRun))).includes("unfinished@diarist"));
     assert.equal(await readFile(join(unrelatedRun, "admitted-request.json"), "utf8"), "");
     const record = join(book, "924", "records.jsonl");
-    assert.equal(await readFile(record, "utf8"), `${prior}\n${sourceContent}`);
+    assert.equal(await readFile(record, "utf8"), `${prior}\n${sourceContent}${scenario === "other-source-same-content" ? sourceContent : ""}`);
     const recordLines = (await readFile(record, "utf8")).trim().split("\n");
     assert.ok(recordLines.includes("{broken"));
     const rows = recordLines.filter((line) => line !== "{broken").map((row) => JSON.parse(row));
