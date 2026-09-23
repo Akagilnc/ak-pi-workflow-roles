@@ -44,6 +44,7 @@ import {
   projectHostFacingProvider,
   renderHostProvidersTable,
 } from "./host-providers.ts";
+import { packagedModelParent } from "../packaged-role-registry.ts";
 import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -60,22 +61,9 @@ import {
 } from "./role-turn-host-resolution.ts";
 import {
   parseAnalystArgv,
-  parseCoderArgv,
-  parseCollectorArgv,
-  parseCountersignArgv,
-  parseDiaristArgv,
-  parseSecretariatArgv,
-  parseGleanerLeftArgv,
-  parseDoctorArgv,
-  parseFixerArgv,
-  parseGatekeeperArgv,
-  parseJudgeArgv,
-  parseInspectorArgv,
-  parseMergerArgv,
-  parseNavigatorArgv,
-  parseAuditorArgv,
-  parseNotaryArgv,
-  parseReviewerArgv,
+  parsePublicSeatArgv,
+  type PublicSeatArgvOwner,
+  type PublicSeatParse,
 } from "./invocation.ts";
 import {
   createTypedOptionConsumer,
@@ -83,24 +71,13 @@ import {
   projectCommandHelp,
   projectOwnerOptions,
   PUBLIC_NAVIGATOR_HELP_NOTE,
+  PUBLIC_ROLE_OPTION_OWNERS,
   renderHumanOwnerOptionLines,
   type PublicOptionDefinition,
+  type PublicRoleOptionOwner,
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
-import { runPublicCoder, runPublicCoderResume } from "./coder-run.ts";
 import { runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
-import { runPublicCollector, runPublicCollectorResume } from "./collector-run.ts";
-import { runPublicCountersign, runPublicCountersignResume } from "./countersign-run.ts";
-import { runPublicDiarist, runPublicDiaristResume } from "./diarist-run.ts";
-import { runPublicSecretariat, runPublicSecretariatResume } from "./secretariat-run.ts";
-import { runPublicGleanerLeft, runPublicGleanerLeftResume } from "./gleaner-left-run.ts";
-import { runPublicDoctor, runPublicDoctorResume } from "./doctor-run.ts";
-import { runPublicFixer, runPublicFixerResume } from "./fixer-run.ts";
-import { runPublicNotary, runPublicNotaryResume } from "./notary-run.ts";
-import { runPublicInspector, runPublicInspectorResume } from "./inspector-run.ts";
-import { runPublicJudge, runPublicResume } from "./judge-run.ts";
-import { runPublicMerger, runPublicMergerResume } from "./merger-run.ts";
-import { runPublicReviewer, runPublicReviewerResume } from "./reviewer-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
 import {
   AUTO_RESUME_LIMIT,
@@ -108,45 +85,9 @@ import {
   type PublicResumeRequest,
 } from "./run-lifecycle.ts";
 
-/**
- * Single authoritative resume dispatch (#633): durable role → seat + public
- * resume runner. Seat-specific loader validation, turn projection, and
- * adapters live in each seat's resume module.
- */
-const RESUME_SEAT_DISPATCH: Record<
-  NonNullable<Awaited<ReturnType<typeof peekRoleRunRole>>>,
-  {
-    readonly seat: PublicCallableRole;
-    readonly run: (
-      request: PublicResumeRequest,
-      env: PostAdmissionEnv,
-      io: CliIo,
-    ) => Promise<{
-      exitCode: number;
-      terminal?: TerminalResult;
-      staleWriterLeaseReclaimed?: true;
-    }>;
-  }
-> = {
-  judge: { seat: "judge", run: runPublicResume },
-  coder: { seat: "coder", run: runPublicCoderResume },
-  fixer: { seat: "fixer", run: runPublicFixerResume },
-  reviewer: { seat: "reviewer", run: runPublicReviewerResume },
-  merger: { seat: "merger", run: runPublicMergerResume },
-  countersign: { seat: "countersign", run: runPublicCountersignResume },
-  "gleaner-left": { seat: "gleaner-left", run: runPublicGleanerLeftResume },
-  collector: { seat: "collector", run: runPublicCollectorResume },
-  doctor: { seat: "doctor", run: runPublicDoctorResume },
-  notary: { seat: "notary", run: runPublicNotaryResume },
-  inspector: { seat: "inspector", run: runPublicInspectorResume },
-  gatekeeper: { seat: "gatekeeper", run: runPublicInstructionSeatResume },
-  navigator: { seat: "navigator", run: runPublicInstructionSeatResume },
-  auditor: { seat: "auditor", run: runPublicInstructionSeatResume },
-  diarist: { seat: "diarist", run: runPublicDiaristResume },
-  secretariat: { seat: "secretariat", run: runPublicSecretariatResume },
-};
 import {
   INTERNAL_ROLE_ENTRYPOINT_RELATIVE,
+  PUBLIC_CALLABLE_ROLES,
   isPublicCallableRole,
   isPublicCliSupportCommand,
   isPublicConfigurableSeat,
@@ -170,29 +111,37 @@ export { CliUsageError } from "./cli-errors.ts";
 export type { CliIo } from "./cli-io.ts";
 
 /**
- * Sole production map: public role command → argv parser + option definitions.
- * cli handlers and help consume this table; no parallel spelling set (#342).
+ * Sole production map: public role command → one argv parse + that owner's option row.
+ * Seat option values are assigned in parsePublicSeatArgv. Analyst stays deterministic.
  */
-export const PUBLIC_ROLE_ARGV = {
-  judge: { parse: parseJudgeArgv, options: optionsForOwner("judge") },
-  countersign: { parse: parseCountersignArgv, options: optionsForOwner("countersign") },
-  "gleaner-left": { parse: parseGleanerLeftArgv, options: optionsForOwner("gleaner-left") },
-  coder: { parse: parseCoderArgv, options: optionsForOwner("coder") },
-  fixer: { parse: parseFixerArgv, options: optionsForOwner("fixer") },
-  collector: { parse: parseCollectorArgv, options: optionsForOwner("collector") },
-  doctor: { parse: parseDoctorArgv, options: optionsForOwner("doctor") },
-  merger: { parse: parseMergerArgv, options: optionsForOwner("merger") },
-  notary: { parse: parseNotaryArgv, options: optionsForOwner("notary") },
-  inspector: { parse: parseInspectorArgv, options: optionsForOwner("inspector") },
-  reviewer: { parse: parseReviewerArgv, options: optionsForOwner("reviewer") },
-  gatekeeper: { parse: parseGatekeeperArgv, options: optionsForOwner("gatekeeper") },
-  navigator: { parse: parseNavigatorArgv, options: optionsForOwner("navigator") },
-  auditor: { parse: parseAuditorArgv, options: optionsForOwner("auditor") },
-  diarist: { parse: parseDiaristArgv, options: optionsForOwner("diarist") },
-  secretariat: { parse: parseSecretariatArgv, options: optionsForOwner("secretariat") },
-  /** Deterministic analysis seat (#336) — argv parse only; no LLM admission. */
-  analyst: { parse: parseAnalystArgv, options: optionsForOwner("analyst") },
-} as const;
+function publicSeatArgv(owner: PublicSeatArgvOwner) {
+  return {
+    parse: (args: readonly string[]) => parsePublicSeatArgv(owner, args),
+    options: optionsForOwner(owner),
+  };
+}
+
+type PublicRoleArgvTable = {
+  [K in PublicRoleOptionOwner]: K extends "analyst"
+    ? {
+        readonly parse: typeof parseAnalystArgv;
+        readonly options: readonly PublicOptionDefinition[];
+      }
+    : ReturnType<typeof publicSeatArgv>;
+};
+
+/**
+ * One argv row per public owner. Seats come from PUBLIC_ROLE_OPTION_OWNERS
+ * (composition-root roles plus the deterministic analyst command).
+ */
+export const PUBLIC_ROLE_ARGV = Object.fromEntries(
+  PUBLIC_ROLE_OPTION_OWNERS.map((owner) => [
+    owner,
+    owner === "analyst"
+      ? { parse: parseAnalystArgv, options: optionsForOwner("analyst") }
+      : publicSeatArgv(owner),
+  ]),
+) as PublicRoleArgvTable;
 
 /** Global public options — same typed table as role rows (#342). */
 export const PUBLIC_GLOBAL_OPTIONS: readonly PublicOptionDefinition[] =
@@ -260,51 +209,25 @@ export type CliEnv = {
   io?: CliIo;
   /**
    * Injectable host-neutral turn host (tests). Production composes the Pi
-   * adapter once per dispatch from packageRoot + seat extraPiArgs/timeout.
+   * adapter once per dispatch from packageRoot + extraPiArgs/timeout.
    */
   roleTurnHost?: RoleTurnHost;
   /** Composition-root-owned unique named adapter table. */
   hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   /** Optional caller correlation id (#78 host channel). */
   correlationId?: string;
-  /** Extra Pi args for Judge runs (tests: faux provider). */
-  judgeExtraPiArgs?: readonly string[];
-  /** Override Judge role-run timeout (tests). */
-  judgeTimeoutMs?: number;
-  /** Extra Pi args for Coder runs (tests: faux provider). */
-  coderExtraPiArgs?: readonly string[];
-  /** Override Coder role-run timeout (tests). */
-  coderTimeoutMs?: number;
-  /** Extra Pi args for Collector runs (tests: faux provider). */
-  collectorExtraPiArgs?: readonly string[];
-  /** Override Collector role-run timeout (tests). */
-  collectorTimeoutMs?: number;
-  /** Extra Pi args for Doctor runs (tests: faux provider). */
-  doctorExtraPiArgs?: readonly string[];
-  /** Override Doctor role-run timeout (tests). */
-  doctorTimeoutMs?: number;
-  /** Extra Pi args for Fixer runs (tests: faux provider). */
-  fixerExtraPiArgs?: readonly string[];
-  /** Override Fixer role-run timeout (tests). */
-  fixerTimeoutMs?: number;
-  /** Extra Pi args for Reviewer runs (tests: faux provider). */
-  reviewerExtraPiArgs?: readonly string[];
-  /** Override Reviewer role-run timeout (tests). */
-  reviewerTimeoutMs?: number;
-  /** Extra Pi args for Merger runs (tests: faux provider). */
-  mergerExtraPiArgs?: readonly string[];
-  /** Override Merger role-run timeout (tests). */
-  mergerTimeoutMs?: number;
-  /** Extra Pi args for Notary runs (tests: faux provider). */
-  notaryExtraPiArgs?: readonly string[];
-  /** Override Notary role-run timeout (tests). */
-  notaryTimeoutMs?: number;
+  /** Extra Pi args for the dispatched public seat (tests: faux provider). */
+  extraPiArgs?: readonly string[];
+  /** Override the dispatched public seat's role-run timeout (tests). */
+  timeoutMs?: number;
   createRunId?: () => string;
   /**
    * #724: set by the `new` support verb before role dispatch; seat runners
    * skip same-ticket auto-resume. Not a public flag — the verb is the choice.
    */
   freshSummons?: true;
+  /** Typed ticket already on this summons. Not a public argv flag. */
+  boundTicketNumber?: number;
   /**
    * #855: process-level cancel (SIGTERM/SIGINT/SIGHUP). Nested turns receive
    * the same signal so hosts can gracefully stop children.
@@ -331,42 +254,8 @@ function createRoleEnvironment(
   afterHost?: () => void,
 ) {
   const role = options.role;
-  const extraPiArgs =
-    role === "coder"
-      ? env.coderExtraPiArgs
-      : role === "fixer"
-        ? env.fixerExtraPiArgs
-        : role === "reviewer"
-          ? env.reviewerExtraPiArgs
-          : role === "merger"
-            ? env.mergerExtraPiArgs
-            : role === "judge"
-              ? env.judgeExtraPiArgs
-              : role === "collector"
-                ? env.collectorExtraPiArgs
-                : role === "doctor"
-                  ? env.doctorExtraPiArgs
-                  : role === "notary"
-                    ? env.notaryExtraPiArgs
-                    : undefined;
-  const timeoutMs =
-    role === "coder"
-      ? env.coderTimeoutMs
-      : role === "fixer"
-        ? env.fixerTimeoutMs
-        : role === "reviewer"
-          ? env.reviewerTimeoutMs
-          : role === "merger"
-            ? env.mergerTimeoutMs
-            : role === "judge"
-              ? env.judgeTimeoutMs
-              : role === "collector"
-                ? env.collectorTimeoutMs
-                : role === "doctor"
-                  ? env.doctorTimeoutMs
-                  : role === "notary"
-                    ? env.notaryTimeoutMs
-                    : undefined;
+  const extraPiArgs = env.extraPiArgs;
+  const timeoutMs = env.timeoutMs;
 
   // #617/#178/#788/#840: host first, then model; nested child seat selects own host.
   const hostAdapters = composeRoleTurnHostAdapters(
@@ -418,6 +307,9 @@ function createRoleEnvironment(
       ? {}
       : { autoResumeLimit: options.config.autoResumeLimit }),
     ...(env.freshSummons === true ? { freshSummons: true as const } : {}),
+    ...(env.boundTicketNumber === undefined
+      ? {}
+      : { boundTicketNumber: env.boundTicketNumber }),
     ...(env.signal === undefined ? {} : { signal: env.signal }),
   };
 }
@@ -473,19 +365,15 @@ export type CliResult = {
   /** Settled Terminal when an admitted Role run produced one (programmatic/tests). */
   terminal?: TerminalResult;
   hostFailure?: HostSelectionFailure;
-  /** Typed #556 fact from public resume/dispatch when a dead holder lock was unlinked. */
-  staleWriterLeaseReclaimed?: true;
 };
 
 function cliResultFromRoleRun(result: {
   exitCode: number;
   terminal?: TerminalResult;
-  staleWriterLeaseReclaimed?: true;
 }): CliResult {
   return {
     exitCode: result.exitCode,
     ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
-    ...(result.staleWriterLeaseReclaimed === true ? { staleWriterLeaseReclaimed: true as const } : {}),
   };
 }
 
@@ -883,7 +771,7 @@ export function projectConfigSeatDisplay(
   seat: PublicConfigurableSeat,
 ): ConfigDisplaySeat {
   const disk = config.seats[seat];
-  if (seat === "notary" || seat === "inspector") {
+  if (packagedModelParent(seat) !== undefined) {
     const resolved = resolveConfiguredProvinceOfficer(config, seat);
     return {
       seat,
@@ -918,8 +806,8 @@ export function projectConfigDisplaySeats(
   for (const seat of diskSeats) {
     rows.set(seat, projectConfigSeatDisplay(config, seat));
   }
-  for (const seat of ["notary", "inspector"] as const) {
-    if (rows.has(seat)) continue;
+  for (const seat of PUBLIC_CALLABLE_ROLES) {
+    if (packagedModelParent(seat) === undefined || rows.has(seat)) continue;
     const projected = projectConfigSeatDisplay(config, seat);
     if (projected.source === "inherit-gatekeeper") {
       rows.set(seat, projected);
@@ -1319,26 +1207,19 @@ export async function runAkRole(
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const resumeRequest = parseResumeRequest(parsed.args);
       const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
-      // #633: single authoritative resume dispatch — the seat follows the
-      // durable admitted role; missing durable role keeps the judge path.
-      const dispatch =
-        resumeRole === undefined
-          ? RESUME_SEAT_DISPATCH.judge
-          : RESUME_SEAT_DISPATCH[resumeRole];
-      // #617 DK-4 / #178: resume resolves model/host/engine from the live seat
-      // table exactly as a new leg would (flag → persistent → officer inherit;
-      // model still none → error). Cross-host resume delivers prior native
-      // records as context to the target host.
+      // Missing durable role keeps the judge seat table. The resume entry
+      // itself is one function; it reads the stored run.
+      const seatRole = resumeRole ?? "judge";
       const seat = resolveEffectiveSeat(
         config,
-        dispatch.seat,
+        seatRole,
         credentials,
         invocationFromParsed(parsed),
       );
-      const result = await dispatch.run(
+      const result = await runPublicInstructionSeatResume(
         resumeRequest,
         createRoleEnvironment(env, {
-          role: dispatch.seat,
+          role: seatRole,
           home,
           agentDir,
           cwd,
@@ -1358,94 +1239,13 @@ export async function runAkRole(
       throw new CliUsageError(`unhandled support command: ${parsed.command}`);
     }
 
-    // Public LLM role commands share one #178 spine (host → argv once → missing-model → run).
-    if (parsed.command === "judge") {
+    // Public LLM role commands share one spine: registry parser → one runner.
+    if (parsed.command !== undefined && isPublicCallableRole(parsed.command)) {
+      const role = parsed.command;
       return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "judge", PUBLIC_ROLE_ARGV.judge.parse,
-        (args, roleEnv, once) => runPublicJudge(args, roleEnv, io, once),
-      );
-    }
-    if (parsed.command === "countersign") {
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "countersign", PUBLIC_ROLE_ARGV.countersign.parse,
-        (args, roleEnv, once) => runPublicCountersign(args, roleEnv, io, once),
-      );
-    }
-    if (parsed.command === "gleaner-left") {
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "gleaner-left", PUBLIC_ROLE_ARGV["gleaner-left"].parse,
-        (args, roleEnv, once) => runPublicGleanerLeft(args, roleEnv, io, once),
-      );
-    }
-    if (parsed.command === "diarist") {
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "diarist", PUBLIC_ROLE_ARGV.diarist.parse,
-        (args, roleEnv, once) => runPublicDiarist(args, roleEnv, io, once),
-      );
-    }
-    if (parsed.command === "secretariat") {
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "secretariat", PUBLIC_ROLE_ARGV.secretariat.parse,
-        (args, roleEnv, once) => runPublicSecretariat(args, roleEnv, io, once),
-      );
-    }
-    if (parsed.command === "coder") {
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "coder", PUBLIC_ROLE_ARGV.coder.parse,
-        (args, roleEnv, once) => runPublicCoder(args, roleEnv, io, once),
-      );
-    }
-    if (parsed.command === "fixer") {
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "fixer", PUBLIC_ROLE_ARGV.fixer.parse,
-        (args, roleEnv, once) => runPublicFixer(args, roleEnv, io, once),
-      );
-    }
-    if (parsed.command === "collector") {
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "collector", PUBLIC_ROLE_ARGV.collector.parse,
-        (args, roleEnv, once) => runPublicCollector(args, roleEnv, io, once),
-      );
-    }
-    if (parsed.command === "reviewer") {
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "reviewer", PUBLIC_ROLE_ARGV.reviewer.parse,
-        (args, roleEnv, once) => runPublicReviewer(args, roleEnv, io, once),
-      );
-    }
-    if (parsed.command === "doctor") {
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "doctor", PUBLIC_ROLE_ARGV.doctor.parse,
-        (args, roleEnv, once) => runPublicDoctor(args, roleEnv, io, once),
-      );
-    }
-    if (parsed.command === "notary") {
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "notary", PUBLIC_ROLE_ARGV.notary.parse,
-        (args, roleEnv, once) => runPublicNotary(args, roleEnv, io, once),
-      );
-    }
-    if (parsed.command === "inspector") {
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "inspector", PUBLIC_ROLE_ARGV.inspector.parse,
-        (args, roleEnv, once) => runPublicInspector(args, roleEnv, io, once),
-      );
-    }
-    if (parsed.command === "merger") {
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, "merger", PUBLIC_ROLE_ARGV.merger.parse,
-        (args, roleEnv, once) => runPublicMerger(args, roleEnv, io, once),
-      );
-    }
-    if (
-      parsed.command === "gatekeeper"
-      || parsed.command === "navigator"
-      || parsed.command === "auditor"
-    ) {
-      const seat = parsed.command;
-      return await dispatchPublicRoleCommand(
-        env, home, io, parsed, seat, PUBLIC_ROLE_ARGV[seat].parse,
-        (args, roleEnv, once) => runPublicInstructionSeat(args, roleEnv, io, seat, once),
+        env, home, io, parsed, role,
+        (args) => PUBLIC_ROLE_ARGV[role].parse(args) as PublicSeatParse,
+        (args, roleEnv, once) => runPublicInstructionSeat(args, roleEnv, io, role, once),
       );
     }
 

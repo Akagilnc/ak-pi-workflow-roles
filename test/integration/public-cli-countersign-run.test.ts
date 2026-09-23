@@ -2,18 +2,19 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 /**
  * #572 / ADR 0074 public Countersign seat — ticket materials in, 署/封驳 verdict
- * out via real runAkRole entry; #599 resume continues the exact session.
- * #742: court admission auto-runs the public 起居郎 station before the body turn.
- * #771: ticket identity comes from 起居郎 LLM typed assertion (court station),
- * never from mechanical matching of summons text against book records;
- * ADR 0079: same-ticket re-summons resume prior run via that typed key;
+ * out via real runAkRole entry; #599 / #987 resume continues via explicit package
+ * runId. #742: court admission auto-runs the public 起居郎 station before the
+ * body turn. #771: ticket identity comes from 起居郎 LLM typed assertion (court
+ * station), never from mechanical matching of summons text against book records.
+ * Public re-summons mint a new run under the typed ticket (#505 / #987).
+ * Gate handoff resumes by parent run path. Explicit ak-role resume takes a runId.
  * 起居录 path delivery rides the shared post-admission mount.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, rm, writeFile, readFile } from "node:fs/promises";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, sep } from "node:path";
 import test from "node:test";
 
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -29,21 +30,20 @@ import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/c
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitCountersignInvocation,
+  admitPublicRole,
   bindAdmittedTicketNumber,
-  parseCountersignArgv,
   type AdmittedCountersignInvocation,
+  type AdmittedRoleInvocation,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
+import { type CountersignRunEnv } from "../../src/public-cli/countersign-run.ts";
 import {
-  buildCountersignTurnRequest,
-  runPublicCountersign,
-  type CountersignRunEnv,
-} from "../../src/public-cli/countersign-run.ts";
+  buildInstructionSeatTurnRequest,
+  runPublicInstructionSeat,
+  runPublicInstructionSeatResume,
+} from "../../src/public-cli/instruction-seat-run.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
-import {
-  findLatestRunIdForSeatTicket,
-  readRoleRunState,
-} from "../../src/public-cli/run-lifecycle.ts";
+import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
@@ -169,12 +169,13 @@ test("countersign admission freezes attachments and binds the countersign role",
     const ticket = join(project, "ticket.md");
     await writeFile(ticket, "# 票面\n五问裁决。", "utf8");
 
-    const admitted = await admitCountersignInvocation({
+    const admitted = await admitPublicRole("countersign", {
+      instruction: "裁：本票是否足以开工。",
+      attachmentPaths: [ticket],
+    }, {
       home,
       principalAuthority: piDurablePrincipalAuthority,
       cwd: project,
-      instruction: "裁：本票是否足以开工。",
-      attachmentPaths: [ticket],
       createRunId: () => "01a0sign00-0000-7000-8000-000000000001",
     });
 
@@ -184,7 +185,7 @@ test("countersign admission freezes attachments and binds the countersign role",
     assert.equal(admitted.attachments.length, 1);
     assert.ok(admitted.attachments[0]?.frozenPath);
 
-    const turn = buildCountersignTurnRequest(admitted, {
+    const turn = buildInstructionSeatTurnRequest(admitted, {
       packageRoot,
       home,
       agentDir: join(home, ".pi"),
@@ -207,17 +208,18 @@ test("countersign admission ignores attachment frontmatter; --ticket is unknown"
     const ticket = join(project, "ticket.md");
     await writeFile(ticket, "---\nticketNumber: 100\n---\n\n五问。\n", "utf8");
 
-    const admitted = await admitCountersignInvocation({
+    const admitted = await admitPublicRole("countersign", {
+      instruction: "裁",
+      attachmentPaths: [ticket],
+    }, {
       home,
       principalAuthority: piDurablePrincipalAuthority,
       cwd: project,
-      instruction: "裁",
-      attachmentPaths: [ticket],
       createRunId: () => "01a0sign00-0000-7000-8000-000000000582",
     });
     assert.equal(admitted.ticketNumber, undefined);
 
-    const turn = buildCountersignTurnRequest(admitted, {
+    const turn = buildInstructionSeatTurnRequest(admitted, {
       packageRoot,
       home,
       agentDir: join(home, ".pi"),
@@ -235,7 +237,7 @@ test("countersign admission ignores attachment frontmatter; --ticket is unknown"
   });
 
   assert.throws(
-    () => parseCountersignArgv(["--ticket", "582", "裁"]),
+    () => parsePublicSeatArgv("countersign", ["--ticket", "582", "裁"]),
     (error: unknown) =>
       error instanceof CliUsageError
       && /unknown countersign option: --ticket/.test(
@@ -246,7 +248,7 @@ test("countersign admission ignores attachment frontmatter; --ticket is unknown"
 
 test("countersign argv rejects unknown options", async () => {
   assert.throws(
-    () => parseCountersignArgv(["--bogus", "裁"]),
+    () => parsePublicSeatArgv("countersign", ["--bogus", "裁"]),
     (error: unknown) => error instanceof CliUsageError,
   );
   await withTempHome(async (home) => {
@@ -811,7 +813,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     );
 
     // 1) Same court/attempt via resume+message: bounce then sealed accept → accepted / exit 0.
-    // closedLedgerOutcome reads attempt-scoped rows when courtAttemptId is present.
+    // sealedLedgerOutcome reads attempt-scoped rows when courtAttemptId is present.
     let sawCourtAttemptId = false;
     const { cap, done } = runScripted(
       ["resume", ...seatModel, runId, "再裁"],
@@ -1115,6 +1117,15 @@ async function withCountersignProject(
   });
 }
 
+function admittedCountersign(
+  admitted: AdmittedRoleInvocation | undefined,
+): AdmittedCountersignInvocation {
+  if (admitted?.role !== "countersign") {
+    throw new Error("countersign entry did not admit countersign");
+  }
+  return admitted;
+}
+
 function countersignPathEnv(input: {
   home: string;
   project: string;
@@ -1165,7 +1176,7 @@ function countersignPathEnv(input: {
 
 test("public countersign path: --ticket is unknown-option reject (exit 2)", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    const result = await runPublicCountersign(
+    const result = await runPublicInstructionSeat(
       ["--ticket", "582", "裁：本票是否足以开工。"],
       countersignPathEnv({
         home,
@@ -1174,7 +1185,7 @@ test("public countersign path: --ticket is unknown-option reject (exit 2)", asyn
         blockTurn: true,
       }),
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 2);
     assert.equal(result.admitted, undefined);
@@ -1185,7 +1196,7 @@ test("public countersign path: invalid attachment rejects before identity or run
   await withCountersignProject(async ({ home, project }) => {
     const runId = "01a0sign00-0000-7000-8000-000000000bad";
     let identityCalls = 0;
-    const result = await runPublicCountersign(
+    const result = await runPublicInstructionSeat(
       ["--attach", join(project, "missing.md"), "裁：附件无效。"],
       countersignPathEnv({
         home,
@@ -1197,7 +1208,7 @@ test("public countersign path: invalid attachment rejects before identity or run
         },
       }),
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
 
     assert.equal(result.exitCode, 2);
@@ -1218,7 +1229,7 @@ test("public countersign path: 起居郎 typed handoff binds ticket; dossier vol
     // Volume may pre-exist; binding still requires 起居郎 typed assertion (#771).
     ensureTicketProvenanceVolume(582, project, home);
     let turnTicket: number | undefined;
-    const result = await runPublicCountersign(
+    const result = await runPublicInstructionSeat(
       ["裁：继续审票 #582 是否足以开工。"],
       countersignPathEnv({
         home,
@@ -1233,7 +1244,7 @@ test("public countersign path: 起居郎 typed handoff binds ticket; dossier vol
         },
       }),
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
@@ -1251,7 +1262,7 @@ test("public countersign path: 起居郎 typed handoff binds ticket; dossier vol
 test("public countersign path: no 起居郎 handoff stays unbound (真无票 face)", async () => {
   await withCountersignProject(async ({ home, project }) => {
     let turnTicket: number | undefined;
-    const result = await runPublicCountersign(
+    const result = await runPublicInstructionSeat(
       ["一般性程序问询，本庭无具体票号。"],
       countersignPathEnv({
         home,
@@ -1263,7 +1274,7 @@ test("public countersign path: no 起居郎 handoff stays unbound (真无票 fac
         },
       }),
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
@@ -1282,7 +1293,7 @@ test("public countersign path: summons text alone never mints a ticket without �
     // Book has #82; summons mentions #582 — code must not match either.
     ensureTicketProvenanceVolume(82, project, home);
     let turnTicket: number | undefined;
-    const result = await runPublicCountersign(
+    const result = await runPublicInstructionSeat(
       ["裁：票 #582 / 邻 #82 是否足以开工。"],
       countersignPathEnv({
         home,
@@ -1294,7 +1305,7 @@ test("public countersign path: summons text alone never mints a ticket without �
         },
       }),
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
@@ -1541,7 +1552,11 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     assert.deepEqual(result.terminal?.gate?.actualSeats, ["notary"]);
     await readFile(join(ticketRun, "session", "auditor-roles", "o01_notary.jsonl"), "utf8");
 
-    const resumed = await runAkRole(
+    // #987 Result 7: public re-summons without parentRunPath always mints a new
+    // countersign run (no ticketNumber same-ticket selection). Gate same-parent
+    // resume stays on parentRunPath; callers continue an old public run via
+    // explicit `ak-role resume <runId>`.
+    const reminted = await runAkRole(
       ["countersign", "--model", "test/caller-seat:high", "--project", project, "裁：继续复审 #582。"],
       {
         home,
@@ -1555,7 +1570,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
         io: captureIo().io,
       },
     );
-    assert.equal(resumed.exitCode, 0);
+    assert.equal(reminted.exitCode, 0);
 
     const unboundId = "01a0sign00-0000-7000-8000-00000000free";
     let unboundRunDirectory = "";
@@ -1695,13 +1710,19 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     for (const entry of await readdir(bookRoot)) {
       assert.equal(allowedBookEntries.has(entry), true, entry);
     }
+    const countersignLeaves = [
+      ...(await readdir(join(bookRoot, "582", "runs"))),
+      ...(await readdir(join(bookRoot, "unbound", "runs"))),
+    ]
+      .filter((entry) => entry.endsWith("@countersign"))
+      .sort();
     assert.deepEqual(
+      countersignLeaves,
       [
-        ...(await readdir(join(bookRoot, "582", "runs"))),
-        ...(await readdir(join(bookRoot, "unbound", "runs"))),
-      ].filter((entry) => entry.endsWith("@countersign")),
-      [`${result.terminal!.runId}@countersign`],
-      "same-ticket resume must not materialize a provisional run in any run partition",
+        `${result.terminal!.runId}@countersign`,
+        "01a0sign00-0000-7000-8000-000000000d46@countersign",
+      ].sort(),
+      "public re-summons without parentRunPath mint a second countersign run under the typed ticket",
     );
   });
 });
@@ -1724,7 +1745,7 @@ test("public countersign path: identity-time source mutation cannot change the a
       },
     });
 
-    const result = await runPublicCountersign(
+    const result = await runPublicInstructionSeat(
       ["--attach", source, "裁：继续审票 #582。"],
       {
         home,
@@ -1740,7 +1761,7 @@ test("public countersign path: identity-time source mutation cannot change the a
         host: "pi",
       },
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
 
     assert.equal(result.exitCode, 0);
@@ -1784,7 +1805,7 @@ test("A2: exhausted court diarist station is not re-run by parent auto-resume", 
       },
     });
     const { io } = captureIo();
-    const result = await runPublicCountersign(
+    const result = await runPublicInstructionSeat(
       ["裁：继续审票 #582 是否足以开工。"],
       {
         home,
@@ -1800,7 +1821,7 @@ test("A2: exhausted court diarist station is not re-run by parent auto-resume", 
         host: "pi",
       },
       io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 1);
     assert.equal(parentTurns, 0, "parent body must not run after the station child exhausts");
@@ -1819,7 +1840,7 @@ test("beforeDispatch ticket-bind failure uses parent call-local auto-resume", as
     let bindAttempts = 0;
     let parentTurns = 0;
     const { io, stdout, stderr } = captureIo();
-    const result = await runPublicCountersign(
+    const result = await runPublicInstructionSeat(
       ["裁：继续审票 #582 是否足以开工。"],
       {
         ...countersignPathEnv({
@@ -1839,7 +1860,7 @@ test("beforeDispatch ticket-bind failure uses parent call-local auto-resume", as
         }),
       },
       io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0, stderr.join("") || stdout.join(""));
     assert.equal(bindAttempts, 2, "parent must retry its own beforeDispatch bind");
@@ -1849,14 +1870,14 @@ test("beforeDispatch ticket-bind failure uses parent call-local auto-resume", as
   });
 });
 
-test("public countersign path: same-ticket re-summons resumes prior run via typed 起居郎 key", async () => {
+test("public countersign path: typed ticket mints a new run; explicit resume continues the named run", async () => {
   await withCountersignProject(async ({ home, project }) => {
-    // ADR 0079: 给事中同票再传召 = resume 该席上一次 run，不新起 run.
-    // Lookup key is 起居郎's typed assertion only (#771).
+    // #505 / #987: public entry without a caller runId mints under the typed
+    // ticket. It does not resume by ticket number. Explicit resume takes the
+    // package runId.
     ensureTicketProvenanceVolume(582, project, home);
 
     const seen: Array<{ runId: string; kind: string }> = [];
-    let sourceToDeleteDuringIdentity: string | undefined;
     const parentSeal = { countersignStatus: "converged" as const, note: "署" };
     const baseHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
@@ -1864,11 +1885,6 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
       piRunner: async (args, options) => {
         const role = argvFlagValue(args, "--ak-role");
         if (role === "diarist") {
-          if (sourceToDeleteDuringIdentity !== undefined) {
-            const source = sourceToDeleteDuringIdentity;
-            sourceToDeleteDuringIdentity = undefined;
-            await rm(source);
-          }
           return courtPipelinePiRunner(582)(args, options);
         }
         return courtPipelinePiRunner(582, parentSeal)(args, options);
@@ -1898,14 +1914,14 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
       hostAdapters: [adapter("pi", host)],
     };
 
-    const first = await runPublicCountersign(
+    const first = await runPublicInstructionSeat(
       ["裁：继续审票 #582 是否足以开工。"],
       {
         ...envBase,
         createRunId: () => "01a0sign00-0000-7000-8000-00000000s001",
       },
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(first.exitCode, 0);
     assert.equal(first.admitted?.ticketNumber, 582);
@@ -1914,63 +1930,65 @@ test("public countersign path: same-ticket re-summons resumes prior run via type
     assert.equal(seen[0]!.kind, "initial");
     assert.equal(seen[0]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
 
-    // createRunId would mint s002 if auto-resume were skipped — must not fire.
-    // The accepted attachment snapshot must survive source deletion by identity.
     const secondAttachment = join(project, "second-court.md");
     await writeFile(secondAttachment, "second court snapshot", "utf8");
-    sourceToDeleteDuringIdentity = secondAttachment;
-    const second = await runPublicCountersign(
+    const second = await runPublicInstructionSeat(
       ["--attach", secondAttachment, "裁：#582 二轮再审。"],
       {
         ...envBase,
         createRunId: () => "01a0sign00-0000-7000-8000-00000000s002",
       },
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(second.exitCode, 0);
     assert.equal(
       second.admitted?.runId,
-      "01a0sign00-0000-7000-8000-00000000s001",
-      "same-ticket re-summons must resume prior run via typed key, not mint s002",
+      "01a0sign00-0000-7000-8000-00000000s002",
+      "public re-summons without runId must mint a new run",
     );
     assert.equal(second.admitted?.ticketNumber, 582);
-    assert.notEqual(
-      second.admitted?.runId,
-      "01a0sign00-0000-7000-8000-00000000s002",
+    assert.ok(
+      second.admitted?.runDirectory.includes(`${sep}582${sep}runs${sep}`),
+      second.admitted?.runDirectory,
     );
-    // A dispatched body turn on re-summons must be resume on the prior run.
     assert.equal(seen.length, 2);
-    assert.equal(seen[1]!.kind, "resume");
-    assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s001");
-    const retainedAttachmentEntries = await readdir(
-      join(first.admitted!.runDirectory, "attachments"),
+    assert.equal(seen[1]!.kind, "initial");
+    assert.equal(seen[1]!.runId, "01a0sign00-0000-7000-8000-00000000s002");
+    const secondAttachments = await readdir(
+      join(second.admitted!.runDirectory, "attachments"),
       { recursive: true },
     );
-    const secondSnapshot = retainedAttachmentEntries.find((entry) =>
-      entry.endsWith("00-second-court.md"),
+    assert.ok(
+      secondAttachments.some((entry) => entry.endsWith("00-second-court.md")),
+      "new mint owns its own attachment snapshot",
     );
-    assert.ok(secondSnapshot);
+    const firstAttachments = await readdir(
+      join(first.admitted!.runDirectory, "attachments"),
+      { recursive: true },
+    ).catch(() => [] as string[]);
     assert.equal(
-      await readFile(join(first.admitted!.runDirectory, "attachments", secondSnapshot), "utf8"),
-      "second court snapshot",
+      firstAttachments.some((entry) => entry.endsWith("00-second-court.md")),
+      false,
+      "public re-summons must not freeze new attachments into the prior run",
     );
 
-    // Third summons must continue selecting s001 without materializing s002/s003.
-    const third = await runPublicCountersign(
-      ["裁：#582 三轮再审。"],
+    const third = await runPublicInstructionSeatResume(
       {
-        ...envBase,
-        createRunId: () => "01a0sign00-0000-7000-8000-00000000s003",
+        runId: "01a0sign00-0000-7000-8000-00000000s001",
+        summons: {
+          instruction: "裁：#582 显式 resume 再审。",
+          instructionEmpty: false,
+        },
       },
+      envBase,
       captureIo().io,
-      parseCountersignArgv,
     );
     assert.equal(third.exitCode, 0);
     assert.equal(
       third.admitted?.runId,
       "01a0sign00-0000-7000-8000-00000000s001",
-      "third same-ticket summons must skip provisional runs that never formed a principal",
+      "explicit resume continues the named package runId",
     );
     assert.equal(seen.length, 3);
     assert.equal(seen[2]!.kind, "resume");
@@ -1986,7 +2004,7 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
       // 起居郎 LLM: true-unbound (null) — not a mechanical skip.
       piRunner: courtPipelinePiRunner(null),
     });
-    const result = await runPublicCountersign(
+    const result = await runPublicInstructionSeat(
       ["一般性程序问询，本庭无具体票号。"],
       {
         home,
@@ -2000,7 +2018,7 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
         createRunId: () => "01a0sign00-0000-7000-8000-000000000d46",
       },
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
@@ -2019,9 +2037,11 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
 
 /**
  * #871 sole tracer: typed co-review set on the real countersign entry.
- * Parent {100,101,102} → resume keeps set → new summons replaces with {100,101,103}.
- * Single-ticket + true-unbound are the same line's minimal boundaries.
- * Asserts typed identities / call counts / readable records only — never prose.
+ * Parent {100,101,102} → explicit resume keeps set → public re-summons mints
+ * new with {100,101,103} (#987: set replace rides a new mint; keep rides
+ * explicit resume). Single-ticket + true-unbound are the same line's minimal
+ * boundaries. Asserts typed identities / call counts / readable records only —
+ * never prose.
  */
 test("public countersign path: #871 typed co-review set refresh, resume keep, replace, single and unbound", async () => {
   await withCountersignProject(async ({ home, project }) => {
@@ -2044,9 +2064,10 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     type Phase = "first" | "resumeKeep" | "replace" | "single" | "unbound";
     let phase: Phase = "first";
     const boundRefreshTickets: number[] = [];
+    const countersignPrompts: string[] = [];
     let countersignBodyTurns = 0;
 
-    const host = roleTurnHostFromLegacyPiRunner({
+    const baseHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
       piRunner: async (args, options) => {
@@ -2086,6 +2107,14 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
         return courtPipelinePiRunner(parent)(args, options);
       },
     });
+    const host: RoleTurnHost = {
+      executeTurn: async (request) => {
+        if (request.activation.role === "countersign") {
+          countersignPrompts.push(request.continuation.prompt);
+        }
+        return await baseHost.executeTurn(request);
+      },
+    };
 
     const envBase = {
       home,
@@ -2112,18 +2141,18 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     phase = "first";
     boundRefreshTickets.length = 0;
     countersignBodyTurns = 0;
-    const first = await runPublicCountersign(
+    const first = await runPublicInstructionSeat(
       ["裁：父子一庭合审 #100 与子票。"],
       {
         ...envBase,
         createRunId: () => "01a0sign00-0000-7000-8000-00000000871a",
       },
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(first.exitCode, 0);
     assert.equal(first.admitted?.ticketNumber, parent);
-    assert.deepEqual(first.admitted?.courtTicketNumbers, [parent, childA, childB]);
+    assert.deepEqual(admittedCountersign(first.admitted).courtTicketNumbers, [parent, childA, childB]);
     assert.equal(countersignBodyTurns, 1, "countersign body runs once per court");
     assert.deepEqual(
       boundRefreshTickets,
@@ -2135,47 +2164,60 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     await assertReadableSubject(childB);
     const firstRunId = first.admitted!.runId;
 
-    // --- same-ticket resume, no new set: keep {parent,A,B} ---
+    // --- #987 explicit resume, no new set: keep {parent,A,B} ---
     phase = "resumeKeep";
     boundRefreshTickets.length = 0;
     countersignBodyTurns = 0;
-    const resumed = await runPublicCountersign(
-      ["裁：#100 二轮再审，集合不变。"],
+    const resumed = await runPublicInstructionSeatResume(
+      {
+        runId: firstRunId,
+        summons: {
+          instruction: "裁：#100 二轮再审，集合不变。",
+          instructionEmpty: false,
+        },
+      },
       {
         ...envBase,
-        createRunId: () => "01a0sign00-0000-7000-8000-00000000871b",
+        runCourtDiaristStation: async () => {
+          throw new Error("refresh unavailable");
+        },
       },
       captureIo().io,
-      parseCountersignArgv,
     );
     assert.equal(resumed.exitCode, 0);
-    assert.equal(resumed.admitted?.runId, firstRunId, "same-ticket resume keeps principal run");
+    assert.equal(resumed.admitted?.runId, firstRunId, "explicit resume keeps principal run");
     assert.equal(resumed.admitted?.ticketNumber, parent);
-    assert.deepEqual(resumed.admitted?.courtTicketNumbers, [parent, childA, childB]);
+    assert.deepEqual(admittedCountersign(resumed.admitted).courtTicketNumbers, [parent, childA, childB]);
     assert.equal(countersignBodyTurns, 1);
-    assert.deepEqual(
-      boundRefreshTickets,
-      [parent, childA, childB],
-      "resume without new set still refreshes stored set",
+    assert.equal(countersignPrompts.at(-1), "裁：#100 二轮再审，集合不变。");
+    assert.equal(
+      boundRefreshTickets.length,
+      0,
+      "explicit resume must dispatch without a diarist refresh precondition",
     );
 
-    // --- new summons replaces whole set with {parent,A,C}; B not refreshed ---
+    // --- #987 public re-summons mints new with set {parent,A,C}; B not refreshed ---
     phase = "replace";
     boundRefreshTickets.length = 0;
     countersignBodyTurns = 0;
-    const replaced = await runPublicCountersign(
+    const replaced = await runPublicInstructionSeat(
       ["裁：#100 三轮，子票集合改为 A+C。"],
       {
         ...envBase,
         createRunId: () => "01a0sign00-0000-7000-8000-00000000871c",
       },
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(replaced.exitCode, 0);
-    assert.equal(replaced.admitted?.runId, firstRunId);
+    assert.notEqual(
+      replaced.admitted?.runId,
+      firstRunId,
+      "set replace rides a new mint (no public ticketNumber resume)",
+    );
+    assert.equal(replaced.admitted?.runId, "01a0sign00-0000-7000-8000-00000000871c");
     assert.equal(replaced.admitted?.ticketNumber, parent);
-    assert.deepEqual(replaced.admitted?.courtTicketNumbers, [parent, childA, childC]);
+    assert.deepEqual(admittedCountersign(replaced.admitted).courtTicketNumbers, [parent, childA, childC]);
     assert.equal(countersignBodyTurns, 1);
     assert.deepEqual(
       boundRefreshTickets,
@@ -2191,20 +2233,18 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     phase = "single";
     boundRefreshTickets.length = 0;
     countersignBodyTurns = 0;
-    const single = await runPublicCountersign(
+    const single = await runPublicInstructionSeat(
       ["裁：单票 #100 开新庭。"],
       {
         ...envBase,
-        // Explicit fresh summons so we mint a new run rather than resume #100.
-        freshSummons: true as const,
         createRunId: () => "01a0sign00-0000-7000-8000-00000000871d",
       },
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(single.exitCode, 0);
     assert.equal(single.admitted?.ticketNumber, parent);
-    assert.deepEqual(single.admitted?.courtTicketNumbers, [parent]);
+    assert.deepEqual(admittedCountersign(single.admitted).courtTicketNumbers, [parent]);
     assert.equal(countersignBodyTurns, 1);
     assert.deepEqual(boundRefreshTickets, [parent]);
     await assertReadableSubject(parent);
@@ -2217,19 +2257,18 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
       parent: (await readTicketProvenance(parent, project, home)).lines.length,
       a: (await readTicketProvenance(childA, project, home)).lines.length,
     };
-    const unbound = await runPublicCountersign(
+    const unbound = await runPublicInstructionSeat(
       ["一般性程序问询，本庭无具体票号。"],
       {
         ...envBase,
-        freshSummons: true as const,
         createRunId: () => "01a0sign00-0000-7000-8000-00000000871e",
       },
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(unbound.exitCode, 0);
     assert.equal(unbound.admitted?.ticketNumber, undefined);
-    assert.equal(unbound.admitted?.courtTicketNumbers, undefined);
+    assert.equal(admittedCountersign(unbound.admitted).courtTicketNumbers, undefined);
     assert.equal(countersignBodyTurns, 1, "true-unbound still runs countersign body");
     assert.deepEqual(boundRefreshTickets, [], "true-unbound must not bound-refresh any ticket");
     assert.equal(

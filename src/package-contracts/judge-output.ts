@@ -2,7 +2,6 @@
 
 
 export const JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
-export const JUDGE_ACCEPTED_TEXT = "大理寺回执已接受";
 
 export type JudgeClass = {
   name: string;

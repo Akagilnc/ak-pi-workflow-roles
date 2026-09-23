@@ -9,7 +9,6 @@ import { openToolObject } from "../open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
 
 export const GATEKEEPER_OUTPUT_TOOL_NAME = "ak_gatekeeper_output";
-export const GATEKEEPER_ACCEPTED_TEXT = "门下省决议已受理";
 
 /** Same open decision shape the province uses inside audit sessions. */
 export const gatekeeperDecisionSchema = openToolObject(

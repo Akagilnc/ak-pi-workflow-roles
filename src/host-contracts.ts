@@ -140,7 +140,16 @@ export type RoleTurnActivation =
 
 export type RoleTurnContinuation =
   | { readonly kind: "initial"; readonly prompt: string }
-  | { readonly kind: "resume"; readonly prompt: string };
+  | {
+      readonly kind: "resume";
+      readonly prompt: string;
+      /**
+       * Stored native host session/thread id for a public explicit resume.
+       * Absent on in-call auto-resume and in-gate retries; those still load
+       * through the host adapter. Never the package run id.
+       */
+      readonly hostSessionId?: string;
+    };
 
 /** Seat model consumed by the turn host (provider/model/thinking). */
 export type RoleTurnModelConfig = {
@@ -161,11 +170,6 @@ export type RoleTurnHostTransition = {
   readonly priorNativeKind: "pi-native" | "sitian";
   readonly priorNativePaths: readonly string[];
 };
-
-/** Gate review officers (台院 / 符宝郎 / 审刑院). Single authority for seat checks. */
-export function isOfficerReviewSeat(role: string): boolean {
-  return role === "notary" || role === "inspector" || role === "auditor";
-}
 
 /** One main-session turn request over the host-neutral execution seam. */
 export type RoleTurnRequest = {
@@ -528,3 +532,40 @@ export interface InstitutionalSessionHost {
   ): Promise<HostInstitutionalSessionHandle>;
 }
 
+/** Host-owned durable record session used by AK ledger placement. */
+export interface HostRecordSession {
+  getSessionFile(): string | undefined;
+  getSessionDir(): string;
+  getEntries(): readonly {
+    readonly type: string;
+    readonly customType?: string;
+    readonly data?: unknown;
+  }[];
+  getHeader(): { readonly type: string } | null;
+  isPersisted(): boolean;
+  setSessionFile(path: string): void;
+  appendCustomEntry(customType: string, data?: unknown): unknown;
+}
+
+/** Host session lifecycle seam; native selection stays inside its adapter. */
+export interface RecordSessionHost {
+  openRecordSession(options: {
+    readonly sessionFile: string;
+    readonly sessionDir: string;
+    readonly cwd: string;
+  }): HostRecordSession;
+  createRecordSession(options: {
+    readonly cwd: string;
+    readonly sessionDir: string;
+    readonly parentSession?: string;
+  }): HostRecordSession;
+  continueRecentRecordSession(options: {
+    readonly cwd: string;
+    readonly sessionDir: string;
+  }): {
+    readonly session: HostRecordSession;
+    /** Whether the host continued an existing session rather than falling back to a new one. */
+    readonly resumed: boolean;
+  };
+  inMemoryRecordSession(cwd: string): HostRecordSession;
+}

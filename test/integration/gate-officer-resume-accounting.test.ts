@@ -25,11 +25,11 @@ import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import type { AdmittedNotaryInvocation } from "../../src/public-cli/invocation.ts";
-import { parseNotaryArgv } from "../../src/public-cli/invocation.ts";
-import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
+import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
+import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   attachRecordedSubmissions,
-  trySettleNotaryTerminalResult,
+  trySettleAcceptedSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
@@ -293,7 +293,7 @@ test("#879 Nth officer turn receives Nth parent submission — not history array
       },
     };
 
-    const first = await runPublicNotary(
+    const first = await runPublicInstructionSeat(
       ["--source-run", sourceRunPath],
       {
         home,
@@ -306,7 +306,8 @@ test("#879 Nth officer turn receives Nth parent submission — not history array
         createRunId: () => "01a087900-0000-7000-8000-0000000n001",
       },
       captureIo().io,
-      parseNotaryArgv,
+      "notary",
+      (args) => parsePublicSeatArgv("notary", args),
     );
     assert.equal(first.exitCode, 0);
     assert.equal(prompts.length, 1);
@@ -402,7 +403,7 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
       },
     };
 
-    const settled = await trySettleNotaryTerminalResult(
+    const settled = await trySettleAcceptedSeatTerminalResult(
       admitted,
       piDurablePrincipalAuthority,
       { courtAttemptId: "court-2" },
@@ -420,7 +421,7 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
       assert.deepEqual(withHistory.roleOutcome.payloads, [second]);
     }
 
-    const emptyCourt = await trySettleNotaryTerminalResult(
+    const emptyCourt = await trySettleAcceptedSeatTerminalResult(
       admitted,
       piDurablePrincipalAuthority,
       { courtAttemptId: "court-never-sealed" },

@@ -25,20 +25,12 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { runPublicCoder } from "../../src/public-cli/coder-run.ts";
-import { runPublicCountersign } from "../../src/public-cli/countersign-run.ts";
+import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import { runPublicFixer } from "../../src/public-cli/fixer-run.ts";
 import {
   bindAdmittedTicketNumber,
-  parseCoderArgv,
-  parseCountersignArgv,
-  parseFixerArgv,
-  parseJudgeArgv,
-  parseNotaryArgv,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
-import { runPublicJudge } from "../../src/public-cli/judge-run.ts";
-import { runPublicNotary } from "../../src/public-cli/notary-run.ts";
 import { installGhFixture } from "../helpers/hermes-fixture.ts";
 import {
   CANONICAL_SOURCE_RUN_ID,
@@ -209,7 +201,7 @@ async function assertDurableUnbound(runDirectory: string): Promise<void> {
 
 test("public coder binds its typed receipt assertion without parsing summons text", async () => {
   await withSeatProject(async ({ home, project }) => {
-    const result = await runPublicCoder(
+    const result = await runPublicInstructionSeat(
       ["apply", "Implement the fix for ticket #582."],
       baseEnv({
         home,
@@ -230,7 +222,8 @@ test("public coder binds its typed receipt assertion without parsing summons tex
         ],
       }),
       captureIo().io,
-      parseCoderArgv,
+      "coder",
+      (args) => parsePublicSeatArgv("coder", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
@@ -247,7 +240,7 @@ test("public coder binds its typed receipt assertion without parsing summons tex
 
 test("public fixer ignores a malformed ticket assertion without rejecting its receipt", async () => {
   await withSeatProject(async ({ home, project }) => {
-    const result = await runPublicFixer(
+    const result = await runPublicInstructionSeat(
       ["apply", "Repair the regression on ticket #582."],
       baseEnv({
         home,
@@ -258,7 +251,8 @@ test("public fixer ignores a malformed ticket assertion without rejecting its re
         details: { status: "completed", report: "repaired", ticketNumber: "582", classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }] },
       }),
       captureIo().io,
-      parseFixerArgv,
+      "fixer",
+      (args) => parsePublicSeatArgv("fixer", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
@@ -268,7 +262,7 @@ test("public fixer ignores a malformed ticket assertion without rejecting its re
 
 test("public judge without --ticket: no mechanical bind from summons text", async () => {
   await withSeatProject(async ({ home, project }) => {
-    const result = await runPublicJudge(
+    const result = await runPublicInstructionSeat(
       ["Adjudicate whether ticket #582 may proceed."],
       baseEnv({
         home,
@@ -279,7 +273,8 @@ test("public judge without --ticket: no mechanical bind from summons text", asyn
         details: { judgeStatus: "converged" },
       }),
       captureIo().io,
-      parseJudgeArgv,
+      "judge",
+      (args) => parsePublicSeatArgv("judge", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
@@ -289,7 +284,7 @@ test("public judge without --ticket: no mechanical bind from summons text", asyn
 
 test("public countersign without --ticket: binds only via 起居郎 typed handoff", async () => {
   await withSeatProject(async ({ home, project }) => {
-    const result = await runPublicCountersign(
+    const result = await runPublicInstructionSeat(
       ["裁：继续审票 #582 是否足以开工。"],
       baseEnv({
         home,
@@ -307,7 +302,7 @@ test("public countersign without --ticket: binds only via 起居郎 typed handof
         },
       }),
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
@@ -319,7 +314,7 @@ test("public countersign without --ticket: binds only via 起居郎 typed handof
 
 test("countersign and notary reject --ticket as unknown option (exit 2)", async () => {
   assert.throws(
-    () => parseCountersignArgv(["--ticket", "582", "裁"]),
+    () => parsePublicSeatArgv("countersign", ["--ticket", "582", "裁"]),
     (error: unknown) =>
       error instanceof CliUsageError &&
       /unknown countersign option: --ticket/.test(
@@ -328,7 +323,7 @@ test("countersign and notary reject --ticket as unknown option (exit 2)", async 
   );
   assert.throws(
     () =>
-      parseNotaryArgv([
+      parsePublicSeatArgv("notary", [
         "--source-run",
         "01a034f1-75bf-71a6-bcf5-d1299145b1a5@judge",
         "--ticket",
@@ -345,7 +340,7 @@ test("countersign and notary reject --ticket as unknown option (exit 2)", async 
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const countersign = await runPublicCountersign(
+    const countersign = await runPublicInstructionSeat(
       ["--ticket", "582", "裁"],
       {
         home,
@@ -362,7 +357,7 @@ test("countersign and notary reject --ticket as unknown option (exit 2)", async 
         createRunId: () => "01a063500-0000-7000-8000-00000000rej1",
       },
       captureIo().io,
-      parseCountersignArgv,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
     assert.equal(countersign.exitCode, 2);
     assert.equal(countersign.admitted, undefined);
@@ -385,7 +380,7 @@ test("notary keeps its bound source-run ticket over a different receipt assertio
       "utf8",
     );
 
-    const result = await runPublicNotary(
+    const result = await runPublicInstructionSeat(
       ["--source-run", sourceRunPath],
       {
         home,
@@ -406,10 +401,15 @@ test("notary keeps its bound source-run ticket over a different receipt assertio
         createRunId: () => "01a063500-0000-7000-8000-0000000notary",
       },
       captureIo().io,
-      parseNotaryArgv,
+      "notary",
+      (args) => parsePublicSeatArgv("notary", args),
     );
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, 582);
+    assert.equal(result.admitted?.role, "notary");
+    if (result.admitted?.role === "notary") {
+      assert.equal(result.admitted.sourceRunPath, sourceRunPath);
+    }
     await assertDurableTicket(result.admitted!.runDirectory, 582);
   });
 });

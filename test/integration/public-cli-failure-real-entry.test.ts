@@ -527,14 +527,14 @@ test("production ExplicitInternalActivationError throw keeps provider cause and 
     });
   });
 });
-test("credential-boundary knownFailure keeps provider cause when runner omits it", async () => {
+test("credential catalog absence does not relabel an unrelated nonzero host exit", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
-    // Real production shape: default runner has no knownFailure field; public CLI
-    // owns credential presence and must not wash missing public-provider auth into activation.
+    // The catalog says the credential is absent, but this invocation provides no
+    // typed evidence that auth caused its nonzero exit.
     const result = await runAkRole(
       ["--model", "xai/grok-4:off", "judge", "--project", project, "empty auth"],
       {
@@ -572,16 +572,11 @@ test("credential-boundary knownFailure keeps provider cause when runner omits it
       result,
       stdout,
       stderr,
-      expectedCause: "provider",
-      identityName: "MissingProviderCredential",
-      identityCode: "xai",
+      expectedCause: "activation",
     });
-    // Typed credential-boundary identity + emission bounds (AC6).
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
-      assert.equal(terminal.roleOutcome.cause, "provider");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorName, "MissingProviderCredential");
-      assert.equal(terminal.roleOutcome.decisiveFacts.errorCode, "xai");
+      assert.notEqual(terminal.roleOutcome.decisiveFacts.errorName, "MissingProviderCredential");
       assert.equal(typeof terminal.roleOutcome.diagnostic, "string");
       assert.ok(terminal.roleOutcome.diagnostic.length > 0);
     }
@@ -590,22 +585,22 @@ test("credential-boundary knownFailure keeps provider cause when runner omits it
       identity?: { name?: string; code?: string | number };
       diagnostic: string;
     };
-    assert.equal(errorBody.cause, "provider");
-    assert.equal(errorBody.identity?.name, "MissingProviderCredential");
-    assert.equal(errorBody.identity?.code, "xai");
+    assert.equal(errorBody.cause, "activation");
+    assert.notEqual(errorBody.identity?.name, "MissingProviderCredential");
     assert.equal(typeof errorBody.diagnostic, "string");
     assert.ok(errorBody.diagnostic.length > 0);
     assert.ok(stderr[0]!.length > 0);
   });
 });
-test("default runner empty-auth retains provider cause, identity, and primary diagnostic", async () => {
+test("typed empty-auth host failure settles as MissingProviderCredential (#987)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
-    // No piRunner: production defaultExplicitInternalPiRunner subprocess.
-    // Empty auth.json + selected xai is the live counterexample from Judge apply.
+    // #987: pre-dispatch local auth checker deleted — host must be attempted;
+    // the host's per-invocation knownFailure supplies MissingProviderCredential.
+    let hostTurns = 0;
     const result = await runAkRole(
       ["--model", "xai/grok-4:off", "judge", "--project", project, "probe empty auth"],
       {
@@ -614,10 +609,30 @@ test("default runner empty-auth retains provider cause, identity, and primary di
         cwd: project,
         credentials: { "openai-codex": false, xai: false },
         createRunId: () => "run-default-empty-auth-001",
-        judgeTimeoutMs: 60_000,
         io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args) => {
+            hostTurns += 1;
+            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDir, { recursive: true });
+            await writeFile(join(sessionDir, "session.jsonl"), "", "utf8");
+            return {
+              code: 1,
+              stderr: "No API key found for the selected model.",
+              timedOut: false,
+              args: [...args],
+              knownFailure: {
+                cause: "provider",
+                identity: { name: "MissingProviderCredential", code: "xai" },
+              },
+            };
+          },
+        }),
       },
     );
+    assert.ok(hostTurns >= 1, `empty credentials must not pre-block host dispatch (hostTurns=${hostTurns})`);
     const { terminal, errorRef } = await assertPublicFailureSettlement({
       result,
       stdout,
@@ -626,7 +641,6 @@ test("default runner empty-auth retains provider cause, identity, and primary di
       identityName: "MissingProviderCredential",
       identityCode: "xai",
     });
-    // Typed credential channel + emission bounds (AC6) — not presentation prose.
     assert.equal(terminal.roleOutcome.kind, "failure");
     if (terminal.roleOutcome.kind === "failure") {
       assert.equal(terminal.roleOutcome.cause, "provider");

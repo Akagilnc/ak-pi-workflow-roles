@@ -18,7 +18,7 @@ import { execFileSync } from "node:child_process";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole, PUBLIC_ROLE_ARGV } from "../../src/public-cli/cli.ts";
-import { runPublicJudge } from "../../src/public-cli/judge-run.ts";
+import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import {
   loadPublicCliConfig,
   publicCliConfigPath,
@@ -60,8 +60,8 @@ test("#422 loop honors injected effective limit once (N=4 → 5 dispatches, coun
       autoResumeLimit:4,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
-      // Loop contract (#416): the dispatcher owns the per-round lease release.
-      dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
+      // #987: loop no longer supplies a lease; release only when present.
+      dispatch: async(_extraArgs,lease)=>{calls+=1;if(lease!==undefined)await lease.release();return{exitCode:1};},
     });
     assert.equal(calls,5);
     assert.equal(result.exitCode,1);
@@ -81,7 +81,7 @@ test("#422 loop with injected limit 0 disables auto resume (single dispatch)", a
       autoResumeLimit:0,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
-      dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
+      dispatch: async(_extraArgs,lease)=>{calls+=1;if(lease!==undefined)await lease.release();return{exitCode:1};},
     });
     assert.equal(calls,1);
     assert.equal(result.exitCode,1);
@@ -251,7 +251,7 @@ test("#422 loop entry rejects NaN/negative/fractional/Infinity limits loudly bef
           autoResumeLimit:bad,
           buildInitialPayload: ()=>["--initial"],
           buildResumePayload: ()=>["--resume"],
-          dispatch: async(_extraArgs,lease)=>{calls+=1;await lease.release();return{exitCode:1};},
+          dispatch: async(_extraArgs,lease)=>{calls+=1;if(lease!==undefined)await lease.release();return{exitCode:1};},
         }),
         /non-negative integer/,
         `expected loud rejection for ${String(bad)}`,
@@ -267,7 +267,7 @@ test("#422 NaN injected via role entry (judge) terminates the whole call loudly 
     const runId="422-nan-role-entry";let calls=0;
     const {io,stderr}=captureIo();
     await assert.rejects(
-      ()=>runPublicJudge(["--project",project,"auto"],{
+      ()=>runPublicInstructionSeat(["--project",project,"auto"],{
         home,
         principalAuthority: piDurablePrincipalAuthority,
         sessionAppender: appendPiSessionCustomEntry,
@@ -282,7 +282,7 @@ test("#422 NaN injected via role entry (judge) terminates the whole call loudly 
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async(args)=>{calls+=1;return{code:0,stderr:"",timedOut:false,args:[...args]};},
           }),
-      },io,PUBLIC_ROLE_ARGV.judge.parse),
+      },io,"judge",PUBLIC_ROLE_ARGV.judge.parse),
       (error:unknown)=>error instanceof Error &&
         /non-negative integer/.test(error.message) &&
         // NaN serializes as null in the diagnostic (JSON.stringify) — still loud, not silent.

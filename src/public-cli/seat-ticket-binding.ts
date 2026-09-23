@@ -1,15 +1,13 @@
 /**
- * Shared ticket identity seam for public court seats (#635 / #637 / #709 / #747 / #771).
+ * Shared same-parent resume seam for gate / officer seats (#635 / #637 / #747 / #987).
  *
- * ADR 0075（起居郎 LLM 自行认票）: the diarist LLM recognizes the
- * court target; recognized ticket → provenance, truly unbound → no provenance,
- * or escalate when it cannot recognize one. Code does not re-judge the ticket
- * (锚定宪法; owner 2026-09-08: 代码不准做判断). Other seats reuse a typed
- * identity already handed over (起居郎 assertion / source-run / already-bound
- * resume) — they do not re-recognize from instruction. No CLI --ticket, no
- * attachment frontmatter. #747: officer same-parent resume also lives here.
- *
- * This module owns same-ticket / same-parent resume only.
+ * Lookup key is parent run path only (#747 / #987 Result 7). Public seats no
+ * longer select a prior run by ticket number — callers use explicit
+ * `ak-role resume <runId>`. Officer and gate countersign same-parent re-summons
+ * keep this seam. Lookup/resume failures propagate (失败诚实) — never wash into
+ * a fresh mint. Returns undefined when the caller declared an explicit fresh
+ * summons (`ak-role new`) or when no prior run exists; both mint new.
+ * freshSummons is required so no seat can drift back into its own skip branch.
  */
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
@@ -19,20 +17,19 @@ import {
 } from "./run-lifecycle.ts";
 
 /**
- * Sole same-seat → resume decision (#637 / #724 / #747).
- * Officer seats (notary/inspector/auditor) look up by parent run path; countersign
- * / diarist keep ticket-number principal. When found, runs resume with this
- * summons' materials. Lookup/resume failures propagate (失败诚实) — never wash
- * into a fresh mint. Returns undefined when the caller declared an explicit
- * fresh summons (`ak-role new`) or when no prior run exists; both mint new.
- * freshSummons is required so no seat can drift back into its own skip branch.
+ * Sole same-seat → resume decision by parent run path (#637 / #724 / #747 / #987).
+ * A typed ticket number is a bind key, not a resume key. When a prior run is
+ * found, resume carries this summons' materials. Lookup/resume failures
+ * propagate (失败诚实) — never wash into a fresh mint. Returns undefined when
+ * the caller declared an explicit fresh summons (`ak-role new`), the parent
+ * path is blank, or no prior run exists; those mint new. freshSummons is
+ * required so no seat can drift back into its own skip branch.
  */
 export async function tryResumeSameTicketSeatRun<T>(input: {
   readonly home: string;
   readonly projectRoot: string;
   readonly role: RoleRunRecord["role"];
-  readonly ticketNumber?: number;
-  readonly parentRunPath?: string;
+  readonly parentRunPath: string;
   readonly freshSummons: true | undefined;
   readonly summons?: SameTicketSummonsMaterials;
   readonly resume: (
@@ -41,19 +38,12 @@ export async function tryResumeSameTicketSeatRun<T>(input: {
   ) => Promise<T>;
 }): Promise<T | undefined> {
   if (input.freshSummons === true) return undefined;
-  if (input.parentRunPath === undefined && input.ticketNumber === undefined) {
-    return undefined;
-  }
+  if (input.parentRunPath.trim() === "") return undefined;
   const previousRunId = await findLatestRunIdForSeatTicket({
     home: input.home,
     bookKey: resolveBookKeyFromGit(input.projectRoot),
     role: input.role,
-    ...(input.parentRunPath === undefined
-      ? {}
-      : { parentRunPath: input.parentRunPath }),
-    ...(input.ticketNumber === undefined
-      ? {}
-      : { ticketNumber: input.ticketNumber }),
+    parentRunPath: input.parentRunPath,
   });
   if (previousRunId === undefined) return undefined;
   return await input.resume(previousRunId, input.summons);

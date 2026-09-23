@@ -17,7 +17,6 @@ import {
 } from "./run-ticket-number.ts";
 
 export const DIARIST_OUTPUT_TOOL_NAME = "ak_diarist_output";
-export const DIARIST_ACCEPTED_TEXT = "起居郎回执已接受";
 
 export type DiaristOutput =
   | {

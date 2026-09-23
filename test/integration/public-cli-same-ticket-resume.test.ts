@@ -67,6 +67,7 @@ type SeenTurn = {
   model?: RoleTurnRequest["model"];
   sourceRun?: string;
   courtAttemptId?: string;
+  prompt: string;
 };
 
 function seedGitProject(root: string): void {
@@ -187,6 +188,7 @@ function observingSealHost(inner: RoleTurnHost, seen: SeenTurn[]): RoleTurnHost 
         runId: runIdFromDirectory(request.runDirectory),
         runDirectory: request.runDirectory,
         kind: request.continuation.kind,
+        prompt: request.continuation.prompt,
         ...(request.model === undefined ? {} : { model: request.model }),
         ...(sourceRun === undefined ? {} : { sourceRun }),
         ...(request.courtAttemptId === undefined
@@ -504,7 +506,7 @@ test("#637 public notary tracer: first seal → seat switch → second court no-
   }
 });
 
-test("#637 public inspector: freeze-once attachment identity survives a no-seal court and resume-with-message continues the open no-seal court", async () => {
+test("#637/#987 public inspector: resume continues open-court settlement without re-delivering attachments", async () => {
   await mkdir(WORKTREE_SCRATCH, { recursive: true });
   const home = await mkdtemp(join(WORKTREE_SCRATCH, "home-materials-"));
   {
@@ -708,7 +710,12 @@ test("#637 public inspector: freeze-once attachment identity survives a no-seal 
       "resume-with-message continues the still-open no-seal court",
     );
     assert.equal(seen[3]!.runDirectory, runDirectory);
-    assert.equal(resumed.exitCode, 0, "open-court resume on frozen materials must accept");
+    assert.equal(
+      seen[3]!.prompt,
+      "caller-resume-message",
+      "public resume forwards only the caller's message without old court attachments",
+    );
+    assert.equal(resumed.exitCode, 0, "open-court resume must accept");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
 
     // Reuse must not mint another summons freeze directory from the missing external path.
@@ -1045,7 +1052,11 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
   }
 });
 
-test("#637 held writer lease: re-summons must not record a new currentCourt", async () => {
+test("#987 same-ticket re-summons reaches host despite live writer lease", async () => {
+  // Same-ticket resume into the retained run shares public manual-resume
+  // orchestration (#987): package writer lease must not pre-block host CLI.
+  // Shared acquire still fails closed for other authorized writers (lease unit
+  // cases); auto-resume loop likewise has no pre-acquire gate.
   const scratch = await openNotaryScratch("home-lease-");
   let heldLease: Awaited<ReturnType<typeof acquireRunWriterLease>> | undefined;
   try {
@@ -1086,7 +1097,7 @@ test("#637 held writer lease: re-summons must not record a new currentCourt", as
     heldLease = await acquireRunWriterLease(runDirectory);
 
     // Same parent path so lookup resumes into the leased run (#747).
-    const blocked = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
+    const resumed = await runAkRole(["notary", "--source-run", `${CANONICAL_SOURCE_RUN_ID}@${CANONICAL_SOURCE_ROLE}`],
       {
         home,
         packageRoot,
@@ -1097,16 +1108,16 @@ test("#637 held writer lease: re-summons must not record a new currentCourt", as
         createRunId: () => "01a063700-0000-7000-8000-00000000n022",
       },
     );
-    assert.notEqual(blocked.exitCode, 0, "held lease must reject the re-summons");
+    assert.equal(resumed.exitCode, 0, "held lease must not pre-block same-ticket resume");
     assert.equal(
       seen.length,
-      1,
-      "held lease must not dispatch a second court turn",
+      2,
+      "same-ticket resume must reach the host despite live writer lease",
     );
     assert.equal(
-      await readCurrentCourt(runDirectory),
-      undefined,
-      "held-lease rejection must not persist a new currentCourt before acquire",
+      seen[1]!.runDirectory,
+      runDirectory,
+      "re-summons continues the retained seat run (ADR 0079)",
     );
   } finally {
     if (heldLease !== undefined) await heldLease.release();

@@ -8,7 +8,6 @@ import { openToolObject } from "../open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
 
 export const AUDITOR_OUTPUT_TOOL_NAME = "ak_auditor_output" as const;
-export const AUDITOR_ACCEPTED_TEXT = "审刑院回执已接受";
 
 export const auditorOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(

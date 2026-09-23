@@ -28,9 +28,11 @@ import type {
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { migrateBookTopology } from "../../src/book-topology-migration.ts";
 import { BOOK_TOPOLOGY_PARTITION_MIGRATORS } from "../../src/book-topology-partition-migrators.ts";
+import { BOOK_TOPOLOGY_MIXED_VOLUME_MIGRATORS } from "../../src/book-topology-mixed-volume-migrators.ts";
 import { relocateBoardBoundUnboundRunsInBooks } from "../../src/book-topology-runs-migrator.ts";
 import { findPlacedMigratingRun } from "../../src/book-topology-migration-placement.ts";
 import {
@@ -53,6 +55,42 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 const TICKET = 708;
+
+test("worker gate topology migration ignores the retired current-session pointer", async () => {
+  await withTempRoot("ak-book-topology-gate-", async (home) => {
+    const ledgerHome = join(home, ".ak-roles");
+    const sourceDir = join(
+      ledgerHome,
+      "books",
+      "demo-book",
+      "worker-submission-gate",
+    );
+    const volume = join(sourceDir, "gate-session.jsonl");
+    await mkdir(sourceDir, { recursive: true });
+    await writeFile(volume, `${JSON.stringify({ type: "session" })}\n`, "utf8");
+    await writeFile(
+      join(sourceDir, "current-session.json"),
+      `${JSON.stringify({ sessionFile: volume })}\n`,
+      "utf8",
+    );
+
+    const report = await migrateBookTopology({
+      ledgerHome,
+      migrators: BOOK_TOPOLOGY_MIXED_VOLUME_MIGRATORS,
+      env: {},
+      now: new Date("2026-09-22T00:00:00.000Z"),
+    });
+
+    const destination = join(
+      report.booksDirectory,
+      "demo-book",
+      "unbound",
+      "worker-submission-gate",
+    );
+    assert.equal(existsSync(join(destination, "gate-session.jsonl")), true);
+    assert.equal(existsSync(join(destination, "current-session.json")), false);
+  });
+});
 
 const immutablePrincipalAuthority: DurablePrincipalAuthority = {
   issue(request) {
@@ -117,7 +155,12 @@ function diaristEnvelopeRunner(
     const sessionDir = join(runDir, "session");
     const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
-    await writeFile(sessionFile, "");
+    // Resume turns share the same ticket-run session. Do not truncate prior
+    // run-owned records (ak_run_attempt_history) that settlement already appended.
+    const sessionAlreadyPresent = existsSync(sessionFile);
+    if (!sessionAlreadyPresent) {
+      await writeFile(sessionFile, "");
+    }
     const runtime = createDiaristRoleRuntime(host, {
       loadSoul: async () => "起居郎职分（测试装载）",
     });
@@ -170,6 +213,7 @@ function diaristEnvelopeRunner(
       role: "diarist",
       toolName: DIARIST_OUTPUT_TOOL_NAME,
       details: accepted.details,
+      sessionWriteMode: sessionAlreadyPresent ? "append" : "replace",
     })(args, options);
   };
 }
@@ -2335,24 +2379,45 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
 
 /**
  * Host turn already started + board ticket already written by the accept hook,
- * then the turn fails: failure stays honest and the run still relocates under the
- * ticket before lease release (shared afterDispatch once-only finish).
+ * then the turn fails: the run relocates under the ticket before auto-resume,
+ * whose next host request must use that current durable location.
  */
-test("ak-role diarist host-turn failure still relocates board-bound run", async () => {
+test("ak-role diarist auto-resume uses the relocated board-bound run", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    // Temp-home config only — never the real seat table. Zero resume budget so
-    // this tracer stays on the post-turn relocate seam.
+    // Temp-home config only — never the real seat table. One retry crosses the
+    // post-turn relocate seam in the same public invocation.
     await mkdir(join(home, ".ak-roles"), { recursive: true });
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ autoResumeLimit: 0 }, null, 2)}\n`,
+      `${JSON.stringify({ autoResumeLimit: 1 }, null, 2)}\n`,
     );
 
     const runId = "01a0diar00-0000-7000-8000-000000000003";
     const { io } = captureIo();
+    const submitted = {
+      status: "completed",
+      ticketNumber: TICKET,
+      sessions: [],
+    };
+    const failAfterBind = diaristEnvelopeRunner(submitted, {
+      afterAdmit: "throw",
+    });
+    const completeAfterResume = diaristEnvelopeRunner(submitted);
+    let hostTurns = 0;
+    const hostRunDirectories: string[] = [];
+    const roleTurnHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: immutablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        hostTurns += 1;
+        return hostTurns === 1
+          ? failAfterBind(args, options)
+          : completeAfterResume(args, options);
+      },
+    });
 
     const result = await runAkRole(
       [
@@ -2370,23 +2435,14 @@ test("ak-role diarist host-turn failure still relocates board-bound run", async 
         io,
         createRunId: () => runId,
         principalAuthority: immutablePrincipalAuthority,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: immutablePrincipalAuthority,
-          piRunner: diaristEnvelopeRunner(
-            {
-              status: "completed",
-              ticketNumber: TICKET,
-              sessions: [],
-            },
-            { afterAdmit: "throw" },
-          ),
-        }),
+        roleTurnHost: {
+          executeTurn: async (request) => {
+            hostRunDirectories.push(request.runDirectory);
+            return roleTurnHost.executeTurn(request);
+          },
+        },
       },
     );
-
-    assert.notEqual(result.exitCode, 0, "host failure must stay non-zero");
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
 
     const bookKey = resolveBookKeyFromGit(project);
     const ticketPlacement = roleRunPlacement(
@@ -2407,6 +2463,12 @@ test("ak-role diarist host-turn failure still relocates board-bound run", async 
         role: "diarist",
       },
     );
+    assert.deepEqual(hostRunDirectories, [
+      unboundPlacement.runDirectory,
+      ticketPlacement.runDirectory,
+    ]);
+    assert.equal(result.exitCode, 0, "auto-resume should recover the host turn");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(
       existsSync(join(ticketPlacement.runDirectory, "run-state.json")),
       true,
@@ -2417,5 +2479,46 @@ test("ak-role diarist host-turn failure still relocates board-bound run", async 
       false,
       "unbound must not keep the durable run-state after relocate",
     );
+
+    // Fixture fidelity: same ticket-run session keeps first failure history and
+    // appends the accepted resume. Assert structured ak_run_attempt_history only.
+    const relocatedSessionFile = join(
+      ticketPlacement.runDirectory,
+      "session",
+      "session.jsonl",
+    );
+    const attemptHistory = (await readFile(relocatedSessionFile, "utf8"))
+      .split("\n")
+      .filter((line) => line.trim() !== "")
+      .map((line) => JSON.parse(line) as {
+        type?: string;
+        customType?: string;
+        data?: {
+          sequence?: number;
+          role?: string;
+          runId?: string;
+          outcome?: { kind?: string; diagnostic?: string };
+        };
+      })
+      .filter(
+        (row) =>
+          row.type === "custom" &&
+          row.customType === ATTEMPT_HISTORY_ENTRY_TYPE,
+      );
+    assert.equal(attemptHistory.length, 2);
+    assert.equal(attemptHistory[0]?.data?.sequence, 1);
+    assert.equal(attemptHistory[0]?.data?.outcome?.kind, "failure");
+    // Diagnostic is free text: assert non-empty presence only (ticket AC4 / quality-law).
+    assert.equal(typeof attemptHistory[0]?.data?.outcome?.diagnostic, "string");
+    assert.ok(
+      (attemptHistory[0]?.data?.outcome?.diagnostic as string).length > 0,
+    );
+    assert.equal(attemptHistory[0]?.data?.role, "diarist");
+    assert.equal(attemptHistory[0]?.data?.runId, runId);
+    assert.equal(attemptHistory[1]?.data?.sequence, 2);
+    assert.equal(attemptHistory[1]?.data?.outcome?.kind, "accepted");
+    assert.equal(attemptHistory[1]?.data?.role, "diarist");
+    assert.equal(attemptHistory[1]?.data?.runId, runId);
+    assert.match(ticketPlacement.runDirectory, new RegExp(`/${TICKET}/runs/`));
   });
 });

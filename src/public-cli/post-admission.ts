@@ -11,7 +11,6 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildAutoResumeContinuationPrompt,
-  buildResumeContinuationPrompt,
   RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
@@ -27,7 +26,7 @@ import {
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
-import { resolveHostAwareSessionAvailability } from "../session-identity.ts";
+import { readStoredHostSessionId, resolveHostAwareSessionAvailability } from "../session-identity.ts";
 import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
 import type {
@@ -40,7 +39,7 @@ import type {
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
-import { isOfficerReviewSeat } from "../host-contracts.ts";
+import { isOfficerReviewSeat } from "../packaged-role-registry.ts";
 import { deliverCaseDossierAsAttachment } from "./case-dossier-delivery.ts";
 
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
@@ -71,11 +70,6 @@ import {
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
-  missingCredentialPreDispatchFailure,
-  postRunMissingCredentialFailure,
-} from "./public-run-credentials.ts";
-import {
-  acquireRunWriterLease,
   clearCurrentCourt,
   clearTypedProviderHttpObservation,
   describeErrorIdentity,
@@ -83,11 +77,9 @@ import {
   readCurrentCourt,
   recordCurrentCourt,
   renderResumeCommand,
-  RunWriterLeaseHeldError,
   type CurrentCourtState,
   type RunWriterLease,
   type TypedProviderHttpObservation,
-  type WriterLeaseDiagnosticKind,
 } from "./run-lifecycle.ts";
 import {
   processCancelDiagnostic,
@@ -264,8 +256,8 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
   diagnostic: string,
   io: CliIo,
 ): Promise<void> {
-  io.stderr(formatCliDiagnostic(diagnostic));
   const payload = { diagnostic, recordedAt: new Date().toISOString() };
+  let retentionFailure: string | undefined;
   try {
     await env.sessionAppender(
       env.principalAuthority,
@@ -273,7 +265,6 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
       POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE,
       payload,
     );
-    return;
   } catch (appendError) {
     try {
       const artifactsDir = await ensureRealArtifactsDirectory(admitted.runDirectory);
@@ -283,12 +274,17 @@ async function recordBestEffortPostDispatchDiagnostic<A extends AdmittedRoleInvo
         { encoding: "utf8", flag: "wx" },
       );
     } catch (artifactError) {
-      io.stderr(
-        formatCliDiagnostic(
-          `post-dispatch diagnostic durable retention failed on both channels (best-effort continue): dossier=${describeErrorIdentity(appendError)}; artifact=${describeErrorIdentity(artifactError)}`,
-        ),
-      );
+      retentionFailure =
+        `post-dispatch diagnostic durable retention failed on both channels (best-effort continue): dossier=${describeErrorIdentity(appendError)}; artifact=${describeErrorIdentity(artifactError)}`;
     }
+  }
+  try {
+    io.stderr(formatCliDiagnostic(diagnostic));
+    if (retentionFailure !== undefined) {
+      io.stderr(formatCliDiagnostic(retentionFailure));
+    }
+  } catch {
+    // Presentation is best-effort beside an already-formed host terminal.
   }
 }
 
@@ -327,6 +323,11 @@ export type PostAdmissionEnv = {
    * and mint a new run. Absent on ordinary role commands and on `ak-role resume`.
    */
   freshSummons?: true;
+  /**
+   * Typed ticket already carried into this summons (parent board / 起居录).
+   * Admission places the run under it. Not a public CLI flag.
+   */
+  boundTicketNumber?: number;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
   /**
@@ -357,13 +358,14 @@ export type PostAdmissionAdapters<
     result: RoleTurnResult;
     sessionFile: string;
   }) => Promise<RoleTurnKnownFailure | undefined>;
-  beforeDispatch?: (admitted: A, lease: RunWriterLease) => Promise<void> | void;
+  beforeDispatch?: (admitted: A, lease?: RunWriterLease) => Promise<void> | void;
   /**
-   * After the host turn settles and before the writer lease is released.
-   * Post-turn bind/relocate (e.g. Diarist first assert) must run here so the
-   * held lease follows the run directory and failures stay controlled.
+   * After the host turn settles and before any held writer lease is released.
+   * Post-turn bind/relocate (e.g. Diarist first assert) must run here so a
+   * held lease (when present) follows the run directory and failures stay
+   * controlled. Public manual resume (#987) may omit the lease.
    */
-  afterDispatch?: (admitted: A, lease: RunWriterLease) => Promise<void> | void;
+  afterDispatch?: (admitted: A, lease?: RunWriterLease) => Promise<void> | void;
 };
 
 export type ControlledFailureInput = {
@@ -644,7 +646,8 @@ export async function dispatchPostAdmissionTurn<
   env: PostAdmissionEnv;
   io: CliIo;
   request: RoleTurnRequest;
-  lease: RunWriterLease;
+  /** Absent on public manual resume (#987): no package lease gate before host CLI resume. */
+  lease?: RunWriterLease;
   adapters: PostAdmissionAdapters<A, T>;
   effectiveEngine?: string;
   persistRunState?: boolean;
@@ -743,14 +746,11 @@ export async function dispatchPostAdmissionTurn<
       if (adapters.afterDispatch !== undefined) await adapters.afterDispatch(admitted, lease);
       return result;
     } catch (error) {
-      const primaryFailure =
-        result.terminal !== undefined
-        && !isLawfulTypedTerminalOutcome(result.terminal.roleOutcome);
-      if (primaryFailure) {
+      if (result.terminal !== undefined) {
         await recordBestEffortPostDispatchDiagnostic(
           admitted,
           env,
-          `afterDispatch failed beside primary terminal (best-effort continue): ${describeErrorIdentity(error)}`,
+          `afterDispatch failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
           io,
         );
         return result;
@@ -776,23 +776,8 @@ export async function dispatchPostAdmissionTurn<
     }
   };
   try {
-    const missingCredential = missingCredentialPreDispatchFailure(
-      env.model,
-      env.credentials,
-    );
-    if (missingCredential !== undefined) {
-      return {
-        ...(await presentControlledFailure(
-          admitted,
-          withEngineDetourInvocationScope(missingCredential, request.invocationScopeId),
-          adapters,
-          env.principalAuthority,
-          io,
-          persistRunState,
-        )) as { exitCode: number; admitted: A; terminal: T },
-        ...deferredPersist,
-      };
-    }
+    // #987: do not pre-block or classify host dispatch from AK credential
+    // catalog facts. Per-invocation runner/host evidence owns provider identity.
     // #617 DK-4: capture previous invocation host before markRunRunning overwrites it.
     // Single authority projectHostTransitionPriorNative classifies the prior native volume.
     // Same-run resume (#637) keeps host identity on the run's invocation page.
@@ -875,8 +860,13 @@ export async function dispatchPostAdmissionTurn<
     // (station-child and ordinary share one seam). Dialogue continuation stays
     // caller/peer opaque — never splice system path sections into user dialogue.
     // No package-resume parallel face or typed resume identity.
-    let turnRequest: RoleTurnRequest =
-      env.signal === undefined ? request : { ...request, signal: env.signal };
+    // #990: one-shot / auto-resume may freeze principal+runDirectory before
+    // relocate; always take durable identity from the live admitted object.
+    let turnRequest: RoleTurnRequest = {
+      ...(env.signal === undefined ? request : { ...request, signal: env.signal }),
+      principal: admitted.principal,
+      runDirectory: admitted.runDirectory,
+    };
     if (env.stationChild !== undefined) {
       turnRequest = { ...turnRequest, stationChild: env.stationChild };
     }
@@ -1032,15 +1022,10 @@ export async function dispatchPostAdmissionTurn<
         adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
           ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
           : result.knownFailure;
-      const credentialFailure = postRunMissingCredentialFailure(
-        result,
-        env.model,
-        env.credentials,
-      );
       resolution = await resolveAuditedRunnerFailureResolution({
         runner: runnerKnownFailure,
         sessionFile,
-        credential: credentialFailure,
+        credential: undefined,
         runDirectory: admitted.runDirectory,
       });
       // A direct, current signal from the host/runner itself (timeout / host
@@ -1061,7 +1046,6 @@ export async function dispatchPostAdmissionTurn<
         result.timedOut
         || result.knownFailure !== undefined
         || runnerKnownFailure !== undefined
-        || credentialFailure !== undefined
         || processCancelName !== undefined;
       hostSignalFailed =
         directHostFailureSignal
@@ -1123,15 +1107,12 @@ export async function dispatchPostAdmissionTurn<
             // Settlement already sealed accepted — a cleanup failure here must
             // not erase that fact or make the caller replay this court's
             // summons over already-delivered work (#840 已交劳动只整理终局不重做).
-            // A later bare resume self-heals: buildRequestAfterLease finds the
-            // open court already sealed and clears it then (documented
-            // continue-under-failure contract, not a swallow — 失败诚实宪法 真因
-            // 必须落痕) — durably, since every auto-resume attempt's io here is
-            // dummyIo (#840 r9 判词 class 1).
+            // Preserve the cleanup failure as a post-dispatch diagnostic; the
+            // accepted settlement remains authoritative (#840 r9 判词 class 1).
             await recordBestEffortPostDispatchDiagnostic(
               admitted,
               env,
-              `current-court cleanup failed after accepted settlement (best-effort continue, self-heals on next resume): ${describeErrorIdentity(error)}`,
+              `current-court cleanup failed after accepted settlement (best-effort continue): ${describeErrorIdentity(error)}`,
               io,
             );
           }
@@ -1184,35 +1165,11 @@ export async function dispatchPostAdmissionTurn<
         try {
           await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
         } catch (error) {
-          // #836: `settledOutcome.terminal` already carries recorded
-          // submissions (attachRecordedSubmissions above). A real run-state
-          // persistence failure here must surface loudly through the same
-          // controlled-failure seam every other dispatch-time failure in
-          // this function uses (ADR 0080: one settlement disposition owner)
-          // — not escape uncaught to auto-resume's dispatch-retry path,
-          // whose exhausted-budget terminal carries no recorded submissions
-          // at all. skipRunStateWrite: the write that just threw is the same
-          // write presentControlledFailure would otherwise retry — don't
-          // call a known-failing operation twice.
-          const failed = await settleAfterTurnStarted(
-          admitted,
-          withEngineDetourInvocationScope({
-              timedOut: false,
-              code: null,
-              stderr: "",
-              thrown: error,
-              skipRunStateWrite: true,
-            }, request.invocationScopeId),
-            adapters,
-            env.principalAuthority,
+          await recordBestEffortPostDispatchDiagnostic(
+            admitted,
+            env,
+            `run-state persistence failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
             io,
-            persistRunState,
-          );
-          return await finishAfterTurn(
-            withProcessCancelSkipAutoResume(
-              { ...failed, turnDispatched: true as const, ...deferredPersist },
-              env.signal,
-            ),
           );
         }
       }
@@ -1313,30 +1270,11 @@ export async function dispatchPostAdmissionTurn<
       try {
         await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
       } catch (error) {
-        // #836: same run-state persistence hazard as the settled/accepted
-        // branch above — route through the shared controlled-failure seam so
-        // the real failure surfaces loudly instead of escaping uncaught to
-        // auto-resume's dispatch-retry path with no recorded submissions.
-        // skipRunStateWrite: don't retry the write that just threw.
-        const failed = await settleAfterTurnStarted(
+        await recordBestEffortPostDispatchDiagnostic(
           admitted,
-          withEngineDetourInvocationScope({
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-            skipRunStateWrite: true,
-          }, request.invocationScopeId),
-          adapters,
-          env.principalAuthority,
+          env,
+          `run-state persistence failed beside host terminal (best-effort continue): ${describeErrorIdentity(error)}`,
           io,
-          persistRunState,
-        );
-        return await finishAfterTurn(
-          withProcessCancelSkipAutoResume(
-            { ...failed, turnDispatched: true as const, ...deferredPersist },
-            env.signal,
-          ),
         );
       }
     }
@@ -1349,20 +1287,23 @@ export async function dispatchPostAdmissionTurn<
       ...deferredPersist,
     });
   } finally {
-    try {
-      await lease.release();
-    } catch (error) {
-      // lease.release() is documented best-effort and never rejects in the
-      // production acquireRunWriterLease implementation (createWriterLease
-      // reports cleanup failures via callback, never throws) — this guard is
-      // structural only: an uncaught throw from a finally block silently
-      // replaces whatever the try already returned, including a properly
-      // tagged turnDispatched:true result (#840 r9 判词 class 1 boundary).
-      io.stderr(
-        formatCliDiagnostic(
-          `writer lease release failed unexpectedly (best-effort continue): ${describeErrorIdentity(error)}`,
-        ),
-      );
+    // Public manual resume (#987) holds no package writer lease.
+    if (lease !== undefined) {
+      try {
+        await lease.release();
+      } catch (error) {
+        // lease.release() is documented best-effort and never rejects in the
+        // production acquireRunWriterLease implementation (createWriterLease
+        // reports cleanup failures via callback, never throws) — this guard is
+        // structural only: an uncaught throw from a finally block silently
+        // replaces whatever the try already returned, including a properly
+        // tagged turnDispatched:true result (#840 r9 判词 class 1 boundary).
+        io.stderr(
+          formatCliDiagnostic(
+            `writer lease release failed unexpectedly (best-effort continue): ${describeErrorIdentity(error)}`,
+          ),
+        );
+      }
     }
   }
 }
@@ -1370,8 +1311,7 @@ export async function dispatchPostAdmissionTurn<
 /**
  * Shared resume continuation projection (#471 / #600 / #633 / #637 / #755 / #879):
  * seat-table model/engine/timeout axes, restored correlation, and either
- * - manual resume (no same-ticket summons): package envelope / optional caller
- *   message, with engine-axis handbook via buildResumeContinuationPrompt, or
+ * - manual resume (no same-ticket summons): caller message bytes, or
  * - same-ticket summons (审核循环续话): caller/peer words + optional frozen
  *   attachment paths only — no「请重读」、no code-authored content substitute,
  *   no engine handbook packaging (#750/#755/#879).
@@ -1411,12 +1351,7 @@ export function resumeTurnRequestProjectionOptions(
       // #755: same-ticket summons without prepared materials — caller words only.
       prompt = request.message;
     } else {
-      // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
-      prompt = buildResumeContinuationPrompt({
-        packageRoot: env.packageRoot,
-        ...pickEngineAxis(env),
-        message: request.message,
-      });
+      prompt = request.message;
     }
   } else if (summonsPrepared !== undefined) {
     // #879 station-child officer: instruction bytes === peer body/reask (no wrap).
@@ -1429,11 +1364,7 @@ export function resumeTurnRequestProjectionOptions(
     // only). Pointer is activation/sourceRun material — not dialogue content.
     prompt = "";
   } else {
-    // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
-    prompt = buildResumeContinuationPrompt({
-      packageRoot: env.packageRoot,
-      ...pickEngineAxis(env),
-    });
+    prompt = "";
   }
   return {
     packageRoot: env.packageRoot,
@@ -1454,13 +1385,38 @@ export function resumeTurnRequestProjectionOptions(
   };
 }
 
+/** Shared new-turn and in-call auto-resume projection. Seat code supplies prompt and activation. */
+export function roleTurnOptions(
+  env: PostAdmissionEnv,
+  admitted: { readonly correlationId?: string },
+  continuation: RoleTurnRequest["continuation"],
+  extra?: { readonly cwd?: string },
+): RoleTurnRequestProjectionOptions {
+  const correlationId = admitted.correlationId ?? env.correlationId;
+  return {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...pickEngineAxis(env),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(correlationId === undefined || correlationId.trim() === ""
+      ? {}
+      : { correlationId }),
+    continuation,
+    ...(extra?.cwd === undefined ? {} : { cwd: extra.cwd }),
+    ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
+  };
+}
+
 /**
- * Hold the writer lease through after-lease build, then hand off to dispatch.
- * Builder (or any throw before dispatch) must release here — dispatch's finally
- * only runs after this handoff (manual resume and station-child auto-resume).
+ * Build the turn request, then hand off to dispatch. When a writer lease is
+ * held, release it if build throws before handoff — dispatch's finally only
+ * runs after this handoff (manual resume and station-child auto-resume).
+ * #987: lease is optional; auto-resume no longer pre-acquires before host CLI.
  */
 async function dispatchAfterWriterLease<T>(input: {
-  lease: RunWriterLease;
+  lease?: RunWriterLease;
   build: () => Promise<RoleTurnRequest>;
   dispatch: (request: RoleTurnRequest) => Promise<T>;
 }): Promise<T> {
@@ -1470,7 +1426,7 @@ async function dispatchAfterWriterLease<T>(input: {
     handedOffToDispatch = true;
     return await input.dispatch(request);
   } finally {
-    if (!handedOffToDispatch) {
+    if (!handedOffToDispatch && input.lease !== undefined) {
       await input.lease.release();
     }
   }
@@ -1490,7 +1446,7 @@ function isAlreadyFrozenSummonsAttachment(
  * Freeze same-ticket summons attachments into the retained run directory (#637).
  * No-op materials (no paths / instruction-only) skip the freeze.
  * Paths already under this run's attachments/ are the accepted freeze identity —
- * reuse them; do not re-freeze from external originals on bare resume.
+ * reuse them for the same internal re-summons flow.
  * Manual resume never calls this — old attachment semantics stay intact.
  */
 export async function prepareSummonsResumeMaterials(
@@ -1524,16 +1480,15 @@ export async function prepareSummonsResumeMaterials(
 }
 
 /**
- * Shared manual-resume orchestration for seats whose continuation is the
- * package resume envelope (#599 / #633): load once → structural rejection →
+ * Shared manual-resume orchestration for seats (#599 / #633):
+ * load once → structural rejection →
  * optional seat afterAdmittedLoad (method material / controlled failure) →
  * seat turn projection → station-child auto-resume or public manual resume.
  * Seat-owned loader
  * validation, turn builder, and adapters stay on the seat.
  *
- * Court open/recovery transaction (#637): under the existing writer lease,
- * read currentCourt, judge seal, clear (bound to the judged court id), freeze,
- * and record. No pre-lease clear or stale court-snapshot consumption.
+ * Court handling (#637): public manual resume reads only the open court's
+ * settlement identity; internal re-summons may freeze and record its materials.
  */
 export async function runPostAdmissionSeatResume<
   A extends AdmittedRoleInvocation,
@@ -1542,7 +1497,7 @@ export async function runPostAdmissionSeatResume<
   request: PublicResumeRequest;
   env: PostAdmissionEnv;
   io: CliIo;
-  /** Load admitted state; receives the effective resume request (may carry rehydrated summons). */
+  /** Load admitted state from the caller's resume request. */
   load: (request: PublicResumeRequest) => Promise<{ admitted: A }>;
   /** Build turn from admitted + effective request (summons ride existing projection). */
   buildTurnRequest: (
@@ -1554,8 +1509,7 @@ export async function runPostAdmissionSeatResume<
    * After the single pre-lease load. Factory seats resolve method-material
    * adapters here via resolveResumeMethodMaterialAdapters (or short-circuit
    * with the same controlled-failure face as initial). Must not re-load the
-   * same admitted; under-lease summons rehydrate remains the only second load,
-   * and only when materials change.
+   * same admitted.
    */
   afterAdmittedLoad?: (
     admitted: A,
@@ -1574,8 +1528,10 @@ export async function runPostAdmissionSeatResume<
 }): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
   let request = input.request;
 
-  // Load once for runDirectory / structural rejection / afterAdmittedLoad;
-  // court identity is judged only after the writer lease is held (below).
+  // Load once for runDirectory / structural rejection / afterAdmittedLoad.
+  // Court identity for public manual resume is judged in the turn builder
+  // (#987: no package writer-lease gate before host CLI resume). Station-child
+  // auto-resume shares that rule via runWithAutoResumeLoop (no pre-acquire).
   let loaded;
   try {
     loaded = await input.load(request);
@@ -1606,33 +1562,19 @@ export async function runPostAdmissionSeatResume<
 
   const buildRequestAfterLease = async (): Promise<RoleTurnRequest> => {
         let openCourtAttemptId: string | undefined;
-        // Build uses the admitted judged under this lease (rehydrated when open
-        // court materials ride). Settlement identity stays on the outer admitted.
-        let admittedForBuild = loaded.admitted;
+        // Settlement identity stays on the outer admitted.
+        const admittedForBuild = loaded.admitted;
 
-        // Bare resume: open-court pointer is the continue signal (not ledger seal).
+        // Bare resume keeps the open court's settlement identity, but public resume
+        // never re-delivers the prior summons or its attachments (#987).
         if (request.summons === undefined) {
           const openCourt = await readCurrentCourt(admittedForBuild.runDirectory);
           if (openCourt !== undefined) {
             openCourtAttemptId = openCourt.courtAttemptId;
-            request = {
-              runId: request.runId,
-              ...(request.message === undefined
-                ? {}
-                : { message: request.message }),
-              ...(openCourt.summons === undefined
-                ? {}
-                : { summons: openCourt.summons }),
-            };
-            if (openCourt.summons !== undefined) {
-              const reloaded = await input.load(request);
-              admittedForBuild = reloaded.admitted;
-            }
           }
         }
 
-        // Freeze external paths once; rewrite summons to the frozen identity so
-        // currentCourt + later bare resume reuse the accepted snapshot.
+        // Internal re-summons freezes external paths once and records that identity.
         if (request.summons !== undefined) {
           const prepared = await prepareSummonsResumeMaterials(
             admittedForBuild.runDirectory,
@@ -1655,6 +1597,22 @@ export async function runPostAdmissionSeatResume<
         }
 
         let turnRequest = await input.buildTurnRequest(admittedForBuild, request);
+        if (
+          turnRequest.continuation.kind === "resume"
+          && turnRequest.continuation.hostSessionId === undefined
+        ) {
+          const hostSessionId = await readStoredHostSessionId(
+            env.host,
+            env.principalAuthority,
+            admittedForBuild.principal,
+          );
+          if (hostSessionId !== undefined) {
+            turnRequest = {
+              ...turnRequest,
+              continuation: { ...turnRequest.continuation, hostSessionId },
+            };
+          }
+        }
 
         // Open court continue, or new court for summons / message re-review
         // (clause 0 新庭可再交卷; #833). Bare resume without open court omits id.
@@ -1683,9 +1641,10 @@ export async function runPostAdmissionSeatResume<
     return turnRequest;
   };
 
-  // Court recovery / open under lease, then dispatch.
-  // Station-child same-ticket/same-parent resume is call-local auto-resume
-  // (#840 / #416). Public `ak-role resume` stays one-shot (ADR 0080).
+  // Court recovery / open, then dispatch. Public manual resume and station-child
+  // auto-resume both pass through to the host CLI without a package writer-lease
+  // pre-gate (#987 / ADR 0080). Station-child same-ticket/same-parent resume is
+  // still call-local auto-resume (#840 / #416).
   // afterAdmittedPrepare runs inside this try so mint failure and cleanup share one finally.
   try {
     if (input.afterAdmittedPrepare !== undefined) {
@@ -1720,14 +1679,13 @@ export async function runPostAdmissionSeatResume<
         // redispatch brake (#833). New-court station-child turns still auto-resume.
         dispatch: async (payload, lease, _isFirst, attemptIo) =>
           dispatchAfterWriterLease({
-            lease,
+            ...(lease === undefined ? {} : { lease }),
             build: async () => {
               // #840 r8 判词 class 2: this call-local retry must keep this
               // court's frozen summons / 交卷 body / attachments verbatim
               // (same object as firstTurn) and project only the minimal
-              // host-needed resume trigger — never the manual-resume engine
-              // handbook (buildResumeContinuationPrompt), which would replace
-              // a 审核循环 same-ticket continuation with a bare outsourcing
+              // host-needed resume trigger — never engine handbook material,
+              // which would replace a 审核循环 same-ticket continuation with a bare outsourcing
               // 「重新读」 envelope (#755 contract, resumeTurnRequestProjectionOptions
               // above). RESUME_TRANSPORT_ENVELOPE is the same package-owned,
               // non-semantic trigger that projection already uses for a
@@ -1754,7 +1712,7 @@ export async function runPostAdmissionSeatResume<
                 env,
                 io: attemptIo,
                 request: turnRequest,
-                lease,
+                ...(lease === undefined ? {} : { lease }),
                 adapters: stationAdapters,
                 persistRunState: false,
                 ...(input.effectiveEngine === undefined
@@ -1783,8 +1741,7 @@ export async function runPostAdmissionSeatResume<
       buildRequestAfterLease,
     });
   } catch (error) {
-    // Open-court rehydrate load under lease may still surface seat structural
-    // rejection (e.g. notary rejects caller message) — same exit face as pre-lease.
+    // Seat preparation may still surface structural rejection.
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, input.io);
       return { exitCode: 2 };
@@ -1892,7 +1849,7 @@ export async function runPostAdmissionResumable<
         },
         io: attemptIo,
         request,
-        lease,
+        ...(lease === undefined ? {} : { lease }),
         adapters,
         persistRunState: false,
         // #600: every attempt (initial + auto-resume) writes seat engine when present.
@@ -1904,10 +1861,11 @@ export async function runPostAdmissionResumable<
 }
 
 /**
- * Manual resume: lease + dispatch. Pass-through to the host — no sealed-accepted
- * short-circuit (#833 / #416). Court open (summons / message / open court) is
- * built under lease when using buildRequestAfterLease; sole-final stays per-attempt.
- * After-lease build shares dispatchAfterWriterLease with station-child auto-resume.
+ * Manual resume: pass-through to the host CLI resume — no package writer-lease
+ * pre-gate (#987), no sealed-accepted short-circuit (#833 / #416). Court open
+ * (summons / message / open court) is built when using buildRequestAfterLease;
+ * sole-final stays per-attempt. Station-child auto-resume shares the same
+ * no-pre-gate rule via runWithAutoResumeLoop + dispatchAfterWriterLease.
  */
 export async function runPostAdmissionManualResume<
   A extends AdmittedRoleInvocation,
@@ -1916,9 +1874,9 @@ export async function runPostAdmissionManualResume<
   admitted: A;
   env: PostAdmissionEnv;
   io: CliIo;
-  /** Eager turn request (non-court path / seats that build before lease). */
+  /** Eager turn request (non-court path / seats that build before dispatch). */
   request?: RoleTurnRequest;
-  /** After-lease builder (#637). Mutually exclusive with a prebuilt request. */
+  /** Turn builder (#637). Mutually exclusive with a prebuilt request. */
   buildRequestAfterLease?: () => Promise<RoleTurnRequest>;
   adapters: PostAdmissionAdapters<A, T>;
   /** Seat-table engine axis on resume (#600). */
@@ -1927,7 +1885,6 @@ export async function runPostAdmissionManualResume<
   exitCode: number;
   admitted?: A;
   terminal?: T;
-  staleWriterLeaseReclaimed?: true;
 }> {
   const {
     admitted,
@@ -1941,67 +1898,34 @@ export async function runPostAdmissionManualResume<
   // #617 DK-3: manual resume writes the live seat/env model (same as new legs).
   const effectiveModel = env.model;
 
-  let lease: RunWriterLease;
-  let staleWriterLeaseReclaimed: true | undefined;
-  try {
-    lease = await acquireRunWriterLease(admitted.runDirectory, (diagnostic, kind?: WriterLeaseDiagnosticKind) => {
-      // Record the typed fact before the fallible sink: if io.stderr throws
-      // (acquire deliberately swallows diagnostic-sink failures), the reclaim
-      // still happened and must stay observable.
-      if (kind === "stale-reclaimed") staleWriterLeaseReclaimed = true;
-      io.stderr(diagnostic);
-    });
-  } catch (error) {
-    if (error instanceof RunWriterLeaseHeldError) {
-      io.stderr(formatCliDiagnostic(error.message));
-      // A held rejection after our own reclaim must still carry the fact that
-      // this caller reclaimed the stale lock — e.g. another resumer re-locked
-      // before our retry create (#629).
-      return {
-        exitCode: 1,
-        ...(staleWriterLeaseReclaimed === true
-          ? { staleWriterLeaseReclaimed: true as const }
-          : {}),
-      };
-    }
-    throw error;
-  }
-
   // Explicit public resume is a new counting unit — mint once for this call.
   const invocationScopeId = mintEngineDetourInvocationScope({
     ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
   });
 
-  const result = await dispatchAfterWriterLease({
-    lease,
-    build: async () => {
-      if (request === undefined) {
-        if (buildRequestAfterLease === undefined) {
-          throw new Error(
-            "runPostAdmissionManualResume requires request or buildRequestAfterLease",
-          );
-        }
-        request = await buildRequestAfterLease();
-      }
-      request = withEngineDetourInvocationScope(request, invocationScopeId);
-      return request;
+  if (request === undefined) {
+    if (buildRequestAfterLease === undefined) {
+      throw new Error(
+        "runPostAdmissionManualResume requires request or buildRequestAfterLease",
+      );
+    }
+    request = await buildRequestAfterLease();
+  }
+  request = withEngineDetourInvocationScope(request, invocationScopeId);
+
+  const result = await dispatchPostAdmissionTurn({
+    admitted,
+    env: {
+      ...env,
+      ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
+      ...(admitted.correlationId === undefined
+        ? {}
+        : { correlationId: admitted.correlationId }),
     },
-    dispatch: (turnRequest) =>
-      dispatchPostAdmissionTurn({
-        admitted,
-        env: {
-          ...env,
-          ...(effectiveModel === undefined ? {} : { model: effectiveModel }),
-          ...(admitted.correlationId === undefined
-            ? {}
-            : { correlationId: admitted.correlationId }),
-        },
-        io,
-        request: turnRequest,
-        lease,
-        adapters,
-        ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
-      }),
+    io,
+    request,
+    adapters,
+    ...(effectiveEngine === undefined ? {} : { effectiveEngine }),
   });
   if (
     result.terminal !== undefined &&
@@ -2017,10 +1941,5 @@ export async function runPostAdmissionManualResume<
   if (result.terminal !== undefined) {
     (result.terminal as { autoResumeCount?: number }).autoResumeCount = 0;
   }
-  return {
-    ...result,
-    ...(staleWriterLeaseReclaimed === true
-      ? { staleWriterLeaseReclaimed: true as const }
-      : {}),
-  };
+  return result;
 }

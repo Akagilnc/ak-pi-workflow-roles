@@ -22,6 +22,7 @@ import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
+import { isNavigatorSeat } from "./packaged-role-registry.ts";
 
 /**
  * Ledger process home for navigator attendance: admitted HostContext.runDirectory
@@ -76,16 +77,16 @@ export function readNavigatorHostRunPointer(entries: readonly unknown[]): string
 
 /**
  * Typed preflight via public CLI load path: can this run reopen as navigator?
- * CliUsageError (code AK_ROLE_USAGE) from loadResumableInstructionSeatRun means
- * unknown id / principal unavailable / non-instruction seat — not resumable.
- * Other throws propagate. Never reads stderr prose.
+ * CliUsageError (code AK_ROLE_USAGE) from loadResumablePublicRole means
+ * unknown id or principal unavailable — not resumable. Any other disk role
+ * is not this navigator host run. Other throws propagate. Never reads stderr prose.
  */
 export async function navigatorHostRunResumable(home: string, runId: string): Promise<boolean> {
   const { piDurablePrincipalAuthority } = await import("./pi/durable-principal.ts");
-  const { loadResumableInstructionSeatRun } = await import("./public-cli/run-lifecycle.ts");
+  const { loadResumablePublicRole } = await import("./public-cli/run-lifecycle.ts");
   try {
-    const loaded = await loadResumableInstructionSeatRun(home, runId, piDurablePrincipalAuthority);
-    return loaded.admitted.role === "navigator";
+    const loaded = await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
+    return isNavigatorSeat(loaded.admitted.role);
   } catch (error) {
     if (error instanceof CliUsageError) return false;
     throw error;

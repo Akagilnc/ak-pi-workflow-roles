@@ -10,7 +10,6 @@ import {
 } from "./diarist-contracts.ts";
 
 export {
-  DIARIST_ACCEPTED_TEXT,
   DIARIST_OUTPUT_TOOL_NAME,
 } from "./diarist-contracts.ts";
 export type { DiaristOutput };

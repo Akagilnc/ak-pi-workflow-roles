@@ -20,6 +20,7 @@ const entries = [
   "activation-ledger-git",
   "activation-ledger-topology",
   "archivist-record-entry",
+  "pi/record-session-host",
   // Pure subject nest topology — static import of archivist-record-entry;
   // cold discovery without SessionManager (#636). Keep listed while that
   // relative edge remains (#857 removal left the import graph open).

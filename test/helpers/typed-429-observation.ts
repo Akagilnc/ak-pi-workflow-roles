@@ -30,7 +30,7 @@ export async function observeTyped429ViaProductionHandler(input: {
     setActiveTools() {},
   };
   createPiRoleRuntimeExtension({
-    loadJudgeSoul: async () => "",
+    loadRoleSoul: async () => "",
   })(pi as unknown as ExtensionAPI);
 
   const handler = handlers.get("after_provider_response");

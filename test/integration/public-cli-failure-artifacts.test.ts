@@ -14,7 +14,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   formatFailureStderrDiagnostic,
   publishFailureArtifacts,
-  publishJudgeArtifacts,
+  publishSeatAcceptedArtifacts,
   settleHostEndedNoReceipt,
 } from "../../src/public-cli/settlement.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
@@ -745,7 +745,7 @@ test("#953 reader adopts current failure after success; success after failure", 
       `${JSON.stringify({ kind: "error", role: "judge", runId, diagnostic: "old boom" })}\n`,
       "utf8",
     );
-    await publishJudgeArtifacts(
+    await publishSeatAcceptedArtifacts(
       admitted,
       {
         kind: "accepted",
@@ -1030,7 +1030,7 @@ test("#953 no_receipt clears owned reader face; sibling and non-terminal retaine
       projectRoot: join(home, "proj"),
       bookKey: "proj",
     });
-    await publishJudgeArtifacts(
+    await publishSeatAcceptedArtifacts(
       admitted,
       {
         kind: "accepted",

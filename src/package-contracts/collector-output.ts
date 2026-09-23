@@ -1,7 +1,6 @@
 /** Package-owned Collector receipt leaf — no role registration surface. */
 
 export const COLLECTOR_OUTPUT_TOOL = "ak_collector_output";
-export const COLLECTOR_ACCEPTED_TEXT = "通进司回执已接受";
 export const COLLECTOR_HOST = "github.com";
 
 export type CollectorIdentityGroup = {

@@ -17,7 +17,7 @@ import {
   type NavigatorWorkContext,
 } from "./navigator-attendance.ts";
 import { loadNotarySourceRunLocator } from "./notary-source-run.ts";
-import { packagedRoleInputFlag } from "./packaged-role-registry.ts";
+import { packagedNavigatorSubject, packagedRoleInputFlag } from "./packaged-role-registry.ts";
 import { loadAdmittedJudgeRequest } from "./public-cli/invocation.ts";
 
 export type NavigatorWorkContextLoaderOptions = {
@@ -44,7 +44,8 @@ export async function loadNavigatorWorkContext(
   options: NavigatorWorkContextLoaderOptions,
 ): Promise<NavigatorWorkContext> {
   const reference = navigatorInputReference(options.getFlag, options.role);
-  const input = reference === undefined || options.role === "doctor" || options.role === "notary"
+  const subjectMode = packagedNavigatorSubject(options.role);
+  const input = reference === undefined || subjectMode === "case" || subjectMode === "source-run"
     ? undefined
     : await readFile(reference, "utf8");
   const subjectRoot = subjectPath(reference ?? options.context.sessionManager.getSessionDir(), options.context.cwd);
@@ -53,12 +54,12 @@ export async function loadNavigatorWorkContext(
     : navigatorSubjectKeyForInput(subjectRoot, reference, options.context.cwd);
   let subject = input ?? `work subject: ${subjectKey}`;
   let subjectProvenance: NavigatorSubjectProvenance = input === undefined ? "placeholder" : "role_input";
-  if (options.role === "doctor" && reference !== undefined) {
+  if (subjectMode === "case" && reference !== undefined) {
     const patient = await loadDoctorCase(reference);
     subject = JSON.stringify({ identity: patient.identity, cost: patient.cost });
     subjectProvenance = "role_input";
   }
-  if (options.role === "notary" && reference !== undefined) {
+  if (subjectMode === "source-run" && reference !== undefined) {
     const locator = await loadNotarySourceRunLocator(reference);
     subject = JSON.stringify({ sourceRun: locator });
     subjectProvenance = "role_input";
@@ -68,10 +69,7 @@ export async function loadNavigatorWorkContext(
   const currentSessionDir = options.context.sessionManager.getSessionDir();
   const isBoundPublicRun = publicRunDir !== undefined
     && resolve(currentSessionDir) === resolve(publicRunDir, "session");
-  if (
-    options.role === "judge" &&
-    isBoundPublicRun
-  ) {
+  if (subjectMode === "public-instruction" && isBoundPublicRun) {
     let admitted;
     try {
       admitted = await loadAdmittedJudgeRequest(publicRunDir);

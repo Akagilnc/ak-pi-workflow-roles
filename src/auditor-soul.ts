@@ -54,7 +54,7 @@ export const AUDITOR_SESSION_MATERIALS = {
 >;
 
 export function isAuditorSoulRole(value: unknown): value is AuditorSoulRole {
-  return value === "judge" || value === "doctor";
+  return typeof value === "string" && Object.hasOwn(AUDITOR_SESSION_MATERIALS, value);
 }
 
 /** Resolve audited subject from explicit value or the subject-input env. */

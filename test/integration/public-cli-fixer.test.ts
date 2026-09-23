@@ -32,12 +32,12 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 
 import {
-  admitFixerInvocation as admitFixerInvocationRaw,
+  admitPublicRole,
+  type AdmitFixerInvocationOptions,
 } from "../../src/public-cli/invocation.ts";
 
 import {
-  extractFixerMethodInvocations,
-  settleFixerTerminalResult,
+  settleSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
   exitCodeForTerminalOutcome,
@@ -81,10 +81,22 @@ function seedGitProject(root: string): void {
 }
 
 
-async function admitFixerInvocation(
-  options: Parameters<typeof admitFixerInvocationRaw>[0],
-): ReturnType<typeof admitFixerInvocationRaw> {
-  return admitFixerInvocationRaw(options);
+function admitFixerInvocation(options: AdmitFixerInvocationOptions) {
+  return admitPublicRole("fixer", {
+    phase: options.phase,
+    instruction: options.instruction,
+    attachmentPaths: options.attachmentPaths,
+    ...(options.prerequisitesPath === undefined ? {} : { prerequisitesPath: options.prerequisitesPath }),
+    ...(options.project === undefined ? {} : { project: options.project }),
+  }, {
+    home: options.home,
+    principalAuthority: options.principalAuthority,
+    cwd: options.cwd,
+    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+    ...(options.model === undefined ? {} : { model: options.model }),
+  }, options.assertedTicketNumber === undefined
+    ? undefined
+    : { assertedTicketNumber: options.assertedTicketNumber });
 }
 
 
@@ -96,7 +108,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
 
     await assert.rejects(
       () =>
-        admitFixerInvocationRaw({
+        admitFixerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
@@ -261,14 +273,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       toolCallId: "f1",
     });
 
-    const entries = sessionLines.map((line) => JSON.parse(line));
-    const invocations = extractFixerMethodInvocations(entries, {
-      allowedLocations: [configuredPath, material.skillPath],
-    });
-    assert.equal(invocations.length, 1);
-    assert.equal(invocations[0]!.name, "diagnosing-bugs");
-
-    const terminal = await settleFixerTerminalResult(admitted, piDurablePrincipalAuthority, {
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -303,6 +308,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
     assert.equal(evidence.methodProvenance.upstream.attribution, "mattpocock/skills");
     assert.equal(evidence.methodInvocationObserved, true);
     assert.equal(evidence.methodInvocations.length, 1);
+    assert.equal(evidence.methodInvocations[0]?.name, "diagnosing-bugs");
     assert.equal(JSON.stringify(evidence).includes(".agents/skills"), false);
 
     // Without skill expansion, provenance remains and invocation is not forced/observed.
@@ -339,7 +345,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       details: receipt,
       toolCallId: "f2",
     });
-    const terminalNoDiag = await settleFixerTerminalResult(noDiag, piDurablePrincipalAuthority, {
+    const terminalNoDiag = await settleSeatTerminalResult(noDiag, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -669,7 +675,7 @@ async function settleFixerSession(
     packageRoot,
     "diagnosing-bugs",
   );
-  return settleFixerTerminalResult(admitted, piDurablePrincipalAuthority, {
+  return settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
     methodProvenance: material.provenance,
     methodSkillPath: material.skillPath,
     methodSkillConfiguredPath: resolvePackagedMethodSkillPath(

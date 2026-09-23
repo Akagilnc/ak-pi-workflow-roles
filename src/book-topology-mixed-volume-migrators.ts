@@ -391,7 +391,6 @@ async function migrateWorkerSubmissionGate(
       .filter((entry) => entry.isFile() && entry.name.endsWith(".jsonl"))
       .map((entry) => entry.name)
       .sort();
-    const volumeDestinations = new Map<string, string>();
 
     for (const name of volumes) {
       const sourcePath = join(sourceDir, name);
@@ -417,8 +416,6 @@ async function migrateWorkerSubmissionGate(
       );
       await mkdir(dirname(dest), { recursive: true });
       await cp(sourcePath, dest, { preserveTimestamps: true });
-      volumeDestinations.set(resolve(sourcePath), dest);
-      volumeDestinations.set(resolve(join(booksDirectory, bookKey, kind, name)), dest);
       // One outcome per volume keeps the entries closure; bad rows attach below.
       outcomes.push({
         disposition: destRun?.disposition === "placed" ? "placed" : "unbound",
@@ -431,18 +428,6 @@ async function migrateWorkerSubmissionGate(
         });
       }
     }
-
-    await migrateCurrentSessionPointer({
-      sourceDir,
-      volumeDestinations,
-      unboundPointerFile: join(
-        booksDirectory,
-        bookKey,
-        "unbound",
-        kind,
-        CURRENT_SESSION_LEDGER,
-      ),
-    });
   }
 
   const report = reconcileMigrationPartition(kind, "entries", outcomes);

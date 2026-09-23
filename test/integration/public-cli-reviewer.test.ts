@@ -32,20 +32,20 @@ import {
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitReviewerInvocation as admitReviewerInvocationRaw,
-  parseReviewerArgv,
+  admitPublicRole,
+  type AdmitReviewerInvocationOptions,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 
 import {
-  loadResumableReviewerRun,
+  loadResumablePublicRole,
   markRunAdmitted,
   markRunResumable,
   readRoleRunState,
 } from "../../src/public-cli/run-lifecycle.ts";
 import {
-  extractReviewerMethodInvocations,
   formatTerminalResult,
-  settleReviewerTerminalResult,
+  settleSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
   packageRoot,
@@ -107,30 +107,42 @@ function lawfulReviewerReceipt(
   };
 }
 
-
-async function admitReviewerInvocation(
-  options: Parameters<typeof admitReviewerInvocationRaw>[0],
-): ReturnType<typeof admitReviewerInvocationRaw> {
-  return admitReviewerInvocationRaw(options);
+function admitReviewerInvocation(options: AdmitReviewerInvocationOptions) {
+  return admitPublicRole("reviewer", {
+    instruction: options.instruction,
+    attachmentPaths: options.attachmentPaths,
+    baseRevision: options.baseRevision,
+    lens: options.lens,
+    authorityRefs: options.authorityRefs,
+    ...(options.project === undefined ? {} : { project: options.project }),
+  }, {
+    home: options.home,
+    principalAuthority: options.principalAuthority,
+    cwd: options.cwd,
+    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.correlationId === undefined ? {} : { correlationId: options.correlationId }),
+  }, options.assertedTicketNumber === undefined
+    ? undefined
+    : { assertedTicketNumber: options.assertedTicketNumber });
 }
-
 
 test("parseReviewerArgv defaults to both lenses and accepts an optional single-lens override", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
   assert.throws(
-    () => parseReviewerArgv(["Review the branch since main."]),
+    () => parsePublicSeatArgv("reviewer", ["Review the branch since main."]),
     (error: unknown) => error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
   );
   // Authority remains required; omitted lens defaults to the parallel two-axis mode.
-  assert.throws(() => parseReviewerArgv(["--base", "main"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["--base", "main"]), isUsage);
   assert.throws(
-    () => parseReviewerArgv(["--base", "main", "--lens", "completeness"]),
+    () => parsePublicSeatArgv("reviewer", ["--base", "main", "--lens", "completeness"]),
     isUsage,
   );
   assert.deepEqual(
-    parseReviewerArgv([
+    parsePublicSeatArgv("reviewer", [
       "--base",
       "main",
       "--authority-ref",
@@ -146,7 +158,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // Public `--lens all` is not an admitted single-axis value.
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -162,7 +174,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // Empty lens shares the enum message (not path-helper "requires a path").
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -176,7 +188,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
       error.message === "--lens requires completeness or correctness",
   );
   assert.deepEqual(
-    parseReviewerArgv([
+    parsePublicSeatArgv("reviewer", [
       "--base",
       "main",
       "--lens",
@@ -197,7 +209,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
     },
   );
   assert.deepEqual(
-    parseReviewerArgv([
+    parsePublicSeatArgv("reviewer", [
       "--base",
       "HEAD~1",
       "--lens",
@@ -214,7 +226,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
     },
   );
   assert.deepEqual(
-    parseReviewerArgv([
+    parsePublicSeatArgv("reviewer", [
       "--base",
       "main",
       "--lens",
@@ -235,12 +247,12 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
       ],
     },
   );
-  assert.throws(() => parseReviewerArgv(["--unknown-flag"]), isUsage);
-  assert.throws(() => parseReviewerArgv(["--base", "", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["--unknown-flag"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["--base", "", "task"]), isUsage);
   // Whitespace-bearing --base smuggles Skill flags; single-token only (same rule as authority-ref).
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main --lens all",
         "--lens",
@@ -256,7 +268,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // Leading `-` is read as the next Skill option; shared token boundary with authority-ref.
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "--not-a-rev",
         "--lens",
@@ -271,7 +283,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   );
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -285,12 +297,12 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
       error.message ===
         "--authority-ref requires a durable reference, not inline Spec prose",
   );
-  assert.throws(() => parseReviewerArgv(["--project", "", "task"]), isUsage);
-  assert.throws(() => parseReviewerArgv(["--attach", "spec.md", "task"]), isUsage);
-  assert.throws(() => parseReviewerArgv(["--attach=spec.md", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["--project", "", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["--attach", "spec.md", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("reviewer", ["--attach=spec.md", "task"]), isUsage);
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -302,7 +314,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   );
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -314,7 +326,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   // refs-only: representative inline Spec prose is rejected at the public admission seam.
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -329,7 +341,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   );
   assert.throws(
     () =>
-      parseReviewerArgv([
+      parsePublicSeatArgv("reviewer", [
         "--base",
         "main",
         "--lens",
@@ -341,7 +353,7 @@ test("parseReviewerArgv defaults to both lenses and accepts an optional single-l
   );
   // Durable public reference forms remain accepted with bytes unchanged; extras pass (ADR 0025).
   assert.deepEqual(
-    parseReviewerArgv([
+    parsePublicSeatArgv("reviewer", [
       "--base",
       "main",
       "--lens",
@@ -554,6 +566,16 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
         type: "message",
         message: {
           role: "user",
+          content: [{
+            type: "text",
+            text: `<skill name="ak-cross-m-review" location="${join(home, ".agents/skills/ak-cross-m-review/SKILL.md")}">\nbody\n</skill>\n\nreq`,
+          }],
+        },
+      }),
+      JSON.stringify({
+        type: "message",
+        message: {
+          role: "user",
           content: [{ type: "text", text: expansion }],
         },
       }),
@@ -597,34 +619,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       toolCallId: "r1",
     });
 
-    const entries = sessionLines.map((line) => JSON.parse(line));
-    const invocations = extractReviewerMethodInvocations(entries, {
-      allowedLocations: [material.skillPath, skillPath],
-    });
-    assert.equal(invocations.length, 1);
-    assert.equal(invocations[0]?.name, "ak-cross-m-review");
-    assert.equal(invocations[0]?.location, material.skillPath);
-
-    const ambient = extractReviewerMethodInvocations(
-      [
-        {
-          type: "message",
-          message: {
-            role: "user",
-            content: [
-              {
-                type: "text",
-                text: `<skill name="ak-cross-m-review" location="${join(home, ".agents/skills/ak-cross-m-review/SKILL.md")}">\nbody\n</skill>\n\nreq`,
-              },
-            ],
-          },
-        },
-      ],
-      { allowedLocations: [material.skillPath, skillPath] },
-    );
-    assert.equal(ambient.length, 0);
-
-    const terminal = await settleReviewerTerminalResult(admitted, piDurablePrincipalAuthority, {
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: skillPath,
@@ -674,6 +669,8 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     );
     assert.equal(evidence.methodInvocationObserved, true);
     assert.equal(evidence.methodInvocations.length, 1);
+    assert.equal(evidence.methodInvocations[0]?.name, "ak-cross-m-review");
+    assert.equal(evidence.methodInvocations[0]?.location, material.skillPath);
     const evidenceText = JSON.stringify(evidence);
     assert.equal(evidenceText.includes(".agents/skills"), false);
   });
@@ -1184,7 +1181,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const admitted = await admitReviewerInvocationRaw({
+    const admitted = await admitReviewerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
@@ -1214,7 +1211,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
     );
 
     await assert.rejects(
-      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
+      () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
@@ -1227,7 +1224,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       "utf8",
     );
     await assert.rejects(
-      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
+      () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
@@ -1240,7 +1237,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       "utf8",
     );
     await assert.rejects(
-      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
+      () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
@@ -1252,7 +1249,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
       "utf8",
     );
     await assert.rejects(
-      () => loadResumableReviewerRun(home, admitted.runId, piDurablePrincipalAuthority),
+      () => loadResumablePublicRole(home, admitted.runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof CliUsageError && error.code === "AK_ROLE_USAGE",
     );
@@ -1321,7 +1318,10 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
     let resumeArgs: string[] | undefined;
     let resumeStdin: string | undefined;
     let resumeCwd: string | undefined;
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+    const resumed = await runAkRole([
+      "resume", "--model", "test/caller-seat:high", "--engine", "agy", runId,
+      "调用者原话",
+    ], {
       packageRoot,
       home,
       cwd: project,
@@ -1337,8 +1337,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
         const resumeDialogue = readUserDialogueStdin(resumeStdin ?? "");
-        const { RESUME_TRANSPORT_ENVELOPE } = await import("../../src/public-cli/run-lifecycle.ts");
-        assert.equal(resumeDialogue, RESUME_TRANSPORT_ENVELOPE);
+        assert.equal(resumeDialogue, "调用者原话");
         assert.equal(resumeDialogue.includes("/skill:"), false);
         assert.equal(resumeDialogue.includes(instruction), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
@@ -1411,7 +1410,7 @@ test("default dual-lens from subdirectory admits caller project and deletes ephe
       home,
       cwd: subdir,
       credentials: { "openai-codex": true, xai: true },
-      reviewerTimeoutMs: 17_777,
+      timeoutMs: 17_777,
       io,
       roleTurnHost: reviewerHost(async (args, options) => {
         assert.equal(options.timeoutMs, 17_777);

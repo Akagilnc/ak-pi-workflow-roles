@@ -10,7 +10,6 @@ import { withTerminatingOutputDeclarations } from "./package-contracts/terminati
 import type { NamedRoleTurnHostAdapter } from "./public-cli/role-turn-host-resolution.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import {
-  SECRETARIAT_ACCEPTED_TEXT,
   SECRETARIAT_OUTPUT_TOOL_NAME,
   SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
   type SecretariatVerdict,
@@ -18,7 +17,6 @@ import {
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 
 export {
-  SECRETARIAT_ACCEPTED_TEXT,
   SECRETARIAT_OUTPUT_TOOL_NAME,
   SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
 } from "./secretariat-contracts.ts";

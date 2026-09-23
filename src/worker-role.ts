@@ -8,10 +8,9 @@ import type {
   AnyCanonicalSkillBinding,
   CanonicalSkillBinding,
 } from "./canonical-skill-binding.ts";
+import { packagedRoleAcceptedText } from "./packaged-role-registry.ts";
 import {
-  CODER_ACCEPTED_TEXT,
   CODER_OUTPUT_TOOL_NAME,
-  FIXER_ACCEPTED_TEXT,
   FIXER_OUTPUT_TOOL_NAME,
   validateAcceptedWorkerDetails,
   type CoderOutput,
@@ -296,7 +295,7 @@ export function createFixerRoleRuntime(
             }
             const acceptedDetails = output;
             return {
-              content: [{ type: "text" as const, text: FIXER_ACCEPTED_TEXT }],
+              content: [{ type: "text" as const, text: packagedRoleAcceptedText("fixer") }],
               details: acceptedDetails,
               terminate: true as const,
             };
@@ -436,7 +435,7 @@ export function createCoderRoleRuntime(
             }
             const acceptedDetails = output;
             return {
-              content: [{ type: "text" as const, text: CODER_ACCEPTED_TEXT }],
+              content: [{ type: "text" as const, text: packagedRoleAcceptedText("coder") }],
               details: acceptedDetails,
               terminate: true as const,
             };

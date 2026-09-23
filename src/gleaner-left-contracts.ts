@@ -5,7 +5,6 @@
  */
 
 export const GLEANER_LEFT_OUTPUT_TOOL_NAME = "ak_gleaner_left_output";
-export const GLEANER_LEFT_ACCEPTED_TEXT = "左拾遗回执已接受";
 
 /** Internal transport: comparison-base revision for the unanchored merge-candidate diff. */
 export const GLEANER_LEFT_BASE_FLAG = {
