@@ -38,6 +38,7 @@ import {
   buildNavigatorInfrastructureFailureFact,
   extractInfrastructureFailureEvidence,
 } from "./navigator-invocation-identity.ts";
+import { serializeThrownValue } from "./serialize-thrown-value.ts";
 
 export { projectActivationFlags };
 
@@ -381,6 +382,7 @@ export async function prepareRoleEnvelope(options: {
       ...extractInfrastructureFailureEvidence(error),
       cause: "infrastructure",
       code: errorCode,
+      error: serializeThrownValue(error),
     };
     rememberInfrastructureFailure(details, content);
     return { content, details };
