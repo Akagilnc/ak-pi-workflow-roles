@@ -2035,6 +2035,34 @@ test("public countersign path: true-unbound 起居郎 asserts null — no ticket
   });
 });
 
+test("public countersign relocates its unbound diarist when the body asserts a ticket", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: courtPipelinePiRunner(null, { countersignStatus: "continue", ticketNumber: 582, fix: { summary: "补正" } }),
+    });
+    const result = await runPublicInstructionSeat(
+      ["裁票"],
+      {
+        home, agentDir: join(home, ".pi"), packageRoot, cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: host, hostAdapters: [adapter("pi", host)],
+        createRunId: () => "01a0sign00-0000-7000-8000-000000001010",
+      },
+      captureIo().io,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.admitted?.ticketNumber, 582);
+    const book = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
+    const ticketRuns = await readdir(join(book, "582", "runs"));
+    assert.ok(ticketRuns.some((entry) => entry.endsWith("@diarist")));
+    assert.equal((await readdir(join(book, "unbound", "runs"))).some((entry) => entry.endsWith("@diarist")), false);
+  });
+});
+
 /**
  * #871 sole tracer: typed co-review set on the real countersign entry.
  * Parent {100,101,102} → explicit resume keeps set → public re-summons mints

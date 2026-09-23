@@ -1309,6 +1309,7 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
       parentDiaristRunner: async (args, options) => {
         await mkdir(unrelatedRun, { recursive: true });
         await writeFile(join(unrelatedRun, "admitted-request.json"), "", "utf8");
+        await writeFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), "{broken\n", "utf8");
         return courtDiaristWithDetails({
           status: "completed",
           ticketNumber: null,
@@ -1326,7 +1327,9 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
     assert.ok((await readdir(dirname(unrelatedRun))).includes("unfinished@diarist"));
     assert.equal(await readFile(join(unrelatedRun, "admitted-request.json"), "utf8"), "");
     const record = join(book, "924", "records.jsonl");
-    const rows = (await readFile(record, "utf8")).trim().split("\n").map((row) => JSON.parse(row));
+    const recordLines = (await readFile(record, "utf8")).trim().split("\n");
+    assert.ok(recordLines.includes("{broken"));
+    const rows = recordLines.filter((line) => line !== "{broken").map((row) => JSON.parse(row));
     assert.equal(rows[0]?.subject, "924");
     assert.equal(rows[0]?.payload?.lines?.[0]?.speaker, "owner");
     assert.equal((await readTicketProvenance(924, project, home)).header?.ticket, 924);

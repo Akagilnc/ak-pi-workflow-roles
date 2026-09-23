@@ -387,7 +387,15 @@ export async function rehomeUnboundTicketProvenance(
   }
   for (const line of content.split("\n")) {
     if (line === "") continue;
-    const row = JSON.parse(line) as SitianRecord;
+    let row: SitianRecord;
+    try {
+      row = JSON.parse(line) as SitianRecord;
+    } catch {
+      // The ledger reader retains malformed physical rows. Assignment keeps
+      // them in the destination volume too, without inventing a record.
+      appendFileSync(ensureTicketProvenanceVolume(ticketNumber, cwd, home).recordFile, `${line}\n`, "utf8");
+      continue;
+    }
     appendSitianRecord({
       ...row,
       subject: ticketProvenanceSubject(ticketNumber),
