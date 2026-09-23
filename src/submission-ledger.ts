@@ -168,6 +168,27 @@ async function readOwnedSubmissionRecords(
   };
 }
 
+/** The persisted candidate for the tool call now entering its submission gate. */
+export async function readCandidateForGate(context: HostContext, toolCallId: string): Promise<unknown> {
+  const runId = runIdentity(context);
+  const sessionParent = sessionParentFromHostContext(context);
+  const home = homeFromHostContext(context);
+  const { owned } = await readOwnedSubmissionRecords(context.cwd, runId, {
+    ...(sessionParent === undefined ? {} : { sessionParent }),
+    ...(home === undefined ? {} : { home }),
+  });
+  const candidate = [...owned].reverse().find((record) => {
+    if (record.kind !== "candidate") return false;
+    const payload = record.payload as Partial<SubmissionLedgerEvent> | undefined;
+    return payload?.type === "candidate" && payload.toolCallId === toolCallId;
+  });
+  const payload = candidate?.payload as Partial<Extract<SubmissionLedgerEvent, { type: "candidate" }>> | undefined;
+  if (payload?.params === undefined) {
+    throw new Error(`submission candidate missing for tool call ${toolCallId}`);
+  }
+  return payload.params;
+}
+
 /** Optional court-turn scope for settlement reads (#637). */
 export type SubmissionLedgerReadScope = {
   readonly home?: string;

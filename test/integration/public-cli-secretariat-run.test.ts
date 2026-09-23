@@ -466,6 +466,19 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
     const capture = captureIo();
     const gateCalls: Array<{ kind: string }> = [];
     const countersignRequests: RoleTurnRequest[] = [];
+    let serialized = 0;
+    const firstSubmission = {
+      secretariatStatus: "converged",
+      ticketNumber: 924,
+      toJSON() {
+        serialized += 1;
+        return {
+          secretariatStatus: "converged",
+          ticketNumber: 924,
+          note: serialized === 1 ? "recorded candidate" : "later in-memory value",
+        };
+      },
+    };
     const host = secretariatHostDrivingRealTools({
       packageRoot,
       home,
@@ -485,7 +498,7 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
       steps: [
         {
           kind: "output",
-          details: { secretariatStatus: "converged", ticketNumber: 924 },
+          details: firstSubmission,
         },
         {
           kind: "output",
@@ -561,6 +574,11 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
       countersignRequests.length >= 1,
       "gate must summon countersign",
     );
+    assert.deepEqual(JSON.parse(countersignRequests[0]!.continuation.prompt), {
+      secretariatStatus: "converged",
+      ticketNumber: 924,
+      note: "recorded candidate",
+    });
     // #987: second 给事中 leg resumes via same secretariat parentRunPath.
     assert.ok(
       countersignRequests.some((r) => r.continuation.kind === "resume"),
