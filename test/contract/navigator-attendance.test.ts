@@ -433,9 +433,9 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
         },
       },
       {
-        type: "message",
-        message: {
-          role: "toolResult",
+        type: "custom",
+        customType: "ak-role-submission-closure",
+        data: {
           toolName: FIXER_OUTPUT_TOOL_NAME,
           isError: false,
           details: { status: "completed" },

@@ -297,6 +297,12 @@ function durableTerminalAt(
   if (classification.kind !== "accepted" && classification.kind !== "infrastructure") {
     return undefined;
   }
+  // A non-error toolResult is only a submitted candidate: the gate may still
+  // return continue even when the parent's own status was converged. Current
+  // invocations seal via the ledger-owned closure entry. Historical named
+  // review tools predate that entry and remain readable as legacy terminals.
+  if (entry?.type === "message" && classification.kind === "accepted"
+    && !LEGACY_REVIEW_OUTPUT_ROLES.has(message.toolName)) return undefined;
   return {
     index,
     role,

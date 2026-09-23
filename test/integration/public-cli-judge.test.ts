@@ -467,9 +467,9 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
     data: { invocationId, role: "judge", phase: null, subjectKey: "/repo/.ak/work" },
   };
   const judgeTerminal = {
-    type: "message",
-    message: {
-      role: "toolResult",
+    type: "custom",
+    customType: "ak-role-submission-closure",
+    data: {
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       isError: false,
       details: { status: "converged" },
@@ -579,9 +579,9 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
   });
   // Durable accepted terminal (shared classifier). isError:true/details:{} is nonterminal.
   const currentTerminal = {
-    type: "message",
-    message: {
-      role: "toolResult",
+    type: "custom",
+    customType: "ak-role-submission-closure",
+    data: {
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       isError: false,
       details: { status: "converged" },
@@ -1078,6 +1078,11 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
                   },
                 },
               },
+            },
+            {
+              type: "custom",
+              customType: "ak-role-submission-closure",
+              data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" } },
             },
             {
               type: "custom_message",

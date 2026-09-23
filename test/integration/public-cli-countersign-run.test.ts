@@ -1031,6 +1031,14 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
             isError: false,
             n: 121,
           }),
+          {
+            type: "custom",
+            customType: "ak-role-submission-closure",
+            data: { toolName: COUNTERSIGN_OUTPUT_TOOL_NAME, isError: false, details: reverseAccepted },
+            id: "closure-rev-accept",
+            parentId: "result-rev-accept",
+            timestamp: sessionRowTime(122).iso,
+          },
           ...csExchange({
             stem: "rev-bounce",
             parentId: "result-rev-accept",

@@ -13,6 +13,7 @@ const rows = [
   { type: "message", timestamp: "2026-08-01T05:01:18.900Z", message: { role: "assistant", content: [{ type: "toolCall", id: "c0", name: "read", arguments: {} }] } },
   { type: "message", timestamp: "2026-08-01T05:01:19.000Z", message: { role: "assistant", responseId: "r1", usage: { output: 7 }, content: [{ type: "toolCall", id: "c1", name: "ak_coder_output", arguments: {} }] } },
   { type: "message", timestamp: "2026-08-01T05:01:20.000Z", message: { role: "toolResult", toolCallId: "c1", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "done" } } },
+  { type: "custom", customType: "ak-role-submission-closure", timestamp: "2026-08-01T05:01:20.000Z", data: { toolName: "ak_coder_output", isError: false, details: { status: "completed" } } },
 ];
 
 /** Machine ledger home runs root: `.../.ak-roles/books/<book>/<issue>/runs`. */
@@ -161,6 +162,7 @@ test("intermediate object details neither terminate nor manufacture session stat
       { type: "message", timestamp: "2026-08-01T00:00:03.000Z", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "refused", reason: "invalid shape" } } },
       { type: "message", timestamp: "2026-08-01T00:00:04.000Z", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "completed", report: "superseded" } } },
       { type: "message", timestamp: "2026-08-01T00:00:05.000Z", message: { role: "toolResult", toolName: "ak_coder_output", isError: false, details: { status: "refused", report: "final" } } },
+      { type: "custom", customType: "ak-role-submission-closure", timestamp: "2026-08-01T00:00:05.000Z", data: { toolName: "ak_coder_output", isError: false, details: { status: "completed" } } },
     ];
     await writeFile(join(runs, "coder/session/terminal.jsonl"), fixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
     await writeFile(join(runs, "coder/session/incomplete.jsonl"), fixture.slice(0, 3).map((row) => JSON.stringify(row)).join("\n") + "\n");
@@ -169,6 +171,7 @@ test("intermediate object details neither terminate nor manufacture session stat
     const incomplete = patient.cost.sessions.find((session) => session.source.endsWith("incomplete.jsonl"));
     assert.deepEqual(terminal && { wall: terminal.wallMilliseconds, completion: terminal.completion }, { wall: 5000, completion: "accepted" });
     assert.equal(incomplete?.wallMilliseconds, 3000);
+    assert.equal(incomplete?.completion, "incomplete");
     // #836 B10.3: earlier statuses are retained (no wipe to last-only).
     assert.deepEqual(patient.cost.statuses, [
       { source: "coder/session/incomplete.jsonl", status: "refused" },
