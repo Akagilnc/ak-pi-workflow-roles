@@ -2523,6 +2523,8 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
           assert.deepEqual(paused.content, []);
           assert.equal(paused.details.kind, "audit_escalation");
           assert.deepEqual(paused.details.audit.conflicts, escalation);
+          assert.equal(paused.details.audit.officer, "auditor");
+          assert.deepEqual(paused.details.audit.auditDecisionGate, escalation.decisionGate);
           assert.equal(escalated.auditCalls, 1);
           continue;
         }

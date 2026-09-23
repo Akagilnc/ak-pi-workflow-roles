@@ -4,6 +4,7 @@ import type {
   ComplianceDecision,
 } from "./compliance-transport.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
+import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
 
 export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
 
@@ -37,7 +38,7 @@ export type AuditEscalationToolResult = {
 
 export type OfficerAuditEscalationDecision = {
   readonly status: "escalate";
-  readonly officer?: "inspector" | "notary" | "countersign";
+  readonly officer?: "inspector" | "notary" | "auditor" | "countersign";
   readonly reason?: unknown;
   readonly findings?: unknown;
   readonly conflicts?: unknown;
@@ -111,6 +112,25 @@ export function projectAuditEscalation(
     terminate: true,
     ...(decision.usage === undefined ? {} : { usage: decision.usage }),
   };
+}
+
+/** Preserve the escalating officer's own gate alongside the raw receipt. */
+export function projectGatekeeperEscalation(
+  result: Extract<GatekeeperNonPassResult, { status: "escalate" }>,
+  deliveredOutput?: unknown,
+): AuditEscalationToolResult {
+  const receipt = result.receipt;
+  const record = receipt !== null && typeof receipt === "object" && !Array.isArray(receipt)
+    ? receipt as Record<string, unknown>
+    : undefined;
+  return projectAuditEscalation({
+    status: "escalate",
+    officer: result.officer,
+    conflicts: receipt,
+    ...(record !== undefined && Object.hasOwn(record, "decisionGate")
+      ? { decisionGate: record.decisionGate }
+      : {}),
+  }, deliveredOutput);
 }
 
 /**

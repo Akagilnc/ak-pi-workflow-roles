@@ -382,8 +382,8 @@ function projectOfficerTerminal(
   }
   if (outcome.kind === "accepted") {
     // outcome.status is the fixture/compat leaf: production settlement leaves
-    // it undefined once payloads are recorded, so this only matters when a
-    // caller still supplies status without any recorded payload (#836 hang).
+    // it undefined once payloads are recorded. It may interpret a receipt
+    // lacking its own status, never substitute for a missing receipt.
     return withOfficerRunId(
       projectOfficerPayloads(officer, thisCourt, outcome.status),
       summoned,

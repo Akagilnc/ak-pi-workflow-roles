@@ -3,7 +3,7 @@ import { Type, type Static } from "typebox";
 
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 import { GatekeeperDecisionError, ParentQueueReaskError } from "./submission-errors.ts";
-import { projectAuditEscalation } from "./audit-escalation.ts";
+import { projectGatekeeperEscalation } from "./audit-escalation.ts";
 
 import { readableGateItem } from "./readable-gate-item.ts";
 import {
@@ -152,7 +152,7 @@ export function createJudgeRoleRuntime(
               };
             } catch (error) {
               if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
-                return projectAuditEscalation({ status: "escalate", conflicts: error.result.receipt }, verdict);
+                return projectGatekeeperEscalation(error.result, verdict);
               }
               throw error;
             }
