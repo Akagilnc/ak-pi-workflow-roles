@@ -9,7 +9,7 @@ import type {
   CanonicalSkillBinding,
 } from "./canonical-skill-binding.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
-import { projectAuditEscalation } from "./audit-escalation.ts";
+import { projectGatekeeperEscalation } from "./audit-escalation.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
@@ -299,7 +299,7 @@ export function createFixerRoleRuntime(
                 : undefined;
             } catch (error) {
               if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
-                return projectAuditEscalation({ status: "escalate", conflicts: error.result.receipt }, output);
+                return projectGatekeeperEscalation(error.result, output);
               }
               throw error;
             }
@@ -447,7 +447,7 @@ export function createCoderRoleRuntime(
                 : undefined;
             } catch (error) {
               if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
-                return projectAuditEscalation({ status: "escalate", conflicts: error.result.receipt }, output);
+                return projectGatekeeperEscalation(error.result, output);
               }
               throw error;
             }

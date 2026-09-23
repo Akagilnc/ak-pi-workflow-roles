@@ -287,7 +287,8 @@ function projectOfficerPayloads(
   fallbackStatus?: string,
 ): GatekeeperResult {
   if (payloads.length === 0) {
-    return projectOfficerDecision(officer, undefined, fallbackStatus);
+    // A terminal status alone is not an officer receipt or a pass verdict.
+    return { status: "needs_reask", officer, receipt: undefined };
   }
   // This-court multi-submit: queue the latest seal of THIS court only (#836 呈现≠排队).
   // Single this-court seal is the common path. Never fold history into an array receipt.
@@ -382,8 +383,8 @@ function projectOfficerTerminal(
   }
   if (outcome.kind === "accepted") {
     // outcome.status is the fixture/compat leaf: production settlement leaves
-    // it undefined once payloads are recorded, so this only matters when a
-    // caller still supplies status without any recorded payload (#836 hang).
+    // it undefined once payloads are recorded. It may interpret a receipt
+    // lacking its own status, never substitute for a missing receipt.
     return withOfficerRunId(
       projectOfficerPayloads(officer, thisCourt, outcome.status),
       summoned,

@@ -1443,6 +1443,31 @@ test("judge role returns auditor bounce as raw receipt without aborting (#756)",
   assert.equal(abortCalls, 0);
 });
 
+test("judge does not accept a pass conclusion without an officer receipt", async () => {
+  const { tool } = await startJudge();
+  const verdict = { judgeStatus: "converged" };
+  const ctx = await withPassingGatekeeper(toolCallContext([{ id: "missing-pass-receipt", arguments: verdict }]));
+  let notaryCalls = 0;
+  defaultGateSummon = async (officer) => {
+    if (officer === "notary" && ++notaryCalls === 1) {
+      const missing = passingOfficerSummon(officer);
+      return {
+        ...missing,
+        terminal: {
+          ...missing.terminal!,
+          roleOutcome: { ...missing.terminal!.roleOutcome!, payloads: [] },
+        },
+      };
+    }
+    return passingOfficerSummon(officer);
+  };
+  const result = await tool.execute("missing-pass-receipt", verdict, undefined, undefined, ctx);
+  assert.equal(notaryCalls, 2);
+  assert.equal(result.content.length, 2);
+  assert.equal(result.content.every((part: { type: string; text: unknown }) =>
+    part.type === "text" && typeof part.text === "string"), true);
+});
+
 test("judge returns auditor transport failures on the failure channel with abort (#836 A.3)", async () => {
   const { tool } = await startJudge();
   const verdict = { judgeStatus: "converged" };
@@ -2523,6 +2548,8 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
           assert.deepEqual(paused.content, []);
           assert.equal(paused.details.kind, "audit_escalation");
           assert.deepEqual(paused.details.audit.conflicts, escalation);
+          assert.equal(paused.details.audit.officer, "auditor");
+          assert.deepEqual(paused.details.audit.auditDecisionGate, escalation.decisionGate);
           assert.equal(escalated.auditCalls, 1);
           continue;
         }
