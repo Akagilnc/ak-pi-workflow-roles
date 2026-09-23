@@ -131,21 +131,6 @@ test("role modules do not value-import or call shared summon drivers (ADR 0018)"
   }
 });
 
-test("secretariat role module is projection-only (ADR 0018 / #924)", async () => {
-  const source = await readFile(
-    join(packageRoot, "src", "secretariat-role.ts"),
-    "utf8",
-  );
-  assert.equal(/async\s+activate\s*\(/.test(source), false);
-  assert.equal(/\bregisterTool\b/.test(source), false);
-  assert.equal(/createFiledOfficerRuntime/.test(source), false);
-  assert.equal(/before_agent_start/.test(source), false);
-  assert.equal(/child_process/.test(source), false);
-  assert.equal(/\bspawn\s*\(/.test(source), false);
-  assert.match(source, /SECRETARIAT_OUTPUT_TOOL_SPEC/);
-  assert.match(source, /projectSecretariatSummonResult/);
-});
-
 test("public secretariat face has no new flags or mode params", () => {
   const options = optionsForOwner("secretariat");
   const ids = options.map((o) => o.id).sort();

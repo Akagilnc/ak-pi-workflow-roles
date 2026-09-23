@@ -86,7 +86,7 @@ The examples below are usage sketches; option identity, aliases, requiredness, a
 # countersign — ticket-court review before work starts; admission runs the ticket's diarist first (#742, caller-transparent); resume continues the exact session
 ak-role countersign --model <provider/model[:thinking]> --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
-# secretariat — rewrite ticket per 票面法 and drive countersign to converged or escalate (#924)
+# secretariat — rewrite ticket per 票面法; submission routes converged verdicts through the shared countersign gate (#924, #1021)
 ak-role secretariat --model <provider/model[:thinking]> "整理 #924 票面并送庭。"
 
 # gleaner-left — unanchored pre-merge memorials; resume continues the exact session; --base required; instruction may be empty; callers must not pass directional instruction

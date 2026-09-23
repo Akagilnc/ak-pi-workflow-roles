@@ -8,8 +8,6 @@
  */
 
 export const SECRETARIAT_OUTPUT_TOOL_NAME = "ak_secretariat_output";
-export const SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME =
-  "ak_secretariat_summon_countersign";
 /**
  * #969 durable custom entry: 给事中 terminal (署|上呈) for seat settlement projection.
  * Carries original receipt bytes + nested runId. Envelope persists custom entries
