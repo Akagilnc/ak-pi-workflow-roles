@@ -1384,7 +1384,6 @@ export function roleTurnOptions(
   env: PostAdmissionEnv,
   admitted: { readonly correlationId?: string },
   continuation: RoleTurnRequest["continuation"],
-  extra?: { readonly cwd?: string },
 ): RoleTurnRequestProjectionOptions {
   const correlationId = admitted.correlationId ?? env.correlationId;
   return {
@@ -1398,7 +1397,6 @@ export function roleTurnOptions(
       ? {}
       : { correlationId }),
     continuation,
-    ...(extra?.cwd === undefined ? {} : { cwd: extra.cwd }),
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
   };
 }
@@ -1508,15 +1506,6 @@ export async function runPostAdmissionSeatResume<
   afterAdmittedLoad?: (
     admitted: A,
   ) => Promise<AfterAdmittedLoadResult<A, T>>;
-  /**
-   * After the single pre-lease load (and optional afterAdmittedLoad), prepare
-   * call-local execution context. Reuses this load; does not pre-load outside
-   * the coordinator. cleanup runs after dispatch settles.
-   */
-  afterAdmittedPrepare?: (admitted: A) => Promise<{
-    readonly env?: PostAdmissionEnv;
-    readonly cleanup?: () => Promise<void>;
-  }>;
   effectiveEngine?: string;
 }): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
   let request = input.request;
@@ -1549,9 +1538,7 @@ export async function runPostAdmissionSeatResume<
     adapters = prepared.adapters;
   }
 
-  // Call-local execution env; afterAdmittedPrepare may replace it.
-  let env = input.env;
-  let preparedCleanup: (() => Promise<void>) | undefined;
+  const env = input.env;
 
   const buildRequestAfterLease = async (): Promise<RoleTurnRequest> => {
         let openCourtAttemptId: string | undefined;
@@ -1638,13 +1625,7 @@ export async function runPostAdmissionSeatResume<
   // auto-resume both pass through to the host CLI without a package writer-lease
   // pre-gate (#987 / ADR 0080). Station-child same-ticket/same-parent resume is
   // still call-local auto-resume (#840 / #416).
-  // afterAdmittedPrepare runs inside this try so mint failure and cleanup share one finally.
   try {
-    if (input.afterAdmittedPrepare !== undefined) {
-      const prepared = await input.afterAdmittedPrepare(loaded.admitted);
-      if (prepared.env !== undefined) env = prepared.env;
-      preparedCleanup = prepared.cleanup;
-    }
     if (env.stationChild === true) {
       let firstTurn: RoleTurnRequest | undefined;
       const stationAdapters = withOnceSuccessfulBeforeDispatch(adapters);
@@ -1734,16 +1715,12 @@ export async function runPostAdmissionSeatResume<
       buildRequestAfterLease,
     });
   } catch (error) {
-    // Seat preparation may still surface structural rejection.
+    // Turn construction may still surface structural rejection.
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, input.io);
       return { exitCode: 2 };
     }
     throw error;
-  } finally {
-    if (preparedCleanup !== undefined) {
-      await preparedCleanup();
-    }
   }
 }
 

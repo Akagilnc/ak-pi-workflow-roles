@@ -47,11 +47,6 @@ export type RoleTurnRequestProjectionOptions = {
   invocationScopeId?: string;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
-  /**
-   * Optional host-turn cwd override. Durable admitted projectRoot stays the
-   * identity source; when omitted, the turn uses admitted.projectRoot.
-   */
-  cwd?: string;
 };
 
 export type AdmittedTurnInvocation = {
@@ -72,7 +67,7 @@ export function projectRoleTurnRequest(
   },
   options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
-  const cwd = options.cwd ?? admitted.projectRoot ?? admitted.repoRoot ?? admitted.cwd;
+  const cwd = admitted.projectRoot ?? admitted.repoRoot ?? admitted.cwd;
   if (cwd === undefined) throw new Error("admitted invocation missing working directory");
   if (admitted.principal === undefined) throw new Error("admitted invocation missing principal");
   // #617 DK-3: turn model is the live seat/env model only — never the admitted
