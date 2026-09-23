@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, truncate, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -1291,7 +1291,7 @@ test("#969 omitted receipt ticketNumber still hands parent board identity to 给
 });
 
 test("public secretariat moves its unbound 起居录 to the ticket after typed assignment", async () => {
-  for (const scenario of ["first", "retry", "other-source-same-content"] as const) {
+  for (const scenario of ["first", "retry", "partial-retry", "other-source-same-content"] as const) {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -1323,8 +1323,11 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
         })(args, options);
         sourceContent = await readFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), "utf8");
         if (scenario !== "first") {
-          if (scenario === "retry") {
+          if (scenario === "retry" || scenario === "partial-retry") {
             await rehomeUnboundTicketProvenance(options.env.AK_ROLE_RUN_DIR!, 924, project, home);
+            if (scenario === "partial-retry") {
+              await truncate(join(book, "924", "records.jsonl"), Buffer.byteLength(`${prior}\n`) + Math.floor(Buffer.byteLength(sourceContent) / 2));
+            }
             await writeFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), sourceContent, "utf8");
           } else {
             await writeFile(join(book, "924", "records.jsonl"), `${prior}\n${sourceContent}`, "utf8");

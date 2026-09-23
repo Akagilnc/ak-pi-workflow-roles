@@ -12,6 +12,7 @@ import {
   readFileSync,
   readSync,
   statSync,
+  truncateSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -70,7 +71,6 @@ export function appendSitianRecordBlock(input: SitianRecordInput, block: string,
     const { sessionDir, recordFile, ledgerHome } = resolveSitianRecordPath(input);
     ensureRealDirectoryTree(ledgerHome, sessionDir);
     appendFileSync(recordFile, "", "utf8");
-    sealTornTail(recordFile);
     const marker = `${recordFile}.block-${createHash("sha256").update(sourceRunDirectory).digest("hex")}`;
     const bytes = Buffer.from(block, "utf8");
     if (existsSync(marker)) {
@@ -78,14 +78,26 @@ export function appendSitianRecordBlock(input: SitianRecordInput, block: string,
       if (!Number.isSafeInteger(offset) || offset < 0) {
         throw new Error(`Invalid Sitian block offset in ${marker}`);
       }
-      const actual = Buffer.alloc(bytes.length);
+      const remaining = statSync(recordFile).size - offset;
+      if (remaining < 0) {
+        throw new Error(`Sitian block at ${marker} changed after append`);
+      }
+      const compared = Math.min(remaining, bytes.length);
+      const actual = Buffer.alloc(compared);
       const fd = openSync(recordFile, "r");
       try {
-        if (readSync(fd, actual, 0, actual.length, offset) === bytes.length && actual.equals(bytes)) return;
+        if (readSync(fd, actual, 0, actual.length, offset) !== compared || !bytes.subarray(0, compared).equals(actual)) {
+          throw new Error(`Sitian block at ${marker} does not match its source`);
+        }
       } finally {
         closeSync(fd);
       }
+      if (remaining >= bytes.length) return;
+      truncateSync(recordFile, offset);
+      appendFileSync(recordFile, bytes);
+      return;
     }
+    sealTornTail(recordFile);
     const offset = statSync(recordFile).size;
     writeFileSync(marker, String(offset), "utf8");
     appendFileSync(recordFile, bytes);
