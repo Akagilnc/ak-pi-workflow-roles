@@ -93,8 +93,8 @@ function emptyAccum(): OfficerAccum {
 function absorbRound(accum: OfficerAccum, round: AnalystGateCyclesRoundRow): void {
   accum.rounds += 1;
   accum.wallSum += round.officerWallMs;
-  if (round.status === "bounce") accum.bounceCount += 1;
-  if (round.status === "pass") accum.passCount += 1;
+  if (round.status === "bounce" || round.status === "continue") accum.bounceCount += 1;
+  if (round.status === "pass" || round.status === "converged") accum.passCount += 1;
 }
 
 function finishOfficer(

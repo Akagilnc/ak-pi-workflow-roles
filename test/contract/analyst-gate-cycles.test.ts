@@ -360,6 +360,36 @@ test("analyst gate-cycles via runAnalyst: current English faces + rejected/no-re
   });
 });
 
+test("analyst gate-cycles via runAnalyst: shared submission pointer retains officer and new statuses", async () => {
+  await withTempHome(async (home) => {
+    const auditorDir = judgeAuditorDir(home);
+    await mkdir(auditorDir, { recursive: true });
+    const sessionFile = join(auditorDir, "shared-session.jsonl");
+    await writeFile(sessionFile, gateToolSessionJsonl({
+      id: "shared-inspector",
+      startedAt: iso(1_000),
+      endedAt: iso(11_000),
+      toolName: "ak_submission_output",
+      args: { status: "continue", findings: ["finding"] },
+    }), "utf8");
+    await writeFile(join(auditorDir, "inspector.pointer.json"), JSON.stringify({
+      version: 1,
+      kind: "direct-officer-run-pointer",
+      officer: "inspector",
+      sessionFile,
+    }), "utf8");
+    const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
+    const leg = gateSection(result.page).legs.find((item) => item.runId === GATE_JUDGE_RUN);
+    assert.ok(leg);
+    assert.deepEqual(leg.rounds.map(({ officer, status }) => ({ officer, status })), [
+      { officer: "inspector", status: "continue" },
+    ]);
+    assert.deepEqual(gateSection(result.page).byOfficer.map(({ bounceCount, passCount }) => ({ bounceCount, passCount })), [
+      { bounceCount: 1, passCount: 0 },
+    ]);
+  });
+});
+
 test("analyst gate-cycles via runAnalyst: accepted-then-rejected same volume keeps accepted", async () => {
   await withTempHome(async (home) => {
     const auditorDir = judgeAuditorDir(home);

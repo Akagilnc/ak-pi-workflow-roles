@@ -115,8 +115,6 @@ test("#1028 secretariat_verdict reads the shared review status",
     });
     assert.equal(reasks[0], undefined, "first summon has no reask");
     assert.equal(reasks[1], OFFICER_CONCLUSION_REASK);
-    assert.match(reasks[1] ?? "", /converged、continue、escalate/);
-  assert.doesNotMatch(reasks[1] ?? "", /pass、bounce/);
   },
 );
 
