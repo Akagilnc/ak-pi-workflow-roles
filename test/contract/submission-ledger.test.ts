@@ -337,7 +337,7 @@ test("pipeline ledger records audit-escalation with original details and no rewr
     assert.equal(result.terminate, true);
     assert.deepEqual(result.details, details, "original details reach the model");
     const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
-    assert.deepEqual(rows, [{ role: "judge", kind: "audit-escalation", accepted: details, toolCallId: "esc" }]);
+    assert.deepEqual(rows, [{ role: "judge", kind: "audit-escalation", accepted: details, auditReceipt: ["c1"], toolCallId: "esc" }]);
     assert.deepEqual(escalating.closedSubmissions, [
       { role: "judge", kind: "audit_escalation", accepted: details },
     ]);
