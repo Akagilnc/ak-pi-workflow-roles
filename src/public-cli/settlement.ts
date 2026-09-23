@@ -465,30 +465,14 @@ function thrownIdentity(error: Error): {
   name?: string;
   code?: string | number;
 } {
-  const name = safeThrownField(error, "name");
-  const identity: { name?: string; code?: string | number } =
-    typeof name === "string" ? { name } : {};
-  const code = safeThrownField(error, "code");
+  const identity: { name?: string; code?: string | number } = {
+    name: error.name,
+  };
+  const code = (error as { code?: unknown }).code;
   if (typeof code === "string" || typeof code === "number") {
     identity.code = code;
   }
   return identity;
-}
-
-function safeThrownField(error: Error, key: string): unknown {
-  try {
-    return (error as unknown as Record<string, unknown>)[key];
-  } catch {
-    return undefined;
-  }
-}
-
-function safeThrownDiagnostic(error: Error): string {
-  for (const key of ["message", "name"]) {
-    const value = safeThrownField(error, key);
-    if (typeof value === "string" && value.length > 0) return value;
-  }
-  return "exception";
 }
 
 /** Production-owned typed thrown failure (explicit-internal channel). */
@@ -500,7 +484,7 @@ function isTypedActivationError(
   details?: Readonly<Record<string, unknown>>;
 } {
   if (!(error instanceof Error)) return false;
-  const cause = safeThrownField(error, "knownCause");
+  const cause = (error as { knownCause?: unknown }).knownCause;
   return (
     cause === "provider" ||
     cause === "activation" ||
@@ -530,20 +514,17 @@ function flattenThrownFailureLeaves(error: unknown): unknown[] {
 export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
   if (isTypedActivationError(error)) {
     const identity = thrownIdentity(error);
-    const rawDetails = safeThrownField(error, "details");
-    const safeDetails = serializeThrownValue(rawDetails);
-    const failureCode = safeThrownField(error, "failureCode");
-    if ((typeof failureCode === "string" || typeof failureCode === "number") && identity.code === undefined) {
-      identity.code = failureCode;
+    if (error.failureCode !== undefined && identity.code === undefined) {
+      identity.code = error.failureCode;
     }
     return {
-      cause: safeThrownField(error, "knownCause") as ControlledFailureCause,
-      diagnostic: safeThrownDiagnostic(error),
+      cause: error.knownCause,
+      diagnostic: error.message || error.name || "exception",
       identity,
       details: {
-        ...(typeof safeDetails === "object" && safeDetails !== null
-          ? safeDetails as Record<string, unknown>
-          : rawDetails === undefined ? {} : { priorDetails: safeDetails }),
+        ...(typeof error.details === "object" && error.details !== null
+          ? error.details as Record<string, unknown>
+          : error.details === undefined ? {} : { priorDetails: error.details }),
         error: serializeThrownValue(error),
       },
     };
@@ -552,7 +533,7 @@ export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
     const identity = thrownIdentity(error);
     // No typed confirmation → keep original diagnostic/identity; do not mint a class (#881).
     return {
-      diagnostic: safeThrownDiagnostic(error),
+      diagnostic: error.message || error.name || "exception",
       identity,
       details: { error: serializeThrownValue(error) },
     };
