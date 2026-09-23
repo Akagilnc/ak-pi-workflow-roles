@@ -109,7 +109,7 @@ import {
 } from "./navigator-invocation-identity.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
-import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleAcceptedText, packagedRoleActivationFlags, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleActivationFlags, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
@@ -639,6 +639,7 @@ function createFiledOfficerRuntime(
     tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
     soulTag: string;
     beforeAccept?: FiledOfficerBeforeAccept;
+    relayGatePass?: true;
   },
   dependencies: { loadSoul(): Promise<string> },
 ) {
@@ -663,14 +664,17 @@ function createFiledOfficerRuntime(
               spec.beforeAccept === undefined
                 ? undefined
                 : await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
-            const reply = spec.role === "secretariat" && projected !== null && typeof projected === "object" && "reply" in projected
-              ? projected.reply
+            if (isAuditEscalationProjection(projected)) {
+              return { content: [], details: projected, terminate: true as const };
+            }
+            const pass = spec.relayGatePass === true && projected !== null && typeof projected === "object" && "officer" in projected && "receipt" in projected
+              ? projected
               : undefined;
             // Accept-as-is + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
             return {
-              content: [{ type: "text" as const, text: typeof reply === "string" ? reply : packagedRoleAcceptedText(spec.role) }],
-              details: reply === undefined ? (projected === undefined ? parameters : projected) : parameters,
+              content: pass === undefined ? [] : [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
+              details: pass === undefined ? (projected === undefined ? parameters : projected) : parameters,
               terminate: true as const,
             };
           },
@@ -1016,7 +1020,7 @@ export function createSecretariatRoleRuntime(
                 ...(runId === undefined ? {} : { runId }),
               });
             }
-            return pass === undefined ? undefined : { reply: readableGateItem(pass.receipt) };
+            return pass;
           } catch (error) {
             // 给事中上呈 ends parent with officer receipt (no retry / 不擅改).
             if (
@@ -1063,6 +1067,7 @@ export function createSecretariatRoleRuntime(
     roleHost,
     {
       role: "secretariat",
+      relayGatePass: true,
       tool: SECRETARIAT_OUTPUT_TOOL_SPEC,
       soulTag: "secretariat",
       ...(beforeAccept === undefined ? {} : { beforeAccept }),
@@ -1134,21 +1139,30 @@ export function createCountersignRoleRuntime(
             error.name = "InfrastructureFailure";
             return hostActions.failInfrastructure(error, ctx, toolCallId);
           }
-          await roleHost.requireGatekeeperPass({
-            context: ctx,
-            subject: { kind: "countersign_verdict" },
-            ...(signal === undefined ? {} : { signal }),
-            hostActions,
-            toolCallId,
-            // #879: this-turn typed payload — identity-bound at submit site.
-            submission: parameters,
-          });
+          try {
+            return await roleHost.requireGatekeeperPass({
+              context: ctx,
+              subject: { kind: "countersign_verdict" },
+              ...(signal === undefined ? {} : { signal }),
+              hostActions,
+              toolCallId,
+              // #879: this-turn typed payload — identity-bound at submit site.
+              submission: parameters,
+            });
+          } catch (error) {
+            if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
+              const { buildAuditEscalationResult } = await import("./audit-escalation.ts");
+              return buildAuditEscalationResult({ status: "escalate", officer: "notary", conflicts: error.result.receipt }, parameters);
+            }
+            throw error;
+          }
         }
       : undefined;
   return createFiledOfficerRuntime(
     roleHost,
     {
       role: "countersign",
+      relayGatePass: true,
       tool: COUNTERSIGN_TOOL_SPEC,
       soulTag: "countersign",
       ...(beforeAccept === undefined ? {} : { beforeAccept }),

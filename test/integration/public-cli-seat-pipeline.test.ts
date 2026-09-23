@@ -77,7 +77,6 @@ test("#505 every active seat routes, submits, and settles from the public entry"
             role: seat.role as TerminalRoleName,
             toolName: seat.outputTool,
             details: { status: "completed" },
-            acceptedText: seat.acceptedText,
           })(args, options);
           if (seat.role === "navigator") {
             const sessionFile = argvFlagValue(args, "--session");
@@ -173,7 +172,6 @@ test("#505 every active seat routes, submits, and settles from the public entry"
             role: seat.role as TerminalRoleName,
             toolName: seat.outputTool,
             details: { status: "completed" },
-            acceptedText: seat.acceptedText,
           })(args, options);
         },
       });

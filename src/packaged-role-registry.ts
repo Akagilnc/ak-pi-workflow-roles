@@ -87,7 +87,6 @@ export const PUBLIC_ROLE_RECORDS = [
     auditTool: JUDGE_AUDIT_TOOL_NAME,
     settlement: "sealed",
     runnerFailure: "engine-detour-known-first",
-    acceptedText: "大理寺回执已接受",
     /** Factory board: court until another station has started, then marshal. */
     boardPlacement: "judge-history",
     /** Navigator subject is the public admitted instruction when the run is bound. */
@@ -126,7 +125,6 @@ export const PUBLIC_ROLE_RECORDS = [
       ],
       method: "observed",
     },
-    acceptedText: "修内司回执已接受",
     boardPlacement: "marshal",
     activationFlags: [
       { field: "packetPath", flag: "ak-fix-packet", binds: "input" },
@@ -165,7 +163,6 @@ export const PUBLIC_ROLE_RECORDS = [
       ],
       method: "optional",
     },
-    acceptedText: "将作监回执已接受",
     activationFlags: [
       { field: "taskPath", flag: "ak-coder-task", binds: "input" },
       { field: "phase", flag: "ak-coder-phase", binds: "phase" },
@@ -211,7 +208,6 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Frozen base/lens/authority become the initial prompt; instruction follows. */
     transportPrompt: "skill-args",
     runnerFailure: "engine-detour-record-first",
-    acceptedText: "御史台回执已接受",
     boardPlacement: "marshal",
     activationFlags: [
       { field: "baseRevision", flag: "ak-review-base" },
@@ -253,7 +249,6 @@ export const PUBLIC_ROLE_RECORDS = [
         { key: "manifestDigest" },
       ],
     },
-    acceptedText: "通进司回执已接受",
     boardPlacement: "collector",
     /** Taishi acceptance is a typed groups array, not a status leaf. */
     analystTerminal: "groups",
@@ -287,7 +282,6 @@ export const PUBLIC_ROLE_RECORDS = [
       ],
       doctorReportFacts: true,
     },
-    acceptedText: "太医署回执已接受",
     /** Navigator subject is the doctor case, not the case-path file bytes. */
     navigatorSubject: "case",
     activationFlags: [
@@ -323,7 +317,6 @@ export const PUBLIC_ROLE_RECORDS = [
       ],
       method: "observed",
     },
-    acceptedText: "合并回执已接受",
     activationFlags: [
       { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },
     ],
@@ -356,7 +349,6 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Court reask replaces the initial prompt. Otherwise the fixed kickoff. */
     reaskPrompt: true,
     transportPrompt: "fixed-kickoff",
-    acceptedText: "符宝郎回执已接受",
     gateStageLabel: "符宝郎",
     /** Gate summon binds --source-run and keeps dialogue off the argv. */
     gateSummon: "source-run",
@@ -381,7 +373,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
     settlement: "accepted",
-    acceptedText: "给事中回执已接受",
     gateStageLabel: "给事中",
     /** Gate queue reads countersignStatus, not the shared three-state status. */
     gateDecision: "countersign-status",
@@ -407,7 +398,6 @@ export const PUBLIC_ROLE_RECORDS = [
     settlement: "accepted",
     /** Project the durable 给事中 officer entry onto the shared accepted-tool settlement. */
     projectCountersignTerminal: true,
-    acceptedText: "中书省回执已接受",
     activationFlags: [
       { field: "ticketNumber" },
     ],
@@ -437,7 +427,6 @@ export const PUBLIC_ROLE_RECORDS = [
     settlement: "accepted",
     /** Bound comparison base is the initial prompt; instruction follows. */
     transportPrompt: "baseline",
-    acceptedText: "左拾遗回执已接受",
     activationFlags: [
       { field: "baseRevision", flag: "ak-gleaner-left-base" },
     ],
@@ -468,7 +457,6 @@ export const PUBLIC_ROLE_RECORDS = [
     settlement: "accepted",
     /** Court reask replaces the initial prompt. */
     reaskPrompt: true,
-    acceptedText: "台院回执已接受",
     gateStageLabel: "台院",
     activationFlags: [
       {
@@ -500,7 +488,6 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: GATEKEEPER_OUTPUT_TOOL_NAME,
     settlement: "accepted",
     runnerFailure: "engine-detour-record-first",
-    acceptedText: "门下省决议已受理",
     activationStage: "load-and-install",
     // Province materials; officers reuse their own public records below.
     sessionMaterials: ["CLAUDE.md", "souls/gatekeeper.md", "souls/quality-law.md", "souls/gate-output-guide.md"],
@@ -516,7 +503,6 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
     settlement: "accepted",
     runnerFailure: "engine-detour-record-first",
-    acceptedText: "游奕使建议已受理",
     activationStage: "load-and-install",
     sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
   },
@@ -540,7 +526,6 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Court reask replaces the initial prompt. */
     reaskPrompt: true,
     runnerFailure: "engine-detour-record-first",
-    acceptedText: "审刑院回执已接受",
     gateStageLabel: "审刑院",
     /** Gate summon binds --subject judge and --source-run. */
     gateSummon: "subject-source",
@@ -559,7 +544,6 @@ export const PUBLIC_ROLE_RECORDS = [
     phases: [null],
     outputTool: DIARIST_OUTPUT_TOOL_NAME,
     settlement: "accepted",
-    acceptedText: "起居郎回执已接受",
     activationStage: "load-and-install",
     sessionMaterials: [
       "CLAUDE.md",
@@ -658,15 +642,6 @@ export function packagedRolePhaseFlag(role: string): string | undefined {
 
 export function packagedRoleOutputTool(role: string): string | undefined {
   return packagedRoleMetadata(role)?.outputTool;
-}
-
-/** Accept-face text for a registered seat. One registry leaf; callers do not keep a copy. */
-export function packagedRoleAcceptedText(role: string): string {
-  const record = packagedRoleMetadata(role);
-  if (record === undefined) {
-    throw new Error(`Unsupported workflow role: ${String(role)}`);
-  }
-  return record.acceptedText;
 }
 
 /** Method-material load failure cause declared on the seat. Absent means no typed cause. */

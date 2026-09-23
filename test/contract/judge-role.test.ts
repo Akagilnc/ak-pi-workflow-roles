@@ -20,7 +20,6 @@ import { transcriptFromContext as productionTranscriptFromContext } from "../../
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { packagedRoleAcceptedText } from "../../src/packaged-role-registry.ts";
 import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import type { HostContext, HostGatekeeperActions } from "../../src/host-contracts.ts";
 import {
@@ -360,7 +359,7 @@ function testHostActions(
 function testRequireGatekeeperPass(): NonNullable<import("../../src/host-contracts.ts").RoleHost["requireGatekeeperPass"]> {
   return async (options) => {
     const { requireGatekeeperPass } = await import("../../src/gatekeeper-pass-envelope.ts");
-    await requireGatekeeperPass({
+    return await requireGatekeeperPass({
       context: options.context,
       subject: options.subject as import("../../src/gatekeeper-role.ts").GatekeeperSubject,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -1276,11 +1275,12 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     assert.deepEqual(result.details, fixture.output);
     assert.equal(result.terminate, true);
     const receiptText = result.content[0];
-    assert.equal(receiptText?.type, "text");
-    assert.equal(
-      receiptText !== undefined && "text" in receiptText ? receiptText.text : undefined,
-      packagedRoleAcceptedText(fixture.role),
-    );
+    if (fixture.role === "coder") {
+      assert.deepEqual(result.content, []);
+    } else {
+      assert.equal(receiptText?.type, "text");
+      assert.equal(receiptText && "text" in receiptText ? receiptText.text : undefined, JSON.stringify({ status: "pass", findings: [] }));
+    }
     // #756: judge no longer projects auditor usage onto the parent receipt —
     // nested officer meters live on the officer session; parent accepts as-is.
     assert.equal(result.usage, undefined);
@@ -2492,23 +2492,15 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         await escalated.runtime.activate();
         const escalationTool = escalated.harness.tools.get(tool.name);
         if (role === "judge") {
-          // #756: auditor escalate → raw receipt back to judge (not audit_escalation rewrite).
+          // Escalation terminates into the existing audit-escalation face; no
+          // officer verdict is delivered back to the judge's conversation.
           const escBare = outputContext(tool.name, `${role}-escalate`, outputs[role] as unknown as JsonObject);
           const escCtx = await withPassingGatekeeper(escBare);
           escalated.armJudgeGateDecision();
-          await assert.rejects(
-            escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, escCtx),
-            (error: unknown) => {
-              assert.ok(error instanceof GatekeeperDecisionError);
-              assert.equal(error.result.status, "escalate");
-              if (error.result.status === "escalate") {
-                assert.equal(error.result.officer, "auditor");
-                assert.deepEqual(error.result.receipt, escalation);
-                assert.equal(error.message, JSON.stringify(escalation));
-              }
-              return true;
-            },
-          );
+          const paused = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, escCtx);
+          assert.deepEqual(paused.content, []);
+          assert.equal(paused.details.kind, "audit_escalation");
+          assert.deepEqual(paused.details.audit.conflicts, escalation);
           assert.equal(escalated.auditCalls, 1);
           continue;
         }

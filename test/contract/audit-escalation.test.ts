@@ -50,8 +50,7 @@ test("escalation projects one terminating human decision and is not an accepted 
     (result.details.audit as { auditDecisionGate?: unknown }).auditDecisionGate,
     decision.decisionGate,
   );
-  assert.equal(result.content[0].text, JSON.stringify(decision));
-  assert.doesNotMatch(result.content[0].text, /accepted/i);
+  assert.deepEqual(result.content, []);
   assert.equal(isAuditEscalationResult(result.details), true);
   // #836: status/allowlist rejection deleted — original payload is accepted as details.
   assert.deepEqual(
@@ -134,7 +133,7 @@ test("disposeComplianceDecision preserves delivered role output on escalate face
   assert.equal(result.details.kind, AUDIT_ESCALATION_KIND);
   assert.deepEqual(result.details.receipt, delivered);
   assert.deepEqual((result.details.audit as { conflicts?: unknown }).conflicts, ["conflict"]);
-  assert.equal(result.content[0]?.text, JSON.stringify(delivered));
+  assert.deepEqual(result.content, []);
   const stripped = projectAuditEscalation(decision).details;
   assert.equal(stripped.receipt, undefined);
 
@@ -186,7 +185,7 @@ test("escalate face keeps role decisionGate and audit gate side by side", async 
   assert.deepEqual((details.receipt as { decisionGate?: unknown }).decisionGate, roleGate);
   assert.deepEqual((details.audit as { conflicts?: unknown }).conflicts, decision.conflicts);
   assert.deepEqual((details.audit as { auditDecisionGate?: unknown }).auditDecisionGate, auditGate);
-  assert.equal(result.content[0]?.text, JSON.stringify(delivered));
+  assert.deepEqual(result.content, []);
   const launder = await disposeComplianceDecision(
     decision,
     {
