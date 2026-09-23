@@ -209,7 +209,7 @@ test("judge gate escalation reaches the public terminal without replacing the ro
     const { io } = captureIo();
     const submission = { judgeStatus: "converged", note: "原判词" };
     const receipt = { status: "escalate", decisionGate: { question: "请陛下裁决" } };
-    const escalation = projectAuditEscalation({ status: "escalate", conflicts: receipt }, submission);
+    const escalation = projectAuditEscalation({ status: "escalate", officer: "notary", conflicts: receipt }, submission);
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "review"], {
       packageRoot, home, cwd: project, io,
       createRunId: () => "run-judge-gate-escalation",
@@ -230,6 +230,7 @@ test("judge gate escalation reaches the public terminal without replacing the ro
     assert.equal(result.exitCode, 0);
     assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
     assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts?.auditEscalationReceipt, receipt);
+    assert.equal(result.terminal?.roleOutcome.decisiveFacts?.auditEscalationOfficer, "notary");
     assert.deepEqual(result.terminal?.roleOutcome.payloads, [submission]);
   });
 });

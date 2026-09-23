@@ -287,8 +287,7 @@ function projectOfficerPayloads(
   fallbackStatus?: string,
 ): GatekeeperResult {
   if (payloads.length === 0) {
-    // A terminal status alone is not an officer receipt or a pass verdict.
-    return { status: "needs_reask", officer, receipt: undefined };
+    return projectOfficerDecision(officer, undefined, fallbackStatus);
   }
   // This-court multi-submit: queue the latest seal of THIS court only (#836 呈现≠排队).
   // Single this-court seal is the common path. Never fold history into an array receipt.

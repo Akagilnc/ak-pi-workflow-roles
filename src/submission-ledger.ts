@@ -52,6 +52,7 @@ export type SubmissionLedgerEvent =
       readonly accepted?: unknown;
       /** Audit-owned escalation verdict, separate from the original role submission. */
       readonly auditReceipt?: unknown;
+      readonly auditOfficer?: unknown;
     }
   | {
       readonly type: "sealed";
@@ -105,6 +106,7 @@ export type RecordedSubmissionRow = {
   readonly kind: "accepted" | "audit-escalation" | "correctable-rejection" | "infrastructure" | "candidate";
   readonly accepted: unknown;
   readonly auditReceipt?: unknown;
+  readonly auditOfficer?: unknown;
   /** Present when the ledger row names the tool call — used to dedupe candidate+outcome. */
   readonly toolCallId?: string;
 };
@@ -285,6 +287,7 @@ function rowFromPayload(
     params?: unknown;
     toolCallId?: unknown;
     auditReceipt?: unknown;
+    auditOfficer?: unknown;
   },
   accepted: unknown,
   roleFallback?: TerminalRoleName,
@@ -295,6 +298,7 @@ function rowFromPayload(
     kind,
     accepted,
     ...(Object.hasOwn(payload, "auditReceipt") ? { auditReceipt: payload.auditReceipt } : {}),
+    ...(Object.hasOwn(payload, "auditOfficer") ? { auditOfficer: payload.auditOfficer } : {}),
     ...(typeof payload.toolCallId === "string" && payload.toolCallId.length > 0
       ? { toolCallId: payload.toolCallId }
       : {}),
@@ -726,6 +730,7 @@ export function createSubmissionLedgerHost(
               ...(audit !== undefined && (Object.hasOwn(audit, "receipt") || Object.hasOwn(audit, "conflicts"))
                 ? { auditReceipt: Object.hasOwn(audit, "receipt") ? audit.receipt : audit.conflicts }
                 : {}),
+              ...(audit !== undefined && Object.hasOwn(audit, "officer") ? { auditOfficer: audit.officer } : {}),
             });
             await projectClosure(closed, context);
             return result;
