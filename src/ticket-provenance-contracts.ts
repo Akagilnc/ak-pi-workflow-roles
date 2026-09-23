@@ -40,7 +40,7 @@ export type TicketProvenanceSession = {
 /** 读取时折叠出的逻辑册子头。sessions 为累计区间；reopen 与跨宿主并入，不新建册。 */
 export type TicketProvenanceHeader = {
   readonly repo: string;
-  readonly ticket: number;
+  readonly ticket: number | null;
   readonly createdAt: string;
   readonly updatedAt: string;
   readonly sessions: readonly TicketProvenanceSession[];
@@ -132,7 +132,7 @@ export function projectTicketProvenanceHeader(
   value: unknown,
 ): TicketProvenanceHeader | undefined {
   if (!isRecord(value)) return undefined;
-  const ticket = positiveInteger(value.ticket);
+  const ticket = value.ticket === null ? null : positiveInteger(value.ticket);
   if (ticket === undefined) return undefined;
   if (typeof value.repo !== "string") return undefined;
   if (typeof value.createdAt !== "string" || typeof value.updatedAt !== "string") {

@@ -2323,11 +2323,14 @@ test("ak-role diarist selects user and enqueue boundaries inside their declared 
   }
 });
 
-test("ak-role diarist true-unbound leaves no 起居录", async () => {
+test("ak-role diarist true-unbound records its dialogue under unbound", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const sessionPath = join(home, ".claude", "projects", "unbound", "session.jsonl");
+    await mkdir(join(sessionPath, ".."), { recursive: true });
+    await writeFile(sessionPath, `${JSON.stringify({ type: "user", uuid: "unbound-owner", message: { role: "user", content: "先拟票" }, origin: { kind: "human" } })}\n`, "utf8");
 
     const runId = "01a0diar00-0000-7000-8000-000000000002";
     const { io, stdout } = captureIo();
@@ -2352,7 +2355,7 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
           piRunner: diaristEnvelopeRunner({
             status: "completed",
             ticketNumber: null,
-            sessions: [],
+            sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
           }),
         }),
       },
@@ -2366,9 +2369,13 @@ test("ak-role diarist true-unbound leaves no 起居录", async () => {
       }
     ).decisiveFacts;
     assert.equal(facts?.ticketNumber ?? null, null);
-    assert.equal(facts?.sitian, undefined);
+    const bookKey = resolveBookKeyFromGit(project);
+    const unboundRecord = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@diarist`, "records.jsonl");
+    const rows = (await readFile(unboundRecord, "utf8")).trim().split("\n").map((row) => JSON.parse(row));
+    assert.equal(rows[0]?.kind, "ticket-provenance");
+    assert.equal(rows[0]?.payload?.lines?.[0]?.speaker, "owner");
 
-    // 真无票→无录: ticket dir itself (topology authority) stays unminted.
+    // Ticket dir stays unminted until a typed ticket bind.
     const sample = resolveTicketProvenanceVolume(1, project, home);
     assert.equal(existsSync(sample.recordFile), false);
     assert.equal(

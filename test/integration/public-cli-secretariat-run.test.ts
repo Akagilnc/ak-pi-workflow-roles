@@ -67,6 +67,7 @@ import {
 } from "../helpers/terminal-payload.ts";
 import { MAIN_ROLE_SESSION_MATERIALS } from "../../src/session-opening-materials.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
+import { readTicketProvenance } from "../../src/ticket-provenance.ts";
 import {
   readSitianRecords,
   resolveSitianRecordPathInLedger,
@@ -361,6 +362,7 @@ function secretariatHostDrivingRealTools(input: {
    * sole identity source under test.
    */
   nestedDiaristRunner?: LegacyFauxPiRunner;
+  parentDiaristRunner?: LegacyFauxPiRunner;
 }): RoleTurnHost {
   // Parent identity 起居郎 always asserts #924 so the secretariat board is bound
   // before the gate; nested 给事中 identity may be overridden (unbound).
@@ -371,7 +373,7 @@ function secretariatHostDrivingRealTools(input: {
       const role = argvFlagValue(args, "--ak-role");
       if (role === "diarist") {
         input.diaristRunDirectories?.push(options.env.AK_ROLE_RUN_DIR ?? "");
-        return courtDiaristFor924()(args, options);
+        return (input.parentDiaristRunner ?? courtDiaristFor924())(args, options);
       }
       throw new Error(`parent diarist host unexpected role: ${role}`);
     },
@@ -472,6 +474,9 @@ function secretariatHostDrivingRealTools(input: {
   const hostAdapters = [adapter("pi", nested)];
   return {
     async executeTurn(request: RoleTurnRequest) {
+      if (request.activation.role === "diarist" && input.parentDiaristRunner !== undefined) {
+        return parentDiaristHost.executeTurn(request);
+      }
       if (request.activation.role !== "secretariat") {
         return nested.executeTurn(request);
       }
@@ -1282,6 +1287,44 @@ test("#969 omitted receipt ticketNumber still hands parent board identity to 给
         countersignRequests.map((r) => r.activation),
       )}`,
     );
+  });
+});
+
+test("public secretariat moves its unbound 起居录 to the ticket after typed assignment", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const sessionPath = join(home, ".claude", "projects", "draft", "session.jsonl");
+    await mkdir(dirname(sessionPath), { recursive: true });
+    await writeFile(sessionPath, `${JSON.stringify({ type: "user", uuid: "draft-owner", message: { role: "user", content: "请拟票" }, origin: { kind: "human" } })}\n`, "utf8");
+    const diaristRuns: string[] = [];
+    const host = secretariatHostDrivingRealTools({
+      packageRoot,
+      home,
+      gateCalls: [],
+      diaristRunDirectories: diaristRuns,
+      parentDiaristRunner: courtDiaristWithDetails({
+        status: "completed",
+        ticketNumber: null,
+        sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+      }),
+      countersignSequence: [{ details: { countersignStatus: "converged", note: "署" } }],
+      steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
+    });
+    const result = await runAkRole(
+      ["secretariat", "--model", "test/caller-seat:high", "--project", project, "拟票"],
+      { home, packageRoot, cwd: project, io: captureIo().io, createRunId: () => "01a0sec1010-0000-7000-8000-000000000001", roleTurnHost: host, hostAdapters: [adapter("pi", host)] },
+    );
+    assert.equal(result.exitCode, 0);
+    const book = join(home, ".ak-roles", "books", "project");
+    const record = join(book, "924", "records.jsonl");
+    const rows = (await readFile(record, "utf8")).trim().split("\n").map((row) => JSON.parse(row));
+    assert.equal(rows[0]?.subject, "924");
+    assert.equal(rows[0]?.payload?.lines?.[0]?.speaker, "owner");
+    assert.equal((await readTicketProvenance(924, project, home)).header?.ticket, 924);
+    assert.ok(diaristRuns.length > 0);
+    assert.equal((await readFile(join(diaristRuns[0]!, "records.jsonl"), "utf8").catch((error: NodeJS.ErrnoException) => error.code)), "ENOENT");
   });
 });
 

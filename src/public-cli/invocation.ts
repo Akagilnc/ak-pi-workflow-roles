@@ -7,6 +7,7 @@ import { existsSync } from "node:fs";
 import {
   lstat,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rename,
@@ -83,6 +84,7 @@ import {
   type MergerInput,
 } from "../merger-contracts.ts";
 import { sha256Hex } from "../sha256.ts";
+import { rehomeUnboundTicketProvenance } from "../ticket-provenance.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import {
   NOTARY_FIXED_KICKOFF,
@@ -661,9 +663,25 @@ export async function relocateAdmittedRunToTicket(
   // Keep that failure before the filesystem commit point.
   const principal = authority.seal(target);
 
-  // Rename is the only durable commit. Persisted paths are resolved from typed
-  // run identity on read, so online relocation never writes unleased peers or
-  // pretends a directory rename plus page rewrites form one transaction.
+  // An identity diarist can file before its caller obtains a ticket. Both its
+  // own bind and the caller's later bind use this existing relocation seam.
+  if (admitted.role === "diarist") {
+    await rehomeUnboundTicketProvenance(oldRunDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
+  } else {
+    for (const leaf of await readdir(dirname(oldRunDirectory))) {
+      if (!leaf.endsWith("@diarist")) continue;
+      const runDirectory = join(dirname(oldRunDirectory), leaf);
+      if (!existsSync(join(runDirectory, "records.jsonl"))) continue;
+      const child = JSON.parse(await readFile(join(runDirectory, "admitted-request.json"), "utf8")) as Record<string, unknown>;
+      if (child.correlationId !== admitted.runId &&
+          !(Array.isArray(child.correlationIds) && child.correlationIds.includes(admitted.runId))) continue;
+      await rehomeUnboundTicketProvenance(runDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
+    }
+  }
+
+  // Rename commits the run placement. Diary assignment above is an idempotent
+  // Sitian append, not part of an atomic transaction with this directory move.
+  // Persisted paths are resolved from typed run identity on read.
   await rename(oldRunDirectory, target.runDirectory);
 
   // rename moved the open lock inode with the directory. Transfer cleanup

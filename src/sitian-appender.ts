@@ -254,6 +254,12 @@ export function resolveSitianRecordPathInLedger(
     );
     sessionDir = paths.sessionDir;
     recordFile = paths.recordFile;
+  } else if (category === "ticket-provenance" && input.sessionParent !== undefined) {
+    if (!physicallyContainedIn(ledgerHome, input.sessionParent)) {
+      throw new Error("Sitian record ownership requires a parent session inside the ledger home");
+    }
+    sessionDir = dirname(dirname(input.sessionParent));
+    recordFile = join(sessionDir, SITIAN_RECORDS_LEAF);
   } else {
     if (
       input.sessionParent === undefined

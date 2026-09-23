@@ -12,7 +12,7 @@ import type { TicketProvenanceSession } from "./ticket-provenance-contracts.ts";
  * Populated by the envelope accept hook — never from model self-report.
  */
 export type DiaristCommitFacts = {
-  readonly ticketNumber: number;
+  readonly ticketNumber: number | null;
   readonly volumeRecordFile: string;
   /** Dialogue lines written by this reproject. */
   readonly lineCount: number;
@@ -24,9 +24,10 @@ export type DiaristCommitFacts = {
  * this seam only copies source facts into the volume.
  */
 export async function commitDiaristProjection(input: {
-  readonly ticketNumber: number;
+  readonly ticketNumber: number | null;
   readonly cwd: string;
   readonly home?: string;
+  readonly runDirectory?: string;
   readonly sessions: readonly TicketProvenanceSession[];
 }): Promise<DiaristCommitFacts> {
   const result = await reprojectTicketProvenance({
@@ -34,6 +35,7 @@ export async function commitDiaristProjection(input: {
     cwd: input.cwd,
     ...(input.home === undefined ? {} : { home: input.home }),
     sessions: input.sessions,
+    ...(input.runDirectory === undefined ? {} : { runDirectory: input.runDirectory }),
   });
   return {
     ticketNumber: input.ticketNumber,
