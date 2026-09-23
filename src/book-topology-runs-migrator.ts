@@ -17,7 +17,6 @@ import {
   resolveMigratingRunTicket,
 } from "./book-topology-migration-placement.ts";
 import {
-  assertBookTopologyMigrationPrerequisites,
   reconcileMigrationPartition,
   type BookTopologyMigrationContext,
   type BookTopologyPartitionMigrator,
@@ -378,13 +377,11 @@ export async function relocateBoardBoundUnboundRunsInBook(
 
 /**
  * Walk every book under `booksDirectory` and relocate board-bound unbound
- * runs in place. Requires zero live writer locks (same gate as topology migrate).
+ * runs in place without the whole-books topology migration's in-flight gate.
  */
 export async function relocateBoardBoundUnboundRunsInBooks(
   booksDirectory: string,
-  env: NodeJS.ProcessEnv = process.env,
 ): Promise<readonly BoardBoundUnboundRelocation[]> {
-  await assertBookTopologyMigrationPrerequisites(booksDirectory, env);
   const relocated: BoardBoundUnboundRelocation[] = [];
   for (const bookKey of await listMigrationBookKeys(booksDirectory)) {
     const batch = await relocateBoardBoundUnboundRunsInBook(
