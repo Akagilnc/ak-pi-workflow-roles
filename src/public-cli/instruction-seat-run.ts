@@ -619,6 +619,7 @@ export async function runPublicInstructionSeat(
         projectRoot,
         role,
         parentRunPath: sourceDirectory,
+        ...(auditorTicket === undefined ? {} : { ticketNumber: auditorTicket }),
         freshSummons: env.freshSummons,
         summons,
         resume: (runId, materials) => runPublicInstructionSeatResume(
@@ -647,6 +648,7 @@ export async function runPublicInstructionSeat(
         projectRoot,
         role,
         parentRunPath,
+        ...(env.boundTicketNumber === undefined ? {} : { ticketNumber: env.boundTicketNumber }),
         freshSummons: env.freshSummons,
         summons,
         resume: (runId, materials) => runPublicInstructionSeatResume(
@@ -675,6 +677,7 @@ export async function runPublicInstructionSeat(
       throw error;
     }
     const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
+    const knownTicket = (await readBoardTicketNumber(source.runDirectory)) ?? env.boundTicketNumber;
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: source.runDirectory,
       sourceRun: source,
@@ -685,6 +688,7 @@ export async function runPublicInstructionSeat(
       projectRoot,
       role,
       parentRunPath: source.runDirectory,
+      ...(knownTicket === undefined ? {} : { ticketNumber: knownTicket }),
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) => runPublicInstructionSeatResume(
