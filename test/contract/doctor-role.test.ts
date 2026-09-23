@@ -87,8 +87,8 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
     (error: unknown) => {
       assert.ok(error instanceof Error);
       assert.ok(error instanceof GatekeeperDecisionError);
-      assert.equal(error.result.status, "bounce");
-      if (error.result.status === "bounce") assert.deepEqual(error.result.receipt, { status: "bounce", violations: [structuredViolation], explanation: "full auditor answer" });
+      assert.equal(error.result.status, "continue");
+      if (error.result.status === "continue") assert.deepEqual(error.result.receipt, { status: "bounce", violations: [structuredViolation], explanation: "full auditor answer" });
       // #775 acceptance: parent-visible text carries every structured field.
       assert.match(error.message, /method-proof/);
       assert.match(error.message, /missing method proof/);

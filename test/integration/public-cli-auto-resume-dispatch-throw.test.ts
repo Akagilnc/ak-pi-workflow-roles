@@ -80,9 +80,9 @@ async function plantRecordedSubmissions(input:{
     runDirectory:input.runDirectory,
     toolCallId:"call-bounce",
     executeError:new GatekeeperDecisionError({
-      status:"bounce",
+      status:"continue",
       officer:"inspector",
-      receipt:{status:"bounce",findings:["x"]},
+      receipt:{status:"continue",findings:["x"]},
     }),
   });
 }

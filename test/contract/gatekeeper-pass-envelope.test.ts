@@ -1,26 +1,25 @@
 /**
- * #969 secretariat↔countersign gate envelope (requireGatekeeperPass).
+ * #969 secretariat↔countersign gate envelope (requireSubmissionGate).
  * Loads archivist-backed envelope — contract tier, not unit (quality-law size).
  * Pure projection cases remain in test/unit/gate-officer-resume-accounting.test.ts.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { requireGatekeeperPass } from "../../src/gatekeeper-pass-envelope.ts";
+import { requireSubmissionGate } from "../../src/submission-gate.ts";
 import {
-  COUNTERSIGN_CONCLUSION_REASK,
+  OFFICER_CONCLUSION_REASK,
   GatekeeperDecisionError,
   projectGatekeeperRun,
 } from "../../src/gatekeeper-role.ts";
 
-test("#969 secretariat_verdict unreadable countersignStatus needs_reask",
+test("#1028 secretariat_verdict reads the shared review status",
   async () => {
-    // Shared-word disguise / field conflict / unmapped / missing on the existing
-    // mapping fixture — never fall back to generic status (#969 / ADR 0055).
+    // Shared contract accepts only its three words; shape-invalid remains unreadable.
     const cases: ReadonlyArray<{
       label: string;
       payload: Record<string, unknown>;
-      expected: "needs_reask" | "bounce";
+      expected: "needs_reask" | "converged" | "continue";
     }> = [
       {
         label: "shared-word disguise status=pass only",
@@ -28,13 +27,18 @@ test("#969 secretariat_verdict unreadable countersignStatus needs_reask",
         expected: "needs_reask",
       },
       {
-        label: "field conflict: only countersignStatus maps (continue→bounce)",
-        payload: { status: "pass", countersignStatus: "continue" },
-        expected: "bounce",
+        label: "shared continue is returned as continue",
+        payload: { status: "continue", fix: { summary: "修" } },
+        expected: "continue",
       },
       {
-        label: "unmapped countersignStatus",
-        payload: { countersignStatus: "maybe" },
+        label: "shared converged remains converged",
+        payload: { status: "converged", note: "署" },
+        expected: "converged",
+      },
+      {
+        label: "unmapped status",
+        payload: { status: "maybe" },
         expected: "needs_reask",
       },
       {
@@ -68,10 +72,10 @@ test("#969 secretariat_verdict unreadable countersignStatus needs_reask",
       assert.equal(projected.result.status, item.expected, item.label);
     }
 
-    // Envelope reask must name countersignStatus three-state words, not pass/bounce.
+    // Envelope reask names the single shared status vocabulary.
     const reasks: Array<string | undefined> = [];
     let round = 0;
-    await requireGatekeeperPass({
+    await requireSubmissionGate({
       context: {
         cwd: process.cwd(),
         sessionManager: { getSessionFile: () => "/tmp/unused" },
@@ -92,15 +96,15 @@ test("#969 secretariat_verdict unreadable countersignStatus needs_reask",
         const payload =
           round === 1
             ? { status: "pass" }
-            : { countersignStatus: "converged", note: "署 after reask" };
+            : { status: "converged", note: "署 after reask" };
         return {
           exitCode: 0,
           runDirectory: "/tmp/runs/01a0cs969-reask-7000-8000-000000000001@countersign",
           terminal: {
             roleOutcome: {
               kind: "accepted",
-              role: "countersign",
-              payloads: [payload],
+          role: "countersign",
+          payloads: [payload],
             },
             navigator: { disposition: "no-advice" },
             artifacts: [],
@@ -110,9 +114,9 @@ test("#969 secretariat_verdict unreadable countersignStatus needs_reask",
       },
     });
     assert.equal(reasks[0], undefined, "first summon has no reask");
-    assert.equal(reasks[1], COUNTERSIGN_CONCLUSION_REASK);
+    assert.equal(reasks[1], OFFICER_CONCLUSION_REASK);
     assert.match(reasks[1] ?? "", /converged、continue、escalate/);
-    assert.doesNotMatch(reasks[1] ?? "", /pass、bounce/);
+  assert.doesNotMatch(reasks[1] ?? "", /pass、bounce/);
   },
 );
 
@@ -120,13 +124,13 @@ test("#969 secretariat_verdict escalate throws without bindSubmissionNonPass (en
   async () => {
     const nonPass: unknown[] = [];
     const receipt = {
-      countersignStatus: "escalate",
+      status: "escalate",
       decisionGate: { question: "q", options: ["a"] },
     };
     let thrown: unknown;
     await assert.rejects(
       () =>
-        requireGatekeeperPass({
+        requireSubmissionGate({
           context: {
             cwd: process.cwd(),
             sessionManager: { getSessionFile: () => "/tmp/unused" },
@@ -176,10 +180,10 @@ test("#969 secretariat_verdict escalate throws without bindSubmissionNonPass (en
 );
 
 
-test("#969 requireGatekeeperPass pass returns receipt + nested runId",
+test("#969 requireSubmissionGate pass returns receipt + nested runId",
   async () => {
-    const receipt = { countersignStatus: "converged", note: "署" };
-    const outcome = await requireGatekeeperPass({
+    const receipt = { status: "converged", note: "署" };
+    const outcome = await requireSubmissionGate({
       context: {
         cwd: process.cwd(),
         sessionManager: { getSessionFile: () => "/tmp/unused" },

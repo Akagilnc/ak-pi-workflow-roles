@@ -5,18 +5,20 @@
  * is defaulted, rewritten, or dropped (ADR 0055).
  */
 
-export const COUNTERSIGN_OUTPUT_TOOL_NAME = "ak_countersign_output";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
+
+export const COUNTERSIGN_OUTPUT_TOOL_NAME = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
 export type CountersignVerdict =
-  | { countersignStatus: "converged"; note?: string; evidence?: unknown }
+  | { status: "converged"; note?: string; evidence?: unknown }
   | {
-    countersignStatus: "continue";
+    status: "continue";
     fix?: { summary: string };
     note?: string;
     evidence?: unknown;
   }
   | {
-    countersignStatus: "escalate";
+    status: "escalate";
     decisionGate?: { question: string; options: string[] };
     note?: string;
     evidence?: unknown;
@@ -26,16 +28,16 @@ export function validateRecordedCountersignOutput(verdict: unknown): Countersign
   if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) {
     throw new Error("Countersign verdict has no execution discriminator");
   }
-  let countersignStatus: unknown;
+  let status: unknown;
   try {
-    countersignStatus = (verdict as Record<string, unknown>).countersignStatus;
+    status = (verdict as Record<string, unknown>).status;
   } catch {
     throw new Error("Countersign verdict has no execution discriminator");
   }
-  if (typeof countersignStatus !== "string") {
+  if (typeof status !== "string") {
     throw new Error("Countersign verdict has no execution discriminator");
   }
-  if (["converged", "continue", "escalate"].includes(countersignStatus)) {
+  if (["converged", "continue", "escalate"].includes(status)) {
     return verdict as CountersignVerdict;
   }
   throw new Error("Countersign verdict has no execution discriminator");

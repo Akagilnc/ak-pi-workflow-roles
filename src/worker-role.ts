@@ -287,7 +287,7 @@ export function createFixerRoleRuntime(
             let pass;
             try {
               pass = WORKER_DONE_STATUSES.has(workerStatusOf(output))
-                ? await pi.requireGatekeeperPass!({
+                ? await pi.requireSubmissionGate!({
                     context: ctx,
                     subject: { kind: "worker_completion" },
                     ...(_signal === undefined ? {} : { signal: _signal }),
@@ -302,6 +302,13 @@ export function createFixerRoleRuntime(
                 return projectGatekeeperEscalation(error.result, output);
               }
               throw error;
+            }
+            if (pass?.status === "continue") {
+              return {
+                content: [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
+                details: output,
+                terminate: false,
+              };
             }
             const acceptedDetails = output;
             return {
@@ -435,7 +442,7 @@ export function createCoderRoleRuntime(
             let pass;
             try {
               pass = WORKER_DONE_STATUSES.has(workerStatusOf(output))
-                ? await pi.requireGatekeeperPass!({
+                ? await pi.requireSubmissionGate!({
                     context: ctx,
                     subject: { kind: "worker_completion" },
                     ...(_signal === undefined ? {} : { signal: _signal }),
@@ -450,6 +457,13 @@ export function createCoderRoleRuntime(
                 return projectGatekeeperEscalation(error.result, output);
               }
               throw error;
+            }
+            if (pass?.status === "continue") {
+              return {
+                content: [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
+                details: output,
+                terminate: false,
+              };
             }
             const acceptedDetails = output;
             return {

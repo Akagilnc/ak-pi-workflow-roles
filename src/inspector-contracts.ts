@@ -1,10 +1,12 @@
 /**
  * Public Inspector (台院) terminating receipt contracts.
- * Lawful explicit releases: pass | bounce | escalate.
+ * Lawful explicit releases: converged | continue | escalate.
  * Dual path: gate-dispatched and independently callable (#568 / ADR 0074).
  */
 
-export const INSPECTOR_OUTPUT_TOOL_NAME = "ak_inspector_output" as const;
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
+
+export const INSPECTOR_OUTPUT_TOOL_NAME: string = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 export const INSPECTOR_SOURCE_RUN_FLAG = {
   name: "ak-inspector-source-run",
   definition: {
@@ -14,8 +16,8 @@ export const INSPECTOR_SOURCE_RUN_FLAG = {
 } as const;
 
 export type InspectorOutput =
-  | { readonly status: "pass"; readonly findings?: unknown }
-  | { readonly status: "bounce"; readonly findings?: unknown }
+  | { readonly status: "converged"; readonly findings?: unknown }
+  | { readonly status: "continue"; readonly findings?: unknown }
   | { readonly status: "escalate"; readonly reason?: unknown; readonly findings?: unknown };
 
 export function validateRecordedInspectorOutput(value: unknown): InspectorOutput {
@@ -28,9 +30,8 @@ export function validateRecordedInspectorOutput(value: unknown): InspectorOutput
   } catch {
     throw new Error("Inspector output has no execution discriminator");
   }
-  if (status === "pass" || status === "bounce" || status === "escalate") {
+  if (status === "converged" || status === "continue" || status === "escalate") {
     return value as InspectorOutput;
   }
   throw new Error("Inspector output has no execution discriminator");
 }
-

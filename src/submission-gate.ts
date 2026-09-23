@@ -1,14 +1,14 @@
 /**
- * Shared submit-path envelope for 门下省 gates (ADR 0018 / #675 / #753).
+ * Shared submissionGate path for review officers (ADR 0018 / #675 / #753).
  * Owns officer-pointer book + host abort/non-pass faces + review queue loop.
  * Role modules only project via projectGatekeeperRun / runGatekeeper — no book, no catch.
  *
  * Queue guarantee only (#753 / #756 / #750):
  *   parent submit → summon officer → read conclusion field
- *   pass → accept end
- *   bounce → raw officer receipt back to parent; escalate → audit_escalation terminal,
- *     without binding a correctable parent submission
- *   not three-state → resume officer with plain-language re-ask (no round cap)
+ *   converged → accept end
+ *   continue → raw officer receipt as a nonterminal result; parent may resubmit
+ *   escalate → audit_escalation terminal, without binding a correctable parent submission
+ *   unrecognized status → resume officer with plain-language re-ask (no round cap)
  *   transport / no_receipt → present honestly
  * Four pairs: countersign↔notary, judge↔auditor, worker↔inspector, secretariat↔countersign (#969).
  * Code does not judge content, map next-step for parent, or label unreadable/unusable.
@@ -20,7 +20,7 @@ import {
   GatekeeperDecisionError,
   officerConclusionReask,
   projectGatekeeperRun,
-  type GatekeeperPassHostActions,
+  type SubmissionGateHostActions,
   type GatekeeperResult,
   type GatekeeperSubject,
   type GateOfficer,
@@ -71,8 +71,8 @@ function bookDirectOfficerPointer(
   summoned: PublicSummonResult,
 ): void {
   if (
-    result.status !== "pass"
-    && result.status !== "bounce"
+    result.status !== "converged"
+    && result.status !== "continue"
     && result.status !== "escalate"
     && result.status !== "needs_reask"
     && result.status !== "transport_failure"
@@ -101,7 +101,8 @@ function bookDirectOfficerPointer(
  * Carries officer receipt + nested runId so seat settlement can project the
  * public terminal without a second authority.
  */
-export type GatekeeperPassOutcome = {
+export type SubmissionGateOutcome = {
+  readonly status: "converged" | "continue";
   readonly officer: GateOfficer;
   readonly receipt: unknown;
   readonly runId?: string;
@@ -110,13 +111,13 @@ export type GatekeeperPassOutcome = {
 /**
  * Shared envelope: project gate, book officer pointer, map onto host actions.
  * Review loop has no round cap (#753 no-round-cap).
- * On pass, returns the officer snapshot (receipt + nested runId) for seat projection.
+ * On converged, returns the officer snapshot (receipt + nested runId) for seat projection.
  */
-export async function requireGatekeeperPass(options: {
+export async function requireSubmissionGate(options: {
   readonly context: ExtensionContext | HostContext;
   readonly subject: GatekeeperSubject;
   readonly signal?: AbortSignal;
-  readonly hostActions: GatekeeperPassHostActions;
+  readonly hostActions: SubmissionGateHostActions;
   readonly toolCallId: string;
   /**
    * In-flight parent typed payload for this gate turn (#879). Relayed verbatim
@@ -125,9 +126,9 @@ export async function requireGatekeeperPass(options: {
   readonly submission?: unknown;
   /** Lowest seam: same as runGatekeeper options.summonOfficer — offline tracers only. */
   readonly summonOfficer?: GateOfficerSummon;
-}): Promise<GatekeeperPassOutcome | void> {
+}): Promise<SubmissionGateOutcome | void> {
   let reask: string | undefined;
-  // No round cap — end only on pass, bounce/escalate, or real failure.
+  // No round cap — end only on converged, continue/escalate, or real failure.
   const summonOfficer =
     options.summonOfficer ??
     createDefaultGateOfficerSummon({
@@ -156,8 +157,19 @@ export async function requireGatekeeperPass(options: {
         options.hostActions.failInfrastructure(error, options.context, options.toolCallId);
       }
     }
-    if (gatekeeper.status === "pass") {
+    if (gatekeeper.status === "converged") {
       return {
+        status: "converged",
+        officer: projected.officer,
+        receipt: gatekeeper.receipt,
+        ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
+          ? { runId: gatekeeper.runId }
+          : {}),
+      };
+    }
+    if (gatekeeper.status === "continue") {
+      return {
+        status: "continue",
         officer: projected.officer,
         receipt: gatekeeper.receipt,
         ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
@@ -181,7 +193,8 @@ export async function requireGatekeeperPass(options: {
     if (gatekeeper.status === "escalate") {
       throw new GatekeeperDecisionError(gatekeeper);
     }
-    // bounce | no_receipt: parent stands and may resubmit. Not a run abort.
+    // no_receipt: keep the lifecycle failure channel; continue is an ordinary
+    // nonterminal tool result above, not an exception or correctable rejection.
     options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
     throw new GatekeeperDecisionError(gatekeeper);
   }

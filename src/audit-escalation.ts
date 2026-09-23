@@ -4,7 +4,7 @@ import type {
   ComplianceDecision,
 } from "./compliance-transport.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
-import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
+import type { SubmissionGateNonPassResult } from "./gatekeeper-role.ts";
 
 export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
 
@@ -116,7 +116,7 @@ export function projectAuditEscalation(
 
 /** Preserve the escalating officer's own gate alongside the raw receipt. */
 export function projectGatekeeperEscalation(
-  result: Extract<GatekeeperNonPassResult, { status: "escalate" }>,
+  result: Extract<SubmissionGateNonPassResult, { status: "escalate" }>,
   deliveredOutput?: unknown,
 ): AuditEscalationToolResult {
   const receipt = result.receipt;

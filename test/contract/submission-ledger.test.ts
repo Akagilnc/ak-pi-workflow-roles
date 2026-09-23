@@ -36,7 +36,7 @@ function registerTool(
     // Default: echo params as details so ledger params≡details unless a test overrides.
     details: params !== undefined && params !== null && typeof params === "object" && !Array.isArray(params) && Object.keys(params as object).length > 0
       ? params
-      : { judgeStatus: "converged" },
+      : { status: "converged" },
     terminate: true,
   }),
   outputTool = JUDGE_OUTPUT_TOOL_NAME,
@@ -140,10 +140,10 @@ async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>
 
 test("audit escalation params enter submissions face even when result.details differ (#836 bounce)", async () => {
   await withLedgerFixture(async (f) => {
-    const params = { judgeStatus: "escalate", report: "from-params" };
+    const params = { status: "escalate", report: "from-params" };
     const details = buildAuditEscalationResult(
       { status: "escalate", conflicts: ["c1"], decisionGate: { question: "q", options: ["a"] } },
-      { judgeStatus: "escalate", rewritten: true },
+      { status: "escalate", rewritten: true },
     );
     const host = registerTool(
       f.root,
@@ -175,8 +175,8 @@ test("non-object params stay raw on accepted/submissions — no envelope wrap (#
 
 test("ledger records LLM params, not rewritten result.details (#836 bounce)", async () => {
   await withLedgerFixture(async (f) => {
-    const params = { judgeStatus: "converged", report: "from-llm-params" };
-    const details = { judgeStatus: "converged", report: "from-tool-result", injected: true };
+    const params = { status: "converged", report: "from-llm-params" };
+    const details = { status: "converged", report: "from-tool-result", injected: true };
     const host = registerTool(
       f.root,
       async () => ({ content: [], details, terminate: true }),
@@ -195,7 +195,7 @@ test("ledger records LLM params, not rewritten result.details (#836 bounce)", as
 test("one turn two submissions → two ledger rows; original payload returned; no abort (#836)", async () => {
   await withLedgerFixture(async (f) => {
     await f.start("first");
-    const firstPayload = { judgeStatus: "converged" };
+    const firstPayload = { status: "converged" };
     const first = await f.tool().execute("first", firstPayload, undefined, undefined, f.context);
     assert.equal(first.terminate, true);
     assert.deepEqual(first.details, firstPayload);
@@ -204,7 +204,7 @@ test("one turn two submissions → two ledger rows; original payload returned; n
     ]);
 
     // Second submission on the same attempt records again — no seal throw.
-    const secondDetails = { judgeStatus: "continue", report: "more" };
+    const secondDetails = { status: "continue", report: "more" };
     const secondHost = registerTool(
       f.root,
       async () => ({ content: [], details: secondDetails, terminate: true }),
@@ -216,7 +216,7 @@ test("one turn two submissions → two ledger rows; original payload returned; n
 
     const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
     assert.equal(all.length, 2);
-    assert.deepEqual(all[0], { judgeStatus: "converged" });
+    assert.deepEqual(all[0], { status: "converged" });
     assert.deepEqual(all[1], secondDetails);
     assert.equal(f.deliveredRejections.length, 0);
     assert.equal(secondHost.deliveredRejections.length, 0);
@@ -226,7 +226,7 @@ test("one turn two submissions → two ledger rows; original payload returned; n
 test("mixed tools in one turn still record every terminating submission (#836 no sole)", async () => {
   await withLedgerFixture(async (f) => {
     await f.start("a");
-    await f.tool().execute("a", { judgeStatus: "converged" }, undefined, undefined, f.context);
+    await f.tool().execute("a", { status: "converged" }, undefined, undefined, f.context);
     await f.start("b", "read");
     await f.close();
     assert.equal((await readRecordedSubmissions(f.root, "run-ledger", f.root)).length, 1);
@@ -240,7 +240,7 @@ test("mixed tools in one turn still record every terminating submission (#836 no
 
 test("pipeline ledger records an unknown output failure as infrastructure", async () => {
   await withLedgerFixture(async (f) => {
-    const params = { judgeStatus: "converged", report: "infra-params" };
+    const params = { status: "converged", report: "infra-params" };
     const failing = registerTool(f.root, async () => { throw new Error("typed seam unavailable"); });
     await assert.rejects(failing.tool().execute("failure", params, undefined, undefined, failing.context));
     const outcome = (await ledgerRecords(f.root)).at(-1);
@@ -265,11 +265,11 @@ test("pipeline ledger records an unknown output failure as infrastructure", asyn
 test("pipeline ledger records typed bounce anchors as correctable-rejection", async () => {
   await withLedgerFixture(async (f) => {
     const anchors: Array<{ label: string; error: Error }> = [
-      { label: "gatekeeper", error: new GatekeeperDecisionError({ status: "bounce", officer: "inspector", receipt: { status: "bounce", findings: ["x"] } }) },
+      { label: "gatekeeper", error: new GatekeeperDecisionError({ status: "continue", officer: "inspector", receipt: { status: "continue", findings: ["x"] } }) },
       { label: "unfinished-reason", error: new WorkerUnfinishedReasonReminderError() },
     ];
     for (const anchor of anchors) {
-      const params = { judgeStatus: "converged", report: anchor.label };
+      const params = { status: "converged", report: anchor.label };
       const failing = registerTool(f.root, async () => { throw anchor.error; });
       await assert.rejects(
         failing.tool().execute(anchor.label, params, undefined, undefined, failing.context),
@@ -292,17 +292,17 @@ test("pipeline ledger records typed bounce anchors as correctable-rejection", as
 
 test("#881 reader projects non-sealed original params once per tool call (correctable + infrastructure)", async () => {
   await withLedgerFixture(async (f) => {
-    const bounceParams = { judgeStatus: "converged", report: "bounce-1" };
+    const bounceParams = { status: "converged", report: "bounce-1" };
     const bounce = registerTool(f.root, async () => {
       throw new GatekeeperDecisionError({
-        status: "bounce",
+        status: "continue",
         officer: "inspector",
-        receipt: { status: "bounce", findings: ["x"] },
+        receipt: { status: "continue", findings: ["x"] },
       });
     });
     await assert.rejects(bounce.tool().execute("call-bounce", bounceParams, undefined, undefined, bounce.context));
 
-    const infraParams = { judgeStatus: "converged", report: "infra-2" };
+    const infraParams = { status: "converged", report: "infra-2" };
     const infra = registerTool(f.root, async () => {
       throw new Error("host aborted after candidate");
     });
@@ -329,7 +329,7 @@ test("pipeline ledger records audit-escalation with original details and no rewr
   await withLedgerFixture(async (f) => {
     const details = buildAuditEscalationResult(
       { status: "escalate", conflicts: ["c1"], decisionGate: { question: "q", options: ["a"] } },
-      { judgeStatus: "escalate" },
+      { status: "escalate" },
     );
     const escalating = registerTool(f.root, async () => ({ content: [], details, terminate: true }));
     await escalating.start("esc");
@@ -400,16 +400,16 @@ test("pipeline ledger refuses shared unbound run identity", async () => {
 
 test("every packaged role records original payload through the production ledger host (#836)", async () => {
   const rows = [
-    { role: "judge" as const, details: { judgeStatus: "converged" }, status: "converged" },
+    { role: "judge" as const, details: { status: "converged" }, status: "converged" },
     { role: "coder" as const, details: { status: "completed", report: "done" }, status: "completed" },
     { role: "fixer" as const, details: { status: "completed", report: "done", classResults: [] }, status: "completed" },
     { role: "reviewer" as const, details: { status: "completed" }, status: "completed" },
     { role: "doctor" as const, details: { status: "refused", reason: "missing", missingEvidence: [] }, status: "refused" },
     { role: "merger" as const, details: { status: "escalate", attemptId: "a", diagnosis: "d", report: "r" }, status: "escalate" },
-    { role: "notary" as const, details: { status: "pass", findings: [] }, status: "pass" },
-    { role: "countersign" as const, details: { countersignStatus: "converged" }, status: "converged" },
+    { role: "notary" as const, details: { status: "converged", findings: [] }, status: "converged" },
+    { role: "countersign" as const, details: { status: "converged" }, status: "converged" },
     { role: "gleaner-left" as const, details: { status: "completed", findings: [] }, status: "completed" },
-    { role: "inspector" as const, details: { status: "pass", findings: [] }, status: "pass" },
+    { role: "inspector" as const, details: { status: "converged", findings: [] }, status: "converged" },
     // Collector has no status leaf — record empty status, original groups payload.
     { role: "collector" as const, details: { groups: [] }, status: "" },
   ];
@@ -449,7 +449,7 @@ test("a recorded append failure never returns accepted", async () => {
     let recordFile: string | undefined;
     const failing = registerTool(f.root, async () => {
       // Force first candidate write, then lock the file before sealed append.
-      return { content: [], details: { judgeStatus: "converged" }, terminate: true };
+      return { content: [], details: { status: "converged" }, terminate: true };
     });
     await withPrimaryAwareCleanup(
       async () => {
@@ -491,25 +491,25 @@ test("court attempt tags record without hiding earlier payloads (#836)", async (
     // Same bare toolCallId across courts — reader must still keep both payloads (#881).
     const reusedCallId = "reused-id";
     await f.start(reusedCallId);
-    await f.tool().execute(reusedCallId, { judgeStatus: "continue" }, undefined, undefined, f.context);
+    await f.tool().execute(reusedCallId, { status: "continue" }, undefined, undefined, f.context);
     const reopened = registerTool(f.root);
     reopened.context.courtAttemptId = "court-turn-2";
     {
       await reopened.start(reusedCallId);
-      await reopened.tool().execute(reusedCallId, { judgeStatus: "converged" }, undefined, undefined, reopened.context);
+      await reopened.tool().execute(reusedCallId, { status: "converged" }, undefined, undefined, reopened.context);
       const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
       assert.deepEqual(
         rows.map((row) => ({ kind: row.kind, toolCallId: row.toolCallId, accepted: row.accepted })),
         [
-          { kind: "accepted", toolCallId: reusedCallId, accepted: { judgeStatus: "continue" } },
-          { kind: "accepted", toolCallId: reusedCallId, accepted: { judgeStatus: "converged" } },
+          { kind: "accepted", toolCallId: reusedCallId, accepted: { status: "continue" } },
+          { kind: "accepted", toolCallId: reusedCallId, accepted: { status: "converged" } },
         ],
       );
       const recorded = await readRecordedSubmissions(f.root, "run-ledger", f.root);
       assert.equal(recorded.length, 2);
       assert.deepEqual(recorded, [
-        { judgeStatus: "continue" },
-        { judgeStatus: "converged" },
+        { status: "continue" },
+        { status: "converged" },
       ]);
       // attemptId is a recording tag, not a visibility gate.
       assert.deepEqual(

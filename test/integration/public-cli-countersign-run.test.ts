@@ -272,13 +272,13 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
     seedGitProject(project);
 
     const receipts = [
-      { countersignStatus: "converged" as const, note: "署" },
+      { status: "converged" as const, note: "署" },
       {
-        countersignStatus: "continue" as const,
+        status: "continue" as const,
         fix: { summary: "票面授权无可溯真源" },
       },
       {
-        countersignStatus: "escalate" as const,
+        status: "escalate" as const,
         decisionGate: { question: "本票走哪条路？", options: ["a", "b"] },
       },
     ] as const;
@@ -307,7 +307,7 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
               // terminating receipt — it never opens a real pi role activation that
               // would summon Notary. Seed the direct officer volume the production
               // gate would leave, so Terminal projection still asserts typed seats.
-              if (receipt.countersignStatus === "converged") {
+              if (receipt.status === "converged") {
                 const sessionFile = argvFlagValue(args, "--session");
                 assert.ok(sessionFile);
                 const auditorDir = join(dirname(sessionFile), "auditor-roles");
@@ -319,7 +319,7 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
                     startedAt: "2026-09-04T00:00:00.000Z",
                     endedAt: "2026-09-04T00:00:10.000Z",
                     toolName: "ak_notary_output",
-                    args: { status: "pass", findings: [] },
+                    args: { status: "converged", findings: [] },
                   }),
                   "utf8",
                 );
@@ -329,24 +329,24 @@ test("countersign 署 (converged) and 封驳 (continue) settle as accepted termi
           }),
         },
       );
-      assert.equal(result.exitCode, 0, `receipt ${receipt.countersignStatus}`);
-      assert.ok(result.terminal, `receipt ${receipt.countersignStatus}`);
+      assert.equal(result.exitCode, 0, `receipt ${receipt.status}`);
+      assert.ok(result.terminal, `receipt ${receipt.status}`);
       assert.equal(result.terminal.roleOutcome.kind, "accepted");
-      assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [receipt.countersignStatus,
+      assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [receipt.status,
       ]);
       const facts = (objectPayloads(result.terminal.roleOutcome)[0] ?? {});
-      assert.equal(facts.countersignStatus, receipt.countersignStatus);
+      assert.equal(facts.status, receipt.status);
       // #757: nested fields pass through — no lift to fixSummary/decisionQuestion.
-      if (receipt.countersignStatus === "continue") {
+      if (receipt.status === "continue") {
         const fix = facts.fix as { summary?: string } | undefined;
         assert.equal(fix?.summary, receipt.fix.summary);
       }
-      if (receipt.countersignStatus === "escalate") {
+      if (receipt.status === "escalate") {
         const gate = facts.decisionGate as { question?: string; options?: string[] } | undefined;
         assert.equal(gate?.question, receipt.decisionGate.question);
         assert.deepEqual(gate?.options, [...receipt.decisionGate.options]);
       }
-      if (receipt.countersignStatus === "converged") {
+      if (receipt.status === "converged") {
         assert.equal(facts.note, receipt.note);
         assert.ok(result.terminal.gate);
         assert.deepEqual(result.terminal.gate!.actualSeats, ["notary"]);
@@ -433,7 +433,7 @@ test("ak-role resume continues countersign on the exact session", async () => {
           resumeArgs = [...args];
           resumeStdin = options.stdin;
           return scriptedCountersignSession({
-            countersignStatus: "converged",
+            status: "converged",
             note: "RESUMED-续署",
           })(args, options);
         }),
@@ -479,7 +479,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
           principalAuthority: piDurablePrincipalAuthority,
           piRunner: withTrueUnboundDiarist(
             scriptedCountersignSession({
-              countersignStatus: "converged",
+              status: "converged",
               note: "FIRST-署",
             }),
           ),
@@ -511,7 +511,7 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
           resumeArgs = [...args];
           resumeStdin = options.stdin;
           return scriptedCountersignSession({
-            countersignStatus: "continue",
+            status: "continue",
             fix: { summary: "RESUMED-再审" },
           })(args, options);
         },
@@ -523,11 +523,11 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
     assert.equal(resumed.exitCode, 0, stdout.join("") || "sealed countersign resume failed");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(resumed.terminal?.roleOutcome.payloads, [
-      { countersignStatus: "continue", fix: { summary: "RESUMED-再审" } },
+      { status: "continue", fix: { summary: "RESUMED-再审" } },
     ]);
     assert.deepEqual(resumed.terminal?.submissions, [
-      { countersignStatus: "converged", note: "FIRST-署" },
-      { countersignStatus: "continue", fix: { summary: "RESUMED-再审" } },
+      { status: "converged", note: "FIRST-署" },
+      { status: "continue", fix: { summary: "RESUMED-再审" } },
     ]);
   });
 });
@@ -553,7 +553,7 @@ test("countersign resume timeout is not masked by a prior-attempt residual", asy
             scriptedTerminatingToolSession({
               role: "countersign",
               toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-              details: { countersignStatus: "converged", note: "PRIOR-residual" },
+              details: { status: "converged", note: "PRIOR-residual" },
               isError: true,
               acceptedText: "PRIOR-attempt-residual-error",
             }),
@@ -636,9 +636,9 @@ function countersignScriptedHost(piRunner: LegacyFauxPiRunner) {
 
 function notaryBounceError(findings: readonly string[]) {
   return new GatekeeperDecisionError({
-    status: "bounce",
+    status: "continue",
     officer: "notary",
-    receipt: { status: "bounce", findings: [...findings] },
+    receipt: { status: "continue", findings: [...findings] },
   });
 }
 
@@ -713,15 +713,15 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     seedGitProject(project);
 
     const seedAccepted = {
-      countersignStatus: "converged" as const,
+      status: "converged" as const,
       note: "PRIOR-COURT-SEED",
     };
     const rejected = {
-      countersignStatus: "continue" as const,
+      status: "continue" as const,
       fix: { summary: "REJECTED-FIRST-findings-visible" },
     };
     const accepted = {
-      countersignStatus: "converged" as const,
+      status: "converged" as const,
       note: "ACCEPTED-AFTER-CORRECTION",
     };
     const rejectionBody = "CORRECTABLE-REJECTION-RESIDUAL-BODY";
@@ -736,13 +736,13 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       readonly id: string;
       readonly startedAt: string;
       readonly endedAt: string;
-      readonly status: "bounce" | "pass";
+      readonly status: "continue" | "converged";
       readonly findings: readonly string[];
     };
     const gateRound = (
       id: string,
       startN: number,
-      status: "bounce" | "pass",
+      status: "continue" | "converged",
       findings: readonly string[],
     ): SeedGateRound => ({
       id,
@@ -773,12 +773,12 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       }
     };
     const bounceThenPassGates = [
-      gateRound("direct-notary-bounce", 1000, "bounce", gateFindings),
-      gateRound("direct-notary-pass", 1020, "pass", []),
+      gateRound("direct-notary-bounce", 1000, "continue", gateFindings),
+      gateRound("direct-notary-pass", 1020, "converged", []),
     ] as const;
     const passThenBounceGates = [
-      gateRound("direct-notary-pass-rev", 2000, "pass", []),
-      gateRound("direct-notary-bounce-rev", 2020, "bounce", reverseGateFindings),
+      gateRound("direct-notary-pass-rev", 2000, "converged", []),
+      gateRound("direct-notary-bounce-rev", 2020, "continue", reverseGateFindings),
     ] as const;
 
     const runScripted = (
@@ -888,12 +888,12 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     ]);
     const payloads = objectPayloads(result.terminal.roleOutcome);
     assert.equal(payloads.length, 2);
-    assert.equal(payloads[0]!.countersignStatus, "continue");
+    assert.equal(payloads[0]!.status, "continue");
     assert.equal(
       (payloads[0]!.fix as { summary?: string } | undefined)?.summary,
       "REJECTED-FIRST-findings-visible",
     );
-    assert.equal(payloads[1]!.countersignStatus, "converged");
+    assert.equal(payloads[1]!.status, "converged");
     assert.equal(payloads[1]!.note, "ACCEPTED-AFTER-CORRECTION");
     // submissions stay run-scoped (#836): prior seed + this-court bounce/accept.
     assert.deepEqual(result.terminal.submissions, [seedAccepted, rejected, accepted]);
@@ -902,9 +902,9 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     assert.equal(result.terminal.gate!.rounds.length, 2);
     assert.equal(result.terminal.gate!.rounds[0]!.dispatch.kind, "direct");
     assert.equal(result.terminal.gate!.rounds[0]!.dispatch.officer, "notary");
-    assert.equal(result.terminal.gate!.rounds[0]!.officer.status, "bounce");
+    assert.equal(result.terminal.gate!.rounds[0]!.officer.status, "continue");
     assert.deepEqual(result.terminal.gate!.rounds[0]!.officer.findings, [...gateFindings]);
-    assert.equal(result.terminal.gate!.rounds[1]!.officer.status, "pass");
+    assert.equal(result.terminal.gate!.rounds[1]!.officer.status, "converged");
     assert.deepEqual(result.terminal.gate!.rounds[1]!.officer.findings, []);
 
     // 2 / 2b / 2c) Bare resume residual bounces must stay failure — plain bounce,
@@ -964,7 +964,7 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
 
     for (const caseSpec of residualBounceCases) {
       const caseBounce = {
-        countersignStatus: "continue" as const,
+        status: "continue" as const,
         fix: { summary: caseSpec.summary },
       };
       const caseRun = runScripted(
@@ -1008,11 +1008,11 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     // 3) Reverse same-turn order (accepted first, bounce later): terminal may
     // stay accepted, but rejection facts must remain on payloads and gate.
     const reverseAccepted = {
-      countersignStatus: "converged" as const,
+      status: "converged" as const,
       note: "ACCEPTED-FIRST-REVERSE",
     };
     const reverseBounced = {
-      countersignStatus: "continue" as const,
+      status: "continue" as const,
       fix: { summary: "BOUNCED-AFTER-ACCEPT-VISIBLE" },
     };
     const reverseRunId = "01a0sign00-0000-7000-8000-000000000844";
@@ -1081,9 +1081,9 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     );
     assert.ok(reversed.terminal!.gate);
     assert.equal(reversed.terminal!.gate!.rounds.length, 2);
-    assert.equal(reversed.terminal!.gate!.rounds[0]!.officer.status, "pass");
+    assert.equal(reversed.terminal!.gate!.rounds[0]!.officer.status, "converged");
     assert.deepEqual(reversed.terminal!.gate!.rounds[0]!.officer.findings, []);
-    assert.equal(reversed.terminal!.gate!.rounds[1]!.officer.status, "bounce");
+    assert.equal(reversed.terminal!.gate!.rounds[1]!.officer.status, "continue");
     assert.deepEqual(
       reversed.terminal!.gate!.rounds[1]!.officer.findings,
       [...reverseGateFindings],
@@ -1149,7 +1149,7 @@ function countersignPathEnv(input: {
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
           piRunner: scriptedCountersignSession({
-            countersignStatus: "converged",
+            status: "converged",
             note: "署",
           }),
         });
@@ -1334,7 +1334,7 @@ type CourtDiaristTicketAssertion =
 function courtPipelinePiRunner(
   ticketAssertion: CourtDiaristTicketAssertion = 582,
   countersignDetails: unknown = {
-    countersignStatus: "converged",
+    status: "converged",
     note: "署",
   },
   courtTicketNumbers?: readonly number[],
@@ -1466,7 +1466,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
               startedAt: "2026-09-11T00:00:00.000Z",
               endedAt: "2026-09-11T00:00:01.000Z",
               toolName: "ak_notary_output",
-              args: { status: "pass", findings: [] },
+              args: { status: "converged", findings: [] },
             }),
             "utf8",
           );
@@ -1590,7 +1590,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       piRunner: scriptedTerminatingToolSession({
         role: "judge",
         toolName: JUDGE_OUTPUT_TOOL_NAME,
-        details: { judgeStatus: "converged" },
+        details: { status: "converged" },
       }),
     });
     const unbound = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "Decide without a ticket."],
@@ -1615,7 +1615,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     const recorded = await readRecordedSubmissionRows(project, unboundId, home);
     assert.equal(recorded.length, 1);
     assert.equal(recorded[0]!.role, "judge");
-    assert.deepEqual(recorded[0]!.accepted, { judgeStatus: "converged" });
+    assert.deepEqual(recorded[0]!.accepted, { status: "converged" });
 
     assert.ok(unbound.terminal?.artifacts.length);
     for (const artifact of unbound.terminal!.artifacts) {
@@ -1888,7 +1888,7 @@ test("public countersign path: typed ticket mints a new run; explicit resume con
     ensureTicketProvenanceVolume(582, project, home);
 
     const seen: Array<{ runId: string; kind: string }> = [];
-    const parentSeal = { countersignStatus: "converged" as const, note: "署" };
+    const parentSeal = { status: "converged" as const, note: "署" };
     const baseHost = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
@@ -2050,7 +2050,7 @@ test("public countersign relocates its unbound diarist when the body asserts a t
     const host = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
-      piRunner: courtPipelinePiRunner(null, { countersignStatus: "continue", ticketNumber: 582, fix: { summary: "补正" } }),
+      piRunner: courtPipelinePiRunner(null, { status: "continue", ticketNumber: 582, fix: { summary: "补正" } }),
     });
     const result = await runPublicInstructionSeat(
       ["裁票"],

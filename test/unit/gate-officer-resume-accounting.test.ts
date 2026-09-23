@@ -7,7 +7,7 @@
  * - Station-child officer promptWithPriorNativePaths omits prior paths.
  * - #969 secretariat_verdict → countersign status map (projection only).
  * Envelope / role-runtime #969 cases (archivist + runtime load):
- * test/contract/gatekeeper-pass-envelope.test.ts,
+ * test/contract/submission-gate.test.ts,
  * test/contract/secretariat-role.test.ts.
  * Medium FS #753 / #821 / #879 Nth-turn / court-scope / dossier fold:
  * test/integration/gate-officer-resume-accounting.test.ts
@@ -47,7 +47,7 @@ function stubRoleTurn(input: {
 }
 
 test("#836 host abort coexists with recorded officer payload — does not wash to bounce", async () => {
-  const bounce = { status: "bounce", findings: ["keep-me"] };
+  const bounce = { status: "continue", findings: ["keep-me"] };
   const projected = await projectGatekeeperRun({
     context: {
       cwd: process.cwd(),
@@ -80,7 +80,7 @@ test("#836 host abort coexists with recorded officer payload — does not wash t
 });
 
 test("#879 this-court receipt from settlement payloads; history stays on submissions", async () => {
-  const thisCourt = { status: "bounce", findings: ["second"] };
+  const thisCourt = { status: "continue", findings: ["second"] };
   const projected = await projectGatekeeperRun({
     context: {
       cwd: process.cwd(),
@@ -100,18 +100,18 @@ test("#879 this-court receipt from settlement payloads; history stays on submiss
         artifacts: [],
         runId: "officer-run",
         submissions: [
-          { status: "pass", findings: ["first"] },
+          { status: "converged", findings: ["first"] },
           thisCourt,
         ],
       },
     }),
   });
-  assert.equal(projected.result.status, "bounce");
-  if (projected.result.status === "bounce") {
+  assert.equal(projected.result.status, "continue");
+  if (projected.result.status === "continue") {
     assert.deepEqual(projected.result.receipt, thisCourt);
   }
   assert.deepEqual(projected.summoned?.terminal?.submissions, [
-    { status: "pass", findings: ["first"] },
+    { status: "converged", findings: ["first"] },
     thisCourt,
   ]);
 });
@@ -130,24 +130,24 @@ test("#879 undivided submissions without scoped payloads are not this-court iden
         roleOutcome: {
           kind: "accepted",
           role: "notary",
-          status: "bounce",
-          decisiveFacts: { status: "bounce" },
+          status: "continue",
+          decisiveFacts: { status: "continue" },
         },
         navigator: { disposition: "no-advice" },
         artifacts: [],
         runId: "officer-run",
         submissions: [
-          { status: "pass", findings: ["first"] },
-          { status: "bounce", findings: ["second"] },
+          { status: "converged", findings: ["first"] },
+          { status: "continue", findings: ["second"] },
         ],
       },
     }),
   });
-  assert.equal(multi.result.status, "bounce");
-  if (multi.result.status === "bounce") {
+  assert.equal(multi.result.status, "continue");
+  if (multi.result.status === "continue") {
     assert.notDeepEqual(
       multi.result.receipt,
-      { status: "bounce", findings: ["second"] },
+      { status: "continue", findings: ["second"] },
       "must not last-wins undivided multi-row submissions",
     );
   }
@@ -165,28 +165,28 @@ test("#879 undivided submissions without scoped payloads are not this-court iden
         roleOutcome: {
           kind: "accepted",
           role: "notary",
-          status: "pass",
-          decisiveFacts: { status: "pass" },
+          status: "converged",
+          decisiveFacts: { status: "converged" },
         },
         navigator: { disposition: "no-advice" },
         artifacts: [],
         runId: "officer-run",
-        submissions: [{ status: "pass", findings: ["only"] }],
+        submissions: [{ status: "converged", findings: ["only"] }],
       },
     }),
   });
-  assert.equal(sole.result.status, "pass");
-  if (sole.result.status === "pass") {
+  assert.equal(sole.result.status, "converged");
+  if (sole.result.status === "converged") {
     assert.notDeepEqual(
       sole.result.receipt,
-      { status: "pass", findings: ["only"] },
+      { status: "converged", findings: ["only"] },
       "must not guess sole unbound submissions row as this-court receipt",
     );
   }
 });
 
 test("#879 non-three-state then lawful pass converges; parent sees this-court pass only", async () => {
-  const thisCourt = { status: "pass", findings: ["ok"] };
+  const thisCourt = { status: "converged", findings: ["ok"] };
   const projected = await projectGatekeeperRun({
     context: {
       cwd: process.cwd(),
@@ -212,8 +212,8 @@ test("#879 non-three-state then lawful pass converges; parent sees this-court pa
       },
     }),
   });
-  assert.equal(projected.result.status, "pass");
-  if (projected.result.status === "pass") {
+  assert.equal(projected.result.status, "converged");
+  if (projected.result.status === "converged") {
     assert.deepEqual(projected.result.receipt, thisCourt);
   }
   assert.deepEqual(projected.summoned?.terminal?.submissions, [
@@ -261,12 +261,12 @@ test("#879 promptWithPriorNativePaths: station-child officer omits paths; others
   );
 });
 
-test("#969 secretariat_verdict routes to countersign and maps countersignStatus",
+test("#969 secretariat_verdict routes to countersign and maps status",
   async () => {
     const cases = [
-      { countersignStatus: "converged", expected: "pass" as const },
-      { countersignStatus: "continue", expected: "bounce" as const },
-      { countersignStatus: "escalate", expected: "escalate" as const },
+      { status: "converged", expected: "converged" as const },
+      { status: "continue", expected: "continue" as const },
+      { status: "escalate", expected: "escalate" as const },
     ];
     for (const item of cases) {
       const projected = await projectGatekeeperRun({
@@ -290,7 +290,7 @@ test("#969 secretariat_verdict routes to countersign and maps countersignStatus"
               roleOutcome: {
                 kind: "accepted",
                 role: "countersign",
-                payloads: [{ countersignStatus: item.countersignStatus }],
+                payloads: [{ status: item.status }],
               },
               navigator: { disposition: "no-advice" },
               artifacts: [],
@@ -303,11 +303,11 @@ test("#969 secretariat_verdict routes to countersign and maps countersignStatus"
       assert.equal(
         projected.result.status,
         item.expected,
-        `countersignStatus=${item.countersignStatus}`,
+        `status=${item.status}`,
       );
       if (
-        projected.result.status === "pass"
-        || projected.result.status === "bounce"
+        projected.result.status === "converged"
+        || projected.result.status === "continue"
         || projected.result.status === "escalate"
       ) {
         assert.equal(

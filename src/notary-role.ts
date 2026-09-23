@@ -159,7 +159,7 @@ export function createNotaryRoleRuntime(
         pi.registerTool({
           name: NOTARY_OUTPUT_TOOL_NAME,
           label: "符宝郎输出",
-          description: "提交引文保真与票面对齐的 typed pass/bounce/escalate 决议。",
+          description: "提交引文保真与票面对齐的 converged/continue/escalate 决议。",
           promptSnippet: "提交符宝郎决议",
           parameters: notaryOutputSchema,
           async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext, ): Promise<HostToolResult<unknown>> {

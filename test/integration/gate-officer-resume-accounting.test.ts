@@ -18,7 +18,7 @@ import test from "node:test";
 import { readAnalystGateCyclesFromAuditorRoles } from "../../src/analyst-gate-cycles-read.ts";
 import { bookDirectOfficerRunPointer } from "../../src/archivist-record-entry.ts";
 import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
-import { createDefaultGateOfficerSummon } from "../../src/gatekeeper-pass-envelope.ts";
+import { createDefaultGateOfficerSummon } from "../../src/submission-gate.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
@@ -69,7 +69,7 @@ async function writeThreeBounceOfficerSession(sessionFile: string): Promise<void
         endedAt: iso(i * 60_000 + 10_000),
         toolName: "ak_notary_output",
         args: {
-          status: "bounce",
+          status: "continue",
           findings: [`finding-${i + 1}`],
         },
         includeHeader: i === 0,
@@ -104,7 +104,7 @@ test("#753 multiple pointers to same officer session count seals once each", asy
     assert.equal(rounds.length, 3, "3 seals via 3 pointers must stay 3 rounds, not 9");
     assert.deepEqual(
       rounds.map((r) => r.status),
-      ["bounce", "bounce", "bounce"],
+      ["continue", "continue", "continue"],
     );
     assert.deepEqual(
       rounds.map((r) => r.findingsCount),
@@ -196,7 +196,7 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
       piRunner: scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "pass", findings: [] },
+        details: { status: "converged", findings: [] },
       }),
     });
     const host = {
@@ -223,7 +223,7 @@ test("#821 projectGatekeeperRun → summonGateOfficer uses officer seat host, no
         createRunId: () => "01a082100-0000-7000-8000-0000000n821",
       }),
     });
-    assert.equal(projected.result.status, "pass");
+    assert.equal(projected.result.status, "converged");
     assert.ok(projected.summoned?.runDirectory, "nested officer run must mint");
     const nestedInvocation = JSON.parse(
       await readFile(join(projected.summoned!.runDirectory!, "invocation.json"), "utf8"),
@@ -278,7 +278,7 @@ test("#879 Nth officer turn receives Nth parent submission — not history array
       piRunner: scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "bounce", findings: ["x"] },
+        details: { status: "continue", findings: ["x"] },
       }),
     });
     const host = {
@@ -338,7 +338,7 @@ test("#879 Nth officer turn receives Nth parent submission — not history array
         createRunId: () => `01a087900-0000-7000-8000-0000000n00${i + 2}`,
       }),
     });
-      assert.equal(projected.result.status, "bounce");
+      assert.equal(projected.result.status, "continue");
       assert.deepEqual(JSON.parse(prompts[i + 1]!), body);
       const terminal = projected.summoned?.terminal;
       assert.ok(terminal !== undefined, `round ${i + 1} must settle a terminal`);
@@ -361,8 +361,8 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
     const sessionFile = join(sessionDirectory, "session.jsonl");
     await writeFile(sessionFile, "", "utf8");
 
-    const first = { status: "pass", findings: ["first"] };
-    const second = { status: "bounce", findings: ["second"] };
+    const first = { status: "converged", findings: ["first"] };
+    const second = { status: "continue", findings: ["second"] };
     await sealAcceptedSubmission({
       cwd: root,
       home: root,
@@ -444,8 +444,8 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
         terminal: withHistory,
       }),
     });
-    assert.equal(projected.result.status, "bounce");
-    if (projected.result.status === "bounce") {
+    assert.equal(projected.result.status, "continue");
+    if (projected.result.status === "continue") {
       assert.deepEqual(projected.result.receipt, second);
     }
     assert.deepEqual(projected.summoned?.terminal?.submissions, [first, second]);
@@ -482,7 +482,7 @@ test("#879 station-child officer: case dossier once via shared envelope readingM
       piRunner: scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "pass", findings: [] },
+        details: { status: "converged", findings: [] },
       }),
     });
     const host = {
@@ -514,7 +514,7 @@ test("#879 station-child officer: case dossier once via shared envelope readingM
         createRunId: () => "01a087900-0000-7000-8000-0000000d001",
       }),
     });
-    assert.equal(projected.result.status, "pass");
+    assert.equal(projected.result.status, "converged");
     assert.ok(prompts.length >= 1);
     assert.deepEqual(JSON.parse(prompts[prompts.length - 1]!), body);
 

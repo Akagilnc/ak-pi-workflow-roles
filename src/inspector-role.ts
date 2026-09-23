@@ -1,8 +1,5 @@
 import type { Static } from "typebox";
-import { Type } from "typebox";
-
-import { openToolObject } from "./open-tool-schema.ts";
-import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
+import { reviewSubmissionSchema } from "./review-submission.ts";
 import {
   INSPECTOR_OUTPUT_TOOL_NAME,
   validateRecordedInspectorOutput,
@@ -17,21 +14,7 @@ export type { InspectorOutput };
 export { validateRecordedInspectorOutput };
 
 /** 台院事后察举交卷形状；形状指引，非 schema 闸。 */
-export const inspectorOutputSchema = withTerminatingOutputDeclarations(
-  openToolObject(
-    Type.Object({
-      status: Type.Unknown({
-        description: "pass | bounce | escalate — 形状指引，非 schema 闸",
-      }),
-      findings: Type.Unknown({
-        description: "随交卷留存的问题记录",
-      }),
-      reason: Type.Optional(Type.Unknown({
-        description: "status 为 escalate 时的上呈理由",
-      })),
-    }),
-  ),
-);
+export const inspectorOutputSchema = reviewSubmissionSchema;
 
 export type InspectorOutputParameters = Static<typeof inspectorOutputSchema>;
 
@@ -45,7 +28,7 @@ export type InspectorRuntimeDependencies = {
 export const INSPECTOR_TOOL_SPEC = {
   name: INSPECTOR_OUTPUT_TOOL_NAME,
   label: "台院输出",
-  description: "台院终局回执，状态为 pass、bounce 或 escalate。",
+  description: "台院终局回执，状态为 converged、continue 或 escalate。",
   promptSnippet: "台院终局回执",
   parameters: inspectorOutputSchema,
 } as const;

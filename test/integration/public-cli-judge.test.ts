@@ -172,7 +172,7 @@ test("S1: judge escalate public CLI keeps decisionGate options on typed payload 
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           const details = {
-            judgeStatus: "escalate",
+            status: "escalate",
             decisionGate: { question: "请二选一", options },
           };
           await writeFile(
@@ -207,7 +207,7 @@ test("judge gate escalation reaches the public terminal without replacing the ro
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io } = captureIo();
-    const submission = { judgeStatus: "converged", note: "原判词" };
+    const submission = { status: "converged", note: "原判词" };
     const receipt = { status: "escalate", decisionGate: { question: "请陛下裁决" } };
     const escalation = projectAuditEscalation({ status: "escalate", officer: "notary", conflicts: receipt }, submission);
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "review"], {
@@ -241,7 +241,7 @@ test("auditor escalation delivers its complete raw verdict through the public te
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io } = captureIo();
-    const submission = { judgeStatus: "converged", note: "原判词" };
+    const submission = { status: "converged", note: "原判词" };
     const receipt = { status: "escalate", decisionGate: { question: "请陛下裁决" }, explanation: "完整审刑院原话" };
     const escalation = await disposeComplianceDecision(readComplianceCandidate(receipt), {
       pass: () => { throw new Error("unexpected pass"); },
@@ -423,7 +423,7 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
     roleOutcome: {
       kind: "accepted",
       role: "judge",
-      payloads: [{ judgeStatus: "converged", note: "done" }],
+      payloads: [{ status: "converged", note: "done" }],
     },
     navigator: {
       disposition: "advice",
@@ -439,7 +439,7 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
   assert.equal(terminal.roleOutcome.role, "judge");
   assert.equal(terminal.roleOutcome.kind, "accepted");
   assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["converged"]);
-  assert.equal((objectPayloads(terminal.roleOutcome)[0] ?? {}).judgeStatus, "converged");
+  assert.equal((objectPayloads(terminal.roleOutcome)[0] ?? {}).status, "converged");
   assert.equal(terminal.navigator.disposition, "advice");
   if (terminal.navigator.disposition === "advice") {
     assert.equal(terminal.navigator.prose, "repair next → fixer apply");
@@ -472,7 +472,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
       role: "toolResult",
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       isError: false,
-      details: { judgeStatus: "converged" },
+      details: { status: "converged" },
     },
   };
 
@@ -584,7 +584,7 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
       role: "toolResult",
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       isError: false,
-      details: { judgeStatus: "converged" },
+      details: { status: "converged" },
     },
   };
   const attendance = (details: Record<string, unknown>) => ({
@@ -728,7 +728,7 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
       role: "toolResult",
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       isError: false,
-      details: { judgeStatus: "converged" },
+      details: { status: "converged" },
     },
   };
   const sameSessionNewInvocation = extractNavigatorFact([
@@ -778,7 +778,7 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
         role: "toolResult",
         toolName: JUDGE_OUTPUT_TOOL_NAME,
         isError: false,
-        details: { judgeStatus: "revise" },
+        details: { status: "continue" },
       },
     },
     attendance(matched),
@@ -1064,7 +1064,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
                 toolName: JUDGE_OUTPUT_TOOL_NAME,
                 isError: false,
                 details: {
-                  judgeStatus: "converged",
+                  status: "converged",
                   note: "ok",
                   auditNoReceipt: {
                     status: "no-receipt",
@@ -1109,7 +1109,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
             sealedAcceptance: {
               role: "judge" as const,
               details: {
-                judgeStatus: "converged",
+                status: "converged",
                 note: "ok",
                 auditNoReceipt: {
                   status: "no-receipt",
@@ -1207,7 +1207,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     assert.equal(report.runId, "run-cli-judge-001");
     assert.equal(report.outcome.kind, "accepted");
     // #836: the persisted report carries the role's original payload, not an
-    // invented top-level status — read judgeStatus off the last payload,
+    // invented top-level status — read status off the last payload,
     // same as the live terminal above.
     assert.deepEqual(payloadStatusSequence(report.outcome), ["converged"]);
 
@@ -1239,7 +1239,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
         prompt = readUserDialogueStdin(String(options.stdin ?? ""));
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });
-        const details = { judgeStatus: "converged" };
+        const details = { status: "converged" };
         await writeFile(
           join(sessionDir, "session.jsonl"),
           `${JSON.stringify({

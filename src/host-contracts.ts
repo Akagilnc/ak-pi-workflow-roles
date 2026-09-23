@@ -349,7 +349,7 @@ type HostGatekeeperSubject = {
     | "secretariat_verdict";
 };
 /** Gatekeeper non-pass faces returned to parent (#836 includes transport_failure; never kill leg). */
-type HostGatekeeperNonPass = { readonly status: "bounce" | "escalate" | "no_receipt" | "transport_failure" } & Record<string, unknown>;
+type HostGatekeeperNonPass = { readonly status: "continue" | "escalate" | "no_receipt" | "transport_failure" } & Record<string, unknown>;
 export type HostSubmissionNonPass =
   | HostGatekeeperNonPass
   | { readonly code: "coder_skill_expansion_evidence_missing" };
@@ -400,10 +400,10 @@ export interface RoleHost {
   setActiveTools(names: string[]): void;
   getActiveTools(): string[];
   /**
-   * Shared gate envelope. On pass may return officer snapshot (receipt + nested
+   * Shared submission gate. On converged/continue returns officer snapshot (receipt + nested
    * runId) for seat public-terminal projection (#969); callers may ignore it.
    */
-  requireGatekeeperPass?(options: {
+  requireSubmissionGate?(options: {
     context: HostContext;
     subject: HostGatekeeperSubject;
     signal?: AbortSignal;
@@ -411,6 +411,7 @@ export interface RoleHost {
     toolCallId: string;
     submission?: unknown;
   }): Promise<void | {
+    readonly status: "converged" | "continue";
     readonly officer: string;
     readonly receipt: unknown;
     readonly runId?: string;

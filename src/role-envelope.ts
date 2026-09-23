@@ -11,8 +11,8 @@ import {
 } from "./engine-detour.ts";
 import {
   createDefaultGateOfficerSummon,
-  requireGatekeeperPass,
-} from "./gatekeeper-pass-envelope.ts";
+  requireSubmissionGate,
+} from "./submission-gate.ts";
 import type {
   HostContext,
   HostEventRegistration,
@@ -233,12 +233,12 @@ export async function prepareRoleEnvelope(options: {
     // seat remains reachable through MCP.
     setActiveTools(names) { preferredTools = [...names]; },
     getActiveTools() { return [...preferredTools]; },
-    async requireGatekeeperPass(gateOptions) {
+    async requireSubmissionGate(gateOptions) {
       const packageRoot =
         typeof options.dependencies.packageRoot === "string"
           ? options.dependencies.packageRoot
           : undefined;
-      return requireGatekeeperPass({
+      return requireSubmissionGate({
         context: gateOptions.context,
         subject: gateOptions.subject,
         ...(gateOptions.signal === undefined ? {} : { signal: gateOptions.signal }),
@@ -301,7 +301,7 @@ export async function prepareRoleEnvelope(options: {
     if (record.kind === "role_infrastructure_failure") return;
     const code = typeof record.code === "string" && record.code.length > 0
       ? record.code
-      : record.status === "bounce" || record.status === "escalate" || record.status === "no_receipt"
+      : record.status === "continue" || record.status === "escalate" || record.status === "no_receipt"
         ? record.status
         : undefined;
     if (code === undefined) return;

@@ -21,7 +21,7 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
-import { createDefaultGateOfficerSummon } from "../../src/gatekeeper-pass-envelope.ts";
+import { createDefaultGateOfficerSummon } from "../../src/submission-gate.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
@@ -290,7 +290,7 @@ test("registry still lists every packaged role as a navigator target (#959 prose
       { role: "inspector", outputTool: INSPECTOR_OUTPUT_TOOL_NAME },
       { role: "gatekeeper", outputTool: "ak_gatekeeper_output" },
       { role: "navigator", outputTool: "ak_navigator_output" },
-      { role: "auditor", outputTool: "ak_auditor_output" },
+      { role: "auditor", outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME },
       { role: "diarist", outputTool: "ak_diarist_output" },
     ],
   );
@@ -654,7 +654,7 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
           return scriptedTerminatingToolSession({
             role: "countersign",
             toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-            details: { countersignStatus: "converged", note: "署" },
+            details: { status: "converged", note: "署" },
           })(args, options);
         },
       });
@@ -697,7 +697,7 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
         piRunner: scriptedTerminatingToolSession({
           role: "notary",
           toolName: NOTARY_OUTPUT_TOOL_NAME,
-          details: { status: "pass", findings: [] },
+          details: { status: "converged", findings: [] },
         }),
       });
       const notaryHost = recordingHost(notaryBase);
@@ -715,8 +715,8 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
                     {
                       type: "toolCall",
                       id: "call-a1b",
-                      name: "ak_countersign_output",
-                      arguments: { countersignStatus: "converged", note: "seat" },
+                      name: "ak_submission_output",
+                      arguments: { status: "converged", note: "seat" },
                     },
                   ],
                 },
@@ -734,7 +734,7 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
         createRunId: () => "01a082100-0000-7000-8000-0000000na1b",
       }),
     });
-      assert.equal(projected.result.status, "pass");
+      assert.equal(projected.result.status, "converged");
       const notaryChild = captured.find((request) => request.activation.role === "notary");
       assert.ok(notaryChild, "inner-gate summons must dispatch a notary child turn");
 
