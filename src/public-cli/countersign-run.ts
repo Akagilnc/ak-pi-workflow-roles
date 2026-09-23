@@ -78,6 +78,7 @@ export type CourtDiaristIdentity =
 
 export type CourtDiaristInvocationResult = {
   readonly identity: CourtDiaristIdentity;
+  readonly admitted?: import("./invocation.ts").AdmittedRoleInvocation;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
 
@@ -308,10 +309,12 @@ export async function invokeCourtDiarist(
         ticketNumber: asserted,
         ...(courtTicketNumbers === undefined ? {} : { courtTicketNumbers }),
       },
+      ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
     };
   }
   return {
     identity: { kind: "unbound" },
+    ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
   };
 }
 

@@ -7,7 +7,6 @@ import { existsSync } from "node:fs";
 import {
   lstat,
   mkdtemp,
-  readdir,
   readFile,
   realpath,
   rename,
@@ -663,36 +662,28 @@ export async function relocateAdmittedRunToTicket(
   // Keep that failure before the filesystem commit point.
   const principal = authority.seal(target);
 
+  if (admitted.role !== "diarist") {
+    const parentPage = JSON.parse(await readFile(admitted.admittedRequestPath, "utf8")) as Record<string, unknown>;
+    if (typeof parentPage.childDiaristRunId === "string") {
+      const childDirectory = join(dirname(oldRunDirectory), `${parentPage.childDiaristRunId}@diarist`);
+      const childTarget = roleRunPlacement(ledgerHome, {
+        bookKey: admitted.bookKey,
+        subject: { ticketNumber: admitted.ticketNumber },
+        runId: parentPage.childDiaristRunId,
+        role: "diarist",
+      });
+      authority.seal(childTarget);
+      await bindTicketNumberOnRunDirectory(childDirectory, admitted.ticketNumber);
+      await rehomeUnboundTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
+      ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));
+      await rename(childDirectory, childTarget.runDirectory);
+    }
+  }
+
   // An identity diarist can file before its caller obtains a ticket. Both its
   // own bind and the caller's later bind use this existing relocation seam.
   if (admitted.role === "diarist") {
     await rehomeUnboundTicketProvenance(oldRunDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
-  } else {
-    for (const leaf of await readdir(dirname(oldRunDirectory))) {
-      if (!leaf.endsWith("@diarist")) continue;
-      const runDirectory = join(dirname(oldRunDirectory), leaf);
-      let childPage: string;
-      try {
-        childPage = await readFile(join(runDirectory, "admitted-request.json"), "utf8");
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw error;
-      }
-      const child = JSON.parse(childPage) as Record<string, unknown>;
-      if (child.correlationId !== admitted.runId &&
-          !(Array.isArray(child.correlationIds) && child.correlationIds.includes(admitted.runId))) continue;
-      await rehomeUnboundTicketProvenance(runDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
-      await bindTicketNumberOnRunDirectory(runDirectory, admitted.ticketNumber);
-      const childTarget = roleRunPlacement(ledgerHome, {
-        bookKey: admitted.bookKey,
-        subject: { ticketNumber: admitted.ticketNumber },
-        runId: leaf.slice(0, -"@diarist".length),
-        role: "diarist",
-      });
-      authority.seal(childTarget);
-      ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));
-      await rename(runDirectory, childTarget.runDirectory);
-    }
   }
 
   // Rename commits the run placement. Diary assignment above is an idempotent
@@ -729,6 +720,15 @@ export async function relocateAdmittedRunToTicket(
   (admitted as { principal: DurablePrincipal }).principal = principal;
 
   return { oldRunDirectory, newRunDirectory: target.runDirectory };
+}
+
+/** Persist the exact child identity; later parent binding never inspects siblings. */
+export async function recordChildDiaristRun(
+  parent: AdmittedRoleInvocation,
+  childRunId: string,
+): Promise<void> {
+  const page = JSON.parse(await readFile(parent.admittedRequestPath, "utf8")) as Record<string, unknown>;
+  await writeFile(parent.admittedRequestPath, `${JSON.stringify({ ...page, childDiaristRunId: childRunId }, null, 2)}\n`, "utf8");
 }
 
 /**

@@ -32,6 +32,7 @@ import {
   materializeCountersignInvocation,
   persistAdmittedSourceRunPath,
   recordAdmittedCorrelation,
+  recordChildDiaristRun,
   relocateAdmittedRunToTicket,
   withPreparedAttachments,
   type AdmittedCountersignInvocation,
@@ -779,6 +780,9 @@ export async function runPublicInstructionSeat(
       }
       if (outcome.identity.kind === "ticket") {
         try {
+          if (outcome.admitted === undefined) throw new Error("court diarist ticket has no admitted run");
+          await bindAdmittedTicketNumber(outcome.admitted, outcome.identity.ticketNumber);
+          await relocateAdmittedRunToTicket(outcome.admitted, env.principalAuthority);
           await bindAdmittedTicketNumber(admitted, outcome.identity.ticketNumber);
           await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
         } catch (error) {
@@ -789,6 +793,8 @@ export async function runPublicInstructionSeat(
             thrown: error,
           }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
         }
+      } else if (outcome.admitted !== undefined) {
+        await recordChildDiaristRun(admitted, outcome.admitted.runId);
       }
     }
     return dispatchAdmitted(admitted, env, io);

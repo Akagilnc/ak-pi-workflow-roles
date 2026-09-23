@@ -1308,10 +1308,11 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
       diaristRunDirectories: diaristRuns,
       parentDiaristRunner: async (args, options) => {
         await mkdir(unrelatedRun, { recursive: true });
+        await writeFile(join(unrelatedRun, "admitted-request.json"), "", "utf8");
         return courtDiaristWithDetails({
-        status: "completed",
-        ticketNumber: null,
-        sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+          status: "completed",
+          ticketNumber: null,
+          sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
         })(args, options);
       },
       countersignSequence: [{ details: { countersignStatus: "converged", note: "署" } }],
@@ -1323,7 +1324,7 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
     );
     assert.equal(result.exitCode, 0);
     assert.ok((await readdir(dirname(unrelatedRun))).includes("unfinished@diarist"));
-    assert.equal((await readFile(join(unrelatedRun, "admitted-request.json"), "utf8").catch((error: NodeJS.ErrnoException) => error.code)), "ENOENT");
+    assert.equal(await readFile(join(unrelatedRun, "admitted-request.json"), "utf8"), "");
     const record = join(book, "924", "records.jsonl");
     const rows = (await readFile(record, "utf8")).trim().split("\n").map((row) => JSON.parse(row));
     assert.equal(rows[0]?.subject, "924");
