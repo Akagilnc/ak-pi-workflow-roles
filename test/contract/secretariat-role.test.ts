@@ -126,8 +126,56 @@ test("secretariat output records any status without shape reject (第 0 条)", a
   );
 });
 
-test("secretariat ungated host records infrastructure failure",
+test("secretariat converged receipt enters the submission gate on every host",
   async () => {
+    async function arm(host: string | undefined) {
+      const gateCalls: string[] = [];
+      const tools = new Map<string, { execute: Function }>();
+      const roleHost = {
+        registerTool(tool: { name: string; execute: Function }) {
+          tools.set(tool.name, tool);
+        },
+        on() {},
+        getAllTools: () => [...tools.keys()].map((name) => ({ name })),
+        setActiveTools() {},
+        getActiveTools: () => [...tools.keys()],
+        getFlag() { return undefined; },
+        async requireGatekeeperPass(options: { subject: { kind: string } }) {
+          gateCalls.push(options.subject.kind);
+        },
+      };
+      await createSecretariatRoleRuntime(
+        roleHost as never,
+        { loadSoul: async () => "中书省" },
+        {
+          failInfrastructure(): never { throw new Error("fail"); },
+          bindSubmissionNonPass() {},
+        },
+      ).activate();
+      const hostCtx = {
+        cwd: "/tmp",
+        mode: "json",
+        model: undefined,
+        sessionManager: {} as never,
+        runDirectory: "/tmp/run",
+        ...(host === undefined ? {} : { host }),
+        abort() {},
+      };
+      await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+        "c",
+        { secretariatStatus: "converged", ticketNumber: 969 },
+        undefined,
+        undefined,
+        hostCtx,
+      );
+      return gateCalls;
+    }
+
+    for (const host of ["codex", "claude", "grok-build", "pi"] as const) {
+      assert.deepEqual(await arm(host), ["secretariat_verdict"], host);
+    }
+    assert.deepEqual(await arm(undefined), ["secretariat_verdict"]);
+
     await withTempRoot("ak-sec-gate-", async (root) => {
       const ungated = new Map<string, { execute: Function }>();
       const rawHost = {

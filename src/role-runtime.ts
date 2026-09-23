@@ -13,7 +13,7 @@ import {
 
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
-import { createSubmissionLedgerHost, readCandidateForGate, sealAcceptedSubmission } from "./submission-ledger.ts";
+import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
 import { createCollectorLedger } from "./collector-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
@@ -988,7 +988,8 @@ export function createSecretariatRoleRuntime(
               ...(signal === undefined ? {} : { signal }),
               hostActions,
               toolCallId,
-              submission: await readCandidateForGate(ctx, toolCallId),
+              // #879: this-turn typed payload — identity-bound at submit site.
+              submission: parameters,
             });
             // Book 给事中 署 snapshot for seat settlement projection (receipt + runId).
             // Ledger accepted stays LLM params (#836); public terminal reads this entry.
