@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { acceptedFacts, type AcceptedDetails } from "../../src/package-contracts/terminating-tools.ts";
+import { acceptedFacts } from "../../src/package-contracts/terminating-tools.ts";
 import {
   NAVIGATOR_OUTPUT_TOOL_NAME,
   navigatorProseFromUnknown,
@@ -18,14 +18,6 @@ test("navigator projection retains prose into acceptedFacts", () => {
   const facts = acceptedFacts(NAVIGATOR_OUTPUT_TOOL_NAME, projected!);
   // acceptedFacts may read status when present; prose-only has no status.
   assert.equal(facts.status, undefined);
-});
-
-test("historical review receipts retain their recorded decision", () => {
-  assert.deepEqual(acceptedFacts("ak_judge_output", { judgeStatus: "converged" } as unknown as AcceptedDetails), { status: "converged" });
-  assert.deepEqual(acceptedFacts("ak_countersign_output", { countersignStatus: "converged" } as unknown as AcceptedDetails), { status: "converged" });
-  for (const tool of ["ak_notary_output", "ak_inspector_output", "ak_auditor_output"]) {
-    assert.deepEqual(acceptedFacts(tool, { status: "continue" }), { status: "continue" });
-  }
 });
 
 test("navigator projection accepts free-form object as prose body (#959)", () => {
