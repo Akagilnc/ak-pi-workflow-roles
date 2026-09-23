@@ -671,7 +671,14 @@ export async function relocateAdmittedRunToTicket(
     for (const leaf of await readdir(dirname(oldRunDirectory))) {
       if (!leaf.endsWith("@diarist")) continue;
       const runDirectory = join(dirname(oldRunDirectory), leaf);
-      const child = JSON.parse(await readFile(join(runDirectory, "admitted-request.json"), "utf8")) as Record<string, unknown>;
+      let childPage: string;
+      try {
+        childPage = await readFile(join(runDirectory, "admitted-request.json"), "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
+      const child = JSON.parse(childPage) as Record<string, unknown>;
       if (child.correlationId !== admitted.runId &&
           !(Array.isArray(child.correlationIds) && child.correlationIds.includes(admitted.runId))) continue;
       await rehomeUnboundTicketProvenance(runDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));

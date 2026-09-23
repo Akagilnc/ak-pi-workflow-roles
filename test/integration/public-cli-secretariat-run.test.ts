@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -1298,17 +1298,22 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
     const sessionPath = join(home, ".claude", "projects", "draft", "session.jsonl");
     await mkdir(dirname(sessionPath), { recursive: true });
     await writeFile(sessionPath, `${JSON.stringify({ type: "user", uuid: "draft-owner", message: { role: "user", content: "请拟票" }, origin: { kind: "human" } })}\n`, "utf8");
+    const book = join(home, ".ak-roles", "books", "project");
+    const unrelatedRun = join(book, "unbound", "runs", "unfinished@diarist");
     const diaristRuns: string[] = [];
     const host = secretariatHostDrivingRealTools({
       packageRoot,
       home,
       gateCalls: [],
       diaristRunDirectories: diaristRuns,
-      parentDiaristRunner: courtDiaristWithDetails({
+      parentDiaristRunner: async (args, options) => {
+        await mkdir(unrelatedRun, { recursive: true });
+        return courtDiaristWithDetails({
         status: "completed",
         ticketNumber: null,
         sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
-      }),
+        })(args, options);
+      },
       countersignSequence: [{ details: { countersignStatus: "converged", note: "署" } }],
       steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
     });
@@ -1317,13 +1322,17 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
       { home, packageRoot, cwd: project, io: captureIo().io, createRunId: () => "01a0sec1010-0000-7000-8000-000000000001", roleTurnHost: host, hostAdapters: [adapter("pi", host)] },
     );
     assert.equal(result.exitCode, 0);
-    const book = join(home, ".ak-roles", "books", "project");
+    assert.ok((await readdir(dirname(unrelatedRun))).includes("unfinished@diarist"));
+    assert.equal((await readFile(join(unrelatedRun, "admitted-request.json"), "utf8").catch((error: NodeJS.ErrnoException) => error.code)), "ENOENT");
     const record = join(book, "924", "records.jsonl");
     const rows = (await readFile(record, "utf8")).trim().split("\n").map((row) => JSON.parse(row));
     assert.equal(rows[0]?.subject, "924");
     assert.equal(rows[0]?.payload?.lines?.[0]?.speaker, "owner");
     assert.equal((await readTicketProvenance(924, project, home)).header?.ticket, 924);
     assert.ok(diaristRuns.length > 0);
+    assert.equal(dirname(diaristRuns[0]!), dirname(unrelatedRun));
+    const parentRun = "01a0sec1010-0000-7000-8000-000000000001@secretariat";
+    assert.ok((await readdir(join(book, "924", "runs"))).includes(parentRun));
     assert.equal((await readFile(join(diaristRuns[0]!, "records.jsonl"), "utf8").catch((error: NodeJS.ErrnoException) => error.code)), "ENOENT");
     const diaristRun = join(book, "924", "runs", diaristRuns[0]!.split("/").at(-1)!);
     assert.equal(JSON.parse(await readFile(join(diaristRun, "admitted-request.json"), "utf8")).ticketNumber, 924);
