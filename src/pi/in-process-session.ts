@@ -23,7 +23,6 @@ import {
   InMemoryCredentialStore,
   type Api,
   type AssistantMessage,
-  type Context,
   type Model,
   type Provider,
   type ProviderStreamOptions,
@@ -354,7 +353,7 @@ export async function openPiInProcessSession(
     const createRetriedStream = (
       simple: boolean,
       model: Model<Api>,
-      context: Context,
+      context: TranscriptContext,
       request?: ProviderStreamOptions,
     ): ReturnType<Provider["stream"]> => {
       const wrapped = createAssistantMessageEventStream();
@@ -415,8 +414,8 @@ export async function openPiInProcessSession(
             }
 
             const source = simple
-              ? childProvider.streamSimple(model, context as TranscriptContext, retriedRequest as any)
-              : childProvider.stream(model, context as TranscriptContext, retriedRequest as any);
+              ? childProvider.streamSimple(model, context, retriedRequest as any)
+              : childProvider.stream(model, context, retriedRequest as any);
             let sawEvent = false;
             const attemptEvents: any[] = [];
             const iterator = source[Symbol.asyncIterator]();
