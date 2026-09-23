@@ -375,7 +375,7 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
     role: "judge",
     status: "converged",
     args: (project) => ["judge", ...CALLER_MODEL, "--project", project, "Decide."],
-    details: () => ({ judgeStatus: "converged" }),
+    details: () => ({ status: "converged" }),
   },
   {
     role: "coder",
@@ -451,7 +451,7 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
     role: "countersign",
     status: "converged",
     args: (project) => ["countersign", ...CALLER_MODEL, "--project", project, "裁：本票是否足以开工。"],
-    details: () => ({ countersignStatus: "converged", findings: [] }),
+    details: () => ({ status: "converged", findings: [] }),
   },
   {
     role: "collector",
@@ -496,8 +496,8 @@ test("public-cli every packaged role accepts via shared sealed→Terminal entry"
 test("host-neutral typed turns record every terminating submission without sole reject (#836)", async () => {
   await withSharedHome(async (home, project) => {
     const runId = "run-multi-submit-836";
-    const first = { judgeStatus: "continue", report: "first-submit" };
-    const second = { judgeStatus: "converged", report: "second-submit" };
+    const first = { status: "continue", report: "first-submit" };
+    const second = { status: "converged", report: "second-submit" };
     const { io } = captureIo();
     const payloads = [first, second];
     let payloadIndex = 0;
@@ -599,7 +599,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
           roleTurnHost: hostNeutralTypedTurn({
             role: "judge",
             runId: "run-table-no-receipt",
-            details: { judgeStatus: "converged" },
+            details: { status: "converged" },
             turns: [],
           }),
         },
@@ -650,7 +650,7 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
         roleTurnHost: hostNeutralTypedTurn({
           role: "judge",
           runId,
-          details: { judgeStatus: "converged" },
+          details: { status: "converged" },
           postSealAction: true,
         }),
       });

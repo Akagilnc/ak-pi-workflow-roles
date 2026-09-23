@@ -24,7 +24,7 @@
  *   - marker role/phase/subjectKey must match the terminal + independent expected
  */
 
-import { PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
+import { LEGACY_REVIEW_OUTPUT_ROLES, PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
 import { isUuidV7, uuidv7 } from "./uuidv7.ts";
 import { workSubjectKeysEqual } from "./work-subject-identity.ts";
 
@@ -113,7 +113,8 @@ export function isNavigatorInfrastructureFailureFact(
 }
 
 const PACKAGED_ROLE_OUTPUT_TOOLS: ReadonlyMap<string, string> = new Map(
-  PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role]),
+  [...PACKAGED_ROLE_REGISTRY.filter((entry) => entry.outputTool !== "ak_submission_output")
+    .map((entry) => [entry.outputTool, entry.role] as const), ...LEGACY_REVIEW_OUTPUT_ROLES],
 );
 
 export type NavigatorInvocationEntryLike = {
@@ -226,7 +227,7 @@ export function classifyPackagedRoleTerminalResult(
   message: PackagedRoleTerminalMessage,
 ): PackagedRoleTerminalClassification {
   if (typeof message.toolName !== "string") return { kind: "nonterminal" };
-  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName)) return { kind: "nonterminal" };
+  if (!PACKAGED_ROLE_OUTPUT_TOOLS.has(message.toolName) && message.toolName !== "ak_submission_output") return { kind: "nonterminal" };
 
   // Base identity is enough; durable details may carry typed failure evidence (#475).
   const hasInfraBase = hasNavigatorInfrastructureFailureBase(message.details);
@@ -285,7 +286,12 @@ function durableTerminalAt(
       ? entry.message
       : undefined;
   if (typeof message?.toolName !== "string") return undefined;
-  const role = PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
+  const marker = message.toolName === "ak_submission_output"
+    ? entries.slice(0, index).reverse().find(isInvocationMarkerEntry)
+    : undefined;
+  const role = message.toolName === "ak_submission_output"
+    ? parseInvocationMarkerIdentity(marker?.data)?.role ?? "unknown"
+    : PACKAGED_ROLE_OUTPUT_TOOLS.get(message.toolName);
   if (role === undefined) return undefined;
   const classification = classifyPackagedRoleTerminalResult(message);
   if (classification.kind !== "accepted" && classification.kind !== "infrastructure") {

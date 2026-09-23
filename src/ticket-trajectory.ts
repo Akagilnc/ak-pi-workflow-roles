@@ -44,7 +44,7 @@ import {
   validateAcceptedDetails,
   type TerminatingToolName,
 } from "./package-contracts/terminating-tools.ts";
-import { PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
+import { LEGACY_REVIEW_OUTPUT_ROLES, PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
 
 
 /** Declared refresh bound for the same viewing surface (seconds). */
@@ -140,9 +140,11 @@ async function realpathOrLexicalIfMissing(path: string): Promise<string> {
   }
 }
 
-const TOOL_TO_ROLE: ReadonlyMap<string, string> = new Map(
-  PACKAGED_ROLE_REGISTRY.map((entry) => [entry.outputTool, entry.role]),
-);
+const TOOL_TO_ROLE: ReadonlyMap<string, string> = new Map([
+  ...PACKAGED_ROLE_REGISTRY.filter((entry) => entry.outputTool !== "ak_submission_output")
+    .map((entry) => [entry.outputTool, entry.role] as const),
+  ...LEGACY_REVIEW_OUTPUT_ROLES,
+]);
 
 const NAME_PREFIX_ROLES: readonly string[] = PACKAGED_ROLE_REGISTRY.map((entry) => entry.role);
 
@@ -324,6 +326,9 @@ function resolveStation(input: {
   invocationRole?: string;
   runId: string;
 }): { station: string; stationSource: StationSource } {
+  if (input.invocationRole && input.toolNames.includes("ak_submission_output")) {
+    return { station: input.invocationRole, stationSource: "invocation" };
+  }
   for (const toolName of input.toolNames) {
     const role = roleFromToolName(toolName);
     if (role) return { station: role, stationSource: "tool" };

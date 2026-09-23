@@ -483,6 +483,13 @@ export async function prepareRoleEnvelope(options: {
         details: result.details,
         isError: false,
       });
+      if (result.terminate === false) {
+        rejection = {
+          code: "continue",
+          toolCallIds: [toolCallId],
+          message: textDiagnostic(projected.content) ?? "continue",
+        };
+      }
       // Candidate only: seal waits for closeRound after the host round boundary.
       return { content: projected.content, isError: projected.isError };
     } catch (error) {

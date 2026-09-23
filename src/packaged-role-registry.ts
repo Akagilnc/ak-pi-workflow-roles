@@ -17,6 +17,15 @@ import { DIARIST_OUTPUT_TOOL_NAME } from "./diarist-contracts.ts";
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "./secretariat-contracts.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "./judge-auditor.ts";
 
+/** Historical durable session names; these are read aliases, never registered tools. */
+export const LEGACY_REVIEW_OUTPUT_ROLES = new Map<string, string>([
+  ["ak_judge_output", "judge"],
+  ["ak_notary_output", "notary"],
+  ["ak_countersign_output", "countersign"],
+  ["ak_inspector_output", "inspector"],
+  ["ak_auditor_output", "auditor"],
+]);
+
 /**
  * Success-face fields that still differ by seat. Presence and omission match
  * the former per-seat publishers. Key order is not part of the contract.

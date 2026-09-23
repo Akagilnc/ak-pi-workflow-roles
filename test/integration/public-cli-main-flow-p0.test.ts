@@ -63,14 +63,14 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
     const runId = "01a0esc471-0000-7000-8000-000000000001";
     const ruling = "owner ruling: accept the plan";
     const escalateDetails = {
-      judgeStatus: "escalate" as const,
+      status: "escalate" as const,
       decisionGate: {
         question: "Ship or hold?",
         options: ["ship", "hold"],
       },
     };
     const convergedDetails = {
-      judgeStatus: "converged" as const,
+      status: "converged" as const,
       note: "owner ruling applied on same session",
     };
 
