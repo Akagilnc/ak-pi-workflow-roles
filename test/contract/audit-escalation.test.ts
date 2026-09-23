@@ -278,7 +278,7 @@ test("runComplianceAudit keeps host failure beside recorded auditor payloads", a
   );
 });
 
-test("#836 auditor non-three-state then pass converges; both original rows kept", async () => {
+test("#836 auditor non-three-state then pass returns only the current receipt", async () => {
   let summons = 0;
   const testimony = { status: "completed", findings: [{ reason: "original" }] };
   const decision = await runComplianceAudit({
@@ -330,10 +330,5 @@ test("#836 auditor non-three-state then pass converges; both original rows kept"
   });
   assert.equal(summons, 2);
   assert.equal(decision.status, "pass");
-  if (decision.status === "pass") {
-    assert.deepEqual(decision.receipt, [
-      { status: "other", note: "first" },
-      { status: "pass" },
-    ]);
-  }
+  if (decision.status === "pass") assert.deepEqual(decision.receipt, { status: "pass" });
 });

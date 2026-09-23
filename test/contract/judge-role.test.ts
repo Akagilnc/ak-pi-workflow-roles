@@ -1435,6 +1435,7 @@ test("judge role returns auditor bounce as raw receipt without aborting (#756)",
         assert.equal(error.result.officer, "auditor");
         assert.deepEqual(error.result.receipt, bounceReceipt);
       }
+      assert.deepEqual(JSON.parse(error.message), bounceReceipt, "current auditor bounce must not include the earlier notary pass");
       return true;
     },
   );

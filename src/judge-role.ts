@@ -150,9 +150,6 @@ export function createJudgeRoleRuntime(
               if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
                 return projectAuditEscalation({ status: "escalate", conflicts: error.result.receipt }, verdict);
               }
-              if (error instanceof GatekeeperDecisionError && draftPass !== undefined) {
-                throw new GatekeeperDecisionError(error.result, `${readableGateItem(draftPass.receipt)}\n${error.message}`);
-              }
               throw error;
             }
           },

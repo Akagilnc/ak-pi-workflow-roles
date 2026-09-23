@@ -173,16 +173,8 @@ async function projectAuditorTerminal(summoned: PublicSummonResult): Promise<Com
     if (rows.length === 0) {
       return readComplianceCandidate({}, usage);
     }
-    // Queue the latest conclusion; keep every original row on the receipt/reply face.
-    const decision = readComplianceCandidate(rows[rows.length - 1], usage);
-    if (rows.length === 1) return decision;
-    if (decision.status === "pass" || decision.status === "bounce" || decision.status === "escalate") {
-      return { ...decision, receipt: rows };
-    }
-    if (decision.status === "received") {
-      return { ...decision, reply: rows };
-    }
-    return decision;
+    // The terminal retains history; the decision carries only the current reply.
+    return readComplianceCandidate(rows[rows.length - 1], usage);
   }
   // Unknown terminal kind: still not a shape judgment — surface as received reply.
   return {
