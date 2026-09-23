@@ -6,7 +6,6 @@ import { withTerminatingOutputDeclarations } from "./package-contracts/terminati
 export const DOCTOR_EVIDENCE_TOOL_NAME = "ak_doctor_evidence";
 export const DOCTOR_OUTPUT_TOOL_NAME = "ak_doctor_output";
 export const DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
-export const DOCTOR_ACCEPTED_AUDIT_NO_RECEIPT_TEXT = "太医署回执已接受；审计无回执";
 export const DOCTOR_OUTPUT_TOOL_DESCRIPTION = "提交唯一终局单案证词；completed 允许空 findings。";
 export const DOCTOR_TARGET_KINDS = ["law", "gate", "template", "station", "seat"] as const;
 export type DoctorTargetKind = typeof DOCTOR_TARGET_KINDS[number];

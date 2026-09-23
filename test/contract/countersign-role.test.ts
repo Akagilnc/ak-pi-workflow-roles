@@ -5,7 +5,6 @@ import {
   COUNTERSIGN_OUTPUT_TOOL_NAME,
   validateRecordedCountersignOutput,
 } from "../../src/countersign-contracts.ts";
-import { packagedRoleAcceptedText } from "../../src/packaged-role-registry.ts";
 import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
 
 /** Shared mock host harness for the Countersign runtime. */
@@ -96,5 +95,5 @@ test("Countersign execute accepts as-is and terminates — sole-final barrier is
     (result.details as { countersignStatus: string }).countersignStatus,
     "continue",
   );
-  assert.equal(result.content[0]?.text, packagedRoleAcceptedText("countersign"));
+  assert.deepEqual(result.content, []);
 });

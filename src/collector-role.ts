@@ -55,7 +55,6 @@ import {
   collectorRequestArgsSchema,
   collectorWaitArgsSchema,
 } from "./collector-tool-schemas.ts";
-import { packagedRoleAcceptedText } from "./packaged-role-registry.ts";
 import { CorrectableSubmissionError, isCorrectableExecuteError } from "./submission-correctable-error.ts";
 import { CollectorUnknownEvidenceError } from "./collector-identity.ts";
 
@@ -664,10 +663,7 @@ export function createCollectorRoleRuntime(
             activation.ledger.beginOperational(COLLECTOR_OUTPUT_TOOL, toolCallId);
             activation.ledger.recordOutputCandidate();
             return {
-              content: [{
-                type: "text" as const,
-                text: packagedRoleAcceptedText("collector"),
-              }],
+              content: [],
               details: params,
               terminate: true as const,
             };

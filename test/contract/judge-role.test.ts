@@ -19,10 +19,9 @@ import {
 import { transcriptFromContext as productionTranscriptFromContext } from "../../extensions/role-runtime.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
 import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
-import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
-import { packagedRoleAcceptedText } from "../../src/packaged-role-registry.ts";
+import { createJudgeRoleRuntime, type JudgeRoleHostActions } from "../../src/judge-role.ts";
 import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
-import type { HostContext, HostGatekeeperActions } from "../../src/host-contracts.ts";
+import type { HostContext } from "../../src/host-contracts.ts";
 import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
@@ -349,10 +348,11 @@ function testHostActions(
   fail: (error: unknown) => never = (error): never => {
     throw error instanceof Error ? error : new Error(String(error));
   },
-): HostGatekeeperActions {
+): JudgeRoleHostActions {
   return {
     failInfrastructure(error) { fail(error); },
     bindSubmissionNonPass() {},
+    bindPriorGatePass() {},
   };
 }
 
@@ -360,7 +360,7 @@ function testHostActions(
 function testRequireGatekeeperPass(): NonNullable<import("../../src/host-contracts.ts").RoleHost["requireGatekeeperPass"]> {
   return async (options) => {
     const { requireGatekeeperPass } = await import("../../src/gatekeeper-pass-envelope.ts");
-    await requireGatekeeperPass({
+    return await requireGatekeeperPass({
       context: options.context,
       subject: options.subject as import("../../src/gatekeeper-role.ts").GatekeeperSubject,
       ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -1276,11 +1276,11 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     assert.deepEqual(result.details, fixture.output);
     assert.equal(result.terminate, true);
     const receiptText = result.content[0];
-    assert.equal(receiptText?.type, "text");
-    assert.equal(
-      receiptText !== undefined && "text" in receiptText ? receiptText.text : undefined,
-      packagedRoleAcceptedText(fixture.role),
-    );
+    if (fixture.role === "coder") {
+      assert.deepEqual(result.content, []);
+    } else {
+      assert.equal(receiptText?.type, "text");
+    }
     // #756: judge no longer projects auditor usage onto the parent receipt —
     // nested officer meters live on the officer session; parent accepts as-is.
     assert.equal(result.usage, undefined);
@@ -1435,12 +1435,8 @@ test("judge role returns auditor bounce as raw receipt without aborting (#756)",
       if (error.result.status === "bounce") {
         assert.equal(error.result.officer, "auditor");
         assert.deepEqual(error.result.receipt, bounceReceipt);
-        // #775 acceptance: parent-visible text carries every structured field + string items.
-        assert.match(error.message, /evidence-required/);
-        assert.match(error.message, /No authority clause was applied/);
-        assert.match(error.message, /session tool_result lacks ADR cite/);
-        assert.match(error.message, /Tests were not adjudicated/);
       }
+      assert.deepEqual(JSON.parse(error.message), bounceReceipt, "current auditor bounce must not include the earlier notary pass");
       return true;
     },
   );
@@ -1712,6 +1708,32 @@ test("Gatekeeper non-pass projects structured details through role-runtime tool_
       details: {},
     }, ctx);
     assert.equal(second, undefined);
+
+    const notaryPass = { status: "pass", reason: "draft accepted" };
+    const auditorBounce = { status: "bounce", violations: ["revise evidence"] };
+    defaultGateSummon = async (officer) => ({
+      exitCode: 0,
+      terminal: {
+        roleOutcome: {
+          kind: "accepted", role: officer,
+          status: officer === "notary" ? "pass" : "bounce",
+          payloads: [officer === "notary" ? notaryPass : auditorBounce],
+          decisiveFacts: officer === "notary" ? notaryPass : auditorBounce,
+        },
+        navigator: { disposition: "no-advice" }, artifacts: [], runId: `test-${officer}`,
+      },
+    });
+    const twoGateCallId = "judge-two-gates";
+    const twoGateContext = Object.assign(toolCallContext([{ id: twoGateCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
+      cwd: process.cwd(), model, modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider), thinkingLevel: "off",
+    });
+    await assert.rejects(tool.execute(twoGateCallId, { judgeStatus: "converged" }, undefined, undefined, twoGateContext), GatekeeperDecisionError);
+    const twoGateProjection = await harness.handlers.get("tool_result")?.({
+      toolName: JUDGE_OUTPUT_TOOL_NAME, toolCallId: twoGateCallId, isError: true,
+      content: [{ type: "text", text: JSON.stringify(auditorBounce) }], details: {},
+    }, ctx);
+    const delivered = twoGateProjection as { content?: Array<{ type: string; text: string }> } | undefined;
+    assert.deepEqual(delivered?.content?.map((part) => JSON.parse(part.text)), [notaryPass, auditorBounce]);
   });
 });
 
@@ -2329,7 +2351,7 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         let auditCalls = 0;
         let selectedDecision = decision;
         // Doctor keeps disposeCompliance path; judge auditor is gate queue (#756).
-        const auditCompliance = async (options: { context: HostContext; signal?: AbortSignal }) => {
+        const auditCompliance = async (options: { context: HostContext; signal?: AbortSignal; submission: unknown }) => {
           auditCalls += 1;
           const summonAuditor: AuditorSummon = async (_subject) => ({
             exitCode: 0,
@@ -2492,23 +2514,15 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         await escalated.runtime.activate();
         const escalationTool = escalated.harness.tools.get(tool.name);
         if (role === "judge") {
-          // #756: auditor escalate → raw receipt back to judge (not audit_escalation rewrite).
+          // Escalation terminates into the existing audit-escalation face; no
+          // officer verdict is delivered back to the judge's conversation.
           const escBare = outputContext(tool.name, `${role}-escalate`, outputs[role] as unknown as JsonObject);
           const escCtx = await withPassingGatekeeper(escBare);
           escalated.armJudgeGateDecision();
-          await assert.rejects(
-            escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, escCtx),
-            (error: unknown) => {
-              assert.ok(error instanceof GatekeeperDecisionError);
-              assert.equal(error.result.status, "escalate");
-              if (error.result.status === "escalate") {
-                assert.equal(error.result.officer, "auditor");
-                assert.deepEqual(error.result.receipt, escalation);
-                assert.equal(error.message, JSON.stringify(escalation));
-              }
-              return true;
-            },
-          );
+          const paused = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, escCtx);
+          assert.deepEqual(paused.content, []);
+          assert.equal(paused.details.kind, "audit_escalation");
+          assert.deepEqual(paused.details.audit.conflicts, escalation);
           assert.equal(escalated.auditCalls, 1);
           continue;
         }

@@ -373,7 +373,9 @@ function projectOfficerTerminal(
         status: "escalate",
         officer,
         // This-court receipt only (#879) — historical rows remain on terminal.submissions.
-        receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
+        receipt: outcome.decisiveFacts !== undefined && Object.hasOwn(outcome.decisiveFacts, "auditEscalationReceipt")
+          ? outcome.decisiveFacts.auditEscalationReceipt
+          : thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
       },
       summoned,
     );

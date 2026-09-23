@@ -50,6 +50,8 @@ export type SubmissionLedgerEvent =
       readonly role?: TerminalRoleName;
       /** Raw LLM params — bounce/infra/audit still keep the original words (#836). */
       readonly accepted?: unknown;
+      /** Audit-owned escalation verdict, separate from the original role submission. */
+      readonly auditReceipt?: unknown;
     }
   | {
       readonly type: "sealed";
@@ -102,6 +104,7 @@ export type RecordedSubmissionRow = {
    */
   readonly kind: "accepted" | "audit-escalation" | "correctable-rejection" | "infrastructure" | "candidate";
   readonly accepted: unknown;
+  readonly auditReceipt?: unknown;
   /** Present when the ledger row names the tool call — used to dedupe candidate+outcome. */
   readonly toolCallId?: string;
 };
@@ -281,6 +284,7 @@ function rowFromPayload(
     accepted?: unknown;
     params?: unknown;
     toolCallId?: unknown;
+    auditReceipt?: unknown;
   },
   accepted: unknown,
   roleFallback?: TerminalRoleName,
@@ -290,6 +294,7 @@ function rowFromPayload(
     ...(role === undefined ? {} : { role }),
     kind,
     accepted,
+    ...(Object.hasOwn(payload, "auditReceipt") ? { auditReceipt: payload.auditReceipt } : {}),
     ...(typeof payload.toolCallId === "string" && payload.toolCallId.length > 0
       ? { toolCallId: payload.toolCallId }
       : {}),
@@ -701,6 +706,11 @@ export function createSubmissionLedgerHost(
           // #836: ledger authority is the LLM tool-call params as-is (角色原话), never result.details.
           // Machine facts on result.details stay on the tool-result face returned to the model.
           if (isAuditEscalationProjection(result.details) || isAuditEscalationProjection(params)) {
+            const audit = isAuditEscalationProjection(result.details)
+              && typeof result.details.audit === "object"
+              && result.details.audit !== null
+              ? result.details.audit as Record<string, unknown>
+              : undefined;
             const closed: ClosedSubmission = {
               role,
               kind: "audit_escalation",
@@ -713,6 +723,9 @@ export function createSubmissionLedgerHost(
               outcome: "audit-escalation",
               role,
               accepted: params,
+              ...(audit !== undefined && (Object.hasOwn(audit, "receipt") || Object.hasOwn(audit, "conflicts"))
+                ? { auditReceipt: Object.hasOwn(audit, "receipt") ? audit.receipt : audit.conflicts }
+                : {}),
             });
             await projectClosure(closed, context);
             return result;

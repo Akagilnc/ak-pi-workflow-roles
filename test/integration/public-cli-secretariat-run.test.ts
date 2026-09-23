@@ -1,8 +1,7 @@
 /**
- * #924 public Secretariat path — through-line + escalate branch.
+ * Public Secretariat submission-gate path — through-line + escalate branch.
  * Real public CLI entry; faux host activates real secretariat runtime and
- * executes production tools. Default summon path → summonPublicRole (no
- * summonCountersign inject). Nested countersign goes through real runtime +
+ * submits through production gate. Nested countersign goes through real runtime +
  * 符宝郎内闸 (requireGatekeeperPass); body rewrite attribution = dirty-ticket real run.
  */
 import assert from "node:assert/strict";
@@ -21,10 +20,7 @@ import {
 } from "../../src/host-descriptions.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
-import {
-  SECRETARIAT_OUTPUT_TOOL_NAME,
-  SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
-} from "../../src/secretariat-contracts.ts";
+import { SECRETARIAT_OUTPUT_TOOL_NAME } from "../../src/secretariat-contracts.ts";
 import type {
   HostContext,
   RoleHost,
@@ -44,7 +40,6 @@ import {
   createSecretariatRoleRuntime,
   GatekeeperDecisionError,
 } from "../../src/role-runtime.ts";
-import type { SecretariatRuntimeDependencies } from "../../src/secretariat-role.ts";
 import { isAuditEscalationProjection } from "../../src/audit-escalation.ts";
 import {
   recordAuditEscalationSubmission,
@@ -223,7 +218,7 @@ function courtDiaristUnbound(): LegacyFauxPiRunner {
  */
 function nestedCountersignHost(input: {
   packageRoot: string;
-  sequence: ReadonlyArray<{ details: unknown }>;
+  sequence: ReadonlyArray<{ details: unknown; notaryEscalation?: unknown }>;
   gateCalls: Array<{ kind: string }>;
   diaristRunDirectories?: string[];
   countersignRequests?: RoleTurnRequest[];
@@ -273,8 +268,11 @@ function nestedCountersignHost(input: {
           return undefined;
         },
         async requireGatekeeperPass(options: { subject: { kind: string } }) {
-          // Minimal fake 符宝郎内闸 host — records structured pass, no parallel fixture.
+          // Minimal fake 符宝郎内闸 host — records structured pass/escalation.
           input.gateCalls.push({ kind: options.subject.kind });
+          if (step.notaryEscalation !== undefined) {
+            throw new GatekeeperDecisionError({ status: "escalate", officer: "notary", receipt: step.notaryEscalation });
+          }
         },
       } as unknown as RoleHost;
 
@@ -317,11 +315,15 @@ function nestedCountersignHost(input: {
       );
       assert.equal(executed.terminate, true);
 
-      return scriptedTerminatingToolSession({
+      const scripted = await scriptedTerminatingToolSession({
         role: "countersign",
         toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-        details: executed.details ?? step.details,
+        details: step.details,
       })(args, options);
+      return step.notaryEscalation === undefined ? scripted : {
+        ...scripted,
+        sealedAcceptance: { role: "countersign", details: step.details, outputDetails: executed.details },
+      };
     }
     throw new Error(`unexpected nested role: ${role}`);
   };
@@ -341,27 +343,20 @@ function nestedCountersignHost(input: {
 }
 
 /**
- * Activate real secretariat runtime; default summon → summonPublicRole.
- * hostAdapters only — never inject summonCountersign (G3).
- * #969: optional `submissionGateHost` (codex/claude/grok-build) drives the
- * production prepareRoleEnvelope.requireGatekeeperPass path (no harness
+ * Activate the real secretariat runtime through the shared submission gate.
+ * `submissionGateHost` drives the production prepareRoleEnvelope.requireGatekeeperPass path (no harness
  * reimplementation of the envelope summon closure).
  */
 function secretariatHostDrivingRealTools(input: {
   packageRoot: string;
   home: string;
-  steps: ReadonlyArray<
-    | { kind: "summon"; instruction: string }
-    | { kind: "output"; details: Record<string, unknown> }
-  >;
-  countersignSequence: ReadonlyArray<{ details: unknown }>;
+  steps: ReadonlyArray<{ kind: "output"; details: Record<string, unknown> }>;
+  countersignSequence: ReadonlyArray<{ details: unknown; notaryEscalation?: unknown }>;
   gateCalls: Array<{ kind: string }>;
   diaristRunDirectories?: string[];
   countersignRequests?: RoleTurnRequest[];
-  onSummonDetails?: (details: Record<string, unknown>) => void;
-  summonCountersign?: SecretariatRuntimeDependencies["summonCountersign"];
-  /** #969 non-pi host key — arms secretariat_verdict gate on output. */
-  submissionGateHost?: "codex" | "claude" | "grok-build";
+  /** Host key — arms secretariat_verdict gate on output. */
+  submissionGateHost: "codex" | "claude" | "grok-build" | "pi";
   /**
    * Nested 给事中 identity 起居郎 override. Parent secretariat identity still
    * uses #924; omit-ticket cases pass unbound so parent board handoff is the
@@ -385,10 +380,10 @@ function secretariatHostDrivingRealTools(input: {
     },
   });
 
-  // #969 non-pi: production envelope wiring (home/packageRoot/hostAdapters).
+  // Production envelope wiring (home/packageRoot/hostAdapters).
   // Gate entry observed via nested countersignRequests — no harness
   // reimplementation of requireGatekeeperPass / createDefaultGateOfficerSummon.
-  if (input.submissionGateHost !== undefined) {
+  {
     // Capture narrowed host for the closure (exactOptionalPropertyTypes).
     const submissionGateHost = input.submissionGateHost;
     // Always track nested summons so gate entry is observable without a custom
@@ -434,11 +429,6 @@ function secretariatHostDrivingRealTools(input: {
         try {
           let nestBaseline = nestRequests.length;
           for (const step of input.steps) {
-            assert.equal(
-              step.kind,
-              "output",
-              "non-pi submission gate path has no mid-turn summon steps",
-            );
             // Production ingest → beforeAccept → envelope.requireGatekeeperPass.
             await prepared.ingestStructuredOutput(step.details);
             const closed = await prepared.closeRound();
@@ -465,569 +455,10 @@ function secretariatHostDrivingRealTools(input: {
     };
   }
 
-  // pi mid-turn summon path — no submission-gate envelope reimplementation.
-  const nested = nestedCountersignHost({
-    packageRoot: input.packageRoot,
-    sequence: input.countersignSequence,
-    gateCalls: input.gateCalls,
-    ...(input.diaristRunDirectories === undefined
-      ? {}
-      : { diaristRunDirectories: input.diaristRunDirectories }),
-    ...(input.countersignRequests === undefined
-      ? {}
-      : { countersignRequests: input.countersignRequests }),
-  });
-  const hostAdapters = [adapter("pi", nested)];
-  return {
-    async executeTurn(request: RoleTurnRequest) {
-      if (request.activation.role === "diarist" && input.parentDiaristRunner !== undefined) {
-        return parentDiaristHost.executeTurn(request);
-      }
-      if (request.activation.role !== "secretariat") {
-        return nested.executeTurn(request);
-      }
-      const parentRunId =
-        request.runDirectory
-          .split("/")
-          .filter(Boolean)
-          .at(-1)
-          ?.replace(/@.*$/, "") ?? "";
-      const tools = new Map<
-        string,
-        {
-          name: string;
-          execute: (
-            id: string,
-            params: unknown,
-            signal: undefined,
-            onUpdate: undefined,
-            ctx: HostContext,
-          ) => Promise<{ details?: unknown; terminate?: boolean }>;
-        }
-      >;
-      let active: string[] = [];
-      const hostActions = {
-        failInfrastructure(error: unknown): never {
-          throw error instanceof Error ? error : new Error(String(error));
-        },
-        bindSubmissionNonPass() {},
-      };
-      const roleHost = {
-        registerTool(tool: {
-          name: string;
-          execute: (typeof tools extends Map<string, infer V> ? V : never)["execute"];
-        }) {
-          tools.set(tool.name, tool);
-        },
-        on() {},
-        getAllTools: () => [...tools.keys()].map((name) => ({ name })),
-        setActiveTools(names: string[]) {
-          active = [...names];
-        },
-        getActiveTools: () => [...active],
-        getFlag() {
-          return undefined;
-        },
-        // Nested 符宝郎内闸 on countersign only — pi path never arms secretariat_verdict.
-        async requireGatekeeperPass(options: { subject: { kind: string } }) {
-          input.gateCalls.push({ kind: options.subject.kind });
-        },
-      } as unknown as RoleHost;
-
-      await createSecretariatRoleRuntime(
-        roleHost,
-        {
-          loadSoul: async () => "中书省职分（测试装载）",
-          packageRoot: input.packageRoot,
-          ...(input.summonCountersign === undefined
-            ? {}
-            : { summonCountersign: input.summonCountersign }),
-          // Deliberately wrong optional dependency: production nested summons must
-          // derive machine home from the durable parent run directory.
-          home: join(input.home, "wrong-dependency-home"),
-          hostAdapters,
-        },
-        hostActions,
-      ).activate();
-
-      assert.ok(active.includes(SECRETARIAT_OUTPUT_TOOL_NAME));
-      assert.ok(active.includes(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME));
-
-      const ctx = {
-        // Deliberately wrong host-context cwd: nested public summons must use the
-        // parent run's durable projectRoot instead.
-        cwd: join(input.home, "wrong-host-cwd"),
-        mode: "json",
-        model: undefined,
-        runDirectory: request.runDirectory,
-        sessionManager: {
-          getSessionFile: () =>
-            piDurablePrincipalAuthority.decode(request.principal).sessionFile,
-          getSessionDir: () =>
-            piDurablePrincipalAuthority.decode(request.principal)
-              .sessionDirectory,
-          getEntries: () => [],
-          getLeafEntry: () => undefined,
-          getLeafId: () => null,
-        },
-        abort() {},
-      } as HostContext;
-
-      let summonIndex = 0;
-      for (const step of input.steps) {
-        if (step.kind === "summon") {
-          const tool = tools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME);
-          assert.ok(tool, "summon tool missing after activate");
-          const summoned = await tool.execute(
-            `summon-${summonIndex++}`,
-            { instruction: step.instruction },
-            undefined,
-            undefined,
-            ctx,
-          );
-          if (input.onSummonDetails !== undefined) {
-            input.onSummonDetails(
-              (summoned.details ?? {}) as Record<string, unknown>,
-            );
-          }
-          continue;
-        }
-        const tool = tools.get(SECRETARIAT_OUTPUT_TOOL_NAME);
-        assert.ok(tool, "output tool missing after activate");
-        let result: { details?: unknown; terminate?: boolean };
-        try {
-          result = await tool.execute(
-            "call_secretariat_out",
-            step.details,
-            undefined,
-            undefined,
-            ctx,
-          );
-        } catch (error) {
-          if (error instanceof GatekeeperDecisionError && error.result.status === "bounce") {
-            continue;
-          }
-          throw error;
-        }
-        assert.equal(result.terminate, true);
-        const coords = piDurablePrincipalAuthority.decode(request.principal);
-        await mkdir(coords.sessionDirectory, { recursive: true });
-        const sealedDetails = result.details ?? step.details;
-        appendFileSync(
-          coords.sessionFile,
-          `${JSON.stringify({
-            type: "message",
-            message: {
-              role: "toolResult",
-              toolCallId: "call_secretariat_out",
-              toolName: SECRETARIAT_OUTPUT_TOOL_NAME,
-              isError: false,
-              details: sealedDetails,
-            },
-          })}\n`,
-          "utf8",
-        );
-        if (isAuditEscalationProjection(sealedDetails)) {
-          await recordAuditEscalationSubmission({
-            cwd: request.cwd,
-            home: request.home,
-            runId: parentRunId,
-            runDirectory: request.runDirectory,
-            role: "secretariat",
-            details: sealedDetails,
-            toolCallId: "call_secretariat_out",
-          });
-        } else {
-          await sealAcceptedSubmission({
-            cwd: request.cwd,
-            home: request.home,
-            runId: parentRunId,
-            runDirectory: request.runDirectory,
-            role: "secretariat",
-            details: sealedDetails,
-            toolCallId: "call_secretariat_out",
-            ...(request.courtAttemptId === undefined
-              ? {}
-              : { courtAttemptId: request.courtAttemptId }),
-          });
-        }
-      }
-
-      return { code: 0, stderr: "", timedOut: false };
-    },
-  };
 }
 
-test("public secretariat through-line: default summon → continue → same-run converged", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-
-    // An unrelated unbound historical countersign shell must not block a
-    // ticket-bound summons from the public Secretariat entry.
-    const bookDir = activationBookDirectory(
-      resolveActivationLedgerHome(home),
-      resolveBookKeyFromGit(project),
-    );
-    const unrelatedBrokenRun = join(
-      bookDir,
-      "unbound",
-      "runs",
-      "01a0sec924-0000-7000-8000-000000000099@countersign",
-    );
-    await mkdir(unrelatedBrokenRun, { recursive: true });
-    await writeFile(join(unrelatedBrokenRun, "admitted-request.json"), "", "utf8");
-    const otherParentRun = join(
-      bookDir,
-      "924",
-      "runs",
-      "01a0sec924-0000-7000-8000-000000000098@countersign",
-    );
-    await mkdir(otherParentRun, { recursive: true });
-    await writeFile(
-      join(otherParentRun, "admitted-request.json"),
-      JSON.stringify({ sourceRunPath: "/different/secretariat-parent" }),
-      "utf8",
-    );
-
-    assert.ok(
-      MAIN_ROLE_SESSION_MATERIALS.secretariat.includes("souls/ticket-law.md"),
-    );
-    assert.ok(
-      (MAIN_ROLE_SESSION_MATERIALS.secretariat as readonly string[]).includes(
-        "souls/secretariat.md",
-      ),
-    );
-
-    const secretariatRunId = "01a0sec924-0000-7000-8000-000000000001";
-    const attachment = join(home, "ticket-material.md");
-    await writeFile(attachment, "#924 frozen material", "utf8");
-    const capture = captureIo();
-    const summonDetails: Array<Record<string, unknown>> = [];
-    const gateCalls: Array<{ kind: string }> = [];
-    const diaristRunDirectories: string[] = [];
-    const countersignRequests: RoleTurnRequest[] = [];
-    const host = secretariatHostDrivingRealTools({
-      packageRoot,
-      home,
-      gateCalls,
-      diaristRunDirectories,
-      countersignRequests,
-      // #987 Result 7: no public ticketNumber resume into a pre-seeded run.
-      // First gate summon under this secretariat parent mints; second resumes
-      // via parentRunPath (#747).
-      countersignSequence: [
-        {
-          details: {
-            countersignStatus: "continue",
-            fix: { summary: "删考古与伪 authority" },
-          },
-        },
-        {
-          details: { countersignStatus: "converged", note: "署" },
-        },
-      ],
-      onSummonDetails: (details) => {
-        summonDetails.push(details);
-      },
-      steps: [
-        { kind: "summon", instruction: "- 裁：#924 是否足以开工。" },
-        { kind: "summon", instruction: "裁：#924 已按封驳重写，请复审。" },
-        {
-          kind: "output",
-          details: { secretariatStatus: "converged", ticketNumber: 924 },
-        },
-      ],
-    });
-
-    const result = await runAkRole(
-      [
-        "secretariat",
-        "--model",
-        "test/caller-seat:high",
-        "--project",
-        project,
-        "--attach",
-        attachment,
-        "整理 #924 票面并送庭。",
-      ],
-      {
-        home,
-        packageRoot,
-        cwd: project,
-        io: capture.io,
-        createRunId: () => secretariatRunId,
-        roleTurnHost: host,
-        hostAdapters: [adapter("pi", host)],
-      },
-    );
-    assert.equal(result.exitCode, 0, capture.stderr.join(""));
-    assert.ok(result.terminal);
-    assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
-      "converged",
-    ]);
-    const facts = objectPayloads(result.terminal.roleOutcome)[0] as {
-      secretariatStatus: string;
-      ticketNumber?: number;
-    };
-    assert.equal(facts.secretariatStatus, "converged");
-    assert.equal(facts.ticketNumber, 924);
-
-    // Nested terminal fidelity on the summon tool projection (default path).
-    assert.equal(summonDetails.length, 2);
-    assert.equal(summonDetails[0]!.outcomeKind, "accepted");
-    assert.equal(summonDetails[0]!.countersignStatus, "continue");
-    assert.equal(summonDetails[1]!.outcomeKind, "accepted");
-    assert.equal(summonDetails[1]!.countersignStatus, "converged");
-    const firstRunId = summonDetails[0]!.runId;
-    assert.equal(
-      typeof firstRunId,
-      "string",
-      "first gate summon must mint a countersign run under this secretariat parent",
-    );
-    assert.ok(
-      (firstRunId as string).length > 0,
-      "minted countersign runId must be non-empty",
-    );
-    assert.equal(
-      summonDetails[1]!.runId,
-      firstRunId,
-      "second gate summon must resume the same-parent countersign run",
-    );
-
-    // G2: mint + resume each cross 符宝郎内闸 and create a court.
-    assert.equal(gateCalls.length, 2);
-    assert.ok(
-      gateCalls.every((c) => c.kind === "countersign_verdict"),
-      `gate subjects must be countersign_verdict, got ${JSON.stringify(gateCalls)}`,
-    );
-
-    const childRunDir = await findRunDirectoryById(home, firstRunId as string);
-    assert.ok(childRunDir, "countersign child run must exist");
-    const attemptIds = await distinctCourtAttemptIds({
-      cwd: project,
-      home,
-      runId: firstRunId as string,
-      runDirectory: childRunDir,
-    });
-    assert.equal(
-      attemptIds.size,
-      2,
-      `mint + same-parent resume must each create a court; got=${[...attemptIds].join(",") || "(none)"}`,
-    );
-
-    assert.equal(
-      countersignRequests.length,
-      2,
-      `expected mint then resume under secretariat caller: ${JSON.stringify(countersignRequests.map((request) => ({ kind: request.continuation.kind, correlationId: request.correlationId })))}`,
-    );
-    assert.equal(countersignRequests[0]!.continuation.kind, "initial");
-    assert.equal(countersignRequests[0]!.correlationId, secretariatRunId);
-    assert.equal(countersignRequests[1]!.continuation.kind, "resume");
-    assert.equal(countersignRequests[1]!.correlationId, secretariatRunId);
-    assert.ok(
-      piDurablePrincipalAuthority
-        .decode(countersignRequests[1]!.principal)
-        .sessionDirectory.includes(firstRunId as string),
-      "second leg must resume the minted countersign principal",
-    );
-
-    // G3: parent secretariat run bound under ticket, not unbound.
-    // Canonical placement: books/<key>/<ticket>/runs/ (legacy issues/ is read-only).
-    const parentRunDir = await findRunDirectoryById(home, secretariatRunId);
-    assert.ok(parentRunDir, "secretariat parent run must exist");
-    assert.match(
-      parentRunDir.replace(/\\/g, "/"),
-      /\/924\/runs\//,
-      `parent run must bind under ticket 924; got ${parentRunDir}`,
-    );
-    assert.equal(
-      parentRunDir.includes(`${join("unbound", "runs")}`),
-      false,
-    );
-    const parentAdmitted = JSON.parse(
-      await readFile(join(parentRunDir, "admitted-request.json"), "utf8"),
-    ) as { ticketNumber?: number };
-    assert.equal(parentAdmitted.ticketNumber, 924);
-    const diaristAdmissions = await Promise.all(
-      diaristRunDirectories.map(async (directory) => {
-        const runId = directory.split("/").at(-1)?.replace(/@.*$/, "") ?? "";
-        const currentDirectory = await findRunDirectoryById(home, runId);
-        assert.ok(currentDirectory);
-        return JSON.parse(
-          await readFile(join(currentDirectory, "admitted-request.json"), "utf8"),
-        ) as {
-          attachments?: unknown[];
-          correlationId?: string;
-          correlationIds?: string[];
-        };
-      }),
-    );
-    assert.ok(
-      diaristAdmissions.some((admission) => (admission.attachments?.length ?? 0) > 0),
-      "identity diarist must receive the secretariat run's frozen attachment",
-    );
-    const diaristCallers = new Set(
-      diaristAdmissions.flatMap((admission) => [
-        admission.correlationId,
-        ...(admission.correlationIds ?? []),
-      ]),
-    );
-    assert.ok(
-      diaristCallers.has(secretariatRunId),
-      "secretariat identity diarist must record the secretariat as direct caller",
-    );
-    assert.ok(
-      diaristCallers.has(firstRunId as string),
-      "court diarists must record the countersign as direct caller",
-    );
-
-    const state = await readRoleRunState(
-      parentRunDir,
-      piDurablePrincipalAuthority,
-    );
-    assert.equal(state?.state, "terminal");
-  });
-});
-
-test("public secretariat summon failure preserves original exception diagnostic", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const cause = Object.assign(new Error("root-cause-marker"), {
-      code: "ROOT_CAUSE_CODE",
-    });
-    const error = Object.assign(
-      new Error("summon-failure-marker", { cause }),
-      { code: "SUMMON_FAILURE_CODE" },
-    );
-    error.stack = "summon-stack-marker";
-    const capture = captureIo();
-    const host = secretariatHostDrivingRealTools({
-      packageRoot,
-      home,
-      gateCalls: [],
-      countersignSequence: [],
-      steps: [
-        { kind: "summon", instruction: "裁：请传召给事中。" },
-        { kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } },
-      ],
-      summonCountersign: async () => { throw error; },
-    });
-    const result = await runAkRole(
-      ["secretariat", "--model", "test/caller-seat:high", "--project", project, "整理并送庭。"],
-      {
-        home,
-        packageRoot,
-        cwd: project,
-        io: capture.io,
-        createRunId: () => "01a0sec924-0000-7000-8000-000000000201",
-        roleTurnHost: host,
-        hostAdapters: [adapter("pi", host)],
-      },
-    );
-
-    assert.equal(result.exitCode, 1);
-    assert.equal(result.terminal?.roleOutcome.kind, "failure");
-    const errorArtifact = result.terminal?.artifacts.find((artifact) => artifact.kind === "error");
-    assert.ok(errorArtifact);
-    const retained = JSON.parse(await readFile(errorArtifact.path, "utf8")) as {
-      diagnostic?: string;
-      identity?: { code?: string };
-      details?: { error?: unknown };
-    };
-    assert.equal(retained.diagnostic, "summon-failure-marker");
-    assert.equal(retained.identity?.code, "SUMMON_FAILURE_CODE");
-    assert.equal(typeof retained.details?.error, "string");
-    assert.ok((retained.details?.error as string).length > 0);
-  });
-});
-
-test("public secretariat escalate branch: countersign escalate → secretariat escalate with matter", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const runId = "01a0sec924-esc0-7000-8000-000000000099";
-    const capture = captureIo();
-    const summonDetails: Array<Record<string, unknown>> = [];
-    const gateCalls: Array<{ kind: string }> = [];
-    const host = secretariatHostDrivingRealTools({
-      packageRoot,
-      home,
-      gateCalls,
-      countersignSequence: [
-        {
-          details: {
-            countersignStatus: "escalate",
-            decisionGate: {
-              question: "中书省是否拆席？",
-              options: ["暂不", "拆"],
-            },
-          },
-        },
-      ],
-      onSummonDetails: (d) => {
-        summonDetails.push(d);
-      },
-      steps: [
-        { kind: "summon", instruction: "裁：#924 上呈事项。" },
-        {
-          kind: "output",
-          details: {
-            secretariatStatus: "escalate",
-            decisionGate: {
-              question: "中书省是否拆席？",
-              options: ["暂不", "拆"],
-            },
-          },
-        },
-      ],
-    });
-    const result = await runAkRole(
-      [
-        "secretariat",
-        "--model",
-        "test/caller-seat:high",
-        "--project",
-        project,
-        "整理 #924；若须拆席则上呈。",
-      ],
-      {
-        home,
-        packageRoot,
-        cwd: project,
-        io: capture.io,
-        createRunId: () => runId,
-        roleTurnHost: host,
-        hostAdapters: [adapter("pi", host)],
-      },
-    );
-    assert.equal(result.exitCode, 0, capture.stderr.join(""));
-    assert.ok(result.terminal);
-    assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
-      "escalate",
-    ]);
-    const facts = objectPayloads(result.terminal.roleOutcome)[0] as {
-      secretariatStatus: string;
-      decisionGate?: { question?: string; options?: string[] };
-    };
-    assert.equal(facts.secretariatStatus, "escalate");
-    assert.equal(facts.decisionGate?.question, "中书省是否拆席？");
-    assert.deepEqual(facts.decisionGate?.options, ["暂不", "拆"]);
-    assert.equal(summonDetails[0]?.countersignStatus, "escalate");
-    assert.equal(summonDetails[0]?.outcomeKind, "accepted");
-    // escalate skips 符宝郎内闸 (#753)
-    assert.equal(gateCalls.length, 0);
-  });
-});
-
-for (const hostName of ["codex", "claude", "grok-build"] as const) {
-test(`#969 ${hostName} public entry: converged enters the shared gate`, async () => {
+for (const hostName of ["codex", "claude", "grok-build", "pi"] as const) {
+test(`${hostName} public entry: converged enters the shared gate`, async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -1036,7 +467,9 @@ test(`#969 ${hostName} public entry: converged enters the shared gate`, async ()
       ? "01a0sec969-gate-7000-8000-000000000001"
       : hostName === "claude"
         ? "01a0sec969-gate-7000-8000-000000000011"
-        : "01a0sec969-gate-7000-8000-000000000021";
+        : hostName === "grok-build"
+          ? "01a0sec969-gate-7000-8000-000000000021"
+          : "01a0sec969-gate-7000-8000-000000000031";
     const capture = captureIo();
     const gateCalls: Array<{ kind: string }> = [];
     const countersignRequests: RoleTurnRequest[] = [];
@@ -1055,7 +488,7 @@ test(`#969 ${hostName} public entry: converged enters the shared gate`, async ()
         },
         { details: { countersignStatus: "converged", note: "署" } },
       ],
-      // Headless path: output only — no mid-turn summon tool.
+      // Submission gate runs when the terminating output is submitted.
       steps: [
         {
           kind: "output",
@@ -1144,6 +577,7 @@ test(`#969 ${hostName} public entry: converged enters the shared gate`, async ()
 });
 }
 
+
 test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
@@ -1229,6 +663,31 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
       gateCalls.some((c) => c.kind === "secretariat_verdict"),
       "must enter secretariat_verdict before 给事中 escalate",
     );
+  });
+});
+
+test("nested Notary escalation reaches the Secretariat public terminal with its verdict", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const receipt = { status: "escalate", decisionGate: { question: "notary?", options: ["yes"] } };
+    const result = await runAkRole(
+      ["secretariat", "--model", "test/caller-seat:high", "--project", project, "整理 #924 票面并送庭。"],
+      {
+        home, packageRoot, cwd: project, io: captureIo().io,
+        createRunId: () => "01a0sec1021-nst-7000-8000-000000000001",
+        roleTurnHost: secretariatHostDrivingRealTools({
+          packageRoot, home, gateCalls: [], submissionGateHost: "codex",
+          countersignSequence: [{ details: { countersignStatus: "converged" }, notaryEscalation: receipt }],
+          steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
+        }),
+      },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
+    const countersignTerminal = result.terminal?.roleOutcome.decisiveFacts?.countersignTerminal as { receipt?: unknown } | undefined;
+    assert.deepEqual(countersignTerminal?.receipt, receipt);
   });
 });
 
@@ -1401,6 +860,7 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
       packageRoot,
       home,
       gateCalls: [],
+      submissionGateHost: "pi",
       diaristRunDirectories: diaristRuns,
       parentDiaristRunner: async (args, options) => {
         await mkdir(unrelatedRun, { recursive: true });

@@ -175,6 +175,7 @@ test("#969 secretariat_verdict escalate throws without bindSubmissionNonPass (en
   },
 );
 
+
 test("#969 requireGatekeeperPass pass returns receipt + nested runId",
   async () => {
     const receipt = { countersignStatus: "converged", note: "署" };

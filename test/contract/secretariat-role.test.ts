@@ -5,18 +5,13 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import test from "node:test";
 
-import {
-  SECRETARIAT_OUTPUT_TOOL_NAME,
-  SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME,
-  projectSecretariatSummonResult,
-} from "../../src/secretariat-role.ts";
+import { SECRETARIAT_OUTPUT_TOOL_NAME } from "../../src/secretariat-role.ts";
 import { createSecretariatRoleRuntime } from "../../src/role-runtime.ts";
 import {
   createSubmissionLedgerHost,
   readRecordedSubmissionRows,
 } from "../../src/submission-ledger.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 
 type HostHarness = {
@@ -25,11 +20,6 @@ type HostHarness = {
 };
 
 async function activateSecretariat(options?: {
-  summonCountersign?: (input: {
-    readonly instruction: string;
-    readonly cwd: string;
-    readonly correlationId?: string;
-  }) => Promise<PublicSummonResult>;
   /** Optional pre-existing host-surface tool names (no Pi-name hardcode in role). */
   readonly hostSurfaceTools?: readonly string[];
   readonly activationCount?: number;
@@ -60,10 +50,6 @@ async function activateSecretariat(options?: {
   };
   const runtime = createSecretariatRoleRuntime(roleHost as never, {
     loadSoul: async () => "中书省法",
-    packageRoot: "/pkg",
-    ...(options?.summonCountersign === undefined
-      ? {}
-      : { summonCountersign: options.summonCountersign as never }),
   });
   for (let i = 0; i < (options?.activationCount ?? 1); i += 1) {
     await runtime.activate();
@@ -80,14 +66,15 @@ const ctx = {
   abort() {},
 };
 
-test("secretariat activation and reload declare package tools on active surface (G6)", async () => {
+test("secretariat activation exposes only the terminating package tool (G6)", async () => {
   const { activeTools } = await activateSecretariat({
     hostSurfaceTools: ["host_read", "host_shell"],
     activationCount: 2,
   });
   const active = activeTools();
   assert.ok(active.includes(SECRETARIAT_OUTPUT_TOOL_NAME));
-  assert.ok(active.includes(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME));
+  assert.equal(active.some((name) => name.startsWith("ak_secretariat_summon_")), false);
+  assert.equal([...active].filter((name) => name === SECRETARIAT_OUTPUT_TOOL_NAME).length, 1);
   // Host surface preserved without role hardcoding builtin names.
   assert.ok(active.includes("host_read"));
   assert.ok(active.includes("host_shell"));
@@ -139,276 +126,9 @@ test("secretariat output records any status without shape reject (第 0 条)", a
   );
 });
 
-test("secretariat summon-countersign calls shared seam with parent correlation", async () => {
-  const calls: Array<{
-    instruction: string;
-    cwd: string;
-    correlationId?: string;
-  }> = [];
-  const { tools } = await activateSecretariat({
-    summonCountersign: async (input) => {
-      calls.push({
-        instruction: input.instruction,
-        cwd: input.cwd,
-        ...(input.correlationId === undefined
-          ? {}
-          : { correlationId: input.correlationId }),
-      });
-      return {
-        exitCode: 0,
-        runDirectory: "/home/books/x/runs/01child@countersign",
-        terminal: {
-          roleOutcome: {
-            kind: "accepted",
-            role: "countersign",
-            payloads: [{ countersignStatus: "converged", note: "署" }],
-          },
-        } as never,
-      };
-    },
-  });
-  const result = await tools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
-    "summon-1",
-    { instruction: "裁：#924 是否足以开工。" },
-    undefined,
-    undefined,
-    ctx,
-  );
-  assert.equal(result.terminate, undefined);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0]!.instruction, "裁：#924 是否足以开工。");
-  assert.equal(calls[0]!.cwd, "/work");
-  assert.equal(calls[0]!.correlationId, "01parent");
-  const details = result.details as {
-    outcomeKind?: string;
-    countersignStatus?: string;
-    runId?: string;
-  };
-  assert.equal(details.outcomeKind, "accepted");
-  assert.equal(details.countersignStatus, "converged");
-  assert.equal(details.runId, "01child");
-});
-
-/**
- * #953: real ak_secretariat_summon_countersign execute entry — six terminal
- * kinds on typed details only. Parent-visible text reuses readableGateItem on
- * those details in role-runtime (static review); do not lock generated text.
- */
-test("secretariat summon tool delivers typed parent facts for each terminal kind", async () => {
-  const cases: ReadonlyArray<{
-    readonly label: string;
-    readonly summoned: PublicSummonResult;
-    readonly expect: {
-      readonly outcomeKind: string;
-      readonly runId?: string;
-      readonly detailsCheck?: (details: Record<string, unknown>) => void;
-    };
-  }> = [
-    {
-      label: "continue",
-      summoned: {
-        exitCode: 0,
-        runDirectory: "/r/01cont@countersign",
-        terminal: {
-          roleOutcome: {
-            kind: "accepted",
-            role: "countersign",
-            status: "continue",
-            payloads: [{ countersignStatus: "continue", fix: { summary: "rework" } }],
-          },
-        } as never,
-      },
-      expect: {
-        outcomeKind: "accepted",
-        runId: "01cont",
-        detailsCheck: (details) => {
-          assert.equal(details.countersignStatus, "continue");
-          assert.deepEqual(details.receipt, {
-            countersignStatus: "continue",
-            fix: { summary: "rework" },
-          });
-        },
-      },
-    },
-    {
-      label: "converged",
-      summoned: {
-        exitCode: 0,
-        runDirectory: "/r/01conv@countersign",
-        terminal: {
-          roleOutcome: {
-            kind: "accepted",
-            role: "countersign",
-            payloads: [{ countersignStatus: "converged", note: "seal" }],
-          },
-        } as never,
-      },
-      expect: {
-        outcomeKind: "accepted",
-        runId: "01conv",
-        detailsCheck: (details) => {
-          assert.equal(details.countersignStatus, "converged");
-        },
-      },
-    },
-    {
-      label: "escalate",
-      summoned: {
-        exitCode: 0,
-        runDirectory: "/r/01esc@countersign",
-        terminal: {
-          roleOutcome: {
-            kind: "audit_escalation",
-            role: "countersign",
-            status: "audit_escalation",
-            payloads: [
-              { countersignStatus: "escalate", decisionGate: { question: "split?" } },
-            ],
-            decisiveFacts: { gate: "open" },
-          },
-        } as never,
-      },
-      expect: {
-        outcomeKind: "audit_escalation",
-        runId: "01esc",
-        detailsCheck: (details) => {
-          assert.equal(details.countersignStatus, "escalate");
-          assert.deepEqual(details.decisiveFacts, { gate: "open" });
-        },
-      },
-    },
-    {
-      label: "failure",
-      summoned: {
-        exitCode: 1,
-        runDirectory: "/r/01fail@countersign",
-        terminal: {
-          roleOutcome: {
-            kind: "failure",
-            role: "countersign",
-            diagnostic: "nested boom",
-            cause: "provider",
-            decisiveFacts: { cause: "provider" },
-          },
-          // #953: history on submissions carrier — not failure.payloads/receipt.
-          submissions: [
-            {
-              countersignStatus: "continue",
-              findings: [{ article: "old", reason: "prior" }],
-            },
-          ],
-        } as never,
-      },
-      expect: {
-        outcomeKind: "failure",
-        runId: "01fail",
-        detailsCheck: (details) => {
-          assert.equal(details.diagnostic, "nested boom");
-          assert.equal(details.cause, "provider");
-          assert.equal(details.receipt, undefined);
-          assert.equal(details.payloads, undefined);
-          assert.deepEqual(details.submissions, [
-            {
-              countersignStatus: "continue",
-              findings: [{ article: "old", reason: "prior" }],
-            },
-          ]);
-        },
-      },
-    },
-    {
-      label: "no_receipt",
-      summoned: {
-        exitCode: 0,
-        runDirectory: "/r/01norec@countersign",
-        stderr: "quiet",
-        terminal: {
-          roleOutcome: {
-            kind: "no_receipt",
-            role: "countersign",
-            status: "no-accepted-receipt",
-            decisiveFacts: { acceptedReceipt: false },
-          },
-        } as never,
-      },
-      expect: {
-        outcomeKind: "no_receipt",
-        runId: "01norec",
-        detailsCheck: (details) => {
-          assert.equal(details.status, "no-accepted-receipt");
-          assert.equal(details.stderr, "quiet");
-        },
-      },
-    },
-    {
-      label: "no_terminal",
-      summoned: {
-        exitCode: 1,
-        runDirectory: "/r/01noterm@countersign",
-        stderr: "died before terminal",
-      },
-      expect: {
-        outcomeKind: "no_terminal",
-        runId: "01noterm",
-        detailsCheck: (details) => {
-          assert.equal(details.exitCode, 1);
-          assert.equal(details.stderr, "died before terminal");
-        },
-      },
-    },
-  ];
-
-  for (const row of cases) {
-    const { tools } = await activateSecretariat({
-      summonCountersign: async () => row.summoned,
-    });
-    const result = await tools.get(SECRETARIAT_SUMMON_COUNTERSIGN_TOOL_NAME)!.execute(
-      `summon-${row.label}`,
-      { instruction: `case ${row.label}` },
-      undefined,
-      undefined,
-      ctx,
-    );
-    const details = result.details as Record<string, unknown>;
-    assert.equal(details.outcomeKind, row.expect.outcomeKind, row.label);
-    if (row.expect.runId !== undefined) {
-      assert.equal(details.runId, row.expect.runId, row.label);
-    }
-    row.expect.detailsCheck?.(details);
-  }
-});
-
-test("projectSecretariatSummonResult keeps multi-receipt latest as receipt", () => {
-  const multi = projectSecretariatSummonResult({
-    exitCode: 0,
-    runDirectory: "/r/01multi@countersign",
-    terminal: {
-      roleOutcome: {
-        kind: "accepted",
-        role: "countersign",
-        payloads: [
-          { countersignStatus: "continue", fix: { summary: "bounce" } },
-          { countersignStatus: "converged", note: "seal" },
-        ],
-      },
-    } as never,
-  });
-  assert.equal(multi.outcomeKind, "accepted");
-  assert.equal(multi.runId, "01multi");
-  assert.equal(multi.countersignStatus, "converged");
-  assert.deepEqual(multi.payloads, [
-    { countersignStatus: "continue", fix: { summary: "bounce" } },
-    { countersignStatus: "converged", note: "seal" },
-  ]);
-  assert.deepEqual(multi.receipt, {
-    countersignStatus: "converged",
-    note: "seal",
-  });
-});
-
-test("#969 host trigger boundary: codex/claude/grok-build arm gate; pi does not",
+test("secretariat converged receipt enters the submission gate on every host",
   async () => {
-    async function arm(host: string | undefined) {
+    async function arm(host: string | undefined, statusOnly = false) {
       const gateCalls: string[] = [];
       const tools = new Map<string, { execute: Function }>();
       const roleHost = {
@@ -422,6 +142,7 @@ test("#969 host trigger boundary: codex/claude/grok-build arm gate; pi does not"
         getFlag() { return undefined; },
         async requireGatekeeperPass(options: { subject: { kind: string } }) {
           gateCalls.push(options.subject.kind);
+          return { officer: "countersign", receipt: statusOnly ? undefined : { countersignStatus: "converged", note: "署原话" } };
         },
       };
       await createSecretariatRoleRuntime(
@@ -441,21 +162,27 @@ test("#969 host trigger boundary: codex/claude/grok-build arm gate; pi does not"
         ...(host === undefined ? {} : { host }),
         abort() {},
       };
-      await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+      const result = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
         "c",
         { secretariatStatus: "converged", ticketNumber: 969 },
         undefined,
         undefined,
         hostCtx,
       );
+      assert.equal(result.content.length, statusOnly ? 0 : 1);
+      if (!statusOnly) {
+        assert.equal(result.content[0]?.type, "text");
+        assert.deepEqual(JSON.parse(result.content[0].text), { countersignStatus: "converged", note: "署原话" });
+      }
+      assert.deepEqual(result.details, { secretariatStatus: "converged", ticketNumber: 969 });
       return gateCalls;
     }
 
-    for (const host of ["codex", "claude", "grok-build"] as const) {
+    for (const host of ["codex", "claude", "grok-build", "pi"] as const) {
       assert.deepEqual(await arm(host), ["secretariat_verdict"], host);
     }
-    assert.deepEqual(await arm("pi"), []);
-    assert.deepEqual(await arm(undefined), []);
+    assert.deepEqual(await arm(undefined), ["secretariat_verdict"]);
+    assert.deepEqual(await arm(undefined, true), ["secretariat_verdict"]);
 
     await withTempRoot("ak-sec-gate-", async (root) => {
       const ungated = new Map<string, { execute: Function }>();
@@ -493,7 +220,7 @@ test("#969 host trigger boundary: codex/claude/grok-build arm gate; pi does not"
         mode: "json",
         model: undefined,
         runDirectory,
-        host: "codex",
+      host: "pi",
         sessionManager: {
           getHeader: () => ({ type: "session", id: "run-ledger:attempt" }),
           getLeafEntry: () => undefined,
@@ -517,7 +244,7 @@ test("#969 host trigger boundary: codex/claude/grok-build arm gate; pi does not"
       ]);
     });
 
-    // Unknown status on non-pi reasks parent (ADR 0055).
+    // Unknown status reasks parent (ADR 0055).
     const tools = new Map<string, { execute: Function }>();
     const roleHost = {
       registerTool(tool: { name: string; execute: Function }) {

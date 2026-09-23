@@ -8,7 +8,9 @@ import type {
   AnyCanonicalSkillBinding,
   CanonicalSkillBinding,
 } from "./canonical-skill-binding.ts";
-import { packagedRoleAcceptedText } from "./packaged-role-registry.ts";
+import { readableGateItem } from "./readable-gate-item.ts";
+import { projectAuditEscalation } from "./audit-escalation.ts";
+import { GatekeeperDecisionError } from "./submission-errors.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -282,20 +284,28 @@ export function createFixerRoleRuntime(
               ctx,
               toolCallId,
             );
-            if (WORKER_DONE_STATUSES.has(workerStatusOf(output))) {
-              await pi.requireGatekeeperPass!({
-                context: ctx,
-                subject: { kind: "worker_completion" },
-                ...(_signal === undefined ? {} : { signal: _signal }),
-                hostActions,
-                toolCallId,
-                // #879: this-turn typed payload — identity-bound at submit site.
-                submission: output,
-              });
+            let pass;
+            try {
+              pass = WORKER_DONE_STATUSES.has(workerStatusOf(output))
+                ? await pi.requireGatekeeperPass!({
+                    context: ctx,
+                    subject: { kind: "worker_completion" },
+                    ...(_signal === undefined ? {} : { signal: _signal }),
+                    hostActions,
+                    toolCallId,
+                    // #879: this-turn typed payload — identity-bound at submit site.
+                    submission: output,
+                  })
+                : undefined;
+            } catch (error) {
+              if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
+                return projectAuditEscalation({ status: "escalate", conflicts: error.result.receipt }, output);
+              }
+              throw error;
             }
             const acceptedDetails = output;
             return {
-              content: [{ type: "text" as const, text: packagedRoleAcceptedText("fixer") }],
+              content: pass === undefined ? [] : [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
               details: acceptedDetails,
               terminate: true as const,
             };
@@ -407,7 +417,7 @@ export function createCoderRoleRuntime(
           description: "提交将作监终局回执；本工具无 escalate 通道。",
           promptSnippet: "提交将作监终局回执",
           parameters: coderOutputSchema,
-          async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
+          async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
             if (task === undefined || phase === undefined) {
               throw new Error("将作监任务与阶段未装载");
             }
@@ -422,20 +432,28 @@ export function createCoderRoleRuntime(
               ctx,
               toolCallId,
             );
-            if (WORKER_DONE_STATUSES.has(workerStatusOf(output))) {
-              await pi.requireGatekeeperPass!({
-                context: ctx,
-                subject: { kind: "worker_completion" },
-                ...(_signal === undefined ? {} : { signal: _signal }),
-                hostActions,
-                toolCallId,
-                // #879: this-turn typed payload — identity-bound at submit site.
-                submission: output,
-              });
+            let pass;
+            try {
+              pass = WORKER_DONE_STATUSES.has(workerStatusOf(output))
+                ? await pi.requireGatekeeperPass!({
+                    context: ctx,
+                    subject: { kind: "worker_completion" },
+                    ...(_signal === undefined ? {} : { signal: _signal }),
+                    hostActions,
+                    toolCallId,
+                    // #879: this-turn typed payload — identity-bound at submit site.
+                    submission: output,
+                  })
+                : undefined;
+            } catch (error) {
+              if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
+                return projectAuditEscalation({ status: "escalate", conflicts: error.result.receipt }, output);
+              }
+              throw error;
             }
             const acceptedDetails = output;
             return {
-              content: [{ type: "text" as const, text: packagedRoleAcceptedText("coder") }],
+              content: pass === undefined ? [] : [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
               details: acceptedDetails,
               terminate: true as const,
             };

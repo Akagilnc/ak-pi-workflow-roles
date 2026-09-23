@@ -169,6 +169,7 @@ function roleOutcomeFromRows(
     readonly role?: TerminalRoleName;
     readonly kind: "accepted" | "audit-escalation" | "correctable-rejection" | "infrastructure" | "candidate";
     readonly accepted: unknown;
+    readonly auditReceipt?: unknown;
   }[],
 ): Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined {
   const mine = rows.filter((row) => row.role === role);
@@ -181,7 +182,11 @@ function roleOutcomeFromRows(
   // Role-result block is the full recorded sequence for this seat, not a sole pick.
   const payloads = mine.map((row) => row.accepted);
   if (terminal.some((row) => row.kind === "audit-escalation")) {
-    return { kind: "audit_escalation", role, status: "audit_escalation", payloads };
+    const audited = terminal.slice().reverse().find((row) => row.kind === "audit-escalation" && Object.hasOwn(row, "auditReceipt"));
+    return {
+      kind: "audit_escalation", role, status: "audit_escalation", payloads,
+      ...(audited === undefined ? {} : { decisiveFacts: { auditEscalationReceipt: audited.auditReceipt } }),
+    };
   }
   return { kind: "accepted", role, payloads };
 }

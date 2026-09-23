@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { DoctorCase } from "../../src/doctor-contracts.ts";
 import { createDoctorRoleRuntime, DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-role.ts";
+import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 
@@ -42,6 +43,7 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
   let decision: "pass" | "bounce" | "failure" | "no-receipt" = "bounce";
   let aborts = 0;
   let auditCalls = 0;
+  const auditedSubmissions: unknown[] = [];
   // #775: structured violations must reach the parent seat with field content intact.
   const structuredViolation = {
     article: "method-proof",
@@ -67,10 +69,11 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
     async auditCompliance(options) {
       auditCalls += 1;
       assert.ok(options.context);
+      auditedSubmissions.push(options.submission);
       if (decision === "failure") throw new Error("provider unavailable");
       if (decision === "no-receipt") return auditNoReceiptFacts;
       return decision === "bounce"
-        ? { status: "bounce", violations: [structuredViolation] }
+        ? { status: "bounce", violations: [structuredViolation], receipt: { status: "bounce", violations: [structuredViolation], explanation: "full auditor answer" } }
         : { status: "pass" };
     },
   }, {
@@ -83,6 +86,9 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
     output.execute("doctor", refusal, undefined, undefined, context("doctor")),
     (error: unknown) => {
       assert.ok(error instanceof Error);
+      assert.ok(error instanceof GatekeeperDecisionError);
+      assert.equal(error.result.status, "bounce");
+      if (error.result.status === "bounce") assert.deepEqual(error.result.receipt, { status: "bounce", violations: [structuredViolation], explanation: "full auditor answer" });
       // #775 acceptance: parent-visible text carries every structured field.
       assert.match(error.message, /method-proof/);
       assert.match(error.message, /missing method proof/);
@@ -101,6 +107,7 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
   // Runtime cost is still a fact — recorded beside the testimony in the
   // candidate audit entry, not folded into the accepted payload.
   assert.deepEqual(candidates, [{ version: 1, testimony, cost: patient.cost, readRecord: [], patientIdentity: patient.identity }]);
+  assert.deepEqual(auditedSubmissions, [refusal, refusal, testimony]);
   assert.equal(auditCalls, 3);
   decision = "no-receipt";
   const noReceiptCandidates: unknown[] = [];

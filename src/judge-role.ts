@@ -2,9 +2,10 @@ import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } fro
 import { Type, type Static } from "typebox";
 
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
-import { ParentQueueReaskError } from "./submission-errors.ts";
+import { GatekeeperDecisionError, ParentQueueReaskError } from "./submission-errors.ts";
+import { projectAuditEscalation } from "./audit-escalation.ts";
 
-import { packagedRoleAcceptedText } from "./packaged-role-registry.ts";
+import { readableGateItem } from "./readable-gate-item.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
@@ -64,7 +65,10 @@ export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;
 };
 
-export type JudgeRoleHostActions = HostGatekeeperActions;
+export type JudgeRoleHostActions = HostGatekeeperActions & {
+  /** Preserve the first officer's pass as a separate model-visible result item if the second gate fails. */
+  bindPriorGatePass(toolCallId: string, receipt: unknown): void;
+};
 
 export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   return validateAcceptedJudgeDetails(verdict);
@@ -107,7 +111,7 @@ export function createJudgeRoleRuntime(
               // Parent escalate → throw to caller as-is; officers do not attend (#753 / #756).
               const verdict = validateVerdict(parameters);
               return {
-                content: [{ type: "text" as const, text: packagedRoleAcceptedText("judge") }],
+                content: [],
                 details: verdict,
                 terminate: true as const,
               };
@@ -115,33 +119,43 @@ export function createJudgeRoleRuntime(
             const verdict = validateVerdict(parameters);
             // Candidate verdict is already on the parent session books as this
             // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
-            // #753: 符宝郎内闸 — queue only, raw receipt on bounce/escalate.
-            await pi.requireGatekeeperPass!({
-              context: ctx,
-              subject: { kind: "judge_draft" },
-              ...(signal === undefined ? {} : { signal }),
-              hostActions,
-              toolCallId,
-              // #879: this-turn typed payload — identity-bound at submit site.
-              submission: parameters,
-            });
-            // #756: 审刑院合规路径 — same review-queue law as 符宝郎/台院.
-            // pass → accept; bounce|escalate → raw auditor receipt back to judge;
-            // not three-state → resume auditor; no round cap; no disposeCompliance mapping.
-            await pi.requireGatekeeperPass!({
-              context: ctx,
-              subject: { kind: "judge_compliance" },
-              ...(signal === undefined ? {} : { signal }),
-              hostActions,
-              toolCallId,
-              // #879: same parent payload for 审刑院; not recovered from session latest.
-              submission: parameters,
-            });
-            return {
-              content: [{ type: "text" as const, text: packagedRoleAcceptedText("judge") }],
-              details: verdict,
-              terminate: true as const,
-            };
+            // #753: 符宝郎内闸 — bounce returns raw receipt; escalate pauses.
+            let draftPass: { receipt: unknown } | undefined;
+            try {
+              const obtainedDraftPass = await pi.requireGatekeeperPass!({
+                context: ctx,
+                subject: { kind: "judge_draft" },
+                ...(signal === undefined ? {} : { signal }),
+                hostActions,
+                toolCallId,
+                // #879: this-turn typed payload — identity-bound at submit site.
+                submission: parameters,
+              });
+              draftPass = obtainedDraftPass || undefined;
+              if (draftPass !== undefined) hostActions.bindPriorGatePass(toolCallId, draftPass.receipt);
+              // #756: 审刑院合规路径 — same review-queue law as 符宝郎/台院.
+              // pass → accept; bounce → raw auditor receipt; escalate → pause;
+              // not three-state → resume auditor; no round cap; no disposeCompliance mapping.
+              const compliancePass = await pi.requireGatekeeperPass!({
+                context: ctx,
+                subject: { kind: "judge_compliance" },
+                ...(signal === undefined ? {} : { signal }),
+                hostActions,
+                toolCallId,
+                // #879: same parent payload for 审刑院; not recovered from session latest.
+                submission: parameters,
+              });
+              return {
+                content: [draftPass, compliancePass].filter((pass) => pass !== undefined).map((pass) => ({ type: "text" as const, text: readableGateItem(pass.receipt) })),
+                details: verdict,
+                terminate: true as const,
+              };
+            } catch (error) {
+              if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
+                return projectAuditEscalation({ status: "escalate", conflicts: error.result.receipt }, verdict);
+              }
+              throw error;
+            }
           },
         });
         pi.on("before_agent_start", (event) => {

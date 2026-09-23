@@ -6,8 +6,8 @@
  * Queue guarantee only (#753 / #756 / #750):
  *   parent submit → summon officer → read conclusion field
  *   pass → accept end
- *   bounce | escalate → raw officer receipt as tool result back to parent
- *     — except secretariat_verdict escalate: throw → parent audit_escalation, not raw receipt (#969)
+ *   bounce → raw officer receipt back to parent; escalate → audit_escalation terminal,
+ *     without binding a correctable parent submission
  *   not three-state → resume officer with plain-language re-ask (no round cap)
  *   transport / no_receipt → present honestly
  * Four pairs: countersign↔notary, judge↔auditor, worker↔inspector, secretariat↔countersign (#969).
@@ -127,7 +127,7 @@ export async function requireGatekeeperPass(options: {
   readonly summonOfficer?: GateOfficerSummon;
 }): Promise<GatekeeperPassOutcome | void> {
   let reask: string | undefined;
-  // No round cap — end only on pass, bounce/escalate-to-parent, or real failure.
+  // No round cap — end only on pass, bounce/escalate, or real failure.
   const summonOfficer =
     options.summonOfficer ??
     createDefaultGateOfficerSummon({
@@ -176,15 +176,12 @@ export async function requireGatekeeperPass(options: {
       });
       options.hostActions.failInfrastructure(failure, options.context, options.toolCallId);
     }
-    // #969: 给事中上呈 ends the secretariat parent — no bind/retry (不回中书省擅改).
-    // Parent beforeAccept converts this into audit_escalation with the officer receipt.
-    if (
-      gatekeeper.status === "escalate"
-      && options.subject.kind === "secretariat_verdict"
-    ) {
+    // Escalation ends the parent without a correctable tool error or resubmission.
+    // Each caller projects the existing audit_escalation terminal.
+    if (gatekeeper.status === "escalate") {
       throw new GatekeeperDecisionError(gatekeeper);
     }
-    // bounce | escalate | no_receipt: parent stands and may resubmit. Not a run abort.
+    // bounce | no_receipt: parent stands and may resubmit. Not a run abort.
     options.hostActions.bindSubmissionNonPass(options.toolCallId, gatekeeper);
     throw new GatekeeperDecisionError(gatekeeper);
   }

@@ -28,7 +28,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     auditTool: "ak_soul_audit_decision",
     settlement: "sealed",
     runnerFailure: "engine-detour-known-first",
-    acceptedText: "大理寺回执已接受",
     boardPlacement: "judge-history",
     navigatorSubject: "public-instruction",
     activationStage: "load-and-install",
@@ -58,7 +57,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
       ],
       method: "observed",
     },
-    acceptedText: "修内司回执已接受",
     boardPlacement: "marshal",
     activationFlags: [
       { field: "packetPath", flag: "ak-fix-packet", binds: "input" },
@@ -90,7 +88,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
       ],
       method: "optional",
     },
-    acceptedText: "将作监回执已接受",
     activationFlags: [
       { field: "taskPath", flag: "ak-coder-task", binds: "input" },
       { field: "phase", flag: "ak-coder-phase", binds: "phase" },
@@ -126,7 +123,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     },
     transportPrompt: "skill-args",
     runnerFailure: "engine-detour-record-first",
-    acceptedText: "御史台回执已接受",
     boardPlacement: "marshal",
     activationFlags: [
       { field: "baseRevision", flag: "ak-review-base" },
@@ -159,7 +155,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
         { key: "manifestDigest" },
       ],
     },
-    acceptedText: "通进司回执已接受",
     boardPlacement: "collector",
     analystTerminal: "groups",
     activationFlags: [
@@ -191,7 +186,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
       ],
       doctorReportFacts: true,
     },
-    acceptedText: "太医署回执已接受",
     navigatorSubject: "case",
     activationFlags: [
       { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
@@ -222,7 +216,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
       ],
       method: "observed",
     },
-    acceptedText: "合并回执已接受",
     activationFlags: [
       { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },
     ],
@@ -250,7 +243,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settlement: "accepted",
     reaskPrompt: true,
     transportPrompt: "fixed-kickoff",
-    acceptedText: "符宝郎回执已接受",
     navigatorSubject: "source-run",
     gateStageLabel: "符宝郎",
     gateSummon: "source-run",
@@ -271,7 +263,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_countersign_output",
     settlement: "accepted",
-    acceptedText: "给事中回执已接受",
     gateStageLabel: "给事中",
     gateDecision: "countersign-status",
     gateSummon: "parent-instruction",
@@ -292,7 +283,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_secretariat_output",
     settlement: "accepted",
     projectCountersignTerminal: true,
-    acceptedText: "中书省回执已接受",
     activationFlags: [
       { field: "ticketNumber" },
     ],
@@ -312,7 +302,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_gleaner_left_output",
     settlement: "accepted",
     transportPrompt: "baseline",
-    acceptedText: "左拾遗回执已接受",
     activationFlags: [
       { field: "baseRevision", flag: "ak-gleaner-left-base" },
     ],
@@ -334,7 +323,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_inspector_output",
     settlement: "accepted",
     reaskPrompt: true,
-    acceptedText: "台院回执已接受",
     gateStageLabel: "台院",
     activationFlags: [
       {
@@ -360,7 +348,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_gatekeeper_output",
     settlement: "accepted",
     runnerFailure: "engine-detour-record-first",
-    acceptedText: "门下省决议已受理",
     activationStage: "load-and-install",
   },
   {
@@ -374,7 +361,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     outputTool: "ak_navigator_output",
     settlement: "accepted",
     runnerFailure: "engine-detour-record-first",
-    acceptedText: "游奕使建议已受理",
     activationStage: "load-and-install",
   },
   {
@@ -392,7 +378,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settlement: "accepted",
     reaskPrompt: true,
     runnerFailure: "engine-detour-record-first",
-    acceptedText: "审刑院回执已接受",
     gateStageLabel: "审刑院",
     gateSummon: "subject-source",
     activationStage: "load-and-install",
@@ -407,7 +392,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     phases: [null],
     outputTool: "ak_diarist_output",
     settlement: "accepted",
-    acceptedText: "起居郎回执已接受",
     activationStage: "load-and-install",
   },
 ] as const;

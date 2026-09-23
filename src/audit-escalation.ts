@@ -3,7 +3,6 @@ import type { Usage } from "@earendil-works/pi-ai";
 import type {
   ComplianceDecision,
 } from "./compliance-transport.ts";
-import { readableGateItem } from "./readable-gate-item.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
 
 export const AUDIT_ESCALATION_KIND = "audit_escalation" as const;
@@ -30,7 +29,7 @@ export type AuditEscalationResult = {
 };
 
 export type AuditEscalationToolResult = {
-  content: [{ type: "text"; text: string }];
+  content: [];
   details: AuditEscalationResult;
   terminate: true;
   usage?: Usage;
@@ -66,6 +65,9 @@ export function buildAuditEscalationResult(
   const auditOwned: Record<string, unknown> = {
     kind: AUDIT_ESCALATION_KIND,
   };
+  if (Object.hasOwn(decision, "receipt")) {
+    auditOwned.receipt = (decision as { receipt?: unknown }).receipt;
+  }
   if (Object.hasOwn(decision, "conflicts")) {
     auditOwned.conflicts = (decision as { conflicts?: unknown }).conflicts;
   }
@@ -103,9 +105,8 @@ export function projectAuditEscalation(
   deliveredOutput?: unknown,
 ): AuditEscalationToolResult {
   const details = buildAuditEscalationResult(decision, deliveredOutput);
-  const original = deliveredOutput !== undefined ? deliveredOutput : decision;
   return {
-    content: [{ type: "text", text: readableGateItem(original) }],
+    content: [],
     details,
     terminate: true,
     ...(decision.usage === undefined ? {} : { usage: decision.usage }),

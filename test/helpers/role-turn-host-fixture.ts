@@ -296,6 +296,7 @@ export function withNestedTrueUnboundDiaristPiRunner(
 export type LegacyFauxSealedAcceptance = {
   readonly role: TerminalRoleName;
   readonly details: unknown;
+  readonly outputDetails?: unknown;
   readonly toolCallId?: string;
 };
 
@@ -338,6 +339,9 @@ export function roleTurnHostFromLegacyPiRunner(options: {
         env: spawnOptions.env,
         role: result.sealedAcceptance.role,
         details: result.sealedAcceptance.details,
+        ...(result.sealedAcceptance.outputDetails === undefined
+          ? {}
+          : { outputDetails: result.sealedAcceptance.outputDetails }),
         ...(result.sealedAcceptance.toolCallId === undefined
           ? {}
           : { toolCallId: result.sealedAcceptance.toolCallId }),

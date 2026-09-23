@@ -14,6 +14,7 @@ export { DOCTOR_AUDIT_TOOL_NAME } from "./doctor-contracts.ts";
 
 export type DoctorAuditOptions = {
   context: HostContext;
+  submission: unknown;
   signal?: AbortSignal;
   /** Same seam as runComplianceAudit options — offline tracers only. */
   summonAuditor?: AuditorSummon;
@@ -33,6 +34,7 @@ export function createPiDoctorAuditor(): (options: DoctorAuditOptions) => Promis
     return runComplianceAudit({
       subject: "doctor",
       context: options.context,
+      submission: options.submission,
       ...(auditorRunDirectory(options.context) === undefined
         ? {}
         : { runDirectory: auditorRunDirectory(options.context) }),
