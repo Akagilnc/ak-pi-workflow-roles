@@ -142,6 +142,7 @@ test("secretariat converged receipt enters the submission gate on every host",
         getFlag() { return undefined; },
         async requireGatekeeperPass(options: { subject: { kind: string } }) {
           gateCalls.push(options.subject.kind);
+          return { officer: "countersign", receipt: { countersignStatus: "converged", note: "署原话" } };
         },
       };
       await createSecretariatRoleRuntime(
@@ -161,13 +162,15 @@ test("secretariat converged receipt enters the submission gate on every host",
         ...(host === undefined ? {} : { host }),
         abort() {},
       };
-      await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+      const result = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
         "c",
         { secretariatStatus: "converged", ticketNumber: 969 },
         undefined,
         undefined,
         hostCtx,
       );
+      assert.deepEqual(result.content, [{ type: "text", text: '{"countersignStatus":"converged","note":"署原话"}' }]);
+      assert.deepEqual(result.details, { secretariatStatus: "converged", ticketNumber: 969 });
       return gateCalls;
     }
 

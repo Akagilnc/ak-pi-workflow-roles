@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
+import { readableGateItem } from "./readable-gate-item.ts";
 import {
   ExplicitInternalActivationError,
 
@@ -662,11 +663,14 @@ function createFiledOfficerRuntime(
               spec.beforeAccept === undefined
                 ? undefined
                 : await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
+            const reply = spec.role === "secretariat" && projected !== null && typeof projected === "object" && "reply" in projected
+              ? projected.reply
+              : undefined;
             // Accept-as-is + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
             return {
-              content: [{ type: "text" as const, text: packagedRoleAcceptedText(spec.role) }],
-              details: projected === undefined ? parameters : projected,
+              content: [{ type: "text" as const, text: typeof reply === "string" ? reply : packagedRoleAcceptedText(spec.role) }],
+              details: reply === undefined ? (projected === undefined ? parameters : projected) : parameters,
               terminate: true as const,
             };
           },
@@ -1012,7 +1016,7 @@ export function createSecretariatRoleRuntime(
                 ...(runId === undefined ? {} : { runId }),
               });
             }
-            return undefined;
+            return pass === undefined ? undefined : { reply: readableGateItem(pass.receipt) };
           } catch (error) {
             // 给事中上呈 ends parent with officer receipt (no retry / 不擅改).
             if (
