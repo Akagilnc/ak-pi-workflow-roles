@@ -1155,7 +1155,7 @@ test("#993 public coder resume: worker completion gate bounce then pass is proje
           sessionFile,
         });
         try {
-          execFileSync("git", ["commit", "--allow-empty", "-m", `ak-roles: worker attempt ${coderTurns}`], { cwd: scratch.project });
+          execFileSync("git", ["-c", "user.name=Worker Test", "-c", "user.email=worker@test.invalid", "commit", "--allow-empty", "-m", `ak-roles: worker attempt ${coderTurns}`], { cwd: scratch.project });
           await prepared.ingestStructuredOutput({ status: "completed", report: "work submitted" });
           const closed = await prepared.closeRound();
           assert.equal(closed.accepted, coderTurns === 2);
