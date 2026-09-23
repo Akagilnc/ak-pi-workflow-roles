@@ -23,7 +23,6 @@ import { fileURLToPath } from "node:url";
 
 import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
-import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -1198,7 +1197,8 @@ test("#993 public coder resume: worker completion gate bounce then pass is proje
 
     assert.equal(resumed.exitCode, 0, cliOutput.join(""));
     assert.ok(resumed.terminal);
-    assert.equal(resumed.terminal.runId, "run-worker-gate-resume-993");
+    assert.equal(resumed.terminal.runId, first.terminal.runId);
+    assert.equal(resumed.terminal.roleOutcome.kind, "accepted");
     assert.equal(resumed.terminal.gate?.rounds.at(-1)?.officer.status, "pass");
     assert.equal(officerRequests.length, 2);
     assert.deepEqual(
