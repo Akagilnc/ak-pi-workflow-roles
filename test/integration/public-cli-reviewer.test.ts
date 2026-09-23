@@ -685,9 +685,9 @@ test("package ak-cross-m-review method is verbatim upstream single-lens CMR", as
   assert.equal(material.provenance.packageAdaptation, "verbatim-upstream");
   assert.equal(
     material.provenance.upstream.commit,
-    "57b10e2cea9ff008e2b36b98b55610e58cdfd512",
+    "2c54e69d522ff0c41ec1f3cf134976cb64645584",
   );
-  assert.equal(material.provenance.upstream.version, "0.5.2.0");
+  assert.equal(material.provenance.upstream.version, "0.5.3.0");
   assert.equal(material.skillPath.includes(packageRoot), true);
   assert.equal(material.skillPath.includes(".agents/skills"), false);
 });

@@ -250,9 +250,9 @@ test("packed artifact ships frozen method trees bound to upstream provenance", a
   assert.equal(cmrProvenance.upstream.path, ".");
   assert.equal(
     cmrProvenance.upstream.commit,
-    "57b10e2cea9ff008e2b36b98b55610e58cdfd512",
+    "2c54e69d522ff0c41ec1f3cf134976cb64645584",
   );
-  assert.equal(cmrProvenance.upstream.version, "0.5.2.0");
+  assert.equal(cmrProvenance.upstream.version, "0.5.3.0");
   assert.equal(cmrProvenance.upstream.attribution, "Akagilnc/ak-cross-m-review");
   assert.equal(cmrProvenance.upstream.license, "MIT");
   for (const file of [
