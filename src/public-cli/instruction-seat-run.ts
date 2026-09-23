@@ -132,15 +132,6 @@ function initialPrompt(
   );
 }
 
-function hostTurnCwd(env: InstructionSeatRunEnv): { readonly cwd: string } | undefined {
-  return env.executionCwd === undefined ? undefined : { cwd: env.executionCwd };
-}
-
-function wantsFreshExecutionCopy(role: PackagedRole): boolean {
-  const record = roleRecord(role);
-  return "freshExecutionCopy" in record && record.freshExecutionCopy === true;
-}
-
 function infraFailure(role: PackagedRole) {
   const resolveRunnerKnownFailure = seatKnownFailureResolver(role);
   return resolveRunnerKnownFailure === undefined ? {} : { resolveRunnerKnownFailure };
@@ -260,7 +251,6 @@ async function dispatchAdmitted(
   const adapters = seatAdapters(admitted, env, material);
   const execute = async (activeEnv: InstructionSeatRunEnv): Promise<SeatRunResult> => {
     const auto = "inCallAutoResume" in record && record.inCallAutoResume === true;
-    const cwd = hostTurnCwd(activeEnv);
     if (auto) {
       return await runPostAdmissionResumable({
         admitted,
@@ -268,7 +258,7 @@ async function dispatchAdmitted(
         io,
         buildInitialRequest: () => buildInstructionSeatTurnRequest(
           admitted,
-          roleTurnOptions(activeEnv, admitted, { kind: "initial", prompt: initialPrompt(admitted, activeEnv) }, cwd),
+          roleTurnOptions(activeEnv, admitted, { kind: "initial", prompt: initialPrompt(admitted, activeEnv) }),
         ),
         buildResumeRequest: () => buildInstructionSeatTurnRequest(
           admitted,
@@ -278,7 +268,7 @@ async function dispatchAdmitted(
               packageRoot: activeEnv.packageRoot,
               ...pickEngineAxis(activeEnv),
             }),
-          }, cwd),
+          }),
         ),
         adapters,
         ...(activeEnv.engine === undefined ? {} : { effectiveEngine: activeEnv.engine }),
@@ -290,31 +280,13 @@ async function dispatchAdmitted(
       io,
       request: buildInstructionSeatTurnRequest(
         admitted,
-        roleTurnOptions(activeEnv, admitted, { kind: "initial", prompt: initialPrompt(admitted, activeEnv) }, cwd),
+        roleTurnOptions(activeEnv, admitted, { kind: "initial", prompt: initialPrompt(admitted, activeEnv) }),
       ),
       adapters,
       ...(activeEnv.engine === undefined ? {} : { effectiveEngine: activeEnv.engine }),
     });
   };
-  if (!wantsFreshExecutionCopy(admitted.role)) return execute(env);
-  try {
-    if (env.executionCwd !== undefined) return await execute(env);
-    const { withEphemeralReviewerWorktree } = await import("../public-role-summons.ts");
-    return await withEphemeralReviewerWorktree({
-      projectRoot: admitted.projectRoot,
-      onCleanupDiagnostic: (diagnostic) => {
-        io.stderr(`${diagnostic}\n`);
-      },
-      run: (executionCwd) => execute({ ...env, executionCwd }),
-    });
-  } catch (error) {
-    return await presentControlledFailure(admitted, {
-      timedOut: false,
-      code: null,
-      stderr: "",
-      thrown: error,
-    }, adapters, env.principalAuthority, io) as SeatRunResult;
-  }
+  return execute(env);
 }
 
 /**
@@ -809,9 +781,6 @@ export async function runPublicInstructionSeatResume(
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<SeatRunResult> {
-  const execution: { cwd?: string } = {
-    ...(env.executionCwd === undefined ? {} : { cwd: env.executionCwd }),
-  };
   return runPostAdmissionSeatResume<AdmittedRoleInvocation>({
     request,
     env,
@@ -835,13 +804,11 @@ export async function runPublicInstructionSeatResume(
       return loaded;
     },
     buildTurnRequest: async (admitted, effective) => {
-      const activeEnv = execution.cwd === undefined ? env : { ...env, executionCwd: execution.cwd };
       const summonsPrepared = await prepareSummonsResumeMaterials(admitted.runDirectory, effective.summons);
       return buildInstructionSeatTurnRequest(
         admitted,
         {
-          ...resumeTurnRequestProjectionOptions(admitted, effective, activeEnv, summonsPrepared),
-          ...(execution.cwd === undefined ? {} : { cwd: execution.cwd }),
+          ...resumeTurnRequestProjectionOptions(admitted, effective, env, summonsPrepared),
         },
       );
     },
@@ -863,24 +830,6 @@ export async function runPublicInstructionSeatResume(
         emptyAdapters: seatAdapters(admitted, env),
         ...(knownCause === undefined ? {} : { knownCause }),
       });
-    },
-    afterAdmittedPrepare: async (admitted) => {
-      if (!wantsFreshExecutionCopy(admitted.role)) return {};
-      if (execution.cwd !== undefined) {
-        return { env: { ...env, executionCwd: execution.cwd } };
-      }
-      const { openEphemeralReviewerWorktree } = await import("../public-role-summons.ts");
-      const opened = await openEphemeralReviewerWorktree({
-        projectRoot: admitted.projectRoot,
-        onCleanupDiagnostic: (diagnostic) => {
-          io.stderr(`${diagnostic}\n`);
-        },
-      });
-      execution.cwd = opened.executionCwd;
-      return {
-        env: { ...env, executionCwd: opened.executionCwd },
-        cleanup: opened.close,
-      };
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
