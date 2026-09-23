@@ -35,6 +35,8 @@ import {
 import {
   installGhFixture,
 } from "../helpers/hermes-fixture.ts";
+import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import {
   CANONICAL_SOURCE_ROLE,
@@ -1049,6 +1051,164 @@ test("#724 public new: same-ticket mint stays; explicit new mints fresh; later a
     void secondSourcePath;
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
+  }
+});
+
+test("#993 public new ordinary seat: explicit new is distinct from an existing child run", async () => {
+  const scratch = await openNotaryScratch("home-new-ordinary-");
+  try {
+    const { home, project, firstSourcePath, io, credentials } = scratch;
+    const seen: SeenTurn[] = [];
+    const inner = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "inspector",
+        toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+        details: { status: "pass", findings: [] },
+      }),
+    });
+    const host = observingSealHost(inner, seen);
+    const instruction = `卷宗指针：${firstSourcePath}`;
+
+    const priorChild = await runAkRole(["inspector", instruction], {
+      home,
+      packageRoot,
+      cwd: project,
+      credentials,
+      io,
+      roleTurnHost: host,
+      createRunId: () => "01a099300-0000-7000-8000-000000000001",
+    });
+    assert.equal(priorChild.exitCode, 0);
+    assert.equal(priorChild.terminal?.roleOutcome.kind, "accepted");
+    assert.ok(priorChild.terminal);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0]!.kind, "initial");
+    const priorChildRunId = seen[0]!.runId;
+    assert.equal(priorChild.terminal.runId, priorChildRunId);
+
+    const freshChild = await runAkRole(["new", "inspector", instruction], {
+      home,
+      packageRoot,
+      cwd: project,
+      credentials,
+      io,
+      roleTurnHost: host,
+      createRunId: () => "01a099300-0000-7000-8000-000000000002",
+    });
+    assert.equal(freshChild.exitCode, 0);
+    assert.equal(freshChild.terminal?.roleOutcome.kind, "accepted");
+    assert.ok(freshChild.terminal);
+    assert.equal(seen.length, 2);
+    assert.equal(seen[1]!.kind, "initial", "explicit new must not resume an existing child");
+    assert.notEqual(seen[1]!.runId, priorChildRunId, "new child identity must differ from prior child A");
+    assert.equal(freshChild.terminal.runId, seen[1]!.runId);
+    assert.notEqual(freshChild.terminal.runId, priorChild.terminal.runId);
+  } finally {
+    await rm(scratch.home, { recursive: true, force: true });
+    await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
+  }
+});
+
+test("#993 public coder resume: worker completion gate bounce then pass is projected on Terminal", async () => {
+  await rm(WORKTREE_SCRATCH, { recursive: true, force: true });
+  const scratch = await openNotaryScratch("home-worker-gate-resume-");
+  try {
+    let coderTurns = 0;
+    const officerRequests: RoleTurnRequest[] = [];
+    const cliOutput: string[] = [];
+    const io = { stdout: (text: string) => cliOutput.push(text), stderr: (text: string) => cliOutput.push(text) };
+    const officer = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = args[args.indexOf("--ak-role") + 1];
+        assert.equal(role, "inspector");
+        return scriptedTerminatingToolSession({
+          role: "inspector",
+          toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+          details: { status: coderTurns === 1 ? "bounce" : "pass", findings: [] },
+        })(args, options);
+      },
+    });
+    const nested: RoleTurnHost = {
+      executeTurn(request) {
+        if (request.activation.role === "inspector") officerRequests.push(request);
+        return officer.executeTurn(request);
+      },
+    };
+    const inner: RoleTurnHost = {
+      async executeTurn(request) {
+        assert.equal(request.activation.role, "coder");
+        coderTurns += 1;
+        const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
+        const socketDirectory = await mkdtemp(join(scratch.home, "coder-gate-socket-"));
+        const prepared = await prepareRoleEnvelope({
+          request: { ...request, host: "codex" },
+          dependencies: {
+            ...createRoleRuntimeDependencies(packageRoot),
+            hostAdapters: [{ name: "pi", create: () => ({ ok: true as const, host: nested }) }],
+          },
+          socketPath: join(socketDirectory, "mcp.sock"),
+          listTerminatingToolOnMcp: false,
+          sessionFile,
+        });
+        try {
+          execFileSync("git", ["-c", "user.name=Worker Test", "-c", "user.email=worker@test.invalid", "commit", "--allow-empty", "-m", `ak-roles: worker attempt ${coderTurns}`], { cwd: scratch.project });
+          await prepared.ingestStructuredOutput({ status: "completed", report: "work submitted" });
+          const closed = await prepared.closeRound();
+          assert.equal(closed.accepted, coderTurns === 2);
+          return { code: 0, stderr: "", timedOut: false };
+        } finally {
+          await prepared.dispose?.();
+        }
+      },
+    };
+    const seen: SeenTurn[] = [];
+    const host = observingSealHost(inner, seen);
+    const first = await runAkRole(
+      ["coder", "--model", "test/caller-seat:high", "--project", scratch.project, "Implement the approved task."],
+      {
+        packageRoot,
+        home: scratch.home,
+        cwd: scratch.project,
+        createRunId: () => "run-worker-gate-resume-993",
+        io,
+        credentials: scratch.credentials,
+        roleTurnHost: host,
+      },
+    );
+
+    assert.ok(first.terminal);
+    assert.equal(first.terminal.roleOutcome.kind, "no_receipt");
+    assert.equal(first.terminal.gate?.rounds.at(-1)?.officer.status, "bounce");
+    assert.equal(officerRequests.length, 1);
+
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "run-worker-gate-resume-993"], {
+      packageRoot,
+      home: scratch.home,
+      cwd: scratch.project,
+      io,
+      credentials: scratch.credentials,
+      principalAuthority: piDurablePrincipalAuthority,
+      roleTurnHost: host,
+    });
+
+    assert.equal(resumed.exitCode, 0, cliOutput.join(""));
+    assert.ok(resumed.terminal);
+    assert.equal(resumed.terminal.runId, first.terminal.runId);
+    assert.equal(resumed.terminal.roleOutcome.kind, "accepted");
+    assert.equal(resumed.terminal.gate?.rounds.at(-1)?.officer.status, "pass");
+    assert.equal(officerRequests.length, 2);
+    assert.deepEqual(
+      seen.filter((turn) => turn.kind === "initial" || turn.kind === "resume").map((turn) => turn.runId),
+      ["run-worker-gate-resume-993", "run-worker-gate-resume-993"],
+    );
+    assert.equal(coderTurns, 2);
+  } finally {
+    await rm(scratch.home, { recursive: true, force: true });
+    await rm(WORKTREE_SCRATCH, { recursive: true, force: true });
   }
 });
 
