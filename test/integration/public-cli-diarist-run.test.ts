@@ -2391,29 +2391,38 @@ test("ak-role diarist true-unbound records its dialogue under unbound", async ()
   });
 });
 
-test("pre-bound diarist records a lawful null assertion in the ticket volume", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "project");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const sessionPath = join(home, ".claude", "projects", "bound-null", "session.jsonl");
-    await mkdir(join(sessionPath, ".."), { recursive: true });
-    await writeFile(sessionPath, `${JSON.stringify({ type: "user", uuid: "bound-null-owner", message: { role: "user", content: "续录" }, origin: { kind: "human" } })}\n`, "utf8");
-    const result = await runAkRole(["diarist", "--model", "test/caller-seat:high", "--project", project, "续录"], {
-      home, packageRoot, cwd: project, io: captureIo().io,
-      boundTicketNumber: TICKET,
-      createRunId: () => "01a0diar00-0000-7000-8000-0000000000b1",
-      roleTurnHost: roleTurnHostFromLegacyPiRunner({
-        packageRoot,
-        principalAuthority: piDurablePrincipalAuthority,
-        piRunner: diaristEnvelopeRunner({ status: "completed", ticketNumber: null,
-          sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+test("pre-bound diarist records its own ticket assertion, including null", async () => {
+  for (const assertedTicket of [null, TICKET + 1]) {
+    await withTempHome(async (home) => {
+      const project = join(home, "project");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const sessionPath = join(home, ".claude", "projects", "bound-assertion", "session.jsonl");
+      await mkdir(join(sessionPath, ".."), { recursive: true });
+      await writeFile(sessionPath, `${JSON.stringify({ type: "user", uuid: "bound-assertion-owner", message: { role: "user", content: "续录" }, origin: { kind: "human" } })}\n`, "utf8");
+      const result = await runAkRole(["diarist", "--model", "test/caller-seat:high", "--project", project, "续录"], {
+        home, packageRoot, cwd: project, io: captureIo().io,
+        boundTicketNumber: TICKET,
+        createRunId: () => "01a0diar00-0000-7000-8000-0000000000b1",
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: diaristEnvelopeRunner({ status: "completed", ticketNumber: assertedTicket,
+            sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+          }),
         }),
-      }),
+      });
+      assert.equal(result.exitCode, 0);
+      assert.equal(existsSync(resolveTicketProvenanceVolume(TICKET, project, home).recordFile), false);
+      if (assertedTicket === null) {
+        const runRecord = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET), "runs", "01a0diar00-0000-7000-8000-0000000000b1@diarist", "records.jsonl");
+        const rows = (await readFile(runRecord, "utf8")).trim().split("\n").map((row) => JSON.parse(row));
+        assert.equal(rows[0]?.payload?.lines?.[0]?.id, "bound-assertion-owner");
+      } else {
+        assert.equal((await readTicketProvenance(assertedTicket, project, home)).lines[0]?.id, "bound-assertion-owner");
+      }
     });
-    assert.equal(result.exitCode, 0);
-    assert.equal((await readTicketProvenance(TICKET, project, home)).lines[0]?.id, "bound-null-owner");
-  });
+  }
 });
 
 /**
