@@ -192,8 +192,6 @@ export const PUBLIC_ROLE_RECORDS = [
     settleMethod: "ak-cross-m-review",
     /** Omitted public lens starts two ordinary single-axis runs (ADR 0052). */
     parallelLenses: true,
-    /** Every turn runs in a fresh worktree; durable projectRoot stays the caller project (#946). */
-    freshExecutionCopy: true,
     phases: [null],
     bareCommand: false,
     outputTool: REVIEWER_OUTPUT_TOOL_NAME,
