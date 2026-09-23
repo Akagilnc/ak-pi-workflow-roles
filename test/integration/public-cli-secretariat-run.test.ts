@@ -44,6 +44,7 @@ import {
   createSecretariatRoleRuntime,
   GatekeeperDecisionError,
 } from "../../src/role-runtime.ts";
+import type { SecretariatRuntimeDependencies } from "../../src/secretariat-role.ts";
 import { isAuditEscalationProjection } from "../../src/audit-escalation.ts";
 import {
   recordAuditEscalationSubmission,
@@ -66,7 +67,11 @@ import {
   payloadStatusSequence,
 } from "../helpers/terminal-payload.ts";
 import { MAIN_ROLE_SESSION_MATERIALS } from "../../src/session-opening-materials.ts";
-import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
+import {
+  activationBookDirectory,
+  resolveActivationLedgerHome,
+} from "../../src/activation-ledger-topology.ts";
+import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import {
   readSitianRecords,
   resolveSitianRecordPathInLedger,
@@ -353,6 +358,7 @@ function secretariatHostDrivingRealTools(input: {
   diaristRunDirectories?: string[];
   countersignRequests?: RoleTurnRequest[];
   onSummonDetails?: (details: Record<string, unknown>) => void;
+  summonCountersign?: SecretariatRuntimeDependencies["summonCountersign"];
   /** #969 non-pi host key — arms secretariat_verdict gate on output. */
   submissionGateHost?: "codex" | "claude" | "grok-build";
   /**
@@ -528,6 +534,9 @@ function secretariatHostDrivingRealTools(input: {
         {
           loadSoul: async () => "中书省职分（测试装载）",
           packageRoot: input.packageRoot,
+          ...(input.summonCountersign === undefined
+            ? {}
+            : { summonCountersign: input.summonCountersign }),
           // Deliberately wrong optional dependency: production nested summons must
           // derive machine home from the durable parent run directory.
           home: join(input.home, "wrong-dependency-home"),
@@ -649,6 +658,33 @@ test("public secretariat through-line: default summon → continue → same-run 
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+
+    // An unrelated unbound historical countersign shell must not block a
+    // ticket-bound summons from the public Secretariat entry.
+    const bookDir = activationBookDirectory(
+      resolveActivationLedgerHome(home),
+      resolveBookKeyFromGit(project),
+    );
+    const unrelatedBrokenRun = join(
+      bookDir,
+      "unbound",
+      "runs",
+      "01a0sec924-0000-7000-8000-000000000099@countersign",
+    );
+    await mkdir(unrelatedBrokenRun, { recursive: true });
+    await writeFile(join(unrelatedBrokenRun, "admitted-request.json"), "", "utf8");
+    const otherParentRun = join(
+      bookDir,
+      "924",
+      "runs",
+      "01a0sec924-0000-7000-8000-000000000098@countersign",
+    );
+    await mkdir(otherParentRun, { recursive: true });
+    await writeFile(
+      join(otherParentRun, "admitted-request.json"),
+      JSON.stringify({ sourceRunPath: "/different/secretariat-parent" }),
+      "utf8",
+    );
 
     assert.ok(
       MAIN_ROLE_SESSION_MATERIALS.secretariat.includes("souls/ticket-law.md"),
@@ -848,6 +884,58 @@ test("public secretariat through-line: default summon → continue → same-run 
       piDurablePrincipalAuthority,
     );
     assert.equal(state?.state, "terminal");
+  });
+});
+
+test("public secretariat summon failure preserves original exception diagnostic", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const cause = Object.assign(new Error("root-cause-marker"), {
+      code: "ROOT_CAUSE_CODE",
+    });
+    const error = Object.assign(
+      new Error("summon-failure-marker", { cause }),
+      { code: "SUMMON_FAILURE_CODE" },
+    );
+    error.stack = "summon-stack-marker";
+    const capture = captureIo();
+    const host = secretariatHostDrivingRealTools({
+      packageRoot,
+      home,
+      gateCalls: [],
+      countersignSequence: [],
+      steps: [
+        { kind: "summon", instruction: "裁：请传召给事中。" },
+        { kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } },
+      ],
+      summonCountersign: async () => { throw error; },
+    });
+    const result = await runAkRole(
+      ["secretariat", "--model", "test/caller-seat:high", "--project", project, "整理并送庭。"],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: capture.io,
+        createRunId: () => "01a0sec924-0000-7000-8000-000000000201",
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+      },
+    );
+
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    const errorArtifact = result.terminal?.artifacts.find((artifact) => artifact.kind === "error");
+    assert.ok(errorArtifact);
+    const retained = JSON.parse(await readFile(errorArtifact.path, "utf8")) as {
+      details?: { error?: { stack?: string; code?: string; causeChain?: { message?: string; code?: string } } };
+    };
+    assert.equal(retained.details?.error?.stack, "summon-stack-marker", JSON.stringify(retained));
+    assert.equal(retained.details?.error?.code, "SUMMON_FAILURE_CODE");
+    assert.equal(retained.details?.error?.causeChain?.message, "root-cause-marker");
+    assert.equal(retained.details?.error?.causeChain?.code, "ROOT_CAUSE_CODE");
   });
 });
 

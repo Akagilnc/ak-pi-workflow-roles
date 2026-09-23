@@ -415,6 +415,9 @@ async function runCountersignBody(
       projectRoot: resolve(parsed.project ?? env.cwd),
       role: "countersign",
       parentRunPath: gateParentRunPath,
+      ...(env.boundTicketNumber === undefined
+        ? {}
+        : { ticketNumber: env.boundTicketNumber }),
       freshSummons: env.freshSummons,
       summons: {
         sourceRunPath: gateParentRunPath,

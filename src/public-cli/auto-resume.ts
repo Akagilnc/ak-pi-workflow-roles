@@ -40,6 +40,7 @@ import {
   resolveControlledFailureResumeObservation,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
+import { serializeThrownValue } from "../serialize-thrown-value.ts";
 
 const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
 
@@ -176,42 +177,6 @@ export async function ensureRealArtifactsDirectory(runDirectory: string): Promis
   return artifactsDir;
 }
 
-/**
- * Whole-object transfer of a thrown value (owner 2026-08-23: 「记录所有错误信息。
- * 不能丢详细情况」). Every own property of the Error object — enumerable or not,
- * which is how message/stack and any attached identity land verbatim — plus the
- * constructor name and the full cause chain. No field list is prescribed or
- * filtered: whatever the exception object carries goes into the file as-is.
- */
-function serializeThrownValue(value: unknown, depth = 0, seen = new WeakSet<object>()): unknown {
-  if (value instanceof Error) {
-    if (seen.has(value)) return "[circular]";
-    seen.add(value);
-    const transferred: Record<string, unknown> = {};
-    for (const key of Object.getOwnPropertyNames(value)) {
-      transferred[key] = transferNestedValue(
-        (value as unknown as Record<string, unknown>)[key],
-        depth + 1,
-        seen,
-      );
-    }
-    return {
-      errorKind: "Error",
-      constructorName: value.constructor?.name,
-      ...transferred,
-      ...(value.cause === undefined
-        ? {}
-        : {
-            causeChain:
-              depth >= 10
-                ? "[cause-chain-depth-limit]"
-                : serializeThrownValue(value.cause, depth + 1, seen),
-          }),
-    };
-  }
-  return value;
-}
-
 /** ENOENT identity shared with settlement.ts's hardened audit-artifact path. */
 function isMissingPathError(error: unknown): boolean {
   return (
@@ -219,34 +184,6 @@ function isMissingPathError(error: unknown): boolean {
     "code" in error &&
     (error as { code?: unknown }).code === "ENOENT"
   );
-}
-
-/**
- * Recursive Error-property transfer (#426 review: nested Errors must not be
- * passed raw to JSON.stringify — their non-enumerable message/stack would
- * serialize as {}). Depth-limited; cycle-safe via the seen set so the recursive
- * construction itself cannot diverge before stringify runs.
- */
-function transferNestedValue(value: unknown, depth: number, seen: WeakSet<object>): unknown {
-  if (value instanceof Error) return serializeThrownValue(value, depth, seen);
-  if (depth >= 10) return "[nested-depth-limit]";
-  if (Array.isArray(value)) {
-    return value.map((item) => transferNestedValue(item, depth + 1, seen));
-  }
-  if (value !== null && typeof value === "object") {
-    if (seen.has(value)) return "[circular]";
-    seen.add(value);
-    const transferred: Record<string, unknown> = {};
-    for (const key of Object.getOwnPropertyNames(value)) {
-      transferred[key] = transferNestedValue(
-        (value as unknown as Record<string, unknown>)[key],
-        depth + 1,
-        seen,
-      );
-    }
-    return transferred;
-  }
-  return value;
 }
 
 /** Cycle- and bigint-safe JSON replacer so serialization itself cannot drop data. */

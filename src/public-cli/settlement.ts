@@ -24,6 +24,7 @@ import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
 import type { RoleTurnKnownFailure } from "../host-contracts.ts";
 import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
+import { serializeThrownValue } from "../serialize-thrown-value.ts";
 import {
   isV1ResumableProvider,
   readLatestTypedProviderHttpObservation,
@@ -520,7 +521,12 @@ export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
       cause: error.knownCause,
       diagnostic: error.message || error.name || "exception",
       identity,
-      ...(error.details === undefined ? {} : { details: error.details }),
+      details: {
+        ...(typeof error.details === "object" && error.details !== null
+          ? error.details as Record<string, unknown>
+          : error.details === undefined ? {} : { priorDetails: error.details }),
+        error: serializeThrownValue(error),
+      },
     };
   }
   if (error instanceof Error) {
@@ -529,6 +535,7 @@ export function projectThrownFailureLeaf(error: unknown): ControlledFailure {
     return {
       diagnostic: error.message || error.name || "exception",
       identity,
+      details: { error: serializeThrownValue(error) },
     };
   }
   return {
