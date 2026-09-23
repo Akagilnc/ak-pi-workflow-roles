@@ -218,7 +218,7 @@ function courtDiaristUnbound(): LegacyFauxPiRunner {
  */
 function nestedCountersignHost(input: {
   packageRoot: string;
-  sequence: ReadonlyArray<{ details: unknown }>;
+  sequence: ReadonlyArray<{ details: unknown; notaryEscalation?: unknown }>;
   gateCalls: Array<{ kind: string }>;
   diaristRunDirectories?: string[];
   countersignRequests?: RoleTurnRequest[];
@@ -268,8 +268,11 @@ function nestedCountersignHost(input: {
           return undefined;
         },
         async requireGatekeeperPass(options: { subject: { kind: string } }) {
-          // Minimal fake 符宝郎内闸 host — records structured pass, no parallel fixture.
+          // Minimal fake 符宝郎内闸 host — records structured pass/escalation.
           input.gateCalls.push({ kind: options.subject.kind });
+          if (step.notaryEscalation !== undefined) {
+            throw new GatekeeperDecisionError({ status: "escalate", officer: "notary", receipt: step.notaryEscalation });
+          }
         },
       } as unknown as RoleHost;
 
@@ -312,11 +315,15 @@ function nestedCountersignHost(input: {
       );
       assert.equal(executed.terminate, true);
 
-      return scriptedTerminatingToolSession({
+      const scripted = await scriptedTerminatingToolSession({
         role: "countersign",
         toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-        details: executed.details ?? step.details,
+        details: step.details,
       })(args, options);
+      return step.notaryEscalation === undefined ? scripted : {
+        ...scripted,
+        sealedAcceptance: { role: "countersign", details: step.details, outputDetails: executed.details },
+      };
     }
     throw new Error(`unexpected nested role: ${role}`);
   };
@@ -344,7 +351,7 @@ function secretariatHostDrivingRealTools(input: {
   packageRoot: string;
   home: string;
   steps: ReadonlyArray<{ kind: "output"; details: Record<string, unknown> }>;
-  countersignSequence: ReadonlyArray<{ details: unknown }>;
+  countersignSequence: ReadonlyArray<{ details: unknown; notaryEscalation?: unknown }>;
   gateCalls: Array<{ kind: string }>;
   diaristRunDirectories?: string[];
   countersignRequests?: RoleTurnRequest[];
@@ -656,6 +663,31 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
       gateCalls.some((c) => c.kind === "secretariat_verdict"),
       "must enter secretariat_verdict before 给事中 escalate",
     );
+  });
+});
+
+test("nested Notary escalation reaches the Secretariat public terminal with its verdict", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const receipt = { status: "escalate", decisionGate: { question: "notary?", options: ["yes"] } };
+    const result = await runAkRole(
+      ["secretariat", "--model", "test/caller-seat:high", "--project", project, "整理 #924 票面并送庭。"],
+      {
+        home, packageRoot, cwd: project, io: captureIo().io,
+        createRunId: () => "01a0sec1021-nst-7000-8000-000000000001",
+        roleTurnHost: secretariatHostDrivingRealTools({
+          packageRoot, home, gateCalls: [], submissionGateHost: "codex",
+          countersignSequence: [{ details: { countersignStatus: "converged" }, notaryEscalation: receipt }],
+          steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
+        }),
+      },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
+    const countersignTerminal = result.terminal?.roleOutcome.decisiveFacts?.countersignTerminal as { receipt?: unknown } | undefined;
+    assert.deepEqual(countersignTerminal?.receipt, receipt);
   });
 });
 
