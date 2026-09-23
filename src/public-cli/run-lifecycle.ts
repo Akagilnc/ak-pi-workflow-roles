@@ -1122,6 +1122,7 @@ export async function findLatestRunIdForSeatTicket(input: {
   readonly bookKey: string;
   readonly role: RoleRunRecord["role"];
   readonly parentRunPath: string;
+  readonly ticketNumber?: number;
 }): Promise<string | undefined> {
   if (input.parentRunPath.trim() === "") {
     return undefined;
@@ -1130,7 +1131,13 @@ export async function findLatestRunIdForSeatTicket(input: {
   const bookDir = activationBookDirectory(ledgerHome, input.bookKey);
   let runDirectories: string[];
   try {
-    runDirectories = await listBookRunDirectories(bookDir);
+    // A typed ticket narrows the existing walk surface to that ticket's runs;
+    // same-parent matching below still selects the actual prior leg.
+    runDirectories = await listBookRunDirectories(
+      input.ticketNumber === undefined
+        ? bookDir
+        : join(bookDir, String(input.ticketNumber)),
+    );
   } catch (error) {
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
