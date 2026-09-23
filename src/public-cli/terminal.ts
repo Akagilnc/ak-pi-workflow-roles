@@ -278,8 +278,8 @@ export function formatTerminalResult(result: TerminalResult): string {
       `diagnostic\t${encodeTerminalField(result.roleOutcome.diagnostic)}`,
     );
   }
-  if (result.roleOutcome.kind === "failure" || result.roleOutcome.kind === "no_receipt") {
-    const facts = result.roleOutcome.decisiveFacts;
+  if (result.roleOutcome.kind === "failure" || result.roleOutcome.kind === "no_receipt" || result.roleOutcome.kind === "audit_escalation") {
+    const facts = result.roleOutcome.decisiveFacts ?? {};
     for (const [key, value] of Object.entries(facts)) {
       if (value === undefined) continue;
       const rendered =

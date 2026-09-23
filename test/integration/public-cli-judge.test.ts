@@ -28,7 +28,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
+import { isAuditEscalationResult, projectAuditEscalation } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -197,6 +197,39 @@ test("S1: judge escalate public CLI keeps decisionGate options on typed payload 
     assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["escalate"]);
     const payload = objectPayloads(result.terminal.roleOutcome)[0] ?? {};
     assert.deepEqual(payload.decisionGate, { question: "请二选一", options });
+  });
+});
+
+test("judge gate escalation reaches the public terminal without replacing the role submission", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const { io } = captureIo();
+    const submission = { judgeStatus: "converged", note: "原判词" };
+    const receipt = { status: "escalate", decisionGate: { question: "请陛下裁决" } };
+    const escalation = projectAuditEscalation({ status: "escalate", conflicts: receipt }, submission);
+    const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "review"], {
+      packageRoot, home, cwd: project, io,
+      createRunId: () => "run-judge-gate-escalation",
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+          await mkdir(sessionDir, { recursive: true });
+          await writeFile(join(sessionDir, "session.jsonl"), sessionToolResultLine(JUDGE_OUTPUT_TOOL_NAME, escalation.details), "utf8");
+          return {
+            code: 0, stderr: "", timedOut: false, args: [...args],
+            sealedAcceptance: { role: "judge" as const, details: submission, outputDetails: escalation.details },
+          };
+        },
+      }),
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
+    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts?.auditEscalationReceipt, receipt);
+    assert.deepEqual(result.terminal?.roleOutcome.payloads, [submission]);
   });
 });
 

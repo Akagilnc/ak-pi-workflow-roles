@@ -23,6 +23,7 @@ async function driveLedgerProducer(input: {
   readonly runId: string;
   readonly role: TerminalRoleName;
   readonly details: unknown;
+  readonly outputDetails?: unknown;
   readonly home?: string;
   readonly toolCallId: string;
   readonly runDirectory?: string;
@@ -54,7 +55,7 @@ async function driveLedgerProducer(input: {
     parameters: Type.Object({}),
     execute: async () => {
       if (Object.hasOwn(input, "executeError")) throw input.executeError;
-      return { content: [], details: input.details, terminate: true };
+      return { content: [], details: input.outputDetails ?? input.details, terminate: true };
     },
   });
   if (registered === undefined) throw new Error("submission ledger host did not register output tool");
@@ -105,6 +106,7 @@ export async function sealAcceptedSubmission(input: {
   readonly runId: string;
   readonly role: TerminalRoleName;
   readonly details: unknown;
+  readonly outputDetails?: unknown;
   readonly home?: string;
   readonly toolCallId?: string;
   readonly runDirectory?: string;
@@ -116,6 +118,7 @@ export async function sealAcceptedSubmission(input: {
     runId: input.runId,
     role: input.role,
     details: input.details,
+    ...(input.outputDetails === undefined ? {} : { outputDetails: input.outputDetails }),
     toolCallId: input.toolCallId ?? "seal-1",
     ...(input.home === undefined ? {} : { home: input.home }),
     ...(input.runDirectory === undefined ? {} : { runDirectory: input.runDirectory }),
@@ -129,6 +132,7 @@ export async function sealAcceptedSubmissionForSpawn(input: {
   readonly env: NodeJS.ProcessEnv;
   readonly role: TerminalRoleName;
   readonly details: unknown;
+  readonly outputDetails?: unknown;
   readonly toolCallId?: string;
 }): Promise<void> {
   const runDirectory = input.env.AK_ROLE_RUN_DIR;
@@ -155,6 +159,7 @@ export async function sealAcceptedSubmissionForSpawn(input: {
     runDirectory,
     role: input.role,
     details: input.details,
+    ...(input.outputDetails === undefined ? {} : { outputDetails: input.outputDetails }),
     ...(home === undefined ? {} : { home }),
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
     ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
