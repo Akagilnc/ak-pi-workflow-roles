@@ -415,6 +415,7 @@ export const PUBLIC_ROLE_RECORDS = [
       "CLAUDE.md",
       "souls/secretariat.md",
       "souls/ticket-law.md",
+      "resources/secretariat-ticket-identity.md",
       "souls/countersign.md",
       "souls/notary.md",
     ],
