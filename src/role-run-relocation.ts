@@ -218,20 +218,6 @@ export function rewriteAdmittedRoleRunPage(
   }
 }
 
-async function rewriteJsonObjectFile(
-  path: string,
-  fields: readonly string[],
-  rewrites: readonly RunDirectoryPathRewrite[],
-): Promise<void> {
-  if (!existsSync(path)) return;
-  const page = JSON.parse(await readFile(path, "utf8")) as unknown;
-  if (!isPlainObject(page)) return;
-  const before = JSON.stringify(page);
-  rewriteRunDirectoryPathFieldsAgainstRewrites(page, fields, rewrites);
-  if (JSON.stringify(page) !== before) {
-    await writeFile(path, `${JSON.stringify(page, null, 2)}\n`, "utf8");
-  }
-}
 async function rewriteOfficerPointerFile(
   path: string,
   rewrites: readonly RunDirectoryPathRewrite[],
@@ -448,22 +434,11 @@ export async function rewriteRoleRunDurablePages(input: {
 
   const invocationPath = join(pagesDirectory, "invocation.json");
   if (existsSync(invocationPath)) {
-    const page = JSON.parse(await readFile(invocationPath, "utf8")) as Record<
-      string,
-      unknown
-    >;
+    const page = JSON.parse(await readFile(invocationPath, "utf8")) as Record<string, unknown>;
     const before = JSON.stringify(page);
-    rewriteRunDirectoryPathFieldsAgainstRewrites(
-      page,
-      INVOCATION_PAGE_FIELDS,
-      rewrites,
-    );
+    rewriteRunDirectoryPathFieldsAgainstRewrites(page, INVOCATION_PAGE_FIELDS, rewrites);
     if (JSON.stringify(page) !== before) {
-      await writeFile(
-        invocationPath,
-        `${JSON.stringify(page, null, 2)}\n`,
-        "utf8",
-      );
+      await writeFile(invocationPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
     }
   }
 
