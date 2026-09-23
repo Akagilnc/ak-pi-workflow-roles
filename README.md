@@ -148,10 +148,6 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<ruling>"
 
 Roles are named after Tang/Song offices; the full roster and naming rule live in [README.zh-CN.md](https://github.com/Akagilnc/ak-pi-workflow-roles/blob/main/README.zh-CN.md).
 
-## Codex fast tier
-
-Enable fast tier with `echo "fast_mode = on" > ~/.pi-codex-fast`; disable it with `echo "fast_mode = off" > ~/.pi-codex-fast` (or delete the file). The change takes effect on the next request without a restart. Fast tier costs more than the default tier.
-
 ## Normative pointers
 
 - Command usage and refusal text: `ak-role help <command>`, `ak-role help config` (sole authority).
