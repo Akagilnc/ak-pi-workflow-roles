@@ -17,14 +17,11 @@ import {
   resolveMigratingRunTicket,
 } from "./book-topology-migration-placement.ts";
 import {
-  holdBoardBoundUnboundRelocateClosure,
   reconcileMigrationPartition,
   type BookTopologyMigrationContext,
   type BookTopologyPartitionMigrator,
   type MigrationItemOutcome,
-  type MutationClosureLeaseCleanupDiagnostic,
 } from "./book-topology-migration.ts";
-import type { RunWriterLease } from "./public-cli/run-lifecycle.ts";
 import { listBookRunDirectories } from "./role-run-placement.ts";
 import {
   rewriteRoleRunDurablePages,
@@ -286,13 +283,6 @@ export type BoardBoundUnboundRelocation = {
   readonly ticketNumber: number;
 };
 
-/** Structured result for #863/#986 real-entry relocate (mutation closure recorded). */
-export type BoardBoundUnboundRelocateReport = {
-  readonly relocated: readonly BoardBoundUnboundRelocation[];
-  /** Frozen plan-time closure: every run directory that may be rewritten or renamed. */
-  readonly mutationClosureRuns: readonly string[];
-};
-
 type PlannedBoardBoundMove = {
   readonly sourcePath: string;
   readonly targetPath: string;
@@ -300,13 +290,16 @@ type PlannedBoardBoundMove = {
 };
 
 /**
- * Read-only plan of board-bound unbound→ticket moves for one book. No
- * filesystem mutation. Books with zero planned moves are outside the #863
- * mutation closure (#986).
+ * Live in-place repair for already-migrated trees (#863 stock): plan the full
+ * board-bound unbound→ticket batch first, refuse any overwrite before mutation,
+ * rewrite durable pages (including batch `crossRunRewrites`) while sources still
+ * sit at unbound, then rename. Parse/write failures therefore leave sources in
+ * place so a retry can finish the same closure; rename-only retries still find
+ * remaining unbound sources. Leaves without a board ticket stay unbound.
  */
-async function planBoardBoundUnboundMovesInBook(
+export async function relocateBoardBoundUnboundRunsInBook(
   bookDirectory: string,
-): Promise<readonly PlannedBoardBoundMove[]> {
+): Promise<readonly BoardBoundUnboundRelocation[]> {
   const bookKey = basename(bookDirectory);
   const booksDirectory = dirname(bookDirectory);
   const unboundRuns = join(bookDirectory, "unbound", "runs");
@@ -339,22 +332,7 @@ async function planBoardBoundUnboundMovesInBook(
       ticketNumber: boardTicket,
     });
   }
-  return planned;
-}
 
-/**
- * Apply a previously planned board-bound batch against a frozen run-directory
- * snapshot: refuse overwrite, rewrite durable pages (including batch
- * `crossRunRewrites`) while sources still sit at unbound, then rename.
- * Does not re-enumerate the book — post-gate runs must not expand the write
- * set (#986 TOCTOU). Parse/write failures leave sources in place so a retry
- * can finish the same closure.
- */
-async function applyBoardBoundUnboundMovesInBook(
-  planned: readonly PlannedBoardBoundMove[],
-  frozenRunDirectories: readonly string[],
-  leasesByRunDirectory: ReadonlyMap<string, RunWriterLease>,
-): Promise<readonly BoardBoundUnboundRelocation[]> {
   if (planned.length === 0) return [];
 
   for (const move of planned) {
@@ -375,7 +353,7 @@ async function applyBoardBoundUnboundMovesInBook(
 
   // Rewrite before any rename so durable-page failures remain retryable from
   // the same unbound sources (failure-honesty: no relocatedCount=0 whitewash).
-  for (const runDir of frozenRunDirectories) {
+  for (const runDir of await listBookRunDirectories(bookDirectory)) {
     const move = relocatedBySource.get(runDir);
     await rewriteRoleRunDurablePages({
       pagesDirectory: runDir,
@@ -388,9 +366,6 @@ async function applyBoardBoundUnboundMovesInBook(
   for (const move of planned) {
     await mkdir(dirname(move.targetPath), { recursive: true });
     await rename(move.sourcePath, move.targetPath);
-    // Directory rename moves writer.lock with the tree; keep lease release
-    // anchored at the new path (shared RunWriterLease.relocate seam).
-    leasesByRunDirectory.get(move.sourcePath)?.relocate(move.targetPath);
   }
 
   return planned.map((move) => ({
@@ -402,67 +377,17 @@ async function applyBoardBoundUnboundMovesInBook(
 
 /**
  * Walk every book under `booksDirectory` and relocate board-bound unbound
- * runs in place. Gate (#986) covers only the frozen mutation closure: every
- * run directory in every book that has ≥1 planned board-bound move at plan
- * time. The ordinary writer lease is held on that frozen set through
- * rewrite/rename so writers cannot enter the window; apply never re-enumerates
- * the book. Outside-closure locks do not refuse; a bare live PID inside the
- * closure has unverifiable identity and fails loud. #860 stays separate.
+ * runs in place without the whole-books topology migration's in-flight gate.
  */
 export async function relocateBoardBoundUnboundRunsInBooks(
   booksDirectory: string,
-  env: NodeJS.ProcessEnv = process.env,
-  onCleanupFailure?: MutationClosureLeaseCleanupDiagnostic,
-): Promise<BoardBoundUnboundRelocateReport> {
-  type BookBatch = {
-    readonly bookDirectory: string;
-    readonly planned: readonly PlannedBoardBoundMove[];
-    readonly frozenRunDirectories: readonly string[];
-  };
-  const batches: BookBatch[] = [];
-  const mutationClosure: string[] = [];
-
+): Promise<readonly BoardBoundUnboundRelocation[]> {
+  const relocated: BoardBoundUnboundRelocation[] = [];
   for (const bookKey of await listMigrationBookKeys(booksDirectory)) {
-    const bookDirectory = join(booksDirectory, bookKey);
-    const planned = await planBoardBoundUnboundMovesInBook(bookDirectory);
-    if (planned.length === 0) {
-      batches.push({ bookDirectory, planned, frozenRunDirectories: [] });
-      continue;
-    }
-    // Freeze closure at plan time — apply must not listBookRunDirectories again.
-    const frozenRunDirectories = await listBookRunDirectories(bookDirectory);
-    batches.push({ bookDirectory, planned, frozenRunDirectories });
-    mutationClosure.push(...frozenRunDirectories);
+    const batch = await relocateBoardBoundUnboundRunsInBook(
+      join(booksDirectory, bookKey),
+    );
+    relocated.push(...batch);
   }
-
-  const leases = await holdBoardBoundUnboundRelocateClosure(
-    booksDirectory,
-    mutationClosure,
-    env,
-    onCleanupFailure,
-  );
-  const leasesByRunDirectory = new Map<string, RunWriterLease>();
-  for (let i = 0; i < mutationClosure.length; i += 1) {
-    leasesByRunDirectory.set(mutationClosure[i]!, leases[i]!);
-  }
-
-  try {
-    const relocated: BoardBoundUnboundRelocation[] = [];
-    for (const batch of batches) {
-      const moved = await applyBoardBoundUnboundMovesInBook(
-        batch.planned,
-        batch.frozenRunDirectories,
-        leasesByRunDirectory,
-      );
-      relocated.push(...moved);
-    }
-    return {
-      relocated,
-      mutationClosureRuns: mutationClosure,
-    };
-  } finally {
-    for (const lease of leases) {
-      await lease.release();
-    }
-  }
+  return relocated;
 }

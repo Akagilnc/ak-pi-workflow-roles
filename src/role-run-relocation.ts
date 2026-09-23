@@ -227,8 +227,11 @@ async function rewriteJsonObjectFile(
   if (!existsSync(path)) return;
   const page = JSON.parse(await readFile(path, "utf8")) as unknown;
   if (!isPlainObject(page)) return;
+  const before = JSON.stringify(page);
   rewriteRunDirectoryPathFieldsAgainstRewrites(page, fields, rewrites);
-  await writeFile(path, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+  if (JSON.stringify(page) !== before) {
+    await writeFile(path, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+  }
 }
 
 async function rewriteOfficerPointerFile(
@@ -240,12 +243,15 @@ async function rewriteOfficerPointerFile(
   if (!isPlainObject(page)) return;
   // Only the typed direct-officer pointer shape — never arbitrary .pointer.json.
   if (page.kind !== "direct-officer-run-pointer") return;
+  const before = JSON.stringify(page);
   rewriteRunDirectoryPathFieldsAgainstRewrites(
     page,
     OFFICER_POINTER_FIELDS,
     rewrites,
   );
-  await writeFile(path, `${JSON.stringify(page)}\n`, "utf8");
+  if (JSON.stringify(page) !== before) {
+    await writeFile(path, `${JSON.stringify(page)}\n`, "utf8");
+  }
 }
 
 async function rewriteSitianRecordsJsonl(
@@ -437,8 +443,11 @@ export async function rewriteRoleRunDurablePages(input: {
       string,
       unknown
     >;
+    const before = JSON.stringify(page);
     rewriteAdmittedRoleRunPage(page, rewrites);
-    await writeFile(admittedPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+    if (JSON.stringify(page) !== before) {
+      await writeFile(admittedPath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+    }
   }
 
   const invocationPath = join(pagesDirectory, "invocation.json");
@@ -447,16 +456,19 @@ export async function rewriteRoleRunDurablePages(input: {
       string,
       unknown
     >;
+    const before = JSON.stringify(page);
     rewriteRunDirectoryPathFieldsAgainstRewrites(
       page,
       INVOCATION_PAGE_FIELDS,
       rewrites,
     );
-    await writeFile(
-      invocationPath,
-      `${JSON.stringify(page, null, 2)}\n`,
-      "utf8",
-    );
+    if (JSON.stringify(page) !== before) {
+      await writeFile(
+        invocationPath,
+        `${JSON.stringify(page, null, 2)}\n`,
+        "utf8",
+      );
+    }
   }
 
   const statePath = join(pagesDirectory, "run-state.json");
@@ -465,6 +477,7 @@ export async function rewriteRoleRunDurablePages(input: {
       string,
       unknown
     >;
+    const before = JSON.stringify(page);
     rewriteRunDirectoryPathFieldsAgainstRewrites(
       page,
       RUN_STATE_PAGE_FIELDS,
@@ -481,7 +494,9 @@ export async function rewriteRoleRunDurablePages(input: {
     if (isPlainObject(page.currentCourt)) {
       rewriteSummonsMaterials(page.currentCourt.summons, rewrites);
     }
-    await writeFile(statePath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+    if (JSON.stringify(page) !== before) {
+      await writeFile(statePath, `${JSON.stringify(page, null, 2)}\n`, "utf8");
+    }
   }
 
   await rewriteNestedMachinePathPages(pagesDirectory, rewrites);

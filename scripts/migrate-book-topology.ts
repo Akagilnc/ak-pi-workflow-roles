@@ -37,24 +37,11 @@ const parsed = parseMigrateArgv(process.argv.slice(2));
 if (parsed.relocateBoardBoundUnbound) {
   // #863 stock: already-migrated trees — in-place unbound→ticket via shared seam.
   const ledgerHome = parsed.ledgerHome ?? join(homedir(), ".ak-roles");
-  const report = await relocateBoardBoundUnboundRunsInBooks(
+  const relocated = await relocateBoardBoundUnboundRunsInBooks(
     join(ledgerHome, "books"),
-    process.env,
-    (diagnostic) => {
-      process.stderr.write(diagnostic);
-    },
   );
   process.stdout.write(
-    `${JSON.stringify(
-      {
-        ledgerHome,
-        relocatedCount: report.relocated.length,
-        relocated: report.relocated,
-        mutationClosureRuns: report.mutationClosureRuns,
-      },
-      null,
-      2,
-    )}\n`,
+    `${JSON.stringify({ ledgerHome, relocatedCount: relocated.length, relocated }, null, 2)}\n`,
   );
 } else {
   const report = await migrateBookTopology({

@@ -1254,12 +1254,9 @@ test("relocateBoardBoundUnboundRunsInBooks moves typed unbound runs under ticket
       sourceRun: { runDirectory: boundSource },
     });
 
-    const report = await relocateBoardBoundUnboundRunsInBooks(
-      booksDirectory,
-      {},
-    );
+    const relocated = await relocateBoardBoundUnboundRunsInBooks(booksDirectory);
     const boundTarget = join(bookDir, "863", "runs", boundLeaf);
-    assert.deepEqual(report.relocated, [
+    assert.deepEqual(relocated, [
       {
         from: boundSource,
         to: boundTarget,
