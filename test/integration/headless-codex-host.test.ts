@@ -190,6 +190,8 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     rejectLoad = false;
     assert.ok(argv[1]!.includes("--output-schema"));
     assert.ok(argv[1]!.some((arg) => arg === "mcp_servers.ak-probe.required=true"));
+    assert.ok(argv[1]!.includes("mcp_servers.ak-probe.tool_timeout_sec=3600"));
+    assert.ok(explicitArgv.at(-1)!.includes("mcp_servers.ak-probe.tool_timeout_sec=3600"));
 
     const failed = await host.executeTurn({
       ...request,
