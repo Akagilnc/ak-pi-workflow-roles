@@ -109,7 +109,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     methodSkills: ["ak-cross-m-review"],
     settleMethod: "ak-cross-m-review",
     parallelLenses: true,
-    freshExecutionCopy: true,
     phases: [null],
     bareCommand: false,
     outputTool: "ak_reviewer_output",
