@@ -675,6 +675,7 @@ export async function relocateAdmittedRunToTicket(
         role: "diarist",
       });
       authority.seal(childTarget);
+      if (!existsSync(childDirectory) && existsSync(childTarget.runDirectory)) continue;
       await bindTicketNumberOnRunDirectory(childDirectory, admitted.ticketNumber);
       await rehomeUnboundTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
       ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));

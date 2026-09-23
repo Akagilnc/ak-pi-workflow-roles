@@ -67,7 +67,11 @@ export function appendSitianRecordBlock(input: SitianRecordInput, block: string)
     ensureRealDirectoryTree(ledgerHome, sessionDir);
     appendFileSync(recordFile, "", "utf8");
     sealTornTail(recordFile);
-    appendFileSync(recordFile, block, "utf8");
+    // The source survives until the caller unlinks it. If that unlink failed,
+    // the exact block is already durable and a retry must not repeat it.
+    if (!readFileSync(recordFile, "utf8").includes(block)) {
+      appendFileSync(recordFile, block, "utf8");
+    }
   } catch (error) {
     if (error instanceof SitianInfrastructureError) throw error;
     throw new SitianInfrastructureError(

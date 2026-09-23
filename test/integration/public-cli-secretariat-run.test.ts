@@ -1291,6 +1291,7 @@ test("#969 omitted receipt ticketNumber still hands parent board identity to 给
 });
 
 test("public secretariat moves its unbound 起居录 to the ticket after typed assignment", async () => {
+  for (const preAppended of [false, true]) {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -1299,6 +1300,7 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
     await mkdir(dirname(sessionPath), { recursive: true });
     await writeFile(sessionPath, `${JSON.stringify({ type: "user", uuid: "draft-owner", message: { role: "user", content: "请拟票" }, origin: { kind: "human" } })}\n`, "utf8");
     const book = join(home, ".ak-roles", "books", "project");
+    const parentRun = "01a0sec1010-0000-7000-8000-000000000001@secretariat";
     const unrelatedRun = join(book, "unbound", "runs", "unfinished@diarist");
     const diaristRuns: string[] = [];
     const prior = '{"identity":"prior"}';
@@ -1320,6 +1322,13 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
           sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
         })(args, options);
         sourceContent = await readFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), "utf8");
+        if (preAppended) {
+          await writeFile(join(book, "924", "records.jsonl"), `${prior}\n${sourceContent}`, "utf8");
+          const parentPagePath = join(book, "unbound", "runs", parentRun, "admitted-request.json");
+          const parentPage = JSON.parse(await readFile(parentPagePath, "utf8"));
+          await writeFile(parentPagePath, `${JSON.stringify({ ...parentPage, childDiaristRunIds: ["already-moved"] })}\n`, "utf8");
+          await mkdir(join(book, "924", "runs", "already-moved@diarist"), { recursive: true });
+        }
         return result;
       },
       countersignSequence: [{ details: { countersignStatus: "converged", note: "署" } }],
@@ -1342,7 +1351,6 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
     assert.equal((await readTicketProvenance(924, project, home)).header?.ticket, 924);
     assert.ok(diaristRuns.length > 0);
     assert.equal(dirname(diaristRuns[0]!), dirname(unrelatedRun));
-    const parentRun = "01a0sec1010-0000-7000-8000-000000000001@secretariat";
     assert.ok((await readdir(join(book, "924", "runs"))).includes(parentRun));
     assert.equal((await readFile(join(diaristRuns[0]!, "records.jsonl"), "utf8").catch((error: NodeJS.ErrnoException) => error.code)), "ENOENT");
     const diaristRun = join(book, "924", "runs", diaristRuns[0]!.split("/").at(-1)!);
@@ -1350,6 +1358,7 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
     assert.equal(JSON.parse(await readFile(join(diaristRun, "invocation.json"), "utf8")).ticketNumber, 924);
     assert.equal((await readFile(join(diaristRuns[0]!, "admitted-request.json"), "utf8").catch((error: NodeJS.ErrnoException) => error.code)), "ENOENT");
   });
+  }
 });
 
 /** Distinct court attempt ids from ledger subject.attemptId (not row count). */
