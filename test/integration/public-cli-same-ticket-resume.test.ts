@@ -36,7 +36,8 @@ import {
 import {
   installGhFixture,
 } from "../helpers/hermes-fixture.ts";
-import { gateToolSessionJsonl } from "../helpers/gate-tool-session-jsonl.ts";
+import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 import {
   CANONICAL_SOURCE_ROLE,
@@ -1082,9 +1083,11 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
     });
     assert.equal(priorChild.exitCode, 0);
     assert.equal(priorChild.terminal?.roleOutcome.kind, "accepted");
+    assert.ok(priorChild.terminal);
     assert.equal(seen.length, 1);
     assert.equal(seen[0]!.kind, "initial");
     const priorChildRunId = seen[0]!.runId;
+    assert.equal(priorChild.terminal.runId, priorChildRunId);
 
     const freshChild = await runAkRole(["new", "inspector", instruction], {
       home,
@@ -1097,9 +1100,12 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
     });
     assert.equal(freshChild.exitCode, 0);
     assert.equal(freshChild.terminal?.roleOutcome.kind, "accepted");
+    assert.ok(freshChild.terminal);
     assert.equal(seen.length, 2);
     assert.equal(seen[1]!.kind, "initial", "explicit new must not resume an existing child");
     assert.notEqual(seen[1]!.runId, priorChildRunId, "new child identity must differ from prior child A");
+    assert.equal(freshChild.terminal.runId, seen[1]!.runId);
+    assert.notEqual(freshChild.terminal.runId, priorChild.terminal.runId);
   } finally {
     await rm(scratch.home, { recursive: true, force: true });
     await rm(WORKTREE_SCRATCH, { recursive: true, force: true }).catch(() => undefined);
@@ -1111,59 +1117,55 @@ test("#993 public coder resume: worker completion gate bounce then pass is proje
   const scratch = await openNotaryScratch("home-worker-gate-resume-");
   try {
     let coderTurns = 0;
+    const officerRequests: RoleTurnRequest[] = [];
     const cliOutput: string[] = [];
     const io = { stdout: (text: string) => cliOutput.push(text), stderr: (text: string) => cliOutput.push(text) };
-    async function recordWorkerCompletionGate(args: readonly string[], status: "bounce" | "pass") {
-      const sessionFile = args[args.indexOf("--session") + 1]!;
-      const auditorDirectory = join(dirname(sessionFile), "auditor-roles");
-      await mkdir(auditorDirectory, { recursive: true });
-      const index = coderTurns;
-      const attemptEntryId = `worker-completion-${index}`;
-      await writeFile(
-        join(auditorDirectory, `d${String(index).padStart(2, "0")}_gatekeeper.jsonl`),
-        gateToolSessionJsonl({
-          id: `dispatch-${index}`,
-          startedAt: `2026-09-01T00:00:0${index}Z`,
-          endedAt: `2026-09-01T00:00:1${index}Z`,
-          toolName: "ak_gatekeeper_output",
-          args: { status: "dispatch", officer: "inspector" },
-          attemptEntryId,
-        }),
-        "utf8",
-      );
-      await writeFile(
-        join(auditorDirectory, `o${String(index).padStart(2, "0")}_inspector.jsonl`),
-        gateToolSessionJsonl({
-          id: `inspector-${index}`,
-          startedAt: `2026-09-01T00:00:1${index}Z`,
-          endedAt: `2026-09-01T00:00:2${index}Z`,
-          toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-          args: { status, findings: status === "bounce" ? ["revise submission"] : [] },
-          attemptEntryId,
-        }),
-        "utf8",
-      );
-    }
-    const inner = roleTurnHostFromLegacyPiRunner({
+    const officer = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
       piRunner: async (args, options) => {
         const role = args[args.indexOf("--ak-role") + 1];
-        if (role === "coder") {
-          coderTurns += 1;
-          const result = await scriptedTerminatingToolSession({
-            role: "coder",
-            toolName: CODER_OUTPUT_TOOL_NAME,
-            details: { status: "completed", report: "work submitted" },
-            ...(coderTurns === 1 ? { isError: true, seal: false } : {}),
-            sessionWriteMode: coderTurns === 1 ? "replace" : "append",
-          })(args, options);
-          await recordWorkerCompletionGate(args, coderTurns === 1 ? "bounce" : "pass");
-          return result;
-        }
-        throw new Error(`unexpected public role: ${String(role)}`);
+        assert.equal(role, "inspector");
+        return scriptedTerminatingToolSession({
+          role: "inspector",
+          toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+          details: { status: coderTurns === 1 ? "bounce" : "pass", findings: [] },
+        })(args, options);
       },
     });
+    const nested: RoleTurnHost = {
+      executeTurn(request) {
+        if (request.activation.role === "inspector") officerRequests.push(request);
+        return officer.executeTurn(request);
+      },
+    };
+    const inner: RoleTurnHost = {
+      async executeTurn(request) {
+        assert.equal(request.activation.role, "coder");
+        coderTurns += 1;
+        const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
+        const socketDirectory = await mkdtemp(join(scratch.home, "coder-gate-socket-"));
+        const prepared = await prepareRoleEnvelope({
+          request: { ...request, host: "codex" },
+          dependencies: {
+            ...createRoleRuntimeDependencies(packageRoot),
+            hostAdapters: [{ name: "pi", create: () => ({ ok: true as const, host: nested }) }],
+          },
+          socketPath: join(socketDirectory, "mcp.sock"),
+          listTerminatingToolOnMcp: false,
+          sessionFile,
+        });
+        try {
+          execFileSync("git", ["commit", "--allow-empty", "-m", `ak-roles: worker attempt ${coderTurns}`], { cwd: scratch.project });
+          await prepared.ingestStructuredOutput({ status: "completed", report: "work submitted" });
+          const closed = await prepared.closeRound();
+          assert.equal(closed.accepted, coderTurns === 2);
+          return { code: 0, stderr: "", timedOut: false };
+        } finally {
+          await prepared.dispose?.();
+        }
+      },
+    };
     const seen: SeenTurn[] = [];
     const host = observingSealHost(inner, seen);
     const first = await runAkRole(
@@ -1182,6 +1184,7 @@ test("#993 public coder resume: worker completion gate bounce then pass is proje
     assert.ok(first.terminal);
     assert.equal(first.terminal.roleOutcome.kind, "no_receipt");
     assert.equal(first.terminal.gate?.rounds.at(-1)?.officer.status, "bounce");
+    assert.equal(officerRequests.length, 1);
 
     const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "run-worker-gate-resume-993"], {
       packageRoot,
@@ -1197,6 +1200,7 @@ test("#993 public coder resume: worker completion gate bounce then pass is proje
     assert.ok(resumed.terminal);
     assert.equal(resumed.terminal.runId, "run-worker-gate-resume-993");
     assert.equal(resumed.terminal.gate?.rounds.at(-1)?.officer.status, "pass");
+    assert.equal(officerRequests.length, 2);
     assert.deepEqual(
       seen.filter((turn) => turn.kind === "initial" || turn.kind === "resume").map((turn) => turn.runId),
       ["run-worker-gate-resume-993", "run-worker-gate-resume-993"],
