@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { DoctorCase } from "../../src/doctor-contracts.ts";
 import { createDoctorRoleRuntime, DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-role.ts";
+import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 
@@ -72,7 +73,7 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
       if (decision === "failure") throw new Error("provider unavailable");
       if (decision === "no-receipt") return auditNoReceiptFacts;
       return decision === "bounce"
-        ? { status: "bounce", violations: [structuredViolation] }
+        ? { status: "bounce", violations: [structuredViolation], receipt: { status: "bounce", violations: [structuredViolation], explanation: "full auditor answer" } }
         : { status: "pass" };
     },
   }, {
@@ -85,6 +86,9 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
     output.execute("doctor", refusal, undefined, undefined, context("doctor")),
     (error: unknown) => {
       assert.ok(error instanceof Error);
+      assert.ok(error instanceof GatekeeperDecisionError);
+      assert.equal(error.result.status, "bounce");
+      if (error.result.status === "bounce") assert.deepEqual(error.result.receipt, { status: "bounce", violations: [structuredViolation], explanation: "full auditor answer" });
       // #775 acceptance: parent-visible text carries every structured field.
       assert.match(error.message, /method-proof/);
       assert.match(error.message, /missing method proof/);

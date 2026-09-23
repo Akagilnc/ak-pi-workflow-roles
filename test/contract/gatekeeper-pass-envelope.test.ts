@@ -175,6 +175,24 @@ test("#969 secretariat_verdict escalate throws without bindSubmissionNonPass (en
   },
 );
 
+test("nested Notary escalation relays its verdict, not the countersign payload", async () => {
+  const verdict = { status: "escalate", decisionGate: { question: "notary?", options: ["yes"] } };
+  const projected = await projectGatekeeperRun({
+    context: { cwd: process.cwd(), sessionManager: { getSessionFile: () => "/tmp/unused" } } as never,
+    subject: { kind: "secretariat_verdict" },
+    runDirectory: "/tmp/runs/01parent@secretariat",
+    summonOfficer: async () => ({
+      exitCode: 0,
+      terminal: {
+        roleOutcome: { kind: "audit_escalation", role: "countersign", status: "audit_escalation", payloads: [{ countersignStatus: "converged" }], decisiveFacts: { auditEscalationReceipt: verdict } },
+        navigator: { disposition: "no-advice" }, artifacts: [], runId: "countersign-run",
+      },
+    }),
+  });
+  assert.equal(projected.result.status, "escalate");
+  assert.deepEqual(projected.result.receipt, verdict);
+});
+
 test("#969 requireGatekeeperPass pass returns receipt + nested runId",
   async () => {
     const receipt = { countersignStatus: "converged", note: "署" };

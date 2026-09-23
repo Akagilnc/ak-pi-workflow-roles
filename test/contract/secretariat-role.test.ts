@@ -128,7 +128,7 @@ test("secretariat output records any status without shape reject (第 0 条)", a
 
 test("secretariat converged receipt enters the submission gate on every host",
   async () => {
-    async function arm(host: string | undefined) {
+    async function arm(host: string | undefined, statusOnly = false) {
       const gateCalls: string[] = [];
       const tools = new Map<string, { execute: Function }>();
       const roleHost = {
@@ -142,7 +142,7 @@ test("secretariat converged receipt enters the submission gate on every host",
         getFlag() { return undefined; },
         async requireGatekeeperPass(options: { subject: { kind: string } }) {
           gateCalls.push(options.subject.kind);
-          return { officer: "countersign", receipt: { countersignStatus: "converged", note: "署原话" } };
+          return { officer: "countersign", receipt: statusOnly ? undefined : { countersignStatus: "converged", note: "署原话" } };
         },
       };
       await createSecretariatRoleRuntime(
@@ -169,7 +169,7 @@ test("secretariat converged receipt enters the submission gate on every host",
         undefined,
         hostCtx,
       );
-      assert.deepEqual(result.content, [{ type: "text", text: '{"countersignStatus":"converged","note":"署原话"}' }]);
+      assert.deepEqual(result.content, statusOnly ? [] : [{ type: "text", text: '{"countersignStatus":"converged","note":"署原话"}' }]);
       assert.deepEqual(result.details, { secretariatStatus: "converged", ticketNumber: 969 });
       return gateCalls;
     }
@@ -178,6 +178,7 @@ test("secretariat converged receipt enters the submission gate on every host",
       assert.deepEqual(await arm(host), ["secretariat_verdict"], host);
     }
     assert.deepEqual(await arm(undefined), ["secretariat_verdict"]);
+    assert.deepEqual(await arm(undefined, true), ["secretariat_verdict"]);
 
     await withTempRoot("ak-sec-gate-", async (root) => {
       const ungated = new Map<string, { execute: Function }>();

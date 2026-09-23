@@ -673,7 +673,7 @@ function createFiledOfficerRuntime(
             // Accept-as-is + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
             return {
-              content: pass === undefined ? [] : [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
+              content: pass === undefined || pass.receipt === undefined ? [] : [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
               details: pass === undefined ? (projected === undefined ? parameters : projected) : parameters,
               terminate: true as const,
             };
