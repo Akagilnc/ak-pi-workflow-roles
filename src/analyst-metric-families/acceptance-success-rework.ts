@@ -117,7 +117,7 @@ function findCollectorGroups(body: Record<string, unknown>): unknown {
 }
 
 /** Extract role receipt status from canonical terminal body faces. */
-function extractStatus(body: Record<string, unknown>): string | undefined {
+export function extractStatus(body: Record<string, unknown>): string | undefined {
   const outcome = body.outcome;
   if (isRecord(outcome) && typeof outcome.status === "string" && outcome.status.trim() !== "") {
     return outcome.status;

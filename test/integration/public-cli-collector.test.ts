@@ -238,7 +238,7 @@ type BindProjection = {
  */
 async function executeBindViaProductionEnvelope(input: {
   readonly home: string;
-  readonly params: { prNumber?: number; issueNumber?: number };
+  readonly params: { prNumber?: number | string; issueNumber?: number | string };
   readonly toolCallId?: string;
 }): Promise<BindProjection> {
   const harness = extensionHarness("collector", {
@@ -431,6 +431,18 @@ test("#676 production envelope bind multi-PR leaves the ambiguous choice to the 
       });
       assert.equal(stdout.length > 0, true);
     });
+  });
+});
+
+test("collector bind rejects a ticket string outside the safe-integer range", async () => {
+  await withTempRoot("collector-unsafe-ticket-", async (home) => {
+    const bind = await executeBindViaProductionEnvelope({
+      home,
+      params: { issueNumber: "9007199254740992" },
+    });
+
+    assert.equal(bind.isError, true);
+    assert.match(bind.content[0]?.text ?? "", /正安全整数/);
   });
 });
 

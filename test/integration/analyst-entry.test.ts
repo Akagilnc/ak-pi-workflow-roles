@@ -12,7 +12,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
@@ -1052,6 +1052,54 @@ test("analyst issue-mode entry: null terminal artifact is terminal-artifact unre
       assert.ok(
         result.page.legs.some((leg) => leg.runId === LEG_E7_RUN),
         "B4 death e7 must remain when only coder a1 terminal is null",
+      );
+    });
+  });
+});
+
+test("analyst B3 and B4 use the same receipt status when outcome status is absent", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async (home) => {
+      const reportPath = join(
+        home,
+        ".ak-roles",
+        "books",
+        BOOK,
+        "runs",
+        LEG_A1_DIR,
+        "artifacts",
+        "report.json",
+      );
+      await writeFile(reportPath, JSON.stringify({
+        role: "coder",
+        runId: LEG_A1_RUN,
+        receipt: { status: "completed" },
+      }));
+
+      const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
+      const page = result.page as PageWithMetricFamilies;
+      const b3 = page.acceptanceSuccessRework?.legs.find((leg) => leg.runId === LEG_A1_RUN);
+      const b4Row = page.roundTimeline?.lanes
+        .flatMap((lane) => lane.rows)
+        .find((row) => row.kind === "run" && row.runId === LEG_A1_RUN);
+
+      assert.equal(b3?.terminalLabel, "completed");
+      assert.ok(b4Row && b4Row.kind === "run");
+      if (b4Row?.kind === "run") assert.deepEqual(b4Row.terminal, { kind: "receipt", status: "completed" });
+    });
+  });
+});
+
+test("analyst entry does not turn a malformed live run state into no-receipt", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async (home) => {
+      const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
+      await rm(join(runDirectory, "artifacts", "report.json"));
+      await writeFile(join(runDirectory, "run-state.json"), "{broken", "utf8");
+
+      await assert.rejects(
+        () => runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home }),
+        SyntaxError,
       );
     });
   });

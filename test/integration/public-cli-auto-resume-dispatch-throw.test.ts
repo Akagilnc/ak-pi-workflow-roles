@@ -187,6 +187,31 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
   });
 });
 
+test("Pi custom-entry append surfaces Sitian persistence failure after the session write", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    const runDir = join(home, ".ak-roles", "books", "proj", "runs", "custom-entry-sitian-failure@judge");
+    const sessionDir = join(runDir, "session");
+    const sessionFile = join(sessionDir, "session.jsonl");
+    await mkdir(project, { recursive: true });
+    await mkdir(sessionDir, { recursive: true });
+    await writeFile(sessionFile, "{}\n", "utf8");
+    // Make the Sitian destination impossible while leaving the Pi session writable.
+    await writeFile(join(sessionDir, "dispatch-error"), "not a directory", "utf8");
+
+    await assert.rejects(
+      appendPiSessionCustomEntry(
+        piDurablePrincipalAuthority,
+        fixturePrincipal(dirname(sessionFile), sessionFile),
+        "custom-entry-probe",
+        { observed: true },
+      ),
+      /Sitian appender persistence failure/,
+    );
+    assert.match(await readFile(sessionFile, "utf8"), /custom-entry-probe/);
+  });
+});
+
 test("retention sink failure does not break the retry path (PR #418 isolation precedent)", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");

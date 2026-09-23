@@ -10,6 +10,7 @@
  */
 import type { AnalystReadableRunFacts } from "../analyst-ledger.ts";
 import type { AnalystMetricFamilyModule } from "../analyst-metric-family.ts";
+import { extractStatus } from "./acceptance-success-rework.ts";
 import type {
   AnalystFirstFrameAt,
   AnalystMissingSource,
@@ -73,13 +74,6 @@ function wallMsFromSpan(startedAt: string, endedAt: string): number {
   return Date.parse(endedAt) - Date.parse(startedAt);
 }
 
-function readOutcomeStatus(body: Record<string, unknown>): string | undefined {
-  if (!isRecord(body.outcome)) return undefined;
-  const status = body.outcome.status;
-  if (typeof status !== "string" || status.trim() === "") return undefined;
-  return status;
-}
-
 function readClassCount(body: Record<string, unknown>): number | undefined {
   if (!isRecord(body.outcome)) return undefined;
   if (!isRecord(body.outcome.decisiveFacts)) return undefined;
@@ -101,7 +95,7 @@ function projectTerminal(facts: AnalystReadableRunFacts): AnalystRoundTimelineTe
     return { kind: "death", channel: "audit-incomplete" };
   }
   // report.json — receipt face; classCount only when producer wrote a number.
-  const status = readOutcomeStatus(facts.terminal.body);
+  const status = extractStatus(facts.terminal.body);
   const classCount = readClassCount(facts.terminal.body);
   const receiptStatus = status ?? "unparsed";
   if (classCount === undefined) {

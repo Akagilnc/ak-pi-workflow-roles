@@ -15,14 +15,14 @@
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 
-import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
+import { isSyntheticAnalystBookKey, resolveAnalystBookKey } from "./analyst-book-key.ts";
 import {
   pathContainedIn,
   physicalPathIdentity,
   resolveActivationLedgerHome,
 } from "./activation-ledger-topology.ts";
 import { listBookRunDirectories } from "./role-run-placement.ts";
-import { autopsyWriterLock } from "./public-cli/run-lifecycle.ts";
+import { autopsyWriterLock, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 import { readRunTicketNumber } from "./run-ticket-number.ts";
 import {
   extractSessionModelSequence,
@@ -77,15 +77,7 @@ const LIVE_RUN_STATES = new Set(["admitted", "running", "resumable"]);
 async function readExistingRunLifecycleState(
   runDirectory: string,
 ): Promise<string | undefined> {
-  try {
-    const raw: unknown = JSON.parse(
-      await readFile(join(runDirectory, "run-state.json"), "utf8"),
-    );
-    if (!isRecord(raw) || typeof raw.state !== "string") return undefined;
-    return raw.state;
-  } catch {
-    return undefined;
-  }
+  return (await readRoleRunIdentity(runDirectory))?.state;
 }
 
 /**
@@ -164,15 +156,6 @@ type InvocationScopeFields = {
   readonly projectRoot: string;
   readonly ticketNumber?: number;
 };
-
-/** Best-effort book key from a projectRoot git common-dir; undefined when not a git tree. */
-function tryResolveBookKeyFromProjectRoot(projectRoot: string): string | undefined {
-  try {
-    return resolveBookKeyFromGit(projectRoot);
-  } catch {
-    return undefined;
-  }
-}
 
 async function listLedgerBookNames(booksRoot: string): Promise<string[]> {
   try {
@@ -667,8 +650,8 @@ export async function scanAnalystIssueRuns(input: {
       wholeBook = true;
     }
   } else if (input.projectRoot !== undefined) {
-    const resolved = tryResolveBookKeyFromProjectRoot(input.projectRoot);
-    if (resolved !== undefined) {
+    const resolved = resolveAnalystBookKey(input.projectRoot);
+    if (!isSyntheticAnalystBookKey(resolved)) {
       bookNames = [resolved];
       wholeBook = true;
     } else {
