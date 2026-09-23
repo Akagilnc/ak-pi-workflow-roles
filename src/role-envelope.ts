@@ -314,11 +314,12 @@ export async function prepareRoleEnvelope(options: {
     };
   }
   function textDiagnostic(content: ContentPart[]): string | undefined {
-    // Keep concatenated text bytes intact for resume relay (#813 online P2):
-    // only emptiness uses the trimmed form; do not alter Markdown/spacing.
+    // Keep each text item's bytes intact and its boundary readable on the
+    // string-only host continuation channel.
     const text = content
-      .map((part) => (part.type === "text" ? part.text : ""))
-      .join("");
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("\n\n");
     return text.trim().length > 0 ? text : undefined;
   }
   /** Arm closeRound + abort path with the durable infrastructure failure for this round. */

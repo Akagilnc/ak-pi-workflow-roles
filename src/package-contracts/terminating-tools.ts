@@ -155,8 +155,9 @@ export type AcceptedFacts = {
 export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): AcceptedFacts {
   const record = details as Record<string, unknown>;
   const entry = PACKAGED_ROLE_REGISTRY.find((candidate) => candidate.outputTool === toolName);
-  const statusKey = LEGACY_REVIEW_OUTPUT_ROLES.get(toolName) === "judge"
-    ? "judgeStatus"
+  const legacyRole = LEGACY_REVIEW_OUTPUT_ROLES.get(toolName);
+  const statusKey = legacyRole === "judge" || legacyRole === "countersign"
+    ? `${legacyRole}Status`
     : entry !== undefined && "receiptStatusKey" in entry ? entry.receiptStatusKey : "status";
   const status = typeof record[statusKey] === "string" ? record[statusKey] : undefined;
   const commitKey = entry !== undefined && "receiptCommitKey" in entry ? entry.receiptCommitKey : undefined;
