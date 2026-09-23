@@ -169,7 +169,11 @@ test("secretariat converged receipt enters the submission gate on every host",
         undefined,
         hostCtx,
       );
-      assert.deepEqual(result.content, statusOnly ? [] : [{ type: "text", text: '{"countersignStatus":"converged","note":"署原话"}' }]);
+      assert.equal(result.content.length, statusOnly ? 0 : 1);
+      if (!statusOnly) {
+        assert.equal(result.content[0]?.type, "text");
+        assert.deepEqual(JSON.parse(result.content[0].text), { countersignStatus: "converged", note: "署原话" });
+      }
       assert.deepEqual(result.details, { secretariatStatus: "converged", ticketNumber: 969 });
       return gateCalls;
     }
