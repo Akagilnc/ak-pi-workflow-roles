@@ -2373,6 +2373,7 @@ test("ak-role diarist true-unbound records its dialogue under unbound", async ()
     const unboundRecord = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${runId}@diarist`, "records.jsonl");
     const rows = (await readFile(unboundRecord, "utf8")).trim().split("\n").map((row) => JSON.parse(row));
     assert.equal(rows[0]?.kind, "ticket-provenance");
+    assert.equal(rows[0]?.sessionParent, undefined);
     assert.equal(rows[0]?.payload?.lines?.[0]?.speaker, "owner");
 
     // Ticket dir stays unminted until a typed ticket bind.

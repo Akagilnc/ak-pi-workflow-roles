@@ -1325,6 +1325,10 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
     assert.equal((await readTicketProvenance(924, project, home)).header?.ticket, 924);
     assert.ok(diaristRuns.length > 0);
     assert.equal((await readFile(join(diaristRuns[0]!, "records.jsonl"), "utf8").catch((error: NodeJS.ErrnoException) => error.code)), "ENOENT");
+    const diaristRun = join(book, "924", "runs", diaristRuns[0]!.split("/").at(-1)!);
+    assert.equal(JSON.parse(await readFile(join(diaristRun, "admitted-request.json"), "utf8")).ticketNumber, 924);
+    assert.equal(JSON.parse(await readFile(join(diaristRun, "invocation.json"), "utf8")).ticketNumber, 924);
+    assert.equal((await readFile(join(diaristRuns[0]!, "admitted-request.json"), "utf8").catch((error: NodeJS.ErrnoException) => error.code)), "ENOENT");
   });
 });
 

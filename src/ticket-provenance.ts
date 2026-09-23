@@ -123,7 +123,7 @@ function ticketProvenanceRecordInput(
     level: "event",
     kind: TICKET_PROVENANCE_KIND,
     ...(ticketNumber === null ? {} : { subject: ticketProvenanceSubject(ticketNumber) }),
-    ...(runDirectory === undefined ? {} : { sessionParent: join(runDirectory, "session", "session.jsonl") }),
+    ...(runDirectory === undefined ? {} : { runDirectory }),
     cwd,
     ...(home === undefined ? {} : { home }),
   };

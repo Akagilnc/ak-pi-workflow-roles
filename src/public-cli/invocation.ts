@@ -671,11 +671,20 @@ export async function relocateAdmittedRunToTicket(
     for (const leaf of await readdir(dirname(oldRunDirectory))) {
       if (!leaf.endsWith("@diarist")) continue;
       const runDirectory = join(dirname(oldRunDirectory), leaf);
-      if (!existsSync(join(runDirectory, "records.jsonl"))) continue;
       const child = JSON.parse(await readFile(join(runDirectory, "admitted-request.json"), "utf8")) as Record<string, unknown>;
       if (child.correlationId !== admitted.runId &&
           !(Array.isArray(child.correlationIds) && child.correlationIds.includes(admitted.runId))) continue;
       await rehomeUnboundTicketProvenance(runDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
+      await bindTicketNumberOnRunDirectory(runDirectory, admitted.ticketNumber);
+      const childTarget = roleRunPlacement(ledgerHome, {
+        bookKey: admitted.bookKey,
+        subject: { ticketNumber: admitted.ticketNumber },
+        runId: leaf.slice(0, -"@diarist".length),
+        role: "diarist",
+      });
+      authority.seal(childTarget);
+      ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));
+      await rename(runDirectory, childTarget.runDirectory);
     }
   }
 

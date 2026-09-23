@@ -254,11 +254,8 @@ export function resolveSitianRecordPathInLedger(
     );
     sessionDir = paths.sessionDir;
     recordFile = paths.recordFile;
-  } else if (category === "ticket-provenance" && input.sessionParent !== undefined) {
-    if (!physicallyContainedIn(ledgerHome, input.sessionParent)) {
-      throw new Error("Sitian record ownership requires a parent session inside the ledger home");
-    }
-    sessionDir = dirname(dirname(input.sessionParent));
+  } else if (category === "ticket-provenance" && input.runDirectory !== undefined) {
+    sessionDir = input.runDirectory;
     recordFile = join(sessionDir, SITIAN_RECORDS_LEAF);
   } else {
     if (
@@ -270,6 +267,9 @@ export function resolveSitianRecordPathInLedger(
     }
     sessionDir = join(dirname(input.sessionParent), category);
     recordFile = join(sessionDir, SITIAN_RECORDS_LEAF);
+  }
+  if (!physicallyContainedIn(ledgerHome, sessionDir)) {
+    throw new Error("Sitian record ownership requires a directory inside the ledger home");
   }
 
   return { sessionDir, recordFile, ledgerHome };
@@ -294,7 +294,7 @@ export function resolveSitianRecordPath(input: SitianRecordInput): SitianRecordP
   const ledgerHome =
     input.home !== undefined && input.home.length > 0
       ? resolveActivationLedgerHome(input.home)
-      : resolveActivationLedgerHomeForPath(input.sessionParent);
+      : resolveActivationLedgerHomeForPath(input.runDirectory ?? input.sessionParent);
   return resolveSitianRecordPathInLedger(input, ledgerHome);
 }
 
