@@ -2,3 +2,5 @@ allowBuilds:
   '@google/genai': false
   esbuild: true
   protobufjs: false
+minimumReleaseAgeExclude:
+  - '@earendil-works/*'
