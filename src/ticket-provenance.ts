@@ -326,7 +326,7 @@ export async function readTicketProvenance(
         repo: header?.repo ?? resolveBookKeyFromGit(cwd),
         ticket: ticketNumber,
         createdAt: header?.createdAt ?? now,
-        updatedAt: now,
+        updatedAt: header?.updatedAt !== undefined && header.updatedAt > now ? header.updatedAt : now,
         sessions: merged.sessions,
       };
       const carried = lines.map((entry) => ({

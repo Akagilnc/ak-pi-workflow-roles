@@ -913,7 +913,7 @@ export function createDiaristRoleRuntime(
         let facts;
         try {
           facts = await commitDiaristProjection({
-            ticketNumber: ticketNumber ?? null,
+          ticketNumber: coords.boundTicketNumber ?? ticketNumber ?? null,
             cwd: coords.projectRoot,
             home: coords.home,
             runDirectory: coords.runDirectory,

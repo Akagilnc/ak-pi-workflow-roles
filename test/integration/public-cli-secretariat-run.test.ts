@@ -1291,7 +1291,7 @@ test("#969 omitted receipt ticketNumber still hands parent board identity to 给
 });
 
 test("public secretariat moves its unbound 起居录 to the ticket after typed assignment", async () => {
-  for (const scenario of ["first", "existing-identity"] as const) {
+  for (const scenario of ["first", "existing-identity", "failed-child"] as const) {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -1322,6 +1322,7 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
           sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
         })(args, options);
         sourceContent = await readFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), "utf8");
+        if (scenario === "failed-child") throw new Error("host failed after diarist recorded");
         if (scenario === "existing-identity") {
           await writeFile(join(book, "924", "records.jsonl"), `${prior}\n${sourceContent.split("\n")[1]}\n`, "utf8");
           const parentPagePath = join(book, "unbound", "runs", parentRun, "admitted-request.json");
@@ -1338,6 +1339,13 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
       ["secretariat", "--model", "test/caller-seat:high", "--project", project, "拟票"],
       { home, packageRoot, cwd: project, io: captureIo().io, createRunId: () => "01a0sec1010-0000-7000-8000-000000000001", roleTurnHost: host, hostAdapters: [adapter("pi", host)] },
     );
+    if (scenario === "failed-child") {
+      assert.notEqual(result.exitCode, 0);
+      const parentPage = JSON.parse(await readFile(join(book, "unbound", "runs", parentRun, "admitted-request.json"), "utf8"));
+      assert.deepEqual(parentPage.childDiaristRunIds, [diaristRuns[0]?.split("/").at(-1)?.replace(/@diarist$/, "")]);
+      assert.equal(await readFile(join(diaristRuns[0]!, "records.jsonl"), "utf8"), sourceContent);
+      return;
+    }
     assert.equal(result.exitCode, 0);
     assert.ok((await readdir(dirname(unrelatedRun))).includes("unfinished@diarist"));
     assert.equal(await readFile(join(unrelatedRun, "admitted-request.json"), "utf8"), "");

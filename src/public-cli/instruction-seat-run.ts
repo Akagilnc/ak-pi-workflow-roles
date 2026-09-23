@@ -461,6 +461,7 @@ async function runCountersignBody(
           await materializeAdmission(
             isSafePositiveTicketNumber(env.boundTicketNumber) ? env.boundTicketNumber : undefined,
           );
+          if (unboundDiaristRunId !== undefined) await recordChildDiaristRun(admitted, unboundDiaristRunId);
           await markRunAdmitted(admitted, env.principalAuthority);
           return await presentControlledFailure(admitted, {
             timedOut: false,
@@ -746,6 +747,9 @@ export async function runPublicInstructionSeat(
         ...(env.signal === undefined ? {} : { signal: env.signal }),
         ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
       }, io);
+      if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
+        await recordChildDiaristRun(admitted, outcome.admitted.runId);
+      }
       if (outcome.identity.kind === "escalate" || outcome.failedWithoutEscalate !== undefined) {
         const diagnostic = outcome.identity.kind === "escalate"
           ? outcome.identity.diagnostic
@@ -772,8 +776,6 @@ export async function runPublicInstructionSeat(
             thrown: error,
           }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
         }
-      } else if (outcome.admitted !== undefined) {
-        await recordChildDiaristRun(admitted, outcome.admitted.runId);
       }
     }
     return dispatchAdmitted(admitted, env, io);

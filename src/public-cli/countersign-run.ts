@@ -289,6 +289,7 @@ export async function invokeCourtDiarist(
         : result.stderr?.trim() || `exit ${result.exitCode}`;
     return {
       identity: { kind: "unbound" },
+      ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
       failedWithoutEscalate: {
         diagnostic: `court diarist station failed for ${input.failureLabel}: ${diagnostic}`,
       },

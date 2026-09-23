@@ -2248,10 +2248,16 @@ test("ticket provenance gives mixed positioned and legacy rows a total order", a
           }],
         },
       }),
+      JSON.stringify({
+        kind: "ticket-provenance",
+        timestamp: "2025-12-31T00:00:00.000Z",
+        payload: { type: "ticket-provenance-append", sessions: [], lines: [] },
+      }),
     ].join("\n") + "\n", "utf8");
 
     const result = await readTicketProvenance(TICKET, project, home);
     assert.deepEqual(result.lines.map((line) => line.id), ["positioned", "legacy"]);
+    assert.equal(result.header?.updatedAt, "2026-01-02T00:00:00.000Z");
   });
 });
 
@@ -2382,6 +2388,31 @@ test("ak-role diarist true-unbound records its dialogue under unbound", async ()
       `true-unbound must not mint ticket dir ${sample.volumeDir}`,
     );
     assert.equal(existsSync(join(sample.volumeDir, "起居录.md")), false);
+  });
+});
+
+test("pre-bound diarist records a lawful null assertion in the ticket volume", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const sessionPath = join(home, ".claude", "projects", "bound-null", "session.jsonl");
+    await mkdir(join(sessionPath, ".."), { recursive: true });
+    await writeFile(sessionPath, `${JSON.stringify({ type: "user", uuid: "bound-null-owner", message: { role: "user", content: "续录" }, origin: { kind: "human" } })}\n`, "utf8");
+    const result = await runAkRole(["diarist", "--model", "test/caller-seat:high", "--project", project, "续录"], {
+      home, packageRoot, cwd: project, io: captureIo().io,
+      boundTicketNumber: TICKET,
+      createRunId: () => "01a0diar00-0000-7000-8000-0000000000b1",
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: diaristEnvelopeRunner({ status: "completed", ticketNumber: null,
+          sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+        }),
+      }),
+    });
+    assert.equal(result.exitCode, 0);
+    assert.equal((await readTicketProvenance(TICKET, project, home)).lines[0]?.id, "bound-null-owner");
   });
 });
 
