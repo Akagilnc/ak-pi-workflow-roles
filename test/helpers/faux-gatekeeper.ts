@@ -1,7 +1,7 @@
-import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
+import { fauxAssistantMessage, fauxToolCall, type JsonObject } from "@earendil-works/pi-ai";
 
 export function fauxGatekeeper(
-  calls: Array<{ tool?: string; args?: object | undefined; text?: string }>,
+  calls: Array<{ tool?: string; args?: JsonObject | undefined; text?: string }>,
   seen: string[],
 ) {
   return async (context: any) => {

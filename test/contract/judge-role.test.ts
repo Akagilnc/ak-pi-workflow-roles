@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import test, { after, afterEach } from "node:test";
 
-import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context, type Usage } from "@earendil-works/pi-ai";
+import { createAssistantMessageEventStream, fauxAssistantMessage, fauxProvider, fauxToolCall, type AssistantMessage, type Context, type JsonObject, type Usage } from "@earendil-works/pi-ai";
 import {
   SessionManager,
   type ExtensionAPI,
@@ -390,7 +390,7 @@ function installRoleRuntime(
 }
 
 function toolCallContext(
-  calls: Array<{ id: string; name?: string; arguments?: Record<string, unknown> }>,
+  calls: Array<{ id: string; name?: string; arguments?: JsonObject }>,
   abort: () => void = () => {},
 ): ExtensionContext {
   const sessionManager = SessionManager.inMemory();
@@ -1314,7 +1314,7 @@ test("judge role injects its soul and accepts a soul-compliant verdict", async (
 
   const verdict: JudgeVerdict = { judgeStatus: "converged" };
   // withPassingGatekeeper: notary (judge_draft) + auditor (judge_compliance) both pass.
-  const context = await withPassingGatekeeper(toolCallContext([{ id: "call-1", arguments: verdict }]));
+  const context = await withPassingGatekeeper(toolCallContext([{ id: "call-1", arguments: verdict as unknown as JsonObject }]));
   const { sealed, pending } = await acceptThroughTypedRoundClosure({
     handlers: harness.handlers,
     tool,
@@ -2288,7 +2288,7 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         };
         return { pi, tools, handlers, activeTools: () => [...activeTools] };
       };
-      const outputContext = (name: string, id: string, arguments_: Record<string, unknown> = {}) => {
+      const outputContext = (name: string, id: string, arguments_: JsonObject = {}) => {
         const sessionManager = SessionManager.inMemory();
         (sessionManager as any).getSessionFile = () => join(nestedRunDir, "session", "session.jsonl");
         sessionManager.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
@@ -2437,7 +2437,7 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
           assert.ok(tool);
           const ctx = role === "fixer"
             ? await withPassingGatekeeper(outputContext(tool.name, `${role}-pass`))
-            : outputContext(tool.name, `${role}-pass`, outputs[role] as Record<string, unknown>);
+            : outputContext(tool.name, `${role}-pass`, outputs[role] as unknown as JsonObject);
           const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, ctx);
           assert.equal(accepted.terminate, true);
           if (role === "fixer") {
@@ -2454,7 +2454,7 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         const tool = retriable.harness.tools.get(toolName);
         assert.ok(tool);
         const submissionContext = async (id: string) => {
-          const bare = outputContext(tool.name, id, outputs[role] as Record<string, unknown>);
+          const bare = outputContext(tool.name, id, outputs[role] as unknown as JsonObject);
           if (role !== "judge") return bare;
           const ctx = await withPassingGatekeeper(bare);
           retriable.armJudgeGateDecision();
@@ -2493,7 +2493,7 @@ test("role outputs run nested audits through pass, bounce, and escalation", asyn
         const escalationTool = escalated.harness.tools.get(tool.name);
         if (role === "judge") {
           // #756: auditor escalate → raw receipt back to judge (not audit_escalation rewrite).
-          const escBare = outputContext(tool.name, `${role}-escalate`, outputs[role] as Record<string, unknown>);
+          const escBare = outputContext(tool.name, `${role}-escalate`, outputs[role] as unknown as JsonObject);
           const escCtx = await withPassingGatekeeper(escBare);
           escalated.armJudgeGateDecision();
           await assert.rejects(
