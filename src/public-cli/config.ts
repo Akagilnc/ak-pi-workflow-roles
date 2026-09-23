@@ -12,6 +12,11 @@ import {
 } from "../package-resources/engine-material.ts";
 import { resolveConfiguredProvinceOfficer } from "../institutional-resolution.ts";
 import {
+  PUBLIC_ROLE_RECORDS,
+  packagedModelParent,
+  packagedProvinceConfig,
+} from "../packaged-role-registry.ts";
+import {
   PUBLIC_CALLABLE_ROLES,
   PUBLIC_CONFIGURABLE_SEATS,
   isPublicCallableRole,
@@ -23,17 +28,20 @@ import {
   type PublicThinkingLevel,
 } from "./registry.ts";
 
-/** Province officers that may carry a persistent model override (#453). */
-export const GATE_OFFICER_SEATS = [
-  "gatekeeper",
-  "inspector",
-  "notary",
-] as const;
+/** Province officers that may carry a persistent model override (#453). Registry order. */
+type ProvinceConfigRole = Extract<
+  (typeof PUBLIC_ROLE_RECORDS)[number],
+  { readonly provinceConfig: true }
+>["role"];
+
+export const GATE_OFFICER_SEATS: readonly ProvinceConfigRole[] = PUBLIC_ROLE_RECORDS.flatMap(
+  (record) => ("provinceConfig" in record && record.provinceConfig === true ? [record.role] : []),
+);
 
 export type GateOfficerSeat = (typeof GATE_OFFICER_SEATS)[number];
 
 export function isGateOfficerSeat(value: string): value is GateOfficerSeat {
-  return (GATE_OFFICER_SEATS as readonly string[]).includes(value);
+  return packagedProvinceConfig(value);
 }
 
 export type CredentialProviders = {
@@ -191,7 +199,7 @@ export function clearPersistentSeatConfig(
   if (previous === undefined) return config;
   // Callable province seats keep independent host/engine residuals after model clear.
   if (
-    (seat === "notary" || seat === "inspector") &&
+    packagedModelParent(seat) !== undefined &&
     (previous.engine !== undefined || previous.host !== undefined)
   ) {
     return {
@@ -558,7 +566,7 @@ function parseSeatModelConfig(value: unknown, seat: string): PersistentSeatConfi
   // model clear. All other seats keep provider/model.
   if (!hasProvider) {
     if (
-      (seat === "notary" || seat === "inspector") &&
+      packagedModelParent(seat) !== undefined &&
       (typeof raw.engine === "string" || typeof raw.host === "string")
     ) {
       if (raw.thinking !== undefined) {
@@ -715,7 +723,7 @@ function resolveBaseSeat(
   seat: PublicConfigurableSeat,
 ): UnhostedEffectiveSeat {
   // #620: subordinate officers consume institutional-resolution authority result.
-  if (seat === "notary" || seat === "inspector") {
+  if (packagedModelParent(seat) !== undefined) {
     const resolved = resolveConfiguredProvinceOfficer(config, seat);
     return {
       seat,

@@ -22,8 +22,6 @@ import {
 
 import { isAuditEscalationResult } from "../audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../auditor-soul.ts";
-import { DOCTOR_AUDIT_TOOL_NAME } from "../doctor-auditor.ts";
-import { JUDGE_AUDIT_TOOL_NAME } from "../judge-auditor.ts";
 import type { RoleTurnKnownFailure } from "../host-contracts.ts";
 import { knownFailureFromProviderStop } from "../pi/known-failure.ts";
 import {
@@ -79,40 +77,26 @@ import {
   REVIEWER_OUTPUT_TOOL_NAME,
 } from "../package-contracts/reviewer-output.ts";
 import {
-  MERGER_OUTPUT_TOOL_NAME,
-} from "../merger-contracts.ts";
-import {
-  NOTARY_OUTPUT_TOOL_NAME,
-} from "../notary-contracts.ts";
-import {
-  COUNTERSIGN_OUTPUT_TOOL_NAME,
-} from "../countersign-contracts.ts";
-import {
-  GLEANER_LEFT_OUTPUT_TOOL_NAME,
-} from "../gleaner-left-contracts.ts";
-import {
-  DIARIST_OUTPUT_TOOL_NAME,
-} from "../diarist-contracts.ts";
+  packagedAuditToolName,
+  packagedDurableOfficerEntry,
+  packagedProjectsTargetBindRejection,
+  packagedRoleAcceptedOutputTool,
+  packagedRoleMetadata,
+  packagedSkipsGateOnInfrastructureStage,
+  type PackagedArtifactFace,
+  type PackagedArtifactLeaf,
+  type PackagedRole,
+} from "../packaged-role-registry.ts";
 import {
   SECRETARIAT_COUNTERSIGN_TERMINAL_FACT_KEY,
   SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
-  SECRETARIAT_OUTPUT_TOOL_NAME,
 } from "../secretariat-contracts.ts";
 import {
-  INSPECTOR_OUTPUT_TOOL_NAME,
-} from "../inspector-contracts.ts";
-import {
-  GATEKEEPER_OUTPUT_TOOL_NAME,
-} from "../package-contracts/gatekeeper-output.ts";
-import {
-  NAVIGATOR_OUTPUT_TOOL_NAME,
-} from "../package-contracts/navigator-output.ts";
-import {
-  AUDITOR_OUTPUT_TOOL_NAME,
-} from "../package-contracts/auditor-output.ts";
-import {
   observePackagedMethodSkillInvocation,
+  resolvePackagedMethodSkillPath,
   type ObservedPackagedMethodSkillInvocation,
+  type PackagedMethodSkillMaterial,
+  type PackagedMethodSkillName,
   type PackagedMethodSkillProvenance,
 } from "../package-resources/method-skill.ts";
 import {
@@ -146,21 +130,7 @@ import {
 import {
   ensureRunArtifactsDir,
   homeFromRunDirectory,
-  type AdmittedCoderInvocation,
-  type AdmittedCollectorInvocation,
-  type AdmittedDoctorInvocation,
-  type AdmittedFixerInvocation,
   type AdmittedJudgeInvocation,
-  type AdmittedMergerInvocation,
-  type AdmittedCountersignInvocation,
-  type AdmittedDiaristInvocation,
-  type AdmittedSecretariatInvocation,
-  type AdmittedGleanerLeftInvocation,
-  type AdmittedInspectorInvocation,
-  type AdmittedGatekeeperInvocation,
-  type AdmittedNavigatorInvocation,
-  type AdmittedNotaryInvocation,
-  type AdmittedReviewerInvocation,
   type AdmittedRoleInvocation,
 } from "./invocation.ts";
 
@@ -354,14 +324,6 @@ export async function settleHostEndedNoReceipt(
     coordinates.sessionDirectory,
     detourGateContext(admitted, scope),
   );
-}
-
-async function closedLedgerOutcome(
-  admitted: AdmittedRoleInvocation,
-  role: TerminalRoleName,
-  scope?: SettlementCourtScope,
-): Promise<Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }> | undefined> {
-  return sealedLedgerOutcome(admitted, role, scope);
 }
 
 /** Transitional host-session reads remain only for non-sealed failure and audit evidence. */
@@ -1696,15 +1658,63 @@ export async function readEngineDetourInfrastructureFailure(
   );
 }
 
+function knownFailureFromControlled(failure: ControlledFailure): RoleTurnKnownFailure {
+  return {
+    ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+    diagnostic: failure.diagnostic,
+    ...(failure.identity === undefined ? {} : { identity: failure.identity }),
+  };
+}
+
+const RUNNER_FAILURE_POLICY = {
+  "engine-detour-known-first": {
+    read: readEngineDetourInfrastructureFailure,
+    rank: "known-first",
+  },
+  "engine-detour-record-first": {
+    read: readEngineDetourInfrastructureFailure,
+    rank: "record-first",
+  },
+  "collector-known-first": {
+    read: readCollectorInfrastructureFailure,
+    rank: "known-first",
+  },
+} as const;
+
+/**
+ * Runner-failure rank for one seat. The composition-root `runnerFailure`
+ * leaf is the only seat difference; absent means the runner knownFailure stands.
+ */
+export function seatKnownFailureResolver(
+  role: PackagedRole,
+): ((input: {
+  result: { knownFailure?: RoleTurnKnownFailure };
+  sessionFile: string;
+}) => Promise<RoleTurnKnownFailure | undefined>) | undefined {
+  const record = packagedRoleMetadata(role);
+  if (record === undefined || !("runnerFailure" in record)) return undefined;
+  const policy = RUNNER_FAILURE_POLICY[record.runnerFailure];
+  return async ({ result, sessionFile }) => {
+    const infrastructureFailure = await policy.read(sessionFile);
+    if (policy.rank === "record-first") {
+      return infrastructureFailure === undefined
+        ? result.knownFailure
+        : knownFailureFromControlled(infrastructureFailure);
+    }
+    return result.knownFailure ?? (
+      infrastructureFailure === undefined ? undefined : knownFailureFromControlled(infrastructureFailure)
+    );
+  };
+}
+
 function auditToolNameForRole(
   role: (typeof AUDITOR_SOUL_ROLES)[number],
 ): string {
-  switch (role) {
-    case "judge":
-      return JUDGE_AUDIT_TOOL_NAME;
-    case "doctor":
-      return DOCTOR_AUDIT_TOOL_NAME;
+  const name = packagedAuditToolName(role);
+  if (name === undefined) {
+    throw new Error(`audit tool is not declared for ${role}`);
   }
+  return name;
 }
 
 type BoundRoleToolCall = {
@@ -1958,11 +1968,6 @@ export async function appendRunAttemptHistory(
   } catch {}
 }
 
-/** Lawful Judge outcomes extracted from session (never a fabricated failure Receipt). */
-export type LawfulJudgeRoleOutcome = Extract<
-  TerminalRoleOutcome,
-  { kind: "accepted" } | { kind: "audit_escalation" }
->;
 /**
  * Minimal attendance provenance against the bound marker (ADR 0043).
  * Keep only invocationId + post-terminal ordering. Runtime-self-produced
@@ -2223,11 +2228,7 @@ async function withOptionalGateProjection<
   const skipGate =
     isRecord(secondaryEvidence)
     && secondaryEvidence.kind === "role_infrastructure_failure"
-    && (
-      secondaryEvidence.stage === "gatekeeper"
-      || secondaryEvidence.stage === "inspector"
-      || secondaryEvidence.stage === "notary"
-    );
+    && packagedSkipsGateOnInfrastructureStage(secondaryEvidence.stage);
 
   let next: T & { gate?: TerminalGateFact } = base;
   if (!skipGate) {
@@ -2464,64 +2465,22 @@ async function publishAcceptedTerminalArtifacts(
   ];
 }
 
-export async function publishJudgeArtifacts(
-  admitted: AdmittedJudgeInvocation,
+type MethodPublicationOptions = {
+  readonly methodProvenance?: PackagedMethodSkillProvenance;
+  readonly methodSkillPath?: string;
+  readonly methodSkillConfiguredPath?: string;
+};
+
+/** Publish one accepted seat's report/evidence face from the shared leaf table. */
+export async function publishSeatAcceptedArtifacts(
+  admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
+  entries: readonly SessionEntry[] = [],
+  options: MethodPublicationOptions = {},
 ): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: "judge",
-      runId: admitted.runId,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-    },
-  });
+  return publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries, options);
 }
-
-/**
- * Publish lawful Coder success Artifacts on the shared #106 success interface.
- * Evidence records package method provenance without ambient home Skill paths.
- */
-export async function publishCoderArtifacts(
-  admitted: AdmittedCoderInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-  options: {
-    readonly methodProvenance?: PackagedMethodSkillProvenance;
-  } = {},
-): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: "coder",
-      runId: admitted.runId,
-      phase: admitted.phase,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      role: "coder",
-      phase: admitted.phase,
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      taskPath: admitted.taskPath,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-      ...(options.methodProvenance === undefined
-        ? {}
-        : { methodProvenance: options.methodProvenance }),
-    },
-  });
-}
-
-/** Lawful Coder accepted outcome extracted from session (shared success interface). */
-export type LawfulCoderRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
 
 /**
  * Read session entries for lawful settlement. Missing path → undefined (absence).
@@ -2544,49 +2503,34 @@ async function readLawfulSettlementEntries(
 }
 
 /**
- * Lawful Judge outcome presence only — no artifact publication.
- * Returns undefined for genuine absence (missing path / no lawful verdict).
- * Session-read failures propagate with typed identity.
+ * Sealed-ledger seats that publish on a lawful outcome and do not scan a
+ * residual tool or attach run-scoped submission history.
+ * Absence stays undefined. Session-read and publication errors keep their identity.
+ * Outcome is read before publication so a later write error cannot erase it.
  */
-export async function readLawfulJudgeRoleOutcome(
-  admitted: AdmittedJudgeInvocation,
+async function settleSealedLedgerTerminal(
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<LawfulJudgeRoleOutcome | undefined> {
-  return sealedLedgerOutcome(admitted, "judge", scope);
-}
-
-/**
- * Single lawful-settlement implementation (session → outcome/Navigator/artifacts).
- *
- * - Returns undefined only for genuine absence (missing session path, or no
- *   lawful verdict in an otherwise readable session).
- * - Malformed JSONL / other session-read failures throw with knownCause=session
- *   and original identity (SyntaxError name retained).
- * - Artifact publication failures propagate with their original typed identity.
- * - Lawful outcome presence is decided before publication so a later write error
- *   cannot erase the fact that a lawful result already exists.
- */
-async function settleLawfulJudgeTerminalResult(
-  admitted: AdmittedJudgeInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
+  scope: SettlementCourtScope | undefined,
+  publish: (
+    roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
+    coordinates: DurablePrincipalCoordinates,
+    entries: readonly SessionEntry[],
+  ) => Promise<TerminalArtifactRef[]>,
+  accept?: (
+    roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
+  ) => boolean,
 ): Promise<TerminalResult | undefined> {
-  const roleOutcome = await readLawfulJudgeRoleOutcome(admitted, authority, scope);
+  const roleOutcome = await sealedLedgerOutcome(admitted, admitted.role, scope);
   if (roleOutcome === undefined) return undefined;
+  if (accept !== undefined && !accept(roleOutcome)) return undefined;
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
-  const navigator = extractNavigatorFact(entries);
-  // Lawful outcome exists — artifact publication keeps original errno/name.
-  const artifacts = await publishJudgeArtifacts(
-    admitted,
-    roleOutcome,
-    coordinates,
-  );
+  const artifacts = await publish(roleOutcome, coordinates, entries);
   return withOptionalGateProjection(
     {
       roleOutcome,
-      navigator,
+      navigator: extractNavigatorFact(entries),
       artifacts,
       runId: admitted.runId,
     },
@@ -2596,86 +2540,139 @@ async function settleLawfulJudgeTerminalResult(
 }
 
 /**
- * Settle a lawful typed terminal result from the admitted session.
- * Throws when no lawful outcome is present (tests/callers that require success).
- * Session-read and publication failures retain their typed identity.
+ * Sealed accepted outcome publishes. Any other ledger face falls through to
+ * the latest bound errored tool result in the scan window, which settles as
+ * output failure. Both faces attach run-scoped submissions. Absence of both
+ * stays undefined. Session is read first so a read failure keeps its identity
+ * even when the ledger has no accepted row.
  */
-export async function settleJudgeTerminalResult(
-  admitted: AdmittedJudgeInvocation,
+async function settleSealedAcceptedOrToolResidual(
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleLawfulJudgeTerminalResult(admitted, authority, scope);
-  if (settled === undefined) {
-    throw new Error(
-      "Judge Role run completed without a lawful typed terminal result",
+  scope: SettlementCourtScope | undefined,
+  role: TerminalRoleName,
+  residualToolName: string,
+  scan: "current-attempt" | "session",
+  publish: (
+    roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" }>,
+    coordinates: DurablePrincipalCoordinates,
+    entries: readonly SessionEntry[],
+  ) => Promise<TerminalArtifactRef[]>,
+): Promise<TerminalResult | undefined> {
+  const coordinates = coordinatesFromAdmitted(authority, admitted);
+  const { sessionDirectory, sessionFile } = coordinates;
+  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
+  const roleOutcome = await sealedLedgerOutcome(admitted, role, scope);
+  if (roleOutcome?.role !== role || roleOutcome.kind !== "accepted") {
+    const scanStart = scan === "current-attempt" ? currentAttemptStartIndex(entries) : 0;
+    for (let index = entries.length - 1; index >= scanStart; index -= 1) {
+      const message = entries[index]?.message;
+      if (message?.role !== "toolResult") continue;
+      const residual = boundErroredToolCandidate(entries, index, message, residualToolName);
+      if (residual === undefined) continue;
+      const candidate = residual.candidate;
+      const details = isRecord(candidate) ? candidate : { candidate };
+      const failed = await settleFailureTerminalResult(
+        admitted,
+        {
+          cause: "output",
+          diagnostic: residual.diagnostic,
+          details,
+        },
+        authority,
+        scope ?? {},
+      );
+      return attachRecordedSubmissions(admitted, failed, scope);
+    }
+    return undefined;
+  }
+  const artifacts = await publish(roleOutcome, coordinates, entries);
+  return attachRecordedSubmissions(
+    admitted,
+    await withOptionalGateProjection(
+      {
+        roleOutcome,
+        navigator: extractNavigatorFact(entries),
+        artifacts,
+        runId: admitted.runId,
+      },
+      sessionDirectory,
+      detourGateContext(admitted, scope),
+    ),
+    scope,
+  );
+}
+
+/**
+ * One settlement for every registered seat. The registry `settlement` leaf
+ * picks sealed ledger, sealed-or-residual, or the accepted-tool scan.
+ * Seat evidence and the observed-method tail stay on the artifact face.
+ */
+async function settleSeat(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  scope: SettlementCourtScope | undefined,
+  options: MethodPublicationOptions,
+): Promise<TerminalResult | undefined> {
+  const record = packagedRoleMetadata(admitted.role);
+  if (record === undefined) {
+    throw new Error(`no settlement for ${admitted.role}`);
+  }
+  if (record.settlement === "accepted") {
+    return trySettleAcceptedSeatTerminalResult(admitted, authority, scope);
+  }
+  const publish = (
+    roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
+    coordinates: DurablePrincipalCoordinates,
+    entries: readonly SessionEntry[],
+  ) => publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries, options);
+  if (record.settlement === "residual") {
+    return settleSealedAcceptedOrToolResidual(
+      admitted,
+      authority,
+      scope,
+      admitted.role,
+      record.residualTool,
+      record.residualScan,
+      publish,
     );
   }
-  return settled;
+  const accept = "sealedAcceptedOnly" in record && record.sealedAcceptedOnly === true
+    ? (
+      roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
+    ) => roleOutcome.role === admitted.role && roleOutcome.kind === "accepted"
+    : undefined;
+  return settleSealedLedgerTerminal(admitted, authority, scope, publish, accept);
 }
 
 /**
- * Try to settle a lawful typed terminal result from the admitted session.
- * Returns undefined only for genuine absence (no lawful verdict / missing path).
- * Session malformation and publication exceptions propagate with typed identity.
+ * Try to settle any registered seat. Undefined only for genuine absence.
+ * Session malformation and publication exceptions keep their typed identity.
  */
-export async function trySettleJudgeTerminalResult(
-  admitted: AdmittedJudgeInvocation,
+export async function trySettleSeatTerminalResult(
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
+  options: MethodPublicationOptions = {},
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulJudgeTerminalResult(admitted, authority, scope);
+  return settleSeat(admitted, authority, scope, options);
 }
 
-async function settleLawfulCoderTerminalResult(
-  admitted: AdmittedCoderInvocation,
+/**
+ * Settle any registered seat. Throws when no lawful outcome is present.
+ * Session-read and publication failures retain their typed identity.
+ */
+export async function settleSeatTerminalResult(
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance?: PackagedMethodSkillProvenance;
-  } = {},
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  const ledgerOutcome = await closedLedgerOutcome(admitted, "coder", scope);
-  if (ledgerOutcome === undefined) return undefined;
-  const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
-  const navigator = extractNavigatorFact(entries);
-  const artifacts = await publishCoderArtifacts(
-    admitted,
-    roleOutcome,
-    coordinates,
-    {
-      ...(options.methodProvenance === undefined
-        ? {}
-        : { methodProvenance: options.methodProvenance }),
-    },
-  );
-  return withOptionalGateProjection(
-    {
-      roleOutcome,
-      navigator,
-      artifacts,
-      runId: admitted.runId,
-    },
-    coordinates.sessionDirectory,
-    detourGateContext(admitted, scope),
-  );
-}
-
-/** Settle a lawful Coder Terminal from the admitted session (shared #106 success interface). */
-export async function settleCoderTerminalResult(
-  admitted: AdmittedCoderInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance?: PackagedMethodSkillProvenance;
-  } = {},
+  options: MethodPublicationOptions = {},
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleLawfulCoderTerminalResult(admitted, authority, options, scope);
+  const settled = await settleSeat(admitted, authority, scope, options);
   if (settled === undefined) {
+    const label = admitted.role.charAt(0).toUpperCase() + admitted.role.slice(1);
     throw new Error(
-      "Coder Role run completed without a lawful typed terminal result",
+      `${label} Role run completed without a lawful typed terminal result`,
     );
   }
   return settled;
@@ -2701,12 +2698,32 @@ function sessionMessageText(message: SessionMessage | undefined): string {
 }
 
 /**
- * Observe optional Fixer diagnosing-bugs Skill expansions from the session.
- * Availability is always package-bound; invocation is recorded only when observed.
+ * Locations a loaded packaged method may be observed at.
+ * The name is the loaded material; the configured path is the package copy.
  */
-export function extractFixerMethodInvocations(
+export function observedMethodSkillOptions(
+  packageRoot: string,
+  material: PackagedMethodSkillMaterial,
+): {
+  readonly methodProvenance: PackagedMethodSkillProvenance;
+  readonly methodSkillPath: string;
+  readonly methodSkillConfiguredPath: string;
+} {
+  return {
+    methodProvenance: material.provenance,
+    methodSkillPath: material.skillPath,
+    methodSkillConfiguredPath: resolvePackagedMethodSkillPath(packageRoot, material.name),
+  };
+}
+
+/**
+ * Observe packaged method Skill expansions from the session.
+ * The skill name is the caller's packaged method; home locations never count.
+ */
+function extractObservedMethodInvocations(
   entries: readonly SessionEntry[],
   options: {
+    readonly name: PackagedMethodSkillName;
     readonly allowedLocations: readonly string[];
   },
 ): readonly ObservedPackagedMethodSkillInvocation[] {
@@ -2718,7 +2735,7 @@ export function extractFixerMethodInvocations(
     const text = sessionMessageText(message);
     if (text.length === 0) continue;
     const hit = observePackagedMethodSkillInvocation(text, {
-      name: "diagnosing-bugs",
+      name: options.name,
       allowedLocations: options.allowedLocations,
     });
     if (hit !== undefined) observed.push(hit);
@@ -2727,367 +2744,146 @@ export function extractFixerMethodInvocations(
 }
 
 /**
- * Publish lawful Fixer success Artifacts on the shared #106 success interface.
- * Evidence records package diagnosis provenance and optional observed invocation.
+ * #836: cost and the auditor's no-receipt facts ride beside the role's
+ * testimony on the current attempt's candidate entry. Absence is omitted,
+ * never invented. Both facts come from that one entry.
  */
-export async function publishFixerArtifacts(
-  admitted: AdmittedFixerInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-  },
-): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: "fixer",
-      runId: admitted.runId,
-      phase: admitted.phase,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      role: "fixer",
-      phase: admitted.phase,
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      packetPath: admitted.packetPath,
-      ...(admitted.prerequisitesPath === undefined
-        ? {}
-        : { prerequisitesPath: admitted.prerequisitesPath }),
-      prerequisites: admitted.prerequisites,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-      methodProvenance: options.methodProvenance,
-      // Optional diagnosis: availability is package-bound; invocation only when observed.
-      methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
-      methodInvocations: options.methodInvocations ?? [],
-    },
-  });
-}
-
-/** Lawful Fixer accepted outcome extracted from session (no LLM auditor after #242). */
-export type LawfulFixerRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-async function settleLawfulFixerTerminalResult(
-  admitted: AdmittedFixerInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodSkillPath: string;
-    readonly methodSkillConfiguredPath: string;
-  },
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  const ledgerOutcome = await closedLedgerOutcome(admitted, "fixer", scope);
-  if (ledgerOutcome === undefined) return undefined;
-  const roleOutcome: TerminalRoleOutcome = ledgerOutcome;
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const navigator = extractNavigatorFact(entries);
-  const methodInvocations = extractFixerMethodInvocations(entries, {
-    allowedLocations: [
-      options.methodSkillPath,
-      options.methodSkillConfiguredPath,
-    ],
-  });
-  const artifacts = await publishFixerArtifacts(
-    admitted,
-    roleOutcome,
-    coordinates,
-    {
-      methodProvenance: options.methodProvenance,
-      methodInvocations,
-    },
-  );
-  return withOptionalGateProjection(
-    {
-      roleOutcome,
-      navigator,
-      artifacts,
-      runId: admitted.runId,
-    },
-    sessionDirectory,
-    detourGateContext(admitted, scope),
-  );
-}
-
-/** Settle a lawful Fixer Terminal from the admitted session (shared #106 success interface). */
-export async function settleFixerTerminalResult(
-  admitted: AdmittedFixerInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodSkillPath: string;
-    readonly methodSkillConfiguredPath: string;
-  },
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleLawfulFixerTerminalResult(admitted, authority, options, scope);
-  if (settled === undefined) {
-    throw new Error(
-      "Fixer Role run completed without a lawful typed terminal result",
-    );
-  }
-  return settled;
-}
-
-export async function publishCollectorArtifacts(
-  admitted: AdmittedCollectorInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: "collector",
-      runId: admitted.runId,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      role: "collector",
-      ...(admitted.prNumber === undefined ? {} : { prNumber: admitted.prNumber }),
-      repository: admitted.repository.canonical,
-      manifestDigest: admitted.manifestDigest,
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-    },
-  });
-}
-
-/** Lawful Collector accepted outcome extracted from session. */
-export type LawfulCollectorRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-async function settleLawfulCollectorTerminalResult(
-  admitted: AdmittedCollectorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted, "collector", scope);
-  if (roleOutcome?.role !== "collector" || roleOutcome.kind !== "accepted") {
-    // Bounded to the current attempt so multi-attempt resume timeout/no-output
-    // is not masked by a prior wait-tool residual (#633).
-    const scanStart = currentAttemptStartIndex(entries);
-    for (let index = entries.length - 1; index >= scanStart; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(entries, index, message, COLLECTOR_WAIT_TOOL);
-      if (residual === undefined) continue;
-      const candidate = residual.candidate;
-      const details = isRecord(candidate) ? candidate : { candidate };
-      const failed = await settleFailureTerminalResult(
-        admitted,
-        {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details,
-        },
-        authority,
-        scope ?? {},
-      );
-      return attachRecordedSubmissions(admitted, failed, scope);
-    }
-    return undefined;
-  }
-  const accepted: LawfulCollectorRoleOutcome = roleOutcome;
-  const navigator = extractNavigatorFact(entries);
-  const artifacts = await publishCollectorArtifacts(
-    admitted,
-    accepted,
-    coordinates,
-  );
-  return attachRecordedSubmissions(
-    admitted,
-    await withOptionalGateProjection(
-      {
-        roleOutcome: accepted,
-        navigator,
-        artifacts,
-        runId: admitted.runId,
-      },
-      sessionDirectory,
-      detourGateContext(admitted, scope),
-    ),
-    scope,
-  );
-}
-
-/** Settle a lawful Collector Terminal from the admitted session. */
-export async function settleCollectorTerminalResult(
-  admitted: AdmittedCollectorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleLawfulCollectorTerminalResult(admitted, authority, scope);
-  if (settled === undefined) {
-    throw new Error(
-      "Collector Role run completed without a lawful typed terminal result",
-    );
-  }
-  return settled;
-}
-
-/** Try to settle a lawful Collector Terminal; undefined only for genuine absence. */
-export async function trySettleCollectorTerminalResult(
-  admitted: AdmittedCollectorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulCollectorTerminalResult(admitted, authority, scope);
-}
-
-/**
- * #836: runtime cost is a machine fact recorded beside the role's original
- * testimony (`ak_doctor_audit_candidate` custom entry), never merged into the
- * accepted payload itself. Absence (no candidate entry, or entry without a
- * cost sibling) reads as undefined — never invented.
- */
-function extractDoctorCandidateCostFact(
+function extractDoctorCandidateFacts(
   entries: readonly SessionEntry[],
-): DoctorCaseCost | undefined {
+): { readonly cost?: DoctorCaseCost; readonly auditNoReceipt?: unknown } {
   const scanStart = currentAttemptStartIndex(entries);
   for (let i = entries.length - 1; i >= scanStart; i -= 1) {
     const entry = entries[i];
-    if (entry?.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
-      const data = entry.data;
-      return isRecord(data) ? (data.cost as DoctorCaseCost | undefined) : undefined;
+    if (entry?.type !== "custom" || entry.customType !== DOCTOR_CANDIDATE_ENTRY_TYPE) {
+      continue;
     }
+    const data = entry.data;
+    if (!isRecord(data)) return {};
+    return {
+      ...(data.cost === undefined ? {} : { cost: data.cost as DoctorCaseCost }),
+      ...(data.auditNoReceipt === undefined ? {} : { auditNoReceipt: data.auditNoReceipt }),
+    };
   }
-  return undefined;
+  return {};
 }
 
-/**
- * #836: the auditor's own no-receipt lifecycle facts are a machine fact about
- * the audit leg, recorded beside (never merged into) the role's accepted
- * testimony. Absence reads as undefined — never invented.
- */
-function extractDoctorCandidateAuditNoReceiptFact(
+const EMPTY_ARTIFACT_FACE: PackagedArtifactFace = { leaves: [] };
+
+/** Artifact face for one seat. Absent means report/evidence carry only shared leaves. */
+function seatArtifactFace(role: string): PackagedArtifactFace {
+  const record = packagedRoleMetadata(role);
+  if (record !== undefined && "artifactFace" in record && record.artifactFace !== undefined) {
+    return record.artifactFace;
+  }
+  return EMPTY_ARTIFACT_FACE;
+}
+
+function readAdmittedPath(source: object, path: string): unknown {
+  let current: unknown = source;
+  for (const part of path.split(".")) {
+    if (typeof current !== "object" || current === null) return undefined;
+    current = (current as Record<string, unknown>)[part];
+  }
+  return current;
+}
+
+function evidenceLeaves(
+  admitted: AdmittedRoleInvocation,
+  leaves: readonly PackagedArtifactLeaf[],
+): Record<string, unknown> {
+  const evidence: Record<string, unknown> = {};
+  for (const leaf of leaves) {
+    if (leaf.callerProvenance === true) {
+      if (!admitted.instructionEmpty) evidence[leaf.key] = admitted.instruction;
+      continue;
+    }
+    const value = readAdmittedPath(admitted, leaf.from ?? leaf.key);
+    if (value === undefined && leaf.omitUndefined === true) continue;
+    evidence[leaf.key] = leaf.copyArray === true && Array.isArray(value) ? [...value] : value;
+  }
+  return evidence;
+}
+
+function doctorReportFacts(
+  face: PackagedArtifactFace,
+  roleOutcome: TerminalRoleOutcome,
   entries: readonly SessionEntry[],
-): unknown {
-  const scanStart = currentAttemptStartIndex(entries);
-  for (let i = entries.length - 1; i >= scanStart; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type === "custom" && entry.customType === DOCTOR_CANDIDATE_ENTRY_TYPE) {
-      const data = entry.data;
-      return isRecord(data) ? data.auditNoReceipt : undefined;
-    }
-  }
-  return undefined;
+): Record<string, unknown> {
+  if (face.doctorReportFacts !== true || roleOutcome.kind === "audit_escalation") return {};
+  const facts = extractDoctorCandidateFacts(entries);
+  return {
+    ...(facts.cost === undefined ? {} : { cost: facts.cost }),
+    ...(facts.auditNoReceipt === undefined ? {} : { auditNoReceipt: facts.auditNoReceipt }),
+  };
 }
 
-export async function publishDoctorArtifacts(
-  admitted: AdmittedDoctorInvocation,
+function observedMethodTail(
+  face: PackagedArtifactFace,
+  entries: readonly SessionEntry[],
+  options: {
+    readonly methodProvenance?: PackagedMethodSkillProvenance;
+    readonly methodSkillPath?: string;
+    readonly methodSkillConfiguredPath?: string;
+  },
+): Record<string, unknown> {
+  if (face.method === undefined) return {};
+  if (face.method === "optional") {
+    return options.methodProvenance === undefined
+      ? {}
+      : { methodProvenance: options.methodProvenance };
+  }
+  if (
+    options.methodProvenance === undefined
+    || options.methodSkillPath === undefined
+    || options.methodSkillConfiguredPath === undefined
+  ) {
+    throw new Error("observed method publication is missing packaged method coordinates");
+  }
+  const methodInvocations = extractObservedMethodInvocations(entries, {
+    name: options.methodProvenance.name,
+    allowedLocations: [options.methodSkillPath, options.methodSkillConfiguredPath],
+  });
+  return {
+    methodProvenance: options.methodProvenance,
+    methodInvocationObserved: methodInvocations.length > 0,
+    methodInvocations,
+  };
+}
+
+async function publishDeclaredSeatArtifacts(
+  admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
+  entries: readonly SessionEntry[],
   options: {
-    readonly cost?: DoctorCaseCost;
-    readonly auditNoReceipt?: unknown;
+    readonly methodProvenance?: PackagedMethodSkillProvenance;
+    readonly methodSkillPath?: string;
+    readonly methodSkillConfiguredPath?: string;
   } = {},
 ): Promise<TerminalArtifactRef[]> {
+  const face = seatArtifactFace(admitted.role);
+  const phase = face.reportPhase === true
+    ? { phase: readAdmittedPath(admitted, "phase") }
+    : {};
   return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
     report: {
-      role: "doctor",
+      role: admitted.role,
       runId: admitted.runId,
+      ...phase,
       outcome: roleOutcome,
-      ...(options.cost === undefined ? {} : { cost: options.cost }),
-      ...(options.auditNoReceipt === undefined
-        ? {}
-        : { auditNoReceipt: options.auditNoReceipt }),
+      ...doctorReportFacts(face, roleOutcome, entries),
     },
     evidence: {
       runId: admitted.runId,
-      role: "doctor",
-      issueNumber: admitted.issueNumber,
-      caseRunsPath: admitted.caseRunsPath,
-      caseIdentity: admitted.caseIdentity,
+      ...(face.evidenceRole === true ? { role: admitted.role } : {}),
+      ...evidenceLeaves(admitted, face.leaves),
       sessionDirectory: coordinates.sessionDirectory,
       sessionFile: coordinates.sessionFile,
       admittedRequestPath: admitted.admittedRequestPath,
       attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
+      ...observedMethodTail(face, entries, options),
     },
   });
-}
-
-/** Lawful Doctor accepted/refused/audit_escalation outcome extracted from session. */
-export type LawfulDoctorRoleOutcome = Extract<
-  TerminalRoleOutcome,
-  { kind: "accepted" } | { kind: "audit_escalation" }
->;
-async function settleLawfulDoctorTerminalResult(
-  admitted: AdmittedDoctorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted, "doctor", scope);
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  if (sealed === undefined) return undefined;
-  if (sealed.kind === "audit_escalation") {
-    const artifacts = await publishDoctorArtifacts(admitted, sealed, coordinates);
-    return withOptionalGateProjection(
-      {
-        roleOutcome: sealed,
-        navigator: extractNavigatorFact(entries),
-        artifacts,
-        runId: admitted.runId,
-      },
-      sessionDirectory,
-      detourGateContext(admitted, scope),
-    );
-  }
-  const roleOutcome = sealed;
-  const navigator = extractNavigatorFact(entries);
-  const cost = extractDoctorCandidateCostFact(entries);
-  const auditNoReceipt = extractDoctorCandidateAuditNoReceiptFact(entries);
-  const artifacts = await publishDoctorArtifacts(
-    admitted,
-    roleOutcome,
-    coordinates,
-    {
-      ...(cost === undefined ? {} : { cost }),
-      ...(auditNoReceipt === undefined ? {} : { auditNoReceipt }),
-    },
-  );
-  return withOptionalGateProjection(
-    {
-      roleOutcome,
-      navigator,
-      artifacts,
-      runId: admitted.runId,
-    },
-    sessionDirectory,
-    detourGateContext(admitted, scope),
-  );
-}
-
-/** Settle a lawful Doctor Terminal from the admitted session. */
-export async function settleDoctorTerminalResult(
-  admitted: AdmittedDoctorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleLawfulDoctorTerminalResult(admitted, authority, scope);
-  if (settled === undefined) {
-    throw new Error(
-      "Doctor Role run completed without a lawful typed terminal result",
-    );
-  }
-  return settled;
-}
-
-/** Try to settle a lawful Doctor Terminal; undefined only for genuine absence. */
-export async function trySettleDoctorTerminalResult(
-  admitted: AdmittedDoctorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulDoctorTerminalResult(admitted, authority, scope);
 }
 
 /**
@@ -3096,16 +2892,7 @@ export async function trySettleDoctorTerminalResult(
  * #757: sealed receipts pass through full decisiveFacts — one path, no per-seat projector.
  */
 type SeatAcceptedSettlementSpec = {
-  readonly role:
-    | "notary"
-    | "countersign"
-    | "gleaner-left"
-    | "inspector"
-    | "gatekeeper"
-    | "navigator"
-    | "auditor"
-    | "diarist"
-    | "secretariat";
+  readonly role: TerminalRoleName;
   readonly toolName: string;
 };
 
@@ -3120,47 +2907,8 @@ function currentAttemptStartIndex(entries: readonly SessionEntry[]): number {
   return 0;
 }
 
-/**
- * Filed-seat success face via the sole accepted publisher (#953).
- */
-async function publishSeatAcceptedArtifacts(
-  admitted: {
-    readonly role: TerminalRoleName;
-    readonly runId: string;
-    readonly runDirectory: string;
-    readonly admittedRequestPath: string;
-    readonly attachments: readonly AcceptedArtifactAttachment[];
-  },
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: admitted.role,
-      runId: admitted.runId,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-    },
-  });
-}
-
 async function settleLawfulSeatAcceptedTerminalResult(
-  admitted:
-    | AdmittedNotaryInvocation
-    | AdmittedCountersignInvocation
-    | AdmittedGleanerLeftInvocation
-    | AdmittedInspectorInvocation
-    | AdmittedGatekeeperInvocation
-    | AdmittedNavigatorInvocation
-    | import("./invocation.ts").AdmittedAuditorInvocation
-    | AdmittedDiaristInvocation
-    | AdmittedSecretariatInvocation,
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   spec: SeatAcceptedSettlementSpec,
   scope?: SettlementCourtScope,
@@ -3203,13 +2951,14 @@ async function settleLawfulSeatAcceptedTerminalResult(
       );
     }
   }
-  const roleOutcome = await closedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
+  const roleOutcome = await sealedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
   if (roleOutcome !== undefined && (thisAttemptHasSeatSuccess || residual === undefined)) {
     const navigator = extractNavigatorFact(entries);
-    const artifacts = await publishSeatAcceptedArtifacts(
+    const artifacts = await publishDeclaredSeatArtifacts(
       admitted,
       roleOutcome,
       coordinates,
+      entries,
     );
     return withSubmissions(
       await withOptionalGateProjection(
@@ -3244,142 +2993,49 @@ async function settleLawfulSeatAcceptedTerminalResult(
   return undefined;
 }
 
-/** Lawful Notary accepted outcome (pass/bounce/escalate). */
-export type LawfulNotaryRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulNotaryTerminalResult(
-  admitted: AdmittedNotaryInvocation,
+/** Accepted-tool seats: one scan, tool name from the composition-root record. */
+export async function trySettleAcceptedSeatTerminalResult(
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  // #757: default sealed pass-through — no projectAccepted identity wrapper.
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "notary",
-    toolName: NOTARY_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-/** Settle a lawful Notary Terminal from the admitted session. */
-export async function settleNotaryTerminalResult(
-  admitted: AdmittedNotaryInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleLawfulNotaryTerminalResult(admitted, authority, scope);
-  if (settled === undefined) {
-    throw new Error(
-      "Notary Role run completed without a lawful typed terminal result",
-    );
+  const toolName = packagedRoleAcceptedOutputTool(admitted.role);
+  if (toolName === undefined) {
+    throw new Error(`accepted-seat settlement is not declared for ${admitted.role}`);
   }
-  return settled;
-}
-
-/** Try to settle a lawful Notary Terminal; undefined only for genuine absence. */
-export async function trySettleNotaryTerminalResult(
-  admitted: AdmittedNotaryInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulNotaryTerminalResult(admitted, authority, scope);
-}
-
-/** Lawful Countersign accepted outcome (署/封驳/上呈, #572 / ADR 0074). */
-export type LawfulCountersignRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulCountersignTerminalResult(
-  admitted: AdmittedCountersignInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "countersign",
-    toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+  const settled = await settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
+    role: admitted.role,
+    toolName,
   }, scope);
-}
-
-/** Settle a lawful Countersign Terminal from the admitted session. */
-export async function settleCountersignTerminalResult(
-  admitted: AdmittedCountersignInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleLawfulCountersignTerminalResult(admitted, authority, scope);
-  if (settled === undefined) {
-    throw new Error(
-      "Countersign Role run completed without a lawful typed terminal result",
-    );
+  const record = packagedRoleMetadata(admitted.role);
+  if (
+    settled === undefined
+    || record === undefined
+    || !("projectCountersignTerminal" in record)
+    || record.projectCountersignTerminal !== true
+  ) {
+    return settled;
   }
-  return settled;
+  return applySecretariatCountersignTerminal(admitted, authority, settled);
 }
 
-/** Try to settle a lawful Countersign Terminal; undefined only for genuine absence. */
-export async function trySettleCountersignTerminalResult(
-  admitted: AdmittedCountersignInvocation,
+/** One settlement dispatch. The registry `settlement` leaf selects the path. */
+export async function trySettlePublicSeat(
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
+  scope: { readonly courtAttemptId?: string } | undefined,
+  material: PackagedMethodSkillMaterial | undefined,
+  packageRoot: string,
 ): Promise<TerminalResult | undefined> {
-  return settleLawfulCountersignTerminalResult(admitted, authority, scope);
-}
-
-/** Lawful Gleaner-Left accepted outcome (completed 弹章, #502). */
-export type LawfulGleanerLeftRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulGleanerLeftTerminalResult(
-  admitted: AdmittedGleanerLeftInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "gleaner-left",
-    toolName: GLEANER_LEFT_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-/** Settle a lawful Gleaner-Left Terminal from the admitted session. */
-export async function settleGleanerLeftTerminalResult(
-  admitted: AdmittedGleanerLeftInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleLawfulGleanerLeftTerminalResult(admitted, authority, scope);
-  if (settled === undefined) {
-    throw new Error(
-      "Gleaner-Left Role run completed without a lawful typed terminal result",
-    );
-  }
-  return settled;
-}
-
-/** Try to settle a lawful Gleaner-Left Terminal; undefined only for genuine absence. */
-export async function trySettleGleanerLeftTerminalResult(
-  admitted: AdmittedGleanerLeftInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulGleanerLeftTerminalResult(admitted, authority, scope);
-}
-
-/** Lawful Diarist accepted outcome (completed 入录选择, #708). */
-export type LawfulDiaristRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulDiaristTerminalResult(
-  admitted: AdmittedDiaristInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "diarist",
-    toolName: DIARIST_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-/** Try to settle a lawful Diarist Terminal; undefined only for genuine absence. */
-export async function trySettleDiaristTerminalResult(
-  admitted: AdmittedDiaristInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulDiaristTerminalResult(admitted, authority, scope);
+  const face = seatArtifactFace(admitted.role);
+  if (face.method === "observed" && material === undefined) return undefined;
+  const options: MethodPublicationOptions =
+    face.method === "observed" && material !== undefined
+      ? observedMethodSkillOptions(packageRoot, material)
+      : face.method === "optional" && material !== undefined
+        ? { methodProvenance: material.provenance }
+        : {};
+  return settleSeat(admitted, authority, scope, options);
 }
 
 /**
@@ -3405,7 +3061,7 @@ function countersignTerminalFromEntries(
       entry.data !== null && typeof entry.data === "object" && !Array.isArray(entry.data)
         ? (entry.data as Record<string, unknown>)
         : undefined;
-    if (data?.officer !== "countersign") continue;
+    if (data === undefined || !packagedDurableOfficerEntry(data.officer)) continue;
     if (data.receipt === undefined) continue;
     const runId =
       typeof data.runId === "string" && data.runId.trim() !== ""
@@ -3462,16 +3118,11 @@ function acceptedSecretariatDefinesOfficerProjection(
   return false;
 }
 
-async function settleLawfulSecretariatTerminalResult(
-  admitted: AdmittedSecretariatInvocation,
+async function applySecretariatCountersignTerminal(
+  admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  const settled = await settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "secretariat",
-    toolName: SECRETARIAT_OUTPUT_TOOL_NAME,
-  }, scope);
-  if (settled === undefined) return undefined;
+  settled: TerminalResult,
+): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
   const entries = await readLawfulSettlementEntries(coordinates.sessionFile) ?? [];
   const officer = countersignTerminalFromEntries(entries);
@@ -3505,443 +3156,6 @@ async function settleLawfulSecretariatTerminalResult(
   }
 
   return settled;
-}
-
-/** Try to settle a lawful Secretariat Terminal; undefined only for genuine absence. */
-export async function trySettleSecretariatTerminalResult(
-  admitted: AdmittedSecretariatInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSecretariatTerminalResult(admitted, authority, scope);
-}
-
-/** Lawful Inspector accepted outcome (pass/bounce/escalate). */
-export type LawfulInspectorRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulInspectorTerminalResult(
-  admitted: AdmittedInspectorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "inspector",
-    toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-export async function trySettleInspectorTerminalResult(
-  admitted: AdmittedInspectorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulInspectorTerminalResult(admitted, authority, scope);
-}
-
-/** Lawful Gatekeeper accepted outcome (dispatch | pass, #639). */
-export type LawfulGatekeeperRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulGatekeeperTerminalResult(
-  admitted: AdmittedGatekeeperInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "gatekeeper",
-    toolName: GATEKEEPER_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-/** Try to settle a lawful Gatekeeper Terminal; undefined only for genuine absence. */
-export async function trySettleGatekeeperTerminalResult(
-  admitted: AdmittedGatekeeperInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulGatekeeperTerminalResult(admitted, authority, scope);
-}
-
-/** Lawful Navigator accepted outcome (route advice, #639). */
-export type LawfulNavigatorRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulNavigatorTerminalResult(
-  admitted: AdmittedNavigatorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "navigator",
-    toolName: NAVIGATOR_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-/** Try to settle a lawful Navigator Terminal; undefined only for genuine absence. */
-export async function trySettleNavigatorTerminalResult(
-  admitted: AdmittedNavigatorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulNavigatorTerminalResult(admitted, authority, scope);
-}
-
-/** Lawful Auditor accepted outcome (pass/bounce/escalate, #675 / #754). */
-export type LawfulAuditorRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-
-async function settleLawfulAuditorTerminalResult(
-  admitted: import("./invocation.ts").AdmittedAuditorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulSeatAcceptedTerminalResult(admitted, authority, {
-    role: "auditor",
-    toolName: AUDITOR_OUTPUT_TOOL_NAME,
-  }, scope);
-}
-
-export async function trySettleAuditorTerminalResult(
-  admitted: import("./invocation.ts").AdmittedAuditorInvocation,
-  authority: DurablePrincipalAuthority,
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulAuditorTerminalResult(admitted, authority, scope);
-}
-
-/** Try to settle a lawful Coder Terminal; undefined only for genuine absence. */
-export async function trySettleCoderTerminalResult(
-  admitted: AdmittedCoderInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance?: PackagedMethodSkillProvenance;
-  } = {},
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulCoderTerminalResult(admitted, authority, options, scope);
-}
-
-/** Try to settle a lawful Fixer Terminal; undefined only for genuine absence. */
-export async function trySettleFixerTerminalResult(
-  admitted: AdmittedFixerInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodSkillPath: string;
-    readonly methodSkillConfiguredPath: string;
-  },
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulFixerTerminalResult(admitted, authority, options, scope);
-}
-
-/**
- * Observe forced Reviewer ak-cross-m-review Skill expansions from the session.
- * Expansion evidence is package-path only; ambient home locations never count.
- */
-export function extractReviewerMethodInvocations(
-  entries: readonly SessionEntry[],
-  options: {
-    readonly allowedLocations: readonly string[];
-  },
-): readonly ObservedPackagedMethodSkillInvocation[] {
-  const observed: ObservedPackagedMethodSkillInvocation[] = [];
-  for (const entry of entries) {
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "user") continue;
-    const text = sessionMessageText(message);
-    if (text.length === 0) continue;
-    const hit = observePackagedMethodSkillInvocation(text, {
-      name: "ak-cross-m-review",
-      allowedLocations: options.allowedLocations,
-    });
-    if (hit !== undefined) observed.push(hit);
-  }
-  return Object.freeze(observed);
-}
-
-/**
- * Publish lawful Reviewer success Artifacts on the shared #106 success interface.
- * Evidence records package ak-cross-m-review provenance and typed expansion
- * observation without ambient home Skill paths.
- */
-export async function publishReviewerArtifacts(
-  admitted: AdmittedReviewerInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-  },
-): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: "reviewer",
-      runId: admitted.runId,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      role: "reviewer",
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      baseRevision: admitted.baseRevision,
-      lens: admitted.lens,
-      authorityRefs: [...admitted.authorityRefs],
-      ...(admitted.instructionEmpty
-        ? {}
-        : { callerProvenance: admitted.instruction }),
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-      methodProvenance: options.methodProvenance,
-      // Forced package method: availability is package-bound; expansion only when observed.
-      methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
-      methodInvocations: options.methodInvocations ?? [],
-    },
-  });
-}
-
-/** Lawful Reviewer accepted outcome extracted from session (no LLM auditor after #495 S6). */
-export type LawfulReviewerRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-async function settleLawfulReviewerTerminalResult(
-  admitted: AdmittedReviewerInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodSkillPath: string;
-    readonly methodSkillConfiguredPath: string;
-  },
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  const sealed = await sealedLedgerOutcome(admitted, "reviewer", scope);
-  if (sealed?.role !== "reviewer" || sealed.kind !== "accepted") return undefined;
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome: LawfulReviewerRoleOutcome = sealed;
-  const navigator = extractNavigatorFact(entries);
-  const methodInvocations = extractReviewerMethodInvocations(entries, {
-    allowedLocations: [
-      options.methodSkillPath,
-      options.methodSkillConfiguredPath,
-    ],
-  });
-  const artifacts = await publishReviewerArtifacts(
-    admitted,
-    roleOutcome,
-    coordinates,
-    {
-      methodProvenance: options.methodProvenance,
-      methodInvocations,
-    },
-  );
-  return withOptionalGateProjection(
-    {
-      roleOutcome,
-      navigator,
-      artifacts,
-      runId: admitted.runId,
-    },
-    sessionDirectory,
-    detourGateContext(admitted, scope),
-  );
-}
-
-/** Settle a lawful Reviewer Terminal from the admitted session (shared #106 success interface). */
-export async function settleReviewerTerminalResult(
-  admitted: AdmittedReviewerInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodSkillPath: string;
-    readonly methodSkillConfiguredPath: string;
-  },
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleLawfulReviewerTerminalResult(admitted, authority, options, scope);
-  if (settled === undefined) {
-    throw new Error(
-      "Reviewer Role run completed without a lawful typed terminal result",
-    );
-  }
-  return settled;
-}
-
-/** Try to settle a lawful Reviewer Terminal; undefined only for genuine absence. */
-export async function trySettleReviewerTerminalResult(
-  admitted: AdmittedReviewerInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodSkillPath: string;
-    readonly methodSkillConfiguredPath: string;
-  },
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulReviewerTerminalResult(admitted, authority, options, scope);
-}
-
-/**
- * Observe forced Merger resolving-merge-conflicts Skill expansions from the session.
- * Expansion evidence is package-path only; ambient home locations never count.
- */
-export function extractMergerMethodInvocations(
-  entries: readonly SessionEntry[],
-  options: {
-    readonly allowedLocations: readonly string[];
-  },
-): readonly ObservedPackagedMethodSkillInvocation[] {
-  const observed: ObservedPackagedMethodSkillInvocation[] = [];
-  for (const entry of entries) {
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "user") continue;
-    const text = sessionMessageText(message);
-    if (text.length === 0) continue;
-    const hit = observePackagedMethodSkillInvocation(text, {
-      name: "resolving-merge-conflicts",
-      allowedLocations: options.allowedLocations,
-    });
-    if (hit !== undefined) observed.push(hit);
-  }
-  return Object.freeze(observed);
-}
-
-/**
- * Publish lawful Merger success Artifacts on the shared #106 success interface.
- * Evidence records package method provenance, forced expansion observation, and
- * adapter-derived mechanical envelope facts without ambient home Skill paths.
- */
-export async function publishMergerArtifacts(
-  admitted: AdmittedMergerInvocation,
-  roleOutcome: TerminalRoleOutcome,
-  coordinates: DurablePrincipalCoordinates,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodInvocations?: readonly ObservedPackagedMethodSkillInvocation[];
-  },
-): Promise<TerminalArtifactRef[]> {
-  return publishAcceptedTerminalArtifacts(admitted, roleOutcome, coordinates, {
-    report: {
-      role: "merger",
-      runId: admitted.runId,
-      outcome: roleOutcome,
-    },
-    evidence: {
-      runId: admitted.runId,
-      role: "merger",
-      sessionDirectory: coordinates.sessionDirectory,
-      sessionFile: coordinates.sessionFile,
-      admittedRequestPath: admitted.admittedRequestPath,
-      mergerInputPath: admitted.mergerInputPath,
-      derived: admitted.derived,
-      attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-      methodProvenance: options.methodProvenance,
-      methodInvocationObserved: (options.methodInvocations ?? []).length > 0,
-      methodInvocations: options.methodInvocations ?? [],
-    },
-  });
-}
-
-/** Lawful Merger accepted outcome extracted from session (shared success interface). */
-export type LawfulMergerRoleOutcome = Extract<TerminalRoleOutcome, { kind: "accepted" }>;
-async function settleLawfulMergerTerminalResult(
-  admitted: AdmittedMergerInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodSkillPath: string;
-    readonly methodSkillConfiguredPath: string;
-  },
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  const coordinates = coordinatesFromAdmitted(authority, admitted);
-  const { sessionDirectory, sessionFile } = coordinates;
-  const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
-  const roleOutcome = await sealedLedgerOutcome(admitted, "merger", scope);
-  if (roleOutcome?.role !== "merger" || roleOutcome.kind !== "accepted") {
-    // #836: non-sole-round barrier deleted; residual path is host/session only.
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-      const message = entries[index]?.message;
-      if (message?.role !== "toolResult") continue;
-      const residual = boundErroredToolCandidate(entries, index, message, MERGER_OUTPUT_TOOL_NAME);
-      if (residual === undefined) continue;
-      const candidate = residual.candidate;
-      const details = isRecord(candidate) ? candidate : { candidate };
-      const failed = await settleFailureTerminalResult(
-        admitted,
-        {
-          cause: "output",
-          diagnostic: residual.diagnostic,
-          details,
-        },
-        authority,
-        scope ?? {},
-      );
-      return attachRecordedSubmissions(admitted, failed, scope);
-    }
-    return undefined;
-  }
-  const accepted: LawfulMergerRoleOutcome = roleOutcome;
-  const navigator = extractNavigatorFact(entries);
-  const methodInvocations = extractMergerMethodInvocations(entries, {
-    allowedLocations: [options.methodSkillPath, options.methodSkillConfiguredPath],
-  });
-  const artifacts = await publishMergerArtifacts(
-    admitted,
-    accepted,
-    coordinates,
-    {
-      methodProvenance: options.methodProvenance,
-      methodInvocations,
-    },
-  );
-  return attachRecordedSubmissions(
-    admitted,
-    await withOptionalGateProjection(
-      {
-        roleOutcome: accepted,
-        navigator,
-        artifacts,
-        runId: admitted.runId,
-      },
-      sessionDirectory,
-      detourGateContext(admitted, scope),
-    ),
-    scope,
-  );
-}
-
-/** Settle a lawful Merger Terminal from the admitted session (shared #106 success interface). */
-export async function settleMergerTerminalResult(
-  admitted: AdmittedMergerInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodSkillPath: string;
-    readonly methodSkillConfiguredPath: string;
-  },
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult> {
-  const settled = await settleLawfulMergerTerminalResult(admitted, authority, options, scope);
-  if (settled === undefined) {
-    throw new Error(
-      "Merger Role run completed without a lawful typed terminal result",
-    );
-  }
-  return settled;
-}
-
-/** Try to settle a lawful Merger Terminal; undefined only for genuine absence. */
-export async function trySettleMergerTerminalResult(
-  admitted: AdmittedMergerInvocation,
-  authority: DurablePrincipalAuthority,
-  options: {
-    readonly methodProvenance: PackagedMethodSkillProvenance;
-    readonly methodSkillPath: string;
-    readonly methodSkillConfiguredPath: string;
-  },
-  scope?: SettlementCourtScope,
-): Promise<TerminalResult | undefined> {
-  return settleLawfulMergerTerminalResult(admitted, authority, options, scope);
 }
 
 /** One failed attempt to place a durable failure artifact (path is private layout). */
@@ -4220,7 +3434,7 @@ export async function settleFailureTerminalResult(
         ) {
           let decisiveFacts: NoReceiptLifecycleFacts & Record<string, unknown> = facts;
           // #676 D1/J3: project durable bind-target rejection onto public no_receipt facts.
-          if (admitted.role === "collector") {
+          if (packagedProjectsTargetBindRejection(admitted.role)) {
             const bindRejection = extractCollectorTargetBindRejection(entries.slice(attemptStart));
             if (bindRejection !== undefined) {
               decisiveFacts = {

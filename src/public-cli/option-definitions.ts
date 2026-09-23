@@ -12,6 +12,7 @@
  */
 
 import { CliUsageError } from "./cli-errors.ts";
+import { PUBLIC_CALLABLE_ROLES, type PublicCallableRole } from "./registry.ts";
 
 /** Analyst public query faces (#336/#337/#338/#399). model-groups CLI face disabled (library kernel retained). */
 export type AnalystMode = "issue" | "sweep" | "cohort";
@@ -19,25 +20,8 @@ export type AnalystMode = "issue" | "sweep" | "cohort";
 /** Coder/Fixer public phase tokens. */
 export type RolePhase = "plan" | "apply";
 
-export type OptionOwner =
-  | "global"
-  | "judge"
-  | "countersign"
-  | "coder"
-  | "fixer"
-  | "reviewer"
-  | "collector"
-  | "doctor"
-  | "merger"
-  | "notary"
-  | "gleaner-left"
-  | "inspector"
-  | "gatekeeper"
-  | "navigator"
-  | "auditor"
-  | "diarist"
-  | "secretariat"
-  | "analyst";
+/** global, every composition-root role, and the deterministic analyst command. */
+export type OptionOwner = "global" | PublicCallableRole | "analyst";
 
 /**
  * One public option (or positional mode/phase token) identity.
@@ -386,10 +370,29 @@ function bindOwner(
   return { ...semantics, owner };
 }
 
-const JUDGE_OPTIONS = [
-  bindOwner("judge", SHARED_PROJECT_SEMANTICS),
-  bindOwner("judge", SHARED_ATTACH_SEMANTICS),
-] as const satisfies readonly PublicOptionDefinition[];
+/** Seats whose public face is only project + attach. Unique rows stay explicit. */
+function projectAndAttach(owner: OptionOwner): readonly PublicOptionDefinition[] {
+  return [
+    bindOwner(owner, SHARED_PROJECT_SEMANTICS),
+    bindOwner(owner, SHARED_ATTACH_SEMANTICS),
+  ];
+}
+
+const SHARED_PHASE_SEMANTICS = {
+  id: "phase",
+  canonical: "plan|apply",
+  aliases: ["plan", "apply"],
+  valueMetavar: null,
+  required: false,
+  repeatable: false,
+  defaultValue: "apply",
+  form: "positional",
+  phases: ["plan", "apply"],
+  description: {
+    en: "Optional phase token before the instruction; defaults to apply.",
+    zh: "指令前可选 phase 词元；默认 apply。",
+  },
+} as const satisfies Omit<PublicOptionDefinition, "owner">;
 
 const GLEANER_LEFT_OPTIONS = [
   bindOwner("gleaner-left", SHARED_PROJECT_SEMANTICS),
@@ -410,24 +413,8 @@ const GLEANER_LEFT_OPTIONS = [
   },
 ] as const satisfies readonly PublicOptionDefinition[];
 
-const INSPECTOR_OPTIONS = [
-  bindOwner("inspector", SHARED_PROJECT_SEMANTICS),
-  bindOwner("inspector", SHARED_ATTACH_SEMANTICS),
-] as const satisfies readonly PublicOptionDefinition[];
-
-const GATEKEEPER_OPTIONS = [
-  bindOwner("gatekeeper", SHARED_PROJECT_SEMANTICS),
-  bindOwner("gatekeeper", SHARED_ATTACH_SEMANTICS),
-] as const satisfies readonly PublicOptionDefinition[];
-
-const NAVIGATOR_OPTIONS = [
-  bindOwner("navigator", SHARED_PROJECT_SEMANTICS),
-  bindOwner("navigator", SHARED_ATTACH_SEMANTICS),
-] as const satisfies readonly PublicOptionDefinition[];
-
 const AUDITOR_OPTIONS = [
-  bindOwner("auditor", SHARED_PROJECT_SEMANTICS),
-  bindOwner("auditor", SHARED_ATTACH_SEMANTICS),
+  ...projectAndAttach("auditor"),
   {
     id: "subject",
     owner: "auditor",
@@ -458,61 +445,14 @@ const AUDITOR_OPTIONS = [
   },
 ] as const satisfies readonly PublicOptionDefinition[];
 
-const COUNTERSIGN_OPTIONS = [
-  bindOwner("countersign", SHARED_PROJECT_SEMANTICS),
-  bindOwner("countersign", SHARED_ATTACH_SEMANTICS),
-] as const satisfies readonly PublicOptionDefinition[];
-
-const DIARIST_OPTIONS = [
-  bindOwner("diarist", SHARED_PROJECT_SEMANTICS),
-  bindOwner("diarist", SHARED_ATTACH_SEMANTICS),
-] as const satisfies readonly PublicOptionDefinition[];
-
-const SECRETARIAT_OPTIONS = [
-  bindOwner("secretariat", SHARED_PROJECT_SEMANTICS),
-  bindOwner("secretariat", SHARED_ATTACH_SEMANTICS),
-] as const satisfies readonly PublicOptionDefinition[];
-
 const CODER_OPTIONS = [
-  {
-    id: "phase",
-    owner: "coder",
-    canonical: "plan|apply",
-    aliases: ["plan", "apply"],
-    valueMetavar: null,
-    required: false,
-    repeatable: false,
-    defaultValue: "apply",
-    form: "positional",
-    phases: ["plan", "apply"],
-    description: {
-      en: "Optional phase token before the instruction; defaults to apply.",
-      zh: "指令前可选 phase 词元；默认 apply。",
-    },
-  },
-  bindOwner("coder", SHARED_PROJECT_SEMANTICS),
-  bindOwner("coder", SHARED_ATTACH_SEMANTICS),
+  bindOwner("coder", SHARED_PHASE_SEMANTICS),
+  ...projectAndAttach("coder"),
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const FIXER_OPTIONS = [
-  {
-    id: "phase",
-    owner: "fixer",
-    canonical: "plan|apply",
-    aliases: ["plan", "apply"],
-    valueMetavar: null,
-    required: false,
-    repeatable: false,
-    defaultValue: "apply",
-    form: "positional",
-    phases: ["plan", "apply"],
-    description: {
-      en: "Optional phase token before the instruction; defaults to apply.",
-      zh: "指令前可选 phase 词元；默认 apply。",
-    },
-  },
-  bindOwner("fixer", SHARED_PROJECT_SEMANTICS),
-  bindOwner("fixer", SHARED_ATTACH_SEMANTICS),
+  bindOwner("fixer", SHARED_PHASE_SEMANTICS),
+  ...projectAndAttach("fixer"),
   {
     id: "prerequisites",
     owner: "fixer",
@@ -577,8 +517,7 @@ const REVIEWER_OPTIONS = [
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const COLLECTOR_OPTIONS = [
-  bindOwner("collector", SHARED_PROJECT_SEMANTICS),
-  bindOwner("collector", SHARED_ATTACH_SEMANTICS),
+  ...projectAndAttach("collector"),
   {
     id: "pr",
     owner: "collector",
@@ -639,8 +578,7 @@ const COLLECTOR_OPTIONS = [
 ] as const satisfies readonly PublicOptionDefinition[];
 
 const DOCTOR_OPTIONS = [
-  bindOwner("doctor", SHARED_PROJECT_SEMANTICS),
-  bindOwner("doctor", SHARED_ATTACH_SEMANTICS),
+  ...projectAndAttach("doctor"),
   {
     id: "issue",
     owner: "doctor",
@@ -841,13 +779,12 @@ const ANALYST_OPTIONS = [
 ] as const satisfies readonly PublicOptionDefinition[];
 
 /**
- * Sole production option tables keyed by PUBLIC_ROLE_ARGV / global owner.
- * Rows are readonly definition lists — parsers look up spellings here.
+ * Seats whose public rows are not the shared project+attach face.
+ * A new project+attach seat needs no entry here.
  */
-export const PUBLIC_OPTION_TABLE = {
-  global: GLOBAL_OPTIONS,
-  judge: JUDGE_OPTIONS,
-  countersign: COUNTERSIGN_OPTIONS,
+const SEAT_OPTION_ROWS: Partial<
+  Record<PublicCallableRole, readonly PublicOptionDefinition[]>
+> = {
   "gleaner-left": GLEANER_LEFT_OPTIONS,
   coder: CODER_OPTIONS,
   fixer: FIXER_OPTIONS,
@@ -856,37 +793,35 @@ export const PUBLIC_OPTION_TABLE = {
   doctor: DOCTOR_OPTIONS,
   merger: MERGER_OPTIONS,
   notary: NOTARY_OPTIONS,
-  inspector: INSPECTOR_OPTIONS,
-  gatekeeper: GATEKEEPER_OPTIONS,
-  navigator: NAVIGATOR_OPTIONS,
   auditor: AUDITOR_OPTIONS,
-  diarist: DIARIST_OPTIONS,
-  secretariat: SECRETARIAT_OPTIONS,
-  analyst: ANALYST_OPTIONS,
-} as const satisfies Record<OptionOwner, readonly PublicOptionDefinition[]>;
+};
+
+function seatOptionRows(role: PublicCallableRole): readonly PublicOptionDefinition[] {
+  return SEAT_OPTION_ROWS[role] ?? projectAndAttach(role);
+}
+
+/**
+ * Sole production option tables keyed by PUBLIC_ROLE_ARGV / global owner.
+ * Rows are readonly definition lists — parsers look up spellings here.
+ * Callable seats come from the composition root; only a different face is listed above.
+ */
+function publicOptionTable(): Record<OptionOwner, readonly PublicOptionDefinition[]> {
+  const roles = {} as Record<PublicCallableRole, readonly PublicOptionDefinition[]>;
+  for (const role of PUBLIC_CALLABLE_ROLES) {
+    roles[role] = seatOptionRows(role);
+  }
+  return { global: GLOBAL_OPTIONS, ...roles, analyst: ANALYST_OPTIONS };
+}
+
+export const PUBLIC_OPTION_TABLE = publicOptionTable();
 
 export type PublicRoleOptionOwner = Exclude<OptionOwner, "global">;
 
-/** Role/deterministic owners that appear on PUBLIC_ROLE_ARGV. */
-export const PUBLIC_ROLE_OPTION_OWNERS = [
-  "judge",
-  "countersign",
-  "gleaner-left",
-  "coder",
-  "fixer",
-  "reviewer",
-  "collector",
-  "doctor",
-  "merger",
-  "notary",
-  "inspector",
-  "gatekeeper",
-  "navigator",
-  "auditor",
-  "diarist",
-  "secretariat",
+/** Role/deterministic owners that appear on PUBLIC_ROLE_ARGV. Roles follow the composition root; analyst is the deterministic command. */
+export const PUBLIC_ROLE_OPTION_OWNERS: readonly PublicRoleOptionOwner[] = [
+  ...PUBLIC_CALLABLE_ROLES,
   "analyst",
-] as const satisfies readonly PublicRoleOptionOwner[];
+];
 
 export function optionsForOwner(
   owner: OptionOwner,
@@ -1379,7 +1314,7 @@ const SUPPORT_COMMAND_HELP = {
   resume: {
     command: "resume",
     summary:
-      "Resume a role run under the live seat table (model/host/engine); session principal must still exist. [message] applies only to seats that accept caller instruction; Notary/符宝郎 must omit message and derives evidence from the existing source-run/dossier binding. Global --model/--thinking/--host/--engine must be placed before <runId> (either before `resume` or between `resume` and <runId>); the one argv after <runId> is the opaque message, not a flag position (#471).",
+      "Resume a role run under the live seat table (model/host/engine); session principal must still exist. Every callable seat, including Notary/符宝郎, accepts the optional caller message and passes it through unchanged as the continuation prompt. Notary explicit new still accepts only its source-run locator, not a caller prompt. Global --model/--thinking/--host/--engine must be placed before <runId> (either before `resume` or between `resume` and <runId>); the one argv after <runId> is the opaque message, not a flag position (#471).",
     usage: ["ak-role resume <runId> [message]"],
     examples: [
       "ak-role resume 01abc…",

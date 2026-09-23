@@ -60,13 +60,28 @@ export function resolveHostAwareSessionAvailability(
   if (host === undefined || host === DEFAULT_ROLE_TURN_HOST) {
     return (principal) => principalAuthority.isAvailable(principal);
   }
+  // Unregistered names have no binding file: absence, not a guess at pi.
+  return async (principal) =>
+    (await readStoredHostSessionId(host, principalAuthority, principal)) !== undefined;
+}
+
+/**
+ * Native session/thread id already stored for this principal on `host`.
+ * Public explicit resume reads it once and hands it to the host adapter.
+ * Pi has no separate binding file. A missing file is absence, not the package run id.
+ */
+export async function readStoredHostSessionId(
+  host: string | undefined,
+  authority: DurablePrincipalAuthority,
+  principal: DurablePrincipal,
+): Promise<string | undefined> {
+  if (host === undefined || host === DEFAULT_ROLE_TURN_HOST) return undefined;
   const description = lookupHostDescription(host) ?? lookupHeadlessHostDescription(host);
-  if (description === undefined) {
-    // Host selection already fails closed on an unregistered name (#510) long
-    // before a turn dispatches; mirror the same fail-closed default here
-    // rather than guessing at pi's binding for a name pi does not own.
-    return () => Promise.resolve(false);
-  }
-  const sessionIdentity = createSessionIdentityAuthority(principalAuthority, description.sessionBindingFile);
-  return async (principal) => (await sessionIdentity.load(principal)) !== undefined;
+  if (description === undefined) return undefined;
+  const sessionId = await createSessionIdentityAuthority(
+    authority,
+    description.sessionBindingFile,
+  ).load(principal);
+  if (sessionId === undefined || sessionId === "") return undefined;
+  return sessionId;
 }

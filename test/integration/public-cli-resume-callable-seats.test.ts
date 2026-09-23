@@ -20,15 +20,11 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { writeRoleRunState, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import {
-  admitCollectorInvocation,
-  admitDoctorInvocation,
-  admitGatekeeperInvocation,
-  admitInspectorInvocation,
-  admitNotaryInvocation,
-  admitNavigatorInvocation,
+  admitPublicRole,
   type AdmittedRoleInvocation,
 } from "../../src/public-cli/invocation.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import {
   COLLECTOR_OUTPUT_TOOL,
@@ -110,9 +106,11 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
   {
     role: "gatekeeper",
     outputTool: GATEKEEPER_OUTPUT_TOOL_NAME,
-    admit: async ({ home, project, runId }) => await admitGatekeeperInvocation({
-      home, principalAuthority: piDurablePrincipalAuthority, cwd: project,
-      instruction: "original admitted gatekeeper instruction", attachmentPaths: [], createRunId: () => runId,
+    admit: async ({ home, project, runId }) => await admitPublicRole("gatekeeper", {
+      instruction: "original admitted gatekeeper instruction",
+      attachmentPaths: [],
+    }, {
+      home, principalAuthority: piDurablePrincipalAuthority, cwd: project, createRunId: () => runId,
     }),
     originalInstruction: "original admitted gatekeeper instruction",
     sealedDetails: () => ({ status: "pass", findings: [] }),
@@ -120,9 +118,11 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
   {
     role: "navigator",
     outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
-    admit: async ({ home, project, runId }) => await admitNavigatorInvocation({
-      home, principalAuthority: piDurablePrincipalAuthority, cwd: project,
-      instruction: "original admitted navigator instruction", attachmentPaths: [], createRunId: () => runId,
+    admit: async ({ home, project, runId }) => await admitPublicRole("navigator", {
+      instruction: "original admitted navigator instruction",
+      attachmentPaths: [],
+    }, {
+      home, principalAuthority: piDurablePrincipalAuthority, cwd: project, createRunId: () => runId,
     }),
     originalInstruction: "original admitted navigator instruction",
     sealedDetails: () => ({ status: "advice", candidates: [] }),
@@ -131,13 +131,14 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
     role: "collector",
     outputTool: COLLECTOR_OUTPUT_TOOL,
     admit: async ({ home, project, runId }) =>
-      await admitCollectorInvocation({
-        home,
-        principalAuthority: piDurablePrincipalAuthority,
-        cwd: project,
+      await admitPublicRole("collector", {
         prNumber: 42,
         instruction: "original admitted collector instruction",
         repo: "acme/widgets",
+      }, {
+        home,
+        principalAuthority: piDurablePrincipalAuthority,
+        cwd: project,
         createRunId: () => runId,
       }),
     originalInstruction: "original admitted collector instruction",
@@ -165,12 +166,13 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
     admit: async ({ home, project, runId }) => {
       const bookKey = resolveBookKeyFromGit(project);
       await seedDoctorIssueRuns(home, bookKey, DOCTOR_ISSUE_NUMBER);
-      return await admitDoctorInvocation({
+      return await admitPublicRole("doctor", {
+        issueNumber: DOCTOR_ISSUE_NUMBER,
+        instruction: "original admitted doctor instruction",
+      }, {
         home,
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
-        issueNumber: DOCTOR_ISSUE_NUMBER,
-        instruction: "original admitted doctor instruction",
         createRunId: () => runId,
       });
     },
@@ -188,11 +190,12 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
     outputTool: NOTARY_OUTPUT_TOOL_NAME,
     admit: async ({ home, project, runId }) => {
       const sourceRunPath = await seedCanonicalSourceRun(home, project);
-      return await admitNotaryInvocation({
+      return await admitPublicRole("notary", {
+        sourceRun: sourceRunPath,
+      }, {
         home,
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
-        sourceRun: sourceRunPath,
         createRunId: () => runId,
       });
     },
@@ -202,12 +205,13 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
     role: "inspector",
     outputTool: INSPECTOR_OUTPUT_TOOL_NAME,
     admit: async ({ home, project, runId }) =>
-      await admitInspectorInvocation({
+      await admitPublicRole("inspector", {
+        instruction: "original admitted inspector instruction",
+        attachmentPaths: [],
+      }, {
         home,
         principalAuthority: piDurablePrincipalAuthority,
         cwd: project,
-        instruction: "original admitted inspector instruction",
-        attachmentPaths: [],
         createRunId: () => runId,
       }),
     sealedDetails: () => ({ status: "pass", findings: [] }),
@@ -258,9 +262,18 @@ for (const spec of SEAT_SPECS) {
       });
       const openedPrincipals = new Set<string>();
       let resumeSessionFile: string | undefined;
+      let resumePrompt: string | undefined;
 
       const { io, stderr } = captureIo();
-      const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+      const resumed = await runAkRole([
+        "resume",
+        "--model",
+        "test/caller-seat:high",
+        "--engine",
+        "agy",
+        runId,
+        "调用者原话",
+      ], {
         packageRoot,
         home,
         cwd: project,
@@ -271,6 +284,7 @@ for (const spec of SEAT_SPECS) {
           principalAuthority: piDurablePrincipalAuthority,
           piRunner: async (args, options) => {
             resumeSessionFile = args[args.indexOf("--session") + 1]!;
+            resumePrompt = readUserDialogueStdin(String(options.stdin ?? ""));
             openedPrincipals.add(resumeSessionFile);
             if (spec.originalInstruction !== undefined) {
               assert.equal(args.includes(spec.originalInstruction), false);
@@ -284,6 +298,7 @@ for (const spec of SEAT_SPECS) {
       // Exact principal reopen — same session, never directory-latest.
       assert.equal(resumeSessionFile, sessionFile);
       assert.deepEqual([...openedPrincipals], [sessionFile]);
+      assert.equal(resumePrompt, "调用者原话");
 
       assert.equal(resumed.exitCode, 0);
       assert.ok(resumed.terminal);

@@ -5,10 +5,11 @@
  * is the live public seat table (model/host/engine).
  */
 import type {
-  GateOfficerSeat,
   PublicCliConfig,
   SeatModelConfig,
 } from "./public-cli/config.ts";
+import type { PublicConfigurableSeat } from "./public-cli/registry.ts";
+import { packagedModelParent } from "./packaged-role-registry.ts";
 import { seatModelOnly } from "./public-cli/registry.ts";
 
 /**
@@ -29,16 +30,17 @@ export type ConfiguredProvinceOfficerResolution = {
  */
 export function resolveConfiguredProvinceOfficer(
   config: PublicCliConfig,
-  officer: GateOfficerSeat,
+  officer: PublicConfigurableSeat,
 ): ConfiguredProvinceOfficerResolution {
   const ownModel = seatModelOnly(config.seats[officer]);
   if (ownModel !== undefined) {
     return { selection: ownModel, source: "persistent" };
   }
-  if (officer === "gatekeeper") {
+  const parent = packagedModelParent(officer);
+  if (parent === undefined) {
     return { source: "unconfigured" };
   }
-  const gatekeeperModel = seatModelOnly(config.seats.gatekeeper);
+  const gatekeeperModel = seatModelOnly(config.seats[parent]);
   if (gatekeeperModel !== undefined) {
     return { selection: gatekeeperModel, source: "inherit-gatekeeper" };
   }

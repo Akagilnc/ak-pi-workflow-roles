@@ -24,8 +24,8 @@ import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
 import { createDefaultGateOfficerSummon } from "../../src/gatekeeper-pass-envelope.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { parseCountersignArgv } from "../../src/public-cli/invocation.ts";
-import { runPublicCountersign } from "../../src/public-cli/countersign-run.ts";
+import { parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
+import { runPublicInstructionSeat } from "../../src/public-cli/instruction-seat-run.ts";
 import { projectActivationFlags } from "../../src/role-activation-flags.ts";
 import { ensureTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { GLEANER_LEFT_OUTPUT_TOOL_NAME } from "../../src/gleaner-left-contracts.ts";
@@ -432,7 +432,6 @@ test("empty authority at prepare is honest context unavailable", async () => {
     });
 });
 
-
 test("public admitted-request projects typed subject/authority; missing/malformed stay source=context", async () => {
   await withTempRoot("navigator-admitted-request-", async (root) => {
   const previousRunDir = process.env.AK_ROLE_RUN_DIR;
@@ -583,10 +582,12 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
           stopKeepalive() {},
         };
         createRoleRuntimeExtension({
-          loadJudgeSoul: async () => "JUDGE LAW",
-          loadCountersignSoul: async () => "COUNTERSIGN LAW",
-          loadDiaristSoul: async () => "DIARIST LAW",
-          loadNotarySoul: async () => "NOTARY LAW",
+          loadRoleSoul: async (role) => {
+            if (role === "countersign") return "COUNTERSIGN LAW";
+            if (role === "diarist") return "DIARIST LAW";
+            if (role === "notary") return "NOTARY LAW";
+            return "JUDGE LAW";
+          },
           loadNotarySourceRun: async (path: string) => ({
             runDirectory: path,
             runId: "01a034f1-75bf-71a6-bcf5-d1299145b1a5",
@@ -664,7 +665,7 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
       ];
       const stdout: string[] = [];
       const stderr: string[] = [];
-      const countersignResult = await runPublicCountersign(
+      const countersignResult = await runPublicInstructionSeat(
         ["裁：继续审票 #582 是否足以开工。"],
         {
           home,
@@ -679,7 +680,8 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
           createRunId: () => "01a0sign00-0000-7000-8000-00000000a1b",
         },
         { stdout: (text) => stdout.push(text), stderr: (text) => stderr.push(text) },
-        parseCountersignArgv,
+        "countersign",
+        (args) => parsePublicSeatArgv("countersign", args),
       );
       assert.equal(countersignResult.exitCode, 0, stderr.join("") || stdout.join(""));
       const topLevel = captured.find((request) => request.activation.role === "countersign");
@@ -794,7 +796,7 @@ test("host-neutral envelope drives shared registration and session lifecycle", a
         startKeepalive() {},
         stopKeepalive() {} };
       createRoleRuntimeExtension({
-        loadJudgeSoul: async () => "JUDGE LAW",
+        loadRoleSoul: async () => "JUDGE LAW",
         loadNavigatorWorkContext: async () => ({
           subjectKey: `${runDir}/work`,
           subject: prose,
@@ -870,7 +872,7 @@ test("bare developer prompt recovers Navigator work context poisoned at session_
     const setContexts: Array<Record<string, unknown>> = [];
 
     createPiRoleRuntimeExtension({
-      loadJudgeSoul: async () => "JUDGE LAW",
+      loadRoleSoul: async () => "JUDGE LAW",
       // Production soft miss: session_start has no materials yet (no throw/poison).
       loadNavigatorWorkContext: async () => ({
         subjectKey: join(home, ".ak/work"),
@@ -1078,7 +1080,7 @@ async function withNavigatorInfraGraceEnvelope(
       stopKeepalive() {},
     };
     createRoleRuntimeExtension({
-      loadJudgeSoul: async () => "JUDGE LAW",
+      loadRoleSoul: async () => "JUDGE LAW",
       loadNavigatorWorkContext: async () => ({
         // Placeholder skips warm prepare on session_start so the hung nest is
         // only the settlement-feed summon under post-role grace (#959).

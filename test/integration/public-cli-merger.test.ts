@@ -30,16 +30,15 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitMergerInvocation as admitMergerInvocationRaw,
-  buildMergerTransportPrompt,
+  admitPublicRole,
+  type AdmitMergerInvocationOptions,
+  buildInstructionTransportPrompt,
   deriveMergerEnvelopeFromActiveMerge,
-  parseMergerArgv,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 
-
 import {
-  extractMergerMethodInvocations,
-  settleMergerTerminalResult,
+  settleSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -108,24 +107,32 @@ async function materializeConflictedRepo(root: string): Promise<{
   return { target, source, conflictPath: "same.txt" };
 }
 
-
-async function admitMergerInvocation(
-  options: Parameters<typeof admitMergerInvocationRaw>[0],
-): ReturnType<typeof admitMergerInvocationRaw> {
-  return admitMergerInvocationRaw(options);
+function admitMergerInvocation(options: AdmitMergerInvocationOptions) {
+  return admitPublicRole("merger", {
+    instruction: options.instruction,
+    attachmentPaths: options.attachmentPaths,
+    ...(options.project === undefined ? {} : { project: options.project }),
+  }, {
+    home: options.home,
+    principalAuthority: options.principalAuthority,
+    cwd: options.cwd,
+    ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+    ...(options.model === undefined ? {} : { model: options.model }),
+  }, options.assertedTicketNumber === undefined
+    ? undefined
+    : { assertedTicketNumber: options.assertedTicketNumber });
 }
-
 
 test("parseMergerArgv accepts common Invocation flags and rejects unknown options", () => {
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
 
-  assert.deepEqual(parseMergerArgv(["Resolve the active merge."]), {
+  assert.deepEqual(parsePublicSeatArgv("merger", ["Resolve the active merge."]), {
     instruction: "Resolve the active merge.",
     attachmentPaths: [],
   });
   assert.deepEqual(
-    parseMergerArgv([
+    parsePublicSeatArgv("merger", [
       "--attach",
       "a.md",
       "--project",
@@ -138,11 +145,11 @@ test("parseMergerArgv accepts common Invocation flags and rejects unknown option
       project: "/tmp/p",
     },
   );
-  assert.throws(() => parseMergerArgv(["--unknown-flag"]), isUsage);
-  assert.throws(() => parseMergerArgv(["--project", "", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("merger", ["--unknown-flag"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("merger", ["--project", "", "task"]), isUsage);
   // No public packet fields for parents/conflicts/scope.
-  assert.throws(() => parseMergerArgv(["--targetObjectId", "abc"]), isUsage);
-  assert.throws(() => parseMergerArgv(["--ak-merger-input", "x.json"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("merger", ["--targetObjectId", "abc"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("merger", ["--ak-merger-input", "x.json"]), isUsage);
 });
 
 test("deriveMergerEnvelopeFromActiveMerge reads parents and conflicts as materials", async () => {
@@ -176,7 +183,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
 
     await assert.rejects(
       () =>
-        admitMergerInvocationRaw({
+        admitMergerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
           home,
           cwd: project,
@@ -225,7 +232,7 @@ test("admitMergerInvocation derives envelope into internal input without public 
     );
 
     // Transport prompt is host-neutral; Pi `/skill:` is adapter-internal only (#822).
-    const prompt = buildMergerTransportPrompt(admitted);
+    const prompt = buildInstructionTransportPrompt(admitted);
     assert.equal(prompt.startsWith("/skill:"), false);
     assert.equal(prompt.includes(admitted.instruction), true);
   });
@@ -312,14 +319,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       toolCallId: "m1",
     });
 
-    const entries = sessionLines.map((line) => JSON.parse(line));
-    const methodInvocations = extractMergerMethodInvocations(entries, {
-      allowedLocations: [material.skillPath, configuredPath],
-    });
-    assert.equal(methodInvocations.length, 1);
-    assert.equal(methodInvocations[0]!.name, "resolving-merge-conflicts");
-
-    const terminal = await settleMergerTerminalResult(admitted, piDurablePrincipalAuthority, {
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -358,6 +358,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
     ) as {
       methodProvenance: { packageAdaptation: string; upstream: { path: string } };
       methodInvocationObserved: boolean;
+      methodInvocations: Array<{ name: string }>;
       derived: {
         targetObjectId: string;
         sourceObjectId: string;
@@ -372,6 +373,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       "skills/engineering/resolving-merge-conflicts",
     );
     assert.equal(evidence.methodInvocationObserved, true);
+    assert.equal(evidence.methodInvocations[0]?.name, "resolving-merge-conflicts");
     assert.equal(evidence.derived.targetObjectId, fixture.target);
     assert.equal(evidence.derived.sourceObjectId, fixture.source);
     assert.deepEqual(evidence.derived.expectedConflictPaths, [
@@ -432,7 +434,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       details: escalateReceiptBound,
       toolCallId: "m2",
     });
-    const escalateTerminal = await settleMergerTerminalResult(escalateAdmitted, piDurablePrincipalAuthority, {
+    const escalateTerminal = await settleSeatTerminalResult(escalateAdmitted, piDurablePrincipalAuthority, {
       methodProvenance: material.provenance,
       methodSkillPath: material.skillPath,
       methodSkillConfiguredPath: configuredPath,
@@ -542,7 +544,7 @@ test("ak-role merger dispatches and settles escalate without active merge and co
           cwd: home,
           io,
           createRunId: () => "run-merger-dispatch-001",
-          mergerTimeoutMs: 5_000,
+          timeoutMs: 5_000,
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
@@ -679,7 +681,7 @@ test("ak-role resume continues merger with package method and exact session", as
           args.some((a) => a.includes("[ak-role:resume-continue]")),
           false,
         );
-        assert.equal(readUserDialogueStdin(resumeStdin ?? "").startsWith("/skill:resolving-merge-conflicts"), true);
+        assert.equal(readUserDialogueStdin(resumeStdin ?? ""), "");
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
         const expansion = `<skill name="resolving-merge-conflicts" location="${material.skillPath}">\nReferences are relative to ${material.rootDirectory}.\n\n${material.body}\n</skill>\n\n${instruction}`;
         const receipt = {

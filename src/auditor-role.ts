@@ -2,12 +2,11 @@
  * Public Auditor (审刑院) role — filed-officer envelope (#675).
  */
 import {
-  AUDITOR_ACCEPTED_TEXT,
   AUDITOR_OUTPUT_TOOL_NAME,
   auditorOutputSchema,
 } from "./package-contracts/auditor-output.ts";
 
-export { AUDITOR_ACCEPTED_TEXT, AUDITOR_OUTPUT_TOOL_NAME };
+export { AUDITOR_OUTPUT_TOOL_NAME };
 
 export type AuditorRuntimeDependencies = {
   loadSoul(): Promise<string>;

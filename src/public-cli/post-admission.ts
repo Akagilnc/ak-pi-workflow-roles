@@ -11,7 +11,6 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildAutoResumeContinuationPrompt,
-  buildResumeContinuationPrompt,
   RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
@@ -27,7 +26,7 @@ import {
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
-import { resolveHostAwareSessionAvailability } from "../session-identity.ts";
+import { readStoredHostSessionId, resolveHostAwareSessionAvailability } from "../session-identity.ts";
 import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
 import type {
@@ -40,7 +39,7 @@ import type {
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
-import { isOfficerReviewSeat } from "../host-contracts.ts";
+import { isOfficerReviewSeat } from "../packaged-role-registry.ts";
 import { deliverCaseDossierAsAttachment } from "./case-dossier-delivery.ts";
 
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
@@ -324,6 +323,11 @@ export type PostAdmissionEnv = {
    * and mint a new run. Absent on ordinary role commands and on `ak-role resume`.
    */
   freshSummons?: true;
+  /**
+   * Typed ticket already carried into this summons (parent board / 起居录).
+   * Admission places the run under it. Not a public CLI flag.
+   */
+  boundTicketNumber?: number;
   /** Station child role run (#840): omit automatic navigator attendance. */
   stationChild?: boolean;
 };
@@ -1097,15 +1101,12 @@ export async function dispatchPostAdmissionTurn<
             // Settlement already sealed accepted — a cleanup failure here must
             // not erase that fact or make the caller replay this court's
             // summons over already-delivered work (#840 已交劳动只整理终局不重做).
-            // A later bare resume self-heals: buildRequestAfterLease finds the
-            // open court already sealed and clears it then (documented
-            // continue-under-failure contract, not a swallow — 失败诚实宪法 真因
-            // 必须落痕) — durably, since every auto-resume attempt's io here is
-            // dummyIo (#840 r9 判词 class 1).
+            // Preserve the cleanup failure as a post-dispatch diagnostic; the
+            // accepted settlement remains authoritative (#840 r9 判词 class 1).
             await recordBestEffortPostDispatchDiagnostic(
               admitted,
               env,
-              `current-court cleanup failed after accepted settlement (best-effort continue, self-heals on next resume): ${describeErrorIdentity(error)}`,
+              `current-court cleanup failed after accepted settlement (best-effort continue): ${describeErrorIdentity(error)}`,
               io,
             );
           }
@@ -1304,8 +1305,7 @@ export async function dispatchPostAdmissionTurn<
 /**
  * Shared resume continuation projection (#471 / #600 / #633 / #637 / #755 / #879):
  * seat-table model/engine/timeout axes, restored correlation, and either
- * - manual resume (no same-ticket summons): package envelope / optional caller
- *   message, with engine-axis handbook via buildResumeContinuationPrompt, or
+ * - manual resume (no same-ticket summons): caller message bytes, or
  * - same-ticket summons (审核循环续话): caller/peer words + optional frozen
  *   attachment paths only — no「请重读」、no code-authored content substitute,
  *   no engine handbook packaging (#750/#755/#879).
@@ -1345,12 +1345,7 @@ export function resumeTurnRequestProjectionOptions(
       // #755: same-ticket summons without prepared materials — caller words only.
       prompt = request.message;
     } else {
-      // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
-      prompt = buildResumeContinuationPrompt({
-        packageRoot: env.packageRoot,
-        ...pickEngineAxis(env),
-        message: request.message,
-      });
+      prompt = request.message;
     }
   } else if (summonsPrepared !== undefined) {
     // #879 station-child officer: instruction bytes === peer body/reask (no wrap).
@@ -1363,11 +1358,7 @@ export function resumeTurnRequestProjectionOptions(
     // only). Pointer is activation/sourceRun material — not dialogue content.
     prompt = "";
   } else {
-    // Bare manual resume — outsourcing engine axis keeps handbook (#600/#736).
-    prompt = buildResumeContinuationPrompt({
-      packageRoot: env.packageRoot,
-      ...pickEngineAxis(env),
-    });
+    prompt = "";
   }
   return {
     packageRoot: env.packageRoot,
@@ -1388,13 +1379,38 @@ export function resumeTurnRequestProjectionOptions(
   };
 }
 
+/** Shared new-turn and in-call auto-resume projection. Seat code supplies prompt and activation. */
+export function roleTurnOptions(
+  env: PostAdmissionEnv,
+  admitted: { readonly correlationId?: string },
+  continuation: RoleTurnRequest["continuation"],
+  extra?: { readonly cwd?: string },
+): RoleTurnRequestProjectionOptions {
+  const correlationId = admitted.correlationId ?? env.correlationId;
+  return {
+    packageRoot: env.packageRoot,
+    home: env.home,
+    agentDir: env.agentDir,
+    ...(env.model === undefined ? {} : { model: env.model }),
+    ...pickEngineAxis(env),
+    ...(env.timeoutMs === undefined ? {} : { timeoutMs: env.timeoutMs }),
+    ...(correlationId === undefined || correlationId.trim() === ""
+      ? {}
+      : { correlationId }),
+    continuation,
+    ...(extra?.cwd === undefined ? {} : { cwd: extra.cwd }),
+    ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),
+  };
+}
+
 /**
- * Hold the writer lease through after-lease build, then hand off to dispatch.
- * Builder (or any throw before dispatch) must release here — dispatch's finally
- * only runs after this handoff (manual resume and station-child auto-resume).
+ * Build the turn request, then hand off to dispatch. When a writer lease is
+ * held, release it if build throws before handoff — dispatch's finally only
+ * runs after this handoff (manual resume and station-child auto-resume).
+ * #987: lease is optional; auto-resume no longer pre-acquires before host CLI.
  */
 async function dispatchAfterWriterLease<T>(input: {
-  lease: RunWriterLease;
+  lease?: RunWriterLease;
   build: () => Promise<RoleTurnRequest>;
   dispatch: (request: RoleTurnRequest) => Promise<T>;
 }): Promise<T> {
@@ -1404,7 +1420,7 @@ async function dispatchAfterWriterLease<T>(input: {
     handedOffToDispatch = true;
     return await input.dispatch(request);
   } finally {
-    if (!handedOffToDispatch) {
+    if (!handedOffToDispatch && input.lease !== undefined) {
       await input.lease.release();
     }
   }
@@ -1424,7 +1440,7 @@ function isAlreadyFrozenSummonsAttachment(
  * Freeze same-ticket summons attachments into the retained run directory (#637).
  * No-op materials (no paths / instruction-only) skip the freeze.
  * Paths already under this run's attachments/ are the accepted freeze identity —
- * reuse them; do not re-freeze from external originals on bare resume.
+ * reuse them for the same internal re-summons flow.
  * Manual resume never calls this — old attachment semantics stay intact.
  */
 export async function prepareSummonsResumeMaterials(
@@ -1458,16 +1474,15 @@ export async function prepareSummonsResumeMaterials(
 }
 
 /**
- * Shared manual-resume orchestration for seats whose continuation is the
- * package resume envelope (#599 / #633): load once → structural rejection →
+ * Shared manual-resume orchestration for seats (#599 / #633):
+ * load once → structural rejection →
  * optional seat afterAdmittedLoad (method material / controlled failure) →
  * seat turn projection → station-child auto-resume or public manual resume.
  * Seat-owned loader
  * validation, turn builder, and adapters stay on the seat.
  *
- * Court open/recovery transaction (#637): under the existing writer lease,
- * read currentCourt, judge seal, clear (bound to the judged court id), freeze,
- * and record. No pre-lease clear or stale court-snapshot consumption.
+ * Court handling (#637): public manual resume reads only the open court's
+ * settlement identity; internal re-summons may freeze and record its materials.
  */
 export async function runPostAdmissionSeatResume<
   A extends AdmittedRoleInvocation,
@@ -1476,7 +1491,7 @@ export async function runPostAdmissionSeatResume<
   request: PublicResumeRequest;
   env: PostAdmissionEnv;
   io: CliIo;
-  /** Load admitted state; receives the effective resume request (may carry rehydrated summons). */
+  /** Load admitted state from the caller's resume request. */
   load: (request: PublicResumeRequest) => Promise<{ admitted: A }>;
   /** Build turn from admitted + effective request (summons ride existing projection). */
   buildTurnRequest: (
@@ -1488,8 +1503,7 @@ export async function runPostAdmissionSeatResume<
    * After the single pre-lease load. Factory seats resolve method-material
    * adapters here via resolveResumeMethodMaterialAdapters (or short-circuit
    * with the same controlled-failure face as initial). Must not re-load the
-   * same admitted; under-lease summons rehydrate remains the only second load,
-   * and only when materials change.
+   * same admitted.
    */
   afterAdmittedLoad?: (
     admitted: A,
@@ -1510,7 +1524,7 @@ export async function runPostAdmissionSeatResume<
   // Load once for runDirectory / structural rejection / afterAdmittedLoad.
   // Court identity for public manual resume is judged in the turn builder
   // (#987: no package writer-lease gate before host CLI resume). Station-child
-  // auto-resume still acquires the shared lease in runWithAutoResumeLoop.
+  // auto-resume shares that rule via runWithAutoResumeLoop (no pre-acquire).
   let loaded;
   try {
     loaded = await input.load(request);
@@ -1541,34 +1555,19 @@ export async function runPostAdmissionSeatResume<
 
   const buildRequestAfterLease = async (): Promise<RoleTurnRequest> => {
         let openCourtAttemptId: string | undefined;
-        // Build uses the admitted for this resume (rehydrated when open court
-        // materials ride). Settlement identity stays on the outer admitted.
-        // Name kept for station-child callers that still build under lease.
-        let admittedForBuild = loaded.admitted;
+        // Settlement identity stays on the outer admitted.
+        const admittedForBuild = loaded.admitted;
 
-        // Bare resume: open-court pointer is the continue signal (not ledger seal).
+        // Bare resume keeps the open court's settlement identity, but public resume
+        // never re-delivers the prior summons or its attachments (#987).
         if (request.summons === undefined) {
           const openCourt = await readCurrentCourt(admittedForBuild.runDirectory);
           if (openCourt !== undefined) {
             openCourtAttemptId = openCourt.courtAttemptId;
-            request = {
-              runId: request.runId,
-              ...(request.message === undefined
-                ? {}
-                : { message: request.message }),
-              ...(openCourt.summons === undefined
-                ? {}
-                : { summons: openCourt.summons }),
-            };
-            if (openCourt.summons !== undefined) {
-              const reloaded = await input.load(request);
-              admittedForBuild = reloaded.admitted;
-            }
           }
         }
 
-        // Freeze external paths once; rewrite summons to the frozen identity so
-        // currentCourt + later bare resume reuse the accepted snapshot.
+        // Internal re-summons freezes external paths once and records that identity.
         if (request.summons !== undefined) {
           const prepared = await prepareSummonsResumeMaterials(
             admittedForBuild.runDirectory,
@@ -1591,6 +1590,22 @@ export async function runPostAdmissionSeatResume<
         }
 
         let turnRequest = await input.buildTurnRequest(admittedForBuild, request);
+        if (
+          turnRequest.continuation.kind === "resume"
+          && turnRequest.continuation.hostSessionId === undefined
+        ) {
+          const hostSessionId = await readStoredHostSessionId(
+            env.host,
+            env.principalAuthority,
+            admittedForBuild.principal,
+          );
+          if (hostSessionId !== undefined) {
+            turnRequest = {
+              ...turnRequest,
+              continuation: { ...turnRequest.continuation, hostSessionId },
+            };
+          }
+        }
 
         // Open court continue, or new court for summons / message re-review
         // (clause 0 新庭可再交卷; #833). Bare resume without open court omits id.
@@ -1619,10 +1634,10 @@ export async function runPostAdmissionSeatResume<
     return turnRequest;
   };
 
-  // Court recovery / open, then dispatch. Public manual resume does not take a
-  // package writer lease before the host CLI (#987 / ADR 0080 one-shot).
-  // Station-child same-ticket/same-parent resume is call-local auto-resume
-  // (#840 / #416) and still acquires the shared lease in its loop.
+  // Court recovery / open, then dispatch. Public manual resume and station-child
+  // auto-resume both pass through to the host CLI without a package writer-lease
+  // pre-gate (#987 / ADR 0080). Station-child same-ticket/same-parent resume is
+  // still call-local auto-resume (#840 / #416).
   // afterAdmittedPrepare runs inside this try so mint failure and cleanup share one finally.
   try {
     if (input.afterAdmittedPrepare !== undefined) {
@@ -1657,14 +1672,13 @@ export async function runPostAdmissionSeatResume<
         // redispatch brake (#833). New-court station-child turns still auto-resume.
         dispatch: async (payload, lease, _isFirst, attemptIo) =>
           dispatchAfterWriterLease({
-            lease,
+            ...(lease === undefined ? {} : { lease }),
             build: async () => {
               // #840 r8 判词 class 2: this call-local retry must keep this
               // court's frozen summons / 交卷 body / attachments verbatim
               // (same object as firstTurn) and project only the minimal
-              // host-needed resume trigger — never the manual-resume engine
-              // handbook (buildResumeContinuationPrompt), which would replace
-              // a 审核循环 same-ticket continuation with a bare outsourcing
+              // host-needed resume trigger — never engine handbook material,
+              // which would replace a 审核循环 same-ticket continuation with a bare outsourcing
               // 「重新读」 envelope (#755 contract, resumeTurnRequestProjectionOptions
               // above). RESUME_TRANSPORT_ENVELOPE is the same package-owned,
               // non-semantic trigger that projection already uses for a
@@ -1691,7 +1705,7 @@ export async function runPostAdmissionSeatResume<
                 env,
                 io: attemptIo,
                 request: turnRequest,
-                lease,
+                ...(lease === undefined ? {} : { lease }),
                 adapters: stationAdapters,
                 persistRunState: false,
                 ...(input.effectiveEngine === undefined
@@ -1720,8 +1734,7 @@ export async function runPostAdmissionSeatResume<
       buildRequestAfterLease,
     });
   } catch (error) {
-    // Open-court rehydrate load under lease may still surface seat structural
-    // rejection (e.g. notary rejects caller message) — same exit face as pre-lease.
+    // Seat preparation may still surface structural rejection.
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, input.io);
       return { exitCode: 2 };
@@ -1829,7 +1842,7 @@ export async function runPostAdmissionResumable<
         },
         io: attemptIo,
         request,
-        lease,
+        ...(lease === undefined ? {} : { lease }),
         adapters,
         persistRunState: false,
         // #600: every attempt (initial + auto-resume) writes seat engine when present.
@@ -1844,8 +1857,8 @@ export async function runPostAdmissionResumable<
  * Manual resume: pass-through to the host CLI resume — no package writer-lease
  * pre-gate (#987), no sealed-accepted short-circuit (#833 / #416). Court open
  * (summons / message / open court) is built when using buildRequestAfterLease;
- * sole-final stays per-attempt. Station-child auto-resume keeps shared lease
- * acquire in runWithAutoResumeLoop + dispatchAfterWriterLease.
+ * sole-final stays per-attempt. Station-child auto-resume shares the same
+ * no-pre-gate rule via runWithAutoResumeLoop + dispatchAfterWriterLease.
  */
 export async function runPostAdmissionManualResume<
   A extends AdmittedRoleInvocation,

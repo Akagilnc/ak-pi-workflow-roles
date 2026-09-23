@@ -34,15 +34,15 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
-  admitJudgeInvocation,
-  buildJudgeTransportPrompt,
-  parseJudgeArgv,
+  admitPublicRole,
+  buildInstructionTransportPrompt,
+  parsePublicSeatArgv,
 } from "../../src/public-cli/invocation.ts";
 import {
   extractNavigatorFact,
   NAVIGATOR_POST_ROLE_GRACE_MS,
   raceNavigatorGrace,
-  settleJudgeTerminalResult,
+  settleSeatTerminalResult,
 } from "../../src/public-cli/settlement.ts";
 import {
   formatTerminalResult,
@@ -150,8 +150,6 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-
-
 test("S1: judge escalate public CLI keeps decisionGate options on typed payload in order", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -206,11 +204,11 @@ test("parseJudgeArgv rejects public burden selectors and unknown flags", () => {
   // Typed structural reject only (AC6) — never freeze human diagnostic phrasing.
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
-  assert.throws(() => parseJudgeArgv(["--burden", "heavy"]), isUsage);
-  assert.throws(() => parseJudgeArgv(["--ak-judge-burden=light"]), isUsage);
-  assert.throws(() => parseJudgeArgv(["--judge-burden", "x"]), isUsage);
-  assert.throws(() => parseJudgeArgv(["--unknown-flag"]), isUsage);
-  const parsed = parseJudgeArgv([
+  assert.throws(() => parsePublicSeatArgv("judge", ["--burden", "heavy"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--ak-judge-burden=light"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--judge-burden", "x"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--unknown-flag"]), isUsage);
+  const parsed = parsePublicSeatArgv("judge", [
     "--attach",
     "a.md",
     "--project",
@@ -227,23 +225,24 @@ test("parseJudgeArgv rejects blank --project/--attach path values", () => {
   // Typed structural reject only (AC6) — path-flag prose is unfrozen presentation.
   const isUsage = (error: unknown): boolean =>
     error instanceof CliUsageError && error.code === "AK_ROLE_USAGE";
-  assert.throws(() => parseJudgeArgv(["--project=", "task"]), isUsage);
-  assert.throws(() => parseJudgeArgv(["--project", "", "task"]), isUsage);
-  assert.throws(() => parseJudgeArgv(["--project", "   ", "task"]), isUsage);
-  assert.throws(() => parseJudgeArgv(["--attach=", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--project=", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--project", "", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--project", "   ", "task"]), isUsage);
+  assert.throws(() => parsePublicSeatArgv("judge", ["--attach=", "task"]), isUsage);
 });
 
 test("admitJudgeInvocation rejects blank project override before resolve", async () => {
   await withTempHome(async (home) => {
     await assert.rejects(
       () =>
-        admitJudgeInvocation({
-      principalAuthority: piDurablePrincipalAuthority,
-          home,
-          cwd: home,
+        admitPublicRole("judge", {
           instruction: "task",
           attachmentPaths: [],
           project: "",
+        }, {
+          principalAuthority: piDurablePrincipalAuthority,
+          home,
+          cwd: home,
         }),
       // Typed structural reject only (AC6) — do not freeze diagnostic phrasing.
       (error: unknown) =>
@@ -260,12 +259,13 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
     const source = join(home, "evidence.txt");
     await writeFile(source, "admitted-bytes-v1", "utf8");
 
-    const admitted = await admitJudgeInvocation({
+    const admitted = await admitPublicRole("judge", {
+      instruction: "review the attachment",
+      attachmentPaths: [source],
+    }, {
       principalAuthority: piDurablePrincipalAuthority,
       home,
       cwd: project,
-      instruction: "review the attachment",
-      attachmentPaths: [source],
       createRunId: () => "run-freeze-001",
     });
 
@@ -299,7 +299,7 @@ test("admitJudgeInvocation freezes regular-file attachments against later mutati
 });
 
 test("structurally empty request stays empty while attachments remain typed transport", () => {
-  const empty = buildJudgeTransportPrompt(
+  const empty = buildInstructionTransportPrompt(
     fixtureJudgeAdmitted({
       runId: "r",
       bookKey: "b",
@@ -313,7 +313,7 @@ test("structurally empty request stays empty while attachments remain typed tran
   );
   assert.equal(empty, "");
 
-  const withAttach = buildJudgeTransportPrompt(
+  const withAttach = buildInstructionTransportPrompt(
     fixtureJudgeAdmitted({
       runId: "r",
       bookKey: "b",
@@ -1093,7 +1093,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
       "unbound", "runs",
       "run-cli-judge-001@judge",
     );
-    const terminal = await settleJudgeTerminalResult(
+    const terminal = await settleSeatTerminalResult(
       fixtureJudgeAdmitted({
         runId: "run-cli-judge-001",
         runDirectory: runDir,
@@ -1206,7 +1206,7 @@ test("runAkRole judge empty request does not invent semantic task content on the
       "unbound", "runs",
       "run-empty-001@judge",
     );
-    const terminal = await settleJudgeTerminalResult(
+    const terminal = await settleSeatTerminalResult(
       fixtureJudgeAdmitted({
         runId: "run-empty-001",
         runDirectory: runDir,

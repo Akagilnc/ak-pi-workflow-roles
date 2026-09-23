@@ -77,7 +77,7 @@ function runtimeHarness(options: {
   let aborts = 0;
   const { handlers } = captureExtensionHandlers(
     (pi) => createPiRoleRuntimeExtension({
-      loadJudgeSoul: options.activate ?? (async () => { throw new TypeError("soul unavailable"); }),
+      loadRoleSoul: options.activate ?? (async () => { throw new TypeError("soul unavailable"); }),
       activationClock: options.clock ?? (() => "2025-01-01T00:00:00.000Z"),
       activationTraceWriter: options.writeTrace ?? ((record) => { traces.push(record); }),
     })(pi),
@@ -105,7 +105,7 @@ test("non-git cwd and durable session rejection classes fail before model dispat
     let aborts = 0;
     let soulLoads = 0;
     const judgeDeps = () => ({
-      loadJudgeSoul: async () => { soulLoads += 1; return "LAW"; },
+      loadRoleSoul: async () => { soulLoads += 1; return "LAW"; },
       activationTraceWriter: () => {},
     });
     const { handlers } = captureExtensionHandlers(
@@ -241,7 +241,7 @@ test("shared role runtime registers tool observation only after admitted activat
     const observations: ToolExecutionObservationRecord[] = [];
     const { handlers } = captureExtensionHandlers(
       (pi) => createPiRoleRuntimeExtension({
-        loadJudgeSoul: async () => "LAW",
+        loadRoleSoul: async () => "LAW",
         activationClock: () => "2025-01-01T00:00:00.000Z",
         activationTraceWriter: () => {},
         toolExecutionObservationWriter: (record) => { observations.push(record); },

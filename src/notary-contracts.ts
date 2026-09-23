@@ -9,7 +9,6 @@ import { openToolObject } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
 export const NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
-export const NOTARY_ACCEPTED_TEXT = "符宝郎回执已接受";
 export const NOTARY_SOURCE_RUN_FLAG = {
   name: "ak-notary-source-run",
   definition: {

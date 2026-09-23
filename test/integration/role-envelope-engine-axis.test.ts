@@ -26,7 +26,7 @@ import {
 } from "../../src/host-contracts.ts";
 import { resolveEngineMaterialPath } from "../../src/package-resources/engine-material.ts";
 import type { AdmittedInspectorInvocation } from "../../src/public-cli/invocation.ts";
-import { buildInspectorTurnRequest } from "../../src/public-cli/inspector-run.ts";
+import { buildInstructionSeatTurnRequest } from "../../src/public-cli/instruction-seat-run.ts";
 import { projectActivationFlags } from "../../src/role-activation-flags.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
@@ -502,7 +502,7 @@ function admittedInspector(instruction: string, runDirectory: string): AdmittedI
 }
 
 test("#879 inspector first mint: parent path on activation, payload stays dialogue", () => {
-  const request = buildInspectorTurnRequest(
+  const request = buildInstructionSeatTurnRequest(
     admittedInspector(`卷宗指针：${INSPECTOR_PARENT}`, "/tmp/ak-879-inspector-run"),
     {
       packageRoot,
@@ -525,7 +525,7 @@ test("#879 inspector parent binding rides readingMaterial, not prompt", async ()
   const home = await mkdtemp(join(tmpdir(), "ak-879-inspector-bind-"));
   const runDirectory = join(home, "run");
   await mkdir(join(runDirectory, "session"), { recursive: true });
-  const request = buildInspectorTurnRequest(
+  const request = buildInstructionSeatTurnRequest(
     {
       ...admittedInspector(`卷宗指针：${INSPECTOR_PARENT}`, runDirectory),
       projectRoot: packageRoot,

@@ -6,7 +6,6 @@
  */
 
 export const COUNTERSIGN_OUTPUT_TOOL_NAME = "ak_countersign_output";
-export const COUNTERSIGN_ACCEPTED_TEXT = "给事中回执已接受";
 
 export type CountersignVerdict =
   | { countersignStatus: "converged"; note?: string; evidence?: unknown }

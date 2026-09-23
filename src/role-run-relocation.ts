@@ -40,7 +40,6 @@ const RUN_STATE_PAGE_FIELDS = [
 
 const SOURCE_RUN_LOCATOR_FIELDS = ["runDirectory"] as const;
 const SUMMONS_PATH_FIELDS = ["sourceRunPath"] as const;
-const CURRENT_SESSION_FIELDS = ["sessionFile"] as const;
 const OFFICER_POINTER_FIELDS = ["sessionFile", "runDirectory"] as const;
 const SITIAN_RECORD_FIELDS = ["sessionParent"] as const;
 const SESSION_HEADER_FIELDS = ["parentSession"] as const;
@@ -219,18 +218,6 @@ export function rewriteAdmittedRoleRunPage(
   }
 }
 
-async function rewriteJsonObjectFile(
-  path: string,
-  fields: readonly string[],
-  rewrites: readonly RunDirectoryPathRewrite[],
-): Promise<void> {
-  if (!existsSync(path)) return;
-  const page = JSON.parse(await readFile(path, "utf8")) as unknown;
-  if (!isPlainObject(page)) return;
-  rewriteRunDirectoryPathFieldsAgainstRewrites(page, fields, rewrites);
-  await writeFile(path, `${JSON.stringify(page, null, 2)}\n`, "utf8");
-}
-
 async function rewriteOfficerPointerFile(
   path: string,
   rewrites: readonly RunDirectoryPathRewrite[],
@@ -377,7 +364,7 @@ async function rewriteSessionTranscriptBindings(
 
 /**
  * Package-owned nested seams under session/ only:
- * current-session.json, direct-officer *.pointer.json, sitian records.jsonl,
+ * direct-officer *.pointer.json, sitian records.jsonl,
  * session transcript typed parent bindings. Never walks attachments/ or artifacts/.
  */
 async function rewriteNestedMachinePathPages(
@@ -400,9 +387,7 @@ async function rewriteNestedMachinePathPages(
         continue;
       }
       if (!entry.isFile()) continue;
-      if (entry.name === "current-session.json") {
-        await rewriteJsonObjectFile(path, CURRENT_SESSION_FIELDS, rewrites);
-      } else if (entry.name.endsWith(".pointer.json")) {
+      if (entry.name.endsWith(".pointer.json")) {
         await rewriteOfficerPointerFile(path, rewrites);
       } else if (entry.name === "records.jsonl") {
         await rewriteSitianRecordsJsonl(path, rewrites);

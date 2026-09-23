@@ -62,6 +62,7 @@ function streamIdleTimeoutFromUnknown(value: unknown): StreamIdleTimeoutError | 
     : undefined;
 }
 
+
 // ── Stream / remote error projection helpers ───────────────────────────────
 
 function emptyUsage(): Usage {
@@ -599,12 +600,12 @@ export async function openPiInProcessSession(
         kind: options.sessionIdentity.kind,
         ...(options.sessionIdentity.subject === undefined ? {} : { subject: options.sessionIdentity.subject }),
         ...(options.sessionIdentity.parent === undefined ? {} : { parent: options.sessionIdentity.parent }),
-      });
+      }) as SessionManager;
     } else {
       sessionManager = createRecordSession({
         cwd: options.cwd,
         kind: "institutional",
-      });
+      }) as SessionManager;
     }
 
     // 6. Tools mapping
@@ -858,4 +859,3 @@ export async function openPiInProcessSession(
     throw openError;
   }
 }
-

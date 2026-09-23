@@ -125,9 +125,29 @@ test("commit accounting excludes self-reported commit SHAs from Coder and Fixer 
     ];
     await writeFile(join(runs, "fixer/session/commits.jsonl"), fixerFixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
 
+    // Merger's registered commit leaf is the only commit the case counts.
+    await mkdir(join(runs, "merger/session"), { recursive: true });
+    const mergerCommit = "b".repeat(40);
+    const mergerFixture = [
+      { type: "session", timestamp: "2026-08-01T00:00:00.000Z" },
+      {
+        type: "message",
+        timestamp: "2026-08-01T00:00:02.000Z",
+        message: {
+          role: "toolResult",
+          toolName: "ak_merger_output",
+          isError: false,
+          details: { status: "completed", mergeCommitId: mergerCommit },
+        },
+      },
+    ];
+    await writeFile(join(runs, "merger/session/commits.jsonl"), mergerFixture.map((row) => JSON.stringify(row)).join("\n") + "\n");
+
     const patient = await loadDoctorCase(runs);
     assert.equal(patient.cost.statuses[0]?.status, "completed");
-    assert.deepEqual(patient.cost.commits, []);
+    assert.deepEqual(patient.cost.commits, [
+      { source: "merger/session/commits.jsonl", commit: mergerCommit },
+    ]);
   });
 });
 

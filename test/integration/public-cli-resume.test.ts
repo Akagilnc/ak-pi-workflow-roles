@@ -24,7 +24,7 @@ import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
   acquireRunWriterLease,
-  loadResumableJudgeRun,
+  loadResumablePublicRole,
   markRunAdmitted,
   markRunResumable,
   markRunTerminal,
@@ -32,7 +32,6 @@ import {
   readTypedHttp429Observation,
   recordTypedProviderHttpStatus,
   renderResumeCommand,
-  RESUME_TRANSPORT_ENVELOPE,
   RunWriterLeaseHeldError,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
@@ -1553,9 +1552,9 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
       assert.equal(dispatches, 0);
     }
 
-    // Unit: loadResumableJudgeRun rejects terminal/non-resumable.
+    // Unit: loadResumablePublicRole rejects terminal/non-resumable.
     await assert.rejects(
-      () => loadResumableJudgeRun(home, "missing", piDurablePrincipalAuthority),
+      () => loadResumablePublicRole(home, "missing", piDurablePrincipalAuthority),
       /unknown role run id/,
     );
   });
@@ -2146,7 +2145,7 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     // Principal path is bound but the file itself is missing.
 
     await assert.rejects(
-      () => loadResumableJudgeRun(home, runId, piDurablePrincipalAuthority),
+      () => loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),
       (error: unknown) =>
         error instanceof Error &&
         error.message.includes("Pi session principal is unavailable"),
@@ -2374,16 +2373,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       assert.equal(seen[seen.indexOf("--session-dir") + 1], admitted.sessionDirectory);
       // Resume continues the existing method turn instead of invoking its Skill again.
       const rawPrompt = c.message === undefined ? "" : c.message;
-      const expectedBody =
-        c.role === "reviewer"
-          ? (c.message === undefined
-            ? RESUME_TRANSPORT_ENVELOPE
-            : `${RESUME_TRANSPORT_ENVELOPE}\n\n${c.message}`)
-          : c.role === "merger"
-            ? (rawPrompt.length === 0
-              ? "/skill:resolving-merge-conflicts"
-              : `/skill:resolving-merge-conflicts ${rawPrompt}`)
-            : rawPrompt;
+      const expectedBody = rawPrompt;
       assert.equal(readUserDialogueStdin(seenStdin ?? ""), expectedBody);
       assert.equal(readUserDialogueStdin((seenStdin ?? "").trim()), expectedBody);
     }

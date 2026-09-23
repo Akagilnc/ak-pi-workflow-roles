@@ -98,8 +98,13 @@ export type PublicSummonRequest = {
   readonly hostAdapters?: readonly NamedRoleTurnHostAdapter[];
   /** Offline test inject for deterministic run ids (same face as public CLI). */
   readonly createRunId?: () => string;
-  /** Typed ticket number handoff for diarist child run (#840). */
+  /** Typed ticket number handoff for diarist child run (#840). Bind only — not a resume key (#987). */
   readonly boundTicketNumber?: number;
+  /**
+   * Gate / officer same-parent resume key (#747 / #987). Countersign gate re-ask
+   * looks up prior 给事中 by this parent run directory, never by ticket number.
+   */
+  readonly parentRunPath?: string;
   /** Caller correlation id for nested leg ledger (ADR 0010 / #924). */
   readonly correlationId?: string;
   /**
@@ -430,6 +435,9 @@ export async function summonPublicRole(
           ...(options.boundTicketNumber === undefined
             ? {}
             : { boundTicketNumber: options.boundTicketNumber }),
+          ...(options.parentRunPath === undefined || options.parentRunPath.trim() === ""
+            ? {}
+            : { parentRunPath: options.parentRunPath }),
           ...(options.correlationId === undefined || options.correlationId.trim() === ""
             ? {}
             : { correlationId: options.correlationId }),
@@ -483,132 +491,45 @@ export async function summonPublicRole(
     return { ok: await run(prepared.env, () => parsedArgv) };
   }
 
+  const [{ runPublicInstructionSeat, runPublicInstructionSeatResume }, { PUBLIC_ROLE_ARGV }] = await Promise.all([
+    import("./public-cli/instruction-seat-run.ts"),
+    import("./public-cli/cli.ts"),
+  ]);
+  const { packagedRoleMetadata } = await import("./packaged-role-registry.ts");
+  const record = packagedRoleMetadata(options.role);
+  const parse = ((args: readonly string[]) =>
+    PUBLIC_ROLE_ARGV[options.role].parse(args)) as (args: readonly string[]) => import("./public-cli/invocation.ts").PublicSeatParse;
+  const resumeRunId = record?.summonResume === true
+    && typeof options.resumeRunId === "string"
+    && options.resumeRunId.trim() !== ""
+    ? options.resumeRunId.trim()
+    : undefined;
   let result: {
     exitCode: number;
     terminal?: TerminalResult;
     admitted?: { readonly runDirectory?: string };
   };
-  switch (options.role) {
-    case "notary": {
-      const [{ runPublicNotary }, { parseNotaryArgv }] = await Promise.all([
-        import("./public-cli/notary-run.ts"),
-        import("./public-cli/invocation.ts"),
-      ]);
-      const stepped = await runPrepared(parseNotaryArgv, (env, once) =>
-        runPublicNotary(options.argv, env as never, io, once));
-      if ("fail" in stepped) return stepped.fail;
-      result = stepped.ok;
-      break;
-    }
-    case "inspector": {
-      const [{ runPublicInspector }, { parseInspectorArgv }] = await Promise.all([
-        import("./public-cli/inspector-run.ts"),
-        import("./public-cli/invocation.ts"),
-      ]);
-      const stepped = await runPrepared(parseInspectorArgv, (env, once) =>
-        runPublicInspector(options.argv, env as never, io, once));
-      if ("fail" in stepped) return stepped.fail;
-      result = stepped.ok;
-      break;
-    }
-    case "auditor":
-    case "navigator":
-    case "gatekeeper": {
-      const seat = options.role;
-      const [{ runPublicInstructionSeat, runPublicInstructionSeatResume }, invocation] = await Promise.all([
-        import("./public-cli/instruction-seat-run.ts"),
-        import("./public-cli/invocation.ts"),
-      ]);
-      const parse =
-        seat === "auditor"
-          ? invocation.parseAuditorArgv
-          : seat === "navigator"
-            ? invocation.parseNavigatorArgv
-            : invocation.parseGatekeeperArgv;
-      const resumeRunId = typeof options.resumeRunId === "string" && options.resumeRunId.trim() !== ""
-        ? options.resumeRunId.trim()
-        : undefined;
-      if (resumeRunId !== undefined) {
-        // Host CLI resume — same face as `ak-role resume <runId> [message]`.
-        // Instruction/materials ride summons.instruction (not package memory).
-        const instruction = options.argv[0] ?? "";
-        const stepped = await runPrepared(parse, (env) =>
-          runPublicInstructionSeatResume(
-            {
-              runId: resumeRunId,
-              summons: {
-                instruction,
-                instructionEmpty: instruction.trim() === "",
-              },
-            },
-            env as never,
-            io,
-          ));
-        if ("fail" in stepped) return stepped.fail;
-        result = stepped.ok;
-      } else {
-        const stepped = await runPrepared(parse, (env, once) =>
-          runPublicInstructionSeat(options.argv, env as never, io, seat, once));
-        if ("fail" in stepped) return stepped.fail;
-        result = stepped.ok;
-      }
-      break;
-    }
-    case "judge": {
-      const [{ runPublicJudge }, { parseJudgeArgv }] = await Promise.all([
-        import("./public-cli/judge-run.ts"),
-        import("./public-cli/invocation.ts"),
-      ]);
-      const stepped = await runPrepared(parseJudgeArgv, (env, once) =>
-        runPublicJudge(options.argv, env as never, io, once));
-      if ("fail" in stepped) return stepped.fail;
-      result = stepped.ok;
-      break;
-    }
-    case "doctor": {
-      const [{ runPublicDoctor }, { parseDoctorArgv }] = await Promise.all([
-        import("./public-cli/doctor-run.ts"),
-        import("./public-cli/invocation.ts"),
-      ]);
-      const stepped = await runPrepared(parseDoctorArgv, (env, once) =>
-        runPublicDoctor(options.argv, env as never, io, once));
-      if ("fail" in stepped) return stepped.fail;
-      result = stepped.ok;
-      break;
-    }
-    case "diarist": {
-      const [{ runPublicDiarist }, { parseDiaristArgv }] = await Promise.all([
-        import("./public-cli/diarist-run.ts"),
-        import("./public-cli/invocation.ts"),
-      ]);
-      const stepped = await runPrepared(parseDiaristArgv, (env, once) =>
-        runPublicDiarist(options.argv, env as never, io, once));
-      if ("fail" in stepped) return stepped.fail;
-      result = stepped.ok;
-      break;
-    }
-    case "countersign": {
-      const [{ runPublicCountersign }, { parseCountersignArgv }] = await Promise.all([
-        import("./public-cli/countersign-run.ts"),
-        import("./public-cli/invocation.ts"),
-      ]);
-      const stepped = await runPrepared(parseCountersignArgv, (env, once) =>
-        runPublicCountersign(options.argv, env as never, io, once));
-      if ("fail" in stepped) return stepped.fail;
-      result = stepped.ok;
-      break;
-    }
-    case "reviewer": {
-      const [{ runPublicReviewer }, { parseReviewerArgv }] = await Promise.all([
-        import("./public-cli/reviewer-run.ts"),
-        import("./public-cli/invocation.ts"),
-      ]);
-      const stepped = await runPrepared(parseReviewerArgv, (env, once) =>
-        runPublicReviewer(options.argv, env as never, io, once));
-      if ("fail" in stepped) return stepped.fail;
-      result = stepped.ok;
-      break;
-    }
+  if (resumeRunId !== undefined) {
+    const instruction = options.argv[0] ?? "";
+    const stepped = await runPrepared(parse, (env) =>
+      runPublicInstructionSeatResume(
+        {
+          runId: resumeRunId,
+          summons: {
+            instruction,
+            instructionEmpty: instruction.trim() === "",
+          },
+        },
+        env as never,
+        io,
+      ));
+    if ("fail" in stepped) return stepped.fail;
+    result = stepped.ok;
+  } else {
+    const stepped = await runPrepared(parse, (env, once) =>
+      runPublicInstructionSeat(options.argv, env as never, io, options.role, once));
+    if ("fail" in stepped) return stepped.fail;
+    result = stepped.ok;
   }
 
   const stderr = captured?.stderrText();
@@ -830,7 +751,7 @@ export async function summonParallelReviewerLenses(options: {
   return results;
 }
 
-/** Gate officer summons: notary/auditor via --source-run; inspector via pointer; countersign via ticket (#969). */
+/** Gate officer summons: notary/auditor via --source-run; inspector via pointer; countersign via parentRunPath (#969 / #987). */
 export async function summonGateOfficer(options: {
   readonly officer: "inspector" | "notary" | "auditor" | "countersign";
   readonly sourceRunDirectory: string;
@@ -887,20 +808,22 @@ export async function summonGateOfficer(options: {
     ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
   } as const;
-  if (options.officer === "notary") {
+  const { packagedGateSummon } = await import("./packaged-role-registry.ts");
+  const gateSummon = packagedGateSummon(options.officer);
+  if (gateSummon === "source-run") {
     // #753/#879: reask or verbatim body rides summons.instruction / first-mint prompt.
     // Binding stays --source-run (never folded into content).
     return summonPublicRole({
-      role: "notary",
+      role: options.officer,
       argv: ["--source-run", options.sourceRunDirectory, "--project", options.cwd],
       ...common,
     });
   }
-  if (options.officer === "auditor") {
+  if (gateSummon === "subject-source") {
     // #756: judge compliance path — same queue law as notary/inspector.
     // Binding pointer on argv; dialogue content rides gateReviewInstruction.
     return summonPublicRole({
-      role: "auditor",
+      role: options.officer,
       argv: [
         "--subject",
         "judge",
@@ -911,13 +834,14 @@ export async function summonGateOfficer(options: {
       ...common,
     });
   }
-  if (options.officer === "countersign") {
-    // #969: Secretariat submission gate → 给事中.
+  if (gateSummon === "parent-instruction") {
+    // #969 / #987: Secretariat submission gate → 给事中.
     // Dialogue / identity instruction = parent typed payload 原话 (ADR 0079) or reask;
-    // no code-authored summons prose (#924). Ticket identity = parent run durable
-    // board binding only (readBoardTicketNumber) — receipt ticketNumber is payload
-    // content, never the sole identity source; parent true-unbound stays unbound.
+    // no code-authored summons prose (#924). Gate resume key = parentRunPath
+    // (sourceRunDirectory); board ticket handoff is bind-only, never a resume
+    // lookup (#987 Result 7). Receipt ticketNumber stays payload content.
     // correlationId only on this officer — notary/auditor/inspector stay untouched.
+    // Gate resume key is the parent run directory. The board ticket only binds.
     const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
     const correlationId = runIdFromRunDirectory(options.sourceRunDirectory);
     if (correlationId === undefined || correlationId.trim() === "") {
@@ -930,17 +854,18 @@ export async function summonGateOfficer(options: {
     // Argv instruction = reask or parent payload bytes only (never a fabricated line).
     const instruction = options.reask ?? gateReviewInstruction ?? "";
     return summonPublicRole({
-      role: "countersign",
+      role: options.officer,
       argv: ["--project", options.cwd, "--", instruction],
       ...common,
       correlationId,
+      parentRunPath: options.sourceRunDirectory,
       ...(parentTicket === undefined ? {} : { boundTicketNumber: parentTicket }),
     });
   }
   // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath lookup key).
   // Content (body/reask) rides env → summons.instruction / first-mint prompt.
   return summonPublicRole({
-    role: "inspector",
+    role: options.officer,
     argv: [`卷宗指针：${options.sourceRunDirectory}`],
     ...common,
   });

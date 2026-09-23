@@ -10,8 +10,7 @@ import {
   resolveAuditDossier,
 } from "./dossier-resolution.ts";
 import type { HostContext } from "./host-contracts.ts";
-
-export const DOCTOR_AUDIT_TOOL_NAME = "ak_doctor_audit_decision";
+export { DOCTOR_AUDIT_TOOL_NAME } from "./doctor-contracts.ts";
 
 export type DoctorAuditOptions = {
   context: HostContext;
