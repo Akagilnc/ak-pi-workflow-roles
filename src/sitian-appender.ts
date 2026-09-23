@@ -6,13 +6,8 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   appendFileSync,
-  closeSync,
   existsSync,
-  openSync,
   readFileSync,
-  readSync,
-  statSync,
-  truncateSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -64,43 +59,29 @@ function sealTornTail(recordFile: string): void {
   }
 }
 
-/** Assign an already-recorded volume without changing any of its rows. */
-export function appendSitianRecordBlock(input: SitianRecordInput, block: string, sourceRunDirectory: string): void {
+/** Assign already-recorded lines, preserving their original text and malformed lines. */
+export function appendSitianRecordBlock(input: SitianRecordInput, block: string): void {
   if (block === "") return;
   try {
     const { sessionDir, recordFile, ledgerHome } = resolveSitianRecordPath(input);
     ensureRealDirectoryTree(ledgerHome, sessionDir);
     appendFileSync(recordFile, "", "utf8");
-    const marker = `${recordFile}.block-${createHash("sha256").update(sourceRunDirectory).digest("hex")}`;
-    const bytes = Buffer.from(block, "utf8");
-    if (existsSync(marker)) {
-      const offset = Number(readFileSync(marker, "utf8"));
-      if (!Number.isSafeInteger(offset) || offset < 0) {
-        throw new Error(`Invalid Sitian block offset in ${marker}`);
-      }
-      const remaining = statSync(recordFile).size - offset;
-      if (remaining < 0) {
-        throw new Error(`Sitian block at ${marker} changed after append`);
-      }
-      const compared = Math.min(remaining, bytes.length);
-      const actual = Buffer.alloc(compared);
-      const fd = openSync(recordFile, "r");
-      try {
-        if (readSync(fd, actual, 0, actual.length, offset) !== compared || !bytes.subarray(0, compared).equals(actual)) {
-          throw new Error(`Sitian block at ${marker} does not match its source`);
-        }
-      } finally {
-        closeSync(fd);
-      }
-      if (remaining >= bytes.length) return;
-      truncateSync(recordFile, offset);
-      appendFileSync(recordFile, bytes);
-      return;
-    }
     sealTornTail(recordFile);
-    const offset = statSync(recordFile).size;
-    writeFileSync(marker, String(offset), "utf8");
-    appendFileSync(recordFile, bytes);
+    const identityOf = (line: string): string | undefined => {
+      try {
+        const row: unknown = JSON.parse(line);
+        return isRecord(row) && typeof row.identity === "string" ? row.identity : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    const identities = new Set(readFileSync(recordFile, "utf8").split("\n").map(identityOf).filter((id): id is string => id !== undefined));
+    for (const line of block.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
+      const identity = identityOf(line);
+      if (identity !== undefined && identities.has(identity)) continue;
+      appendFileSync(recordFile, line, "utf8");
+      if (identity !== undefined) identities.add(identity);
+    }
   } catch (error) {
     if (error instanceof SitianInfrastructureError) throw error;
     throw new SitianInfrastructureError(

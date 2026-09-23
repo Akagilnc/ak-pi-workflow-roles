@@ -8,7 +8,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, readdir, truncate, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -67,7 +67,7 @@ import {
 } from "../helpers/terminal-payload.ts";
 import { MAIN_ROLE_SESSION_MATERIALS } from "../../src/session-opening-materials.ts";
 import { resolveActivationLedgerHome } from "../../src/activation-ledger-topology.ts";
-import { readTicketProvenance, rehomeUnboundTicketProvenance } from "../../src/ticket-provenance.ts";
+import { readTicketProvenance } from "../../src/ticket-provenance.ts";
 import {
   readSitianRecords,
   resolveSitianRecordPathInLedger,
@@ -1291,7 +1291,7 @@ test("#969 omitted receipt ticketNumber still hands parent board identity to 给
 });
 
 test("public secretariat moves its unbound 起居录 to the ticket after typed assignment", async () => {
-  for (const scenario of ["first", "retry", "partial-retry", "other-source-same-content"] as const) {
+  for (const scenario of ["first", "existing-identity"] as const) {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -1322,16 +1322,8 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
           sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
         })(args, options);
         sourceContent = await readFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), "utf8");
-        if (scenario !== "first") {
-          if (scenario === "retry" || scenario === "partial-retry") {
-            await rehomeUnboundTicketProvenance(options.env.AK_ROLE_RUN_DIR!, 924, project, home);
-            if (scenario === "partial-retry") {
-              await truncate(join(book, "924", "records.jsonl"), Buffer.byteLength(`${prior}\n`) + Math.floor(Buffer.byteLength(sourceContent) / 2));
-            }
-            await writeFile(join(options.env.AK_ROLE_RUN_DIR!, "records.jsonl"), sourceContent, "utf8");
-          } else {
-            await writeFile(join(book, "924", "records.jsonl"), `${prior}\n${sourceContent}`, "utf8");
-          }
+        if (scenario === "existing-identity") {
+          await writeFile(join(book, "924", "records.jsonl"), `${prior}\n${sourceContent.split("\n")[1]}\n`, "utf8");
           const parentPagePath = join(book, "unbound", "runs", parentRun, "admitted-request.json");
           const parentPage = JSON.parse(await readFile(parentPagePath, "utf8"));
           await writeFile(parentPagePath, `${JSON.stringify({ ...parentPage, childDiaristRunIds: ["already-moved"] })}\n`, "utf8");
@@ -1350,7 +1342,7 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
     assert.ok((await readdir(dirname(unrelatedRun))).includes("unfinished@diarist"));
     assert.equal(await readFile(join(unrelatedRun, "admitted-request.json"), "utf8"), "");
     const record = join(book, "924", "records.jsonl");
-    assert.equal(await readFile(record, "utf8"), `${prior}\n${sourceContent}${scenario === "other-source-same-content" ? sourceContent : ""}`);
+    assert.equal(await readFile(record, "utf8"), scenario === "first" ? `${prior}\n${sourceContent}` : `${prior}\n${sourceContent.split("\n")[1]}\n{broken\n`);
     const recordLines = (await readFile(record, "utf8")).trim().split("\n");
     assert.ok(recordLines.includes("{broken"));
     const rows = recordLines.filter((line) => line !== "{broken").map((row) => JSON.parse(row));
