@@ -382,7 +382,6 @@ function codexMcpConfigArgs(
     // would hide a broken intermediate-tool channel (#646 须真跑证②).
     args.push("-c", `${prefix}.command=${codexTomlString(command)}`);
     args.push("-c", `${prefix}.required=true`);
-    args.push("-c", `${prefix}.tool_timeout_sec=3600`);
     if (Array.isArray(row.args) && row.args.every((item): item is string => typeof item === "string")) {
       args.push("-c", `${prefix}.args=${codexTomlStringArray(row.args)}`);
     }
