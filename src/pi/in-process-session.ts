@@ -23,10 +23,10 @@ import {
   InMemoryCredentialStore,
   type Api,
   type AssistantMessage,
-  type Context,
   type Model,
   type Provider,
   type ProviderStreamOptions,
+  type TranscriptContext,
   type Usage,
 } from "@earendil-works/pi-ai";
 
@@ -353,7 +353,7 @@ export async function openPiInProcessSession(
     const createRetriedStream = (
       simple: boolean,
       model: Model<Api>,
-      context: Context,
+      context: TranscriptContext,
       request?: ProviderStreamOptions,
     ): ReturnType<Provider["stream"]> => {
       const wrapped = createAssistantMessageEventStream();

@@ -6,6 +6,7 @@ import {
   fauxProvider,
   fauxToolCall,
   type Context,
+  type JsonObject,
   type Provider,
 } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -176,7 +177,7 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
         : undefined;
     if (auditTool !== undefined) {
       if (process.env.AK_AUDIT_NON_OBJECT === "1") {
-        return fauxAssistantMessage(fauxToolCall(auditTool, ["malformed auditor candidate"]));
+        return fauxAssistantMessage(fauxToolCall(auditTool, ["malformed auditor candidate"] as unknown as JsonObject));
       }
       if (process.env.AK_AUDIT_UNKNOWN_STATUS === "1") {
         return fauxAssistantMessage(fauxToolCall(auditTool, {

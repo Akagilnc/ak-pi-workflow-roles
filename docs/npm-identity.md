@@ -100,6 +100,6 @@ Read-only probes only; no `npm publish`.
 
 ## Host peer dependencies
 
-Pi supplies `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `typebox`. Following Pi's package contract, all three are optional `"*"` peers; ordinary npm install therefore does not materialize a private Pi runtime. Development and typecheck use snapshots `pi-ai@0.84.1`, `pi-coding-agent@0.84.1`, and `typebox@1.3.8`.
+Pi supplies `@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, and `typebox`. Following Pi's package contract, all three are optional `"*"` peers; ordinary npm install therefore does not materialize a private Pi runtime. Development and typecheck use snapshots `pi-ai@0.87.1`, `pi-coding-agent@0.87.1`, and `typebox@1.3.8`.
 
-The packed-artifact npm seam and a real `pi install` in an isolated home verify that host peers remain absent from the package install tree, including after a repeated install. Upgrade evidence is maintained in `docs/pi-0.84.1-capability-audit.md`.
+The packed-artifact npm seam and a real `pi install` in an isolated home verify that host peers remain absent from the package install tree, including after a repeated install.

@@ -30,6 +30,7 @@ import {
   type CredentialStore,
   type FauxProviderHandle,
   fauxProvider,
+  normalizeContext,
   InMemoryCredentialStore,
   type Model,
   type Provider,
@@ -585,11 +586,11 @@ export async function createMockProviderServer(
         })
         .filter(Boolean);
 
-      const stream = faux.provider.stream(faux.getModel(), {
+      const stream = faux.provider.stream(faux.getModel(), normalizeContext({
         messages: messages as any,
         ...(tools.length > 0 ? { tools } : {}),
         ...(systemPrompt ? { systemPrompt } : {}),
-      });
+      }));
       const message = await stream.result();
       if (message.stopReason === "error" || message.stopReason === "aborted") {
         if (message.errorMessage?.includes("Cannot read properties of undefined (reading 'length')")) {
