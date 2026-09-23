@@ -279,6 +279,7 @@ export async function invokeCourtDiarist(
         kind: "escalate",
         diagnostic: courtDiaristEscalateDiagnostic(roleOutcome, submissions),
       },
+      ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
     };
   }
 

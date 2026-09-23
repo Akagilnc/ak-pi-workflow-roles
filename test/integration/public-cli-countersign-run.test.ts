@@ -32,6 +32,7 @@ import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
   admitPublicRole,
   bindAdmittedTicketNumber,
+  relocateAdmittedRunToTicket,
   type AdmittedCountersignInvocation,
   type AdmittedRoleInvocation,
   parsePublicSeatArgv,
@@ -1337,6 +1338,7 @@ function courtPipelinePiRunner(
     note: "署",
   },
   courtTicketNumbers?: readonly number[],
+  recordBeforeEscalate?: string,
 ): LegacyFauxPiRunner {
   return async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
@@ -1400,6 +1402,14 @@ function courtPipelinePiRunner(
                       ? {}
                       : { courtTicketNumbers: [...courtTicketNumbers] }),
                   };
+      if (recordBeforeEscalate !== undefined) {
+        await registered.execute(
+          "call_diarist_record",
+          { status: "completed", ticketNumber: null,
+            sessions: [{ path: recordBeforeEscalate, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+          }, undefined, undefined, { runDirectory: runDir } as HostContext,
+        );
+      }
       const accepted = await registered.execute(
         "call_diarist_1",
         params,
@@ -2060,6 +2070,35 @@ test("public countersign relocates its unbound diarist when the body asserts a t
     const ticketRuns = await readdir(join(book, "582", "runs"));
     assert.ok(ticketRuns.some((entry) => entry.endsWith("@diarist")));
     assert.equal((await readdir(join(book, "unbound", "runs"))).some((entry) => entry.endsWith("@diarist")), false);
+  });
+});
+
+test("public countersign retains an already-recorded diarist child when the child escalates", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    const sessionPath = join(home, ".claude", "projects", "escalated-child", "session.jsonl");
+    await mkdir(dirname(sessionPath), { recursive: true });
+    await writeFile(sessionPath, `${JSON.stringify({ type: "user", uuid: "escalated-child-owner", message: { role: "user", content: "证言" }, origin: { kind: "human" } })}\n`);
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: courtPipelinePiRunner("escalate", undefined, undefined, sessionPath),
+    });
+    const result = await runPublicInstructionSeat(
+      ["裁票"],
+      { home, agentDir: join(home, ".pi"), packageRoot, cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: host, hostAdapters: [adapter("pi", host)],
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000e101",
+      }, captureIo().io,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
+    );
+    assert.notEqual(result.exitCode, 0);
+    assert.ok(result.admitted);
+    const parent = result.admitted;
+    await bindAdmittedTicketNumber(parent, 582);
+    await relocateAdmittedRunToTicket(parent, piDurablePrincipalAuthority);
+    assert.equal((await readTicketProvenance(582, project, home)).lines[0]?.id, "escalated-child-owner");
   });
 });
 
