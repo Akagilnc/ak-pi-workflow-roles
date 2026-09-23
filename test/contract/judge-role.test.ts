@@ -1414,7 +1414,10 @@ test("judge role returns auditor continue as raw receipt without aborting (#756)
   const result = await tool.execute("call-2", verdict, undefined, undefined, ctx);
   assert.equal(result.terminate, false, "continue stays in the same conversation");
   assert.deepEqual(result.details, verdict);
-  assert.deepEqual(JSON.parse(result.content[0]!.text), continueReceipt, "continue returns the current raw receipt, not the earlier notary pass");
+  assert.deepEqual(result.content.map((item: { text: string }) => JSON.parse(item.text)), [
+    { status: "converged", findings: [] },
+    continueReceipt,
+  ], "both officers' structured receipts remain separately visible");
   assert.equal(abortCalls, 0);
 });
 

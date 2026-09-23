@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Value } from "typebox/value";
 
 import {
   COUNTERSIGN_OUTPUT_TOOL_NAME,
@@ -60,16 +61,14 @@ test("review officers expose one shared output tool and receipt schema", () => {
     [REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME],
   );
   assert.ok([countersignVerdictSchema, judgeVerdictSchema, notaryOutputSchema, auditorOutputSchema, inspectorOutputSchema].every((schema) => schema === reviewSubmissionSchema));
-  const shape = reviewSubmissionSchema as { properties: Record<string, any>; required?: string[] };
-  const fields = shape.properties;
-  assert.equal(fields.fix.type, "object");
-  assert.equal(fields.classes.type, "array");
-  assert.equal(fields.classes.items.type, "object");
-  assert.equal(fields.decisionGate.type, "object");
+  const shape = reviewSubmissionSchema as { properties: Record<string, unknown>; required?: string[] };
   assert.deepEqual(shape.required ?? [], []);
-  assert.deepEqual(fields.fix.required ?? [], []);
-  assert.deepEqual(fields.classes.items.required ?? [], []);
-  assert.deepEqual(fields.decisionGate.required ?? [], []);
+  for (const field of ["fix", "classes", "decisionGate"]) {
+    assert.equal(typeof (shape.properties[field] as { description?: unknown }).description, "string");
+  }
+  for (const field of ["fix", "classes", "decisionGate"]) {
+    assert.equal(Value.Check(reviewSubmissionSchema, { status: "continue", [field]: "readable submission" }), true);
+  }
 });
 
 test("Countersign runtime registers output tool and injects soul without ticket body preload", async () => {
