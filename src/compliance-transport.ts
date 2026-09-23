@@ -11,7 +11,7 @@ import { readableGateItem } from "./readable-gate-item.ts";
 export type ComplianceNoReceipt = NoReceiptLifecycleFacts & { status: "no-receipt"; usage?: Usage };
 /**
  * #757 / #750: no unreadable/unusable judgment on auditor replies.
- * Known three-state (pass/bounce/escalate) is read for queueing only.
+ * Known three-state (converged/continue/escalate) is read for queueing only.
  * Unknown accepted shape rides as `received` with the raw reply — parent stands,
  * no forged pass, no shape-death label. Resume-speaker for three pairs is #753/#756.
  */
@@ -29,8 +29,8 @@ export type ComplianceTransportFailure = {
   readonly usage?: Usage;
 };
 export type ComplianceDecision =
-  | { status: "pass"; receipt?: unknown; usage?: Usage }
-  | { status: "bounce"; violations: readonly unknown[]; receipt?: unknown; usage?: Usage }
+  | { status: "converged"; receipt?: unknown; usage?: Usage }
+  | { status: "continue"; violations: readonly unknown[]; receipt?: unknown; usage?: Usage }
   | { status: "escalate"; conflicts?: unknown; decisionGate?: unknown; receipt?: unknown; usage?: Usage }
   | ComplianceNoReceipt
   | ComplianceReceived
@@ -60,15 +60,15 @@ export type AuditorParentAttemptBinding = {
 
 function readListField(value: unknown): readonly unknown[] { return Array.isArray(value) ? value : value === undefined ? [] : [value]; }
 
-/** Try to project a known three-state compliance decision; undefined when not pass/bounce/escalate. */
+/** Try to project a known three-state compliance decision; undefined when not converged/continue/escalate. */
 export function tryReadComplianceCandidate(arguments_: unknown, usage?: Usage): ComplianceDecision | undefined {
   if (typeof arguments_ !== "object" || arguments_ === null || Array.isArray(arguments_)) {
     return undefined;
   }
   const args = arguments_ as Record<string, unknown>;
   const status = args.status;
-  if (status === "pass") return { status, receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
-  if (status === "bounce") return { status, violations: readListField(args.violations), receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
+  if (status === "converged") return { status, receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
+  if (status === "continue") return { status, violations: readListField(args.violations), receipt: arguments_, ...(usage === undefined ? {} : { usage }) };
   if (status === "escalate") {
     return {
       status,
@@ -129,7 +129,7 @@ async function usageFromSummonedSession(summoned: PublicSummonResult): Promise<U
 
 /**
  * Project a public auditor terminal onto the parent compliance decision.
- * Known pass/bounce/escalate/no-receipt flow through for queueing.
+ * Known converged/continue/escalate/no-receipt flow through for queueing.
  * Accepted-but-not-three-state → `received` with raw reply (#757) — no unreadable label,
  * never forged pass, never parent abort. Real provider/engine/disk failures stay loud.
  * Accepted audits always carry real session usage when present (#675 metering).

@@ -1,7 +1,7 @@
 /**
  * #836 (ADR 0003 Amendment) — class-wide regression, table-driven.
  *
- * CodeRabbit found `countersignStatus` registered to the provider as a closed
+ * CodeRabbit found `status` registered to the provider as a closed
  * enum: an unrecognized value fails schema validation, so the host rejects
  * the tool call before `execute` ever runs and the submission ledger never
  * records a candidate row — defeating ADR 0003's "记录后不判，读不出三态 →
@@ -36,8 +36,8 @@ import { mergerOutputSchema } from "../../src/merger-contracts.ts";
 import { reviewerOutputSchema } from "../../src/reviewer-role.ts";
 
 const rows: ReadonlyArray<{ readonly name: string; readonly schema: TSchema; readonly payload: Record<string, unknown> }> = [
-  { name: "countersign", schema: countersignVerdictSchema, payload: { countersignStatus: "not-a-status", note: "typo" } },
-  { name: "judge", schema: judgeVerdictSchema, payload: { judgeStatus: "not-a-status", note: "typo" } },
+  { name: "countersign", schema: countersignVerdictSchema, payload: { status: "not-a-status", note: "typo" } },
+  { name: "judge", schema: judgeVerdictSchema, payload: { status: "not-a-status", note: "typo" } },
   { name: "coder", schema: coderOutputSchema, payload: { status: "not-a-status", report: "typo" } },
   { name: "fixer", schema: fixerOutputSchema, payload: { status: "not-a-status", report: "typo" } },
   { name: "doctor", schema: doctorSubmissionSchema, payload: { status: "not-a-status", reason: "typo" } },

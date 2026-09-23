@@ -183,6 +183,14 @@ export function scriptedTerminatingToolSession(input: {
       isError,
       n: 2,
     }),
+    ...(seal ? [{
+      type: "custom",
+      customType: "ak-role-submission-closure",
+      data: { toolName: input.toolName, isError: false, details: input.details },
+      id: "closure-1",
+      parentId: "result-1",
+      timestamp: sessionRowTime(3).iso,
+    }] : []),
   ];
   return async (extraArgs) => {
     const sessionFile = argvFlagValue(extraArgs, "--session");

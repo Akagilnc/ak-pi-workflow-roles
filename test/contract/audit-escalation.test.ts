@@ -37,8 +37,8 @@ test("escalation projects one terminating human decision and is not an accepted 
   let passCalls = 0;
   let bounceCalls = 0;
   const result = await disposeComplianceDecision(decision, {
-    pass: () => { passCalls += 1; throw new Error("pass branch used"); },
-    bounce: () => { bounceCalls += 1; throw new Error("bounce branch used"); },
+    converged: () => { passCalls += 1; throw new Error("pass branch used"); },
+    continue: () => { bounceCalls += 1; throw new Error("bounce branch used"); },
     escalate: (value) => value,
   });
   assert.equal(passCalls, 0);
@@ -120,10 +120,10 @@ test("disposeComplianceDecision preserves delivered role output on escalate face
   const result = await disposeComplianceDecision(
     decision,
     {
-      pass: () => {
+      converged: () => {
         throw new Error("pass");
       },
-      bounce: () => {
+      continue: () => {
         throw new Error("bounce");
       },
       escalate: (value) => value,
@@ -169,10 +169,10 @@ test("escalate face keeps role decisionGate and audit gate side by side", async 
   const result = await disposeComplianceDecision(
     decision,
     {
-      pass: () => {
+      converged: () => {
         throw new Error("pass");
       },
-      bounce: () => {
+      continue: () => {
         throw new Error("bounce");
       },
       escalate: (value) => value,
@@ -189,10 +189,10 @@ test("escalate face keeps role decisionGate and audit gate side by side", async 
   const launder = await disposeComplianceDecision(
     decision,
     {
-      pass: () => {
+      converged: () => {
         throw new Error("pass");
       },
-      bounce: () => {
+      continue: () => {
         throw new Error("bounce");
       },
       escalate: (value) => value,
@@ -219,9 +219,9 @@ test("no-receipt uses its own projection leg instead of collapsing into pass", a
     parent: string;
     auditNoReceipt: ComplianceNoReceipt;
   }>(decision, {
-    pass: () => { passCalls += 1; throw new Error("ordinary pass used"); },
+    converged: () => { passCalls += 1; throw new Error("ordinary pass used"); },
     noReceipt: (facts) => ({ parent: "accepted", auditNoReceipt: facts }),
-    bounce: () => { throw new Error("bounce used"); },
+    continue: () => { throw new Error("bounce used"); },
     escalate: () => { throw new Error("escalate used"); },
   });
   assert.equal(passCalls, 0);
@@ -233,7 +233,7 @@ test("no-receipt uses its own projection leg instead of collapsing into pass", a
 });
 
 test("runComplianceAudit keeps host failure beside recorded auditor payloads", async () => {
-  const bounce = { status: "bounce", violations: ["keep-me"] };
+  const bounce = { status: "continue", violations: ["keep-me"] };
   const decision = await runComplianceAudit({
     subject: "doctor",
     context: { cwd: process.cwd() } as never,
@@ -262,8 +262,8 @@ test("runComplianceAudit keeps host failure beside recorded auditor payloads", a
   }
   await assert.rejects(
     disposeComplianceDecision(decision, {
-      pass: () => { throw new Error("pass"); },
-      bounce: () => { throw new Error("bounce"); },
+      converged: () => { throw new Error("pass"); },
+      continue: () => { throw new Error("bounce"); },
       escalate: () => { throw new Error("escalate"); },
     }),
     (error: unknown) => {
@@ -314,21 +314,21 @@ test("#836 auditor non-three-state then pass returns only the current receipt", 
           roleOutcome: {
             kind: "accepted",
             role: "auditor",
-            status: "pass",
-            decisiveFacts: { status: "pass" },
+            status: "converged",
+            decisiveFacts: { status: "converged" },
           },
           navigator: { disposition: "no-advice" },
           artifacts: [],
           runId: "auditor-run",
           submissions: [
             { status: "other", note: "first" },
-            { status: "pass" },
+            { status: "converged" },
           ],
         },
       };
     },
   });
   assert.equal(summons, 2);
-  assert.equal(decision.status, "pass");
-  if (decision.status === "pass") assert.deepEqual(decision.receipt, { status: "pass" });
+  assert.equal(decision.status, "converged");
+  if (decision.status === "converged") assert.deepEqual(decision.receipt, { status: "converged" });
 });

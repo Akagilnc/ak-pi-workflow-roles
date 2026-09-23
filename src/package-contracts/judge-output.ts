@@ -1,7 +1,9 @@
 /** Package-owned Judge output leaf — no role registration surface. */
 
 
-export const JUDGE_OUTPUT_TOOL_NAME = "ak_judge_output";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "../review-submission.ts";
+
+export const JUDGE_OUTPUT_TOOL_NAME: string = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
 export type JudgeClass = {
   name: string;
@@ -11,16 +13,16 @@ export type JudgeClass = {
 };
 
 export type JudgeVerdict =
-  | { judgeStatus: "converged"; note?: string; evidence?: unknown }
+  | { status: "converged"; note?: string; evidence?: unknown }
   | {
-    judgeStatus: "continue";
+    status: "continue";
     fix: { summary: string };
     classes: JudgeClass[];
     note?: string;
     evidence?: unknown;
   }
   | {
-    judgeStatus: "escalate";
+    status: "escalate";
     decisionGate: { question: string; options: string[] };
     note?: string;
     evidence?: unknown;
@@ -28,17 +30,17 @@ export type JudgeVerdict =
 
 export function validateAcceptedJudgeDetails(verdict: unknown): JudgeVerdict {
   if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) throw new Error("Judge verdict has no execution discriminator");
-  let judgeStatus: unknown;
+  let status: unknown;
   try {
-    judgeStatus = (verdict as Record<string, unknown>).judgeStatus;
+    status = (verdict as Record<string, unknown>).status;
   } catch {
     throw new Error("Judge verdict has no execution discriminator");
   }
-  if (typeof judgeStatus !== "string") {
+  if (typeof status !== "string") {
     throw new Error("Judge verdict has no execution discriminator");
   }
   if (
-    ["converged", "continue", "escalate"].includes(judgeStatus)
+    ["converged", "continue", "escalate"].includes(status)
   ) {
     return verdict as JudgeVerdict;
   }

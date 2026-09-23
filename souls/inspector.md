@@ -14,4 +14,4 @@
 
 ## 结论
 
-结论以三态明示：pass（署）／bounce（封驳）／escalate（上呈）。
+结论以三态明示：converged（署）／continue（封驳）／escalate（上呈）。

@@ -2,7 +2,7 @@
  * Public Secretariat submission-gate path — through-line + escalate branch.
  * Real public CLI entry; faux host activates real secretariat runtime and
  * submits through production gate. Nested countersign goes through real runtime +
- * 符宝郎内闸 (requireGatekeeperPass); body rewrite attribution = dirty-ticket real run.
+ * 符宝郎内闸 (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -265,9 +265,9 @@ function nestedCountersignHost(input: {
         },
         getActiveTools: () => [...active],
         getFlag() {
-          return undefined;
+          return "secretariat";
         },
-        async requireGatekeeperPass(options: { subject: { kind: string } }) {
+        async requireSubmissionGate(options: { subject: { kind: string } }) {
           // Minimal fake 符宝郎内闸 host — records structured pass/escalation.
           input.gateCalls.push({ kind: options.subject.kind });
           if (step.notaryEscalation !== undefined) {
@@ -287,8 +287,8 @@ function nestedCountersignHost(input: {
         },
       ).activate();
 
-      const tool = tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
-      assert.ok(tool, "countersign output tool missing after real activate");
+      const tool = tools.get("ak_submission_output");
+      assert.ok(tool, "shared submission tool missing after real countersign activate");
       const runDir = options.env.AK_ROLE_RUN_DIR ?? "";
       const sessionFile = argvFlagValue(args, "--session") ?? "";
       const ctx = {
@@ -317,7 +317,7 @@ function nestedCountersignHost(input: {
 
       const scripted = await scriptedTerminatingToolSession({
         role: "countersign",
-        toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
+        toolName: "ak_submission_output",
         details: step.details,
       })(args, options);
       return step.notaryEscalation === undefined ? scripted : {
@@ -344,7 +344,7 @@ function nestedCountersignHost(input: {
 
 /**
  * Activate the real secretariat runtime through the shared submission gate.
- * `submissionGateHost` drives the production prepareRoleEnvelope.requireGatekeeperPass path (no harness
+ * `submissionGateHost` drives the production prepareRoleEnvelope.requireSubmissionGate path (no harness
  * reimplementation of the envelope summon closure).
  */
 function secretariatHostDrivingRealTools(input: {
@@ -382,12 +382,12 @@ function secretariatHostDrivingRealTools(input: {
 
   // Production envelope wiring (home/packageRoot/hostAdapters).
   // Gate entry observed via nested countersignRequests — no harness
-  // reimplementation of requireGatekeeperPass / createDefaultGateOfficerSummon.
+  // reimplementation of requireSubmissionGate / createDefaultGateOfficerSummon.
   {
     // Capture narrowed host for the closure (exactOptionalPropertyTypes).
     const submissionGateHost = input.submissionGateHost;
     // Always track nested summons so gate entry is observable without a custom
-    // requireGatekeeperPass push (tests may omit countersignRequests).
+    // requireSubmissionGate push (tests may omit countersignRequests).
     const nestRequests = input.countersignRequests ?? [];
     const nestedTracked = nestedCountersignHost({
       packageRoot: input.packageRoot,
@@ -429,7 +429,7 @@ function secretariatHostDrivingRealTools(input: {
         try {
           let nestBaseline = nestRequests.length;
           for (const step of input.steps) {
-            // Production ingest → beforeAccept → envelope.requireGatekeeperPass.
+            // Production ingest → beforeAccept → envelope.requireSubmissionGate.
             await prepared.ingestStructuredOutput(step.details);
             const closed = await prepared.closeRound();
             const nestNow = nestRequests.length;
@@ -482,11 +482,11 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
       countersignSequence: [
         {
           details: {
-            countersignStatus: "continue",
+            status: "continue",
             fix: { summary: "删伪 authority" },
           },
         },
-        { details: { countersignStatus: "converged", note: "署" } },
+        { details: { status: "converged", note: "署" } },
       ],
       // Submission gate runs when the terminating output is submitted.
       steps: [
@@ -542,7 +542,7 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
       | undefined;
     assert.ok(countersignTerminal, "accepted terminal must project countersignTerminal");
     assert.deepEqual(countersignTerminal.receipt, {
-      countersignStatus: "converged",
+      status: "converged",
       note: "署",
     });
     assert.equal(
@@ -594,7 +594,7 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
       countersignSequence: [
         {
           details: {
-            countersignStatus: "escalate",
+            status: "escalate",
             decisionGate: {
               question: "票面争议上呈？",
               options: ["再议", "准"],
@@ -632,10 +632,10 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "audit_escalation");
     const facts = objectPayloads(result.terminal.roleOutcome)[0] as {
-      countersignStatus?: string;
+      status?: string;
       decisionGate?: { question?: string };
     };
-    assert.equal(facts.countersignStatus, "escalate");
+    assert.equal(facts.status, "escalate");
     assert.equal(facts.decisionGate?.question, "票面争议上呈？");
     // #969: 上呈终局呈现给事中判词（payloads）与 runId（decisiveFacts）.
     const countersignTerminal = result.terminal.roleOutcome.decisiveFacts
@@ -644,7 +644,7 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
       | undefined;
     assert.ok(countersignTerminal, "escalate terminal must project countersignTerminal");
     assert.deepEqual(countersignTerminal.receipt, {
-      countersignStatus: "escalate",
+      status: "escalate",
       decisionGate: {
         question: "票面争议上呈？",
         options: ["再议", "准"],
@@ -679,7 +679,7 @@ test("nested Notary escalation reaches the Secretariat public terminal with its 
         createRunId: () => "01a0sec1021-nst-7000-8000-000000000001",
         roleTurnHost: secretariatHostDrivingRealTools({
           packageRoot, home, gateCalls: [], submissionGateHost: "codex",
-          countersignSequence: [{ details: { countersignStatus: "converged" }, notaryEscalation: receipt }],
+          countersignSequence: [{ details: { status: "converged" }, notaryEscalation: receipt }],
           steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
         }),
       },
@@ -688,6 +688,38 @@ test("nested Notary escalation reaches the Secretariat public terminal with its 
     assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
     const countersignTerminal = result.terminal?.roleOutcome.decisiveFacts?.countersignTerminal as { receipt?: unknown } | undefined;
     assert.deepEqual(countersignTerminal?.receipt, receipt);
+  });
+});
+
+test("public Secretariat gate reads the shared status field from Countersign", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const gateCalls: Array<{ kind: string }> = [];
+    const capture = captureIo();
+    const result = await runAkRole(
+      ["secretariat", "--model", "test/caller-seat:high", "--project", project, "整理并送庭。"],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: capture.io,
+        createRunId: () => "01a0sec1028-shared-status-7000-8000-000000000001",
+        roleTurnHost: secretariatHostDrivingRealTools({
+          packageRoot,
+          home,
+          gateCalls,
+          submissionGateHost: "codex",
+          countersignSequence: [{ details: { status: "converged", note: "署" } }],
+          steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
+        }),
+      },
+    );
+
+    assert.equal(result.exitCode, 0, capture.stderr.join(""));
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.ok(gateCalls.some((call) => call.kind === "secretariat_verdict"));
   });
 });
 
@@ -706,7 +738,7 @@ test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
       submissionGateHost: "claude",
       // Prior pass books a durable officer entry; parent escalate must not inherit it.
       countersignSequence: [
-        { details: { countersignStatus: "converged", note: "先署" } },
+        { details: { status: "converged", note: "先署" } },
       ],
       steps: [
         {
@@ -786,7 +818,7 @@ test("#969 omitted receipt ticketNumber still hands parent board identity to 给
       // Nested 起居郎 must not mint 924 — parent board handoff is the sole source.
       nestedDiaristRunner: courtDiaristUnbound(),
       countersignSequence: [
-        { details: { countersignStatus: "converged", note: "署" } },
+        { details: { status: "converged", note: "署" } },
       ],
       // Legal omit of optional ticketNumber — parent board binding is the identity.
       steps: [
@@ -882,7 +914,7 @@ test("public secretariat moves its unbound 起居录 to the ticket after typed a
         }
         return result;
       },
-      countersignSequence: [{ details: { countersignStatus: "converged", note: "署" } }],
+      countersignSequence: [{ details: { status: "converged", note: "署" } }],
       steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
     });
     const result = await runAkRole(
@@ -951,7 +983,7 @@ async function distinctCourtAttemptIds(input: {
 /**
  * #969 shortest adapter convergence boundary.
  * Real headless (codex/claude) / ACP (grok-build) adapter → prepareRoleEnvelope
- * production requireGatekeeperPass. Nested 给事中 reuses nestedCountersignHost so
+ * production requireSubmissionGate. Nested 给事中 reuses nestedCountersignHost so
  * the envelope summon closure is bitten without copying the full gate flow.
  */
 async function adapterBoundaryCase(input: {
@@ -993,7 +1025,7 @@ async function adapterBoundaryCase(input: {
     const countersignRequests: RoleTurnRequest[] = [];
     const nest = nestedCountersignHost({
       packageRoot,
-      sequence: [{ details: { countersignStatus: "converged", note: "署" } }],
+      sequence: [{ details: { status: "converged", note: "署" } }],
       gateCalls,
       countersignRequests,
     });

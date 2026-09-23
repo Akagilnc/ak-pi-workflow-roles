@@ -1128,7 +1128,7 @@ test("#993 public coder resume: worker completion gate bounce then pass is proje
         return scriptedTerminatingToolSession({
           role: "inspector",
           toolName: INSPECTOR_OUTPUT_TOOL_NAME,
-          details: { status: coderTurns === 1 ? "bounce" : "pass", findings: [] },
+          details: { status: coderTurns === 1 ? "continue" : "converged", findings: [] },
         })(args, options);
       },
     });
@@ -1182,7 +1182,7 @@ test("#993 public coder resume: worker completion gate bounce then pass is proje
 
     assert.ok(first.terminal);
     assert.equal(first.terminal.roleOutcome.kind, "no_receipt");
-    assert.equal(first.terminal.gate?.rounds.at(-1)?.officer.status, "bounce");
+    assert.equal(first.terminal.gate?.rounds.at(-1)?.officer.status, "continue");
     assert.equal(officerRequests.length, 1);
 
     const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "run-worker-gate-resume-993"], {
@@ -1199,7 +1199,7 @@ test("#993 public coder resume: worker completion gate bounce then pass is proje
     assert.ok(resumed.terminal);
     assert.equal(resumed.terminal.runId, first.terminal.runId);
     assert.equal(resumed.terminal.roleOutcome.kind, "accepted");
-    assert.equal(resumed.terminal.gate?.rounds.at(-1)?.officer.status, "pass");
+    assert.equal(resumed.terminal.gate?.rounds.at(-1)?.officer.status, "converged");
     assert.equal(officerRequests.length, 2);
     assert.deepEqual(
       seen.filter((turn) => turn.kind === "initial" || turn.kind === "resume").map((turn) => turn.runId),

@@ -433,9 +433,9 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
         },
       },
       {
-        type: "message",
-        message: {
-          role: "toolResult",
+        type: "custom",
+        customType: "ak-role-submission-closure",
+        data: {
           toolName: FIXER_OUTPUT_TOOL_NAME,
           isError: false,
           details: { status: "completed" },
@@ -575,8 +575,8 @@ test("model settings are exact and typed settlement projection ignores prose and
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { message: "correctable schema wording" } }), undefined);
   assert.deepEqual(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: buildNavigatorInfrastructureFailureFact() }), { kind: "role_infrastructure_failure", role: "coder", phase: "apply" });
   assert.equal(publicNavigatorSettlement("coder", "apply", { toolName: "ak_coder_output", isError: true, details: { terminal: "infrastructure_failure", message: "network wording" } }), undefined);
-  assert.deepEqual(publicNavigatorSettlement("judge", null, { toolName: "ak_judge_output", isError: false, details: { judgeStatus: "escalate", report: "any wording" } }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
-  assert.deepEqual(publicNavigatorSettlement("countersign", null, { toolName: "ak_countersign_output", isError: false, details: { countersignStatus: "escalate" } }), { kind: "human_decision", role: "countersign", phase: null, status: "escalate" });
+  assert.deepEqual(publicNavigatorSettlement("judge", null, { toolName: "ak_submission_output", isError: false, details: { status: "escalate", report: "any wording" } }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
+  assert.deepEqual(publicNavigatorSettlement("countersign", null, { toolName: "ak_submission_output", isError: false, details: { status: "escalate" } }), { kind: "human_decision", role: "countersign", phase: null, status: "escalate" });
   assert.deepEqual(publicNavigatorSettlement("secretariat", null, { toolName: "ak_secretariat_output", isError: false, details: { secretariatStatus: "escalate" } }), { kind: "human_decision", role: "secretariat", phase: null, status: "escalate" });
   assert.deepEqual(publicNavigatorSettlement("secretariat", null, { toolName: "ak_secretariat_output", isError: false, details: { secretariatStatus: "converged" } }), { kind: "accepted", role: "secretariat", phase: null, status: "converged" });
   assert.notEqual(publicNavigatorSettlement("fixer", "apply", { toolName: "ak_fixer_output", isError: false, details: { kind: "audit_escalation", conflicts: ["authority"], auditDecisionGate: { question: "Which?", options: ["owner"] } } })?.kind, "human_decision");

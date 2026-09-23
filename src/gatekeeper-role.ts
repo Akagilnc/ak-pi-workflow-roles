@@ -2,10 +2,11 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { HostContext } from "./host-contracts.ts";
 
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
-import { packagedGateDecision, packagedGateStageLabel } from "./packaged-role-registry.ts";
+import { packagedGateStageLabel } from "./packaged-role-registry.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 import {
   GATEKEEPER_OUTPUT_TOOL_NAME,
   gatekeeperDecisionSchema,
@@ -15,7 +16,7 @@ import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
 export const INSPECTOR_OUTPUT_TOOL = INSPECTOR_OUTPUT_TOOL_NAME;
-export const NOTARY_OUTPUT_TOOL = "ak_notary_output";
+export const NOTARY_OUTPUT_TOOL = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
 /** Gate review officers — 台院 / 符宝郎 / 审刑院 / 给事中 (#753 / #756 / #969). */
 export type GateOfficer = "inspector" | "notary" | "auditor" | "countersign";
@@ -38,14 +39,14 @@ export type GatekeeperSubject =
  */
 export type GatekeeperResult =
   | {
-      readonly status: "pass";
+      readonly status: "converged";
       readonly officer: GateOfficer;
       readonly receipt: unknown;
       readonly runId?: string;
     }
-  /** bounce | escalate: both return the officer receipt to the parent (#753 / #756). */
+  /** continue | escalate: both return the officer receipt to the parent (#753 / #756). */
   | {
-      readonly status: "bounce";
+      readonly status: "continue";
       readonly officer: GateOfficer;
       readonly receipt: unknown;
       readonly runId?: string;
@@ -58,9 +59,9 @@ export type GatekeeperResult =
     }
   | {
       /**
-       * Accepted reply whose conclusion is not pass|bounce|escalate.
+       * Accepted reply whose conclusion is not converged|continue|escalate.
        * Envelope resumes the officer with plain-language re-ask — never parent-stands,
-       * never forges bounce (#753 / unreadable-conclusion-resume-speaker).
+       * never forges continue (#753 / unreadable-conclusion-resume-speaker).
        */
       readonly status: "needs_reask";
       readonly officer: GateOfficer;
@@ -77,9 +78,9 @@ export type GatekeeperResult =
     };
 
 /** Non-pass faces returned to the parent session (correctable; #836 never kill leg). */
-export type GatekeeperNonPassResult = Extract<
+export type SubmissionGateNonPassResult = Extract<
   GatekeeperResult,
-  { status: "bounce" | "escalate" | "no_receipt" | "transport_failure" }
+  { status: "continue" | "escalate" | "no_receipt" | "transport_failure" }
 >;
 
 function gateSeatLabel(stage: GateOfficer): string {
@@ -138,16 +139,16 @@ export type RunGatekeeperOptions = {
   readonly submission?: unknown;
   /**
    * Officer summon seam. Production default lives on the shared envelope
-   * (`createDefaultGateOfficerSummon` / requireGatekeeperPass — ADR 0018).
+   * (`createDefaultGateOfficerSummon` / requireSubmissionGate — ADR 0018).
    * Role module only projects; callers must supply the summon.
    */
   readonly summonOfficer: GateOfficerSummon;
 };
 
-export type GatekeeperPassHostActions = {
+export type SubmissionGateHostActions = {
   failInfrastructure(error: unknown, ctx: ExtensionContext | HostContext, toolCallId?: string): never;
   /** Envelope-owned execute→tool_result bridge (role-runtime); role module only throws typed error. */
-  bindSubmissionNonPass(toolCallId: string, result: GatekeeperNonPassResult): void;
+  bindSubmissionNonPass(toolCallId: string, result: SubmissionGateNonPassResult): void;
 };
 
 /**
@@ -204,15 +205,15 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
 
 /**
  * Read only the conclusion field for queueing (#753).
- * pass | bounce | escalate → queue signal + raw receipt.
+ * converged | continue | escalate → queue signal + raw receipt.
  * Anything else accepted → needs_reask (resume speaker), never unreadable/parent-stand.
  * `fallbackStatus` is the terminal outcome.status when the receipt body has no status key
  * (keeps missing-args sentinel intact as the receipt).
  */
-/** Map 给事中 countersignStatus onto the shared gate queue words (#969). */
-function gateStatusFromCountersign(status: string): string | undefined {
-  if (status === "converged") return "pass";
-  if (status === "continue") return "bounce";
+/** Map the shared review verdict onto the gate queue words (#1028). */
+function reviewQueueStatus(status: string): string | undefined {
+  if (status === "converged") return "converged";
+  if (status === "continue") return "continue";
   if (status === "escalate") return "escalate";
   return undefined;
 }
@@ -224,34 +225,15 @@ function projectOfficerDecision(
 ): GatekeeperResult {
   const receipt = retainedReceipt(decision);
   const record = readRecord(decision);
-  // 给事中: only countersignStatus, strict three-word map; never generic status,
-  // never unmapped raw word, never fallbackStatus (#969 / ADR 0040/0055).
-  if (packagedGateDecision(officer) === "countersign-status") {
-    const countersignStatus =
-      record !== undefined && typeof record.countersignStatus === "string"
-        ? record.countersignStatus
-        : undefined;
-    const status =
-      typeof countersignStatus === "string"
-        ? gateStatusFromCountersign(countersignStatus)
-        : undefined;
-    if (status === "pass") {
-      return { status: "pass", officer, receipt };
-    }
-    if (status === "bounce" || status === "escalate") {
-      return { status, officer, receipt };
-    }
-    return { status: "needs_reask", officer, receipt };
-  }
-  // inspector / notary / auditor: shared gate words on generic status.
   const status =
     (record !== undefined && typeof record.status === "string" ? record.status : undefined)
     ?? fallbackStatus;
-  if (status === "pass") {
-    return { status: "pass", officer, receipt };
+  const queueStatus = typeof status === "string" ? reviewQueueStatus(status) : undefined;
+  if (queueStatus === "converged") {
+    return { status: "converged", officer, receipt };
   }
-  if (status === "bounce" || status === "escalate") {
-    return { status, officer, receipt };
+  if (queueStatus === "continue" || queueStatus === "escalate") {
+    return { status: queueStatus, officer, receipt };
   }
   return { status: "needs_reask", officer, receipt };
 }
@@ -316,8 +298,8 @@ function withOfficerRunId(
   summoned: PublicSummonResult,
 ): GatekeeperResult {
   if (
-    result.status !== "pass"
-    && result.status !== "bounce"
+    result.status !== "converged"
+    && result.status !== "continue"
     && result.status !== "escalate"
     && result.status !== "needs_reask"
   ) {
@@ -409,28 +391,21 @@ export type GatekeeperProjection = {
 };
 
 /**
- * Plain-language re-ask when the officer conclusion is not pass|bounce|escalate.
+ * Plain-language re-ask when the officer conclusion is not converged|continue|escalate.
  * Not a packaged engine handbook line (#755 exception for 读不出三态).
- * inspector / notary / auditor keep shared gate words; 给事中 uses own three-state
- * field and words so reask does not invite non-contract values (#969 / ADR 0055).
+ * Every review officer uses the same `status` field and three queue words (#1028).
  */
 export const OFFICER_CONCLUSION_REASK =
-  "上次交卷的结论不是 pass、bounce、escalate 三态之一。请重新输出，结论字段写明其一；打回或上呈的话就是给对方看的原文。" as const;
-
-/** 给事中 re-ask: countersignStatus converged|continue|escalate only (#969). */
-export const COUNTERSIGN_CONCLUSION_REASK =
-  "上次交卷的 countersignStatus 不是 converged、continue、escalate 三态之一。请重新输出，countersignStatus 写明其一；封驳或上呈的话就是给对方看的原文。" as const;
+  "上次交卷的 status 不是 converged、continue、escalate 三态之一。请重新输出，status 写明其一；continue 或 escalate 的话就是给对方看的原文。" as const;
 
 /** Pick the re-ask line for the officer under review. */
 export function officerConclusionReask(officer: GateOfficer): string {
-  return packagedGateDecision(officer) === "countersign-status"
-    ? COUNTERSIGN_CONCLUSION_REASK
-    : OFFICER_CONCLUSION_REASK;
+  return OFFICER_CONCLUSION_REASK;
 }
 
 /**
  * Summon (via injected seam) + project. Default summonGateOfficer drive lives
- * on the shared envelope (`gatekeeper-pass-envelope.ts`, ADR 0018 / #675) —
+ * on the shared envelope (`submission-gate.ts`, ADR 0018 / #675) —
  * role module keeps projection only.
  */
 export async function projectGatekeeperRun(

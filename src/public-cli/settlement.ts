@@ -2935,10 +2935,9 @@ async function settleLawfulSeatAcceptedTerminalResult(
   const entries = await readLawfulSettlementEntries(sessionFile) ?? [];
   const submissions = await recordedSubmissionPayloads(admitted, scope);
   // #843: collector shape (ledger closed first) plus current user-turn freshness.
-  // A lawful bound non-error seat toolResult (isError === false + one-to-one call
-  // bind, same grade as residual) means this turn sealed — a prior bounce residual
-  // in the same turn must not outrank it. Missing isError, unbound, or mis-bound
-  // results do not establish success and do not reject/abort. A current-attempt
+  // Only the ledger-owned closure establishes this turn's success. A non-error
+  // toolResult may be a candidate whose nested gate continued the conversation.
+  // A current-attempt
   // residual without that success is this turn's own failure and must not be
   // masked by run-scoped stale acceptance (bare resume without courtAttemptId).
   // Same-turn accept-then-bounce keeps the success marker: terminal stays
@@ -2947,18 +2946,16 @@ async function settleLawfulSeatAcceptedTerminalResult(
   let thisAttemptHasSeatSuccess = false;
   let residual: BoundErroredToolCandidate | undefined;
   for (let index = entries.length - 1; index >= scanStart; index -= 1) {
+    const entry = entries[index];
+    if (entry?.type === "custom" && entry.customType === "ak-role-submission-closure"
+      && isRecord(entry.data) && entry.data.toolName === spec.toolName
+      && classifyPackagedRoleTerminalResult(entry.data).kind === "accepted") {
+      thisAttemptHasSeatSuccess = true;
+    }
     const message = entries[index]?.message;
     if (message?.role !== "toolResult") continue;
     if (message.toolName !== spec.toolName) continue;
-    if (message.isError === false) {
-      if (
-        boundRoleToolCallForResult(entries, index, message, spec.toolName) !==
-          undefined
-      ) {
-        thisAttemptHasSeatSuccess = true;
-      }
-      continue;
-    }
+    if (message.isError === false) continue;
     if (residual === undefined) {
       residual = boundErroredToolCandidate(
         entries,
@@ -2969,7 +2966,9 @@ async function settleLawfulSeatAcceptedTerminalResult(
     }
   }
   const roleOutcome = await sealedLedgerOutcome(admitted, spec.role as TerminalRoleName, scope);
-  if (roleOutcome !== undefined && (thisAttemptHasSeatSuccess || residual === undefined)) {
+  if (roleOutcome !== undefined && (
+    thisAttemptHasSeatSuccess || residual === undefined || (scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0)
+  )) {
     const navigator = extractNavigatorFact(entries);
     const artifacts = await publishDeclaredSeatArtifacts(
       admitted,

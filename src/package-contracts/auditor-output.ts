@@ -1,36 +1,16 @@
 /**
  * Public Auditor (审刑院) terminating receipt contracts (#675 / #754).
- * Lawful explicit releases: pass | bounce | escalate.
+ * Lawful explicit releases: converged | continue | escalate.
  */
-import { Type } from "typebox";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, reviewSubmissionSchema } from "../review-submission.ts";
 
-import { openToolObject } from "../open-tool-schema.ts";
-import { withTerminatingOutputDeclarations } from "./terminating-infrastructure.ts";
+export const AUDITOR_OUTPUT_TOOL_NAME: string = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
-export const AUDITOR_OUTPUT_TOOL_NAME = "ak_auditor_output" as const;
-
-export const auditorOutputSchema = withTerminatingOutputDeclarations(
-  openToolObject(
-    Type.Object({
-      status: Type.Unknown({
-        description: "pass | bounce | escalate — 形状指引，非 schema 闸",
-      }),
-      violations: Type.Optional(Type.Unknown({
-        description: "status 为 bounce 时的违规条目",
-      })),
-      conflicts: Type.Optional(Type.Unknown({
-        description: "status 为 escalate 时的冲突",
-      })),
-      decisionGate: Type.Optional(Type.Unknown({
-        description: "status 为 escalate 时的决策闸",
-      })),
-    }),
-  ),
-);
+export const auditorOutputSchema = reviewSubmissionSchema;
 
 export type AuditorOutput =
-  | { readonly status: "pass" }
-  | { readonly status: "bounce"; readonly violations?: unknown }
+  | { readonly status: "converged" }
+  | { readonly status: "continue"; readonly violations?: unknown }
   | {
       readonly status: "escalate";
       readonly conflicts?: unknown;
@@ -50,4 +30,3 @@ export function validateRecordedAuditorOutput(value: unknown): AuditorOutput {
   if (!isRecord(value)) throw new Error("Auditor output is not an object");
   return value as AuditorOutput;
 }
-

@@ -1199,7 +1199,7 @@ const ROLE_COMMAND_HELP = {
   },
   inspector: {
     command: "inspector",
-    summary: "Direct Inspector (台院) complexity and test-quality check; pass or bounce.",
+    summary: "Direct Inspector (台院) complexity and test-quality check; converged, continue, or escalate.",
     usage: ["ak-role inspector [options] [instruction]"],
     examples: [
       'ak-role inspector --attach ./change.patch "Review this material."',
@@ -1223,7 +1223,7 @@ const ROLE_COMMAND_HELP = {
   },
   auditor: {
     command: "auditor",
-    summary: "Direct Auditor (审刑院) compliance audit: pass, bounce, or escalate.",
+    summary: "Direct Auditor (审刑院) compliance audit: converged, continue, or escalate.",
     usage: ["ak-role auditor --subject <judge|doctor> --source-run <runId@role|path> [options] [instruction]"],
     examples: [
       'ak-role auditor --subject judge --source-run 01abc…@judge --attach ./dossier "审：本 run 是否合规。"',

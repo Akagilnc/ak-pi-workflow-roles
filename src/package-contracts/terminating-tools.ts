@@ -18,7 +18,7 @@ import {
   validateReviewerIntent,
   type ReviewerIntent,
 } from "./reviewer-output.ts";
-import { PACKAGED_ROLE_REGISTRY } from "../packaged-role-registry.ts";
+import { LEGACY_REVIEW_OUTPUT_ROLES, PACKAGED_ROLE_REGISTRY } from "../packaged-role-registry.ts";
 import { CorrectableSubmissionError } from "../submission-correctable-error.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME, validateRecordedGatekeeperOutput, type GatekeeperDirectOutput } from "./gatekeeper-output.ts";
@@ -80,7 +80,10 @@ export type {
   SecretariatVerdict,
 };
 
-export const TERMINATING_TOOL_NAMES = PACKAGED_ROLE_REGISTRY.map((entry) => entry.outputTool);
+export const TERMINATING_TOOL_NAMES = [...new Set([
+  ...PACKAGED_ROLE_REGISTRY.map((entry) => entry.outputTool),
+  ...LEGACY_REVIEW_OUTPUT_ROLES.keys(),
+])];
 
 export type TerminatingToolName = (typeof TERMINATING_TOOL_NAMES)[number];
 
@@ -152,7 +155,10 @@ export type AcceptedFacts = {
 export function acceptedFacts(toolName: TerminatingToolName, details: AcceptedDetails): AcceptedFacts {
   const record = details as Record<string, unknown>;
   const entry = PACKAGED_ROLE_REGISTRY.find((candidate) => candidate.outputTool === toolName);
-  const statusKey = entry !== undefined && "receiptStatusKey" in entry ? entry.receiptStatusKey : "status";
+  const legacyRole = LEGACY_REVIEW_OUTPUT_ROLES.get(toolName);
+  const statusKey = legacyRole === "judge" || legacyRole === "countersign"
+    ? `${legacyRole}Status`
+    : entry !== undefined && "receiptStatusKey" in entry ? entry.receiptStatusKey : "status";
   const status = typeof record[statusKey] === "string" ? record[statusKey] : undefined;
   const commitKey = entry !== undefined && "receiptCommitKey" in entry ? entry.receiptCommitKey : undefined;
   const commitWhen = entry !== undefined && "receiptCommitWhen" in entry ? entry.receiptCommitWhen : undefined;

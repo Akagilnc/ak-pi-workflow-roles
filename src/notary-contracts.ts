@@ -1,14 +1,11 @@
 /**
  * Public Notary (符宝郎) terminating receipt contracts.
- * Lawful explicit releases: pass | bounce | escalate.
+ * Lawful explicit releases: converged | continue | escalate.
  * No usable result is infrastructure failure via public settlement, not a judgment status (#475).
  */
-import { Type } from "typebox";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, reviewSubmissionSchema } from "./review-submission.ts";
 
-import { openToolObject } from "./open-tool-schema.ts";
-import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
-
-export const NOTARY_OUTPUT_TOOL_NAME = "ak_notary_output";
+export const NOTARY_OUTPUT_TOOL_NAME: string = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 export const NOTARY_SOURCE_RUN_FLAG = {
   name: "ak-notary-source-run",
   definition: {
@@ -30,21 +27,7 @@ export const NOTARY_TICKET_FLAG = {
 export const NOTARY_FIXED_KICKOFF =
   "符宝郎案卷已受理；来源 run 定位见会话材料。";
 
-export const notaryOutputSchema = withTerminatingOutputDeclarations(
-  openToolObject(
-    Type.Object({
-      status: Type.Unknown({
-        description: "pass | bounce | escalate — 形状指引，非 schema 闸",
-      }),
-      findings: Type.Unknown({
-        description: "string[] findings，随 pass、bounce 或 escalate 留存",
-      }),
-      reason: Type.Optional(Type.Unknown({
-        description: "status 为 escalate 时的上呈理由",
-      })),
-    }),
-  ),
-);
+export const notaryOutputSchema = reviewSubmissionSchema;
 
 export type NotarySourceRunLocator = {
   readonly runDirectory: string;
@@ -54,8 +37,8 @@ export type NotarySourceRunLocator = {
 
 /** Recognition face only — fields retained as submitted (#753, no disposition/findings forge). */
 export type NotaryOutput =
-  | { readonly status: "pass"; readonly findings?: unknown }
-  | { readonly status: "bounce"; readonly findings?: unknown }
+  | { readonly status: "converged"; readonly findings?: unknown }
+  | { readonly status: "continue"; readonly findings?: unknown }
   | {
       readonly status: "escalate";
       readonly reason?: unknown;
@@ -67,7 +50,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Recognize one lawful explicit Notary release (pass | bounce | escalate).
+ * Recognize one lawful explicit Notary release (converged | continue | escalate).
  * #753: no field rewrite — submitted params retained as-is (no disposition forge,
  * no findings array rewrite). Recognition only for recording/settlement callers.
  */
@@ -89,7 +72,7 @@ export function retainNotarySubmission(value: unknown): unknown {
 }
 
 /**
- * Settlement/recording path: only lawful recorded pass/bounce/escalate.
+ * Settlement/recording path: only lawful recorded converged/continue/escalate.
  * Does not gate role admission — callers must not use this to reject a submission.
  */
 export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
@@ -98,4 +81,3 @@ export function validateRecordedNotaryOutput(value: unknown): NotaryOutput {
   }
   return value as NotaryOutput;
 }
-

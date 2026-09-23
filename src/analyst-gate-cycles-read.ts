@@ -140,7 +140,7 @@ type GateToolCall = {
 };
 
 function isGateTerminatingToolName(toolName: string): boolean {
-  return DISPATCH_TOOLS.has(toolName) || OFFICER_TOOL_TO_FACE[toolName] !== undefined;
+  return toolName === "ak_submission_output" || DISPATCH_TOOLS.has(toolName) || OFFICER_TOOL_TO_FACE[toolName] !== undefined;
 }
 
 /**
@@ -278,6 +278,7 @@ function projectAcceptedGateCall(
     readonly attemptEntryId?: string;
     readonly parentSessionFile?: string;
   },
+  pointerOfficer?: "inspector" | "notary",
 ): ClassifiedVolume | undefined {
   // Continuous memory volumes carry many summons; span only this binding's interval.
   const span = requireAcceptedGateSpan(intervalRowsForGateCall(rows, call.rowIndex), filePath);
@@ -312,7 +313,9 @@ function projectAcceptedGateCall(
     };
   }
 
-  const officer = OFFICER_TOOL_TO_FACE[call.toolName];
+  const officer = call.toolName === "ak_submission_output"
+    ? pointerOfficer
+    : OFFICER_TOOL_TO_FACE[call.toolName];
   if (officer === undefined) {
     // isGateTerminatingToolName already screened; keep loud if tables drift.
     throw new Error(
@@ -334,6 +337,7 @@ function projectAcceptedGateCall(
 
 async function classifyAuditorVolume(
   filePath: string,
+  pointerOfficer?: "inspector" | "notary",
 ): Promise<readonly ClassifiedVolume[]> {
   // Canonical JSONL errors propagate — failure honesty (never wash to fewer rounds).
   const rows = await readLedgerSessionJsonl(filePath);
@@ -342,7 +346,9 @@ async function classifyAuditorVolume(
   if (accepted.length === 0) return [];
   const volumes: ClassifiedVolume[] = [];
   for (const call of accepted) {
-    const projected = projectAcceptedGateCall(filePath, rows, call);
+    const projected = call.toolName === "ak_submission_output" && pointerOfficer === undefined
+      ? undefined // Shared tool alone carries no officer identity; a typed pointer does.
+      : projectAcceptedGateCall(filePath, rows, call, pointerOfficer);
     if (projected !== undefined) volumes.push(projected);
   }
   return volumes;
@@ -425,7 +431,7 @@ function pairGateRounds(
 /** Resolve a direct-officer-run-pointer file to the officer session 正本 path. */
 async function resolveOfficerSessionFromPointerFile(
   pointerPath: string,
-): Promise<string | undefined> {
+): Promise<{ sessionFile: string; officer?: "inspector" | "notary" }> {
   const { readFile } = await import("node:fs/promises");
   let raw: unknown;
   try {
@@ -443,7 +449,9 @@ async function resolveOfficerSessionFromPointerFile(
   if (typeof sessionFile !== "string" || sessionFile.trim() === "") {
     throw new Error(`direct officer run pointer missing sessionFile in ${pointerPath}`);
   }
-  return sessionFile;
+  const officer = raw.officer === "inspector" || raw.officer === "notary"
+    ? raw.officer : undefined;
+  return { sessionFile, ...(officer === undefined ? {} : { officer }) };
 }
 
 /**
@@ -488,15 +496,15 @@ export async function readAnalystGateCyclesFromAuditorRoles(
     for (const name of names) {
       const path = join(directory, name);
       const fromPointer = name.endsWith(".pointer.json");
-      const sessionPath = fromPointer
+      const pointer = fromPointer
         ? await resolveOfficerSessionFromPointerFile(path)
-        : path;
-      if (sessionPath === undefined) continue;
+        : undefined;
+      const sessionPath = pointer?.sessionFile ?? path;
       if (fromPointer) {
         if (classifiedOfficerSessions.has(sessionPath)) continue;
         classifiedOfficerSessions.add(sessionPath);
       }
-      const classified = await classifyAuditorVolume(sessionPath);
+      const classified = await classifyAuditorVolume(sessionPath, pointer?.officer);
       for (const volume of classified) {
         if (
           options.parentSessionFile !== undefined &&

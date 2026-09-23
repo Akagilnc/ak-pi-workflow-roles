@@ -11,8 +11,8 @@ import {
 } from "./engine-detour.ts";
 import {
   createDefaultGateOfficerSummon,
-  requireGatekeeperPass,
-} from "./gatekeeper-pass-envelope.ts";
+  requireSubmissionGate,
+} from "./submission-gate.ts";
 import type {
   HostContext,
   HostEventRegistration,
@@ -233,12 +233,12 @@ export async function prepareRoleEnvelope(options: {
     // seat remains reachable through MCP.
     setActiveTools(names) { preferredTools = [...names]; },
     getActiveTools() { return [...preferredTools]; },
-    async requireGatekeeperPass(gateOptions) {
+    async requireSubmissionGate(gateOptions) {
       const packageRoot =
         typeof options.dependencies.packageRoot === "string"
           ? options.dependencies.packageRoot
           : undefined;
-      return requireGatekeeperPass({
+      return requireSubmissionGate({
         context: gateOptions.context,
         subject: gateOptions.subject,
         ...(gateOptions.signal === undefined ? {} : { signal: gateOptions.signal }),
@@ -301,7 +301,7 @@ export async function prepareRoleEnvelope(options: {
     if (record.kind === "role_infrastructure_failure") return;
     const code = typeof record.code === "string" && record.code.length > 0
       ? record.code
-      : record.status === "bounce" || record.status === "escalate" || record.status === "no_receipt"
+      : record.status === "continue" || record.status === "escalate" || record.status === "no_receipt"
         ? record.status
         : undefined;
     if (code === undefined) return;
@@ -314,11 +314,12 @@ export async function prepareRoleEnvelope(options: {
     };
   }
   function textDiagnostic(content: ContentPart[]): string | undefined {
-    // Keep concatenated text bytes intact for resume relay (#813 online P2):
-    // only emptiness uses the trimmed form; do not alter Markdown/spacing.
+    // Keep each text item's bytes intact and its boundary readable on the
+    // string-only host continuation channel.
     const text = content
-      .map((part) => (part.type === "text" ? part.text : ""))
-      .join("");
+      .filter((part) => part.type === "text")
+      .map((part) => part.text)
+      .join("\n\n");
     return text.trim().length > 0 ? text : undefined;
   }
   /** Arm closeRound + abort path with the durable infrastructure failure for this round. */
@@ -483,6 +484,13 @@ export async function prepareRoleEnvelope(options: {
         details: result.details,
         isError: false,
       });
+      if (result.terminate === false) {
+        rejection = {
+          code: "continue",
+          toolCallIds: [toolCallId],
+          message: textDiagnostic(projected.content) ?? "continue",
+        };
+      }
       // Candidate only: seal waits for closeRound after the host round boundary.
       return { content: projected.content, isError: projected.isError };
     } catch (error) {

@@ -1,9 +1,9 @@
-import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
+import type { SubmissionGateNonPassResult } from "./gatekeeper-role.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
 
 /**
  * Tool-result text the parent model sees (#753 / #750 evidence).
- * bounce | escalate → officer receipt verbatim (JSON when structured).
+ * continue | escalate → officer receipt verbatim (JSON when structured).
  * no_receipt → honest lifecycle fact. No findings rewrite, no「（无 findings）」.
  * #775: structured field content via readableGateItem (DRY with other gate seams).
  */
@@ -11,8 +11,8 @@ function serializeReceipt(receipt: unknown): string {
   return readableGateItem(receipt);
 }
 
-function gatekeeperNonPassMessage(result: GatekeeperNonPassResult): string {
-  if (result.status === "bounce" || result.status === "escalate") {
+function gatekeeperNonPassMessage(result: SubmissionGateNonPassResult): string {
+  if (result.status === "continue" || result.status === "escalate") {
     return serializeReceipt(result.receipt);
   }
   if (result.status === "transport_failure") {
@@ -26,8 +26,8 @@ function gatekeeperNonPassMessage(result: GatekeeperNonPassResult): string {
 
 /** Structured non-pass; `.result` is session-projected via tool_result, message feeds the model. */
 export class GatekeeperDecisionError extends Error {
-  readonly result: GatekeeperNonPassResult;
-  constructor(result: GatekeeperNonPassResult, message?: string) {
+  readonly result: SubmissionGateNonPassResult;
+  constructor(result: SubmissionGateNonPassResult, message?: string) {
     super(message ?? gatekeeperNonPassMessage(result));
     this.name = "GatekeeperDecisionError";
     this.result = result;

@@ -119,7 +119,7 @@ import {
   type ReviewerActivation,
   type ReviewerAdmittedInputs,
 } from "./reviewer-role.ts";
-import type { GatekeeperNonPassResult } from "./gatekeeper-role.ts";
+import type { SubmissionGateNonPassResult } from "./gatekeeper-role.ts";
 
 /**
  * Private transport flag names/definitions for Reviewer admitted inputs.
@@ -256,7 +256,7 @@ import {
 
 /** One envelope map for Gatekeeper non-pass and other correct submission rejects (#525). */
 type SubmissionNonPassResult =
-  | GatekeeperNonPassResult
+  | SubmissionGateNonPassResult
   | CoderSkillExpansionEvidenceMissingResult;
 import { JUDGE_OUTPUT_TOOL_NAME } from "./package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "./package-contracts/reviewer-output.ts";
@@ -319,7 +319,7 @@ export {
   runGatekeeper,
   gateOfficerForSubject,
 };
-export type { GatekeeperResult, GatekeeperSubject, GatekeeperNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
+export type { GatekeeperResult, GatekeeperSubject, SubmissionGateNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
 import { ParentQueueReaskError } from "./submission-errors.ts";
 
 export {
@@ -490,7 +490,7 @@ export type RoleRuntimeDependencies = {
   /**
    * Composition-root adapter table for nested gate officer summons (#969).
    * Production leaves unset (default pi + packaged externals). Tests inject
-   * faux nested hosts so prepareRoleEnvelope.requireGatekeeperPass is bitten
+   * faux nested hosts so prepareRoleEnvelope.requireSubmissionGate is bitten
    * without reimplementing the envelope summon closure.
    */
   hostAdapters?: readonly import("./public-cli/role-turn-host-resolution.ts").NamedRoleTurnHostAdapter[];
@@ -666,6 +666,14 @@ function createFiledOfficerRuntime(
                 : await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
             if (isAuditEscalationProjection(projected)) {
               return { content: [], details: projected, terminate: true as const };
+            }
+            if (projected !== null && typeof projected === "object" && "status" in projected
+              && projected.status === "continue" && "receipt" in projected) {
+              return {
+                content: [{ type: "text" as const, text: readableGateItem(projected.receipt) }],
+                details: projected,
+                terminate: false,
+              };
             }
             const pass = spec.relayGatePass === true && projected !== null && typeof projected === "object" && "officer" in projected && "receipt" in projected
               ? projected
@@ -937,15 +945,15 @@ export function createDiaristRoleRuntime(
   );
 }
 
-/** Countersign status words the queue reads (#753). */
+/** Shared review-submission status words the queue reads (#1028). */
 const COUNTERSIGN_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]);
 
 /**
- * Plain-language re-ask when countersignStatus is not a known queue word.
+ * Plain-language re-ask when status is not a known queue word.
  * Back to countersign itself — notary is not summoned (#753).
  */
 const COUNTERSIGN_STATUS_REASK =
-  "countersignStatus 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
+  "status 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
 
 /** Secretariat status words the submission gate reads. */
 const SECRETARIAT_QUEUE_STATUSES = new Set(["converged", "escalate"]);
@@ -969,7 +977,7 @@ export function createSecretariatRoleRuntime(
   const beforeAccept: FiledOfficerBeforeAccept | undefined =
     hostActions !== undefined
       ? async ({ toolCallId, parameters, signal, ctx }) => {
-          if (roleHost.requireGatekeeperPass === undefined) {
+          if (roleHost.requireSubmissionGate === undefined) {
             const error = new Error("host cannot mount the secretariat submission gate");
             error.name = "InfrastructureFailure";
             return hostActions.failInfrastructure(error, ctx, toolCallId);
@@ -990,7 +998,7 @@ export function createSecretariatRoleRuntime(
             return undefined;
           }
           try {
-            const pass = await roleHost.requireGatekeeperPass!({
+            const pass = await roleHost.requireSubmissionGate!({
               context: ctx,
               subject: { kind: "secretariat_verdict" },
               ...(signal === undefined ? {} : { signal }),
@@ -1005,6 +1013,7 @@ export function createSecretariatRoleRuntime(
               pass !== undefined
               && pass !== null
               && typeof pass === "object"
+              && pass.status === "converged"
               && "receipt" in pass
             ) {
               const {
@@ -1112,7 +1121,7 @@ export function createCountersignRoleRuntime(
 ) {
   // Notary inner gate difference only — lifecycle stays on the shared envelope.
   // Pointer-only summons: officer self-fetches from run dossier (#632 / ADR 0079).
-  // #753 queue: read countersignStatus only — escalate skips gate (thrown to caller);
+  // #1028 queue: read shared status — escalate skips gate (thrown to caller);
   // unreadable status returns to countersign; else notary inner gate.
   const beforeAccept: FiledOfficerBeforeAccept | undefined =
     hostActions !== undefined
@@ -1122,8 +1131,8 @@ export function createCountersignRoleRuntime(
               ? (parameters as Record<string, unknown>)
               : undefined;
           const status =
-            record !== undefined && typeof record.countersignStatus === "string"
-              ? record.countersignStatus
+            record !== undefined && typeof record.status === "string"
+              ? record.status
               : undefined;
           if (status === undefined || !COUNTERSIGN_QUEUE_STATUSES.has(status)) {
             // Parent status unreadable → back to countersign itself; do not summon notary,
@@ -1134,13 +1143,13 @@ export function createCountersignRoleRuntime(
             // Parent escalate → throw to caller as-is; notary does not attend (#753).
             return undefined;
           }
-          if (roleHost.requireGatekeeperPass === undefined) {
+          if (roleHost.requireSubmissionGate === undefined) {
             const error = new Error("host cannot mount the countersign gate");
             error.name = "InfrastructureFailure";
             return hostActions.failInfrastructure(error, ctx, toolCallId);
           }
           try {
-            return await roleHost.requireGatekeeperPass({
+            return await roleHost.requireSubmissionGate({
               context: ctx,
               subject: { kind: "countersign_verdict" },
               ...(signal === undefined ? {} : { signal }),
@@ -1202,7 +1211,15 @@ export function createRoleRuntimeExtension(
     };
     const roleHost = createSubmissionLedgerHost(
       envelopeHost.host,
-      new Map(PACKAGED_ROLE_REGISTRY.map(({ role, outputTool }) => [outputTool, role])),
+      new Map(PACKAGED_ROLE_REGISTRY.reduce<(readonly [string, import("./public-cli/terminal.ts").TerminalRoleName | readonly import("./public-cli/terminal.ts").TerminalRoleName[]])[]>((entries, { role, outputTool }) => {
+        const existingIndex = entries.findIndex(([name]) => name === outputTool);
+        if (existingIndex < 0) entries.push([outputTool, role]);
+        else {
+          const previous = entries[existingIndex]![1];
+          entries[existingIndex] = [outputTool, [...(Array.isArray(previous) ? previous : [previous]), role]];
+        }
+        return entries;
+      }, [])),
       failInfrastructure,
       async (closed, context) => projectClosedSubmission(closed, context),
     );

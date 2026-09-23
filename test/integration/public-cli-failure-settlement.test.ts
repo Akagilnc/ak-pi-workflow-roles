@@ -116,14 +116,14 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
                 role: "toolResult",
                 toolName: JUDGE_OUTPUT_TOOL_NAME,
                 isError: false,
-                details: { judgeStatus: "converged", note: "domain remains role-owned" },
+                details: { status: "converged", note: "domain remains role-owned" },
               },
             })}\n`,
             "utf8",
           );
           return {
             code: 0,
-            sealedAcceptance: { role: "judge" as const, details: { judgeStatus: "converged", note: "domain remains role-owned" } },
+            sealedAcceptance: { role: "judge" as const, details: { status: "converged", note: "domain remains role-owned" } },
             stderr: "",
             timedOut: false,
             args: [...args],
@@ -323,8 +323,13 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
             // Durable accepted terminal for attendance correlation; retryable
             // isError:true/details:{} is nonterminal under the shared classifier.
             isError: false,
-            details: { judgeStatus: "converged" },
+            details: { status: "converged" },
           },
+        }),
+        JSON.stringify({
+          type: "custom",
+          customType: "ak-role-submission-closure",
+          data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" } },
         }),
         JSON.stringify({
           type: "custom_message",
@@ -478,7 +483,7 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
                 toolName: JUDGE_OUTPUT_TOOL_NAME,
                 isError: false,
                 details: {
-                  judgeStatus: "escalate",
+                  status: "escalate",
                   decisionGate: {
                     question: "Ship or hold?",
                     options: ["ship", "hold"],
@@ -493,7 +498,7 @@ test("lawful judge escalate human-decision exits zero as accepted role outcome",
             sealedAcceptance: {
               role: "judge" as const,
               details: {
-                judgeStatus: "escalate",
+                status: "escalate",
                 decisionGate: {
                   question: "Ship or hold?",
                   options: ["ship", "hold"],
@@ -677,7 +682,7 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
             return { code: 1, stderr: "fail\n", timedOut: false, args: [...args] };
           }
           const prior = await readFile(sessionFile, "utf8");
-          const details = { judgeStatus: "converged", note: "resumed ok" };
+          const details = { status: "converged", note: "resumed ok" };
           await writeFile(
             sessionFile,
             `${prior}${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details } })}\n`,
@@ -804,8 +809,8 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout, stderr } = captureIo();
-    const bounceParams = { judgeStatus: "converged", report: "bounce-verdict" };
-    const infraParams = { judgeStatus: "converged", report: "infra-verdict" };
+    const bounceParams = { status: "converged", report: "bounce-verdict" };
+    const infraParams = { status: "converged", report: "infra-verdict" };
 
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "host aborts after non-sealed submissions"],
       {
@@ -828,9 +833,9 @@ test("#881 non-sealed correctable-rejection and infrastructure params each appea
               details: bounceParams,
               toolCallId: "call-bounce",
               executeError: new GatekeeperDecisionError({
-                status: "bounce",
+                status: "continue",
                 officer: "inspector",
-                receipt: { status: "bounce", findings: ["x"] },
+                receipt: { status: "continue", findings: ["x"] },
               }),
             });
             await recordNonSealedSubmissionForSpawn({

@@ -89,7 +89,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function isEscalatePayload(payload: unknown): boolean {
   if (!isRecord(payload)) return false;
   return (
-    payload.status === "escalate" || payload.countersignStatus === "escalate"
+    payload.status === "escalate"
   );
 }
 

@@ -1,10 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Value } from "typebox/value";
 
 import {
   COUNTERSIGN_OUTPUT_TOOL_NAME,
   validateRecordedCountersignOutput,
 } from "../../src/countersign-contracts.ts";
+import { countersignVerdictSchema } from "../../src/countersign-role.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
+import { inspectorOutputSchema } from "../../src/inspector-role.ts";
+import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { judgeVerdictSchema } from "../../src/judge-role.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME, auditorOutputSchema } from "../../src/package-contracts/auditor-output.ts";
+import { NOTARY_OUTPUT_TOOL_NAME, notaryOutputSchema } from "../../src/notary-contracts.ts";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, reviewSubmissionSchema } from "../../src/review-submission.ts";
 import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
 
 /** Shared mock host harness for the Countersign runtime. */
@@ -23,28 +32,43 @@ test("validateRecordedCountersignOutput recognizes 署/封驳/上呈 read-only �
   // 原卷保真 (ADR 0055): lawful verdicts are delivered untouched — no field
   // defaulted, renamed, or dropped (#572 判词送修 2).
   const sealedBack = validateRecordedCountersignOutput({
-    countersignStatus: "continue",
+    status: "continue",
     findings: ["x"],
     evidence: "e-1",
   }) as unknown as Record<string, unknown>;
-  assert.equal(sealedBack.countersignStatus, "continue");
+  assert.equal(sealedBack.status, "continue");
   assert.equal("disposition" in sealedBack, false, "no disposition default may be injected");
   assert.deepEqual(sealedBack.findings, ["x"], "findings must not be normalized");
   assert.equal(sealedBack.evidence, "e-1", "evidence must survive");
   assert.equal(
-    validateRecordedCountersignOutput({ countersignStatus: "converged", note: "n" }).countersignStatus,
+    validateRecordedCountersignOutput({ status: "converged", note: "n" }).status,
     "converged",
   );
   assert.equal(
     validateRecordedCountersignOutput({
-      countersignStatus: "escalate",
+      status: "escalate",
       decisionGate: { question: "q", options: ["a"] },
-    }).countersignStatus,
+    }).status,
     "escalate",
   );
-  assert.throws(() => validateRecordedCountersignOutput({ countersignStatus: "maybe" }));
-  assert.throws(() => validateRecordedCountersignOutput({ status: "converged" }));
+  assert.throws(() => validateRecordedCountersignOutput({ status: "maybe" }));
   assert.throws(() => validateRecordedCountersignOutput(null));
+});
+
+test("review officers expose one shared output tool and receipt schema", () => {
+  assert.deepEqual(
+    [COUNTERSIGN_OUTPUT_TOOL_NAME, JUDGE_OUTPUT_TOOL_NAME, NOTARY_OUTPUT_TOOL_NAME, AUDITOR_OUTPUT_TOOL_NAME, INSPECTOR_OUTPUT_TOOL_NAME],
+    [REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME],
+  );
+  assert.ok([countersignVerdictSchema, judgeVerdictSchema, notaryOutputSchema, auditorOutputSchema, inspectorOutputSchema].every((schema) => schema === reviewSubmissionSchema));
+  const shape = reviewSubmissionSchema as { properties: Record<string, unknown>; required?: string[] };
+  assert.deepEqual(shape.required ?? [], []);
+  for (const field of ["fix", "classes", "decisionGate"]) {
+    assert.equal(typeof (shape.properties[field] as { description?: unknown }).description, "string");
+  }
+  for (const field of ["fix", "classes", "decisionGate"]) {
+    assert.equal(Value.Check(reviewSubmissionSchema, { status: "continue", [field]: "readable submission" }), true);
+  }
 });
 
 test("Countersign runtime registers output tool and injects soul without ticket body preload", async () => {
@@ -82,17 +106,19 @@ test("Countersign execute accepts as-is and terminates — sole-final barrier is
   await runtime.activate();
   const tool = h.tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
   assert.ok(tool);
+  const declared = tool.parameters as { required?: readonly string[] };
+  assert.equal(declared.required?.includes("status") ?? false, false, "missing status must reach the ledger for speaker re-ask");
 
   const result = await tool.execute(
     "one",
-    { countersignStatus: "continue", findings: ["x"] },
+    { status: "continue", findings: ["x"] },
     undefined,
     undefined,
     {},
   );
   assert.equal(result.terminate, true);
   assert.equal(
-    (result.details as { countersignStatus: string }).countersignStatus,
+    (result.details as { status: string }).status,
     "continue",
   );
   assert.deepEqual(result.content, []);

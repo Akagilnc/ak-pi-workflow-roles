@@ -6,12 +6,12 @@
 - **Soul**:LLM 角色的身份与不可约判断原则,经系统提示注入。分**通用层**与**业务 overlay**。确定性角色无 soul。见 ADR 0005。
 - **角色方法 Skill(Role method Skill)**:供一个角色执行具体任务方法的包版本化材料；Soul 持判断原则，Skill 持可替换方法步骤。见 ADR 0032、0082。
 - **角色门禁(Role gating)**:车间内的机械限制（LLM：工具集收窄与调用拦截；确定性角色：自身能力边界）。区别于 soul 文本约束。见 ADR 0008。
-- **交卷工具(Submission tool)**:角色具名的 terminating 工具(`ak_<role>_output`)。**回执(Receipt)** = 其产物,角色劳动成果的法定出口。见 ADR 0003、0041。
+- **交卷工具(Submission tool)**:角色的 terminating 工具（审核席共用 `ak_submission_output`，其他角色使用具名输出工具）。**回执(Receipt)** = 其产物,角色劳动成果的法定出口。见 ADR 0003、0041。
 - **审核席(Review seat)**:父席交卷后按受审物传召的审核角色（如台院、符宝郎、审刑院）。见 ADR 0055、0079、0080。
 - **格式契约(Format contract)**:在具名输入、输出或持久化边界上,由真实生产路径执行、会改变接受或拒绝结果,且有明确 owner 与 consumer 的格式不变式。
 - **最小必需验证(Minimum-required validation)**:输入输出只验证必须有的。见 ADR 0025。
 - **形状校验(Shape validation)**:拒收理由**只涉数据排布**（在场/缺席、键拼写、基数、类型、跨字段组合）；一旦需引用外部可观察事实或世界规则,即非形状校验。见 ADR 0055；CLAUDE.md 第 0 条。
-- **记账位(Ledger slot)**:每份角色输出唯一精确 key 及取值域(如 `judgeStatus`),供落账与呈现。见 ADR 0010、0040、0057。
+- **记账位(Ledger slot)**:每份角色输出唯一精确 key 及取值域(如 `status`),供落账与呈现。见 ADR 0010、0040、0057。
 - **承接者判据(Successor test)**:删与留之争的可核验判据。见 ADR 0084；关联 ADR 0036、`souls/quality-law.md` 三问。
 - **同类扫描(Class-wide scan)**:以会拒绝输入输出的同类行为为范围的全仓扫描。见 ADR 0045。
 - **语义 JSON 校验(Semantic JSON validation)**:对 JSON 值的生产语义进行校验。见 ADR 0021。

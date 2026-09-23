@@ -7,8 +7,8 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
-import type { GatekeeperNonPassResult, GatekeeperSubject } from "../gatekeeper-role.ts";
-import { requireGatekeeperPass } from "../gatekeeper-pass-envelope.ts";
+import type { SubmissionGateNonPassResult, GatekeeperSubject } from "../gatekeeper-role.ts";
+import { requireSubmissionGate } from "../submission-gate.ts";
 import type {
   HostContext,
   HostEventRegistration,
@@ -85,7 +85,7 @@ export function toPiContext(context: HostContext): ExtensionContext {
 }
 
 /** Gatekeeper receives HostContext directly (#518 §1③) without recovering raw ExtensionContext via WeakMap. */
-function requirePiGatekeeperPass(options: {
+function requirePiSubmissionGate(options: {
   context: HostContext;
   subject: GatekeeperSubject;
   signal?: AbortSignal;
@@ -93,11 +93,12 @@ function requirePiGatekeeperPass(options: {
   toolCallId: string;
   submission?: unknown;
 }): Promise<void | {
+  readonly status: "converged" | "continue";
   readonly officer: string;
   readonly receipt: unknown;
   readonly runId?: string;
 }> {
-  return requireGatekeeperPass({
+  return requireSubmissionGate({
     context: options.context,
     subject: options.subject,
     ...(options.signal === undefined ? {} : { signal: options.signal }),
@@ -203,7 +204,7 @@ export function createPiRoleHostAdapter(
     })),
     setActiveTools: (names) => pi.setActiveTools(names),
     getActiveTools: () => pi.getActiveTools(),
-    requireGatekeeperPass: requirePiGatekeeperPass,
+    requireSubmissionGate: requirePiSubmissionGate,
     on(...registration: HostEventRegistration) {
       const context = (value: ExtensionContext) => projectPiContext(value, options.transcriptFromContext);
       if (registration[0] === "before_agent_start") {

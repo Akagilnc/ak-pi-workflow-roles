@@ -13,7 +13,7 @@ test("accepted judge details round-trip unchanged across statuses and key shapes
     empty: {},
   } as const;
   const converged = {
-    judgeStatus: "converged",
+    status: "converged",
     note: "archive the accepted evidence",
     evidence,
   } as const;
@@ -23,16 +23,16 @@ test("accepted judge details round-trip unchanged across statuses and key shapes
 
   // Full-state loop: continue/escalate carry optional fix/classes/decisionGate.
   const verdicts = [
-    { judgeStatus: "converged", note: "Archive the accepted evidence.", evidence: {} },
+    { status: "converged", note: "Archive the accepted evidence.", evidence: {} },
     {
-      judgeStatus: "continue",
+      status: "continue",
       fix: { summary: "repair" },
       classes: [{ name: "Contract", owner: "runtime", boundary: "judge output", disposition: "repair" }],
       note: "Keep the fresh test output with the repair record.",
       evidence: [],
     },
     {
-      judgeStatus: "escalate",
+      status: "escalate",
       decisionGate: { question: "Choose", options: ["A"] },
       note: "Include the trade-off note for whoever decides.",
       evidence: null,

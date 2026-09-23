@@ -32,7 +32,7 @@ async function activateCountersign(): Promise<HostHarness> {
     getFlag() {
       return undefined;
     },
-    async requireGatekeeperPass(options: {
+    async requireSubmissionGate(options: {
       subject: { kind: string };
     }) {
       gateCalls.push({
@@ -68,7 +68,7 @@ test("countersign gate summons Notary with kind only — no verdict/ticket body"
   const { tools, gateCalls } = await activateCountersign();
   await tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME)!.execute(
     "call-1",
-    { countersignStatus: "converged" },
+    { status: "converged" },
     undefined,
     undefined,
     ctx,
@@ -86,14 +86,14 @@ test("countersign escalate skips Notary gate and accepts as-is (#753)", async ()
   const { tools, gateCalls } = await activateCountersign();
   const result = await tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME)!.execute(
     "call-esc",
-    { countersignStatus: "escalate", note: "need owner" },
+    { status: "escalate", note: "need owner" },
     undefined,
     undefined,
     ctx,
   );
   assert.equal(gateCalls.length, 0, "escalate must not summon notary");
   assert.equal(result.terminate, true);
-  assert.deepEqual(result.details, { countersignStatus: "escalate", note: "need owner" });
+  assert.deepEqual(result.details, { status: "escalate", note: "need owner" });
 });
 
 test("countersign status unreadable returns to countersign without Notary (#753)", async () => {
@@ -101,7 +101,7 @@ test("countersign status unreadable returns to countersign without Notary (#753)
   await assert.rejects(
     tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME)!.execute(
       "call-bad",
-      { countersignStatus: "not-a-status", note: "typo" },
+      { status: "not-a-status", note: "typo" },
       undefined,
       undefined,
       ctx,
@@ -109,7 +109,7 @@ test("countersign status unreadable returns to countersign without Notary (#753)
     (error: unknown) => {
       // Parent re-ask — not a forged officer bounce face (#753).
       assert.ok(error instanceof ParentQueueReaskError);
-      assert.match(error.message, /countersignStatus/);
+      assert.match(error.message, /status/);
       return true;
     },
   );

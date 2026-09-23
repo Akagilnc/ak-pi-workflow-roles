@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import type { DoctorCase } from "../../src/doctor-contracts.ts";
 import { createDoctorRoleRuntime, DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-role.ts";
-import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 
@@ -37,10 +36,10 @@ function context(id: string, abort = () => {}, candidates: unknown[] = []): Host
 }
 const refusal = { status: "refused" as const, reason: "Session bytes are incomplete.", missingEvidence: [{ need: "session header", targetKeys: ["case"] }] };
 
-test("Doctor activation exposes only paged session evidence and output tools", async () => { const h = harness(); const soul = crypto.randomUUID(); const runtime = createDoctorRoleRuntime(h.host, { loadSoul: async () => soul, loadCase: async () => patient, auditCompliance: async () => ({ status: "pass" }) }, { failInfrastructure(error) { throw error; } }); await runtime.activate(); assert.deepEqual(h.active(), [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.deepEqual([...h.tools.keys()], [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.equal(typeof h.tools.get(DOCTOR_EVIDENCE_TOOL_NAME)?.parameters, "object"); assert.equal(typeof h.tools.get(DOCTOR_OUTPUT_TOOL_NAME)?.parameters, "object"); const prompt = await h.beforeAgentStartResult(); assert.ok(prompt && typeof prompt === "object" && "systemPrompt" in prompt); assert.ok(typeof prompt.systemPrompt === "string"); assert.equal(prompt.systemPrompt.includes(soul), true); });
+test("Doctor activation exposes only paged session evidence and output tools", async () => { const h = harness(); const soul = crypto.randomUUID(); const runtime = createDoctorRoleRuntime(h.host, { loadSoul: async () => soul, loadCase: async () => patient, auditCompliance: async () => ({ status: "converged" }) }, { failInfrastructure(error) { throw error; } }); await runtime.activate(); assert.deepEqual(h.active(), [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.deepEqual([...h.tools.keys()], [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.equal(typeof h.tools.get(DOCTOR_EVIDENCE_TOOL_NAME)?.parameters, "object"); assert.equal(typeof h.tools.get(DOCTOR_OUTPUT_TOOL_NAME)?.parameters, "object"); const prompt = await h.beforeAgentStartResult(); assert.ok(prompt && typeof prompt === "object" && "systemPrompt" in prompt); assert.ok(typeof prompt.systemPrompt === "string"); assert.equal(prompt.systemPrompt.includes(soul), true); });
 
 test("Doctor output audits testimony, records runtime cost beside it, and keeps failure behavior", async () => {
-  let decision: "pass" | "bounce" | "failure" | "no-receipt" = "bounce";
+  let decision: "converged" | "continue" | "failure" | "no-receipt" = "continue";
   let aborts = 0;
   let auditCalls = 0;
   const auditedSubmissions: unknown[] = [];
@@ -72,9 +71,9 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
       auditedSubmissions.push(options.submission);
       if (decision === "failure") throw new Error("provider unavailable");
       if (decision === "no-receipt") return auditNoReceiptFacts;
-      return decision === "bounce"
-        ? { status: "bounce", violations: [structuredViolation], receipt: { status: "bounce", violations: [structuredViolation], explanation: "full auditor answer" } }
-        : { status: "pass" };
+      return decision === "continue"
+        ? { status: "continue", violations: [structuredViolation], receipt: { status: "continue", violations: [structuredViolation], explanation: "full auditor answer" } }
+        : { status: "converged" };
     },
   }, {
     failInfrastructure(error, ctx) { ctx.abort(); throw error; },
@@ -82,21 +81,10 @@ test("Doctor output audits testimony, records runtime cost beside it, and keeps 
   await runtime.activate();
   const output = h.tools.get(DOCTOR_OUTPUT_TOOL_NAME);
   assert.ok(output);
-  await assert.rejects(
-    output.execute("doctor", refusal, undefined, undefined, context("doctor")),
-    (error: unknown) => {
-      assert.ok(error instanceof Error);
-      assert.ok(error instanceof GatekeeperDecisionError);
-      assert.equal(error.result.status, "bounce");
-      if (error.result.status === "bounce") assert.deepEqual(error.result.receipt, { status: "bounce", violations: [structuredViolation], explanation: "full auditor answer" });
-      // #775 acceptance: parent-visible text carries every structured field.
-      assert.match(error.message, /method-proof/);
-      assert.match(error.message, /missing method proof/);
-      assert.match(error.message, /case catalog lists no method bite/);
-      return true;
-    },
-  );
-  decision = "pass";
+  const continued = await output.execute("doctor", refusal, undefined, undefined, context("doctor"));
+  assert.equal(continued.terminate, false);
+  assert.deepEqual(continued.details, refusal);
+  decision = "converged";
   assert.equal((await output.execute("doctor", refusal, undefined, undefined, context("doctor"))).terminate, true);
   const testimony = { status: "completed" as const, case: patient.identity, findings: [] };
   const candidates: unknown[] = [];

@@ -17,6 +17,15 @@ import { DIARIST_OUTPUT_TOOL_NAME } from "./diarist-contracts.ts";
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "./secretariat-contracts.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "./judge-auditor.ts";
 
+/** Historical durable session names; these are read aliases, never registered tools. */
+export const LEGACY_REVIEW_OUTPUT_ROLES = new Map<string, string>([
+  ["ak_judge_output", "judge"],
+  ["ak_notary_output", "notary"],
+  ["ak_countersign_output", "countersign"],
+  ["ak_inspector_output", "inspector"],
+  ["ak_auditor_output", "auditor"],
+]);
+
 /**
  * Success-face fields that still differ by seat. Presence and omission match
  * the former per-seat publishers. Key order is not part of the contract.
@@ -92,7 +101,7 @@ export const PUBLIC_ROLE_RECORDS = [
     /** Navigator subject is the public admitted instruction when the run is bound. */
     navigatorSubject: "public-instruction",
     activationStage: "load-and-install",
-    receiptStatusKey: "judgeStatus",
+    receiptStatusKey: "status",
     sessionMaterials: [
       "CLAUDE.md",
       "souls/judge.md",
@@ -374,15 +383,13 @@ export const PUBLIC_ROLE_RECORDS = [
     outputTool: COUNTERSIGN_OUTPUT_TOOL_NAME,
     settlement: "accepted",
     gateStageLabel: "给事中",
-    /** Gate queue reads countersignStatus, not the shared three-state status. */
-    gateDecision: "countersign-status",
     /** Gate summon carries the parent payload as the instruction and a parent run id. */
     gateSummon: "parent-instruction",
     activationFlags: [
       { field: "ticketNumber" },
     ],
     activationStage: "load-and-install",
-    receiptStatusKey: "countersignStatus",
+    receiptStatusKey: "status",
     // #924: 公用《票面法》三席同装
     sessionMaterials: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md"],
   },
@@ -804,7 +811,7 @@ export function packagedGateStageLabel(role: string): string | undefined {
   return record.gateStageLabel;
 }
 
-/** Countersign gate queue reads countersignStatus. Every other officer uses the shared three-state. */
+/** How the gate caller builds one officer summons. Pointer is the inspector face. */
 export type PackagedGateSummon = "source-run" | "subject-source" | "parent-instruction" | "pointer";
 
 /** How the gate caller builds one officer summons. Pointer is the inspector face. */
@@ -812,12 +819,4 @@ export function packagedGateSummon(role: string): PackagedGateSummon {
   const record = packagedRoleMetadata(role);
   if (record !== undefined && "gateSummon" in record) return record.gateSummon;
   return "pointer";
-}
-
-export function packagedGateDecision(role: string): "countersign-status" | "three-state" {
-  const record = packagedRoleMetadata(role);
-  if (record !== undefined && "gateDecision" in record && record.gateDecision === "countersign-status") {
-    return "countersign-status";
-  }
-  return "three-state";
 }
