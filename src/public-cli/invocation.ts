@@ -27,6 +27,7 @@ import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
   ensureRoleRunDirectory,
   ensureRoleRunPlacement,
+  listBookRunDirectories,
   roleRunArtifactsDirectory,
   roleRunPlacement,
   type RoleRunSubject,
@@ -665,9 +666,14 @@ export async function relocateAdmittedRunToTicket(
   if (admitted.role !== "diarist") {
     const parentPage = JSON.parse(await readFile(admitted.admittedRequestPath, "utf8")) as Record<string, unknown>;
     const childRunIds = parentPage.childDiaristRunIds;
+    const childLocations = await listBookRunDirectories(activationBookDirectory(ledgerHome, admitted.bookKey));
     for (const childRunId of Array.isArray(childRunIds) ? childRunIds : []) {
       if (typeof childRunId !== "string") continue;
       const childDirectory = join(dirname(oldRunDirectory), `${childRunId}@diarist`);
+      const locations = childLocations.filter((directory) => basename(directory) === `${childRunId}@diarist`);
+      if (locations.length !== 1) throw new Error(`expected one diarist run ${childRunId}, found ${locations.length}`);
+      // A child that already filed under its own ticket is not the parent's unbound property.
+      if (locations[0] !== childDirectory) continue;
       const childTarget = roleRunPlacement(ledgerHome, {
         bookKey: admitted.bookKey,
         subject: { ticketNumber: admitted.ticketNumber },
@@ -675,7 +681,6 @@ export async function relocateAdmittedRunToTicket(
         role: "diarist",
       });
       authority.seal(childTarget);
-      if (!existsSync(childDirectory) && existsSync(childTarget.runDirectory)) continue;
       await bindTicketNumberOnRunDirectory(childDirectory, admitted.ticketNumber);
       await rehomeUnboundTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
       ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));

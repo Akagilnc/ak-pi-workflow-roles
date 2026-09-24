@@ -858,20 +858,21 @@ for (const preliminaryTicket of [null, 923] as const) {
   });
 }
 
-test("diarist escalation pauses Secretariat before its turn", async () => {
+test("diarist escalation pauses Secretariat, whose final ticket does not rebind the child's ticket", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const gateCalls: Array<{ kind: string }> = [];
     let diaristTurns = 0;
+    const parentRunId = "01a0sec1025-0000-7000-8000-000000000002";
     const host = secretariatHostDrivingRealTools({
       packageRoot, home, gateCalls, submissionGateHost: "codex",
       parentDiaristRunner: async (args, options) => {
         diaristTurns += 1;
         return courtDiaristWithDetails(diaristTurns === 1
           ? { status: "escalate", reason: "uncertain bounds" }
-          : { status: "converged", ticketNumber: 924 })(args, options);
+          : { status: "converged", ticketNumber: 923 })(args, options);
       },
       nestedDiaristRunner: courtDiaristWithDetails({ status: "completed", ticketNumber: 924 }),
       countersignSequence: [{ details: { status: "converged", note: "署" } }],
@@ -879,7 +880,7 @@ test("diarist escalation pauses Secretariat before its turn", async () => {
     });
     const result = await runAkRole(
       ["secretariat", "--model", "test/caller-seat:high", "--project", project, "请建立本票。"],
-      { home, packageRoot, cwd: project, io: captureIo().io,
+      { home, packageRoot, cwd: project, io: captureIo().io, createRunId: () => parentRunId,
         roleTurnHost: host, hostAdapters: [adapter("pi", host)] },
     );
     assert.equal(result.exitCode, 0);
@@ -899,6 +900,11 @@ test("diarist escalation pauses Secretariat before its turn", async () => {
     assert.equal(resumed.exitCode, 0, resumeIo.stderr.join(""));
     assert.equal(resumed.terminal?.roleOutcome.role, "secretariat");
     assert.equal(gateCalls.some((call) => call.kind === "secretariat_verdict"), true);
+    const parentDirectory = await findRunDirectoryById(home, parentRunId, undefined, "secretariat");
+    const book = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project));
+    assert.equal(parentDirectory, join(book, "924", "runs", `${parentRunId}@secretariat`));
+    assert.equal(await findRunDirectoryById(home, result.terminal.runId!, undefined, "diarist"),
+      join(book, "923", "runs", `${result.terminal.runId}@diarist`));
   });
 });
 

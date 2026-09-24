@@ -2091,8 +2091,8 @@ test("public countersign pauses on a recorded diarist escalation", async () => {
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
       piRunner: (args, options) => {
-        const assertion = argvFlagValue(args, "--ak-role") === "diarist" && diaristTurns++ === 0
-          ? "escalate" : null;
+        const assertion = argvFlagValue(args, "--ak-role") === "diarist"
+          ? (diaristTurns++ === 0 ? "escalate" : 582) : 582;
         return courtPipelinePiRunner(assertion, undefined, undefined, sessionPath)(args, options);
       },
     });
@@ -2120,8 +2120,10 @@ test("public countersign pauses on a recorded diarist escalation", async () => {
     assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.role, "countersign");
     const parent = result.admitted;
-    await bindAdmittedTicketNumber(parent, 582);
-    await relocateAdmittedRunToTicket(parent, piDurablePrincipalAuthority);
+    const relocated = await findRunDirectoryById(home, parent.runId, undefined, "countersign");
+    assert.equal(relocated,
+      join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "582", "runs", `${parent.runId}@countersign`));
+    assert.equal(JSON.parse(await readFile(join(relocated!, "admitted-request.json"), "utf8")).ticketNumber, 582);
     assert.equal((await readTicketProvenance(582, project, home)).lines[0]?.id, "escalated-child-owner");
   });
 });

@@ -848,6 +848,10 @@ export async function continueParentAfterDiarist(
   const page = JSON.parse(await readFile(loaded.admitted.admittedRequestPath, "utf8")) as Record<string, unknown>;
   if (!Array.isArray(page.childDiaristRunIds) || !page.childDiaristRunIds.includes(child.runId)) return undefined;
   const admitted = loaded.admitted;
+  if (admitted.role === "countersign" && admitted.ticketNumber === undefined && child.ticketNumber !== undefined) {
+    await bindAdmittedTicketNumber(admitted, child.ticketNumber);
+    await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+  }
   if (admitted.role === "countersign" && admitted.ticketNumber !== undefined) {
     const refresh = await runCountersignCourtDiaristStation(admitted, env, io, child.ticketNumber);
     if (refresh !== undefined) {
