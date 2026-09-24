@@ -27,6 +27,7 @@ import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
 import type { HostContext, RoleHost, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
+import { summonPublicRole } from "../../src/public-role-summons.ts";
 import { publicCliConfigPath } from "../../src/public-cli/config.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -2096,22 +2097,19 @@ test("public countersign pauses on a recorded diarist escalation", async () => {
         return courtPipelinePiRunner(assertion, undefined, [582, 583], sessionPath)(args, options);
       },
     });
-    const result = await runPublicInstructionSeat(
-      ["裁票"],
-      { home, agentDir: join(home, ".pi"), packageRoot, cwd: project,
-        principalAuthority: piDurablePrincipalAuthority,
-        sessionAppender: appendPiSessionCustomEntry,
-        roleTurnHost: host, hostAdapters: [adapter("pi", host)],
-        createRunId: () => "01a0sign00-0000-7000-8000-00000000e101",
-      }, captureIo().io,
-      "countersign", (args) => parsePublicSeatArgv("countersign", args),
-    );
+    const result = await summonPublicRole({
+      role: "countersign", argv: ["--project", project, "裁票"],
+      cwd: join(home, ".ak-roles"), packageRoot,
+      roleTurnHost: host, hostAdapters: [adapter("pi", host)],
+      createRunId: () => "01a0sign00-0000-7000-8000-00000000e101",
+    });
     assert.equal(result.exitCode, 0);
     assert.ok(result.admitted);
     assert.equal(result.terminal?.roleOutcome.role, "diarist");
     assert.equal((await readRoleRunState(result.admitted.runDirectory, piDurablePrincipalAuthority))?.state, "admitted");
     const childDirectory = await findRunDirectoryById(home, result.terminal!.runId!);
     assert.ok(childDirectory);
+    assert.equal(result.runDirectory, childDirectory, "summons returns the escalated child's run");
     await writeFile(join(childDirectory, "session", "session.jsonl"), "", "utf8");
     const resumed = await runAkRole(["resume", result.terminal!.runId!], {
       home, packageRoot, cwd: project, io: captureIo().io,

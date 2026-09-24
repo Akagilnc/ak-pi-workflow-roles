@@ -541,7 +541,7 @@ export async function summonPublicRole(
     && result.terminal.roleOutcome.role !== options.role
     && typeof result.terminal.runId === "string"
     ? await (await import("./public-cli/run-lifecycle.ts")).findRunDirectoryById(
-      options.home,
+      home,
       result.terminal.runId,
     )
     : result.admitted?.runDirectory;
