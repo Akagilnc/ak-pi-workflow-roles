@@ -83,7 +83,7 @@ import {
   type MergerInput,
 } from "../merger-contracts.ts";
 import { sha256Hex } from "../sha256.ts";
-import { ensureTicketProvenanceVolume, rehomeUnboundTicketProvenance } from "../ticket-provenance.ts";
+import { rehomeUnboundTicketProvenance } from "../ticket-provenance.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import {
   NOTARY_FIXED_KICKOFF,
@@ -687,9 +687,6 @@ export async function relocateAdmittedRunToTicket(
   // Rehome any run-owned diary before moving the run directory.
   if (admitted.role === "diarist" || admitted.role === "secretariat") {
     await rehomeUnboundTicketProvenance(oldRunDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
-    if (admitted.role === "secretariat") {
-      ensureTicketProvenanceVolume(admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
-    }
   }
 
   // Rename commits the run placement. Diary assignment above is an idempotent

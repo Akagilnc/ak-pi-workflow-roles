@@ -46,7 +46,7 @@ import {
   sealAcceptedSubmission,
 } from "../helpers/submission-ledger-fixture.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
-import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
+import { readTicketProvenance } from "../../src/ticket-provenance.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { connect } from "node:net";
 import {
@@ -796,6 +796,9 @@ test("public secretariat reaches its turn before an unnumbered new issue exists"
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const sessionPath = join(home, ".claude", "projects", "ticket", "session.jsonl");
+    await mkdir(dirname(sessionPath), { recursive: true });
+    await writeFile(sessionPath, `${JSON.stringify({ type: "user", uuid: "new-ticket-owner", message: { role: "user", content: "请辨认并建立本票。" }, origin: { kind: "human" } })}\n`, "utf8");
     const gateCalls: Array<{ kind: string }> = [];
     const countersignRequests: RoleTurnRequest[] = [];
     const host = secretariatHostDrivingRealTools({
@@ -805,6 +808,8 @@ test("public secretariat reaches its turn before an unnumbered new issue exists"
       countersignRequests,
       submissionGateHost: "codex",
       parentDiaristRunner: courtDiaristWithDetails({ status: "escalate", reason: "issue not yet created" }),
+      nestedDiaristRunner: courtDiaristWithDetails({ status: "completed", ticketNumber: 924,
+        sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }] }),
       countersignSequence: [{ details: { status: "converged", note: "署" } }],
       steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
     });
@@ -826,8 +831,8 @@ test("public secretariat reaches its turn before an unnumbered new issue exists"
       924,
       "the completed new-ticket run must be archived under its ticket",
     );
-    assert.equal(typeof (await readFile(resolveTicketProvenanceVolume(924, project, home).recordFile, "utf8")), "string",
-      "the new ticket must have a ticket-keyed diary volume");
+    assert.equal((await readTicketProvenance(924, project, home)).lines[0]?.id, "new-ticket-owner",
+      "the ticket-keyed diary must contain the owner's actual dialogue");
   });
 });
 
