@@ -11,15 +11,12 @@ import type {
 } from "../host-contracts.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import {
-  resolvePackagedMethodSkillPath,
-  type PackagedMethodSkillName,
-} from "../package-resources/method-skill.ts";
-import {
   packagedRoleActivationFlags,
   packagedRoleMetadata,
 } from "../packaged-role-registry.ts";
 import type { SeatModelConfig } from "./config.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
+import { installedMethodSkillPath } from "./machine-method-skills.ts";
 import { parentRunPathFromGatePointerInstruction } from "./run-lifecycle.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 
@@ -33,6 +30,7 @@ export type ResumeModelConfig = {
 export type RoleTurnRequestProjectionOptions = {
   packageRoot: string;
   home: string;
+  host?: string;
   agentDir: string;
   model?: SeatModelConfig;
   engine?: string;
@@ -103,7 +101,7 @@ export function projectRoleTurnRequest(
  */
 export function packagedSettleSkill(
   admitted: AdmittedRoleInvocation,
-): PackagedMethodSkillName | undefined {
+): string | undefined {
   const record = packagedRoleMetadata(admitted.role);
   if (record === undefined) return undefined;
   if ("applyMethod" in record && record.applyMethod !== undefined) {
@@ -148,33 +146,43 @@ function activationForAdmitted(admitted: AdmittedRoleInvocation): RoleTurnActiva
 }
 
 /** Skill bindings declared on the composition-root record for this admitted run. */
-function methodBindings(
-  admitted: AdmittedRoleInvocation,
-  packageRoot: string,
-): readonly MethodBinding[] {
+export function requiredMethodSkills(admitted: AdmittedRoleInvocation): readonly string[] {
   const record = packagedRoleMetadata(admitted.role);
-  const names: PackagedMethodSkillName[] = [];
+  const names: string[] = [];
   if (record !== undefined && "methodSkills" in record && record.methodSkills !== undefined) {
     names.push(...record.methodSkills);
   }
   const apply = packagedSettleSkill(admitted);
   if (apply !== undefined && !names.includes(apply)) names.push(apply);
-  return names.map((name) => ({
-    kind: "skill" as const,
-    path: resolvePackagedMethodSkillPath(packageRoot, name),
-  }));
+  return names;
+}
+
+function methodBindings(
+  admitted: AdmittedRoleInvocation,
+  home: string,
+  host: string | undefined,
+): readonly MethodBinding[] {
+  if (host !== undefined && host !== "pi") return [];
+  return requiredMethodSkills(admitted).flatMap((name) => {
+    const path = installedMethodSkillPath(home, name);
+    return path === undefined ? [] : [{
+      kind: "skill" as const,
+      path,
+    }];
+  });
 }
 
 /** Registry activation and method bindings for one admitted public seat. */
 export function admittedSeatTurnDetails(
   admitted: AdmittedRoleInvocation,
-  packageRoot: string,
+  home: string,
+  host: string | undefined,
 ): {
   readonly activation: RoleTurnActivation;
   readonly methods: readonly MethodBinding[];
 } {
   return {
     activation: activationForAdmitted(admitted),
-    methods: methodBindings(admitted, packageRoot),
+    methods: methodBindings(admitted, home, host),
   };
 }

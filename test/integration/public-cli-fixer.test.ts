@@ -21,11 +21,6 @@ import { execFileSync } from "node:child_process";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { tryHomeFromAkRolesPath } from "../../src/activation-ledger-topology.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import {
-  loadPackagedMethodSkillMaterial,
-  observePackagedMethodSkillInvocation,
-  resolvePackagedMethodSkillPath,
-} from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
@@ -189,7 +184,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
 });
 
 
-test("lawful fixer Terminal records diagnosis provenance and optional invocation observation", async () => {
+test("lawful fixer Terminal accepts a receipt without Skill expansion", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -204,32 +199,6 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       createRunId: () => "run-fixer-settle-001",
     });
     await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
-    const material = await loadPackagedMethodSkillMaterial(
-      packageRoot,
-      "diagnosing-bugs",
-    );
-    const configuredPath = resolvePackagedMethodSkillPath(
-      packageRoot,
-      "diagnosing-bugs",
-    );
-    const skillBody = `References are relative to ${material.rootDirectory}.\n\n${material.body}`;
-    const skillPrompt = `<skill name="diagnosing-bugs" location="${configuredPath}">\n${skillBody}\n</skill>\n\nDiagnose the root cause.`;
-    assert.deepEqual(
-      observePackagedMethodSkillInvocation(skillPrompt, {
-        name: "diagnosing-bugs",
-        allowedLocations: [configuredPath, material.skillPath],
-      }),
-      { name: "diagnosing-bugs", location: configuredPath },
-    );
-    // Ambient home path must not count as package invocation.
-    assert.equal(
-      observePackagedMethodSkillInvocation(
-        `<skill name="diagnosing-bugs" location="/tmp/home/.agents/skills/diagnosing-bugs/SKILL.md">\n${skillBody}\n</skill>\n\nx`,
-        { name: "diagnosing-bugs", allowedLocations: [configuredPath] },
-      ),
-      undefined,
-    );
-
     const receipt = {
       status: "completed" as const,
       report: "Root cause repaired across the class; diagnosis was used once.",
@@ -244,13 +213,6 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       ],
     };
     const sessionLines = [
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: skillPrompt }],
-        },
-      }),
       JSON.stringify({
         type: "message",
         message: {
@@ -273,11 +235,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       toolCallId: "f1",
     });
 
-    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
-      methodProvenance: material.provenance,
-      methodSkillPath: material.skillPath,
-      methodSkillConfiguredPath: configuredPath,
-    });
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
     assert.equal(terminal.roleOutcome.role, "fixer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
@@ -286,32 +244,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
     assert.ok(report);
     assert.ok((await readFile(report.path, "utf8")).includes(receipt.report));
 
-    const evidence = JSON.parse(
-      await readFile(
-        terminal.artifacts.find((a) => a.kind === "evidence")!.path,
-        "utf8",
-      ),
-    ) as {
-      methodProvenance: {
-        name: string;
-        packageAdaptation: string;
-        upstream: { commit: string; attribution: string };
-      };
-      methodInvocationObserved: boolean;
-      methodInvocations: Array<{ name: string; location: string }>;
-    };
-    assert.equal(evidence.methodProvenance.name, "diagnosing-bugs");
-    assert.equal(
-      evidence.methodProvenance.packageAdaptation,
-      "fixer-boundary-no-external-skill-chain",
-    );
-    assert.equal(evidence.methodProvenance.upstream.attribution, "mattpocock/skills");
-    assert.equal(evidence.methodInvocationObserved, true);
-    assert.equal(evidence.methodInvocations.length, 1);
-    assert.equal(evidence.methodInvocations[0]?.name, "diagnosing-bugs");
-    assert.equal(JSON.stringify(evidence).includes(".agents/skills"), false);
-
-    // Without skill expansion, provenance remains and invocation is not forced/observed.
+    // Without skill expansion, terminal settlement remains accepted.
     const noDiag = await admitFixerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
       home,
@@ -345,19 +278,8 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       details: receipt,
       toolCallId: "f2",
     });
-    const terminalNoDiag = await settleSeatTerminalResult(noDiag, piDurablePrincipalAuthority, {
-      methodProvenance: material.provenance,
-      methodSkillPath: material.skillPath,
-      methodSkillConfiguredPath: configuredPath,
-    });
-    const evidenceNoDiag = JSON.parse(
-      await readFile(
-        terminalNoDiag.artifacts.find((a) => a.kind === "evidence")!.path,
-        "utf8",
-      ),
-    ) as { methodInvocationObserved: boolean; methodInvocations: unknown[] };
-    assert.equal(evidenceNoDiag.methodInvocationObserved, false);
-    assert.equal(evidenceNoDiag.methodInvocations.length, 0);
+    const terminalNoDiag = await settleSeatTerminalResult(noDiag, piDurablePrincipalAuthority);
+    assert.equal(terminalNoDiag.roleOutcome.kind, "accepted");
   });
 });
 
@@ -596,7 +518,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
         assert.equal(args[args.indexOf("--ak-role") + 1], "fixer");
         assert.equal(args[args.indexOf("--ak-fixer-phase") + 1], "plan");
         assert.equal(args[args.indexOf("--ak-fix-packet") + 1], admitted.packetPath);
-        assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
         assert.equal(args.includes("[ak-role:resume-continue]"), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
@@ -671,18 +592,7 @@ async function settleFixerSession(
     details,
     toolCallId: "f-out",
   });
-  const material = await loadPackagedMethodSkillMaterial(
-    packageRoot,
-    "diagnosing-bugs",
-  );
-  return settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
-    methodProvenance: material.provenance,
-    methodSkillPath: material.skillPath,
-    methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-      packageRoot,
-      "diagnosing-bugs",
-    ),
-  });
+  return settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
 }
 
 test("public CLI retains declared prerequisite_unmet judgment as accepted Terminal (not usage/failure)", async () => {

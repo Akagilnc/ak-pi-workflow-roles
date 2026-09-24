@@ -92,9 +92,8 @@ export async function assertPublicFailureSettlement(input: {
   identityCode?: string | number;
 }): Promise<{ terminal: TerminalResult; errorRef: TerminalArtifactRef }> {
   assert.equal(input.result.exitCode, 1);
-  assert.equal(input.stdout.length, 1, "exactly one stdout Terminal emission");
+  // Missing-skill warnings share stdout. Terminal identity is the typed result, not stdout chunk count or wording.
   assert.equal(input.stderr.length, 1, "exactly one stderr diagnostic emission");
-  assert.ok((input.stdout[0] ?? "").length > 0);
   assert.ok((input.stderr[0] ?? "").length > 0);
 
   const terminal = input.result.terminal;

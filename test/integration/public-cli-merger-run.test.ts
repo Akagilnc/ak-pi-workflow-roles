@@ -18,7 +18,6 @@ test.after(() => { process.exitCode = undefined; });
 
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
-import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -425,15 +424,10 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
       report: "both authorized intents cannot coexist",
     }),
     sessionLines: async () => {
-      const material = await loadPackagedMethodSkillMaterial(
-        packageRoot,
-        "resolving-merge-conflicts",
-      );
-      const expansion = `<skill name="resolving-merge-conflicts" location="${material.skillPath}">\nbody\n</skill>\n\nEscalate.`;
       return [
         JSON.stringify({
           type: "message",
-          message: { role: "user", content: [{ type: "text", text: expansion }] },
+          message: { role: "user", content: [{ type: "text", text: "Escalate." }] },
         }),
       ];
     },

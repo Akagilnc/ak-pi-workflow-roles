@@ -94,8 +94,6 @@ export function headlessTurnArgs(options: {
   readonly effort?: string;
   /** Fresh session: pass as session id. Resume: pass as resume id. */
   readonly session: { readonly kind: "new"; readonly id: string } | { readonly kind: "resume"; readonly id: string };
-  /** Packaged method plugin dir (`--plugin-dir`). */
-  readonly pluginDir?: string;
 }): string[] {
   const { description } = options;
   const args: string[] = [
@@ -107,7 +105,6 @@ export function headlessTurnArgs(options: {
   if (options.jsonSchema !== undefined) {
     args.push(description.jsonSchemaFlag, JSON.stringify(options.jsonSchema));
   }
-  if (options.pluginDir) args.push("--plugin-dir", options.pluginDir);
   if (options.mcpConfigPath !== undefined && options.mcpConfigPath !== "") {
     args.push(description.mcpConfigFlag, options.mcpConfigPath);
   }
