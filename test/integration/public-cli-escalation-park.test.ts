@@ -320,7 +320,9 @@ test("#1057 auditor escalation is the auditor run and the parent is not that esc
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(latestPayload(continued.terminal), VERDICT);
     const after = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
-    assert.equal(after.some((row) => row.kind === "accepted"), true);
+    const toolCallIds = [...new Set(after.flatMap((row) => row.toolCallId === undefined ? [] : [row.toolCallId]))];
+    assert.deepEqual(toolCallIds, [after.find((row) => row.kind === "candidate" || row.kind === "accepted")?.toolCallId]);
+    assert.equal(after.filter((row) => row.kind === "accepted" && row.toolCallId === toolCallIds[0]).length, 1);
   });
 });
 
@@ -372,6 +374,10 @@ test("#1057 a notary pass continues the judge auditor gate and settles the origi
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
     assert.deepEqual(latestPayload(continued.terminal), VERDICT);
+    const after = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
+    const toolCallIds = [...new Set(after.flatMap((row) => row.toolCallId === undefined ? [] : [row.toolCallId]))];
+    assert.equal(toolCallIds.length, 1);
+    assert.equal(after.some((row) => row.kind === "accepted" && row.toolCallId === toolCallIds[0]), true);
   });
 });
 

@@ -1,5 +1,3 @@
-import { AsyncLocalStorage } from "node:async_hooks";
-
 import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
 import type { Static } from "typebox";
 import { reviewSubmissionSchema } from "./review-submission.ts";
@@ -25,18 +23,6 @@ const JUDGE_GATES: readonly GatekeeperSubject[] = [
   { kind: "judge_draft" },
   { kind: "judge_compliance" },
 ];
-
-const openJudgeGateSkip = new AsyncLocalStorage<
-  (subject: GatekeeperSubject) => Promise<boolean>
->();
-
-/** Re-enter the interrupted judge tool without auditing officers that already passed. */
-export function withOpenJudgeGateSkip<T>(
-  skip: (subject: GatekeeperSubject) => Promise<boolean>,
-  run: () => Promise<T>,
-): Promise<T> {
-  return openJudgeGateSkip.run(skip, run);
-}
 
 export async function runJudgeGates(input: {
   readonly gateAlreadyConverged: (subject: GatekeeperSubject) => Promise<boolean>;
@@ -139,7 +125,7 @@ export function createJudgeRoleRuntime(
             // One order: 符宝郎 then 审刑院. continue returns the raw receipts.
             try {
               const chain = await runJudgeGates({
-                gateAlreadyConverged: async (subject) => openJudgeGateSkip.getStore()?.(subject) ?? false,
+                gateAlreadyConverged: async () => false,
                 runGate: (subject) => pi.requireSubmissionGate!({
                   context: ctx,
                   subject,
