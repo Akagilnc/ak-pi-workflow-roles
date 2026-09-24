@@ -18,7 +18,6 @@ import {
 
 import { transcriptFromContext as productionTranscriptFromContext } from "../../extensions/role-runtime.ts";
 import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
-import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts";
 import { createJudgeRoleRuntime, type JudgeRoleHostActions } from "../../src/judge-role.ts";
 import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import type { HostContext } from "../../src/host-contracts.ts";
@@ -40,8 +39,6 @@ import {
 } from "../../src/navigator-attendance.ts";
 import { NAVIGATOR_INVOCATION_ENTRY } from "../../src/navigator-invocation-identity.ts";
 import {
-  CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE,
-  CoderSkillExpansionEvidenceMissingError,
   createCoderRoleRuntime,
   createFixerRoleRuntime,
 } from "../../src/worker-role.ts";
@@ -251,37 +248,6 @@ type Tool = {
 
 const emptyFixPacket = "Repair the assigned findings.";
 const declaredFixPrerequisites = JSON.stringify([{ id: "owner.choice", requirement: "Owner selects the contract." }]);
-
-const tddPath = "/home/test/.agents/skills/tdd/SKILL.md";
-const tddBaseDir = "/home/test/.agents/skills/tdd";
-const tddBody = "# Canonical TDD\n\nRun red then green.";
-const tddContent = `References are relative to ${tddBaseDir}.\n\n${tddBody}`;
-
-function tddBinding(): CanonicalSkillBinding<"tdd"> {
-  return {
-    name: "tdd",
-    snapshot: {
-      raw: `---\nname: tdd\ndescription: test\n---\n\n${tddBody}`,
-      path: tddPath,
-      baseDir: tddBaseDir,
-      body: tddBody,
-      snapshotIdentity: Object.freeze({ text: `---\nname: tdd\ndescription: test\n---\n\n${tddBody}` }),
-    },
-    captureExpansion(evidence, originalRequest) {
-      return evidence?.name === "tdd"
-        && evidence.location === tddPath
-        && evidence.content === tddContent
-        && evidence.userMessage === originalRequest
-        ? { name: "tdd", location: tddPath, content: tddContent, userMessage: originalRequest }
-        : undefined;
-    },
-  };
-}
-
-function expandedTdd(request: string): string {
-  const block = `<skill name="tdd" location="${tddPath}">\n${tddContent}\n</skill>`;
-  return request === "" ? block : `${block}\n\n${request}`;
-}
 
 const usage = {
   input: 1,
@@ -1465,7 +1431,6 @@ test("judge role fails before adjudication when its soul is empty", async () => 
 
 test("coder plan loads its task without construction skill and returns planned", async () => {
   const loadedTasks: string[] = [];
-  let bindingLoads = 0;
   const harness = extensionHarness("coder", {
     "ak-coder-task": "/materials/task.md",
     "ak-coder-phase": "plan",
@@ -1475,10 +1440,6 @@ test("coder plan loads its task without construction skill and returns planned",
     loadCoderTask: async (path) => {
       loadedTasks.push(path);
       return "IMPLEMENT THE VERTICAL SLICE";
-    },
-    loadCanonicalSkillBinding: async () => {
-      bindingLoads += 1;
-      return tddBinding();
     },
   });
 
@@ -1491,7 +1452,6 @@ test("coder plan loads its task without construction skill and returns planned",
   );
   const prompt = (promptResult as { systemPrompt: string }).systemPrompt;
   assert.deepEqual(loadedTasks, ["/materials/task.md"]);
-  assert.equal(bindingLoads, 0);
   assert.deepEqual(
     await harness.handlers.get("input")?.(
       { text: "Plan the approved seam.", source: "interactive" },
@@ -1503,7 +1463,6 @@ test("coder plan loads its task without construction skill and returns planned",
     prompt,
     "BASE\n\n<coder_soul>\nCODER LAW\n</coder_soul>\n\n<coder_phase>\nplan\n</coder_phase>\n\n<coder_task>\nIMPLEMENT THE VERTICAL SLICE\n</coder_task>",
   );
-  assert.doesNotMatch(prompt, /TDD AND SELF-CHECK/);
 
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
   assert.ok(tool);
@@ -1529,7 +1488,6 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
     loadRoleSoul: async (role) => role === "coder" ? "CODER LAW" : "JUDGE LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
-    loadCanonicalSkillBinding: async () => tddBinding(),
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
@@ -1580,7 +1538,6 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   installRoleRuntime(harness2.pi as unknown as ExtensionAPI, {
     loadRoleSoul: async (role) => role === "coder" ? "CODER LAW" : "JUDGE LAW",
     loadCoderTask: async () => "APPROVED IMPLEMENTATION PLAN",
-    loadCanonicalSkillBinding: async () => tddBinding(),
   });
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness2.handlers.get("session_start")?.({}, activationCtx(home));
@@ -1694,14 +1651,13 @@ test("coder completed submissions traverse the direct Inspector gate until pass"
     {
       loadSoul: async () => "CODER LAW",
       loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
-      loadCanonicalSkillBinding: async () => tddBinding(),
-    },
+      },
     testHostActions(),
   );
   await runtime.activate();
   await harness.handlers.get("input")?.({ text: request }, {});
   await harness.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE", prompt: expandedTdd(request) },
+    { systemPrompt: "BASE", prompt: request },
     { abort() {}, mode: "tui" },
   );
   const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
@@ -1901,14 +1857,13 @@ test("direct Inspector submit summons inspector; transport failure stays loud", 
       {
         loadSoul: async () => "CODER LAW",
         loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
-        loadCanonicalSkillBinding: async () => tddBinding(),
-      },
+          },
       testHostActions(),
     );
     await runtime.activate();
     await harness.handlers.get("input")?.({ text: request }, {});
     await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd(request) },
+      { systemPrompt: "BASE", prompt: request },
       { abort() {}, mode: "tui" },
     );
     return harness.tools.get(CODER_OUTPUT_TOOL_NAME)!;
@@ -2210,7 +2165,6 @@ test("role outputs run nested audits through converged, continue, and escalation
         evidence: [],
         cost: { invocations: { total: 0, sources: [] }, bytes: 0 },
       };
-      const skill = "canonical review skill";
       const escalation = {
         status: "escalate" as const,
         violations: [],
@@ -2376,11 +2330,6 @@ test("role outputs run nested audits through converged, continue, and escalation
         } else {
           runtime = reviewerRole.createReviewerRoleRuntime(piHostAdapter.host, {
             loadSoul: async () => "reviewer law",
-            loadCanonicalSkillBinding: async () => ({
-              name: "ak-cross-m-review" as const,
-              snapshot: { raw: skill, path: "/skill", baseDir: "/", body: skill, snapshotIdentity: Object.freeze({ text: skill }) },
-              captureExpansion: () => ({ name: "ak-cross-m-review" as const, location: "/skill", content: skill, userMessage: "" }),
-            }),
           }, testHostActions());
         }
         return {

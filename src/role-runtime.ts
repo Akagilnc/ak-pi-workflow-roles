@@ -39,7 +39,6 @@ import {
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
-import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
 import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
@@ -251,13 +250,8 @@ import {
   FIXER_FLAG_DEFINITIONS,
   FIXER_OUTPUT_TOOL_NAME,
   FIXER_PHASES,
-  type CoderSkillExpansionEvidenceMissingResult,
 } from "./worker-role.ts";
 
-/** One envelope map for Gatekeeper non-pass and other correct submission rejects (#525). */
-type SubmissionNonPassResult =
-  | SubmissionGateNonPassResult
-  | CoderSkillExpansionEvidenceMissingResult;
 import { JUDGE_OUTPUT_TOOL_NAME } from "./package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "./package-contracts/reviewer-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "./doctor-contracts.ts";
@@ -340,13 +334,10 @@ export {
 } from "./reviewer-role.ts";
 export {
   CODER_OUTPUT_TOOL_NAME,
-  CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE,
-  CoderSkillExpansionEvidenceMissingError,
   FIXER_FLAG_DEFINITIONS,
   FIXER_OUTPUT_TOOL_NAME,
   FIXER_PHASES,
   type CoderOutput,
-  type CoderSkillExpansionEvidenceMissingResult,
   type FixerOutput,
   type WorkerOutput,
 } from "./worker-role.ts";
@@ -510,9 +501,6 @@ export type RoleRuntimeDependencies = {
   createCollectorClock?(): CollectorClock;
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
-  loadCanonicalSkillBinding?(
-    name: "tdd" | "ak-cross-m-review",
-  ): Promise<AnyCanonicalSkillBinding>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
   /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
@@ -1267,9 +1255,6 @@ export function createRoleRuntimeExtension(
     let roleReferenceMaterials = "";
     /** Live Reviewer parent activation for envelope agent_start prompt assembly. */
     let activeReviewerParent: ReviewerActivation | undefined;
-    /** Envelope-owned Reviewer Skill expansion state (ADR 0018 — not a role-module facade). */
-    let reviewerOriginalRequest: string | undefined;
-    let reviewerExpansionCaptured = false;
     let navigatorAttendance: NavigatorAttendanceDependency | undefined;
     // #351: session-lifecycle owner for periodic OAuth refresh (orthogonal to role admission).
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
@@ -1280,7 +1265,7 @@ export function createRoleRuntimeExtension(
     /** toolCallId → fact+evidence; one-shot projected onto durable tool_result (#475). */
     const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
     // Envelope-owned execute→tool_result bridge for submission non-pass (ADR 0018 / #525).
-    const pendingSubmissionNonPassByToolCallId = new Map<string, SubmissionNonPassResult>();
+    const pendingSubmissionNonPassByToolCallId = new Map<string, SubmissionGateNonPassResult>();
     const pendingPriorGatePassByToolCallId = new Map<string, unknown>();
     let engineDetourRegistered = false;
     // #288 primary-session thin adapter. The policy is the sole budget owner;
@@ -1377,23 +1362,9 @@ export function createRoleRuntimeExtension(
       () => receiptDelivery.recordAccepted(),
       settleNavigatorProjection,
     );
-    roleHost.on("input", (event) => {
-      const text = event.text;
+    roleHost.on("input", (_event) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
       if (role !== undefined && !admitted) return { action: "handled" as const };
-      // Reviewer: recover original request; Pi argv may already carry native form.
-      if (
-        admitted
-        && activeReviewerParent !== undefined
-        && selectedRole === role
-        && reviewerOriginalRequest === undefined
-      ) {
-        reviewerOriginalRequest =
-          roleHost.capabilities?.skillOriginalRequest?.(
-            activeReviewerParent.skillBinding.name,
-            text,
-          ) ?? text;
-      }
       return { action: "continue" as const };
     });
     // Reference law/guides use the existing typed reading-material channel;
@@ -1447,17 +1418,8 @@ export function createRoleRuntimeExtension(
         }
       }
       navigatorAttendance?.prepare();
-      // Envelope-owned Reviewer expansion capture + parent prompt assembly (no role-module callback).
+      // Reviewer parent prompt assembly.
       if (activeReviewerParent !== undefined && selectedRole === role) {
-        if (!reviewerExpansionCaptured) {
-          if (reviewerOriginalRequest !== undefined) {
-            activeReviewerParent.skillBinding.captureExpansion(
-              roleHost.capabilities?.skillExpansion(prompt),
-              reviewerOriginalRequest,
-            );
-          }
-          reviewerExpansionCaptured = true;
-        }
         return {
           systemPrompt: assembleReviewerParentSystemPrompt({
             baseSystemPrompt: event.systemPrompt,
@@ -1747,7 +1709,7 @@ export function createRoleRuntimeExtension(
         }
         failInfrastructure(error, ctx);
       },
-      bindSubmissionNonPass(toolCallId: string, result: SubmissionNonPassResult): void {
+      bindSubmissionNonPass(toolCallId: string, result: SubmissionGateNonPassResult): void {
         pendingSubmissionNonPassByToolCallId.set(toolCallId, result);
       },
       bindPriorGatePass(toolCallId: string, receipt: unknown): void {
@@ -1785,12 +1747,6 @@ export function createRoleRuntimeExtension(
           }
           return dependencies.loadCoderTask(path);
         },
-        ...(dependencies.loadCanonicalSkillBinding === undefined
-          ? {}
-          : {
-              loadCanonicalSkillBinding: (name: "tdd") =>
-                dependencies.loadCanonicalSkillBinding!(name),
-            }),
       },
       hostActions,
     );
@@ -1798,12 +1754,6 @@ export function createRoleRuntimeExtension(
       roleHost,
       {
         loadSoul: () => requireRoleSoul("reviewer"),
-        async loadCanonicalSkillBinding(name) {
-          if (dependencies.loadCanonicalSkillBinding === undefined) {
-            throw new Error("Reviewer runtime dependencies are not configured");
-          }
-          return dependencies.loadCanonicalSkillBinding(name);
-        },
       },
       hostActions,
     );
@@ -2091,8 +2041,6 @@ export function createRoleRuntimeExtension(
       activeReviewerParent = undefined;
       activeCollector = undefined;
       collectorFirstDispatchDone = false;
-      reviewerOriginalRequest = undefined;
-      reviewerExpansionCaptured = false;
       receiptDelivery = createReceiptDeliveryPolicy();
       noReceiptRecorded = false;
       observationFace.reset();

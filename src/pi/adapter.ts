@@ -1,5 +1,4 @@
 import {
-  parseSkillBlock,
   type BeforeAgentStartEventResult,
   type ExtensionAPI,
   type ExtensionContext,
@@ -165,32 +164,6 @@ export function createPiRoleHostAdapter(
   const host: RoleHost = {
     deliverSubmissionRejection(_rejection) {
       // #836 删 1/A4.5: no package-authored non-sole resume sentence.
-    },
-    capabilities: {
-      skillExpansion(prompt) {
-        const parsed = parseSkillBlock(prompt);
-        if (parsed == null) return undefined;
-        const userMessage = parsed.userMessage ?? "";
-        return Object.freeze({
-          name: parsed.name,
-          location: parsed.location,
-          content: parsed.content,
-          userMessage,
-        });
-      },
-      /** Recover plain original request from Pi-native `/skill:` turn text (ADR 0082). */
-      skillOriginalRequest(name, text) {
-        const token = `/skill:${name}`;
-        const trimmed = text.trimStart();
-        if (
-          trimmed === token
-          || trimmed.startsWith(`${token} `)
-          || trimmed.startsWith(`${token}\n`)
-        ) {
-          return text.slice(text.indexOf(token) + token.length).trim();
-        }
-        return text.trim();
-      },
     },
     registerFlag: (name, definition) => pi.registerFlag(name, definition),
     getFlag: (name) => pi.getFlag(name),

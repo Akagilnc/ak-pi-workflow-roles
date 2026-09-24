@@ -55,7 +55,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
         { key: "prerequisitesPath", omitUndefined: true },
         { key: "prerequisites" },
       ],
-      method: "observed",
     },
     boardPlacement: "marshal",
     activationFlags: [
@@ -74,7 +73,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "none",
     worker: true,
     applyMethod: "tdd",
-    methodLoadFailureCause: "activation",
     boardPlacement: "coder",
     phases: ["plan", "apply"],
     outputTool: "ak_coder_output",
@@ -86,7 +84,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
         { key: "phase" },
         { key: "taskPath" },
       ],
-      method: "optional",
     },
     activationFlags: [
       { field: "taskPath", flag: "ak-coder-task", binds: "input" },
@@ -119,7 +116,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
         { key: "authorityRefs", copyArray: true },
         { key: "callerProvenance", callerProvenance: true },
       ],
-      method: "observed",
     },
     transportPrompt: "skill-args",
     runnerFailure: "engine-detour-record-first",
@@ -202,7 +198,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     sameParent: "none",
     methodSkills: ["resolving-merge-conflicts"],
     settleMethod: "resolving-merge-conflicts",
-    methodLoadFailureCause: "activation",
     phases: [null],
     outputTool: "ak_merger_output",
     settlement: "residual",
@@ -214,7 +209,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
         { key: "mergerInputPath" },
         { key: "derived" },
       ],
-      method: "observed",
     },
     activationFlags: [
       { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },

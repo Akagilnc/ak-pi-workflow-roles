@@ -24,12 +24,6 @@ import {
 
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
-  applyClaudeSkillInvocation,
-  applyCodexSkillInvocation,
-  hostMethodSkills,
-  packagedMethodPluginDir,
-} from "../host-native-method.ts";
-import {
   closeJsonSchemaForCodex,
   codexTurnArgs,
   headlessMcpConfigDocument,
@@ -418,7 +412,6 @@ function buildTurnArgs(options: {
   readonly sessionKind: "new" | "resume";
   readonly cwd: string;
   readonly writableRoots?: readonly string[];
-  readonly pluginDir?: string;
 }): readonly string[] {
   if (isCodexExecDescription(options.description)) {
     if (options.sessionKind === "resume" && !options.sessionId) {
@@ -451,7 +444,6 @@ function buildTurnArgs(options: {
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.effort === undefined ? {} : { effort: options.effort }),
     session: { kind: options.sessionKind, id: options.sessionId },
-    ...(options.pluginDir === undefined ? {} : { pluginDir: options.pluginDir }),
   });
 }
 
@@ -460,7 +452,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
   return createSerializedRoleTurnHost(async (request): Promise<RoleTurnResult> => {
     const prepared = await config.prepare(request);
     const systemPrompt = renderSystemPromptOverride(prepared.systemPrompt);
-    const codex = isCodexExecDescription(config.description);
+      const codex = isCodexExecDescription(config.description);
     let outcome: RoleTurnResult = failure("session", "HeadlessNoOutcome", "no-outcome");
     try {
       // Claude mints a package UUID for --session-id; codex waits for thread.started.
@@ -486,10 +478,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       await writeFile(systemPromptPath, systemPrompt, "utf8");
       let mcpConfigPath: string | undefined;
       let outputSchemaPath: string | undefined;
-      let pluginDir: string | undefined;
-      let applyMethodPrompt: (prompt: string) => string = codex
-        ? (prompt) => applyCodexSkillInvocation(request.methods, prompt)
-        : (prompt) => prompt;
       if (codex) {
         // #959: navigator is a prose-exit seat — no closed output-schema.
         if (prepared.terminatingToolName !== NAVIGATOR_OUTPUT_TOOL_NAME) {
@@ -507,14 +495,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           `${JSON.stringify(headlessMcpConfigDocument(prepared.mcpServers), null, 2)}\n`,
           "utf8",
         );
-        if (hostMethodSkills(request.methods).length > 0) {
-          const packageRoot = env.AK_PACKAGE_ROOT ?? process.env.AK_PACKAGE_ROOT;
-          if (typeof packageRoot !== "string" || packageRoot === "") {
-            throw new Error("claude method plugin-dir requires AK_PACKAGE_ROOT");
-          }
-          pluginDir = packagedMethodPluginDir(packageRoot);
-          applyMethodPrompt = (prompt) => applyClaudeSkillInvocation(request.methods, prompt);
-        }
       }
 
       const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
@@ -542,7 +522,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               sessionKind,
               cwd: request.cwd,
               ...(gitCommonDir === undefined ? {} : { writableRoots: [gitCommonDir] }),
-              ...(pluginDir === undefined ? {} : { pluginDir }),
             });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
@@ -560,7 +539,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               args,
               cwd: request.cwd,
               env,
-              stdin: request.continuation.kind === "resume" ? prompt : applyMethodPrompt(prompt),
+              stdin: prompt,
               ...(abortSignal === undefined ? {} : { signal: abortSignal }),
               ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
               onStdoutLine(line) {

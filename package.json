@@ -26,6 +26,8 @@
   },
   "files": [
     "dist",
+    "!dist/package-resources/method-skill.js",
+    "!dist/package-resources/method-skill-binding.js",
     "extensions",
     "scripts/generate-tool-execution-observation-schema.ts",
     "scripts/build-package.mjs",
