@@ -4,6 +4,7 @@
  * session writer and the real-envelope structured-output tracer (#502 DRY).
  */
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
@@ -59,7 +60,7 @@ export function roleTurnHostFromStructuredOutputRounds(input: {
       const prepared = await prepareRoleEnvelope({
         request: { ...request, host: "codex" },
         dependencies: createRoleRuntimeDependencies(input.packageRoot),
-        socketPath: join(request.runDirectory, "structured-output.sock"),
+        socketPath: `/tmp/ak-headless-mcp-${randomUUID()}.sock`,
         listTerminatingToolOnMcp: false,
         sessionFile: input.principalAuthority.decode(request.principal).sessionFile,
       });
