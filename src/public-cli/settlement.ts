@@ -2653,7 +2653,6 @@ async function settleSeat(
 export async function trySettleSeatTerminalResult(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  _obsoleteMethodPublication?: object,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
   return settleSeat(admitted, authority, scope);
@@ -2666,7 +2665,6 @@ export async function trySettleSeatTerminalResult(
 export async function settleSeatTerminalResult(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  _obsoleteMethodPublication?: object,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
   const settled = await settleSeat(admitted, authority, scope);

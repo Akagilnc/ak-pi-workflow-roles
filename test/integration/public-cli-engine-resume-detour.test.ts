@@ -119,16 +119,6 @@ async function seedTerminalSession(input: {
   const details =
     seat === "merger" ? { ...baseDetails, attemptId: runId } : baseDetails;
   const entries = [];
-  if (seat === "merger") {
-    const skillPath = join(packageRoot, "resources/methods/resolving-merge-conflicts/SKILL.md");
-    entries.push({
-      type: "message",
-      message: {
-        role: "user",
-        content: `<skill name="resolving-merge-conflicts" location="${skillPath}">\nmerge instructions\n</skill>\n\nComplete the merge.`,
-      },
-    });
-  }
   entries.push({
     type: "message",
     message: {

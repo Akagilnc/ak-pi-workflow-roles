@@ -10,11 +10,11 @@ const HOSTS = ["claude-code", "pi", "codex"] as const;
 function skillRoots(home: string, host: string): string[] {
   if (host !== "claude-code" && host !== "pi" && host !== "codex") return [];
   const native = host === "claude-code"
-    ? ".claude/skills"
+    ? join(process.env.CLAUDE_CONFIG_DIR?.trim() || join(home, ".claude"), "skills")
     : host === "pi"
-      ? ".pi/agent/skills"
-      : ".codex/skills";
-  return [join(home, native), ...(host === "pi" || host === "codex" ? [join(home, ".agents/skills")] : [])];
+      ? join(home, ".pi/agent/skills")
+      : join(process.env.CODEX_HOME?.trim() || join(home, ".codex"), "skills");
+  return [native, ...(host === "pi" || host === "codex" ? [join(home, ".agents/skills")] : [])];
 }
 
 export function installedMethodSkillPath(home: string, host: string, name: string): string | undefined {
@@ -50,9 +50,10 @@ export async function warnMissingMethodSkills(
 ): Promise<void> {
   const nativeHost = host === undefined ? "pi" : host === "claude" ? "claude-code" : host;
   const supportedHost = HOSTS.find((candidate) => candidate === nativeHost);
+  if (supportedHost === undefined) return;
   const missing: string[] = [];
   for (const skill of skills) {
-    if (supportedHost === undefined || installedMethodSkillPath(home, supportedHost, skill) === undefined) missing.push(skill);
+    if (installedMethodSkillPath(home, supportedHost, skill) === undefined) missing.push(skill);
   }
   for (const skill of missing) {
     stdout(`Warning: required machine Skill "${skill}" is missing for ${role}; its method guidance may be unavailable and reduce work quality. Run \`ak-role setup\` to install required Skills.\n`);

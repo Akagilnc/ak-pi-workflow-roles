@@ -69,8 +69,8 @@ import {
 } from "./terminal.ts";
 import {
   admittedSeatTurnDetails,
-  packagedSettleSkill,
   projectRoleTurnRequest,
+  requiredMethodSkills,
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
 import {
@@ -227,12 +227,7 @@ async function dispatchAdmitted(
   io: CliIo,
 ): Promise<SeatRunResult> {
   const record = roleRecord(admitted.role);
-  const methods: readonly string[] = "methodSkills" in record ? record.methodSkills ?? [] : [];
-  const settleSkill = packagedSettleSkill(admitted);
-  const requiredSkills = settleSkill !== undefined && !methods.includes(settleSkill)
-      ? [...methods, settleSkill]
-    : methods;
-  await warnMissingMethodSkills(env.home, env.host, admitted.role, requiredSkills, io.stdout);
+  await warnMissingMethodSkills(env.home, env.host, admitted.role, requiredMethodSkills(admitted), io.stdout);
   const adapters = seatAdapters(admitted, env);
   const execute = async (activeEnv: InstructionSeatRunEnv): Promise<SeatRunResult> => {
     const auto = "inCallAutoResume" in record && record.inCallAutoResume === true;
@@ -822,13 +817,7 @@ export async function runPublicInstructionSeatResume(
       trySettle: async () => undefined,
     },
     afterAdmittedLoad: async (admitted) => {
-      const record = roleRecord(admitted.role);
-      const methods: readonly string[] = "methodSkills" in record ? record.methodSkills ?? [] : [];
-      const settleSkill = packagedSettleSkill(admitted);
-      const requiredSkills = settleSkill !== undefined && !methods.includes(settleSkill)
-        ? [...methods, settleSkill]
-        : methods;
-      await warnMissingMethodSkills(env.home, env.host, admitted.role, requiredSkills, io.stdout);
+      await warnMissingMethodSkills(env.home, env.host, admitted.role, requiredMethodSkills(admitted), io.stdout);
       return { kind: "continue" as const, adapters: seatAdapters(admitted, env) };
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),

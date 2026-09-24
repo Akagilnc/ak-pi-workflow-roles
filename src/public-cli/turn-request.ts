@@ -147,11 +147,7 @@ function activationForAdmitted(admitted: AdmittedRoleInvocation): RoleTurnActiva
 }
 
 /** Skill bindings declared on the composition-root record for this admitted run. */
-function methodBindings(
-  admitted: AdmittedRoleInvocation,
-  home: string,
-  host: string | undefined,
-): readonly MethodBinding[] {
+export function requiredMethodSkills(admitted: AdmittedRoleInvocation): readonly PackagedMethodSkillName[] {
   const record = packagedRoleMetadata(admitted.role);
   const names: PackagedMethodSkillName[] = [];
   if (record !== undefined && "methodSkills" in record && record.methodSkills !== undefined) {
@@ -159,8 +155,16 @@ function methodBindings(
   }
   const apply = packagedSettleSkill(admitted);
   if (apply !== undefined && !names.includes(apply)) names.push(apply);
+  return names;
+}
+
+function methodBindings(
+  admitted: AdmittedRoleInvocation,
+  home: string,
+  host: string | undefined,
+): readonly MethodBinding[] {
   const nativeHost = host === "claude" ? "claude-code" : host ?? "pi";
-  return names.flatMap((name) => {
+  return requiredMethodSkills(admitted).flatMap((name) => {
     const path = installedMethodSkillPath(home, nativeHost, name);
     return path === undefined ? [] : [{
       kind: "skill" as const,
