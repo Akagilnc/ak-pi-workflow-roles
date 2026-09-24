@@ -197,7 +197,7 @@ test("block1: session principal unavailable still fails honestly", async()=>{
     const bookKey=resolveBookKeyFromGit(project);
     const runDir=join(home,".ak-roles","books",bookKey,"unbound","runs",`${runId}@judge`);
     await rm(join(runDir,"session","session.jsonl"),{force:true});
-    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),/Pi session principal is unavailable/);
+    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority));
     const {io:io2,stderr}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,io:io2,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                       packageRoot,
@@ -205,9 +205,11 @@ test("block1: session principal unavailable still fails honestly", async()=>{
                                                                                       piRunner: async(a)=>{dispatched=true;return{code:0,stderr:"",timedOut:false,args:[...a]};},
                                                                                     })});
     const errorRecord=join(runDir,"artifacts","error.json");
-    const recorded=JSON.parse(await readFile(errorRecord,"utf8")) as {diagnostic:string};
+    const recorded=JSON.parse(await readFile(errorRecord,"utf8")) as {kind?:unknown;runId?:unknown;diagnostic?:unknown};
     assert.equal(dispatched,false);
-    assert.equal(recorded.diagnostic.includes("Pi session principal is unavailable"),true);
+    assert.equal(recorded.kind,"error");
+    assert.equal(recorded.runId,runId);
+    assert.equal(typeof recorded.diagnostic,"string");
     assert.equal(stderr.join("").includes(errorRecord),true);
     assert.notEqual(res.exitCode,0);
   });

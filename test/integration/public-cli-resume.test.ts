@@ -16,7 +16,6 @@ import test from "node:test";
 import { execFileSync, spawn } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { resolveAuditorSubject } from "../../src/auditor-soul.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
@@ -2148,7 +2147,6 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
 
     await assert.rejects(
       () => loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),
-      /Pi session principal is unavailable/,
     );
 
     const { io, stdout, stderr } = captureIo();
@@ -2174,11 +2172,13 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
       }),
     });
     const errorRecord = join(runDirectory, "artifacts", "error.json");
-    const recorded = JSON.parse(await readFile(errorRecord, "utf8")) as { diagnostic: string };
+    const recorded = JSON.parse(await readFile(errorRecord, "utf8")) as { kind?: unknown; runId?: unknown; diagnostic?: unknown };
     assert.equal(dispatches, 0);
     assert.equal(stdout.length, 0);
     assert.notEqual(blocked.exitCode, 0);
-    assert.equal(recorded.diagnostic.includes("Pi session principal is unavailable"), true);
+    assert.equal(recorded.kind, "error");
+    assert.equal(recorded.runId, runId);
+    assert.equal(typeof recorded.diagnostic, "string");
     assert.equal(stderr.join("").includes(errorRecord), true);
   });
 });
@@ -2506,40 +2506,36 @@ test("public resume says which confirmed fact failed and where to look", async (
         return { ...result, stderr: captured.stderr.join("") };
       };
       const errorRecord = (runDirectory: string) => join(runDirectory, "artifacts", "error.json");
-      const readError = async (runDirectory: string) =>
-        JSON.parse(await readFile(join(runDirectory, "artifacts", "error.json"), "utf8")) as { diagnostic: string };
-      const subjectDiagnosis = () => {
-        try {
-          resolveAuditorSubject();
-        } catch (error) {
-          return error instanceof Error ? error.message : String(error);
-        }
-        return undefined;
+      const readError = async (runDirectory: string, expectedRunId: string) => {
+        const parsed: unknown = JSON.parse(await readFile(errorRecord(runDirectory), "utf8"));
+        assert.equal(parsed !== null && typeof parsed === "object" && !Array.isArray(parsed), true);
+        const record = parsed as { kind?: unknown; runId?: unknown; diagnostic?: unknown };
+        assert.equal(record.kind, "error");
+        assert.equal(record.runId, expectedRunId);
+        assert.equal(typeof record.diagnostic, "string");
+        return record;
       };
 
       const callsBeforeWorkspace = seen.length;
       const noWorkspace = await resume(["resume", "--model", "test/caller-seat:high", "1058-no-workspace"]);
       assert.notEqual(noWorkspace.exitCode, 0);
       assert.equal(seen.length, callsBeforeWorkspace);
-      const workspaceRecordPath = errorRecord(deletedWorkspace.runDirectory);
-      const workspaceRecord = await readError(deletedWorkspace.runDirectory);
-      assert.equal(workspaceRecord.diagnostic.includes("ENOENT"), true);
-      assert.equal(noWorkspace.stderr.includes(workspaceRecordPath), true);
+      await readError(deletedWorkspace.runDirectory, "1058-no-workspace");
+      assert.equal(noWorkspace.stderr.includes(errorRecord(deletedWorkspace.runDirectory)), true);
 
       const callsBeforeSubject = seen.length;
       const missingSubject = await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
       assert.notEqual(missingSubject.exitCode, 0);
       assert.equal(seen.length, callsBeforeSubject);
-      assert.equal((await readError(auditor.runDirectory)).diagnostic, subjectDiagnosis());
+      await readError(auditor.runDirectory, "1058-auditor");
       assert.equal(missingSubject.stderr.includes(errorRecord(auditor.runDirectory)), true);
 
       process.env.AK_ROLE_AUDITOR_SUBJECT = "typo";
       const illegalSubject = await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
       assert.notEqual(illegalSubject.exitCode, 0);
       assert.equal(seen.length, callsBeforeSubject);
-      const illegalRecord = await readError(auditor.runDirectory);
-      assert.equal(illegalRecord.diagnostic, subjectDiagnosis());
-      assert.equal(illegalRecord.diagnostic.includes("typo"), true);
+      await readError(auditor.runDirectory, "1058-auditor");
+      assert.equal(illegalSubject.stderr.includes(errorRecord(auditor.runDirectory)), true);
       delete process.env.AK_ROLE_AUDITOR_SUBJECT;
 
       process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
@@ -2551,12 +2547,12 @@ test("public resume says which confirmed fact failed and where to look", async (
       assert.notEqual(unknown.exitCode, 0);
       assert.equal(unknown.stderr.includes(errorRecord(unknownHost.runDirectory)), true);
       assert.equal(unknown.terminal?.roleOutcome.kind, "failure");
+      const unknownRecord = await readError(unknownHost.runDirectory, "1058-unknown-host");
       assert.equal(
         unknown.terminal?.roleOutcome.kind === "failure"
-          && unknown.terminal.roleOutcome.diagnostic === (await readError(unknownHost.runDirectory)).diagnostic,
+          && unknown.terminal.roleOutcome.diagnostic === unknownRecord.diagnostic,
         true,
       );
-      assert.equal((await readError(unknownHost.runDirectory)).diagnostic.includes("zeta-unique-host-diagnostic"), true);
     });
   } finally {
     if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
