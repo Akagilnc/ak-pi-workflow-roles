@@ -19,6 +19,7 @@ import { listBookRunDirectories } from "../../src/role-run-placement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { readableGateItem } from "../../src/readable-gate-item.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -257,7 +258,7 @@ test("#1057 a notary escalation pauses that officer and a pass resumes the judge
     assert.equal(notaryCalls, 2);
     assert.equal(auditorCalls, 1);
     assert.equal(observed.parentMessages.length, 1);
-    assert.deepEqual(JSON.parse(observed.parentMessages[0]!), passed);
+    assert.equal(observed.parentMessages[0], readableGateItem(passed));
     const notarySessions = observed.officerSessions.filter((item) => item.role === "notary");
     assert.equal(notarySessions.length, 2);
     assert.equal(notarySessions[0]?.sessionFile, notarySessions[1]?.sessionFile);
@@ -291,7 +292,7 @@ test("#1057 an auditor escalation is the auditor run and a pass resumes the judg
     assert.equal(continued.exitCode, 0);
     assert.equal(auditorCalls, 2);
     assert.equal(observed.parentMessages.length, 1);
-    assert.deepEqual(JSON.parse(observed.parentMessages[0]!), passed);
+    assert.equal(observed.parentMessages[0], readableGateItem(passed));
     assert.equal(observed.officerSessions.filter((item) => item.role === "notary").length, 1);
     const auditorSessions = observed.officerSessions.filter((item) => item.role === "auditor");
     assert.equal(auditorSessions.length, 2);
@@ -363,7 +364,7 @@ test("#1057 a non-three-state auditor conclusion resumes that officer", async ()
   });
 });
 
-test("#1057 an officer host failure does not settle the pending judge verdict", async () => {
+test("#1057 a parent Judge host failure does not settle the pending verdict", async () => {
   let auditorCalls = 0;
   await runJudge(async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
