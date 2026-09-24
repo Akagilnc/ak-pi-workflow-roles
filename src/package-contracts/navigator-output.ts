@@ -16,7 +16,7 @@ export const navigatorOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       prose: Type.Unknown({
-        description: "游奕使散文建议，原样呈现。不要求 candidates/next 等结构化字段。形状指引，非 schema 闸",
+        description: "游奕使散文建议，原样呈现。不要求 candidates/next 等结构化字段。",
       }),
     }),
   ),

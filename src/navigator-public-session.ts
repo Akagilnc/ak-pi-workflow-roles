@@ -6,6 +6,7 @@
  * host conversation continuity uses CLI resume (`resumeRunId`), not a package
  * advice ledger (development-closure: do not invent package-level memory).
  */
+import { existsSync } from "node:fs";
 import { basename } from "node:path";
 
 import { sitianReport } from "./sitian-facade.ts";
@@ -23,6 +24,10 @@ import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
 import { isNavigatorSeat } from "./packaged-role-registry.ts";
+import {
+  attachWorkContextPointer,
+  navigatorWorkContextFile,
+} from "./navigator-work-base.ts";
 
 /**
  * Ledger process home for navigator attendance: admitted HostContext.runDirectory
@@ -155,12 +160,16 @@ export function createNativeNavigatorSessionFactory(deps?: {
           // (ADR 0018 / #959 — legal HostContext may omit signal).
           if (disposed) return;
           const resumeRunId = hostRunId;
+          const workContextPath = navigatorWorkContextFile(sessionManager.getSessionDir());
+          const argvText = existsSync(workContextPath)
+            ? attachWorkContextPointer(text, workContextPath)
+            : text;
 
           // Call contract only: forward shared-lifecycle signal; do not own AbortController here
           // (ADR 0018 / #959 — cancel ownership stays on the attendance/envelope seam).
           const baseSummon = {
             role: "navigator" as const,
-            argv: [text] as const,
+            argv: [argvText] as const,
             cwd: context.cwd,
             ...(summonHome === undefined ? {} : { home: summonHome }),
             ...(context.signal === undefined ? {} : { signal: context.signal }),

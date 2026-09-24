@@ -62,6 +62,7 @@ export { resolveNavigatorSeatSelection };
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
 import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
+import { persistNavigatorWorkBase } from "./navigator-work-base.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
 export { NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY };
@@ -422,6 +423,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           // (navigator-public-session). No assistant-entry harvest — entries() is
           // archivist custom-only on the wired factory (#959).
           const promptAllowingRejectedPrepare = async (text: string, deliveryRequest: boolean) => {
+            await persistNavigatorWorkBase(activeSession.recordPointer(), { subject, authority });
             const entryStart = activeSession.entries().length;
             prepareBatchRejected = false;
             let promptFailure: unknown;

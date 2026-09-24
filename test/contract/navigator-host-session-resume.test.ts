@@ -5,16 +5,19 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { createNavigatorAttendance } from "../../src/navigator-attendance.ts";
 import {
   createNativeNavigatorSessionFactory,
   NAVIGATOR_HOST_RUN_POINTER_ENTRY,
   readNavigatorHostRunPointer,
   runIdFromNavigatorDirectory,
 } from "../../src/navigator-public-session.ts";
+import { loadNavigatorWorkBaseSuffix } from "../../src/navigator-work-base.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
+import { createNavigatorRoleRuntime } from "../../src/role-runtime.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { seedGitRepository } from "../helpers/pi-test-harness.ts";
 
@@ -363,5 +366,91 @@ test("#959 typed non-resumable preflight allows one fresh mint", async () => {
     assert.equal(calls, 2, "non-resumable preflight → single fresh mint");
     assert.equal(readNavigatorHostRunPointer(session.entries() as readonly unknown[]), "01navminted");
     await session.dispose();
+  });
+});
+
+test("fresh navigator settlement keeps subject and authority on the nest base", async () => {
+  await withTempRoot("navigator-work-base-", async (root) => {
+    seedGitRepository(root);
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
+    await mkdir(join(parentRun, "session"), { recursive: true });
+    const authority = "authority-token-9f3c";
+    const subject = "task-bytes-9f3c";
+    const subjectKey = `${join(root, ".ak/work")}#ad-hoc`;
+    const summons: string[] = [];
+    const nav = createNavigatorAttendance({
+      context: {
+        cwd: root,
+        home: root,
+        runDirectory: parentRun,
+      } as never,
+      role: "coder",
+      phase: "apply",
+      subjectKey,
+      subject,
+      authority,
+      createSession: createNativeNavigatorSessionFactory({
+        summonPublicRole: async (options) => {
+          summons.push(options.argv[0] ?? "");
+          return {
+            exitCode: 0,
+            runDirectory: join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navbase@navigator"),
+            terminal: {
+              roleOutcome: { kind: "accepted", payloads: [{ prose: "下一步" }] },
+            },
+          } as never;
+        },
+        hostRunResumable: async () => false,
+      }),
+      onEvent: () => {},
+    });
+
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(summons.length, 2);
+    for (const argv of summons) {
+      assert.equal(argv.includes(authority), false);
+      assert.equal(argv.includes(subject), false);
+      const fed = JSON.parse(argv) as { workContextPath?: string; subjectKey?: string };
+      assert.equal(fed.subjectKey, subjectKey);
+      assert.equal(typeof fed.workContextPath, "string");
+      const stored = JSON.parse(await readFile(fed.workContextPath ?? "", "utf8")) as {
+        subject: string;
+        authority: string;
+      };
+      assert.equal(stored.subject, subject);
+      assert.equal(stored.authority, authority);
+    }
+
+    const handlers: Array<(event: { prompt: string; systemPrompt: string }) => Promise<{ systemPrompt?: string } | undefined>> = [];
+    const tools: Array<{ name: string }> = [];
+    const runtime = createNavigatorRoleRuntime({
+      registerTool(tool: { name: string }) { tools.push(tool); },
+      getAllTools() { return tools; },
+      on(name: string, handler: (event: { prompt: string; systemPrompt: string }) => Promise<{ systemPrompt?: string } | undefined>) {
+        if (name === "before_agent_start") handlers.push(handler);
+      },
+    } as never, {
+      loadSoul: async () => "navigator soul",
+      loadRoutePlaybook: async () => "route playbook",
+    });
+    await runtime.activate();
+    let systemPrompt = "seat";
+    for (const handler of handlers) {
+      const next = await handler({ prompt: summons[0] ?? "", systemPrompt });
+      if (typeof next?.systemPrompt === "string") systemPrompt = next.systemPrompt;
+    }
+    assert.equal(systemPrompt.includes(authority), true);
+    assert.equal(systemPrompt.includes(subject), true);
+    assert.equal(systemPrompt.includes("<controlling_authority>"), true);
+    assert.equal(systemPrompt.includes("route playbook"), true);
+    const suffix = await loadNavigatorWorkBaseSuffix(JSON.stringify({ workContextPath: "/etc/passwd" }));
+    assert.equal(suffix, undefined);
+    await nav.dispose();
   });
 });

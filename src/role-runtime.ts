@@ -99,7 +99,8 @@ import {
   type AuditorRuntimeDependencies,
 } from "./auditor-role.ts";
 
-import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { loadNavigatorWorkBaseSuffix } from "./navigator-work-base.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
@@ -109,7 +110,7 @@ import {
 } from "./navigator-invocation-identity.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
-import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleActivationFlags, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleActivationFlags, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
@@ -450,27 +451,6 @@ export const ROLE_FLAG = {
   },
 } as const;
 
-/** Host-neutral in-process role help for Navigator prepare (Pi and Grok share this). */
-export function formatNavigatorRoleHelp(role: NavigatorTargetRole): string {
-  const metadata = packagedRoleMetadata(role);
-  const lines = [
-    `Usage: ak-role ${role}`,
-    ROLE_FLAG.definition.description,
-  ];
-  const inputFlag = packagedRoleInputFlag(role);
-  if (inputFlag !== undefined) {
-    lines.push(`  --${inputFlag} <value>    ${role} input material`);
-  }
-  const phaseFlag = packagedRolePhaseFlag(role);
-  if (phaseFlag !== undefined && metadata !== undefined) {
-    lines.push(
-      `  --${phaseFlag} <value>    ${role} phase: ${(metadata.phases.filter((p) => p !== null) as string[]).join(" | ")}`,
-    );
-  }
-  lines.push(`Public next-command form: ak-role ${role}`);
-  return lines.join("\n");
-}
-
 type NavigatorAttendanceDependency = NavigatorAttendance;
 
 export type RoleRuntimeDependencies = {
@@ -772,22 +752,28 @@ export function createNavigatorRoleRuntime(
         ?? (() => readPackageMaterial("resources/navigator-route-playbook.md"));
       let playbookRead: Promise<string> | undefined;
       roleHost.on("before_agent_start", async (event) => {
-        const base = typeof event.systemPrompt === "string" ? event.systemPrompt : "";
-        const append = (text: string) => ({
-          systemPrompt: base.trim() === "" ? text : `${base}\n\n${text}`,
-        });
+        const basePrompt = typeof event.systemPrompt === "string" ? event.systemPrompt : "";
+        const parts: string[] = [];
         try {
           playbookRead ??= loadRoutePlaybook();
           const content = await playbookRead;
           dependencies.recordRoutePlaybookReadFailure?.(undefined);
-          if (content.trim() === "") return;
-          return append(content);
+          if (content.trim() !== "") parts.push(content);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          if (message.trim() === "") return;
-          dependencies.recordRoutePlaybookReadFailure?.(message);
-          return append(message);
+          if (message.trim() !== "") {
+            dependencies.recordRoutePlaybookReadFailure?.(message);
+            parts.push(message);
+          }
         }
+        const prompt = typeof event.prompt === "string" ? event.prompt : "";
+        const work = await loadNavigatorWorkBaseSuffix(prompt);
+        if (work !== undefined && work.trim() !== "") parts.push(work);
+        if (parts.length === 0) return;
+        const text = parts.join("\n\n");
+        return {
+          systemPrompt: basePrompt.trim() === "" ? text : `${basePrompt}\n\n${text}`,
+        };
       });
     },
   };

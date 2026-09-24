@@ -29,7 +29,7 @@ const reviewerAmendmentsSchema = Type.Object({
 }, {
   additionalProperties: true,
   description:
-    "已运行 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；显式单轴时另一轴可省略。hard-stop／usage error 为 refused 时，已产出报告仍照录对应 lens 字段。形状指引，非 schema 闸。",
+    "已运行 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；显式单轴时另一轴可省略。hard-stop／usage error 为 refused 时，已产出报告仍照录对应 lens 字段。",
 });
 // #836 r16 class 1: diagnostic is LLM/human-read narrative content — no code
 // branches on its length (src/reviewer-role.ts consumer: reviewer content is
@@ -40,7 +40,7 @@ const reviewerAmendmentsSchema = Type.Object({
 // #917 §6: both normal lens verdicts → completed; hard-stop/usage error → refused
 // (report already produced still lands in selected-lens amendments).
 const REVIEWER_STATUS_DESCRIPTION =
-  "completed | refused — 形状指引，非 schema 闸。两种正常 lens verdict（completeness / correctness）均 completed；hard-stop 与 usage error 为 refused（已产出报告仍照录进所选 lens amendments）。" as const;
+  "completed | refused。两种正常 lens verdict（completeness / correctness）均 completed；hard-stop 与 usage error 为 refused（已产出报告仍照录进所选 lens amendments）。" as const;
 const reviewerOutputVariants = Type.Union([
   Type.Object({
     status: Type.Unknown({ description: REVIEWER_STATUS_DESCRIPTION }),

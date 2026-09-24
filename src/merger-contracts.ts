@@ -20,7 +20,7 @@ export const mergerInputSchema = Type.Object({
 // #836 (ADR 0003 Amendment): status kept open like countersignStatus
 // (src/countersign-role.ts) — one shared description across both variants
 // so openToolObjectFromUnion's identical-declaration collapse drops none of it.
-const MERGER_STATUS_DESCRIPTION = "completed | escalate — 形状指引，非 schema 闸" as const;
+const MERGER_STATUS_DESCRIPTION = "completed | escalate" as const;
 const mergerOutputVariants = Type.Union([
   Type.Object({ status: Type.Unknown({ description: MERGER_STATUS_DESCRIPTION }), attemptId: Type.String({ description: "已受理合并 attempt 身份" }), report: Type.String({ description: "如实结果报告" }), mergeCommitId: Type.String({ description: "完成合并 commit object ID" }) }, { additionalProperties: false }),
   Type.Object({ status: Type.Unknown({ description: MERGER_STATUS_DESCRIPTION }), attemptId: Type.String({ description: "已受理合并 attempt 身份" }), diagnosis: Type.String({ description: "合并无法或不应由本席完成的原因（含无进行中合并、无活可干、需新的产品/权力决定）" }), report: Type.String({ description: "如实结果报告" }) }, { additionalProperties: false }),

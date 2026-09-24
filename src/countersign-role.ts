@@ -18,7 +18,7 @@ export type { CountersignVerdict };
 // (notary/auditor/gatekeeper/navigator); src/role-runtime.ts:997-1025 still
 // classifies the recorded value and reasks the countersign itself when it
 // isn't one of the three states — code, not the transport, does that work.
-/** 给事中票庭审读五问的交卷形状（ADR 0074）；形状指引，非 schema 闸。 */
+/** 给事中票庭审读五问的交卷形状（ADR 0074）。 */
 export const countersignVerdictSchema = reviewSubmissionSchema;
 export type CountersignVerdictParameters = import("./review-submission.ts").ReviewSubmission;
 
