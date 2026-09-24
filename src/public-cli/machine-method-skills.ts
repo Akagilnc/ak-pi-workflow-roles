@@ -18,10 +18,13 @@ export function installedMethodSkillPath(home: string, name: string): string | u
 function installedSkillPath(root: string, name: string): string | undefined {
   const path = join(root, name, "SKILL.md");
   try {
-    return statSync(path).isFile() ? path : undefined;
+    if (!statSync(path).isFile()) return undefined;
+    accessSync(path, constants.R_OK);
+    return path;
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ENOTDIR") throw error;
-    return undefined;
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM") return undefined;
+    throw error;
   }
 }
 
