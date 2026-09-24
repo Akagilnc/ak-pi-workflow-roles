@@ -427,12 +427,14 @@ async function runCountersignBody(
         });
       };
 
-      let typedTicket: number | undefined;
+      let typedTicket: number | undefined = gateParentRunPath !== undefined && isSafePositiveTicketNumber(env.boundTicketNumber)
+        ? env.boundTicketNumber
+        : undefined;
       let typedCourtTicketNumbers: readonly number[] | undefined;
       let identityDiaristRan = false;
       let unboundDiaristRunId: string | undefined;
 
-      if (env.runCourtDiaristStation === undefined) {
+      if (gateParentRunPath === undefined && env.runCourtDiaristStation === undefined) {
         let outcome: Awaited<ReturnType<typeof invokeCourtDiarist>>;
         try {
           outcome = await invokeCourtDiarist({
