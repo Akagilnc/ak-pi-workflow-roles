@@ -6,7 +6,7 @@
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -1838,8 +1838,7 @@ async function publishResumeErrorPointer(
   diagnostic: string,
 ): Promise<string> {
   if (await existingSuccessReport(admitted.runDirectory)) {
-    const dir = join(admitted.runDirectory, "artifacts");
-    await mkdir(dir, { recursive: true });
+    const dir = await ensureRealArtifactsDirectory(admitted.runDirectory);
     const path = join(dir, `resume-diagnostic-${randomUUID()}.json`);
     await writeFile(
       path,
