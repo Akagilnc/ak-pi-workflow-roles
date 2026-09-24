@@ -25,7 +25,7 @@ export const reviewSubmissionSchema = withTerminatingOutputDeclarations(
           Type.Literal(REVIEW_QUEUE_WORDS[2]),
         ],
         {
-          description: "审核队列三态：converged、continue、escalate。",
+          description: "审核席本轮裁决的判别状态。",
         },
       ),
       findings: Type.Optional(Type.Unknown({ description: "审核发现，原样留存" })),

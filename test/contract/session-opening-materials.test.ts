@@ -26,6 +26,7 @@ const TICKET_MAIN_MATERIALS = {
     "souls/audit-law.md",
     "souls/quality-law.md",
     "souls/judge-output-guide.md",
+    "resources/review-queue-submission.md",
   ],
   fixer: [
     "CLAUDE.md",
@@ -54,8 +55,9 @@ const TICKET_MAIN_MATERIALS = {
     "souls/audit-law.md",
     "souls/ticket-law.md",
     "souls/gate-output-guide.md",
+    "resources/review-queue-submission.md",
   ],
-  countersign: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md", "resources/countersign-ticket-issue.md"],
+  countersign: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md", "resources/countersign-ticket-issue.md", "resources/review-queue-submission.md"],
   secretariat: [
     "CLAUDE.md",
     "souls/secretariat.md",
@@ -71,6 +73,7 @@ const TICKET_MAIN_MATERIALS = {
     "souls/audit-law.md",
     "souls/quality-law.md",
     "souls/gate-output-guide.md",
+    "resources/review-queue-submission.md",
   ],
   navigator: ["CLAUDE.md", "souls/navigator.md"],
 } as const;
@@ -88,6 +91,7 @@ const TICKET_GATEKEEPER_MATERIALS = {
     "souls/audit-law.md",
     "souls/quality-law.md",
     "souls/gate-output-guide.md",
+    "resources/review-queue-submission.md",
   ],
   notary: [
     "CLAUDE.md",
@@ -95,6 +99,7 @@ const TICKET_GATEKEEPER_MATERIALS = {
     "souls/audit-law.md",
     "souls/ticket-law.md",
     "souls/gate-output-guide.md",
+    "resources/review-queue-submission.md",
   ],
 } as const;
 
@@ -104,10 +109,11 @@ const TICKET_AUDITOR_MATERIALS = {
     "souls/judge-auditor.md",
     "souls/audit-law.md",
     "souls/quality-law.md",
+    "resources/review-queue-submission.md",
   ],
   // #470 范围修正: doctor auditor 暂不装审刑院法典
   // #495 S6: reviewer-side auditor roster retired with gate
-  doctor: ["CLAUDE.md", "souls/doctor-auditor.md"],
+  doctor: ["CLAUDE.md", "souls/doctor-auditor.md", "resources/review-queue-submission.md"],
 } as const;
 
 test("main-role material roster matches ticket path list", () => {

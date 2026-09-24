@@ -52,6 +52,7 @@ export const NOTARY_SESSION_MATERIALS = [
   "souls/audit-law.md",
   "souls/ticket-law.md",
   "souls/gate-output-guide.md",
+  "resources/review-queue-submission.md",
 ] as const;
 
 /** Shared by public inspector and gatekeeper-province inspector. */
@@ -61,6 +62,7 @@ export const INSPECTOR_SESSION_MATERIALS = [
   "souls/audit-law.md",
   "souls/quality-law.md",
   "souls/gate-output-guide.md",
+  "resources/review-queue-submission.md",
 ] as const;
 
 /**
@@ -75,6 +77,7 @@ export const AUDITOR_PUBLIC_SESSION_MATERIALS = [
   "souls/doctor-auditor.md",
   "souls/audit-law.md",
   "souls/quality-law.md",
+  "resources/review-queue-submission.md",
 ] as const;
 
 /**
@@ -107,6 +110,7 @@ export const PUBLIC_ROLE_RECORDS = [
       "souls/audit-law.md",
       "souls/quality-law.md",
       "souls/judge-output-guide.md",
+      "resources/review-queue-submission.md",
     ],
   },
   {
@@ -384,7 +388,7 @@ export const PUBLIC_ROLE_RECORDS = [
     activationStage: "load-and-install",
     receiptStatusKey: "status",
     // #924: 公用《票面法》三席同装
-    sessionMaterials: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md", "resources/countersign-ticket-issue.md"],
+    sessionMaterials: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md", "resources/countersign-ticket-issue.md", "resources/review-queue-submission.md"],
   },
   {
     role: "secretariat",
