@@ -1,7 +1,6 @@
 import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
-  HostSessionAvailability,
 } from "../host-contracts.ts";
 /**
  * Durable Role run lifecycle for public CLI (ADR 0052 / #11 / #108 / #416).
@@ -32,7 +31,6 @@ export {
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import { parseCollectorRepository } from "../collector-config.ts";
-import { readHostAwareSessionAvailability } from "../session-identity.ts";
 import {
   interpretDurableCourtTicketNumbers,
   sameCourtTicketNumbers,
@@ -1328,7 +1326,6 @@ async function loadResumableRunRecord(
   runId: string,
   authority: DurablePrincipalAuthority,
   allowUnformedAdmitted = false,
-  deferSessionGate = false,
 ): Promise<{
   readonly run: RoleRunRecord;
   readonly principal: DurablePrincipal;
@@ -1351,11 +1348,10 @@ async function loadResumableRunRecord(
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
   const { run, principal } = materialized;
-  if (!deferSessionGate && !(allowUnformedAdmitted && run.state === "admitted")) {
-    const availability = await readHostSessionAvailability(authority, principal);
-    if (!availability.available) {
-      throw new CliUsageError(sessionUnavailableFact(availability));
-    }
+  if (!(allowUnformedAdmitted && run.state === "admitted") && !(await isDurablePrincipalAvailable(principal, authority))) {
+    throw new CliUsageError(
+      `role run Pi session principal is unavailable: ${runId}`,
+    );
   }
   // Reconstruct admitted identity from durable run record + admitted-request.json.
   let instruction = "";
@@ -1760,15 +1756,8 @@ export async function loadResumablePublicRole(
   runId: string,
   authority: DurablePrincipalAuthority,
   allowUnformedAdmitted = false,
-  deferSessionGate = false,
 ): Promise<LoadedResumablePublicRole> {
-  const loaded = await loadResumableRunRecord(
-    home,
-    runId,
-    authority,
-    allowUnformedAdmitted,
-    deferSessionGate,
-  );
+  const loaded = await loadResumableRunRecord(home, runId, authority, allowUnformedAdmitted);
   return seatLoadedResult(loaded, admitResumedRole(loaded));
 }
 
@@ -2030,23 +2019,4 @@ function resumedWorkerPhase(
     }
   }
   throw new CliUsageError(`role run admitted ${role} phase is missing: ${runId}`);
-}
-
-/** Original session fact for the error record. ENOENT is the only confirmed absence. */
-export function sessionUnavailableFact(availability: HostSessionAvailability): string {
-  if (availability.available) return availability.sessionFile;
-  const sessionFile = availability.sessionFile;
-  const fact = availability.absent
-    ? "ENOENT"
-    : availability.cause instanceof Error && availability.cause.message.trim() !== ""
-      ? availability.cause.message
-      : "session unavailable";
-  return fact.includes(sessionFile) ? fact : `${fact}: ${sessionFile}`;
-}
-
-export async function readHostSessionAvailability(
-  authority: DurablePrincipalAuthority,
-  principal: DurablePrincipal,
-): Promise<HostSessionAvailability> {
-  return readHostAwareSessionAvailability(undefined, authority, principal);
 }

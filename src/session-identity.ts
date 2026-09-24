@@ -1,11 +1,7 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-import type {
-  DurablePrincipal,
-  DurablePrincipalAuthority,
-  HostSessionAvailability,
-} from "./host-contracts.ts";
+import type { DurablePrincipal, DurablePrincipalAuthority } from "./host-contracts.ts";
 import {
   DEFAULT_ROLE_TURN_HOST,
   lookupHeadlessHostDescription,
@@ -88,55 +84,4 @@ export async function readStoredHostSessionId(
   ).load(principal);
   if (sessionId === undefined || sessionId === "") return undefined;
   return sessionId;
-}
-
-/**
- * Same host-aware fact as readStoredHostSessionId, plus the expected file
- * when that fact is unavailable. Pi stays on the principal authority.
- * A missing binding is absence of that file, not of Pi's session.jsonl.
- */
-export async function readHostAwareSessionAvailability(
-  host: string | undefined,
-  authority: DurablePrincipalAuthority,
-  principal: DurablePrincipal,
-): Promise<HostSessionAvailability> {
-  if (host === undefined || host === DEFAULT_ROLE_TURN_HOST) {
-    if (authority.readSessionAvailability !== undefined) {
-      return authority.readSessionAvailability(principal);
-    }
-    const sessionFile = authority.decode(principal).sessionFile;
-    if (await authority.isAvailable(principal)) return { available: true, sessionFile };
-    return { available: false, sessionFile, absent: false };
-  }
-  const description = lookupHostDescription(host) ?? lookupHeadlessHostDescription(host);
-  const decoded = authority.decode(principal);
-  if (description === undefined) {
-    return {
-      available: false,
-      sessionFile: decoded.sessionFile,
-      absent: false,
-      cause: new Error(`unregistered host: ${host}`),
-    };
-  }
-  const sessionFile = join(decoded.sessionDirectory, description.sessionBindingFile);
-  try {
-    const stored = await readStoredHostSessionId(host, authority, principal);
-    if (stored !== undefined) return { available: true, sessionFile };
-  } catch (error) {
-    return { available: false, sessionFile, absent: false, cause: error };
-  }
-  try {
-    await readFile(sessionFile, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { available: false, sessionFile, absent: true };
-    }
-    return { available: false, sessionFile, absent: false, cause: error };
-  }
-  return {
-    available: false,
-    sessionFile,
-    absent: false,
-    cause: new Error("durable session binding is invalid"),
-  };
 }

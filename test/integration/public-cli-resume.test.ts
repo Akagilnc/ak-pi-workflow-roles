@@ -17,7 +17,6 @@ import { execFileSync, spawn } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { resolveAuditorSubject } from "../../src/auditor-soul.ts";
-import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
@@ -2149,7 +2148,7 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
 
     await assert.rejects(
       () => loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),
-      (error: unknown) => error instanceof Error && error.message.includes(sessionFile),
+      /Pi session principal is unavailable/,
     );
 
     const { io, stdout, stderr } = captureIo();
@@ -2179,7 +2178,7 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     assert.equal(dispatches, 0);
     assert.equal(stdout.length, 0);
     assert.notEqual(blocked.exitCode, 0);
-    assert.equal(recorded.diagnostic.includes(sessionFile), true);
+    assert.equal(recorded.diagnostic.includes("Pi session principal is unavailable"), true);
     assert.equal(stderr.join("").includes(errorRecord), true);
   });
 });
@@ -2429,9 +2428,6 @@ test("public resume says which confirmed fact failed and where to look", async (
       seedGitProject(gone);
       const sourceRun = join(home, "audited-source");
       await mkdir(sourceRun, { recursive: true });
-      const bindingName = lookupHeadlessHostDescription("claude")?.sessionBindingFile;
-      assert.equal(typeof bindingName, "string");
-
       async function seed(input: {
         readonly runId: string;
         readonly role: "secretariat" | "auditor";
@@ -2439,7 +2435,6 @@ test("public resume says which confirmed fact failed and where to look", async (
         readonly projectRoot: string;
         readonly ticketNumber?: number;
         readonly sourceRunPath?: string;
-        readonly hostBinding?: string;
       }) {
         const runDirectory = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${input.runId}@${input.role}`);
         const sessionDirectory = join(runDirectory, "session");
@@ -2447,13 +2442,6 @@ test("public resume says which confirmed fact failed and where to look", async (
         const admittedRequestPath = join(runDirectory, "admitted-request.json");
         await mkdir(sessionDirectory, { recursive: true });
         if (input.session) await writeFile(sessionFile, "\n", "utf8");
-        if (input.hostBinding !== undefined) {
-          await writeFile(
-            join(sessionDirectory, bindingName!),
-            `${JSON.stringify({ sessionId: input.hostBinding })}\n`,
-            "utf8",
-          );
-        }
         await writeFile(join(runDirectory, "invocation.json"), "{}\n", "utf8");
         await writeFile(admittedRequestPath, `${JSON.stringify({
           role: input.role,
@@ -2494,12 +2482,6 @@ test("public resume says which confirmed fact failed and where to look", async (
       });
       const unknownHost = await seed({
         runId: "1058-unknown-host", role: "secretariat", session: true, projectRoot: project,
-      });
-      const boundHost = await seed({
-        runId: "1058-bound-host", role: "secretariat", session: false, projectRoot: project, hostBinding: "native-123",
-      });
-      const unboundHost = await seed({
-        runId: "1058-unbound-host", role: "secretariat", session: false, projectRoot: project,
       });
       await rm(gone, { recursive: true, force: true });
 
@@ -2575,25 +2557,6 @@ test("public resume says which confirmed fact failed and where to look", async (
         true,
       );
       assert.equal((await readError(unknownHost.runDirectory)).diagnostic.includes("zeta-unique-host-diagnostic"), true);
-
-      const callsBeforeBound = seen.length;
-      await resume(["resume", "--host", "claude", "--model", "test/caller-seat:high", "1058-bound-host"]);
-      assert.equal(seen.length, callsBeforeBound + 1);
-      const boundRequest = seen.at(-1);
-      assert.equal(boundRequest?.runDirectory, boundHost.runDirectory);
-      assert.equal(
-        boundRequest?.continuation.kind === "resume" ? boundRequest.continuation.hostSessionId : undefined,
-        "native-123",
-      );
-
-      const callsBeforeUnbound = seen.length;
-      const unbound = await resume(["resume", "--host", "claude", "--model", "test/caller-seat:high", "1058-unbound-host"]);
-      assert.notEqual(unbound.exitCode, 0);
-      assert.equal(seen.length, callsBeforeUnbound);
-      const unboundRecord = await readError(unboundHost.runDirectory);
-      assert.equal(unboundRecord.diagnostic.includes(join(unboundHost.sessionDirectory, bindingName!)), true);
-      assert.equal(unboundRecord.diagnostic.includes("session.jsonl"), false);
-      assert.equal(unbound.stderr.includes(errorRecord(unboundHost.runDirectory)), true);
     });
   } finally {
     if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;

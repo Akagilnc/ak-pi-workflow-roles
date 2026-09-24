@@ -11,6 +11,8 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildAutoResumeContinuationPrompt,
+  findRunDirectoryById,
+  readRoleRunState,
   RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
@@ -28,7 +30,6 @@ import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import {
-  readHostAwareSessionAvailability,
   readStoredHostSessionId,
   resolveHostAwareSessionAvailability,
 } from "../session-identity.ts";
@@ -36,7 +37,6 @@ import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
 import type {
   ControlledFailureCause,
-  DurablePrincipal,
   DurablePrincipalAuthority,
   RoleTurnHost,
   RoleTurnKnownFailure,
@@ -82,7 +82,6 @@ import {
   readCurrentCourt,
   recordCurrentCourt,
   renderResumeCommand,
-  sessionUnavailableFact,
   type CurrentCourtState,
   type RunWriterLease,
   type TypedProviderHttpObservation,
@@ -1530,24 +1529,17 @@ export async function runPostAdmissionSeatResume<
     loaded = await input.load(request);
   } catch (error) {
     if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, input.io);
+      const recorded = await pointExistingRunFailure(
+        input.env.home,
+        request.runId,
+        input.env.principalAuthority,
+        input.io,
+        error.message,
+      );
+      if (!recorded) presentStructuralRejection(error, input.io);
       return { exitCode: 2 };
     }
     throw error;
-  }
-  const sessionFact = await blockedHostSessionFact(
-    input.env.host,
-    input.env.principalAuthority,
-    loaded.admitted.principal,
-  );
-  if (sessionFact !== undefined) {
-    await presentResumeFailurePointer(
-      loaded.admitted,
-      input.env.principalAuthority,
-      input.io,
-      sessionFact,
-    );
-    return { exitCode: 2 };
   }
   const subjectFact = rejectedSubjectFact(loaded.admitted.role);
   if (subjectFact !== undefined) {
@@ -1765,6 +1757,44 @@ export async function runPostAdmissionSeatResume<
   }
 }
 
+async function pointExistingRunFailure(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+  io: CliIo,
+  diagnostic: string,
+): Promise<boolean> {
+  try {
+    const runDirectory = await findRunDirectoryById(home, runId);
+    if (runDirectory === undefined) return false;
+    const record = await readRoleRunState(runDirectory, authority);
+    if (record === undefined) return false;
+    await presentResumeFailurePointer(
+      {
+        role: record.role,
+        runId: record.runId,
+        bookKey: record.bookKey,
+        projectRoot: record.projectRoot,
+        instruction: "",
+        instructionEmpty: true,
+        attachments: [],
+        runDirectory: record.runDirectory,
+        principal: authority.seal({
+          sessionDirectory: record.sessionDirectory,
+          sessionFile: record.sessionFile,
+        }),
+        admittedRequestPath: record.admittedRequestPath,
+      } as AdmittedRoleInvocation,
+      authority,
+      io,
+      diagnostic,
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function rejectedSubjectFact(role: string): string | undefined {
   if (packagedSubjectChoices(role) === undefined) return undefined;
   try {
@@ -1773,16 +1803,6 @@ function rejectedSubjectFact(role: string): string | undefined {
   } catch (error) {
     return error instanceof Error && error.message.trim() !== "" ? error.message : String(error);
   }
-}
-
-async function blockedHostSessionFact(
-  host: string | undefined,
-  authority: DurablePrincipalAuthority,
-  principal: DurablePrincipal,
-): Promise<string | undefined> {
-  const availability = await readHostAwareSessionAvailability(host, authority, principal);
-  if (availability.available) return undefined;
-  return sessionUnavailableFact(availability);
 }
 
 function writeResumeFailurePointer(io: CliIo, errorPath: string): void {

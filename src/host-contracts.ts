@@ -241,17 +241,6 @@ export type DurablePrincipalCoordinates = {
   readonly sessionFile: string;
 };
 
-/** Host-adapter session fact. Absence is confirmed only by ENOENT. */
-export type HostSessionAvailability =
-  | { readonly available: true; readonly sessionFile: string }
-  | { readonly available: false; readonly sessionFile: string; readonly absent: true }
-  | {
-      readonly available: false;
-      readonly sessionFile: string;
-      readonly absent: false;
-      readonly cause?: unknown;
-    };
-
 export type NewDurablePrincipalRequest = {
   readonly cwd: string;
   readonly runId: string;
@@ -268,11 +257,6 @@ export interface DurablePrincipalAuthority {
    */
   seal(coordinates: DurablePrincipalCoordinates): DurablePrincipal;
   isAvailable(principal: DurablePrincipal): Promise<boolean>;
-  /**
-   * Why a session cannot be resumed. Optional so older doubles keep the
-   * boolean gate; without it the public face must not claim the file is absent.
-   */
-  readSessionAvailability?(principal: DurablePrincipal): Promise<HostSessionAvailability>;
   decode(principal: unknown): DurablePrincipalCoordinates;
 }
 
