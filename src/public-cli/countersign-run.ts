@@ -162,7 +162,7 @@ export type CourtDiaristSummonEnv = Pick<
  * - Multiple submissions: last qualifying set wins.
  * Live path never shape-rejects the role turn; durable damage is a separate seam.
  */
-function courtTicketNumbersFromOutcome(
+export function courtTicketNumbersFromOutcome(
   roleOutcome: TerminalRoleOutcome | undefined,
   principalTicket: number,
   submissions?: readonly unknown[],

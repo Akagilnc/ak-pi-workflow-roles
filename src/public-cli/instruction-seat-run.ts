@@ -80,6 +80,7 @@ import {
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
 import {
+  courtTicketNumbersFromOutcome,
   invokeCourtDiarist,
   runCountersignCourtDiaristStation,
   type CountersignRunEnv,
@@ -840,17 +841,21 @@ export async function runPublicInstructionSeatResume(
 export async function continueParentAfterDiarist(
   parentRunId: string,
   child: AdmittedRoleInvocation,
+  childTerminal: TerminalResult,
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<SeatRunResult | undefined> {
   const loaded = await loadResumablePublicRole(env.home, parentRunId, env.principalAuthority, true);
   if (loaded.run.state !== "admitted" || !["secretariat", "countersign"].includes(loaded.admitted.role)) return undefined;
   const page = JSON.parse(await readFile(loaded.admitted.admittedRequestPath, "utf8")) as Record<string, unknown>;
-  if (!Array.isArray(page.childDiaristRunIds) || !page.childDiaristRunIds.includes(child.runId)) return undefined;
+  if (!Array.isArray(page.childDiaristRunIds) || page.childDiaristRunIds.at(-1) !== child.runId) return undefined;
   const admitted = loaded.admitted;
   if (admitted.role === "countersign" && admitted.ticketNumber === undefined && child.ticketNumber !== undefined) {
     await bindAdmittedTicketNumber(admitted, child.ticketNumber);
     await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+    await bindCourtTicketNumbersOnAdmitted(admitted,
+      courtTicketNumbersFromOutcome(childTerminal.roleOutcome, child.ticketNumber, childTerminal.submissions)
+        ?? [child.ticketNumber]);
   }
   if (admitted.role === "countersign" && admitted.ticketNumber !== undefined) {
     const refresh = await runCountersignCourtDiaristStation(admitted, env, io, child.ticketNumber);

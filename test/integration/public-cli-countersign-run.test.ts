@@ -2093,7 +2093,7 @@ test("public countersign pauses on a recorded diarist escalation", async () => {
       piRunner: (args, options) => {
         const assertion = argvFlagValue(args, "--ak-role") === "diarist"
           ? (diaristTurns++ === 0 ? "escalate" : 582) : 582;
-        return courtPipelinePiRunner(assertion, undefined, undefined, sessionPath)(args, options);
+        return courtPipelinePiRunner(assertion, undefined, [582, 583], sessionPath)(args, options);
       },
     });
     const result = await runPublicInstructionSeat(
@@ -2123,7 +2123,10 @@ test("public countersign pauses on a recorded diarist escalation", async () => {
     const relocated = await findRunDirectoryById(home, parent.runId, undefined, "countersign");
     assert.equal(relocated,
       join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "582", "runs", `${parent.runId}@countersign`));
-    assert.equal(JSON.parse(await readFile(join(relocated!, "admitted-request.json"), "utf8")).ticketNumber, 582);
+    const page = JSON.parse(await readFile(join(relocated!, "admitted-request.json"), "utf8"));
+    assert.equal(page.ticketNumber, 582);
+    assert.deepEqual(page.courtTicketNumbers, [582, 583]);
+    assert.ok((await readTicketProvenance(583, project, home)).recordFile);
     assert.equal((await readTicketProvenance(582, project, home)).lines[0]?.id, "escalated-child-owner");
   });
 });
@@ -2206,6 +2209,7 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     type Phase = "first" | "resumeKeep" | "replace" | "single" | "unbound";
     let phase: Phase = "first";
     let memberEscalated = false;
+    let nextMemberEscalated = false;
     const boundRefreshTickets: number[] = [];
     const countersignPrompts: string[] = [];
     let countersignBodyTurns = 0;
@@ -2225,6 +2229,10 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
             boundRefreshTickets.push(boundTicket);
             if (phase === "first" && boundTicket === childA && !memberEscalated) {
               memberEscalated = true;
+              return courtPipelinePiRunner("escalate")(args, options);
+            }
+            if (phase === "first" && boundTicket === childB && !nextMemberEscalated) {
+              nextMemberEscalated = true;
               return courtPipelinePiRunner("escalate")(args, options);
             }
             return courtPipelinePiRunner(boundTicket)(args, options);
@@ -2303,7 +2311,19 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     assert.equal(first.terminal?.roleOutcome.role, "diarist");
     assert.equal(countersignBodyTurns, 0, "the parent waits on the escalated member");
     assert.deepEqual(boundRefreshTickets, [parent, childA]);
-    const completedFirst = await runAkRole(["resume", first.terminal!.runId!], {
+    const completedA = await runAkRole(["resume", first.terminal!.runId!], {
+      home, packageRoot, cwd: project, io: captureIo().io,
+      roleTurnHost: host, hostAdapters: [adapter("pi", host)],
+    });
+    assert.equal(completedA.terminal?.roleOutcome.role, "diarist");
+    assert.equal(countersignBodyTurns, 0, "parent still waits for the second escalated member");
+    const replayA = await runAkRole(["resume", first.terminal!.runId!], {
+      home, packageRoot, cwd: project, io: captureIo().io,
+      roleTurnHost: host, hostAdapters: [adapter("pi", host)],
+    });
+    assert.equal(replayA.terminal?.roleOutcome.role, "diarist");
+    assert.equal(countersignBodyTurns, 0, "replaying an earlier child cannot overtake the pending child");
+    const completedFirst = await runAkRole(["resume", completedA.terminal!.runId!], {
       home, packageRoot, cwd: project, io: captureIo().io,
       roleTurnHost: host, hostAdapters: [adapter("pi", host)],
     });
@@ -2314,8 +2334,8 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     assert.equal(countersignBodyTurns, 1, "countersign body runs once per court");
     assert.deepEqual(
       boundRefreshTickets,
-      [parent, childA, childA, childB],
-      "escalated member resumes, then the remaining member refreshes before the parent turn",
+      [parent, childA, childA, childB, childA, childB],
+      "each escalated member resumes before the parent turn",
     );
     await assertReadableSubject(parent);
     await assertReadableSubject(childA);

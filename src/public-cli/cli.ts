@@ -1242,6 +1242,7 @@ export async function runAkRole(
         const continued = await continueParentAfterDiarist(
           parentRunId,
           result.admitted!,
+          result.terminal,
           createRoleEnvironment(env, {
             role: parentRole, home, agentDir, cwd, credentials, seat: parentSeat, config,
           }),
