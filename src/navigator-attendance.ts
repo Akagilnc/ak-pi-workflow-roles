@@ -8,6 +8,7 @@ import { Type, type Static } from "typebox";
 
 import {
   NAVIGATOR_INVOCATION_ENTRY,
+  NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
   mintNavigatorInvocationId,
 } from "./navigator-invocation-identity.ts";
 import { PACKAGED_ROLE_REGISTRY, type PackagedRole } from "./packaged-role-registry.ts";
@@ -63,8 +64,7 @@ import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./
 import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
-/** Native playbook read failure recorded by the navigator process that read the file. */
-export const NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY = "ak-navigator-route-playbook-failure" as const;
+export { NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY };
 
 /**
  * Role-input document bytes win verbatim over work-root file authority when non-empty.

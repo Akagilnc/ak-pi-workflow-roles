@@ -107,10 +107,10 @@ import {
   isAcceptedPackagedRoleTerminalResult,
   isReceiptSettlementBindingClear,
   NAVIGATOR_INVOCATION_ENTRY,
+  NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
   parseInvocationMarkerIdentity,
   type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
-import { NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY } from "../navigator-attendance.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
   RECEIPT_DELIVERY_TURN_LIMIT,
