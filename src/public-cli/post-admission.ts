@@ -1389,7 +1389,7 @@ export function roleTurnOptions(
   admitted: { readonly correlationId?: string },
   continuation: RoleTurnRequest["continuation"],
 ): RoleTurnRequestProjectionOptions {
-  const correlationId = admitted.correlationId ?? env.correlationId;
+  const correlationId = env.correlationId ?? admitted.correlationId;
   return {
     packageRoot: env.packageRoot,
     home: env.home,

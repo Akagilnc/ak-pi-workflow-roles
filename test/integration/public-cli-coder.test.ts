@@ -1,6 +1,9 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import {
+  roleTurnHostFromLegacyPiRunner,
+  roleTurnHostFromStructuredOutputRounds,
+} from "../helpers/role-turn-host-fixture.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -28,6 +31,7 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
@@ -71,8 +75,42 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
+test("public coder reasks only an unreadable status and accepts an open-shaped other field", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
 
+    const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
+    const corrected = { status: "planned", report: { unvalidated: true } };
+    const roleTurnHost = roleTurnHostFromStructuredOutputRounds({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      submissions: [unreadable, corrected],
+    });
 
+    const result = await runAkRole(
+      ["coder", "--model", "test/caller-seat:high", "plan", "--project", project, "Propose a plan."],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-cli-coder-status-reask",
+        io: captureIo().io,
+        roleTurnHost,
+      },
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["planned"]);
+    const submissions = await readRecordedSubmissionRows(project, "run-cli-coder-status-reask", home);
+    assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
+      { kind: "correctable-rejection", accepted: unreadable },
+      { kind: "accepted", accepted: corrected },
+    ]);
+  });
+});
 
 /**
  * Replaces direct buildPiTurnExtraArgs argv locks — verifies behavior through

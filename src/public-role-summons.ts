@@ -352,10 +352,12 @@ export async function summonPublicRole(
     loadCredentialProviders,
     loadPublicCliConfig,
     resolveEffectiveSeat,
+    validatePublicCliConfigAxes,
   } = await import("./public-cli/config.ts");
   const credentials =
     options.credentials ?? (await loadCredentialProviders(agentDir));
   const config = await loadPublicCliConfig(home);
+  validatePublicCliConfigAxes(config, packageRoot);
   // Nested summons: officer seat only (flag>seat>default pi). #178 order below.
   const resolvedSeat = resolveEffectiveSeat(config, options.role, credentials);
   const inheritedSelection = options.model === undefined

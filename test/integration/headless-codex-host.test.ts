@@ -75,6 +75,7 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
           type: "object",
           properties: {
             status: { type: "string" },
+            routingStatus: { description: "completed | refused — shape guidance, not a schema gate" },
             // Composite nullable type: strip null in-leaf; required keeps non-null.
             label: { type: ["string", "null"] },
             report: { type: "string" },
@@ -93,7 +94,7 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
             kind: { const: "probe" },
             free: { description: "unknown free JSON leaf" },
           },
-          required: ["status", "label", "nested"],
+          required: ["status", "routingStatus", "label", "nested"],
           additionalProperties: true,
         },
         terminatingToolName: "ak_probe_output",
@@ -129,11 +130,15 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     assert.equal(schema.additionalProperties, false);
     assert.deepEqual(
       [...schema.required].sort(),
-      ["free", "kind", "label", "nested", "note", "report", "status", "tags"],
+      ["free", "kind", "label", "nested", "note", "report", "routingStatus", "status", "tags"],
     );
     // Required fields keep non-null closed types.
     assert.equal(isNullUnion(schema.properties.status), false);
     assert.deepEqual(schema.properties.status, { type: "string" });
+    const routingDescription =
+      (schema.properties.routingStatus as { description?: unknown }).description;
+    assert.equal(typeof routingDescription, "string");
+    assert.notEqual(routingDescription, "");
     // Required composite type|["string","null"] → non-null string (not {type:"null"}).
     assert.equal(isNullUnion(schema.properties.label), false);
     assert.deepEqual(schema.properties.label, { type: "string" });

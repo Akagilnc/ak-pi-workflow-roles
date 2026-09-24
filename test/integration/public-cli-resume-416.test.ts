@@ -474,6 +474,34 @@ test("A2: station-child after-lease build failure releases the lock and retries 
   });
 });
 
+test("nested public summon validates persistent seat axes before dispatch", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "summon-config-project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await writeFile(join(home, ".ak-roles", "public-cli.json"), JSON.stringify({
+      seats: { reviewer: { provider: "openai-codex", model: "test/model", engine: "../escape" } },
+    }));
+
+    let dispatches = 0;
+    await assert.rejects(
+      () => summonPublicRole({
+        role: "reviewer",
+        argv: ["--project", project],
+        cwd: project,
+        home,
+        packageRoot,
+        credentials: { "openai-codex": true, xai: true },
+        roleTurnHost: createMinimalHost(async () => {
+          dispatches += 1;
+          return { code: 0, stderr: "", timedOut: false };
+        }),
+      }),
+    );
+    assert.equal(dispatches, 0);
+  });
+});
+
 test("A2: pi/acp/headless stand-ins share the same auto-resume middle layer", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");

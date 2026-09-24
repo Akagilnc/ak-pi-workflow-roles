@@ -15,6 +15,17 @@ import {
 import type { NotarySourceRunLocator } from "./notary-contracts.ts";
 import { findRunDirectoryById, readRoleRunIdentity } from "./public-cli/run-lifecycle.ts";
 
+async function readRetainedIdentity(runDirectory: string) {
+  try {
+    return await readRoleRunIdentity(runDirectory);
+  } catch (error) {
+    if (!(error instanceof TypeError || error instanceof SyntaxError)) throw error;
+    throw new NotarySourceRunError("notary --source-run has invalid retained run-state identity", {
+      cause: error,
+    });
+  }
+}
+
 // Run directory leaf: <runId>@<role>. Production uses uuidv7 runIds; offline tracers
 // may use deterministic non-uuid leaves. Role token stays identifier-shaped.
 const RUN_DIR_NAME =
@@ -131,7 +142,7 @@ export async function resolveNotarySourceRunLocator(options: {
 
   // Authoritative retained record only — legal role/state via shared reader (DRY #14).
   // Identity envelope only: principal payload is not interpreted here.
-  const runState = await readRoleRunIdentity(real);
+  const runState = await readRetainedIdentity(real);
   if (runState === undefined) {
     throw new NotarySourceRunError(
       "notary --source-run lacks retained run-state identity",
@@ -166,7 +177,7 @@ export async function loadNotarySourceRunLocator(
 ): Promise<NotarySourceRunLocator> {
   const real = await requireRunDirectory(path, path);
   const identity = parseRunDirectoryName(basename(real))!;
-  const runState = await readRoleRunIdentity(real);
+  const runState = await readRetainedIdentity(real);
   if (runState === undefined) {
     throw new NotarySourceRunError(
       "notary source-run lacks retained run-state identity",

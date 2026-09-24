@@ -312,9 +312,7 @@ function parseCurrentCourtState(raw: unknown): CurrentCourtState | undefined {
   };
 }
 
-async function readRoleRunStateDisk(
-  runDirectory: string,
-): Promise<RoleRunStateDisk | undefined> {
+async function readRoleRunStateRaw(runDirectory: string): Promise<unknown | undefined> {
   let raw: unknown;
   try {
     raw = JSON.parse(await readFile(join(runDirectory, RUN_STATE_FILE), "utf8"));
@@ -328,16 +326,26 @@ async function readRoleRunStateDisk(
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
   }
+  return raw;
+}
+
+function parseRoleRunIdentity(raw: unknown, runDirectory: string): {
+  readonly runId: string;
+  readonly role: RoleRunRecord["role"];
+  readonly bookKey: string;
+  readonly runDirectory: string;
+  readonly state: RoleRunState;
+} {
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    return undefined;
+    throw new TypeError("Invalid run-state.json");
   }
   const record = raw as Record<string, unknown>;
   if (typeof record.runId !== "string" || record.runId.trim() === "") {
-    return undefined;
+    throw new TypeError("Invalid run-state.json");
   }
   const role = typeof record.role === "string" ? packagedRoleMetadata(record.role)?.role : undefined;
   if (role === undefined) {
-    return undefined;
+    throw new TypeError("Invalid run-state.json");
   }
   if (
     record.state !== "admitted" &&
@@ -345,12 +353,28 @@ async function readRoleRunStateDisk(
     record.state !== "resumable" &&
     record.state !== "terminal"
   ) {
-    return undefined;
+    throw new TypeError("Invalid run-state.json");
   }
-  if (typeof record.bookKey !== "string") return undefined;
-  if (typeof record.projectRoot !== "string") return undefined;
-  if (typeof record.sessionDirectory !== "string") return undefined;
-  if (typeof record.admittedRequestPath !== "string") return undefined;
+  if (typeof record.bookKey !== "string") throw new TypeError("Invalid run-state.json");
+  return {
+    runId: record.runId,
+    role,
+    state: record.state,
+    bookKey: record.bookKey,
+    runDirectory,
+  };
+}
+
+async function readRoleRunStateDisk(
+  runDirectory: string,
+): Promise<RoleRunStateDisk | undefined> {
+  const raw = await readRoleRunStateRaw(runDirectory);
+  if (raw === undefined) return undefined;
+  const identity = parseRoleRunIdentity(raw, runDirectory);
+  const record = raw as Record<string, unknown>;
+  if (typeof record.projectRoot !== "string") throw new TypeError("Invalid run-state.json");
+  if (typeof record.sessionDirectory !== "string") throw new TypeError("Invalid run-state.json");
+  if (typeof record.admittedRequestPath !== "string") throw new TypeError("Invalid run-state.json");
   const storedRunDirectory =
     typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
       ? record.runDirectory
@@ -389,10 +413,10 @@ async function readRoleRunStateDisk(
       : undefined;
   const currentCourt = parseCurrentCourtState(record.currentCourt);
   return {
-    runId: record.runId,
-    role,
-    state: record.state,
-    bookKey: record.bookKey,
+    runId: identity.runId,
+    role: identity.role,
+    state: identity.state,
+    bookKey: identity.bookKey,
     projectRoot: record.projectRoot,
     runDirectory: runDir,
     admittedRequestPath: rewriteRunDirectoryPathValue(
@@ -491,15 +515,8 @@ export async function readRoleRunIdentity(
     }
   | undefined
 > {
-  const disk = await readRoleRunStateDisk(runDirectory);
-  if (disk === undefined) return undefined;
-  return {
-    runId: disk.runId,
-    role: disk.role,
-    bookKey: disk.bookKey,
-    runDirectory: disk.runDirectory,
-    state: disk.state,
-  };
+  const raw = await readRoleRunStateRaw(runDirectory);
+  return raw === undefined ? undefined : parseRoleRunIdentity(raw, runDirectory);
 }
 
 export async function markRunAdmitted(
