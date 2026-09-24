@@ -83,7 +83,7 @@ import {
   type MergerInput,
 } from "../merger-contracts.ts";
 import { sha256Hex } from "../sha256.ts";
-import { rehomeUnboundTicketProvenance } from "../ticket-provenance.ts";
+import { ensureTicketProvenanceVolume, rehomeUnboundTicketProvenance } from "../ticket-provenance.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import {
   NOTARY_FIXED_KICKOFF,
@@ -683,10 +683,13 @@ export async function relocateAdmittedRunToTicket(
     }
   }
 
-  // An identity diarist can file before its caller obtains a ticket. Both its
-  // own bind and the caller's later bind use this existing relocation seam.
-  if (admitted.role === "diarist") {
+  // A diarist or Secretariat can file before its run obtains a ticket.
+  // Rehome any run-owned diary before moving the run directory.
+  if (admitted.role === "diarist" || admitted.role === "secretariat") {
     await rehomeUnboundTicketProvenance(oldRunDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
+    if (admitted.role === "secretariat") {
+      ensureTicketProvenanceVolume(admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
+    }
   }
 
   // Rename commits the run placement. Diary assignment above is an idempotent

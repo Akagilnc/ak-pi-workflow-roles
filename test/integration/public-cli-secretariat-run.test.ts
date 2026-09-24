@@ -46,6 +46,7 @@ import {
   sealAcceptedSubmission,
 } from "../helpers/submission-ledger-fixture.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
+import { resolveTicketProvenanceVolume } from "../../src/ticket-provenance.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { connect } from "node:net";
 import {
@@ -818,6 +819,15 @@ test("public secretariat reaches its turn before an unnumbered new issue exists"
     assert.equal(result.exitCode, 0);
     assert.ok(countersignRequests.some((request) =>
       (request.activation as { ticketNumber?: number }).ticketNumber === 924));
+    const book = join(home, ".ak-roles", "books", "project");
+    const runName = "01a0sec1025-0000-7000-8000-000000000001@secretariat";
+    assert.equal(
+      JSON.parse(await readFile(join(book, "924", "runs", runName, "admitted-request.json"), "utf8")).ticketNumber,
+      924,
+      "the completed new-ticket run must be archived under its ticket",
+    );
+    assert.equal(typeof (await readFile(resolveTicketProvenanceVolume(924, project, home).recordFile, "utf8")), "string",
+      "the new ticket must have a ticket-keyed diary volume");
   });
 });
 
