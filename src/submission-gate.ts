@@ -128,6 +128,7 @@ export function createDefaultGateOfficerSummon(options: {
   readonly cwd: string;
   readonly home?: string;
   readonly packageRoot?: string;
+  readonly io?: import("./public-cli/cli-io.ts").CliIo;
   readonly roleTurnHost?: RoleTurnHost;
   /** Composition-root adapters for nested court stations (tests / #969). */
   readonly hostAdapters?: readonly import("./public-cli/role-turn-host-resolution.ts").NamedRoleTurnHostAdapter[];
@@ -144,6 +145,7 @@ export function createDefaultGateOfficerSummon(options: {
       ...(submission === undefined ? {} : { submission }),
       ...(options.home === undefined ? {} : { home: options.home }),
       ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+      ...(options.io === undefined ? {} : { io: options.io }),
       ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
       ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
       ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
@@ -287,8 +289,8 @@ export async function requireSubmissionGate(options: {
         ? options.context.courtAttemptId
         : undefined;
       const headerId = session.getHeader?.()?.id;
-      if ("appendCustomEntry" in session) {
-        session.appendCustomEntry(OFFICER_ESCALATION_PARK_ENTRY_TYPE, {
+      if ("appendCustomEntry" in session && session.appendCustomEntry !== undefined) {
+        await session.appendCustomEntry(OFFICER_ESCALATION_PARK_ENTRY_TYPE, {
           ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
             ? { officerRunId: gatekeeper.runId }
             : {}),

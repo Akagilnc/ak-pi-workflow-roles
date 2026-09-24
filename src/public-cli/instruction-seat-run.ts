@@ -6,14 +6,20 @@
  */
 import { dirname, join, resolve, sep } from "node:path";
 
-import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "../host-contracts.ts";
-import { readableGateItem } from "../readable-gate-item.ts";
+import { readInvocationSelectedHost } from "../engine-detour-usage.ts";
+import type { DurablePrincipalAuthority, HostContext, RoleTurnHost, RoleTurnRequest } from "../host-contracts.ts";
+import { OFFICER_CONCLUSION_REASK } from "../gatekeeper-role.ts";
+import { joinReadableGateItems } from "../readable-gate-item.ts";
+import { OfficerEscalationParkError } from "../submission-errors.ts";
 import {
+  createDefaultGateOfficerSummon,
   latestQueuePayload,
   latestQueueStatus,
   readOfficerEscalationPark,
+  requireSubmissionGate,
 } from "../submission-gate.ts";
-import { sealAcceptedSubmission } from "../submission-ledger.ts";
+import { readRecordedSubmissionRows, sealAcceptedSubmission } from "../submission-ledger.ts";
+import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
 import { persistReturnedRunState } from "./auto-resume.ts";
 import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
@@ -89,9 +95,16 @@ import {
 } from "./turn-request.ts";
 import {
   invokeCourtDiarist,
+  latestPayloadEscalated,
   runCountersignCourtDiaristStation,
   type CountersignRunEnv,
 } from "./countersign-run.ts";
+import { loadPublicCliConfig, resolveEffectiveSeat } from "./config.ts";
+import { isPublicCallableRole } from "./registry.ts";
+import {
+  composeRoleTurnHostAdapters,
+  selectRoleTurnHost,
+} from "./role-turn-host-resolution.ts";
 
 export type InstructionSeatRunEnv = PostAdmissionEnv & Pick<
   CountersignRunEnv,
@@ -871,6 +884,7 @@ export async function runPublicInstructionSeatResume(
 function hostContextForAdmitted(
   admitted: AdmittedRoleInvocation,
   park: { readonly courtAttemptId?: string; readonly attemptHeaderId?: string },
+  env: InstructionSeatRunEnv,
 ): HostContext {
   const sessionFile = join(admitted.runDirectory, "session", "session.jsonl");
   const headerId = park.attemptHeaderId ?? admitted.runId;
@@ -887,41 +901,183 @@ function hostContextForAdmitted(
       getLeafEntry: () => undefined,
       getLeafId: () => headerId,
       getHeader: () => ({ type: "session", id: headerId }),
+      appendCustomEntry: (customType, data) => env.sessionAppender(
+        env.principalAuthority,
+        admitted.principal,
+        customType,
+        data,
+      ),
     },
     abort() {},
   };
 }
 
-/**
- * Officer already submitted after the park. Converged seals the waiting parent
- * submission — no second parent turn. continue returns the officer words to the parent.
- */
-async function continueParkedParent(
-  loaded: Awaited<ReturnType<typeof loadResumablePublicRole>>,
-  child: AdmittedRoleInvocation,
+function isQueueConclusion(status: string | undefined): boolean {
+  return status === "converged" || status === "continue" || status === "escalate";
+}
+
+function bufferIo(): { readonly io: CliIo; replay(target: CliIo): void } {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  return {
+    io: {
+      stdout: (text) => stdout.push(text),
+      stderr: (text) => stderr.push(text),
+    },
+    replay(target) {
+      for (const text of stdout) target.stdout(text);
+      for (const text of stderr) target.stderr(text);
+    },
+  };
+}
+
+async function roleTurnHostForAdmitted(
+  admitted: AdmittedRoleInvocation,
+  env: InstructionSeatRunEnv,
+): Promise<RoleTurnHost> {
+  if (!isPublicCallableRole(admitted.role)) return env.roleTurnHost;
+  const config = await loadPublicCliConfig(env.home);
+  const storedHost = readInvocationSelectedHost(admitted.runDirectory);
+  const seat = resolveEffectiveSeat(
+    config,
+    admitted.role,
+    env.credentials ?? { "openai-codex": false, xai: false },
+    storedHost === undefined ? undefined : { host: storedHost },
+  );
+  return selectRoleTurnHost(
+    composeRoleTurnHostAdapters(env, env.principalAuthority),
+    { role: admitted.role, seat },
+  );
+}
+
+async function submissionRowCount(
+  admitted: AdmittedRoleInvocation,
+  env: InstructionSeatRunEnv,
+): Promise<number> {
+  const rows = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, env.home);
+  return rows.length;
+}
+
+function parentTurnStands(
+  parentRole: string,
+  turn: SeatRunResult,
+  before: number,
+  after: number,
+): boolean {
+  if (turn.exitCode !== 0) return true;
+  const outcome = turn.terminal?.roleOutcome;
+  if (outcome?.kind === "failure") return true;
+  if (outcome?.kind === "accepted" || outcome?.kind === "audit_escalation") return true;
+  if (outcome !== undefined && outcome.role !== parentRole) return true;
+  return after > before;
+}
+
+async function resumeOfficerForConclusion(
+  officer: AdmittedRoleInvocation,
   env: InstructionSeatRunEnv,
   io: CliIo,
-): Promise<SeatRunResult | undefined> {
-  const sessionFile = env.principalAuthority.decode(loaded.admitted.principal).sessionFile;
-  const park = await readOfficerEscalationPark(sessionFile);
-  if (park?.submission === undefined) return undefined;
-  const childTerminal = await trySettlePublicSeat(
-    child,
+): Promise<SeatRunResult> {
+  const roleTurnHost = await roleTurnHostForAdmitted(officer, env);
+  return runPublicInstructionSeatResume({
+    runId: officer.runId,
+    message: OFFICER_CONCLUSION_REASK,
+  }, { ...env, roleTurnHost }, io);
+}
+
+async function resolveOfficerConclusion(
+  officer: AdmittedRoleInvocation,
+  terminal: TerminalResult | undefined,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<{ readonly officer: AdmittedRoleInvocation; readonly terminal: TerminalResult } | { readonly stop: SeatRunResult }> {
+  let current = officer;
+  let currentTerminal = terminal;
+  for (;;) {
+    const status = latestQueueStatus(currentTerminal);
+    if (isQueueConclusion(status) && currentTerminal !== undefined) {
+      return { officer: current, terminal: currentTerminal };
+    }
+    const reasked = await resumeOfficerForConclusion(current, env, io);
+    if (
+      reasked.exitCode !== 0
+      || reasked.admitted === undefined
+      || reasked.terminal?.roleOutcome.kind !== "accepted"
+      || latestPayloadEscalated(reasked.terminal.roleOutcome)
+    ) {
+      return { stop: reasked };
+    }
+    current = reasked.admitted;
+    currentTerminal = reasked.terminal;
+  }
+}
+
+async function escalatedOfficerResult(
+  error: OfficerEscalationParkError,
+  env: InstructionSeatRunEnv,
+): Promise<SeatRunResult> {
+  const fromResult = error.result.status === "escalate" ? error.result.runId : undefined;
+  const runId = fromResult ?? (
+    error.officerRunDirectory === undefined
+      ? undefined
+      : runIdFromRunDirectory(error.officerRunDirectory)
+  );
+  if (runId === undefined) throw error;
+  const officer = await loadResumablePublicRole(env.home, runId, env.principalAuthority, true);
+  const terminal = await trySettlePublicSeat(
+    officer.admitted,
     env.principalAuthority,
     undefined,
     undefined,
     env.packageRoot,
   );
-  const status = latestQueueStatus(childTerminal);
-  if (status === undefined || status === "escalate") return undefined;
-  if (status === "continue") {
-    return runPublicInstructionSeatResume({
-      runId: loaded.admitted.runId,
-      message: readableGateItem(latestQueuePayload(childTerminal)),
-    }, env, io);
-  }
+  if (terminal === undefined || latestQueueStatus(terminal) !== "escalate") throw error;
+  return { exitCode: 0, admitted: officer.admitted, terminal };
+}
+
+async function resumeParentWithReceipts(
+  loaded: Awaited<ReturnType<typeof loadResumablePublicRole>>,
+  receipts: readonly unknown[],
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult> {
+  return runPublicInstructionSeatResume({
+    runId: loaded.admitted.runId,
+    message: joinReadableGateItems(receipts),
+  }, env, io);
+}
+
+/**
+ * One parent turn sees the officer words and may submit.
+ * No new submission is an observation, not a failed turn — do not auto-resume it.
+ * A real host failure stands; it is not sealed as a pass.
+ */
+async function parentSawWords(
+  loaded: Awaited<ReturnType<typeof loadResumablePublicRole>>,
+  receipts: readonly unknown[],
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult | undefined> {
+  const before = await submissionRowCount(loaded.admitted, env);
+  const buffered = bufferIo();
+  const turn = await runPublicInstructionSeatResume({
+    runId: loaded.admitted.runId,
+    message: joinReadableGateItems(receipts),
+  }, { ...env, autoResumeLimit: 0 }, buffered.io);
+  const after = await submissionRowCount(loaded.admitted, env);
+  if (!parentTurnStands(loaded.admitted.role, turn, before, after)) return undefined;
+  buffered.replay(io);
+  return turn;
+}
+
+async function sealParkedParent(
+  loaded: Awaited<ReturnType<typeof loadResumablePublicRole>>,
+  park: NonNullable<Awaited<ReturnType<typeof readOfficerEscalationPark>>>,
+  officerReceipt: unknown,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult> {
   await sealAcceptedSubmission({
-    context: hostContextForAdmitted(loaded.admitted, park),
+    context: hostContextForAdmitted(loaded.admitted, park, env),
     role: loaded.admitted.role as TerminalRoleName,
     accepted: park.submission,
     toolCallId: park.toolCallId ?? "parked-parent",
@@ -953,13 +1109,120 @@ async function continueParkedParent(
       ...settled.roleOutcome,
       decisiveFacts: {
         ...(settled.roleOutcome.decisiveFacts ?? {}),
-        officerReceipt: latestQueuePayload(childTerminal),
+        officerReceipt,
       },
     },
   };
   await persistReturnedRunState(loaded.admitted, env.principalAuthority, { lawful: true });
   io.stdout(formatTerminalResult(terminal));
   return { exitCode: 0, admitted: loaded.admitted, terminal };
+}
+
+async function acceptAfterParentSeesWords(
+  loaded: Awaited<ReturnType<typeof loadResumablePublicRole>>,
+  park: NonNullable<Awaited<ReturnType<typeof readOfficerEscalationPark>>>,
+  receipts: readonly unknown[],
+  officerReceipt: unknown,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult> {
+  const stood = await parentSawWords(loaded, receipts, env, io);
+  if (stood !== undefined) return stood;
+  return sealParkedParent(loaded, park, officerReceipt, env, io);
+}
+
+/**
+ * Judge has two gates. A notary pass after escalation does not finish the audit;
+ * the same queue runs the auditor. Other seats have one gate.
+ */
+async function followUnfinishedAudit(
+  loaded: Awaited<ReturnType<typeof loadResumablePublicRole>>,
+  officer: AdmittedRoleInvocation,
+  officerTerminal: TerminalResult,
+  park: NonNullable<Awaited<ReturnType<typeof readOfficerEscalationPark>>>,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult | undefined> {
+  const officerReceipt = latestQueuePayload(officerTerminal);
+  if (loaded.admitted.role !== "judge" || officer.role !== "notary") {
+    return acceptAfterParentSeesWords(loaded, park, [officerReceipt], officerReceipt, env, io);
+  }
+  let outcome: Awaited<ReturnType<typeof requireSubmissionGate>>;
+  try {
+    outcome = await requireSubmissionGate({
+      subject: { kind: "judge_compliance" },
+      toolCallId: park.toolCallId ?? "parked-parent",
+      context: hostContextForAdmitted(loaded.admitted, park, env),
+      submission: park.submission,
+      ...(env.signal === undefined ? {} : { signal: env.signal }),
+      summonOfficer: createDefaultGateOfficerSummon({
+        cwd: loaded.admitted.projectRoot,
+        home: env.home,
+        packageRoot: env.packageRoot,
+        io,
+        ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+        ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
+      }),
+      hostActions: {
+        bindSubmissionNonPass() {},
+        failInfrastructure(error): never {
+          throw error instanceof Error ? error : new Error(String(error));
+        },
+      },
+    });
+  } catch (error) {
+    if (error instanceof OfficerEscalationParkError) return escalatedOfficerResult(error, env);
+    throw error;
+  }
+  if (outcome === undefined) {
+    throw new Error("remaining audit gate returned no conclusion");
+  }
+  const receipts = [officerReceipt, outcome.receipt];
+  if (outcome.status === "continue") {
+    return resumeParentWithReceipts(loaded, receipts, env, io);
+  }
+  return acceptAfterParentSeesWords(loaded, park, receipts, outcome.receipt, env, io);
+}
+
+/**
+ * Officer already submitted after the park.
+ * Pass words return to the parent; the parent decides whether to submit again.
+ * A notary pass on a judge continues the auditor gate instead of sealing.
+ * A conclusion outside the three states reopens that officer.
+ */
+async function continueParkedParent(
+  loaded: Awaited<ReturnType<typeof loadResumablePublicRole>>,
+  child: AdmittedRoleInvocation,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult | undefined> {
+  const sessionFile = env.principalAuthority.decode(loaded.admitted.principal).sessionFile;
+  const park = await readOfficerEscalationPark(sessionFile);
+  if (park?.submission === undefined) return undefined;
+  const childTerminal = await trySettlePublicSeat(
+    child,
+    env.principalAuthority,
+    undefined,
+    undefined,
+    env.packageRoot,
+  );
+  if (childTerminal === undefined) return undefined;
+  const resolved = await resolveOfficerConclusion(child, childTerminal, env, io);
+  if ("stop" in resolved) return resolved.stop;
+  const status = latestQueueStatus(resolved.terminal);
+  if (status === "escalate") {
+    return { exitCode: 0, admitted: resolved.officer, terminal: resolved.terminal };
+  }
+  if (status === "continue") {
+    return resumeParentWithReceipts(
+      loaded,
+      [latestQueuePayload(resolved.terminal)],
+      env,
+      io,
+    );
+  }
+  if (status !== "converged") return undefined;
+  return followUnfinishedAudit(loaded, resolved.officer, resolved.terminal, park, env, io);
 }
 
 /** Continue the parent once any escalated child has submitted. */
