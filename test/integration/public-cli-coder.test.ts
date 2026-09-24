@@ -1,6 +1,9 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import {
+  roleTurnHostFromLegacyPiRunner,
+  roleTurnHostFromStructuredOutputRounds,
+} from "../helpers/role-turn-host-fixture.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -28,11 +31,7 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
-import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
-import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
@@ -84,29 +83,11 @@ test("public coder reasks only an unreadable status and accepts an open-shaped o
 
     const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
     const corrected = { status: "planned", report: { unvalidated: true } };
-    const roleTurnHost: RoleTurnHost = {
-      async executeTurn(request) {
-        const prepared = await prepareRoleEnvelope({
-          request: { ...request, host: "codex" },
-          dependencies: createRoleRuntimeDependencies(packageRoot),
-          socketPath: join(home, "coder-reask.sock"),
-          listTerminatingToolOnMcp: false,
-          sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
-        });
-        try {
-          return await driveExternalRoleTurnRounds(prepared, request, {
-            roundLimitName: "CoderStatusReaskRoundLimit",
-            currentSessionId: () => undefined,
-            async runRound({ attempt }) {
-              await prepared.ingestStructuredOutput(attempt === 0 ? unreadable : corrected);
-              return { status: "delivered" };
-            },
-          });
-        } finally {
-          await prepared.dispose?.();
-        }
-      },
-    };
+    const roleTurnHost = roleTurnHostFromStructuredOutputRounds({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      submissions: [unreadable, corrected],
+    });
 
     const result = await runAkRole(
       ["coder", "--model", "test/caller-seat:high", "plan", "--project", project, "Propose a plan."],

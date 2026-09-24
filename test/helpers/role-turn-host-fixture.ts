@@ -1,11 +1,12 @@
 /**
  * Shared test injection seam (#526): adapt legacy faux Pi-runner shape to RoleTurnHost.
- * Single helper — no dual-track piRunner on CliEnv.
- * Also owns the one scripted terminating-tool session writer (#502 DRY).
+ * No dual-track piRunner on CliEnv. Also owns the scripted terminating-tool
+ * session writer and the real-envelope structured-output tracer (#502 DRY).
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
 
 import {
   DIARIST_OUTPUT_TOOL_NAME,
@@ -23,6 +24,8 @@ import {
   type PiSpawnRunner,
 } from "../../src/pi/role-turn-host.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
+import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import {
   sealAcceptedSubmission,
   sealAcceptedSubmissionForSpawn,
@@ -43,6 +46,40 @@ export function argvFlagValue(
   const index = args.indexOf(flag);
   if (index < 0) return undefined;
   return args[index + 1];
+}
+
+/** Drive submitted outputs through the production envelope and external-host retry loop. */
+export function roleTurnHostFromStructuredOutputRounds(input: {
+  readonly packageRoot: string;
+  readonly principalAuthority: DurablePrincipalAuthority;
+  readonly submissions: readonly unknown[];
+}): RoleTurnHost {
+  return {
+    async executeTurn(request) {
+      const prepared = await prepareRoleEnvelope({
+        request: { ...request, host: "codex" },
+        dependencies: createRoleRuntimeDependencies(input.packageRoot),
+        socketPath: join(request.runDirectory, "structured-output.sock"),
+        listTerminatingToolOnMcp: false,
+        sessionFile: input.principalAuthority.decode(request.principal).sessionFile,
+      });
+      try {
+        return await driveExternalRoleTurnRounds(prepared, request, {
+          roundLimitName: "StructuredOutputRoundLimit",
+          currentSessionId: () => undefined,
+          async runRound({ attempt }) {
+            if (attempt >= input.submissions.length) {
+              throw new Error("structured-output fixture ran out of submissions");
+            }
+            await prepared.ingestStructuredOutput(input.submissions[attempt]);
+            return { status: "delivered" };
+          },
+        });
+      } finally {
+        await prepared.dispose?.();
+      }
+    },
+  };
 }
 
 /**

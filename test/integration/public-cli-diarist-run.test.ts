@@ -1,7 +1,7 @@
 /**
  * #708 / #779 / #901 public 起居郎 seat — `ak-role diarist` is a role like the other seats.
  * LLM submits bounds; mechanical layer reprojects records.jsonl.
- * Single seam: real entry, scripted host, on-disk session fixture, assert the unique diary file.
+ * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -42,8 +42,10 @@ import {
 } from "../../src/ticket-provenance.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
+  roleTurnHostFromStructuredOutputRounds,
   scriptedTerminatingToolSession,
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
@@ -799,7 +801,22 @@ test("public diarist reasks an unreadable routing status but escalates without r
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    let sawStatusReask = false;
+    const runId = "01a0diar00-0000-7000-8000-0000000000c1";
+    const unreadable = {
+      status: { value: "completed" },
+      ticketNumber: TICKET,
+      sessions: [],
+    };
+    const corrected = {
+      status: "escalate",
+      reason: "无法辨认本庭对象",
+      sessions: [{}],
+    };
+    const roleTurnHost = roleTurnHostFromStructuredOutputRounds({
+      packageRoot,
+      principalAuthority: immutablePrincipalAuthority,
+      submissions: [unreadable, corrected],
+    });
 
     const { io, stdout } = captureIo();
     const result = await runAkRole(
@@ -809,34 +826,20 @@ test("public diarist reasks an unreadable routing status but escalates without r
         packageRoot,
         cwd: project,
         io,
-        createRunId: () => "01a0diar00-0000-7000-8000-0000000000c1",
+        createRunId: () => runId,
         principalAuthority: immutablePrincipalAuthority,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: immutablePrincipalAuthority,
-          piRunner: diaristEnvelopeRunner((round: number) => {
-            if (round === 1) {
-              return {
-                status: { value: "completed" },
-                ticketNumber: TICKET,
-                sessions: [],
-              };
-            }
-            sawStatusReask = true;
-            return {
-              status: "escalate",
-              reason: "无法辨认本庭对象",
-              sessions: [{}],
-            };
-          }),
-        }),
+        roleTurnHost,
       },
     );
 
     assert.equal(result.exitCode, 0, stdout.join("") || "diarist did not settle");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
-    assert.equal(sawStatusReask, true);
+    const submissions = await readRecordedSubmissionRows(project, runId, home);
+    assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
+      { kind: "correctable-rejection", accepted: unreadable },
+      { kind: "accepted", accepted: corrected },
+    ]);
   });
 });
 
