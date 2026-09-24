@@ -737,54 +737,6 @@ export async function runPublicInstructionSeat(
 
   const runAdmitted = async (): Promise<SeatRunResult> => {
     await markRunAdmitted(admitted, env.principalAuthority);
-    if (record.sameParent === "court-diarist") {
-      const { invokeCourtDiarist } = await import("./countersign-run.ts");
-      const outcome = await invokeCourtDiarist({
-        instruction: parsed.instruction ?? "",
-        projectRoot: admitted.projectRoot,
-        failureLabel: "secretariat unbound summons",
-        attachmentPaths: admitted.attachments.map((attachment) => attachment.frozenPath),
-        correlationId: admitted.runId,
-      }, {
-        cwd: env.cwd,
-        home: env.home,
-        agentDir: env.agentDir,
-        packageRoot: env.packageRoot,
-        ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
-        ...(env.signal === undefined ? {} : { signal: env.signal }),
-        ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
-      }, io);
-      if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
-        await recordChildDiaristRun(admitted, outcome.admitted.runId);
-      }
-      if (outcome.identity.kind === "escalate" || outcome.failedWithoutEscalate !== undefined) {
-        const diagnostic = outcome.identity.kind === "escalate"
-          ? outcome.identity.diagnostic
-          : outcome.failedWithoutEscalate?.diagnostic ?? "";
-        return await presentControlledFailure(admitted, {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: new Error(diagnostic),
-        }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
-      }
-      if (outcome.identity.kind === "ticket") {
-        try {
-          if (outcome.admitted === undefined) throw new Error("court diarist ticket has no admitted run");
-          await bindAdmittedTicketNumber(outcome.admitted, outcome.identity.ticketNumber);
-          await relocateAdmittedRunToTicket(outcome.admitted, env.principalAuthority);
-          await bindAdmittedTicketNumber(admitted, outcome.identity.ticketNumber);
-          await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-        } catch (error) {
-          return await presentControlledFailure(admitted, {
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-          }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
-        }
-      }
-    }
     return dispatchAdmitted(admitted, env, io);
   };
 

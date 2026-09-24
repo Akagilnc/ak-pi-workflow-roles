@@ -277,7 +277,7 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     presentSettled: "always",
     summonResume: false,
     admission: "instruction",
-    sameParent: "court-diarist",
+    sameParent: "none",
     phases: [null],
     outputTool: "ak_secretariat_output",
     settlement: "accepted",
