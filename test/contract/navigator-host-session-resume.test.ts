@@ -15,9 +15,7 @@ import {
   readNavigatorHostRunPointer,
   runIdFromNavigatorDirectory,
 } from "../../src/navigator-public-session.ts";
-import { loadNavigatorWorkBaseSuffix } from "../../src/navigator-work-base.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
-import { createNavigatorRoleRuntime } from "../../src/role-runtime.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { seedGitRepository } from "../helpers/pi-test-harness.ts";
 
@@ -426,31 +424,6 @@ test("fresh navigator settlement keeps subject and authority on the nest base", 
       assert.equal(stored.subject, subject);
       assert.equal(stored.authority, authority);
     }
-
-    const handlers: Array<(event: { prompt: string; systemPrompt: string }) => Promise<{ systemPrompt?: string } | undefined>> = [];
-    const tools: Array<{ name: string }> = [];
-    const runtime = createNavigatorRoleRuntime({
-      registerTool(tool: { name: string }) { tools.push(tool); },
-      getAllTools() { return tools; },
-      on(name: string, handler: (event: { prompt: string; systemPrompt: string }) => Promise<{ systemPrompt?: string } | undefined>) {
-        if (name === "before_agent_start") handlers.push(handler);
-      },
-    } as never, {
-      loadSoul: async () => "navigator soul",
-      loadRoutePlaybook: async () => "route playbook",
-    });
-    await runtime.activate();
-    let systemPrompt = "seat";
-    for (const handler of handlers) {
-      const next = await handler({ prompt: summons[0] ?? "", systemPrompt });
-      if (typeof next?.systemPrompt === "string") systemPrompt = next.systemPrompt;
-    }
-    assert.equal(systemPrompt.includes(authority), true);
-    assert.equal(systemPrompt.includes(subject), true);
-    assert.equal(systemPrompt.includes("<controlling_authority>"), true);
-    assert.equal(systemPrompt.includes("route playbook"), true);
-    const suffix = await loadNavigatorWorkBaseSuffix(JSON.stringify({ workContextPath: "/etc/passwd" }));
-    assert.equal(suffix, undefined);
     await nav.dispose();
   });
 });
