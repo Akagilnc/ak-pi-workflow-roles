@@ -24,6 +24,7 @@ import { readRoleRunIdentity } from "../../src/public-cli/run-lifecycle.ts";
 import { listBookRunDirectories } from "../../src/role-run-placement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   argvFlagValue,
@@ -313,6 +314,7 @@ test("#1057 auditor escalation is the auditor run and the parent is not that esc
     assert.equal(auditorCalls, 2);
     assert.equal(observed.judgeSubmissions.length, 1);
     assert.equal(observed.parentPrompts.length, 1);
+    assert.equal(observed.parentPrompts[0], readableGateItem(passed));
     assert.deepEqual(observed.officerReceipts.at(-1), { role: "auditor", details: passed });
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
@@ -358,6 +360,10 @@ test("#1057 a notary pass continues the judge auditor gate and settles the origi
     assert.equal(auditorCalls, 1);
     assert.equal(observed.judgeSubmissions.length, 1);
     assert.equal(observed.parentPrompts.length, 1);
+    const parentPrompt = observed.parentPrompts[0] ?? "";
+    const notaryAt = parentPrompt.indexOf(readableGateItem(notaryPass));
+    const auditorAt = parentPrompt.indexOf(readableGateItem(auditorPass));
+    assert.equal(notaryAt >= 0 && auditorAt > notaryAt, true);
     assert.deepEqual(observed.officerReceipts, [
       { role: "notary", details: notaryEscalate },
       { role: "notary", details: notaryPass },
@@ -403,6 +409,7 @@ test("#1057 a conclusion outside the three states returns to that officer", asyn
     assert.equal(observed.officerPrompts.some((prompt) => prompt === OFFICER_CONCLUSION_REASK), true);
     assert.equal(observed.judgeSubmissions.length, 1);
     assert.equal(observed.parentPrompts.length, 1);
+    assert.equal(observed.parentPrompts[0], readableGateItem({ status: "converged", mark: 6 }));
     assert.deepEqual(observed.officerReceipts.at(-1), {
       role: "auditor",
       details: { status: "converged", mark: 6 },

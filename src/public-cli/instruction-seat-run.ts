@@ -4,12 +4,14 @@
  * starts two ordinary single-axis runs here. Countersign keeps deferred
  * identity on this entry; the court diarist station stays in countersign-run.
  */
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join, resolve, sep } from "node:path";
 
 import { listDirectOfficerRunPointers } from "../archivist-record-entry.ts";
 import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "../host-contracts.ts";
 import { gateOfficerForSubject, OFFICER_CONCLUSION_REASK } from "../gatekeeper-role.ts";
-import { runJudgeGates } from "../judge-role.ts";
+import { runJudgeGates, withOpenJudgeGateSkip } from "../judge-role.ts";
 import { joinReadableGateItems, readableGateItem } from "../readable-gate-item.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
 import { OfficerEscalationParkError } from "../submission-errors.ts";
@@ -19,8 +21,10 @@ import {
   latestQueueStatus,
   requireSubmissionGate,
 } from "../submission-gate.ts";
-import { readRecordedSubmissionRows, sealAcceptedSubmission } from "../submission-ledger.ts";
+import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { persistReturnedRunState } from "./auto-resume.ts";
+import { prepareRoleEnvelope } from "../role-envelope.ts";
+import { createRoleRuntimeDependencies } from "../role-runtime-dependencies.ts";
 import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
@@ -85,7 +89,6 @@ import {
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
   type TerminalResult,
-  type TerminalRoleName,
 } from "./terminal.ts";
 import {
   admittedSeatTurnDetails,
@@ -1047,6 +1050,52 @@ async function escalatedOfficerResult(
 }
 
 /**
+ * Run the interrupted judge tool through the ledger success tail.
+ * Officers that already passed are not summoned again.
+ */
+async function reenterOpenJudgeTool(
+  admitted: AdmittedRoleInvocation,
+  accepted: unknown,
+  sessionFile: string,
+  env: InstructionSeatRunEnv,
+): Promise<void> {
+  const socketDir = await mkdtemp(join(tmpdir(), "ak-judge-reenter-"));
+  try {
+    const request = buildInstructionSeatTurnRequest(admitted, {
+      packageRoot: env.packageRoot,
+      home: env.home,
+      agentDir: env.agentDir,
+      ...pickEngineAxis(env),
+      continuation: { kind: "resume", prompt: "" },
+    });
+    const prepared = await prepareRoleEnvelope({
+      request: { ...request, host: "pi" },
+      dependencies: {
+        ...createRoleRuntimeDependencies(env.packageRoot),
+        ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
+      },
+      socketPath: join(socketDir, "mcp.sock"),
+      listTerminatingToolOnMcp: false,
+      sessionFile,
+    });
+    try {
+      await withOpenJudgeGateSkip(
+        (subject) => officerGateConverged(sessionFile, gateOfficerForSubject(subject), env),
+        () => prepared.ingestStructuredOutput(accepted),
+      );
+      const closed = await prepared.closeRound();
+      if (!closed.accepted) {
+        throw new Error("open judge verdict did not reach the ledger seal");
+      }
+    } finally {
+      await prepared.dispose?.();
+    }
+  } finally {
+    await rm(socketDir, { recursive: true, force: true });
+  }
+}
+
+/**
  * Finish the judge seat's own remaining gates for the unsealed candidate.
  * A pass with no newer verdict seals that candidate. A newer verdict stands.
  */
@@ -1125,13 +1174,7 @@ async function finishOpenJudgeVerdict(
     buffered.replay(io);
     return turn;
   }
-  await sealAcceptedSubmission({
-    context,
-    role: admitted.role as TerminalRoleName,
-    accepted: open.accepted,
-    toolCallId: open.toolCallId,
-    home: env.home,
-  });
+  await reenterOpenJudgeTool(admitted, open.accepted, sessionFile, env);
   const settled = await trySettlePublicSeat(
     admitted,
     env.principalAuthority,
