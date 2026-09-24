@@ -51,7 +51,7 @@ test("future arrival is typed and presentation-only", async () => {
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
     const events: any[] = [];
-    const nav = await attendance(setting, harness, events, undefined, root);
+    const nav = await attendance(setting, harness, events, root);
     // Presentation-only: no seat table, no prepare — must not open a session just to book.
     await nav.settle({ kind: "arrival", role: "lander", phase: null, message: "抵达" });
     assert.equal(events[0]?.disposition, "arrival");
@@ -78,15 +78,14 @@ test("#959 arrival books settlement on an existing nest without re-prompting", a
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
     const events: any[] = [];
-    const nav = await attendance(setting, harness, events, undefined, root);
-    // Early prepare opens the nest; finish ready-wait, then arrival books without a feed prompt.
+    const nav = await attendance(setting, harness, events, root);
+    // Standby opens the nest without a model round; arrival books without a feed prompt.
     nav.prepare();
-    while (harness.prompts() < 1) await new Promise<void>((resolve) => setImmediate(resolve));
-    harness.release();
-    for (let i = 0; i < 40; i += 1) await new Promise<void>((resolve) => setImmediate(resolve));
+    while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
     const promptsBeforeArrival = harness.prompts();
     await nav.settle({ kind: "arrival", role: "lander", phase: null, message: "抵达" });
     assert.equal(events[0]?.disposition, "arrival");
+    assert.equal(promptsBeforeArrival, 0);
     assert.equal(harness.prompts(), promptsBeforeArrival, "arrival must not run a settlement feed prompt");
     const settlementEntry = harness.entries.find((entry: any) => entry.customType === "ak-navigator-settlement") as any;
     assert.equal(settlementEntry?.data?.kind, "arrival");
@@ -179,8 +178,6 @@ test("dispose during pending createSession drains the created session without pr
       subjectKey: "/repo/.ak/work/issues/28",
       subject: "Fix issue 28",
       authority: "owner decision",
-      loadSoul: async () => "route judgment",
-      loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
       modelSettingPath: setting,
       createSession: async () => {
         markCreateStarted();
@@ -232,8 +229,6 @@ test("attendance dispose settles session close rejection on the caller", async (
         subjectKey: "/repo/.ak/work/issues/28",
         subject: "Fix issue 28",
         authority: "owner decision",
-        loadSoul: async () => "route judgment",
-        loadRoleHelp: async () => "Usage: pi --ak-role coder --help",
         modelSettingPath: setting,
         createSession: async () => ({
           async prompt() {
@@ -250,9 +245,10 @@ test("attendance dispose settles session close rejection on the caller", async (
         onEvent: async () => {},
       });
       nav.prepare();
-      await prompted;
-      // Early ready-wait is in flight; dispose during parent-end settle path.
+      while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
+      // Settlement prompt is in flight; dispose during that round.
       const settleP = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+      await prompted;
       await assert.rejects(
         () => Promise.resolve(nav.dispose()),
         (error: unknown) => error === closeBoom,
@@ -284,8 +280,6 @@ test("resumed setModel session failures preserve typed source and cause", async 
       subjectKey: "/repo/.ak/work/issues/28",
       subject: "task",
       authority: "authority",
-      loadSoul: async () => "route judgment",
-      loadRoleHelp: async () => "help",
       modelSettingPath: setting,
       createSession: async ({ tool }) => {
         created = true;
@@ -338,7 +332,7 @@ test("#959 free-form prose without next is advice, not unavailable", async () =>
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
     const events: any[] = [];
-    const nav = await attendance(setting, harness, events, undefined, root);
+    const nav = await attendance(setting, harness, events, root);
     nav.prepare();
     await settleWithAdvice(
       nav,
@@ -366,7 +360,7 @@ test("#959 empty prose after prepare is no-advice, not machine-usable unavailabl
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
     const events: any[] = [];
-    const nav = await attendance(setting, harness, events, undefined, root);
+    const nav = await attendance(setting, harness, events, root);
     nav.prepare();
     await settleWithAdvice(
       nav,
@@ -389,7 +383,7 @@ test("#959 prose advice is presented as written", async () => {
     await writeFile(setting, JSON.stringify({ model: "provider/model" }));
     const harness = sessionHarness();
     const events: any[] = [];
-    const nav = await attendance(setting, harness, events, undefined, root);
+    const nav = await attendance(setting, harness, events, root);
     nav.prepare();
     await settleWithAdvice(
       nav,

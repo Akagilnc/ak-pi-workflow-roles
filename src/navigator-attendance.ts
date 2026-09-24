@@ -63,7 +63,6 @@ import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_D
 import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
-export const NAVIGATOR_PREPARE_ACCEPTED_TEXT = "游奕使准备已接受";
 
 /**
  * Role-input document bytes win verbatim over work-root file authority when non-empty.
@@ -131,18 +130,6 @@ export type NavigatorEvent = {
   arrivalMessage?: string;
 };
 
-export type NavigatorSettlementFact = NavigatorSettlement & { invocationId: string; subjectKey: string };
-export type NavigatorContextProjection = {
-  subjectKey: string;
-  subject: string;
-  authority: string;
-  currentRole: { role: string; phase: NavigatorPhase };
-  /** Present on the unique settlement-bound advice prompt. */
-  currentSettlement?: NavigatorSettlement;
-  publicSettlementHistory: NavigatorSettlementFact[];
-  liveRoleHelp: Array<{ role: NavigatorTargetRole; help: string }>;
-};
-
 // #959: prepare is a prose vehicle. Object root only (ADR 0060); nested shape is
 // never a gate — every object root reaches execute exactly once (Rule 0).
 const prepareSchema = Type.Object({
@@ -157,9 +144,7 @@ export type NavigatorAttendanceOptions = {
   role: string;
   phase: NavigatorPhase;
   subjectKey: string;
-  loadSoul: () => Promise<string>;
   loadRoutePlaybook?: () => Promise<string>;
-  loadRoleHelp: (role: NavigatorTargetRole) => Promise<string>;
   createSession: NavigatorSessionFactory;
   modelSettingPath?: string;
   subject: string;
@@ -170,7 +155,6 @@ export type NavigatorAttendanceOptions = {
   onEvent: (event: NavigatorEvent, report: NavigatorReport) => void | Promise<void>;
 };
 
-const CONTEXT_ENTRY = "ak-navigator-context";
 const INVOCATION_ENTRY = NAVIGATOR_INVOCATION_ENTRY;
 const SETTLEMENT_ENTRY = "ak-navigator-settlement";
 const unavailableKeys = new Set<NavigatorUnavailableKey>(["context", "session", "model", "thinking", "auth", "quota", "transport", "unknown"]);
@@ -263,7 +247,7 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
     async execute(_id, value) {
       // Rule 0: the unique prepare submission is accepted once. Shape is never a gate.
       onOutput(value as PrepareOutput);
-      return { content: [{ type: "text" as const, text: NAVIGATOR_PREPARE_ACCEPTED_TEXT }], details: value, terminate: true as const };
+      return { content: [], details: value, terminate: true as const };
     },
   };
 }
@@ -307,28 +291,12 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   // Shared attendance seam owns nested summon cancel (ADR 0018 / #959).
   // Role session factory only forwards HostContext.signal — never its own controller.
   const nestCancel = new AbortController();
-  /** One-shot live-help warm; consumed by the next prepare so later prepares reread live help. */
-  let warmedHelp: Promise<Array<{ role: NavigatorTargetRole; help: string }>> | undefined;
-
   const sessionHostContext = (): HostContext => {
     const parentSignal = options.context.signal;
     const signal = parentSignal === undefined
       ? nestCancel.signal
       : AbortSignal.any([nestCancel.signal, parentSignal]);
     return { ...options.context, signal };
-  };
-
-  const loadLiveHelp = async (): Promise<Array<{ role: NavigatorTargetRole; help: string }>> => {
-    try {
-      return await Promise.all(
-        NAVIGATOR_TARGETS.map(async ({ role }) => ({
-          role,
-          help: await options.loadRoleHelp(role),
-        })),
-      );
-    } catch (error) {
-      throw navigatorUnavailableError("transport", error);
-    }
   };
 
   const unavailable = (invocationId: string, reason: unknown): NavigatorReport => {
@@ -344,22 +312,12 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   };
   let routePlaybookSettlement: Promise<void> | undefined;
   /**
-   * Settlement fed for the output prompt. Early prepare() runs the host round
-   * from parent start (ready and wait); settleOnce feeds currentSettlement and
-   * lets navigator speak. No candidates/next parse (owner 2026-09-17 #959).
+   * Settlement is the only model round. Standby records attendance and does not prompt.
+   * Soul and route playbook stay on the navigator system prompt, not this user turn.
    */
   let prepareBoundSettlement: NavigatorSettlement | undefined;
-  type MaterialsBundle = {
-    soul: string;
-    routePlaybook: string;
-    helpContext: string;
-    modelSetting: string;
-    model: ReturnType<typeof parseNavigatorModelSetting>;
-    help: Array<{ role: NavigatorTargetRole; help: string }>;
-    activeSession: NavigatorPreparationSession;
-  };
-  /** Materials + session only — no host prompt (cold settle book-before-feed). */
-  const loadMaterialsAndSession = async (invocationId: string): Promise<MaterialsBundle> => {
+  /** Session only — no host prompt (standby attendance, or cold settle book-before-feed). */
+  const loadMaterialsAndSession = async (invocationId: string): Promise<NavigatorPreparationSession> => {
     if (contextError !== undefined) throw navigatorUnavailableError("context", contextError);
     if (typeof authority !== "string" || authority.trim() === "") {
       throw navigatorUnavailableError(
@@ -367,27 +325,13 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         new Error("controlling authority content was not supplied as typed work context"),
       );
     }
-    let soul: string;
-    let modelSetting: string;
-    let help: Array<{ role: NavigatorTargetRole; help: string }>;
-    let routePlaybook = "";
     routePlaybookReadFailure = undefined;
-    const soulPromise = (async () => {
-      try {
-        const text = (await options.loadSoul()).trim();
-        if (!text) throw new Error("Navigator soul is empty");
-        return text;
-      } catch (error) {
-        throw navigatorUnavailableError("context", error);
-      }
-    })();
     const routePlaybookPromise = (async () => {
-      if (options.loadRoutePlaybook === undefined) return "";
+      if (options.loadRoutePlaybook === undefined) return;
       try {
-        return await options.loadRoutePlaybook();
+        await options.loadRoutePlaybook();
       } catch (error) {
         routePlaybookReadFailure = error instanceof Error ? error.message : String(error);
-        return "";
       }
     })();
     routePlaybookSettlement = routePlaybookPromise.then(() => undefined);
@@ -400,13 +344,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         throw navigatorUnavailableError("model", error);
       }
     })();
-    const helpPromise = warmedHelp ?? loadLiveHelp();
-    warmedHelp = undefined;
-    [soul, routePlaybook, modelSetting, help] = await Promise.all([
-      soulPromise,
-      routePlaybookPromise,
+    const [modelSetting] = await Promise.all([
       modelPromise,
-      helpPromise,
+      routePlaybookPromise,
     ]);
     let model: ReturnType<typeof parseNavigatorModelSetting>;
     try {
@@ -414,7 +354,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     } catch (error) {
       throw navigatorUnavailableError("model", error);
     }
-    const helpContext = help.map(({ role, help: text }) => `<role_help role="${role}">\n${text}\n</role_help>`).join("\n");
     const tool = createNavigatorPrepareTool((value) => { outputSink?.(value); });
     if (session === undefined) {
       sessionReady = (async () => {
@@ -457,9 +396,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     }
     if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
     if (session === undefined) throw new Error("Navigator session was not created");
-    return { soul, routePlaybook, helpContext, modelSetting, model, help, activeSession: session };
+    return session;
   };
-  const prepare = async (materialsBundle?: MaterialsBundle): Promise<string | undefined> => {
+  const prepare = async (existingSession?: NavigatorPreparationSession): Promise<string | undefined> => {
     // Exact principal is owned by shared lifecycle (or one mint per attendance).
     // Model/tool/advice paths cannot override it; role-session persistence is
     // pi.appendEntry at lifecycle start — not optional sessionManager probing.
@@ -480,53 +419,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       const merged = [prior, next].filter((part) => part.trim() !== "").join("\n\n");
       output = { prose: merged };
     };
-    // Cold settle passes its first-load bundle; early/warm prepare loads here.
-    const { soul, routePlaybook, helpContext, help, activeSession } =
-      materialsBundle ?? await loadMaterialsAndSession(invocationId);
-      const publicSettlementHistory = activeSession.entries()
-        .filter((entry): entry is { type: "custom"; customType: string; data?: unknown } => exactRecord(entry) && entry.type === "custom" && entry.customType === SETTLEMENT_ENTRY && exactRecord(entry.data))
-        .map((entry) => entry.data as NavigatorSettlementFact);
-      // Prior advice is the host session's own history (CLI resume), not a package ledger.
-      const projection: NavigatorContextProjection = {
-        subjectKey,
-        subject,
-        authority,
-        currentRole: { role: options.role, phase: options.phase },
-        ...(boundSettlement === undefined ? {} : { currentSettlement: boundSettlement }),
-        publicSettlementHistory,
-        liveRoleHelp: help,
-      };
-      activeSession.appendEntry(CONTEXT_ENTRY, projection);
-      // Early (parent start): full host round — ready and wait. Settlement-bound:
-      // feed the result and let navigator speak (owner 2026-09-17 #959).
-      // ADR 0073: phase behavior text lives in resources/navigator-route-playbook.md;
-      // code only binds a neutral phase pointer + typed materials.
-      const request = boundSettlement === undefined
-        ? [
-          "本轮为待命轮。",
-          `<navigator_soul>\n${soul}\n</navigator_soul>`,
-          ...(routePlaybookReadFailure === undefined
-            ? [`<route_playbook>\n${routePlaybook}\n</route_playbook>`]
-            : ["可选路线手册未能读取。"]),
-          `<work_subject>\n${subject}\n</work_subject>`,
-          `<controlling_authority>\n${authority}\n</controlling_authority>`,
-          `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
-          `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
-          `<live_role_help>\n${helpContext}\n</live_role_help>`,
-        ].join("\n\n")
-        : [
-          "本轮为结算投喂轮。",
-          `<navigator_soul>\n${soul}\n</navigator_soul>`,
-          ...(routePlaybookReadFailure === undefined
-            ? [`<route_playbook>\n${routePlaybook}\n</route_playbook>`]
-            : ["可选路线手册未能读取。"]),
-          `<work_subject>\n${subject}\n</work_subject>`,
-          `<controlling_authority>\n${authority}\n</controlling_authority>`,
-          `<current_role>\n${JSON.stringify({ role: options.role, phase: options.phase })}\n</current_role>`,
-          `<current_settlement>\n${JSON.stringify(boundSettlement)}\n</current_settlement>`,
-          `<public_settlement_history>\n${JSON.stringify(projection.publicSettlementHistory)}\n</public_settlement_history>`,
-          `<live_role_help>\n${helpContext}\n</live_role_help>`,
-        ].join("\n\n");
+    const activeSession = existingSession ?? await loadMaterialsAndSession(invocationId);
+      // Standby records the invocation entry and does not call the model.
+      if (boundSettlement === undefined) return undefined;
+      const request = JSON.stringify(boundSettlement);
       try {
         try {
           if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
@@ -636,17 +532,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       contextError = next.contextError;
       return closing;
     },
-    /**
-     * Start live-help subprocesses during activation without beginning full
-     * preparation. Next prepare() consumes the warm result; a later prepare
-     * reloads so live help edits remain visible.
-     */
-    warmHelp(): void {
-      if (disposed || warmedHelp !== undefined || preparation !== undefined) return;
-      warmedHelp = loadLiveHelp();
-      // Prevent unhandled rejection if attendance is disposed before prepare.
-      void warmedHelp.catch(() => undefined);
-    },
     prepare(): void {
       if (disposed || preparation !== undefined) return;
       preparationFailure = undefined;
@@ -700,8 +585,8 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       if (disposed) return;
       const invocationId = activeInvocationId ?? invocationPrincipal;
       let report: NavigatorReport;
-      // Drain in-flight early prepare (parent-start host round: ready and wait).
-      // Then feed settlement for the output prompt on the same host session.
+      // Drain in-flight standby attendance (record only). Then feed the typed
+      // settlement as the only model round on the same host session.
       if (sessionReady !== undefined) {
         try { await sessionReady; } catch (error) { preparationFailure ??= error; }
       }
@@ -740,12 +625,12 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         // session already exists so the output prompt can run (owner: 准备好了就等着，
         // 结果出来喂给它让它自己输出).
         if (session !== undefined) preparationFailure = undefined;
-        // Cold settle: materials+session only (no unbound host prompt), then book + feed.
-        // Pass the bundle into prepare so loadLiveHelp/setModel/INVOCATION run once.
-        let coldMaterials: MaterialsBundle | undefined;
+        // Cold settle: session only (no unbound host prompt), then book + feed.
+        // Pass the session into prepare so setModel/INVOCATION run once.
+        let coldSession: NavigatorPreparationSession | undefined;
         if (session === undefined && preparationFailure === undefined) {
           try {
-            coldMaterials = await loadMaterialsAndSession(invocationId);
+            coldSession = await loadMaterialsAndSession(invocationId);
           } catch (error) {
             preparationFailure = error;
           }
@@ -753,7 +638,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         session?.appendEntry(SETTLEMENT_ENTRY, settlementFact);
         if (preparationFailure === undefined) {
           prepareBoundSettlement = settlement;
-          preparation = prepare(coldMaterials);
+          preparation = prepare(coldSession);
           void preparation.catch((error) => { preparationFailure = error; });
           try {
             drainedProse = await preparation;

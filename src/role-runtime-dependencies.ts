@@ -8,7 +8,7 @@ import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "
 import { loadNavigatorWorkContext } from "./navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "./notary-source-run.ts";
 import { loadPackagedCanonicalSkillBinding } from "./package-resources/method-skill-binding.ts";
-import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "./role-runtime.ts";
+import { type RoleRuntimeDependencies } from "./role-runtime.ts";
 import {
   loadAuditorReferenceMaterialsFromSubjectInput,
   loadAuditorSoulFromSubjectInput,
@@ -85,9 +85,7 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
       subject: options.subject,
       authority: options.authority,
       invocationId: options.invocationId,
-      loadSoul: () => loadRegisteredRoleSoul("navigator"),
       loadRoutePlaybook: () => readFile(navigatorRoutePlaybookPath, "utf8"),
-      loadRoleHelp: async (role) => formatNavigatorRoleHelp(role),
       createSession: navigatorSessionFactory,
       ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
       onEvent: options.onEvent,

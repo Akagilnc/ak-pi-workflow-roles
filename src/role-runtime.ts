@@ -23,6 +23,7 @@ import {
   durableSessionPointer,
   resolveBookKeyFromGit,
 } from "./activation-ledger.ts";
+import { readPackageMaterial } from "./session-opening-materials.ts";
 import { writeStderrJsonlRecord } from "./stderr-jsonl.ts";
 import {
   createToolExecutionObservationFace,
@@ -765,7 +766,7 @@ export function createNavigatorRoleRuntime(
   roleHost: RoleHost,
   dependencies: NavigatorRuntimeDependencies,
 ) {
-  return createFiledOfficerRuntime(
+  const base = createFiledOfficerRuntime(
     roleHost,
     {
       role: "navigator",
@@ -774,6 +775,31 @@ export function createNavigatorRoleRuntime(
     },
     dependencies,
   );
+  let playbookBound = false;
+  return {
+    async activate() {
+      await base.activate();
+      if (playbookBound) return;
+      playbookBound = true;
+      // Standing system prompt, not a per-turn user message. Native read failure
+      // is the explanation (ADR 0061); no code-written sentence.
+      roleHost.on("before_agent_start", async (event) => {
+        const base = typeof event.systemPrompt === "string" ? event.systemPrompt : "";
+        const append = (text: string) => ({
+          systemPrompt: base.trim() === "" ? text : `${base}\n\n${text}`,
+        });
+        try {
+          const content = await readPackageMaterial("resources/navigator-route-playbook.md");
+          if (content.trim() === "") return;
+          return append(content);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.trim() === "") return;
+          return append(message);
+        }
+      });
+    },
+  };
 }
 
 /** #675: public 审刑院 seat on the shared filed-officer envelope. */
@@ -2227,11 +2253,8 @@ export function createRoleRuntimeExtension(
               pendingNavigatorPresentation = { event: navigatorEvent, report };
             },
           });
-          // Warm live help during activation so prepare is not help-bound under load.
-          // Concrete work context also starts full preparation so session create
-          // overlaps the role run. Placeholder subjects wait for before_agent_start
-          // (user prompt may replace the subject key) but still inherit warm help.
-          navigatorAttendance.warmHelp?.();
+          // Concrete work context starts standby attendance (record only, no model).
+          // Placeholder subjects wait for before_agent_start (user prompt may replace the subject key).
           if (
             navigatorWorkContext.contextError === undefined &&
             navigatorWorkContext.subjectProvenance !== "placeholder"

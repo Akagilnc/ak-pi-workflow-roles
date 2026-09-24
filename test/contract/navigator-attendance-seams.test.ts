@@ -7,7 +7,8 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
-import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import { createNavigatorRoleRuntime, createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import { readPackageMaterial } from "../../src/session-opening-materials.ts";
 import { buildNavigatorInfrastructureFailureFact } from "../../src/navigator-invocation-identity.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_EVENT_TYPE, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
@@ -169,7 +170,7 @@ test("prepare provider schema admits object-root free-form through real Tool val
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events, undefined, root);
+      const nav = await attendance(setting, harness, events, root);
       nav.prepare();
       await settleWithAdvice(
         nav,
@@ -186,7 +187,7 @@ test("prepare provider schema admits object-root free-form through real Tool val
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events, undefined, root);
+      const nav = await attendance(setting, harness, events, root);
       nav.prepare();
       await settleWithAdvice(
         nav,
@@ -214,7 +215,7 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events, undefined, root);
+      const nav = await attendance(setting, harness, events, root);
       nav.prepare();
       await settleWithAdvice(
         nav,
@@ -226,15 +227,18 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "advice");
       assert.equal(events[0].prose, "下一步送 fixer apply");
-      assert.equal(harness.retainedContext()?.currentSettlement?.kind, "accepted");
-      // early ready-wait + settlement feed output
-      assert.equal(harness.prompts(), 2, "early prepare then settlement-fed output");
+      assert.equal(
+        harness.entries.some((entry: any) => entry.customType === "ak-navigator-settlement" && entry.data?.kind === "accepted"),
+        true,
+      );
+      assert.equal(harness.prompts(), 1, "standby does not prompt; settlement is the only model round");
+      assert.equal(harness.promptTexts()[0], JSON.stringify({ kind: "accepted", role: "coder", phase: "apply", status: "completed" }));
     }
 
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events, undefined, root);
+      const nav = await attendance(setting, harness, events, root);
       nav.prepare();
       await settleWithAdvice(
         nav,
@@ -251,7 +255,7 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events, undefined, root);
+      const nav = await attendance(setting, harness, events, root);
       nav.prepare();
       await settleWithAdvice(
         nav,
@@ -312,8 +316,6 @@ test("#959 empty prepare body is no-advice; explicit prose settles as advice wit
       const nav = createNavigatorAttendance({
         context: context(root), role, phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
         subject: "work", authority: "owner decision",
-        loadSoul: async () => "route judgment",
-        loadRoleHelp: async (r) => `help ${r}`,
         createSession: harness.factory,
         modelSettingPath: setting,
         onEvent: async (event) => { events.push(event); } });
@@ -337,8 +339,6 @@ test("#959 empty prepare body is no-advice; explicit prose settles as advice wit
     const nav = createNavigatorAttendance({
       context: context(root), role: "fixer", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
       subject: "work", authority: "Controlling authority names coder apply next.",
-      loadSoul: async () => "route judgment",
-      loadRoleHelp: async (r) => `help ${r}`,
       createSession: harness.factory,
       modelSettingPath: setting,
       onEvent: async (event) => { events.push(event); } });
@@ -367,7 +367,7 @@ test("#959 package does not keep a prior-advice ledger; host session owns contin
 
     const harness = sessionHarness();
     const events: any[] = [];
-    const nav = await attendance(setting, harness, events, undefined, root);
+    const nav = await attendance(setting, harness, events, root);
 
     nav.prepare();
     await settleWithAdvice(
@@ -414,8 +414,6 @@ test("empty authority at prepare is honest context unavailable", async () => {
       subjectKey: "/repo/.ak/work",
       subject: "work subject: /repo/.ak/work",
       authority: "",
-      loadSoul: async () => "route law",
-      loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
       modelSettingPath: setting,
       createSession: async () => {
         throw new Error("session must not open without authority");
@@ -1101,8 +1099,6 @@ async function withNavigatorInfraGraceEnvelope(
           ...(attendanceOptions.contextError === undefined
             ? {}
             : { contextError: attendanceOptions.contextError }),
-          loadSoul: async () => "navigator soul",
-          loadRoleHelp: async () => "Usage: ak-role navigator --help",
           modelSettingPath,
           createSession: async (sessionOptions) => {
             const created = await createNativeNavigatorSessionFactory({
@@ -1222,4 +1218,31 @@ test("#959 post-role grace aborts hung nest; session_shutdown does not re-block"
     if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previousRunDir;
   }
+});
+
+test("navigator system prompt carries soul and route playbook, not a code-written round sentence", async () => {
+  const starts: Array<(event: { systemPrompt: string }) => Promise<unknown> | unknown> = [];
+  const tools = new Map<string, { name: string }>();
+  const host = {
+    registerTool(tool: { name: string }) { tools.set(tool.name, tool); },
+    getAllTools: () => [...tools.values()],
+    on(event: string, handler: (event: { systemPrompt: string }) => Promise<unknown> | unknown) {
+      if (event === "before_agent_start") starts.push(handler);
+    },
+  };
+  const runtime = createNavigatorRoleRuntime(host as never, {
+    loadSoul: async () => "route judgment",
+  });
+  await runtime.activate();
+  const returned: string[] = [];
+  for (const handler of starts) {
+    const result = await handler({ systemPrompt: "BASE" });
+    if (result !== null && typeof result === "object" && "systemPrompt" in result && typeof result.systemPrompt === "string") {
+      returned.push(result.systemPrompt);
+    }
+  }
+  const playbook = await readPackageMaterial("resources/navigator-route-playbook.md");
+  assert.equal(returned.some((text) => text.includes("<navigator_soul>") && text.includes("route judgment")), true);
+  assert.equal(returned.some((text) => text.startsWith("BASE") && text.includes(playbook)), true);
+  assert.equal(returned.some((text) => text.includes("本轮为待命轮") || text.includes("本轮为结算投喂轮")), false);
 });
