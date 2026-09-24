@@ -4,23 +4,15 @@
  * starts two ordinary single-axis runs here. Countersign keeps deferred
  * identity on this entry; the court diarist station stays in countersign-run.
  */
-import { dirname, join, resolve, sep } from "node:path";
+import { resolve, sep } from "node:path";
 
-import { listDirectOfficerRunPointers } from "../archivist-record-entry.ts";
-import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "../host-contracts.ts";
-import { gateOfficerForSubject, OFFICER_CONCLUSION_REASK } from "../gatekeeper-role.ts";
-import { runJudgeGates } from "../judge-role.ts";
-import { joinReadableGateItems, readableGateItem } from "../readable-gate-item.ts";
-import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
-import { OfficerEscalationParkError } from "../submission-errors.ts";
+import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
+import { OFFICER_CONCLUSION_REASK } from "../gatekeeper-role.ts";
+import { readableGateItem } from "../readable-gate-item.ts";
 import {
-  createDefaultGateOfficerSummon,
   latestQueuePayload,
   latestQueueStatus,
-  requireSubmissionGate,
 } from "../submission-gate.ts";
-import { readRecordedSubmissionRows, sealAcceptedSubmission } from "../submission-ledger.ts";
-import { persistReturnedRunState } from "./auto-resume.ts";
 import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
@@ -945,204 +937,10 @@ export async function continueParentAfterChild(
     return { exitCode: 0, admitted: resolved.admitted, terminal: resolved.terminal };
   }
   if (resolved !== undefined && (resolved.status === "continue" || resolved.status === "converged")) {
-    if (admitted.role === "judge") {
-      const finished = await finishOpenJudgeVerdict(loaded, resolved, env, io);
-      if (finished !== undefined) return finished;
-    }
     return runPublicInstructionSeatResume({
       runId: parentRunId,
       message: readableGateItem(latestQueuePayload(resolved.terminal)),
     }, { ...env, autoResumeLimit: 0 }, io);
   }
   return dispatchAdmitted(admitted, env, io);
-}
-
-function parentHostContext(
-  admitted: AdmittedRoleInvocation,
-  env: InstructionSeatRunEnv,
-): HostContext {
-  const sessionFile = join(admitted.runDirectory, "session", "session.jsonl");
-  return {
-    cwd: admitted.projectRoot,
-    mode: "print",
-    model: undefined,
-    runDirectory: admitted.runDirectory,
-    sessionManager: {
-      getSessionFile: () => sessionFile,
-      getSessionDir: () => dirname(sessionFile),
-      getEntries: () => [],
-      getLeafEntry: () => undefined,
-      getLeafId: () => admitted.runId,
-      getHeader: () => ({ type: "session", id: admitted.runId }),
-      appendCustomEntry: (customType, data) => env.sessionAppender(
-        env.principalAuthority,
-        admitted.principal,
-        customType,
-        data,
-      ),
-    },
-    abort() {},
-  };
-}
-
-function bufferIo(): { readonly io: CliIo; replay(target: CliIo): void } {
-  const stdout: string[] = [];
-  const stderr: string[] = [];
-  return {
-    io: {
-      stdout: (text) => stdout.push(text),
-      stderr: (text) => stderr.push(text),
-    },
-    replay(target) {
-      for (const text of stdout) target.stdout(text);
-      for (const text of stderr) target.stderr(text);
-    },
-  };
-}
-
-async function officerGateConverged(
-  sessionFile: string,
-  officer: string,
-  env: InstructionSeatRunEnv,
-): Promise<boolean> {
-  for (const item of listDirectOfficerRunPointers(sessionFile)) {
-    if (item.pointer.officer !== officer) continue;
-    const runDirectory = item.pointer.runDirectory ?? dirname(dirname(item.pointer.sessionFile));
-    const runId = runIdFromRunDirectory(runDirectory);
-    if (runId === undefined) return false;
-    const officerRun = await loadResumablePublicRole(env.home, runId, env.principalAuthority, true);
-    const terminal = await trySettlePublicSeat(
-      officerRun.admitted,
-      env.principalAuthority,
-      undefined,
-      undefined,
-      env.packageRoot,
-    );
-    return latestQueueStatus(terminal) === "converged";
-  }
-  return false;
-}
-
-async function escalatedOfficerResult(
-  error: OfficerEscalationParkError,
-  env: InstructionSeatRunEnv,
-): Promise<SeatRunResult> {
-  const fromResult = error.result.status === "escalate" ? error.result.runId : undefined;
-  const runId = fromResult ?? (
-    error.officerRunDirectory === undefined
-      ? undefined
-      : runIdFromRunDirectory(error.officerRunDirectory)
-  );
-  if (runId === undefined) throw error;
-  const officer = await loadResumablePublicRole(env.home, runId, env.principalAuthority, true);
-  const terminal = await trySettlePublicSeat(
-    officer.admitted,
-    env.principalAuthority,
-    undefined,
-    undefined,
-    env.packageRoot,
-  );
-  if (terminal === undefined || latestQueueStatus(terminal) !== "escalate") throw error;
-  return { exitCode: 0, admitted: officer.admitted, terminal };
-}
-
-/**
- * Finish the judge seat's own remaining gates for the unsealed candidate.
- * A pass with no newer verdict seals that candidate. A newer verdict stands.
- */
-async function finishOpenJudgeVerdict(
-  loaded: Awaited<ReturnType<typeof loadResumablePublicRole>>,
-  resolved: { readonly terminal: TerminalResult },
-  env: InstructionSeatRunEnv,
-  io: CliIo,
-): Promise<SeatRunResult | undefined> {
-  const admitted = loaded.admitted;
-  const rows = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, env.home);
-  const open = [...rows].reverse().find((row) => row.kind === "candidate" && row.toolCallId !== undefined);
-  if (open?.toolCallId === undefined) return undefined;
-  const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
-  const context = parentHostContext(admitted, env);
-  let chain: Awaited<ReturnType<typeof runJudgeGates>>;
-  try {
-    chain = await runJudgeGates({
-      gateAlreadyConverged: (subject) => officerGateConverged(
-        sessionFile,
-        gateOfficerForSubject(subject),
-        env,
-      ),
-      runGate: (subject) => requireSubmissionGate({
-        context,
-        subject,
-        toolCallId: open.toolCallId!,
-        submission: open.accepted,
-        ...(env.signal === undefined ? {} : { signal: env.signal }),
-        summonOfficer: createDefaultGateOfficerSummon({
-          cwd: admitted.projectRoot,
-          home: env.home,
-          packageRoot: env.packageRoot,
-          io,
-          ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
-          ...(env.createRunId === undefined ? {} : { createRunId: env.createRunId }),
-        }),
-        hostActions: {
-          bindSubmissionNonPass() {},
-          failInfrastructure(error): never {
-            throw error instanceof Error ? error : new Error(String(error));
-          },
-        },
-      }),
-    });
-  } catch (error) {
-    if (error instanceof OfficerEscalationParkError) return escalatedOfficerResult(error, env);
-    throw error;
-  }
-  const words = [
-    latestQueuePayload(resolved.terminal),
-    ...chain.passes.map((pass) => pass.receipt),
-  ].filter((item) => item !== undefined);
-  const message = joinReadableGateItems(words);
-  if (chain.status === "continue") {
-    return runPublicInstructionSeatResume({
-      runId: admitted.runId,
-      message,
-    }, { ...env, autoResumeLimit: 0 }, io);
-  }
-  const buffered = bufferIo();
-  const turn = await runPublicInstructionSeatResume({
-    runId: admitted.runId,
-    message,
-  }, { ...env, autoResumeLimit: 0 }, buffered.io);
-  if (turn.exitCode !== 0) {
-    buffered.replay(io);
-    return turn;
-  }
-  const beforeIds = new Set(rows.flatMap((row) => row.toolCallId === undefined ? [] : [row.toolCallId]));
-  const after = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, env.home);
-  const newerVerdict = after.some((row) => row.toolCallId !== undefined && !beforeIds.has(row.toolCallId));
-  const turnedToOfficer = turn.terminal?.roleOutcome.role !== undefined
-    && turn.terminal.roleOutcome.role !== admitted.role;
-  if (newerVerdict || turnedToOfficer) {
-    buffered.replay(io);
-    return turn;
-  }
-  await sealAcceptedSubmission({
-    context,
-    role: admitted.role as TerminalRoleName,
-    accepted: open.accepted,
-    toolCallId: open.toolCallId,
-    home: env.home,
-  });
-  const settled = await trySettlePublicSeat(
-    admitted,
-    env.principalAuthority,
-    undefined,
-    undefined,
-    env.packageRoot,
-  );
-  if (settled?.roleOutcome.kind !== "accepted") {
-    throw new Error("open judge verdict produced no accepted terminal");
-  }
-  await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
-  io.stdout(formatTerminalResult(settled));
-  return { exitCode: 0, admitted, terminal: settled };
 }
