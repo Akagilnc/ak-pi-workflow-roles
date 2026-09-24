@@ -9,6 +9,7 @@ import test from "node:test";
 import { requireSubmissionGate } from "../../src/submission-gate.ts";
 import {
   GatekeeperDecisionError,
+  officerConclusionReask,
   projectGatekeeperRun,
 } from "../../src/gatekeeper-role.ts";
 
@@ -18,7 +19,7 @@ test("#1028 secretariat_verdict reads the shared review status",
     const cases: ReadonlyArray<{
       label: string;
       payload: Record<string, unknown>;
-      expected: "needs_reask" | "converged" | "continue";
+      expected: "needs_reask" | "converged" | "continue" | "escalate";
     }> = [
       {
         label: "shared-word disguise status=pass only",
@@ -45,6 +46,16 @@ test("#1028 secretariat_verdict reads the shared review status",
         payload: { note: "no status field" },
         expected: "needs_reask",
       },
+      {
+        label: "failure declaration with escalate stays escalate",
+        payload: { status: "escalate", infrastructureFailure: { diagnostic: "disk full" } },
+        expected: "escalate",
+      },
+      {
+        label: "failure declaration does not pass as converged",
+        payload: { status: "converged", infrastructureFailure: { diagnostic: "disk full" } },
+        expected: "needs_reask",
+      },
     ];
     for (const item of cases) {
       const projected = await projectGatekeeperRun({
@@ -69,6 +80,16 @@ test("#1028 secretariat_verdict reads the shared review status",
         }),
       });
       assert.equal(projected.result.status, item.expected, item.label);
+      if ("infrastructureFailure" in item.payload) {
+        const receipt = "receipt" in projected.result ? projected.result.receipt : undefined;
+        assert.equal(
+          receipt !== null && typeof receipt === "object" && !Array.isArray(receipt)
+            ? (receipt as { infrastructureFailure?: { diagnostic?: unknown } }).infrastructureFailure?.diagnostic
+            : undefined,
+          "disk full",
+          item.label,
+        );
+      }
     }
 
     // Non-queue status reasks the officer; the next queue word ends the envelope.
@@ -180,6 +201,8 @@ test("#1028 secretariat_verdict reads the shared review status",
       },
     });
     assert.equal(compatReasks.length, 2);
+    assert.equal(compatReasks[1], officerConclusionReask("other"));
+    assert.equal(compatReasks[1]?.includes("other"), true);
     assert.equal(compat?.receipt && (compat.receipt as { status?: unknown }).status, "converged");
   },
 );

@@ -120,7 +120,7 @@ function isInfrastructureFailureDeclaration(
 }
 
 /** Non-empty trimmed diagnostic from the declaration, else undefined. */
-function infrastructureFailureDiagnostic(
+export function infrastructureFailureDiagnostic(
   parameters: unknown,
 ): string | undefined {
   if (!isInfrastructureFailureDeclaration(parameters)) return undefined;

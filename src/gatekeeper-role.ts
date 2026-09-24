@@ -5,9 +5,8 @@ import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { packagedGateStageLabel } from "./packaged-role-registry.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import { GatekeeperDecisionError, receivedDiscriminator, unreadableDiscriminatorNotice } from "./submission-errors.ts";
-import { REVIEW_QUEUE_STATUSES } from "./review-submission.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
-import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
+import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, reviewInfrastructureRoute } from "./review-submission.ts";
 import {
   GATEKEEPER_OUTPUT_TOOL_NAME,
   gatekeeperDecisionSchema,
@@ -228,6 +227,13 @@ function projectOfficerDecision(
   const status =
     (record !== undefined && typeof record.status === "string" ? record.status : undefined)
     ?? fallbackStatus;
+  const failureRoute = reviewInfrastructureRoute(decision);
+  if (failureRoute.kind === "reask") {
+    return { status: "needs_reask", officer, receipt, receivedStatus: failureRoute.receivedStatus };
+  }
+  if (failureRoute.kind === "escalate") {
+    return { status: "escalate", officer, receipt };
+  }
   const queueStatus = typeof status === "string" ? reviewQueueStatus(status) : undefined;
   if (queueStatus === "converged") {
     return { status: "converged", officer, receipt };

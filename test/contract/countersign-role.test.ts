@@ -72,7 +72,7 @@ test("review officers expose one shared output tool and receipt schema", () => {
   };
   assert.equal(shape.type, "object");
   assert.equal(shape.anyOf, undefined);
-  assert.deepEqual(shape.required ?? [], []);
+  assert.deepEqual(shape.required ?? [], ["status"]);
   assert.equal(shape.additionalProperties, true);
   assert.equal(typeof shape.properties.status?.description, "string");
   assert.ok(shape.properties.status?.description !== "");
@@ -80,7 +80,12 @@ test("review officers expose one shared output tool and receipt schema", () => {
     assert.equal(Value.Check(reviewSubmissionSchema, { status: word, extra: true }), true, word);
   }
   assert.equal(Value.Check(reviewSubmissionSchema, { status: "not-a-status" }), false);
-  assert.equal(Value.Check(reviewSubmissionSchema, { infrastructureFailure: { diagnostic: "disk full" } }), true);
+  assert.equal(Value.Check(reviewSubmissionSchema, {}), false);
+  assert.equal(Value.Check(reviewSubmissionSchema, { infrastructureFailure: { diagnostic: "disk full" } }), false);
+  assert.equal(Value.Check(reviewSubmissionSchema, {
+    status: "escalate",
+    infrastructureFailure: { diagnostic: "disk full" },
+  }), true);
   for (const field of ["fix", "classes", "decisionGate"]) {
     assert.equal(typeof shape.properties[field]?.description, "string");
     assert.equal(shape.required?.includes(field) ?? false, false);
@@ -99,7 +104,9 @@ test("review officers expose one shared output tool and receipt schema", () => {
   assert.equal(closed.required?.includes("status"), true);
   assert.equal(closed.required?.includes("infrastructureFailure"), true);
   const closedStatus = JSON.stringify(closed.properties?.status);
-  assert.equal(closedStatus.includes('"null"'), true);
+  assert.equal(closedStatus.includes('"null"'), false);
+  const closedFailure = JSON.stringify(closed.properties?.infrastructureFailure);
+  assert.equal(closedFailure.includes('"null"'), true);
   for (const word of REVIEW_QUEUE_WORDS) {
     assert.equal(closedStatus.includes(word), true);
   }
