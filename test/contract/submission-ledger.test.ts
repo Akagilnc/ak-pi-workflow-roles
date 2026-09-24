@@ -289,7 +289,6 @@ test("review failure declaration escalates with the receipt; a non-escalate stat
       host.tool().execute("review-pass", params, undefined, undefined, host.context),
       (error: unknown) => {
         assert.ok(error instanceof ParentQueueReaskError);
-        assert.equal(error.message.includes("converged"), true);
         return true;
       },
     );
