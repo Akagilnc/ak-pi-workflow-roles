@@ -167,6 +167,13 @@ test("packed artifact ships the release inventory without bundled method Skills"
     false,
     "npm artifact must not ship method Skill copies",
   );
+  for (const path of [
+    "resources/collector-bot-handbook.md",
+    "resources/navigator-route-playbook.md",
+    "resources/diarist-collect.md",
+  ]) {
+    assert.ok(extracted.paths.includes(path), `pack must include non-method resource ${path}`);
+  }
   assert.equal(
     extracted.paths.some((path) => path.startsWith("dist/package-resources/method-skill") || path.startsWith("src/package-resources/method-skill")),
     false,

@@ -26,6 +26,7 @@ import {
   seedGitProject,
   assertPublicFailureSettlement,
   multiTurnIntermediateRetained,
+  stdoutWithoutAuthorizedSkillWarnings,
 } from "../helpers/failure-settlement-kit.ts";
 import { recordAuditEscalationSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
@@ -422,7 +423,7 @@ test("zero-exit post-admission runs with no accepted row settle honestly as no_r
       });
       assert.equal(result.exitCode, 0, row.label);
       assert.equal(result.terminal?.roleOutcome.kind, "no_receipt", row.label);
-      assert.equal(stdout.length, 1, row.label);
+      assert.equal(stdoutWithoutAuthorizedSkillWarnings(stdout).length, 1, row.label);
       assert.equal(stderr.length, 0, row.label);
     });
   }

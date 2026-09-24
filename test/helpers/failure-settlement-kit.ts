@@ -8,6 +8,7 @@ import { access, readFile } from "node:fs/promises";
 import { withTempRoot } from "./primary-aware-cleanup.ts";
 import { join } from "node:path";
 
+import { isMissingMethodSkillWarning } from "../../src/public-cli/machine-method-skills.ts";
 import {
   exitCodeForTerminalOutcome,
   isLawfulTypedTerminalOutcome,
@@ -80,6 +81,11 @@ export function multiTurnIntermediateRetained(runId: string): readonly unknown[]
   ] as const;
 }
 
+/** Terminal writes only. Authorized missing-Skill warnings share stdout and are not a second Terminal. */
+export function stdoutWithoutAuthorizedSkillWarnings(stdout: readonly string[]): string[] {
+  return stdout.filter((chunk) => !isMissingMethodSkillWarning(chunk));
+}
+
 export async function assertPublicFailureSettlement(input: {
   result: { exitCode: number; terminal?: TerminalResult };
   stdout: string[];
@@ -92,9 +98,10 @@ export async function assertPublicFailureSettlement(input: {
   identityCode?: string | number;
 }): Promise<{ terminal: TerminalResult; errorRef: TerminalArtifactRef }> {
   assert.equal(input.result.exitCode, 1);
-  assert.equal(input.stdout.length, 1, "exactly one stdout Terminal emission");
+  const terminalEmissions = stdoutWithoutAuthorizedSkillWarnings(input.stdout);
+  assert.equal(terminalEmissions.length, 1, "exactly one stdout Terminal emission");
   assert.equal(input.stderr.length, 1, "exactly one stderr diagnostic emission");
-  assert.ok((input.stdout[0] ?? "").length > 0);
+  assert.ok((terminalEmissions[0] ?? "").length > 0);
   assert.ok((input.stderr[0] ?? "").length > 0);
 
   const terminal = input.result.terminal;

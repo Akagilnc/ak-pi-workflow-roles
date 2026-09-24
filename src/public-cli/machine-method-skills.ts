@@ -43,6 +43,23 @@ async function occupied(path: string): Promise<boolean> {
   }
 }
 
+const MISSING_SKILL_WARNING_TAIL =
+  "; its method guidance may be unavailable and reduce work quality. Run `ak-role setup` to install required Skills.\n";
+
+function missingMethodSkillWarning(skill: string, role: string): string {
+  return `Warning: required machine Skill "${skill}" is missing for ${role}${MISSING_SKILL_WARNING_TAIL}`;
+}
+
+/** True only for the normal-output warning this module writes. Tests use it to separate that warning from a Terminal emission. */
+export function isMissingMethodSkillWarning(text: string): boolean {
+  const prefix = 'Warning: required machine Skill "';
+  const middle = '" is missing for ';
+  if (!text.startsWith(prefix) || !text.endsWith(MISSING_SKILL_WARNING_TAIL)) return false;
+  const body = text.slice(prefix.length, text.length - MISSING_SKILL_WARNING_TAIL.length);
+  const roleAt = body.indexOf(middle);
+  return roleAt > 0 && roleAt + middle.length < body.length;
+}
+
 export async function warnMissingMethodSkills(
   home: string,
   host: string | undefined,
@@ -56,9 +73,7 @@ export async function warnMissingMethodSkills(
     if (installedMethodSkillPath(home, skill) === undefined ||
       (linkedRoot !== undefined && installedSkillPath(linkedRoot, skill) === undefined)) missing.push(skill);
   }
-  for (const skill of missing) {
-    stdout(`Warning: required machine Skill "${skill}" is missing for ${role}; its method guidance may be unavailable and reduce work quality. Run \`ak-role setup\` to install required Skills.\n`);
-  }
+  for (const skill of missing) stdout(missingMethodSkillWarning(skill, role));
 }
 
 function addSkills(source: string, skills: readonly string[], home: string): boolean {
