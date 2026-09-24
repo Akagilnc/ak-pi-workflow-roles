@@ -1434,7 +1434,6 @@ export function resumeTurnRequestProjectionOptions(
     continuation: {
       kind: "resume",
       prompt,
-      ...(request.receipts === undefined ? {} : { receipts: request.receipts }),
     },
     ...(request.message === undefined ? {} : { courtAttemptId: randomUUID() }),
     ...(env.stationChild === undefined ? {} : { stationChild: env.stationChild }),

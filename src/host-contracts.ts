@@ -143,8 +143,6 @@ export type RoleTurnContinuation =
   | {
       readonly kind: "resume";
       readonly prompt: string;
-      /** Structured gate receipts this prompt presents. Absent when the resume has none. */
-      readonly receipts?: readonly unknown[];
       /**
        * Stored native host session/thread id for a public explicit resume.
        * Absent on in-call auto-resume and in-gate retries; those still load
