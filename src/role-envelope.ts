@@ -496,7 +496,8 @@ export async function prepareRoleEnvelope(options: {
       return { content: projected.content, isError: projected.isError };
     } catch (error) {
       if (error instanceof OfficerEscalationParkError) {
-        // Officer escalation is that officer's run. Do not seal, retry, or fail the parent turn.
+        // Pause this tool call on the officer. Do not seal the parent and do not retry it
+        // in this process. A later resume of the parent carries the officer's words.
         return { content: [], isError: false };
       }
       let content: ContentPart[];
