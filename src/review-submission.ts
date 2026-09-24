@@ -13,8 +13,8 @@ export const REVIEW_QUEUE_STATUSES: ReadonlySet<string> = new Set(REVIEW_QUEUE_W
 /**
  * One object root. Codex structured output rejects a root anyOf, and status
  * stays a required three-state enum with no omitted-status failure branch.
- * A review seat that can still submit records a real external-dependency
- * failure as escalate plus the existing infrastructureFailure field.
+ * External-dependency failure while the seat can still submit:
+ * docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md
  */
 export const reviewSubmissionSchema = withTerminatingOutputDeclarations(
   Type.Object({
