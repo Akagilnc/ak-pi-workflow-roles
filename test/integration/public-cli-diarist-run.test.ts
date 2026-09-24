@@ -43,7 +43,6 @@ import {
 } from "../../src/ticket-provenance.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   roleTurnHostFromStructuredOutputRounds,
