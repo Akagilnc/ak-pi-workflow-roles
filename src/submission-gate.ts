@@ -7,7 +7,7 @@
  *   parent submit → summon officer → read conclusion field
  *   converged → accept end
  *   continue → raw officer receipt as a nonterminal result; parent may resubmit
- *   escalate → audit_escalation terminal, without binding a correctable parent submission
+ *   escalate → park the officer; parent waits. Do not hang the escalation on the parent.
  *   unrecognized status → resume officer with plain-language re-ask (no round cap)
  *   transport / no_receipt → present honestly
  * Four pairs: countersign↔notary, judge↔auditor, worker↔inspector, secretariat↔countersign (#969).
@@ -26,7 +26,98 @@ import {
   type GateOfficer,
   type GateOfficerSummon,
 } from "./gatekeeper-role.ts";
+import { OfficerEscalationParkError } from "./submission-errors.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
+import type { TerminalResult } from "./public-cli/terminal.ts";
+
+/** Durable parent-session fact: this turn's officer escalate is waiting on that officer. */
+export const OFFICER_ESCALATION_PARK_ENTRY_TYPE = "ak-role-officer-escalation-park" as const;
+
+export type OfficerEscalationPark = {
+  readonly officerRunId?: string;
+  readonly officerRunDirectory?: string;
+  readonly submission?: unknown;
+  readonly toolCallId?: string;
+  readonly receipt?: unknown;
+  readonly courtAttemptId?: string;
+  readonly attemptHeaderId?: string;
+};
+
+function parkFromData(data: Record<string, unknown>): OfficerEscalationPark {
+  return {
+    ...(typeof data.officerRunId === "string" && data.officerRunId.trim() !== ""
+      ? { officerRunId: data.officerRunId }
+      : {}),
+    ...(typeof data.officerRunDirectory === "string" && data.officerRunDirectory.trim() !== ""
+      ? { officerRunDirectory: data.officerRunDirectory }
+      : {}),
+    ...(data.submission === undefined ? {} : { submission: data.submission }),
+    ...(typeof data.toolCallId === "string" && data.toolCallId.trim() !== ""
+      ? { toolCallId: data.toolCallId }
+      : {}),
+    ...(data.receipt === undefined ? {} : { receipt: data.receipt }),
+    ...(typeof data.courtAttemptId === "string" && data.courtAttemptId.trim() !== ""
+      ? { courtAttemptId: data.courtAttemptId }
+      : {}),
+    ...(typeof data.attemptHeaderId === "string" && data.attemptHeaderId.trim() !== ""
+      ? { attemptHeaderId: data.attemptHeaderId }
+      : {}),
+  };
+}
+
+/** Latest park fact on the parent session. Missing file is absence, not damage. */
+export async function readOfficerEscalationPark(
+  sessionFile: string,
+): Promise<OfficerEscalationPark | undefined> {
+  const { readFile } = await import("node:fs/promises");
+  let text: string;
+  try {
+    text = await readFile(sessionFile, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  let latest: OfficerEscalationPark | undefined;
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(line) as unknown;
+    } catch {
+      continue;
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+    const entry = parsed as { type?: unknown; customType?: unknown; data?: unknown };
+    if (entry.type !== "custom" || entry.customType !== OFFICER_ESCALATION_PARK_ENTRY_TYPE) continue;
+    if (entry.data === null || typeof entry.data !== "object" || Array.isArray(entry.data)) continue;
+    latest = parkFromData(entry.data as Record<string, unknown>);
+  }
+  return latest;
+}
+
+/** Queue word of the latest this-terminal payload. History does not outrank it. */
+export function latestQueueStatus(terminal: TerminalResult | undefined): string | undefined {
+  const outcome = terminal?.roleOutcome;
+  if (outcome === undefined) return undefined;
+  if (outcome.kind === "audit_escalation") return "escalate";
+  if (outcome.kind !== "accepted") return undefined;
+  const latest = outcome.payloads?.[outcome.payloads.length - 1];
+  if (latest !== null && typeof latest === "object" && !Array.isArray(latest)) {
+    const status = (latest as { status?: unknown }).status;
+    if (typeof status === "string" && status.trim() !== "") return status;
+  }
+  return typeof outcome.status === "string" && outcome.status.trim() !== ""
+    ? outcome.status
+    : undefined;
+}
+
+export function latestQueuePayload(terminal: TerminalResult | undefined): unknown {
+  const outcome = terminal?.roleOutcome;
+  if (outcome === undefined) return undefined;
+  if (outcome.kind !== "accepted" && outcome.kind !== "audit_escalation") return undefined;
+  const payloads = outcome.payloads ?? [];
+  return payloads.length === 0 ? undefined : payloads[payloads.length - 1];
+}
 import { sessionFileFromPublicSummon } from "./session-assistant-usage.ts";
 
 /**
@@ -188,10 +279,34 @@ export async function requireSubmissionGate(options: {
       });
       options.hostActions.failInfrastructure(failure, options.context, options.toolCallId);
     }
-    // Escalation ends the parent without a correctable tool error or resubmission.
-    // Each caller projects the existing audit_escalation terminal.
+    // Escalation pauses the officer. The parent waits; the verdict is not delivered to it.
     if (gatekeeper.status === "escalate") {
-      throw new GatekeeperDecisionError(gatekeeper);
+      const officerRunDirectory = projected.summoned?.runDirectory;
+      const session = options.context.sessionManager;
+      const courtAttemptId = "courtAttemptId" in options.context
+        ? options.context.courtAttemptId
+        : undefined;
+      const headerId = session.getHeader?.()?.id;
+      if ("appendCustomEntry" in session) {
+        session.appendCustomEntry(OFFICER_ESCALATION_PARK_ENTRY_TYPE, {
+          ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
+            ? { officerRunId: gatekeeper.runId }
+            : {}),
+          ...(typeof officerRunDirectory === "string" && officerRunDirectory.trim() !== ""
+            ? { officerRunDirectory }
+            : {}),
+          ...(options.submission === undefined ? {} : { submission: options.submission }),
+          toolCallId: options.toolCallId,
+          receipt: gatekeeper.receipt,
+          ...(typeof courtAttemptId === "string" && courtAttemptId.trim() !== ""
+            ? { courtAttemptId }
+            : {}),
+          ...(typeof headerId === "string" && headerId.trim() !== ""
+            ? { attemptHeaderId: headerId }
+            : {}),
+        });
+      }
+      throw new OfficerEscalationParkError(gatekeeper, officerRunDirectory);
     }
     // no_receipt: keep the lifecycle failure channel; continue is an ordinary
     // nonterminal tool result above, not an exception or correctable rejection.

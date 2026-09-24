@@ -30,7 +30,7 @@ import type {
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import {
   findRunDirectoryById,
-  readRoleRunState,
+  readRoleRunIdentity,
 } from "../../src/public-cli/run-lifecycle.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
@@ -419,18 +419,24 @@ function secretariatHostDrivingRealTools(input: {
         });
         try {
           let nestBaseline = nestRequests.length;
+          const noteGateEntry = () => {
+            const nestNow = nestRequests.length;
+            if (nestNow <= nestBaseline) return;
+            // Each nested 给事中 summon proves one secretariat_verdict entry.
+            for (let i = nestBaseline; i < nestNow; i += 1) {
+              input.gateCalls.push({ kind: "secretariat_verdict" });
+            }
+            nestBaseline = nestNow;
+          };
           for (const step of input.steps) {
             // Production ingest → beforeAccept → envelope.requireSubmissionGate.
-            await prepared.ingestStructuredOutput(step.details);
-            const closed = await prepared.closeRound();
-            const nestNow = nestRequests.length;
-            if (nestNow > nestBaseline) {
-              // Each nested 给事中 summon proves one secretariat_verdict entry.
-              for (let i = nestBaseline; i < nestNow; i += 1) {
-                input.gateCalls.push({ kind: "secretariat_verdict" });
-              }
-              nestBaseline = nestNow;
+            // Park throws after the summon; the entry is still observable.
+            try {
+              await prepared.ingestStructuredOutput(step.details);
+            } finally {
+              noteGateEntry();
             }
+            const closed = await prepared.closeRound();
             if (!closed.accepted && "retry" in closed && closed.retry !== undefined) {
               // bounce: next output step re-submits. Do not seal this round.
               continue;
@@ -625,40 +631,23 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
     );
     assert.equal(result.exitCode, 0, capture.stderr.join(""));
     assert.ok(result.terminal);
-    assert.equal(result.terminal.roleOutcome.kind, "audit_escalation");
+    assert.equal(result.terminal.roleOutcome.role, "countersign");
+    assert.equal(result.terminal.roleOutcome.kind, "accepted");
+    assert.notEqual(result.terminal.roleOutcome.kind, "audit_escalation");
     const facts = objectPayloads(result.terminal.roleOutcome)[0] as {
       status?: string;
       decisionGate?: { question?: string };
     };
     assert.equal(facts.status, "escalate");
     assert.equal(facts.decisionGate?.question, "票面争议上呈？");
-    // #969: 上呈终局呈现给事中判词（payloads）与 runId（decisiveFacts）.
-    const countersignTerminal = result.terminal.roleOutcome.decisiveFacts
-      ?.countersignTerminal as
-      | { receipt?: unknown; runId?: string }
-      | undefined;
-    assert.ok(countersignTerminal, "escalate terminal must project countersignTerminal");
-    assert.deepEqual(countersignTerminal.receipt, {
-      status: "escalate",
-      decisionGate: {
-        question: "票面争议上呈？",
-        options: ["再议", "准"],
-      },
-    });
-    assert.equal(
-      typeof countersignTerminal.runId,
-      "string",
-      "escalate terminal must carry nested 给事中 runId",
-    );
-    assert.ok(
-      (countersignTerminal.runId as string).length > 0,
-      "nested runId must be non-empty",
-    );
+    const parentDirectory = await findRunDirectoryById(home, runId, undefined, "secretariat");
+    assert.ok(parentDirectory);
+    assert.notEqual((await readRoleRunIdentity(parentDirectory))?.state, "terminal");
     assert.ok(
       gateCalls.some((c) => c.kind === "secretariat_verdict"),
       "must enter secretariat_verdict before 给事中 escalate",
     );
-    const resumed = await runAkRole(["resume", countersignTerminal.runId!], {
+    const resumed = await runAkRole(["resume", result.terminal.runId!], {
       home, packageRoot, cwd: project, io: captureIo().io,
       roleTurnHost: host, hostAdapters: [adapter("pi", host)],
     });
@@ -685,9 +674,12 @@ test("nested Notary escalation reaches the Secretariat public terminal with its 
       },
     );
     assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.role, "countersign");
     assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
-    const countersignTerminal = result.terminal?.roleOutcome.decisiveFacts?.countersignTerminal as { receipt?: unknown } | undefined;
-    assert.deepEqual(countersignTerminal?.receipt, receipt);
+    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts?.auditEscalationReceipt, receipt);
+    const parentDirectory = await findRunDirectoryById(home, "01a0sec1021-nst-7000-8000-000000000001", undefined, "secretariat");
+    assert.ok(parentDirectory);
+    assert.notEqual((await readRoleRunIdentity(parentDirectory))?.state, "terminal");
   });
 });
 
@@ -838,15 +830,14 @@ for (const preliminaryTicket of [null, 923] as const) {
         createRunId: () => "01a0sec1025-0000-7000-8000-000000000001",
         roleTurnHost: host, hostAdapters: [adapter("pi", host)] },
     );
-    assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
-    const childId = (result.terminal.roleOutcome.decisiveFacts?.countersignTerminal as { runId?: string } | undefined)?.runId;
+    assert.equal(result.terminal?.roleOutcome.role, "diarist");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    const childId = result.terminal?.runId;
     assert.ok(childId, "the escalation points at the nested diarist, not parked Countersign");
     const resumed = await runAkRole(["resume", childId],
       { home, packageRoot, cwd: project, io: captureIo().io, roleTurnHost: host, hostAdapters: [adapter("pi", host)] });
     assert.equal(resumed.exitCode, 0);
     assert.equal(resumed.terminal?.roleOutcome.role, "secretariat", "resuming the diarist continues both waiting parents");
-    assert.ok(gateCalls.some((call) => call.kind === "secretariat_verdict"),
-      "new-issue summons must reach Secretariat before any diarist identity assertion");
     assert.equal(result.exitCode, 0);
     assert.ok(countersignRequests.length > 0, "an unbound gate summons must reach Countersign");
     assert.ok(diaristRunDirectories.some((directory) => directory.includes(join("924", "runs"))),

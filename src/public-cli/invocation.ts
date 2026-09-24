@@ -515,6 +515,7 @@ async function mergeInvocationIdentityPage(
 export async function persistAdmittedSourceRunPath(
   admitted: AdmittedRoleInvocation,
   sourceRunPath: string,
+  auditorSubject?: "judge" | "doctor",
 ): Promise<void> {
   if (sourceRunPath.trim() === "") {
     throw new Error("persistAdmittedSourceRunPath requires a non-empty sourceRunPath");
@@ -524,15 +525,20 @@ export async function persistAdmittedSourceRunPath(
     string,
     unknown
   >;
-  if (typeof current.sourceRunPath === "string") {
-    if (current.sourceRunPath === sourceRunPath) return;
+  if (typeof current.sourceRunPath === "string" && current.sourceRunPath !== sourceRunPath) {
     throw new Error(
       `persistAdmittedSourceRunPath refuses to replace ${current.sourceRunPath} with ${sourceRunPath}`,
     );
   }
+  const sameSubject = auditorSubject === undefined || current.auditorSubject === auditorSubject;
+  if (current.sourceRunPath === sourceRunPath && sameSubject) return;
   await writeFile(
     admittedPath,
-    `${JSON.stringify({ ...current, sourceRunPath }, null, 2)}\n`,
+    `${JSON.stringify({
+      ...current,
+      sourceRunPath,
+      ...(auditorSubject === undefined ? {} : { auditorSubject }),
+    }, null, 2)}\n`,
     "utf8",
   );
 }

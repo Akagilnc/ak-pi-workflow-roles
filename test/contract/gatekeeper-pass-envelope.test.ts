@@ -12,6 +12,7 @@ import {
   GatekeeperDecisionError,
   projectGatekeeperRun,
 } from "../../src/gatekeeper-role.ts";
+import { OfficerEscalationParkError } from "../../src/submission-errors.ts";
 
 test("#1028 secretariat_verdict reads the shared review status",
   async () => {
@@ -161,13 +162,13 @@ test("#969 secretariat_verdict escalate throws without bindSubmissionNonPass (en
       (error: unknown) => {
         thrown = error;
         return (
-          error instanceof GatekeeperDecisionError
+          error instanceof OfficerEscalationParkError
           && error.result.status === "escalate"
         );
       },
     );
     assert.equal(nonPass.length, 0, "escalate must not arm parent retry bind");
-    assert.ok(thrown instanceof GatekeeperDecisionError);
+    assert.ok(thrown instanceof OfficerEscalationParkError);
     assert.equal(thrown.result.status, "escalate");
     assert.equal(
       thrown.result.status === "escalate" ? thrown.result.runId : undefined,

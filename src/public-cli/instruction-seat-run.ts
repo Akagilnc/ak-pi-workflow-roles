@@ -4,9 +4,17 @@
  * starts two ordinary single-axis runs here. Countersign keeps deferred
  * identity on this entry; the court diarist station stays in countersign-run.
  */
-import { resolve, sep } from "node:path";
+import { dirname, join, resolve, sep } from "node:path";
 
-import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
+import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "../host-contracts.ts";
+import { readableGateItem } from "../readable-gate-item.ts";
+import {
+  latestQueuePayload,
+  latestQueueStatus,
+  readOfficerEscalationPark,
+} from "../submission-gate.ts";
+import { sealAcceptedSubmission } from "../submission-ledger.ts";
+import { persistReturnedRunState } from "./auto-resume.ts";
 import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
@@ -22,7 +30,7 @@ import {
   packagedRebindSourceOnResume,
   packagedRoleMetadata,
 } from "../packaged-role-registry.ts";
-import { isAuditorSoulRole } from "../auditor-soul.ts";
+import { isAuditorSoulRole, readAuditorResumeBinding } from "../auditor-soul.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
   admitPublicRole,
@@ -71,6 +79,7 @@ import {
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
   type TerminalResult,
+  type TerminalRoleName,
 } from "./terminal.ts";
 import {
   admittedSeatTurnDetails,
@@ -251,6 +260,9 @@ async function dispatchAdmitted(
   }
   const adapters = seatAdapters(admitted, env, material);
   const execute = async (activeEnv: InstructionSeatRunEnv): Promise<SeatRunResult> => {
+    if (activeEnv.correlationId !== undefined && activeEnv.correlationId.trim() !== "") {
+      await recordAdmittedCorrelation(admitted, activeEnv.correlationId);
+    }
     const auto = "inCallAutoResume" in record && record.inCallAutoResume === true;
     if (auto) {
       return await runPostAdmissionResumable({
@@ -732,7 +744,7 @@ export async function runPublicInstructionSeat(
     }
   }
   if (record.sameParent === "subject-source" && auditorSource !== undefined) {
-    await persistAdmittedSourceRunPath(admitted, auditorSource);
+    await persistAdmittedSourceRunPath(admitted, auditorSource, auditorSubject);
   }
 
   const runAdmitted = async (): Promise<SeatRunResult> => {
@@ -784,7 +796,8 @@ export async function runPublicInstructionSeatResume(
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<SeatRunResult> {
-  return runPostAdmissionSeatResume<AdmittedRoleInvocation>({
+  const resume = () => runPostAdmissionSeatResume<AdmittedRoleInvocation>({
+
     request,
     env,
     io,
@@ -836,6 +849,117 @@ export async function runPublicInstructionSeatResume(
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
+  let binding: Awaited<ReturnType<typeof readAuditorResumeBinding>>;
+  try {
+    const loaded = await loadResumablePublicRole(env.home, request.runId, env.principalAuthority, true);
+    binding = loaded.admitted.role === "auditor"
+      ? await readAuditorResumeBinding(loaded.admitted.runDirectory)
+      : undefined;
+  } catch (error) {
+    if (!(error instanceof CliUsageError)) throw error;
+  }
+  if (binding !== undefined) {
+    return withAuditorSoulEnv({
+      subject: binding.subject,
+      sourceRunDirectory: binding.sourceRunDirectory,
+      run: resume,
+    });
+  }
+  return resume();
+}
+
+function hostContextForAdmitted(
+  admitted: AdmittedRoleInvocation,
+  park: { readonly courtAttemptId?: string; readonly attemptHeaderId?: string },
+): HostContext {
+  const sessionFile = join(admitted.runDirectory, "session", "session.jsonl");
+  const headerId = park.attemptHeaderId ?? admitted.runId;
+  return {
+    cwd: admitted.projectRoot,
+    mode: "print",
+    model: undefined,
+    runDirectory: admitted.runDirectory,
+    ...(park.courtAttemptId === undefined ? {} : { courtAttemptId: park.courtAttemptId }),
+    sessionManager: {
+      getSessionFile: () => sessionFile,
+      getSessionDir: () => dirname(sessionFile),
+      getEntries: () => [],
+      getLeafEntry: () => undefined,
+      getLeafId: () => headerId,
+      getHeader: () => ({ type: "session", id: headerId }),
+    },
+    abort() {},
+  };
+}
+
+/**
+ * Officer already submitted after the park. Converged seals the waiting parent
+ * submission — no second parent turn. continue returns the officer words to the parent.
+ */
+async function continueParkedParent(
+  loaded: Awaited<ReturnType<typeof loadResumablePublicRole>>,
+  child: AdmittedRoleInvocation,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult | undefined> {
+  const sessionFile = env.principalAuthority.decode(loaded.admitted.principal).sessionFile;
+  const park = await readOfficerEscalationPark(sessionFile);
+  if (park?.submission === undefined) return undefined;
+  const childTerminal = await trySettlePublicSeat(
+    child,
+    env.principalAuthority,
+    undefined,
+    undefined,
+    env.packageRoot,
+  );
+  const status = latestQueueStatus(childTerminal);
+  if (status === undefined || status === "escalate") return undefined;
+  if (status === "continue") {
+    return runPublicInstructionSeatResume({
+      runId: loaded.admitted.runId,
+      message: readableGateItem(latestQueuePayload(childTerminal)),
+    }, env, io);
+  }
+  await sealAcceptedSubmission({
+    context: hostContextForAdmitted(loaded.admitted, park),
+    role: loaded.admitted.role as TerminalRoleName,
+    accepted: park.submission,
+    toolCallId: park.toolCallId ?? "parked-parent",
+    home: env.home,
+  });
+  const sealedTicket = park.submission !== null
+    && typeof park.submission === "object"
+    && !Array.isArray(park.submission)
+    && isSafePositiveTicketNumber((park.submission as { ticketNumber?: unknown }).ticketNumber)
+    ? (park.submission as { ticketNumber: number }).ticketNumber
+    : undefined;
+  if (sealedTicket !== undefined && loaded.admitted.ticketNumber === undefined) {
+    await bindAdmittedTicketNumber(loaded.admitted, sealedTicket);
+  }
+  await relocateAdmittedRunToTicket(loaded.admitted, env.principalAuthority);
+  const settled = await trySettlePublicSeat(
+    loaded.admitted,
+    env.principalAuthority,
+    undefined,
+    undefined,
+    env.packageRoot,
+  );
+  if (settled?.roleOutcome.kind !== "accepted") {
+    throw new Error("parked parent produced no accepted terminal");
+  }
+  const terminal: TerminalResult = {
+    ...settled,
+    roleOutcome: {
+      ...settled.roleOutcome,
+      decisiveFacts: {
+        ...(settled.roleOutcome.decisiveFacts ?? {}),
+        officerReceipt: latestQueuePayload(childTerminal),
+      },
+    },
+  };
+  await persistReturnedRunState(loaded.admitted, env.principalAuthority, { lawful: true });
+  io.stdout(formatTerminalResult(terminal));
+  return { exitCode: 0, admitted: loaded.admitted, terminal };
 }
 
 /** Continue the parent once any escalated child has submitted. */
@@ -846,6 +970,8 @@ export async function continueParentAfterChild(
   io: CliIo,
 ): Promise<SeatRunResult> {
   const loaded = await loadResumablePublicRole(env.home, parentRunId, env.principalAuthority, true);
+  const parked = await continueParkedParent(loaded, child, env, io);
+  if (parked !== undefined) return parked;
   if (loaded.run.state !== "admitted") {
     return runPublicInstructionSeatResume({ runId: parentRunId }, env, io);
   }

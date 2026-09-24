@@ -68,11 +68,15 @@ import {
   withEngineDetourInvocationScope,
 } from "../engine-detour-usage.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
+import { latestQueueStatus, readOfficerEscalationPark } from "../submission-gate.ts";
+import { trySettlePublicSeat } from "./settlement.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
   clearCurrentCourt,
   clearTypedProviderHttpObservation,
   describeErrorIdentity,
+  loadResumablePublicRole,
+  markRunAdmitted,
   markRunRunning,
   readCurrentCourt,
   recordCurrentCourt,
@@ -1016,6 +1020,32 @@ export async function dispatchPostAdmissionTurn<
         admitted.principal !== undefined
           ? env.principalAuthority.decode(admitted.principal).sessionFile
           : "";
+      const park = sessionFile === "" ? undefined : await readOfficerEscalationPark(sessionFile);
+      if (park?.officerRunId !== undefined) {
+        const officer = await loadResumablePublicRole(
+          env.home,
+          park.officerRunId,
+          env.principalAuthority,
+          true,
+        );
+        const officerTerminal = await trySettlePublicSeat(
+          officer.admitted,
+          env.principalAuthority,
+          undefined,
+          undefined,
+          env.packageRoot,
+        );
+        if (officerTerminal !== undefined && latestQueueStatus(officerTerminal) === "escalate") {
+          await markRunAdmitted(admitted, env.principalAuthority);
+          return await finishAfterTurn({
+            exitCode: 0,
+            admitted,
+            terminal: officerTerminal as T,
+            skipAutoResume: true,
+            turnDispatched: true,
+          });
+        }
+      }
       const runnerKnownFailure =
         adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
           ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
