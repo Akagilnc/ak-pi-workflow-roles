@@ -45,8 +45,8 @@ export type CountersignRunEnv = PostAdmissionEnv & {
    */
   gateReviewInstruction?: string;
   /**
-   * #969 / #987 gate path: parent run durable board ticket handoff for bind only.
-   * Resume lookup uses parentRunPath — never this ticket number (#987 Result 7).
+   * #969 / #987 gate path: parent run durable board ticket handoff for bind.
+   * Same-ticket resume lookup narrows the parent path by this typed number.
    */
   boundTicketNumber?: number;
   /**
@@ -337,6 +337,7 @@ export async function runCountersignCourtDiaristStation(
   admitted: AdmittedCountersignInvocation,
   env: CountersignRunEnv,
   io: CliIo,
+  afterTicketNumber?: number,
 ): Promise<{ readonly terminal: import("./terminal.ts").TerminalResult; readonly childRunId?: string } | undefined> {
   if (env.runCourtDiaristStation !== undefined) {
     await env.runCourtDiaristStation(admitted);
@@ -364,7 +365,8 @@ export async function runCountersignCourtDiaristStation(
     refreshTickets = [admitted.ticketNumber];
   }
 
-  for (const ticketNumber of refreshTickets) {
+  const completedIndex = afterTicketNumber === undefined ? -1 : refreshTickets.indexOf(afterTicketNumber);
+  for (const ticketNumber of refreshTickets.slice(completedIndex + 1)) {
     const outcome = await invokeCourtDiarist(
       {
         instruction: `整理 #${ticketNumber} 的本案依据。`,

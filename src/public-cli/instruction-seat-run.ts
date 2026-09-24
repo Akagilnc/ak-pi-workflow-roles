@@ -389,6 +389,7 @@ async function runCountersignBody(
       projectRoot: resolve(parsed.project ?? env.cwd),
       role: "countersign",
       parentRunPath: gateParentRunPath,
+      ...(isSafePositiveTicketNumber(env.boundTicketNumber) ? { ticketNumber: env.boundTicketNumber } : {}),
       freshSummons: env.freshSummons,
       summons: {
         sourceRunPath: gateParentRunPath,
@@ -762,10 +763,6 @@ export async function runPublicInstructionSeat(
         io.stdout(formatTerminalResult(outcome.terminal));
         return { exitCode: 0, admitted, terminal: outcome.terminal };
       }
-      if (outcome.identity.kind === "ticket") {
-        await bindAdmittedTicketNumber(admitted, outcome.identity.ticketNumber);
-        await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-      }
     }
     return dispatchAdmitted(admitted, env, io);
   };
@@ -851,9 +848,13 @@ export async function continueParentAfterDiarist(
   const page = JSON.parse(await readFile(loaded.admitted.admittedRequestPath, "utf8")) as Record<string, unknown>;
   if (!Array.isArray(page.childDiaristRunIds) || !page.childDiaristRunIds.includes(child.runId)) return undefined;
   const admitted = loaded.admitted;
-  if (isSafePositiveTicketNumber(child.ticketNumber)) {
-    await bindAdmittedTicketNumber(admitted, child.ticketNumber);
-    await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+  if (admitted.role === "countersign" && admitted.ticketNumber !== undefined) {
+    const refresh = await runCountersignCourtDiaristStation(admitted, env, io, child.ticketNumber);
+    if (refresh !== undefined) {
+      if (refresh.childRunId !== undefined) await recordChildDiaristRun(admitted, refresh.childRunId);
+      io.stdout(formatTerminalResult(refresh.terminal));
+      return { exitCode: 0, admitted, terminal: refresh.terminal };
+    }
   }
   return dispatchAdmitted(admitted, env, io);
 }

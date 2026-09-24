@@ -565,11 +565,8 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
       countersignRequests.length >= 1,
       "gate must summon countersign",
     );
-    // #987: second 给事中 leg resumes via same secretariat parentRunPath.
-    assert.ok(
-      countersignRequests.some((r) => r.continuation.kind === "resume"),
-      "封驳后给事中 must resume same parent",
-    );
+    // The submission changed #923 to #924: same parent is not same ticket.
+    assert.equal(countersignRequests.filter((r) => r.continuation.kind === "resume").length, 0);
   });
 });
 }
@@ -797,7 +794,8 @@ test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
   });
 });
 
-test("public secretariat reaches its turn before an unnumbered new issue exists", async () => {
+for (const preliminaryTicket of [null, 923] as const) {
+  test(`Secretariat's submitted issue follows preliminary ${preliminaryTicket ?? "unbound"} diarist identity`, async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -820,9 +818,9 @@ test("public secretariat reaches its turn before an unnumbered new issue exists"
         const first = parentDiaristFirstTurn;
         parentDiaristFirstTurn = false;
         return courtDiaristWithDetails(first
-          ? { status: "completed", ticketNumber: null,
+          ? { status: "completed", ticketNumber: preliminaryTicket,
             sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }] }
-          : { status: "completed", ticketNumber: 924 })(args, options);
+          : { status: "completed", ticketNumber: 923 })(args, options);
       },
       nestedDiaristRunner: courtDiaristWithDetails({ status: "escalate", reason: "uncertain evidence" }),
       countersignSequence: [{ details: { status: "converged", note: "署" } }],
@@ -854,9 +852,11 @@ test("public secretariat reaches its turn before an unnumbered new issue exists"
       924,
       "the completed new-ticket run must be archived under its ticket",
     );
-    assert.equal((await readTicketProvenance(924, project, home)).lines[0]?.id, "new-ticket-owner");
+    assert.equal((await readTicketProvenance(preliminaryTicket ?? 924, project, home)).lines[0]?.id,
+      "new-ticket-owner", "the diarist's own assertion stays intact; only unbound records follow the final issue");
   });
-});
+  });
+}
 
 test("diarist escalation pauses Secretariat before its turn", async () => {
   await withTempHome(async (home) => {

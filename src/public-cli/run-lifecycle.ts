@@ -1110,11 +1110,10 @@ async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boole
 /**
  * Locate the latest retained run for one seat under a book (#637 / #747).
  * Same walk surface as findRunDirectoryById (listBookRunDirectories). Match by
- * parent run path (officer / gate seats, #747 / #987). A typed ticket number
- * does not select a run. runId is UUIDv7 — lexicographic max is latest among
- * runs that formed a session principal. No parallel index. Public ticket-number
- * selection of a prior run was deleted (#987 Result 7); callers use explicit
- * `ak-role resume <runId>`.
+ * parent run path (officer / gate seats, #747 / #987), narrowed to a supplied
+ * typed ticket for same-ticket gate re-summons. runId is UUIDv7 — lexicographic
+ * max is latest among runs that formed a session principal. No parallel index;
+ * callers can use explicit `ak-role resume <runId>`.
  * Only a truly missing book directory means no history; damage/permission errors propagate.
  */
 export async function findLatestRunIdForSeatTicket(input: {
@@ -1122,6 +1121,7 @@ export async function findLatestRunIdForSeatTicket(input: {
   readonly bookKey: string;
   readonly role: RoleRunRecord["role"];
   readonly parentRunPath: string;
+  readonly ticketNumber?: number;
 }): Promise<string | undefined> {
   if (input.parentRunPath.trim() === "") {
     return undefined;
@@ -1130,7 +1130,9 @@ export async function findLatestRunIdForSeatTicket(input: {
   const bookDir = activationBookDirectory(ledgerHome, input.bookKey);
   let runDirectories: string[];
   try {
-    runDirectories = await listBookRunDirectories(bookDir);
+    runDirectories = await listBookRunDirectories(
+      input.ticketNumber === undefined ? bookDir : join(bookDir, String(input.ticketNumber)),
+    );
   } catch (error) {
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
