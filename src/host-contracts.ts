@@ -176,8 +176,6 @@ export type RoleTurnRequest = {
   readonly principal: DurablePrincipal;
   readonly activation: RoleTurnActivation;
   readonly methods: readonly MethodBinding[];
-  /** Declared role methods; host-native access rules use names, never package-resolved paths. */
-  readonly methodSkillNames?: readonly string[];
   readonly continuation: RoleTurnContinuation;
   readonly model?: RoleTurnModelConfig;
   readonly engine?: string;

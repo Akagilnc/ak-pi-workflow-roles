@@ -408,7 +408,6 @@ function buildTurnArgs(options: {
   readonly outputSchemaPath?: string;
   readonly model?: string;
   readonly effort?: string;
-  readonly methodSkillNames?: readonly string[];
   readonly sessionId: string | undefined;
   readonly sessionKind: "new" | "resume";
   readonly cwd: string;
@@ -444,7 +443,6 @@ function buildTurnArgs(options: {
     mcpConfigPath: options.mcpConfigPath,
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.effort === undefined ? {} : { effort: options.effort }),
-    ...(options.methodSkillNames === undefined ? {} : { methodSkillNames: options.methodSkillNames }),
     session: { kind: options.sessionKind, id: options.sessionId },
   });
 }
@@ -520,7 +518,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               ...(outputSchemaPath === undefined ? {} : { outputSchemaPath }),
               ...(request.model?.model !== undefined ? { model: request.model.model } : {}),
               ...(request.model?.thinking !== undefined ? { effort: request.model.thinking } : {}),
-              methodSkillNames: request.methodSkillNames ?? [],
               sessionId,
               sessionKind,
               cwd: request.cwd,

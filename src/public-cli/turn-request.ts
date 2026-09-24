@@ -62,7 +62,6 @@ export function projectRoleTurnRequest(
   roleDetails: {
     activation: RoleTurnActivation;
     methods?: readonly MethodBinding[];
-    methodSkillNames?: readonly string[];
   },
   options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
@@ -75,7 +74,6 @@ export function projectRoleTurnRequest(
     principal: admitted.principal,
     activation: roleDetails.activation,
     methods: roleDetails.methods ?? [],
-    methodSkillNames: roleDetails.methodSkillNames ?? [],
     continuation: options.continuation,
     ...(options.model === undefined ? {} : { model: options.model }),
     ...pickEngineAxis(options),
@@ -182,11 +180,9 @@ export function admittedSeatTurnDetails(
 ): {
   readonly activation: RoleTurnActivation;
   readonly methods: readonly MethodBinding[];
-  readonly methodSkillNames: readonly string[];
 } {
   return {
     activation: activationForAdmitted(admitted),
     methods: methodBindings(admitted, home, host),
-    methodSkillNames: requiredMethodSkills(admitted),
   };
 }

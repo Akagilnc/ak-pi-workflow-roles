@@ -69,6 +69,7 @@ export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDes
       "--output-format", "stream-json",
       // Intermediate assistant/tool/system events require verbose with stream-json.
       "--verbose",
+      "--permission-mode", "bypassPermissions",
     ]),
     promptFlag: "-p",
     modelFlag: "--model",

@@ -92,7 +92,6 @@ export function headlessTurnArgs(options: {
   readonly mcpConfigPath?: string;
   readonly model?: string;
   readonly effort?: string;
-  readonly methodSkillNames?: readonly string[];
   /** Fresh session: pass as session id. Resume: pass as resume id. */
   readonly session: { readonly kind: "new"; readonly id: string } | { readonly kind: "resume"; readonly id: string };
   /** Packaged method plugin dir (`--plugin-dir`). */
@@ -105,16 +104,6 @@ export function headlessTurnArgs(options: {
     description.systemPromptFlag,
     options.systemPromptPath,
   ];
-  const methodSkills = options.methodSkillNames ?? [];
-  if (methodSkills.length === 0) {
-    args.push("--permission-mode", "bypassPermissions");
-  } else {
-    // dontAsk denies unmatched Skill calls. Explicit allow rules keep ordinary
-    // role tools available while permitting only this turn's declared Skills.
-    args.push("--permission-mode", "dontAsk", "--allowedTools",
-      "Bash", "Read", "Write", "Edit", "Glob", "Grep", "Agent", "WebFetch", "WebSearch",
-      "NotebookEdit", "mcp__*", ...methodSkills.map((name) => `Skill(${name})`));
-  }
   if (options.jsonSchema !== undefined) {
     args.push(description.jsonSchemaFlag, JSON.stringify(options.jsonSchema));
   }
