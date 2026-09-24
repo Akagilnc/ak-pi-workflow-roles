@@ -126,6 +126,8 @@ export type PublicResumeRequest = {
   readonly runId: string;
   /** Present when the caller supplied the post-runId argv (including empty string). */
   readonly message?: string;
+  /** Structured receipts carried with message. Public CLI resume does not set this. */
+  readonly receipts?: readonly unknown[];
   /**
    * Same-ticket re-summons materials (#637). Present only when a public seat
    * re-enters via the summons face — never from `ak-role resume`.

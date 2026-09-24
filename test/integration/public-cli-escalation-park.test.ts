@@ -65,6 +65,7 @@ type Observation = {
   readonly parentPrompts: readonly string[];
   readonly officerPrompts: readonly string[];
   readonly officerReceipts: readonly { readonly role: string; readonly details: unknown }[];
+  readonly parentReceipts: readonly (readonly unknown[])[];
   readonly resumeStderr: string[];
   resume(message?: string): Promise<CliResult>;
   resumeRun(runId: string, message?: string): Promise<CliResult>;
@@ -91,6 +92,7 @@ async function runJudge(
       const parentPrompts: string[] = [];
       const officerPrompts: string[] = [];
       const officerReceipts: { role: string; details: unknown }[] = [];
+      const parentReceipts: (readonly unknown[])[] = [];
       const observedResumeStderr: string[] = [];
       const officerHost = roleTurnHostFromLegacyPiRunner({
         packageRoot,
@@ -149,6 +151,9 @@ async function runJudge(
         async executeTurn(request: RoleTurnRequest) {
           if (request.continuation.kind === "resume") {
             parentPrompts.push(request.continuation.prompt);
+            if (request.continuation.receipts !== undefined) {
+              parentReceipts.push(request.continuation.receipts);
+            }
             const resumed = onParentResume(request.continuation.prompt);
             if (resumed.verdict === undefined) {
               return { code: resumed.code, stderr: resumed.stderr, timedOut: false };
@@ -195,6 +200,7 @@ async function runJudge(
         parentPrompts,
         officerPrompts,
         officerReceipts,
+        parentReceipts,
         resumeStderr: observedResumeStderr,
         async resumeRun(runId: string, message?: string) {
           const resumeCapture = captureIo();
@@ -314,6 +320,7 @@ test("#1057 auditor escalation is the auditor run and the parent is not that esc
     assert.equal(observed.judgeSubmissions.length, 1);
     assert.equal(observed.parentPrompts.length, 1);
     assert.deepEqual(observed.officerReceipts.at(-1), { role: "auditor", details: passed });
+    assert.deepEqual(observed.parentReceipts, [[passed]]);
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(latestPayload(continued.terminal), VERDICT);
@@ -363,6 +370,7 @@ test("#1057 a notary pass continues the judge auditor gate and settles the origi
       { role: "notary", details: notaryPass },
       { role: "auditor", details: auditorPass },
     ]);
+    assert.deepEqual(observed.parentReceipts, [[notaryPass, auditorPass]]);
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
     assert.deepEqual(latestPayload(continued.terminal), VERDICT);
@@ -407,6 +415,7 @@ test("#1057 a conclusion outside the three states returns to that officer", asyn
       role: "auditor",
       details: { status: "converged", mark: 6 },
     });
+    assert.deepEqual(observed.parentReceipts, [[{ status: "converged", mark: 6 }]]);
   });
 });
 

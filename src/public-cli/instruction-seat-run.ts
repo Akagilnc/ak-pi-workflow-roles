@@ -1105,12 +1105,14 @@ async function finishOpenJudgeVerdict(
     return runPublicInstructionSeatResume({
       runId: admitted.runId,
       message,
+      receipts: words,
     }, { ...env, autoResumeLimit: 0 }, io);
   }
   const buffered = bufferIo();
   const turn = await runPublicInstructionSeatResume({
     runId: admitted.runId,
     message,
+    receipts: words,
   }, { ...env, autoResumeLimit: 0 }, buffered.io);
   if (turn.exitCode !== 0) {
     buffered.replay(io);
