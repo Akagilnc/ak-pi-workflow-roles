@@ -25,6 +25,7 @@ import {
   sessionHarness,
   attendance,
   settleWithAdvice,
+  waitForStandbyOrModelRound,
 } from "../helpers/navigator-attendance-kit.ts";
 import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
@@ -42,8 +43,9 @@ test("Navigator early prepare from parent start; settle feeds result for output"
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, root);
     nav.prepare();
-    while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
+    await waitForStandbyOrModelRound(nav, harness);
     assert.equal(harness.prompts(), 0, "standby records attendance and does not call the model");
+    assert.equal(harness.isPromptParked(), false, "standby must not park a model round");
     assert.equal(
       harness.entries.some((entry: any) => entry.customType === "ak-navigator-invocation"),
       true,
@@ -96,8 +98,9 @@ test("rejected Navigator prepare consumes budget and correction succeeds in the 
     const events: any[] = [];
     const nav = await attendance(setting, harness, events, root);
     nav.prepare();
-    while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
+    await waitForStandbyOrModelRound(nav, harness);
     assert.equal(harness.prompts(), 0);
+    assert.equal(harness.isPromptParked(), false);
     // Settlement feed rejects once then corrects (budget lives on the output turn).
     harness.rejectPrepare("root parameters must be an object");
     const waiting = nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
@@ -128,6 +131,16 @@ test("two rejected Navigator prepares settle typed no-advice with exact reasons 
     harness.rejectPrepare("root rejection one", "root rejection two");
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
     assert.equal(harness.prompts(), 2, "budget exhaustion must not start another prompt");
+    const deliveryFeed = JSON.parse(harness.promptTexts()[1] ?? "") as {
+      terminalToolCalled?: boolean;
+      acceptedReceipt?: boolean;
+      deliveryTurns?: number;
+      rejectedReceipts?: Array<{ reason?: string }>;
+    };
+    assert.equal(deliveryFeed.terminalToolCalled, true);
+    assert.equal(deliveryFeed.acceptedReceipt, false);
+    assert.equal(deliveryFeed.deliveryTurns, 1);
+    assert.equal(deliveryFeed.rejectedReceipts?.[0]?.reason, "root rejection one");
     assert.equal(events[0]?.disposition, "no-advice");
     const lifecycle = harness.entries.find((entry: any) => entry.customType === "ak-no-receipt-lifecycle") as any;
     assert.deepEqual(lifecycle?.data.rejectedReceipts, [

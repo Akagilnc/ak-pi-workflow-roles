@@ -130,6 +130,17 @@ async function waitForEventLoop(condition: () => boolean): Promise<void> {
 }
 
 /**
+ * Standby either finishes without a model round, or a round has already started.
+ * Waiting only on isPreparing() parks forever when the old ready-wait prompt is restored.
+ */
+export async function waitForStandbyOrModelRound(
+  nav: { isPreparing(): boolean },
+  harness: { prompts(): number; isPromptParked(): boolean },
+): Promise<void> {
+  await waitForEventLoop(() => !nav.isPreparing() || harness.prompts() > 0 || harness.isPromptParked());
+}
+
+/**
  * Standby prepare records attendance and does not prompt. Wait it out, then
  * settle feeds the typed settlement and takes the only model round.
  */

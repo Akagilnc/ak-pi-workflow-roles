@@ -20,6 +20,7 @@ import {
   attendance,
   proseAdvice,
   settleWithAdvice,
+  waitForStandbyOrModelRound,
 } from "../helpers/navigator-attendance-kit.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
@@ -81,8 +82,9 @@ test("#959 arrival books settlement on an existing nest without re-prompting", a
     const nav = await attendance(setting, harness, events, root);
     // Standby opens the nest without a model round; arrival books without a feed prompt.
     nav.prepare();
-    while (nav.isPreparing()) await new Promise<void>((resolve) => setImmediate(resolve));
+    await waitForStandbyOrModelRound(nav, harness);
     const promptsBeforeArrival = harness.prompts();
+    assert.equal(harness.isPromptParked(), false);
     await nav.settle({ kind: "arrival", role: "lander", phase: null, message: "抵达" });
     assert.equal(events[0]?.disposition, "arrival");
     assert.equal(promptsBeforeArrival, 0);
