@@ -10,7 +10,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { execFileSync, spawn } from "node:child_process";
@@ -2493,8 +2493,8 @@ test("public resume says which confirmed fact failed and where to look", async (
     await rm(gone, { recursive: true, force: true });
 
     const hostCalls: string[] = [];
-    const host = createMinimalHost(async () => {
-      hostCalls.push("turn");
+    const host = createMinimalHost(async (request) => {
+      hostCalls.push(request.runDirectory);
       return { code: 1, stderr: "zeta-unique-host-diagnostic", timedOut: false };
     });
     const resume = (runId: string) => {
@@ -2545,12 +2545,16 @@ test("public resume says which confirmed fact failed and where to look", async (
     assert.equal(missingSubject.result.resumeFailure?.kind, "auditor-subject-missing");
     if (missingSubject.result.resumeFailure?.kind === "auditor-subject-missing") {
       assert.equal(missingSubject.result.resumeFailure.sourceRunPath, sourceRun);
-      assert.equal(missingSubject.result.resumeFailure.provide.includes("--subject"), true);
-      assert.equal(missingSubject.result.resumeFailure.provide.includes(sourceRun), true);
+      assert.equal(missingSubject.result.resumeFailure.resumeRunId, "1058-auditor");
+      assert.equal(missingSubject.result.resumeFailure.provide.includes("ak-role auditor"), false);
+      assert.equal(
+        missingSubject.result.resumeFailure.provide.includes(`ak-role resume ${missingSubject.result.resumeFailure.resumeRunId}`),
+        true,
+      );
       assert.equal(missingSubject.result.resumeFailure.runDirectory, auditor.runDirectory);
     }
     assert.equal(missingSubject.stderr.includes(sourceRun), true);
-    assert.equal(missingSubject.stderr.includes("--subject"), true);
+    assert.equal(missingSubject.stderr.includes("ak-role resume"), true);
     assert.equal(hostCalls.length, 0);
 
     const unknown = await resume("1058-unknown-host");
@@ -2564,13 +2568,20 @@ test("public resume says which confirmed fact failed and where to look", async (
     );
     assert.equal(hostCalls.length, 1);
 
-    process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
-    try {
-      const supplied = await resume("1058-auditor");
-      assert.equal(supplied.result.resumeFailure?.kind, undefined);
-      assert.equal(hostCalls.length, 2);
-    } finally {
-      delete process.env.AK_ROLE_AUDITOR_SUBJECT;
+    const fact = missingSubject.result.resumeFailure;
+    assert.equal(fact?.kind, "auditor-subject-missing");
+    if (fact?.kind === "auditor-subject-missing") {
+      const runsRoot = join(home, ".ak-roles", "books", bookKey, "unbound", "runs");
+      const before = await readdir(runsRoot);
+      process.env[fact.subjectEnv] = "judge";
+      try {
+        const supplied = await resume(fact.resumeRunId);
+        assert.equal(supplied.result.resumeFailure, undefined);
+        assert.equal(hostCalls.at(-1), auditor.runDirectory);
+        assert.deepEqual(await readdir(runsRoot), before);
+      } finally {
+        delete process.env[fact.subjectEnv];
+      }
     }
   });
 });

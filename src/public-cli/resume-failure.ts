@@ -38,8 +38,11 @@ export type ResumeFailureFact =
   | {
       readonly kind: "auditor-subject-missing";
       readonly runDirectory: string;
+      readonly resumeRunId: string;
+      readonly subjectEnv: typeof AK_ROLE_AUDITOR_SUBJECT_ENV;
       readonly sourceRunPath?: string;
       readonly recordedSubject?: string;
+      /** Same-run input. Not an `ak-role auditor` invocation. */
       readonly provide: string;
     };
 
@@ -93,6 +96,7 @@ export function unavailableHostSessionFact(input: {
 /** Confirmable resume blockers after the run record has loaded. Does not guess. */
 export async function confirmResumeBlocker(admitted: {
   readonly role: string;
+  readonly runId: string;
   readonly runDirectory: string;
   readonly admittedRequestPath: string;
 }): Promise<ResumeFailureFact | undefined> {
@@ -130,8 +134,8 @@ export function formatResumeFailure(fact: ResumeFailureFact): string {
         : `受理记录里有被审席位 ${fact.recordedSubject}，但本次 resume 没有把它交给宿主。`;
       const source = fact.sourceRunPath === undefined
         ? "受理记录里没有被审来源路径。"
-        : `被审来源：${fact.sourceRunPath}。`;
-      return `审刑院续跑缺少被审席位。${recorded}请重新提供：${fact.provide}。可查卷宗：${fact.runDirectory}。${source}`;
+        : `被审来源仍是：${fact.sourceRunPath}。`;
+      return `审刑院续跑缺少被审席位。${recorded}ak-role resume 不收 --subject。不要改跑 ak-role auditor，那会另起一条腿。要续同一条 run，先设置 ${fact.subjectEnv}，再执行：${fact.provide}。可查卷宗：${fact.runDirectory}。${source}`;
     }
   }
 }
@@ -181,6 +185,7 @@ async function workspaceFact(
 
 async function auditorSubjectFact(admitted: {
   readonly role: string;
+  readonly runId: string;
   readonly runDirectory: string;
   readonly admittedRequestPath: string;
 }): Promise<ResumeFailureFact | undefined> {
@@ -191,14 +196,15 @@ async function auditorSubjectFact(admitted: {
     return undefined;
   }
   const stored = await readStoredAuditorContext(admitted.admittedRequestPath, admitted.role);
-  const sourceToken = stored.sourceRunPath ?? "<runId@role|path>";
   const subjectToken = stored.recordedSubject ?? `<${choices.join("|")}>`;
   return {
     kind: "auditor-subject-missing",
     runDirectory: admitted.runDirectory,
     ...(stored.sourceRunPath === undefined ? {} : { sourceRunPath: stored.sourceRunPath }),
     ...(stored.recordedSubject === undefined ? {} : { recordedSubject: stored.recordedSubject }),
-    provide: `ak-role ${admitted.role} --subject ${subjectToken} --source-run ${sourceToken}`,
+    resumeRunId: admitted.runId,
+    subjectEnv: AK_ROLE_AUDITOR_SUBJECT_ENV,
+    provide: `${AK_ROLE_AUDITOR_SUBJECT_ENV}=${subjectToken} ak-role resume ${admitted.runId}`,
   };
 }
 
