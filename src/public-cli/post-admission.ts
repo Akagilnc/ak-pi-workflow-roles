@@ -6,7 +6,7 @@
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -16,13 +16,11 @@ import {
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import { CliUsageError } from "./cli-errors.ts";
+import { AK_ROLE_AUDITOR_SUBJECT_ENV } from "../auditor-soul.ts";
 import {
-  confirmResumeBlocker,
-  formatResumeFailure,
-  missingWorkspaceOnEnoent,
-  ResumeFailureError,
-  type ResumeFailureFact,
-} from "./resume-failure.ts";
+  packagedAdmittedSubject,
+  packagedSubjectChoices,
+} from "../packaged-role-registry.ts";
 import type { RoleTurnRequestProjectionOptions } from "./turn-request.ts";
 import {
   bindAdmittedTicketNumber,
@@ -84,6 +82,7 @@ import {
   readCurrentCourt,
   recordCurrentCourt,
   renderResumeCommand,
+  writeRunErrorRecord,
   type CurrentCourtState,
   type RunWriterLease,
   type TypedProviderHttpObservation,
@@ -1518,7 +1517,7 @@ export async function runPostAdmissionSeatResume<
     admitted: A,
   ) => Promise<AfterAdmittedLoadResult<A, T>>;
   effectiveEngine?: string;
-}): Promise<{ exitCode: number; admitted?: A; terminal?: T; resumeFailure?: ResumeFailureFact }> {
+}): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
   let request = input.request;
 
   // Load once for runDirectory / structural rejection / afterAdmittedLoad.
@@ -1529,20 +1528,21 @@ export async function runPostAdmissionSeatResume<
   try {
     loaded = await input.load(request);
   } catch (error) {
-    if (error instanceof ResumeFailureError) {
-      presentStructuralRejection(error, input.io);
-      return { exitCode: 2, resumeFailure: error.fact };
-    }
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, input.io);
       return { exitCode: 2 };
     }
     throw error;
   }
-  const blocker = await confirmResumeBlocker(loaded.admitted);
-  if (blocker !== undefined) {
-    presentStructuralRejection({ message: formatResumeFailure(blocker) }, input.io);
-    return { exitCode: 2, resumeFailure: blocker };
+  const missingSubject = await missingAuditorSubject(loaded.admitted);
+  if (missingSubject !== undefined) {
+    const pointer = await writeRunErrorRecord(loaded.admitted.runDirectory, {
+      role: loaded.admitted.role,
+      runId: loaded.admitted.runId,
+      diagnostic: missingSubject.record,
+    });
+    presentStructuralRejection({ message: `${missingSubject.hint} ${pointer}` }, input.io);
+    return { exitCode: 2 };
   }
 
   let adapters = input.adapters;
@@ -1724,7 +1724,7 @@ export async function runPostAdmissionSeatResume<
           }),
       });
     }
-    return await runPostAdmissionManualResume({
+    const resumed = await runPostAdmissionManualResume({
       admitted: loaded.admitted,
       env,
       io: input.io,
@@ -1734,23 +1734,106 @@ export async function runPostAdmissionSeatResume<
         : { effectiveEngine: input.effectiveEngine }),
       buildRequestAfterLease,
     });
+    if (resumed.exitCode !== 0) {
+      const pointer = join(loaded.admitted.runDirectory, "artifacts", "error.json");
+      try {
+        await stat(pointer);
+        input.io.stderr(`${pointer}\n`);
+      } catch {
+        // Settlement did not leave the conventional record; do not invent a path.
+      }
+    }
+    return resumed;
   } catch (error) {
     // Turn construction may still surface structural rejection.
-    if (error instanceof ResumeFailureError) {
-      presentStructuralRejection(error, input.io);
-      return { exitCode: 2, resumeFailure: error.fact };
-    }
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, input.io);
       return { exitCode: 2 };
     }
-    const missingWorkspace = await missingWorkspaceOnEnoent(error, loaded.admitted);
-    if (missingWorkspace !== undefined) {
-      presentStructuralRejection({ message: formatResumeFailure(missingWorkspace) }, input.io);
-      return { exitCode: 1, resumeFailure: missingWorkspace };
+    if (await isMissingWorkspaceSpawn(error, loaded.admitted.projectRoot)) {
+      const diagnostic = error instanceof Error ? error.message : String(error);
+      const pointer = await writeRunErrorRecord(loaded.admitted.runDirectory, {
+        role: loaded.admitted.role,
+        runId: loaded.admitted.runId,
+        diagnostic,
+      });
+      presentStructuralRejection({
+        message: `工作目录不存在：${loaded.admitted.projectRoot} ${pointer}`,
+      }, input.io);
+      return { exitCode: 1 };
     }
     throw error;
   }
+}
+
+async function isMissingWorkspaceSpawn(error: unknown, projectRoot: string): Promise<boolean> {
+  if (!isSpawnEnoent(error)) return false;
+  try {
+    await stat(projectRoot);
+    return false;
+  } catch (statError) {
+    return (statError as NodeJS.ErrnoException).code === "ENOENT";
+  }
+}
+
+function isSpawnEnoent(error: unknown): boolean {
+  let current: unknown = error;
+  for (let depth = 0; depth < 4 && current != null; depth += 1) {
+    if (typeof current === "object" && "code" in current && "syscall" in current) {
+      const record = current as { code?: unknown; syscall?: unknown };
+      if (record.code === "ENOENT" && typeof record.syscall === "string" && record.syscall.startsWith("spawn")) {
+        return true;
+      }
+    }
+    if (!(current instanceof Error)) return false;
+    current = current.cause;
+  }
+  return false;
+}
+
+async function missingAuditorSubject(admitted: {
+  readonly role: string;
+  readonly runId: string;
+  readonly admittedRequestPath: string;
+}): Promise<{ readonly hint: string; readonly record: string } | undefined> {
+  const choices = packagedSubjectChoices(admitted.role);
+  if (choices === undefined) return undefined;
+  const raw = process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
+  if (typeof raw === "string" && packagedAdmittedSubject(admitted.role, raw.trim()) !== undefined) {
+    return undefined;
+  }
+  let sourceRunPath: string | undefined;
+  let recordedSubject: string | undefined;
+  try {
+    const parsed: unknown = JSON.parse(await readFile(admitted.admittedRequestPath, "utf8"));
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const record = parsed as Record<string, unknown>;
+      if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
+        sourceRunPath = record.sourceRunPath;
+      }
+      if (typeof record.subject === "string") {
+        recordedSubject = packagedAdmittedSubject(admitted.role, record.subject.trim());
+      }
+    }
+  } catch {
+    // Unreadable admitted page is not a stored subject.
+  }
+  const subjects = recordedSubject === undefined ? [...choices] : [recordedSubject];
+  const commands = subjects.map((subject) =>
+    `${AK_ROLE_AUDITOR_SUBJECT_ENV}=${shellSingleQuote(subject)} ak-role resume ${shellSingleQuote(admitted.runId)}`,
+  );
+  const named = subjects.join(" 或 ");
+  return {
+    hint: `审刑院续跑缺少被审席位；把 ${AK_ROLE_AUDITOR_SUBJECT_ENV} 设为 ${named} 后执行 ak-role resume ${admitted.runId}`,
+    record: [
+      ...(sourceRunPath === undefined ? [] : [`sourceRunPath: ${sourceRunPath}`]),
+      ...commands,
+    ].join("\n"),
+  };
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 /**

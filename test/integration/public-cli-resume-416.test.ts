@@ -13,7 +13,6 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { ResumeFailureError } from "../../src/public-cli/resume-failure.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { payloadFacts , objectPayloads} from "../helpers/terminal-payload.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
@@ -199,14 +198,15 @@ test("block1: session principal unavailable still fails honestly", async()=>{
     const runDir=join(home,".ak-roles","books",bookKey,"unbound","runs",`${runId}@judge`);
     await rm(join(runDir,"session","session.jsonl"),{force:true});
     const sessionFile=join(runDir,"session","session.jsonl");
-    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),(error: unknown)=>error instanceof ResumeFailureError && error.fact.kind==="host-session-absent" && error.fact.sessionFile===sessionFile);
+    const errorRecord=join(runDir,"artifacts","error.json");
+    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),(error: unknown)=>error instanceof Error && error.message.includes(sessionFile) && error.message.includes(errorRecord));
     const {io:io2,stderr}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,io:io2,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                       packageRoot,
                                                                                       principalAuthority: piDurablePrincipalAuthority,
                                                                                       piRunner: async(a)=>{dispatched=true;return{code:0,stderr:"",timedOut:false,args:[...a]};},
                                                                                     })});
-    assert.equal(dispatched,false);assert.equal(res.resumeFailure?.kind,"host-session-absent");assert.equal(stderr.join("").includes(sessionFile),true);assert.notEqual(res.exitCode,0);
+    assert.equal(dispatched,false);assert.equal(stderr.join("").includes(sessionFile),true);assert.equal(stderr.join("").includes(errorRecord),true);assert.notEqual(res.exitCode,0);
   });
 });
 

@@ -20,7 +20,6 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { createMinimalHost, roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
-import { ResumeFailureError } from "../../src/public-cli/resume-failure.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
@@ -2145,13 +2144,13 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     });
     // Principal path is bound but the file itself is missing.
 
+    const errorRecord = join(runDirectory, "artifacts", "error.json");
     await assert.rejects(
       () => loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),
       (error: unknown) =>
-        error instanceof ResumeFailureError &&
-        error.fact.kind === "host-session-absent" &&
-        error.fact.sessionFile === sessionFile &&
-        error.fact.runDirectory === runDirectory,
+        error instanceof Error &&
+        error.message.includes(sessionFile) &&
+        error.message.includes(errorRecord),
     );
 
     const { io, stdout, stderr } = captureIo();
@@ -2179,15 +2178,8 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     assert.equal(dispatches, 0);
     assert.equal(stdout.length, 0);
     assert.notEqual(blocked.exitCode, 0);
-    assert.equal(blocked.resumeFailure?.kind, "host-session-absent");
-    assert.equal(
-      blocked.resumeFailure?.kind === "host-session-absent"
-        ? blocked.resumeFailure.sessionFile
-        : undefined,
-      sessionFile,
-    );
     assert.equal(stderr.join("").includes(sessionFile), true);
-    assert.equal(stderr.join("").includes(runDirectory), true);
+    assert.equal(stderr.join("").includes(join(runDirectory, "artifacts", "error.json")), true);
   });
 });
 
@@ -2510,51 +2502,35 @@ test("public resume says which confirmed fact failed and where to look", async (
     };
 
     const noSession = await resume("1058-no-session");
+    const noSessionRecord = join(missingSession.runDirectory, "artifacts", "error.json");
     assert.notEqual(noSession.result.exitCode, 0);
-    assert.equal(noSession.result.resumeFailure?.kind, "host-session-absent");
-    assert.equal(
-      noSession.result.resumeFailure?.kind === "host-session-absent"
-        ? noSession.result.resumeFailure.sessionFile
-        : undefined,
-      missingSession.sessionFile,
-    );
-    assert.equal(noSession.stderr.includes(missingSession.runDirectory), true);
+    assert.equal(noSession.stderr.includes(missingSession.sessionFile), true);
+    assert.equal(noSession.stderr.includes(noSessionRecord), true);
     assert.equal(hostCalls.length, 0);
 
     const noWorkspace = await resume("1058-no-workspace");
+    const noWorkspaceRecord = join(deletedWorkspace.runDirectory, "artifacts", "error.json");
     assert.notEqual(noWorkspace.result.exitCode, 0);
-    assert.equal(noWorkspace.result.resumeFailure?.kind, "workspace-missing");
-    assert.equal(
-      noWorkspace.result.resumeFailure?.kind === "workspace-missing"
-        ? noWorkspace.result.resumeFailure.projectRoot
-        : undefined,
-      gone,
-    );
-    assert.equal(
-      noWorkspace.result.resumeFailure?.kind === "workspace-missing"
-        ? noWorkspace.result.resumeFailure.diagnostic.includes("spawnSync git ENOENT")
-        : false,
-      true,
-    );
     assert.equal(noWorkspace.stderr.includes(gone), true);
-    assert.equal(noWorkspace.stderr.includes(deletedWorkspace.runDirectory), true);
+    assert.equal(noWorkspace.stderr.includes(noWorkspaceRecord), true);
+    assert.equal(noWorkspace.stderr.includes("spawnSync git ENOENT"), false);
+    const workspaceRecord = JSON.parse(await readFile(noWorkspaceRecord, "utf8")) as { diagnostic: string };
+    assert.equal(workspaceRecord.diagnostic.includes("spawnSync git ENOENT"), true);
     assert.equal(hostCalls.length, 0);
 
     const missingSubject = await resume("1058-auditor");
+    const subjectRecordPath = join(auditor.runDirectory, "artifacts", "error.json");
     assert.notEqual(missingSubject.result.exitCode, 0);
-    assert.equal(missingSubject.result.resumeFailure?.kind, "auditor-subject-missing");
-    if (missingSubject.result.resumeFailure?.kind === "auditor-subject-missing") {
-      assert.equal(missingSubject.result.resumeFailure.sourceRunPath, sourceRun);
-      assert.equal(missingSubject.result.resumeFailure.resumeRunId, "1058-auditor");
-      assert.equal(missingSubject.result.resumeFailure.runDirectory, auditor.runDirectory);
-    }
-    assert.equal(missingSubject.stderr.includes(sourceRun), true);
-    assert.equal(missingSubject.stderr.includes("ak-role resume"), true);
+    assert.equal(missingSubject.stderr.includes("AK_ROLE_AUDITOR_SUBJECT"), true);
+    assert.equal(missingSubject.stderr.includes("--subject"), false);
+    assert.equal(missingSubject.stderr.includes(subjectRecordPath), true);
+    assert.equal(missingSubject.stderr.includes(sourceRun), false);
+    const subjectRecord = JSON.parse(await readFile(subjectRecordPath, "utf8")) as { diagnostic: string };
+    assert.equal(subjectRecord.diagnostic.includes(sourceRun), true);
     assert.equal(hostCalls.length, 0);
 
     const unknown = await resume("1058-unknown-host");
     assert.notEqual(unknown.result.exitCode, 0);
-    assert.equal(unknown.result.resumeFailure, undefined);
     assert.equal(unknown.result.terminal?.roleOutcome.kind, "failure");
     assert.equal(
       unknown.result.terminal?.roleOutcome.kind === "failure"
@@ -2562,49 +2538,50 @@ test("public resume says which confirmed fact failed and where to look", async (
       true,
     );
     assert.equal(hostCalls.length, 1);
+    assert.equal(unknown.stderr.includes("zeta-unique-host-diagnostic"), true);
+    assert.equal(unknown.stderr.includes("artifacts/error.json"), true);
 
-    const fact = missingSubject.result.resumeFailure;
-    assert.equal(fact?.kind, "auditor-subject-missing");
-    if (fact?.kind === "auditor-subject-missing") {
-      assert.equal(fact.provide, fact.sameRunCommands.join("\n"));
-      const stubDir = join(home, "ak-role-stub");
-      const stubOut = join(home, "ak-role-stub-out");
-      await mkdir(stubDir, { recursive: true });
-      await mkdir(stubOut, { recursive: true });
-      const subjectFile = join(stubOut, "subject");
-      const argvFile = join(stubOut, "argv");
-      const stub = [
+    const commands = subjectRecord.diagnostic.split("\n").filter((line) => line.startsWith("AK_ROLE_AUDITOR_SUBJECT="));
+    const stubDir = join(home, "ak-role-stub");
+    const stubOut = join(home, "ak-role-stub-out");
+    await mkdir(stubDir, { recursive: true });
+    await mkdir(stubOut, { recursive: true });
+    const subjectFile = join(stubOut, "subject");
+    const argvFile = join(stubOut, "argv");
+    await writeFile(
+      join(stubDir, "ak-role"),
+      [
         "#!/bin/sh",
         `printf '%s\\n' "$AK_ROLE_AUDITOR_SUBJECT" > ${JSON.stringify(subjectFile)}`,
         `printf '%s\\n' "$@" > ${JSON.stringify(argvFile)}`,
         "",
-      ].join("\n");
-      await writeFile(join(stubDir, "ak-role"), stub, "utf8");
-      await chmod(join(stubDir, "ak-role"), 0o755);
-      const observed: string[] = [];
-      for (const command of fact.sameRunCommands) {
-        const shelled = spawnSync("sh", ["-c", command], {
-          env: { ...process.env, PATH: `${stubDir}:${process.env.PATH ?? ""}` },
-          encoding: "utf8",
-        });
-        assert.equal(shelled.status, 0, `${command}\n${shelled.stderr}`);
-        const subject = (await readFile(subjectFile, "utf8")).trim();
-        const argv = (await readFile(argvFile, "utf8")).trim().split("\n");
-        assert.equal(subject === "judge" || subject === "doctor", true, subject);
-        assert.deepEqual(argv, ["resume", fact.resumeRunId]);
-        observed.push(subject);
-      }
-      const runsRoot = join(home, ".ak-roles", "books", bookKey, "unbound", "runs");
-      const before = await readdir(runsRoot);
-      process.env[fact.subjectEnv] = observed[0]!;
-      try {
-        const supplied = await resume(fact.resumeRunId);
-        assert.equal(supplied.result.resumeFailure, undefined);
-        assert.equal(hostCalls.at(-1), auditor.runDirectory);
-        assert.deepEqual(await readdir(runsRoot), before);
-      } finally {
-        delete process.env[fact.subjectEnv];
-      }
+      ].join("\n"),
+      "utf8",
+    );
+    await chmod(join(stubDir, "ak-role"), 0o755);
+    const observed: string[] = [];
+    for (const command of commands) {
+      const shelled = spawnSync("sh", ["-c", command], {
+        env: { ...process.env, PATH: `${stubDir}:${process.env.PATH ?? ""}` },
+        encoding: "utf8",
+      });
+      assert.equal(shelled.status, 0, `${command}\n${shelled.stderr}`);
+      const subject = (await readFile(subjectFile, "utf8")).trim();
+      const argv = (await readFile(argvFile, "utf8")).trim().split("\n");
+      assert.equal(subject === "judge" || subject === "doctor", true, subject);
+      assert.deepEqual(argv, ["resume", "1058-auditor"]);
+      observed.push(subject);
+    }
+    assert.equal(observed.length, 2);
+    const runsRoot = join(home, ".ak-roles", "books", bookKey, "unbound", "runs");
+    const before = await readdir(runsRoot);
+    process.env.AK_ROLE_AUDITOR_SUBJECT = observed[0]!;
+    try {
+      const supplied = await resume("1058-auditor");
+      assert.equal(hostCalls.at(-1), auditor.runDirectory);
+      assert.deepEqual(await readdir(runsRoot), before);
+    } finally {
+      delete process.env.AK_ROLE_AUDITOR_SUBJECT;
     }
   });
 });
