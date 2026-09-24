@@ -7,7 +7,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import assert from "node:assert/strict";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
@@ -204,14 +204,22 @@ test("block1: session principal unavailable still fails honestly", async()=>{
                                                                                       principalAuthority: piDurablePrincipalAuthority,
                                                                                       piRunner: async(a)=>{dispatched=true;return{code:0,stderr:"",timedOut:false,args:[...a]};},
                                                                                     })});
-    const errorRecord=join(runDir,"artifacts","error.json");
-    const recorded=JSON.parse(await readFile(errorRecord,"utf8")) as {kind?:unknown;runId?:unknown;diagnostic?:unknown};
+    const sessionFile=join(runDir,"session","session.jsonl");
+    const artifactsDirectory=join(runDir,"artifacts");
+    const diagnosticPath=(await readdir(artifactsDirectory))
+      .map((name)=>join(artifactsDirectory,name))
+      .find((path)=>stderr.join("").includes(path));
+    assert.ok(diagnosticPath);
+    const recorded=JSON.parse(await readFile(diagnosticPath,"utf8")) as {
+      runId?:unknown;diagnostic?:unknown;details?:{error?:unknown};
+    };
     assert.equal(dispatched,false);
-    assert.equal(recorded.kind,"error");
+    assert.notEqual(res.exitCode,0);
     assert.equal(recorded.runId,runId);
     assert.equal(typeof recorded.diagnostic,"string");
-    assert.equal(stderr.join("").includes(errorRecord),true);
-    assert.notEqual(res.exitCode,0);
+    assert.equal(typeof recorded.details?.error,"string");
+    assert.notEqual((recorded.details?.error as string).length,0);
+    await assert.rejects(readFile(sessionFile),{code:"ENOENT"});
   });
 });
 
