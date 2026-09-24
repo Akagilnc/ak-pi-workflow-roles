@@ -1,9 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import {
-  roleTurnHostFromLegacyPiRunner,
-  scriptedTerminatingToolSession,
-} from "../helpers/role-turn-host-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -22,7 +19,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -31,13 +28,11 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
-import type { HostContext, RoleHost } from "../../src/host-contracts.ts";
-import { ParentQueueReaskError } from "../../src/submission-errors.ts";
-import { createCoderRoleRuntime } from "../../src/worker-role.ts";
-import {
-  createSubmissionLedgerHost,
-  readRecordedSubmissionRows,
-} from "../../src/submission-ledger.ts";
+import type { RoleTurnHost } from "../../src/host-contracts.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { driveExternalRoleTurnRounds } from "../../src/external-host-turn-loop.ts";
+import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
@@ -89,7 +84,29 @@ test("public coder reasks only an unreadable status and accepts an open-shaped o
 
     const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
     const corrected = { status: "planned", report: { unvalidated: true } };
-    let accepted: { details?: unknown } | undefined;
+    const roleTurnHost: RoleTurnHost = {
+      async executeTurn(request) {
+        const prepared = await prepareRoleEnvelope({
+          request: { ...request, host: "codex" },
+          dependencies: createRoleRuntimeDependencies(packageRoot),
+          socketPath: join(home, "coder-reask.sock"),
+          listTerminatingToolOnMcp: false,
+          sessionFile: piDurablePrincipalAuthority.decode(request.principal).sessionFile,
+        });
+        try {
+          return await driveExternalRoleTurnRounds(prepared, request, {
+            roundLimitName: "CoderStatusReaskRoundLimit",
+            currentSessionId: () => undefined,
+            async runRound({ attempt }) {
+              await prepared.ingestStructuredOutput(attempt === 0 ? unreadable : corrected);
+              return { status: "delivered" };
+            },
+          });
+        } finally {
+          await prepared.dispose?.();
+        }
+      },
+    };
 
     const result = await runAkRole(
       ["coder", "--model", "test/caller-seat:high", "plan", "--project", project, "Propose a plan."],
@@ -100,88 +117,7 @@ test("public coder reasks only an unreadable status and accepts an open-shaped o
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => "run-cli-coder-status-reask",
         io: captureIo().io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args, options) => {
-            let registered: {
-              name: string;
-              execute(
-                toolCallId: string,
-                parameters: unknown,
-                signal: undefined,
-                update: undefined,
-                context: HostContext,
-              ): Promise<{ details?: unknown }>;
-            } | undefined;
-            const flags = new Map<string, string | undefined>([
-              ["ak-coder-task", flagValue(args, "--ak-coder-task")],
-              ["ak-coder-phase", flagValue(args, "--ak-coder-phase")],
-            ]);
-            const host = {
-              registerFlag() {},
-              getFlag(name: string) { return flags.get(name); },
-              registerTool(tool: unknown) { registered = tool as typeof registered; },
-              getAllTools: () => registered === undefined ? [] : [{ name: registered.name }],
-              setActiveTools() {},
-              getActiveTools: () => registered === undefined ? [] : [registered.name],
-              on() {},
-            } as unknown as RoleHost;
-            const ledgerHost = createSubmissionLedgerHost(
-              host,
-              new Map([[CODER_OUTPUT_TOOL_NAME, "coder"]]),
-              undefined,
-              undefined,
-              { home },
-            );
-            const runtime = createCoderRoleRuntime(ledgerHost, {
-              loadSoul: async () => "Coder test soul",
-              loadTask: async () => "Approved plan input",
-            }, {
-              failInfrastructure(error: unknown): never { throw error; },
-              bindSubmissionNonPass() {},
-            });
-            await runtime.activate();
-            assert.ok(registered);
-
-            const sessionFile = flagValue(args, "--session");
-            assert.ok(sessionFile);
-            const sessionDirectory = dirname(sessionFile);
-            await mkdir(sessionDirectory, { recursive: true });
-            await writeFile(sessionFile, "", "utf8");
-            const context = {
-              cwd: project,
-              runDirectory: options.env.AK_ROLE_RUN_DIR,
-              mode: "tui",
-              model: undefined,
-              sessionManager: {
-                getLeafEntry: () => undefined,
-                getLeafId: () => undefined,
-                getEntries: () => [],
-                getSessionDir: () => sessionDirectory,
-                getSessionFile: () => sessionFile,
-              },
-              abort() {},
-            } as HostContext;
-
-            for (const [round, submission] of [unreadable, corrected].entries()) {
-              try {
-                accepted = await registered.execute(
-                  `coder-status-${round}`,
-                  submission,
-                  undefined,
-                  undefined,
-                  context,
-                );
-                break;
-              } catch (error) {
-                if (!(error instanceof ParentQueueReaskError)) throw error;
-              }
-            }
-            assert.ok(accepted, "coder did not accept a readable status after reask");
-            return { code: 0, stderr: "", timedOut: false, args: [...args] };
-          },
-        }),
+        roleTurnHost,
       },
     );
 
@@ -194,14 +130,6 @@ test("public coder reasks only an unreadable status and accepts an open-shaped o
     ]);
   });
 });
-
-function flagValue(args: readonly string[], flag: string): string | undefined {
-  const index = args.indexOf(flag);
-  return index < 0 ? undefined : args[index + 1];
-}
-
-
-
 
 /**
  * Replaces direct buildPiTurnExtraArgs argv locks — verifies behavior through
