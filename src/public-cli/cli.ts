@@ -1,4 +1,4 @@
-import type { DurablePrincipalAuthority } from "../host-contracts.ts";
+import type { DurablePrincipalAuthority, RoleTurnHost } from "../host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../pi/durable-principal.ts";
 /**
  * Public ak-role CLI dispatcher (roles / config / layered help / Judge run).
@@ -50,10 +50,9 @@ import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
 import { runMachineSkillSetup } from "./machine-method-skills.ts";
 import {
-  presentLocatedResumeLoadFailure,
+  presentLocatedResumeFailure,
   type PostAdmissionEnv,
 } from "./post-admission.ts";
-import type { RoleTurnHost } from "../host-contracts.ts";
 import { appendPiSessionCustomEntry } from "../pi/role-turn-host.ts";
 import {
   composeRoleTurnHostAdapters,
@@ -81,6 +80,7 @@ import {
   type PublicRoleOptionOwner,
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
+import { TurnDispatchedFailure } from "./auto-resume.ts";
 import { continueParentAfterChild, runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
 import { courtDiaristEscalated } from "./countersign-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
@@ -1096,6 +1096,9 @@ export async function runAkRole(
   env: CliEnv,
 ): Promise<CliResult> {
   const io = env.io ?? defaultIo();
+  let resumeFailureContext:
+    | { readonly home: string; readonly runId: string; readonly authority: DurablePrincipalAuthority }
+    | undefined;
 
   try {
     // Select the installed package identity once, before any role-owned Skill,
@@ -1210,34 +1213,21 @@ export async function runAkRole(
     // must still exist. Seat and dispatch follow the durable admitted role.
     // #471: unique parser owns {runId, message?}; five role paths only consume it.
     if (parsed.command === "resume") {
+      const resumeRequest = parseResumeRequest(parsed.args);
+      resumeFailureContext = {
+        home,
+        runId: resumeRequest.runId,
+        authority: env.principalAuthority ?? piDurablePrincipalAuthority,
+      };
       const agentDir = resolveAgentDir(env, home);
       const cwd = env.cwd ?? process.cwd();
       const config = await loadAndValidateConfig(home, env.packageRoot);
       const credentials =
         env.credentials ?? (await loadCredentialProviders(agentDir));
-      const resumeRequest = parseResumeRequest(parsed.args);
-      const peekResumeRole = async (
-        runId: string,
-      ): Promise<{ role?: Awaited<ReturnType<typeof peekRoleRunRole>>; exitCode?: number }> => {
-        try {
-          return { role: await peekRoleRunRole(home, runId) };
-        } catch (error) {
-          const recorded = await presentLocatedResumeLoadFailure(
-            home,
-            runId,
-            env.principalAuthority ?? piDurablePrincipalAuthority,
-            io,
-            error,
-          );
-          if (!recorded) throw error;
-          return { exitCode: error instanceof CliUsageError ? 2 : 1 };
-        }
-      };
-      const resumeRole = await peekResumeRole(resumeRequest.runId);
-      if (resumeRole.exitCode !== undefined) return { exitCode: resumeRole.exitCode };
+      const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
       // Missing durable role keeps the judge seat table. The resume entry
       // itself is one function; it reads the stored run.
-      const seatRole = resumeRole.role ?? "judge";
+      const seatRole = resumeRole ?? "judge";
       const seat = resolveEffectiveSeat(
         config,
         seatRole,
@@ -1264,11 +1254,12 @@ export async function runAkRole(
         && !courtDiaristEscalated(current.terminal.roleOutcome)
       ) {
         const parentRunId = current.admitted.correlationId;
-        const parentResumeRole = await peekResumeRole(parentRunId);
-        if (parentResumeRole.exitCode !== undefined) {
-          return { exitCode: parentResumeRole.exitCode };
-        }
-        const parentRole = parentResumeRole.role;
+        resumeFailureContext = {
+          home,
+          runId: parentRunId,
+          authority: env.principalAuthority ?? piDurablePrincipalAuthority,
+        };
+        const parentRole = await peekRoleRunRole(home, parentRunId);
         if (parentRole === undefined) break;
         const parentSeat = resolveEffectiveSeat(config, parentRole, credentials, invocationFromParsed(parsed));
         const parentEnv = createRoleEnvironment(env, {
@@ -1312,6 +1303,24 @@ export async function runAkRole(
     // tokens (including misspelled role names) are structural rejects.
     throw new CliUsageError(`unknown command: ${parsed.command}`);
   } catch (error) {
+    // A dispatched turn owns its settlement; only pre-dispatch resume failures
+    // fall through to the located-run diagnostic presenter here.
+    if (
+      resumeFailureContext !== undefined
+      && !(error instanceof TurnDispatchedFailure)
+      && await presentLocatedResumeFailure(
+        resumeFailureContext.home,
+        resumeFailureContext.runId,
+        resumeFailureContext.authority,
+        io,
+        error,
+      )
+    ) {
+      return {
+        exitCode: error instanceof CliUsageError ? 2 : 1,
+        ...(error instanceof HostSelectionError ? { hostFailure: error.failure } : {}),
+      };
+    }
     if (error instanceof HostSelectionError) {
       io.stderr(formatCliDiagnostic(formatHostSelectionFailure(error.failure)));
       return { exitCode: 1, hostFailure: error.failure };

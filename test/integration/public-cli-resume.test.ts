@@ -2439,11 +2439,12 @@ test("public resume failures point to their recorded diagnostics", async () => {
       await mkdir(sourceRun, { recursive: true });
       async function seed(input: {
         readonly runId: string;
-        readonly role: "secretariat" | "auditor";
+        readonly role: "secretariat" | "auditor" | "judge";
         readonly session: boolean;
         readonly projectRoot: string;
         readonly ticketNumber?: number;
         readonly sourceRunPath?: string;
+        readonly correlationId?: string;
       }) {
         const runDirectory = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${input.runId}@${input.role}`);
         const sessionDirectory = join(runDirectory, "session");
@@ -2459,6 +2460,7 @@ test("public resume failures point to their recorded diagnostics", async () => {
           attachments: [],
           ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
           ...(input.sourceRunPath === undefined ? {} : { sourceRunPath: input.sourceRunPath }),
+          ...(input.correlationId === undefined ? {} : { correlationId: input.correlationId }),
         })}\n`, "utf8");
         await markRunAdmitted({
           role: input.role,
@@ -2524,9 +2526,13 @@ test("public resume failures point to their recorded diagnostics", async () => {
         assert.equal(typeof record.diagnostic, "string");
         return record;
       };
-      const assertRecordedFailurePointer = async (runDirectory: string, runId: string) => {
+      const assertRecordedFailurePointer = async (
+        runDirectory: string,
+        runId: string,
+        argv: readonly string[] = ["resume", "--model", "test/caller-seat:high", runId],
+      ) => {
         const callsBefore = seen.length;
-        const result = await resume(["resume", "--model", "test/caller-seat:high", runId]);
+        const result = await resume(argv);
         assert.notEqual(result.exitCode, 0);
         assert.equal(seen.length, callsBefore);
         const directory = join(runDirectory, "artifacts");
@@ -2549,6 +2555,7 @@ test("public resume failures point to their recorded diagnostics", async () => {
         const errorDetails = (record.details as { error?: unknown }).error;
         assert.equal(typeof errorDetails, "string");
         assert.notEqual((errorDetails as string).length, 0);
+        return result;
       };
 
       const unreadable = await seed({
@@ -2608,6 +2615,106 @@ test("public resume failures point to their recorded diagnostics", async () => {
       await assertRecordedFailurePointer(
         invalidResumeMetadata.runDirectory,
         "1058-invalid-resume-metadata",
+      );
+
+      const seatSelectionFailure = await seed({
+        runId: "1058-seat-selection-failure",
+        role: "secretariat",
+        session: true,
+        projectRoot: project,
+      });
+      const selectionFailureResult = await assertRecordedFailurePointer(
+        seatSelectionFailure.runDirectory,
+        "1058-seat-selection-failure",
+        ["resume", "--host", "unregistered", "--model", "test/caller-seat:high", "1058-seat-selection-failure"],
+      );
+      assert.equal(selectionFailureResult.hostFailure?.kind, "host-unregistered");
+
+      const parent = await seed({
+        runId: "1058-parent-preload-failure",
+        role: "secretariat",
+        session: true,
+        projectRoot: project,
+      });
+      const child = await seed({
+        runId: "1058-child-success",
+        role: "judge",
+        session: true,
+        projectRoot: project,
+        correlationId: "1058-parent-preload-failure",
+      });
+      await rm(join(parent.runDirectory, "admitted-request.json"));
+      const priorParentReport = join(parent.runDirectory, "artifacts", "report.json");
+      await mkdir(join(parent.runDirectory, "artifacts"), { recursive: true });
+      await writeFile(priorParentReport, '{"status":"prior-parent"}\n', "utf8");
+      let childDispatches = 0;
+      const acceptedChildHost = roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          childDispatches += 1;
+          assert.equal(args[args.indexOf("--session-dir") + 1], child.sessionDirectory);
+          const details = { judgeStatus: "converged" };
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await writeFile(sessionFile, `${JSON.stringify({
+            type: "message",
+            message: { role: "toolResult", toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details },
+          })}\n`, "utf8");
+          return {
+            code: 0,
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+            sealedAcceptance: { role: "judge", details },
+          };
+        },
+      });
+      const parentResume = captureIo();
+      const parentResult = await runAkRole(
+        ["resume", "--model", "test/caller-seat:high", "1058-child-success"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          io: parentResume.io,
+          hostAdapters: [
+            { name: "pi", create: () => ({ ok: true as const, host: acceptedChildHost }) },
+            { name: "claude", create: () => ({ ok: true as const, host: acceptedChildHost }) },
+          ],
+        },
+      );
+      assert.equal(childDispatches, 1);
+      assert.notEqual(
+        parentResult.exitCode,
+        0,
+        `${parentResume.stderr.join("")} ${JSON.stringify(parentResult)}`,
+      );
+      assert.equal(existsSync(join(parent.runDirectory, "admitted-request.json")), false);
+      assert.equal(
+        (JSON.parse(await readFile(priorParentReport, "utf8")) as { status?: unknown }).status,
+        "prior-parent",
+      );
+      const parentArtifacts = await readdir(join(parent.runDirectory, "artifacts"));
+      const parentDiagnosticPath = parentArtifacts
+        .map((name) => join(parent.runDirectory, "artifacts", name))
+        .find((path) => parentResume.stderr.join("").includes(path));
+      assert.ok(
+        parentDiagnosticPath,
+        `${parentResume.stderr.join("")} ${parentArtifacts.join(",")}`,
+      );
+      const parentDiagnostic = JSON.parse(await readFile(parentDiagnosticPath, "utf8")) as {
+        runId?: unknown;
+        diagnostic?: unknown;
+        details?: unknown;
+      };
+      assert.equal(parentDiagnostic.runId, "1058-parent-preload-failure");
+      assert.equal(typeof parentDiagnostic.diagnostic, "string");
+      assert.equal(
+        parentDiagnostic.details !== null
+          && typeof parentDiagnostic.details === "object"
+          && !Array.isArray(parentDiagnostic.details),
+        true,
       );
 
       const callsBeforeWorkspace = seen.length;

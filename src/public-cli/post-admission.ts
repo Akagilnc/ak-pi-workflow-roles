@@ -1805,7 +1805,7 @@ async function pointExistingRunFailure(
   return true;
 }
 
-export async function presentLocatedResumeLoadFailure(
+export async function presentLocatedResumeFailure(
   home: string,
   runId: string,
   authority: DurablePrincipalAuthority,
