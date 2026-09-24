@@ -8,6 +8,8 @@ const AK_SKILLS = ["ak-cross-m-review"] as const;
 const HOSTS = ["claude-code", "pi", "codex"] as const;
 
 function skillRoots(home: string, host: string): string[] {
+  if (host === "grok-build") return [join(home, ".agents/skills")];
+  if (host === "hermes") return [join(home, ".hermes/skills")];
   if (host !== "claude-code" && host !== "pi" && host !== "codex") return [];
   const native = host === "claude-code"
     ? join(process.env.CLAUDE_CONFIG_DIR?.trim() || join(home, ".claude"), "skills")
@@ -49,11 +51,10 @@ export async function warnMissingMethodSkills(
   stdout: (text: string) => void,
 ): Promise<void> {
   const nativeHost = host === undefined ? "pi" : host === "claude" ? "claude-code" : host;
-  const supportedHost = HOSTS.find((candidate) => candidate === nativeHost);
-  if (supportedHost === undefined) return;
+  if (skillRoots(home, nativeHost).length === 0) return;
   const missing: string[] = [];
   for (const skill of skills) {
-    if (installedMethodSkillPath(home, supportedHost, skill) === undefined) missing.push(skill);
+    if (installedMethodSkillPath(home, nativeHost, skill) === undefined) missing.push(skill);
   }
   for (const skill of missing) {
     stdout(`Warning: required machine Skill "${skill}" is missing for ${role}; its method guidance may be unavailable and reduce work quality. Run \`ak-role setup\` to install required Skills.\n`);

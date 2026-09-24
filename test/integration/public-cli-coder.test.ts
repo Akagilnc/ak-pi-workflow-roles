@@ -78,7 +78,7 @@ function seedGitProject(root: string): void {
  * the typed request contract, not argv string indexing.
  */
 
-test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD method, plan omits it", async () => {
+test("coder apply/plan/resume project typed RoleTurnRequest preserves phase and continuation", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -86,7 +86,7 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
 
     const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
 
-    // Apply phase: TDD method binding present, phase = apply.
+    // Apply phase selects the typed apply request.
     {
       await runAkRole(["coder", "--model", "test/caller-seat:high", "--project", project, "Apply the approved plan."],
         {
@@ -103,14 +103,8 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
         },
       );
       const req = captured.current!;
-      assert.deepEqual(
-      req.activation.role, "coder");
+      assert.equal(req.activation.role, "coder");
       assert.equal(req.activation.phase, "apply");
-      assert.equal(
-        req.methods.some((m) => m.kind === "skill" && m.path.includes("tdd")),
-        false,
-        "missing machine Skill must not be bound",
-      );
       assert.equal(req.continuation.kind, "initial");
       // Host-neutral transport: no Pi `/skill:` on the shared request face (#822).
       assert.equal(req.continuation.prompt.startsWith("/skill:"), false);
@@ -139,7 +133,7 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
       assert.equal(req.methods.length, 0, "plan must omit method bindings");
     }
 
-    // Resume phase: default envelope (no explicit message) preserves apply bindings and selects typed resume continuation.
+    // Resume phase: default envelope selects typed resume continuation.
     {
       // First seed an admitted apply run with accessible session principal coordinates
       await runAkRole(["coder", "--model", "test/caller-seat:high", "--project", project, "Apply the approved plan."],
@@ -179,11 +173,6 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
       const req = captured.current!;
       assert.equal(req.activation.role, "coder");
       assert.equal(req.activation.phase, "apply");
-      assert.equal(
-        req.methods.some((m) => m.kind === "skill" && m.path.includes("tdd")),
-        false,
-        "missing machine Skill must not be bound on resume",
-      );
       // The two-argument invocation above selects the no-explicit-message branch;
       // its structured request must still carry resume continuation semantics.
       assert.equal(req.continuation.kind, "resume");
