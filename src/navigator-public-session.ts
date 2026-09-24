@@ -148,6 +148,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
         }
         providerFailure = undefined;
         noReceipt = undefined;
+        routePlaybookReadFailure = undefined;
         try {
           const summonHome = await resolveNavigatorLedgerHome(context);
           // Admission after every await: dispose during preflight must not start summon
@@ -188,9 +189,9 @@ export function createNativeNavigatorSessionFactory(deps?: {
           if (disposed) return;
 
           const playbookFailure = summoned.terminal?.navigator?.advisoryDiagnostic;
-          if (typeof playbookFailure === "string" && playbookFailure.trim() !== "") {
-            routePlaybookReadFailure = playbookFailure;
-          }
+          routePlaybookReadFailure = typeof playbookFailure === "string" && playbookFailure.trim() !== ""
+            ? playbookFailure
+            : undefined;
           const outcome = summoned.terminal?.roleOutcome;
           if (outcome === undefined) {
             const detail = summoned.stderr?.trim() || `exit ${summoned.exitCode}`;

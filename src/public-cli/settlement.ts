@@ -2263,7 +2263,7 @@ function routePlaybookFailureMessage(entries: readonly SessionEntry[]): string |
     const entry = entries[i];
     if (entry?.type !== "custom" || entry.customType !== NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY) continue;
     const data = entry.data;
-    if (!isRecord(data) || typeof data.message !== "string" || data.message.trim() === "") continue;
+    if (!isRecord(data) || typeof data.message !== "string" || data.message.trim() === "") return undefined;
     return data.message;
   }
   return undefined;

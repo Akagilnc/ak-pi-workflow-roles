@@ -506,9 +506,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         return preparedProse;
       } finally {
         const playbookFailure = activeSession.routePlaybookReadFailure?.();
-        if (typeof playbookFailure === "string" && playbookFailure.trim() !== "") {
-          observedRoutePlaybookFailure = playbookFailure;
-        }
+        observedRoutePlaybookFailure = typeof playbookFailure === "string" && playbookFailure.trim() !== ""
+          ? playbookFailure
+          : undefined;
         outputSink = undefined;
       }
   };
@@ -575,6 +575,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   async function settleOnce(settlement: NavigatorSettlement): Promise<void> {
       // Dispose during post-role grace must ignore late completion entirely (#675).
       if (disposed) return;
+      observedRoutePlaybookFailure = undefined;
       const invocationId = activeInvocationId ?? invocationPrincipal;
       let report: NavigatorReport;
       // Drain in-flight standby attendance (record only). Then feed the typed

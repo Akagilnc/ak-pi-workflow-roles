@@ -187,9 +187,12 @@ test("each model round is only the typed settlement, not a reassembled materials
     assert.equal(fedFirst.status, first.status);
     assert.equal(fedFirst.message, first.message);
     assert.equal(fedFirst.subjectKey, "/repo/.ak/work/issues/28");
+    harness.setRoutePlaybookReadFailure("ENOENT: missing playbook");
     await harness.tool().execute("prepare-1", proseAdvice(), undefined, undefined, {} as never);
     harness.release();
     await settle1;
+    assert.equal(events[0]?.routePlaybookReadFailure, "ENOENT: missing playbook");
+    harness.setRoutePlaybookReadFailure("");
     const second = { kind: "accepted" as const, role: "coder", phase: "apply" as const, status: "completed", message: "second typed fact" };
     const settle2 = nav.settle(second);
     while (harness.prompts() < 2 || harness.tool() === undefined) await new Promise<void>((resolve) => setImmediate(resolve));
@@ -204,6 +207,7 @@ test("each model round is only the typed settlement, not a reassembled materials
     await harness.tool().execute("prepare-2", proseAdvice(), undefined, undefined, {} as never);
     harness.release();
     await settle2;
+    assert.equal(events[1]?.routePlaybookReadFailure, undefined);
   });
 });
 

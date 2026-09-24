@@ -1274,8 +1274,8 @@ test("navigator playbook read failure is the native message on the existing diag
     loadRoutePlaybook: async () => {
       throw new Error("ENOENT: missing playbook");
     },
-    recordRoutePlaybookReadFailure: (message) => {
-      recorded.push(message);
+    recordRoutePlaybookReadFailure: (message: string | undefined) => {
+      if (message !== undefined) recorded.push(message);
     },
   });
   await runtime.activate();

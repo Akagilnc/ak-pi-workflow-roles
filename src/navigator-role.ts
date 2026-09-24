@@ -17,5 +17,5 @@ export type NavigatorRuntimeDependencies = {
   /** Standing route playbook. Production omits this and reads the package file once. */
   loadRoutePlaybook?(): Promise<string>;
   /** Same read's native failure, for the existing routePlaybookReadFailure outlet. */
-  recordRoutePlaybookReadFailure?(message: string): void;
+  recordRoutePlaybookReadFailure?(message: string | undefined): void;
 };

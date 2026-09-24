@@ -482,6 +482,19 @@ test("extractNavigatorFact keeps a native playbook read failure on the existing 
   ]);
   assert.equal(missing.disposition, "unavailable");
   assert.equal(missing.advisoryDiagnostic, "ENOENT: missing playbook");
+  const laterSuccess = extractNavigatorFact([
+    {
+      type: "custom",
+      customType: "ak-navigator-route-playbook-failure",
+      data: { message: "ENOENT: missing playbook" },
+    },
+    {
+      type: "custom",
+      customType: "ak-navigator-route-playbook-failure",
+      data: { message: "" },
+    },
+  ]);
+  assert.equal(laterSuccess.advisoryDiagnostic, undefined);
 });
 
 test("extractNavigatorFact keeps three-state attendance: affirmative no-advice vs missing/uncorrelated/unparseable", () => {

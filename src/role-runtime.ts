@@ -791,6 +791,7 @@ export function createNavigatorRoleRuntime(
         try {
           playbookRead ??= loadRoutePlaybook();
           const content = await playbookRead;
+          dependencies.recordRoutePlaybookReadFailure?.(undefined);
           if (content.trim() === "") return;
           return append(content);
         } catch (error) {
@@ -1865,7 +1866,9 @@ export function createRoleRuntimeExtension(
     const navigator = createNavigatorRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("navigator"),
       recordRoutePlaybookReadFailure: (message) => {
-        envelopeHost.appendEntry(NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, { message });
+        envelopeHost.appendEntry(NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, {
+          message: message ?? "",
+        });
       },
     });
     const auditor = createAuditorRoleRuntime(roleHost, {
