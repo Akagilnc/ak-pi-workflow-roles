@@ -98,6 +98,7 @@ import {
   exitCodeForTerminalOutcome,
   explicitInternalKnownFailureClassificationInput,
   formatCliDiagnostic,
+  formatErrorCauseDetail,
   formatTerminalResult,
   inspectJudgeSession,
   isLawfulTypedTerminalOutcome,
@@ -1816,12 +1817,16 @@ async function presentResumeFailurePointer(
   try {
     writeResumeFailurePointer(io, await publishResumeErrorPointer(admitted, authority, failure));
   } catch (publishError) {
-    presentStructuralRejection(
-      thrown instanceof Error
-        ? { message: thrown.message, cause: thrown.cause ?? publishError }
-        : { message: String(thrown), cause: publishError },
-      io,
-    );
+    const cause: { thrownCause?: string; publishError: string } = {
+      publishError: formatErrorCauseDetail(publishError),
+    };
+    if (thrown instanceof Error && thrown.cause !== undefined) {
+      cause.thrownCause = formatErrorCauseDetail(thrown.cause);
+    }
+    presentStructuralRejection({
+      message: thrown instanceof Error ? thrown.message : String(thrown),
+      cause,
+    }, io);
   }
 }
 
