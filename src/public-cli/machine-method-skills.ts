@@ -1,5 +1,5 @@
 import { accessSync, constants, statSync } from "node:fs";
-import { lstat, mkdir, realpath, symlink } from "node:fs/promises";
+import { lstat, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { HEADLESS_HOST_DESCRIPTIONS, HOST_DESCRIPTIONS } from "../host-descriptions.ts";
@@ -18,13 +18,10 @@ export function installedMethodSkillPath(home: string, name: string): string | u
 function installedSkillPath(root: string, name: string): string | undefined {
   const path = join(root, name, "SKILL.md");
   try {
-    if (!statSync(path).isFile()) return undefined;
-    accessSync(path, constants.R_OK);
-    return path;
+    return statSync(path).isFile() ? path : undefined;
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM") return undefined;
-    throw error;
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ENOTDIR") throw error;
+    return undefined;
   }
 }
 
@@ -36,7 +33,7 @@ function linkedSkillRoot(home: string, host: string | undefined): string | undef
   return undefined;
 }
 
-async function pathExists(path: string): Promise<boolean> {
+async function occupied(path: string): Promise<boolean> {
   try {
     await lstat(path);
     return true;
@@ -46,15 +43,8 @@ async function pathExists(path: string): Promise<boolean> {
   }
 }
 
-/** Same directory after resolution. A broken link or a different copy is not connected. */
-async function resolvesTo(path: string, canonical: string): Promise<boolean> {
-  try {
-    return await realpath(path) === await realpath(canonical);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP") return false;
-    throw error;
-  }
+function warnOccupied(path: string, stdout: (text: string) => void): void {
+  stdout(`Warning: ${path} is already occupied; left untouched.\n`);
 }
 
 export async function warnMissingMethodSkills(
@@ -91,19 +81,16 @@ export async function runMachineSkillSetup(home: string, stdout: (text: string) 
   const canonical = skillRoot(home);
   const missingMatt: string[] = [];
   const missingAk: string[] = [];
-  let blocked = false;
-  const classify = async (name: string, missing: string[]): Promise<void> => {
+  const queue = async (name: string, missing: string[]): Promise<void> => {
     const path = join(canonical, name);
-    if (installedSkillPath(canonical, name) !== undefined) return;
-    if (await pathExists(path)) {
-      blocked = true;
-      stdout(`Setup left "${name}" untouched at ${path}; the path is occupied but has no usable Skill, so it was not installed.\n`);
+    if (await occupied(path)) {
+      warnOccupied(path, stdout);
       return;
     }
     missing.push(name);
   };
-  for (const name of MATT_SKILLS) await classify(name, missingMatt);
-  for (const name of AK_SKILLS) await classify(name, missingAk);
+  for (const name of MATT_SKILLS) await queue(name, missingMatt);
+  for (const name of AK_SKILLS) await queue(name, missingAk);
   if (!addSkills("mattpocock/skills", missingMatt, home)) return 1;
   if (!addSkills("Akagilnc/ak-cross-m-review", missingAk, home)) return 1;
 
@@ -122,17 +109,14 @@ export async function runMachineSkillSetup(home: string, stdout: (text: string) 
       const target = join(canonical, name);
       if (installedMethodSkillPath(home, name) === undefined) continue;
       const link = join(root, name);
-      if (!(await pathExists(link))) {
-        await mkdir(root, { recursive: true });
-        await symlink(target, link, "dir");
+      if (await occupied(link)) {
+        warnOccupied(link, stdout);
         continue;
       }
-      if (await resolvesTo(link, target)) continue;
-      blocked = true;
-      stdout(`Setup left "${name}" untouched at ${link}; it does not point at the machine Skill ${target}, so the host is not connected.\n`);
+      await mkdir(root, { recursive: true });
+      await symlink(target, link, "dir");
     }
   }
-  if (blocked) return 1;
   stdout("Machine method Skills setup finished. Existing same-name Skills were left untouched.\n");
   return 0;
 }
