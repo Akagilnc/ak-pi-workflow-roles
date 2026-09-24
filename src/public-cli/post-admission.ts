@@ -109,6 +109,7 @@ import {
   settleHostEndedNoReceipt,
   attachRecordedSubmissions,
   publishFailureArtifacts,
+  type ControlledFailure,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -1535,7 +1536,7 @@ export async function runPostAdmissionSeatResume<
         request.runId,
         input.env.principalAuthority,
         input.io,
-        error.message,
+        error,
       );
       if (!recorded) presentStructuralRejection(error, input.io);
       return { exitCode: 2 };
@@ -1737,12 +1738,11 @@ export async function runPostAdmissionSeatResume<
     return resumed;
   } catch (error) {
     if (error instanceof TurnDispatchedFailure) throw error;
-    const diagnostic = error instanceof Error ? error.message : String(error);
     await presentResumeFailurePointer(
       loaded.admitted,
       input.env.principalAuthority,
       input.io,
-      diagnostic,
+      error,
     );
     return { exitCode: error instanceof CliUsageError ? 2 : 1 };
   }
@@ -1753,7 +1753,7 @@ async function pointExistingRunFailure(
   runId: string,
   authority: DurablePrincipalAuthority,
   io: CliIo,
-  diagnostic: string,
+  thrown: unknown,
 ): Promise<boolean> {
   try {
     const runDirectory = await findRunDirectoryById(home, runId);
@@ -1778,7 +1778,7 @@ async function pointExistingRunFailure(
       } as AdmittedRoleInvocation,
       authority,
       io,
-      diagnostic,
+      thrown,
     );
     return true;
   } catch {
@@ -1805,13 +1805,21 @@ async function presentResumeFailurePointer(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   io: CliIo,
-  diagnostic: string,
+  thrown: unknown,
 ): Promise<void> {
+  const failure = classifyPostAdmissionFailure({
+    timedOut: false,
+    code: null,
+    stderr: "",
+    thrown,
+  });
   try {
-    writeResumeFailurePointer(io, await publishResumeErrorPointer(admitted, authority, diagnostic));
+    writeResumeFailurePointer(io, await publishResumeErrorPointer(admitted, authority, failure));
   } catch (publishError) {
     presentStructuralRejection(
-      publishError instanceof Error ? { message: diagnostic, cause: publishError } : { message: diagnostic },
+      thrown instanceof Error
+        ? { message: thrown.message, cause: thrown.cause ?? publishError }
+        : { message: String(thrown), cause: publishError },
       io,
     );
   }
@@ -1835,19 +1843,26 @@ async function existingSuccessReport(runDirectory: string): Promise<boolean> {
 async function publishResumeErrorPointer(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  diagnostic: string,
+  failure: ControlledFailure,
 ): Promise<string> {
   if (await existingSuccessReport(admitted.runDirectory)) {
     const dir = await ensureRealArtifactsDirectory(admitted.runDirectory);
     const path = join(dir, `resume-diagnostic-${randomUUID()}.json`);
     await writeFile(
       path,
-      `${JSON.stringify({ runId: admitted.runId, role: admitted.role, diagnostic }, null, 2)}\n`,
+      `${JSON.stringify({
+        runId: admitted.runId,
+        role: admitted.role,
+        diagnostic: failure.diagnostic,
+        ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+        ...(failure.identity === undefined ? {} : { identity: failure.identity }),
+        ...(failure.details === undefined ? {} : { details: failure.details }),
+      }, null, 2)}\n`,
       { encoding: "utf8", flag: "wx" },
     );
     return path;
   }
-  const published = await publishFailureArtifacts(admitted, { diagnostic }, authority);
+  const published = await publishFailureArtifacts(admitted, failure, authority);
   const error = published.find((artifact) => artifact.kind === "error");
   if (error === undefined) {
     throw new Error("failure publication returned no error record");

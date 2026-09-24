@@ -2525,6 +2525,21 @@ test("public resume says which confirmed fact failed and where to look", async (
         return record;
       };
 
+      const unreadable = await seed({
+        runId: "1058-unreadable",
+        role: "secretariat",
+        session: true,
+        projectRoot: project,
+      });
+      const admittedPath = join(unreadable.runDirectory, "admitted-request.json");
+      await rm(admittedPath);
+      const callsBeforeUnreadable = seen.length;
+      const unreadableResume = await resume(["resume", "--model", "test/caller-seat:high", "1058-unreadable"]);
+      assert.notEqual(unreadableResume.exitCode, 0);
+      assert.equal(seen.length, callsBeforeUnreadable);
+      assert.equal(unreadableResume.stderr.includes(errorRecord(unreadable.runDirectory)), true);
+      assert.equal((await readFile(errorRecord(unreadable.runDirectory), "utf8")).includes(admittedPath), true);
+
       const callsBeforeWorkspace = seen.length;
       const noWorkspace = await resume(["resume", "--model", "test/caller-seat:high", "1058-no-workspace"]);
       assert.notEqual(noWorkspace.exitCode, 0);
