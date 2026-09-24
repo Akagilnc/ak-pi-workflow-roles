@@ -2144,13 +2144,9 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     });
     // Principal path is bound but the file itself is missing.
 
-    const errorRecord = join(runDirectory, "artifacts", "error.json");
     await assert.rejects(
       () => loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),
-      (error: unknown) =>
-        error instanceof Error &&
-        error.message.includes(sessionFile) &&
-        error.message.includes(errorRecord),
+      (error: unknown) => error instanceof Error && error.message.includes(sessionFile),
     );
 
     const { io, stdout, stderr } = captureIo();
@@ -2582,6 +2578,42 @@ test("public resume says which confirmed fact failed and where to look", async (
       assert.deepEqual(await readdir(runsRoot), before);
     } finally {
       delete process.env.AK_ROLE_AUDITOR_SUBJECT;
+    }
+
+    const occupiedSession = join(missingSession.runDirectory, "artifacts", "error.json");
+    const sessionArtifacts = join(missingSession.runDirectory, "artifacts");
+    await chmod(occupiedSession, 0o000);
+    await chmod(sessionArtifacts, 0o555);
+    try {
+      const sessionFallback = await resume("1058-no-session");
+      assert.equal((await stat(occupiedSession)).mode & 0o777, 0o000);
+      assert.equal(sessionFallback.stderr.includes(occupiedSession), false);
+      assert.equal(sessionFallback.stderr.includes(missingSession.sessionFile), true);
+      const sessionPointer = sessionFallback.stderr.split(/\s+/).find((token) => token.endsWith(".json"));
+      assert.equal(sessionPointer !== undefined && sessionPointer !== occupiedSession, true);
+      assert.equal((await readFile(sessionPointer!, "utf8")).includes(missingSession.sessionFile), true);
+    } finally {
+      await chmod(sessionArtifacts, 0o755);
+      await chmod(occupiedSession, 0o644);
+    }
+
+    const unknownRun = (await readdir(runsRoot)).find((name) => name.startsWith("1058-unknown-host@"));
+    assert.equal(typeof unknownRun, "string");
+    const unknownArtifacts = join(runsRoot, unknownRun!, "artifacts");
+    const occupiedUnknown = join(unknownArtifacts, "error.json");
+    await chmod(occupiedUnknown, 0o000);
+    await chmod(unknownArtifacts, 0o555);
+    try {
+      const unknownFallback = await resume("1058-unknown-host");
+      assert.equal((await stat(occupiedUnknown)).mode & 0o777, 0o000);
+      assert.equal(unknownFallback.stderr.includes(occupiedUnknown), false);
+      assert.equal(unknownFallback.stderr.includes("zeta-unique-host-diagnostic"), true);
+      const unknownPointer = unknownFallback.stderr.split(/\s+/).find((token) => token.endsWith(".json"));
+      assert.equal(unknownPointer !== undefined && unknownPointer !== occupiedUnknown, true);
+      assert.equal((await readFile(unknownPointer!, "utf8")).includes("zeta-unique-host-diagnostic"), true);
+    } finally {
+      await chmod(unknownArtifacts, 0o755);
+      await chmod(occupiedUnknown, 0o644);
     }
   });
 });

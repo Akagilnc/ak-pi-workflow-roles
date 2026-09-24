@@ -10,14 +10,14 @@ import type {
  * any existing run with an available Pi session principal may be resumed; caller decides.
  * Prose is never regex-classified as quota evidence.
  */
-import { chmod, lstat, mkdir, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join } from "node:path";
+import { chmod, lstat, open, readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { basename, isAbsolute, join } from "node:path";
 
 import {
   activationBookDirectory,
   resolveActivationLedgerHome,
 } from "../activation-ledger-topology.ts";
-import { listBookRunDirectories, roleRunArtifactsDirectory } from "../role-run-placement.ts";
+import { listBookRunDirectories } from "../role-run-placement.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
@@ -1327,6 +1327,7 @@ async function loadResumableRunRecord(
   runId: string,
   authority: DurablePrincipalAuthority,
   allowUnformedAdmitted = false,
+  deferSessionGate = false,
 ): Promise<{
   readonly run: RoleRunRecord;
   readonly principal: DurablePrincipal;
@@ -1349,24 +1350,10 @@ async function loadResumableRunRecord(
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
   const { run, principal } = materialized;
-  if (!(allowUnformedAdmitted && run.state === "admitted")) {
+  if (!deferSessionGate && !(allowUnformedAdmitted && run.state === "admitted")) {
     const availability = await readHostSessionAvailability(authority, principal);
     if (!availability.available) {
-      const sessionFile = availability.sessionFile;
-      const diagnostic = availability.absent
-        ? `ENOENT: ${sessionFile}`
-        : availability.cause instanceof Error && availability.cause.message.trim() !== ""
-          ? availability.cause.message
-          : `session unavailable: ${sessionFile}`;
-      const pointer = await writeRunErrorRecord(run.runDirectory, {
-        role: run.role,
-        runId: run.runId,
-        diagnostic,
-      });
-      const hint = availability.absent
-        ? `没有可续的宿主会话，预期会话文件不存在：${sessionFile}`
-        : `现在不能续宿主会话，会话文件：${sessionFile}`;
-      throw new CliUsageError(`${hint} ${pointer}`);
+      throw new CliUsageError(sessionUnavailableHint(availability));
     }
   }
   // Reconstruct admitted identity from durable run record + admitted-request.json.
@@ -1772,8 +1759,15 @@ export async function loadResumablePublicRole(
   runId: string,
   authority: DurablePrincipalAuthority,
   allowUnformedAdmitted = false,
+  deferSessionGate = false,
 ): Promise<LoadedResumablePublicRole> {
-  const loaded = await loadResumableRunRecord(home, runId, authority, allowUnformedAdmitted);
+  const loaded = await loadResumableRunRecord(
+    home,
+    runId,
+    authority,
+    allowUnformedAdmitted,
+    deferSessionGate,
+  );
   return seatLoadedResult(loaded, admitResumedRole(loaded));
 }
 
@@ -2037,18 +2031,14 @@ function resumedWorkerPhase(
   throw new CliUsageError(`role run admitted ${role} phase is missing: ${runId}`);
 }
 
-/** Existing artifacts/error.json face. One openable record; not a failure taxonomy. */
-export async function writeRunErrorRecord(
-  runDirectory: string,
-  body: { readonly role: string; readonly runId: string; readonly diagnostic: string },
-): Promise<string> {
-  const path = join(roleRunArtifactsDirectory(runDirectory), "error.json");
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(body, null, 2)}\n`, "utf8");
-  return path;
+export function sessionUnavailableHint(availability: HostSessionAvailability): string {
+  if (availability.available) return availability.sessionFile;
+  return availability.absent
+    ? `没有可续的宿主会话，预期会话文件不存在：${availability.sessionFile}`
+    : `现在不能续宿主会话，会话文件：${availability.sessionFile}`;
 }
 
-async function readHostSessionAvailability(
+export async function readHostSessionAvailability(
   authority: DurablePrincipalAuthority,
   principal: DurablePrincipal,
 ): Promise<HostSessionAvailability> {

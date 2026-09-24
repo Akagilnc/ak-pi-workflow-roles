@@ -789,7 +789,13 @@ export async function runPublicInstructionSeatResume(
     env,
     io,
     load: async (effective) => {
-      const loaded = await loadResumablePublicRole(env.home, effective.runId, env.principalAuthority);
+      const loaded = await loadResumablePublicRole(
+        env.home,
+        effective.runId,
+        env.principalAuthority,
+        false,
+        true,
+      );
       if (
         packagedRebindSourceOnResume(loaded.admitted.role)
         && effective.summons?.sourceRunPath !== undefined

@@ -198,14 +198,14 @@ test("block1: session principal unavailable still fails honestly", async()=>{
     const runDir=join(home,".ak-roles","books",bookKey,"unbound","runs",`${runId}@judge`);
     await rm(join(runDir,"session","session.jsonl"),{force:true});
     const sessionFile=join(runDir,"session","session.jsonl");
-    const errorRecord=join(runDir,"artifacts","error.json");
-    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),(error: unknown)=>error instanceof Error && error.message.includes(sessionFile) && error.message.includes(errorRecord));
+    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),(error: unknown)=>error instanceof Error && error.message.includes(sessionFile));
     const {io:io2,stderr}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,io:io2,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                       packageRoot,
                                                                                       principalAuthority: piDurablePrincipalAuthority,
                                                                                       piRunner: async(a)=>{dispatched=true;return{code:0,stderr:"",timedOut:false,args:[...a]};},
                                                                                     })});
+    const errorRecord=join(runDir,"artifacts","error.json");
     assert.equal(dispatched,false);assert.equal(stderr.join("").includes(sessionFile),true);assert.equal(stderr.join("").includes(errorRecord),true);assert.notEqual(res.exitCode,0);
   });
 });

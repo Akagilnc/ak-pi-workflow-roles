@@ -81,8 +81,9 @@ import {
   markRunRunning,
   readCurrentCourt,
   recordCurrentCourt,
+  readHostSessionAvailability,
   renderResumeCommand,
-  writeRunErrorRecord,
+  sessionUnavailableHint,
   type CurrentCourtState,
   type RunWriterLease,
   type TypedProviderHttpObservation,
@@ -110,6 +111,7 @@ import {
   settleFailureTerminalResult,
   settleHostEndedNoReceipt,
   attachRecordedSubmissions,
+  publishFailureArtifacts,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
@@ -1534,13 +1536,23 @@ export async function runPostAdmissionSeatResume<
     }
     throw error;
   }
+  const sessionBlock = await blockedHostSession(input.env.principalAuthority, loaded.admitted.principal);
+  if (sessionBlock !== undefined) {
+    const pointer = await publishResumeErrorPointer(
+      loaded.admitted,
+      input.env.principalAuthority,
+      sessionBlock.diagnostic,
+    );
+    presentStructuralRejection({ message: `${sessionBlock.hint} ${pointer}` }, input.io);
+    return { exitCode: 2 };
+  }
   const missingSubject = await missingAuditorSubject(loaded.admitted);
   if (missingSubject !== undefined) {
-    const pointer = await writeRunErrorRecord(loaded.admitted.runDirectory, {
-      role: loaded.admitted.role,
-      runId: loaded.admitted.runId,
-      diagnostic: missingSubject.record,
-    });
+    const pointer = await publishResumeErrorPointer(
+      loaded.admitted,
+      input.env.principalAuthority,
+      missingSubject.record,
+    );
     presentStructuralRejection({ message: `${missingSubject.hint} ${pointer}` }, input.io);
     return { exitCode: 2 };
   }
@@ -1734,14 +1746,9 @@ export async function runPostAdmissionSeatResume<
         : { effectiveEngine: input.effectiveEngine }),
       buildRequestAfterLease,
     });
-    if (resumed.exitCode !== 0) {
-      const pointer = join(loaded.admitted.runDirectory, "artifacts", "error.json");
-      try {
-        await stat(pointer);
-        input.io.stderr(`${pointer}\n`);
-      } catch {
-        // Settlement did not leave the conventional record; do not invent a path.
-      }
+    const publishedError = resumed.terminal?.artifacts.find((artifact) => artifact.kind === "error")?.path;
+    if (resumed.exitCode !== 0 && publishedError !== undefined) {
+      input.io.stderr(`${publishedError}\n`);
     }
     return resumed;
   } catch (error) {
@@ -1752,11 +1759,11 @@ export async function runPostAdmissionSeatResume<
     }
     if (await isMissingWorkspaceSpawn(error, loaded.admitted.projectRoot)) {
       const diagnostic = error instanceof Error ? error.message : String(error);
-      const pointer = await writeRunErrorRecord(loaded.admitted.runDirectory, {
-        role: loaded.admitted.role,
-        runId: loaded.admitted.runId,
+      const pointer = await publishResumeErrorPointer(
+        loaded.admitted,
+        input.env.principalAuthority,
         diagnostic,
-      });
+      );
       presentStructuralRejection({
         message: `工作目录不存在：${loaded.admitted.projectRoot} ${pointer}`,
       }, input.io);
@@ -1834,6 +1841,33 @@ async function missingAuditorSubject(admitted: {
 
 function shellSingleQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
+}
+
+async function blockedHostSession(
+  authority: DurablePrincipalAuthority,
+  principal: DurablePrincipal,
+): Promise<{ readonly hint: string; readonly diagnostic: string } | undefined> {
+  const availability = await readHostSessionAvailability(authority, principal);
+  if (availability.available) return undefined;
+  const diagnostic = availability.absent
+    ? `ENOENT: ${availability.sessionFile}`
+    : availability.cause instanceof Error && availability.cause.message.trim() !== ""
+      ? availability.cause.message
+      : `session unavailable: ${availability.sessionFile}`;
+  return { hint: sessionUnavailableHint(availability), diagnostic };
+}
+
+async function publishResumeErrorPointer(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  diagnostic: string,
+): Promise<string> {
+  const published = await publishFailureArtifacts(admitted, { diagnostic }, authority);
+  const error = published.find((artifact) => artifact.kind === "error");
+  if (error === undefined) {
+    throw new Error("failure publication returned no error record");
+  }
+  return error.path;
 }
 
 /**
