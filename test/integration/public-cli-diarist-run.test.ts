@@ -53,6 +53,7 @@ import {
 } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 
 const TICKET = 708;
 
@@ -793,7 +794,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   };
 }
 
-test("public diarist reasks an unreadable routing status before projecting other fields", async () => {
+test("public diarist reasks an unreadable routing status but escalates without reading bounds", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -823,10 +824,9 @@ test("public diarist reasks an unreadable routing status before projecting other
             }
             sawStatusReask = true;
             return {
-              status: "completed",
-              ticketNumber: TICKET,
-              sessions: [],
-              reason: { callerOwnsThisNarrativeField: true },
+              status: "escalate",
+              reason: "无法辨认本庭对象",
+              sessions: [{}],
             };
           }),
         }),
@@ -835,6 +835,7 @@ test("public diarist reasks an unreadable routing status before projecting other
 
     assert.equal(result.exitCode, 0, stdout.join("") || "diarist did not settle");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
     assert.equal(sawStatusReask, true);
   });
 });

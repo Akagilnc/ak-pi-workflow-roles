@@ -35,6 +35,10 @@ import type { HostContext, RoleHost } from "../../src/host-contracts.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 import { createCoderRoleRuntime } from "../../src/worker-role.ts";
 import {
+  createSubmissionLedgerHost,
+  readRecordedSubmissionRows,
+} from "../../src/submission-ledger.ts";
+import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
 } from "../../src/worker-submission-gates.ts";
@@ -85,7 +89,6 @@ test("public coder reasks only an unreadable status and accepts an open-shaped o
 
     const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
     const corrected = { status: "planned", report: { unvalidated: true } };
-    const reaskCodes: string[] = [];
     let accepted: { details?: unknown } | undefined;
 
     const result = await runAkRole(
@@ -124,7 +127,14 @@ test("public coder reasks only an unreadable status and accepts an open-shaped o
               getActiveTools: () => registered === undefined ? [] : [registered.name],
               on() {},
             } as unknown as RoleHost;
-            const runtime = createCoderRoleRuntime(host, {
+            const ledgerHost = createSubmissionLedgerHost(
+              host,
+              new Map([[CODER_OUTPUT_TOOL_NAME, "coder"]]),
+              undefined,
+              undefined,
+              { home },
+            );
+            const runtime = createCoderRoleRuntime(ledgerHost, {
               loadSoul: async () => "Coder test soul",
               loadTask: async () => "Approved plan input",
             }, {
@@ -141,6 +151,7 @@ test("public coder reasks only an unreadable status and accepts an open-shaped o
             await writeFile(sessionFile, "", "utf8");
             const context = {
               cwd: project,
+              runDirectory: options.env.AK_ROLE_RUN_DIR,
               mode: "tui",
               model: undefined,
               sessionManager: {
@@ -165,23 +176,22 @@ test("public coder reasks only an unreadable status and accepts an open-shaped o
                 break;
               } catch (error) {
                 if (!(error instanceof ParentQueueReaskError)) throw error;
-                reaskCodes.push(error.code);
               }
             }
             assert.ok(accepted, "coder did not accept a readable status after reask");
-            return scriptedTerminatingToolSession({
-              role: "coder",
-              toolName: CODER_OUTPUT_TOOL_NAME,
-              details: accepted.details,
-            })(args, options);
+            return { code: 0, stderr: "", timedOut: false, args: [...args] };
           },
         }),
       },
     );
 
     assert.equal(result.exitCode, 0);
-    assert.deepEqual(reaskCodes, ["parent_queue_reask"]);
-    assert.deepEqual(accepted?.details, corrected);
+    assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["planned"]);
+    const submissions = await readRecordedSubmissionRows(project, "run-cli-coder-status-reask", home);
+    assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
+      { kind: "correctable-rejection", accepted: unreadable },
+      { kind: "accepted", accepted: corrected },
+    ]);
   });
 });
 

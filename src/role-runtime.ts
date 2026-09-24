@@ -914,6 +914,7 @@ export function createDiaristRoleRuntime(
         if (typeof status !== "string" || !DIARIST_ROUTING_STATUSES.has(status)) {
           throw new ParentQueueReaskError(DIARIST_STATUS_REASK);
         }
+        if (status === "escalate") return parameters;
         const assertion = readDiaristTicketAssertion(submitted);
         const coords = readDiaristRunCoordinates(ctx);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
