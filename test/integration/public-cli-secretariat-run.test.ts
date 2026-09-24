@@ -595,6 +595,7 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
             },
           },
         },
+        { details: { status: "converged", note: "署" } },
       ],
       steps: [
         {
@@ -657,6 +658,11 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
       gateCalls.some((c) => c.kind === "secretariat_verdict"),
       "must enter secretariat_verdict before 给事中 escalate",
     );
+    const resumed = await runAkRole(["resume", countersignTerminal.runId!], {
+      home, packageRoot, cwd: project, io: captureIo().io,
+      roleTurnHost: host, hostAdapters: [adapter("pi", host)],
+    });
+    assert.equal(resumed.terminal?.roleOutcome.role, "secretariat", "one child resume continues the parent");
   });
 });
 

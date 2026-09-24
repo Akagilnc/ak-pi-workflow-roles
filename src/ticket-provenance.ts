@@ -6,7 +6,7 @@
  */
 import { createHash } from "node:crypto";
 import { appendFileSync } from "node:fs";
-import { readFile, unlink } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -370,8 +370,8 @@ export function ensureTicketProvenanceVolume(
   return { recordFile: path.recordFile, volumeDir: path.sessionDir };
 }
 
-/** Assign a run-owned unbound diary as its original block through Sitian. */
-export async function rehomeUnboundTicketProvenance(
+/** Project a run-owned diary into its current ticket; retain the source for later ticket changes. */
+export async function rehomeRunOwnedTicketProvenance(
   runDirectory: string,
   ticketNumber: number,
   cwd: string,
@@ -386,7 +386,6 @@ export async function rehomeUnboundTicketProvenance(
     throw error;
   }
   appendSitianRecordBlock(ticketProvenanceRecordInput(ticketNumber, cwd, home), content);
-  await unlink(source);
 }
 
 export type ReprojectTicketProvenanceResult = {

@@ -1230,7 +1230,7 @@ export async function runAkRole(
         }),
         io,
       );
-      const parentRunId = result.admitted?.role === "diarist" ? result.admitted.correlationId : undefined;
+      const parentRunId = result.admitted?.correlationId;
       const parentRole = parentRunId === undefined ? undefined : await peekRoleRunRole(home, parentRunId);
       if (
         result.exitCode === 0 && parentRunId !== undefined && result.terminal !== undefined
@@ -1239,14 +1239,12 @@ export async function runAkRole(
         && (parentRole === "secretariat" || parentRole === "countersign")
       ) {
         const parentSeat = resolveEffectiveSeat(config, parentRole, credentials, invocationFromParsed(parsed));
-        const continued = await continueParentAfterDiarist(
-          parentRunId,
-          result.admitted!,
-          createRoleEnvironment(env, {
-            role: parentRole, home, agentDir, cwd, credentials, seat: parentSeat, config,
-          }),
-          io,
-        );
+        const parentEnv = createRoleEnvironment(env, {
+          role: parentRole, home, agentDir, cwd, credentials, seat: parentSeat, config,
+        });
+        const continued = result.admitted?.role === "diarist"
+          ? await continueParentAfterDiarist(parentRunId, result.admitted, parentEnv, io)
+          : await runPublicInstructionSeatResume({ runId: parentRunId }, parentEnv, io);
         if (continued !== undefined) {
           // A Countersign gate can have paused its Secretariat caller while its
           // own diarist was up for decision. Continue that caller after the

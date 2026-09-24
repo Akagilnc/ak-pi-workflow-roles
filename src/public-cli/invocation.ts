@@ -84,7 +84,7 @@ import {
   type MergerInput,
 } from "../merger-contracts.ts";
 import { sha256Hex } from "../sha256.ts";
-import { rehomeUnboundTicketProvenance } from "../ticket-provenance.ts";
+import { rehomeRunOwnedTicketProvenance } from "../ticket-provenance.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import {
   NOTARY_FIXED_KICKOFF,
@@ -645,7 +645,6 @@ export async function relocateAdmittedRunToTicket(
 ): Promise<{ oldRunDirectory: string; newRunDirectory: string } | undefined> {
   if (admitted.ticketNumber === undefined) return undefined;
   const oldRunDirectory = admitted.runDirectory;
-  const wasUnbound = oldRunDirectory.includes(`${sep}unbound${sep}runs${sep}`);
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(oldRunDirectory));
   const target = roleRunPlacement(ledgerHome, {
     bookKey: admitted.bookKey,
@@ -659,7 +658,7 @@ export async function relocateAdmittedRunToTicket(
   // Keep that failure before the filesystem commit point.
   const principal = authority.seal(target);
 
-  if (wasUnbound && admitted.role !== "diarist") {
+  if (admitted.role !== "diarist") {
     const parentPage = JSON.parse(await readFile(admitted.admittedRequestPath, "utf8")) as Record<string, unknown>;
     const childRunIds = parentPage.childDiaristRunIds;
     const childLocations = await listBookRunDirectories(activationBookDirectory(ledgerHome, admitted.bookKey));
@@ -668,7 +667,7 @@ export async function relocateAdmittedRunToTicket(
       const childDirectory = join(dirname(oldRunDirectory), `${childRunId}@diarist`);
       const locations = childLocations.filter((directory) => basename(directory) === `${childRunId}@diarist`);
       if (locations.length !== 1) throw new Error(`expected one diarist run ${childRunId}, found ${locations.length}`);
-      // A child that already filed under its own ticket is not the parent's unbound property.
+      // Only a child previously filed with this parent follows its later ticket change.
       if (locations[0] !== childDirectory) continue;
       const childTarget = roleRunPlacement(ledgerHome, {
         bookKey: admitted.bookKey,
@@ -678,16 +677,15 @@ export async function relocateAdmittedRunToTicket(
       });
       authority.seal(childTarget);
       await bindTicketNumberOnRunDirectory(childDirectory, admitted.ticketNumber);
-      await rehomeUnboundTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
+      await rehomeRunOwnedTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
       ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));
       await rename(childDirectory, childTarget.runDirectory);
     }
   }
 
-  // A diarist or Secretariat can file before its run obtains a ticket.
-  // Rehome any run-owned diary before moving the run directory.
-  if (wasUnbound && (admitted.role === "diarist" || admitted.role === "secretariat")) {
-    await rehomeUnboundTicketProvenance(oldRunDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
+  // A run-owned diary follows each typed ticket change, including later corrections.
+  if (admitted.role === "diarist" || admitted.role === "secretariat") {
+    await rehomeRunOwnedTicketProvenance(oldRunDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
   }
 
   // Rename commits the run placement. Diary assignment above is an idempotent
