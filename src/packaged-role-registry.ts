@@ -391,7 +391,7 @@ export const PUBLIC_ROLE_RECORDS = [
     activationStage: "load-and-install",
     receiptStatusKey: "status",
     // #924: 公用《票面法》三席同装
-    sessionMaterials: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md"],
+    sessionMaterials: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md", "resources/countersign-ticket-issue.md"],
   },
   {
     role: "secretariat",
@@ -399,7 +399,7 @@ export const PUBLIC_ROLE_RECORDS = [
     presentSettled: "always",
     summonResume: false,
     admission: "instruction",
-    sameParent: "court-diarist",
+    sameParent: "none",
     phases: [null],
     outputTool: SECRETARIAT_OUTPUT_TOOL_NAME,
     settlement: "accepted",
@@ -415,6 +415,7 @@ export const PUBLIC_ROLE_RECORDS = [
       "CLAUDE.md",
       "souls/secretariat.md",
       "souls/ticket-law.md",
+      "resources/secretariat-ticket-identity.md",
       "souls/countersign.md",
       "souls/notary.md",
     ],

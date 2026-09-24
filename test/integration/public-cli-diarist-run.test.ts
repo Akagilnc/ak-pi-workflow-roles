@@ -28,6 +28,7 @@ import type {
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { ATTEMPT_HISTORY_ENTRY_TYPE } from "../../src/public-cli/settlement.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
 import { migrateBookTopology } from "../../src/book-topology-migration.ts";
@@ -42,7 +43,6 @@ import {
 } from "../../src/ticket-provenance.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
-import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   roleTurnHostFromStructuredOutputRounds,
@@ -2441,7 +2441,7 @@ test("ak-role diarist true-unbound records its dialogue under unbound", async ()
   });
 });
 
-test("pre-bound diarist records its own ticket assertion, including null", async () => {
+test("pre-bound diarist preserves its receipt without code-side reassignment", async () => {
   for (const assertedTicket of [null, TICKET + 1]) {
     await withTempHome(async (home) => {
       const project = join(home, "project");
@@ -2464,13 +2464,11 @@ test("pre-bound diarist records its own ticket assertion, including null", async
       });
       assert.equal(result.exitCode, 0);
       assert.equal(existsSync(resolveTicketProvenanceVolume(TICKET, project, home).recordFile), false);
-      if (assertedTicket === null) {
-        const runRecord = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET), "runs", "01a0diar00-0000-7000-8000-0000000000b1@diarist", "records.jsonl");
-        const rows = (await readFile(runRecord, "utf8")).trim().split("\n").map((row) => JSON.parse(row));
-        assert.equal(rows[0]?.payload?.lines?.[0]?.id, "bound-assertion-owner");
-      } else {
-        assert.equal((await readTicketProvenance(assertedTicket, project, home)).lines[0]?.id, "bound-assertion-owner");
-      }
+      const runDir = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(TICKET), "runs", "01a0diar00-0000-7000-8000-0000000000b1@diarist");
+      const submissions = await readRecordedSubmissionRows(project, "01a0diar00-0000-7000-8000-0000000000b1", home);
+      assert.equal((submissions.at(-1)?.accepted as { ticketNumber?: unknown })?.ticketNumber, assertedTicket);
+      const admitted = JSON.parse(await readFile(join(runDir, "admitted-request.json"), "utf8"));
+      assert.equal(admitted.ticketNumber, TICKET);
     });
   }
 });

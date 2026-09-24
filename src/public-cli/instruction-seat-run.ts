@@ -388,9 +388,7 @@ async function runCountersignBody(
       projectRoot: resolve(parsed.project ?? env.cwd),
       role: "countersign",
       parentRunPath: gateParentRunPath,
-      ...(env.boundTicketNumber === undefined
-        ? {}
-        : { ticketNumber: env.boundTicketNumber }),
+      ...(isSafePositiveTicketNumber(env.boundTicketNumber) ? { ticketNumber: env.boundTicketNumber } : {}),
       freshSummons: env.freshSummons,
       summons: {
         sourceRunPath: gateParentRunPath,
@@ -430,15 +428,17 @@ async function runCountersignBody(
       let typedTicket: number | undefined;
       let typedCourtTicketNumbers: readonly number[] | undefined;
       let identityDiaristRan = false;
-      let unboundDiaristRunId: string | undefined;
+      let childDiaristRunId: string | undefined;
+      let pausedDiaristTerminal: TerminalResult | undefined;
 
-      if (env.runCourtDiaristStation === undefined) {
+      if (gateParentRunPath === undefined && env.runCourtDiaristStation === undefined) {
         let outcome: Awaited<ReturnType<typeof invokeCourtDiarist>>;
         try {
           outcome = await invokeCourtDiarist({
             instruction: parsed.instruction ?? "",
             projectRoot: admitted.projectRoot,
             failureLabel: "unbound summons",
+            correlationId: admitted.runId,
             ...(env.boundTicketNumber === undefined ? {} : { boundTicketNumber: env.boundTicketNumber }),
           }, env, io);
         } catch (error) {
@@ -454,17 +454,16 @@ async function runCountersignBody(
           }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
         }
         identityDiaristRan = true;
+        if (outcome.identity.kind === "escalate") pausedDiaristTerminal = outcome.terminal;
         if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
-          unboundDiaristRunId = outcome.admitted.runId;
+          childDiaristRunId = outcome.admitted.runId;
         }
-        if (outcome.identity.kind === "escalate" || outcome.failedWithoutEscalate !== undefined) {
-          const diagnostic = outcome.identity.kind === "escalate"
-            ? outcome.identity.diagnostic
-            : outcome.failedWithoutEscalate?.diagnostic ?? "";
+        if (outcome.failedWithoutEscalate !== undefined) {
+          const diagnostic = outcome.failedWithoutEscalate.diagnostic;
           await materializeAdmission(
             isSafePositiveTicketNumber(env.boundTicketNumber) ? env.boundTicketNumber : undefined,
           );
-          if (unboundDiaristRunId !== undefined) await recordChildDiaristRun(admitted, unboundDiaristRunId);
+          if (childDiaristRunId !== undefined) await recordChildDiaristRun(admitted, childDiaristRunId);
           await markRunAdmitted(admitted, env.principalAuthority);
           return await presentControlledFailure(admitted, {
             timedOut: false,
@@ -474,19 +473,20 @@ async function runCountersignBody(
           }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
         }
         if (outcome.identity.kind === "ticket") {
-          typedTicket = isSafePositiveTicketNumber(env.boundTicketNumber)
-            ? env.boundTicketNumber
-            : outcome.identity.ticketNumber;
+          typedTicket = outcome.identity.ticketNumber;
           typedCourtTicketNumbers = outcome.identity.courtTicketNumbers;
-        } else if (isSafePositiveTicketNumber(env.boundTicketNumber)) {
-          typedTicket = env.boundTicketNumber;
         }
       }
 
       await materializeAdmission(typedTicket);
       await markRunAdmitted(admitted, env.principalAuthority);
-      if (unboundDiaristRunId !== undefined) {
-        await recordChildDiaristRun(admitted, unboundDiaristRunId);
+      if (childDiaristRunId !== undefined) {
+        await recordChildDiaristRun(admitted, childDiaristRunId);
+      }
+      if (pausedDiaristTerminal !== undefined) {
+        // The child already submitted its own pause; no parent turn exists yet.
+        io.stdout(formatTerminalResult(pausedDiaristTerminal));
+        return { exitCode: 0, admitted, terminal: pausedDiaristTerminal };
       }
       if (gateParentRunPath !== undefined) {
         await persistAdmittedSourceRunPath(admitted, gateParentRunPath);
@@ -540,7 +540,11 @@ async function runCountersignBody(
           beforeDispatch: async (admittedSeat, lease) => {
             if (!packagedAdmitsCountersign(admittedSeat.role)) return;
             if (!identityDiaristRan || typedTicket !== undefined) {
-              await runCountersignCourtDiaristStation(admittedSeat, env, io);
+              const refresh = await runCountersignCourtDiaristStation(admittedSeat, env, io);
+              if (refresh !== undefined) {
+                io.stdout(formatTerminalResult(refresh.terminal));
+                return refresh.terminal;
+              }
             }
             await relocateAdmittedRunToTicket(admittedSeat, env.principalAuthority, lease);
             Object.assign(turnRequest, buildInstructionSeatTurnRequest(admittedSeat, turnProjection));
@@ -628,7 +632,6 @@ export async function runPublicInstructionSeat(
         projectRoot,
         role,
         parentRunPath: sourceDirectory,
-        ...(auditorTicket === undefined ? {} : { ticketNumber: auditorTicket }),
         freshSummons: env.freshSummons,
         summons,
         resume: (runId, materials) => runPublicInstructionSeatResume(
@@ -657,7 +660,6 @@ export async function runPublicInstructionSeat(
         projectRoot,
         role,
         parentRunPath,
-        ...(env.boundTicketNumber === undefined ? {} : { ticketNumber: env.boundTicketNumber }),
         freshSummons: env.freshSummons,
         summons,
         resume: (runId, materials) => runPublicInstructionSeatResume(
@@ -686,7 +688,6 @@ export async function runPublicInstructionSeat(
       throw error;
     }
     const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
-    const knownTicket = (await readBoardTicketNumber(source.runDirectory)) ?? env.boundTicketNumber;
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: source.runDirectory,
       sourceRun: source,
@@ -697,7 +698,6 @@ export async function runPublicInstructionSeat(
       projectRoot,
       role,
       parentRunPath: source.runDirectory,
-      ...(knownTicket === undefined ? {} : { ticketNumber: knownTicket }),
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) => runPublicInstructionSeatResume(
@@ -737,52 +737,33 @@ export async function runPublicInstructionSeat(
 
   const runAdmitted = async (): Promise<SeatRunResult> => {
     await markRunAdmitted(admitted, env.principalAuthority);
-    if (record.sameParent === "court-diarist") {
-      const { invokeCourtDiarist } = await import("./countersign-run.ts");
-      const outcome = await invokeCourtDiarist({
-        instruction: parsed.instruction ?? "",
-        projectRoot: admitted.projectRoot,
-        failureLabel: "secretariat unbound summons",
-        attachmentPaths: admitted.attachments.map((attachment) => attachment.frozenPath),
-        correlationId: admitted.runId,
-      }, {
-        cwd: env.cwd,
-        home: env.home,
-        agentDir: env.agentDir,
-        packageRoot: env.packageRoot,
-        ...(env.credentials === undefined ? {} : { credentials: env.credentials }),
-        ...(env.signal === undefined ? {} : { signal: env.signal }),
-        ...(env.hostAdapters === undefined ? {} : { hostAdapters: env.hostAdapters }),
-      }, io);
+    if (role === "secretariat") {
+      let outcome: Awaited<ReturnType<typeof invokeCourtDiarist>>;
+      try {
+        outcome = await invokeCourtDiarist({
+          instruction: parsed.instruction ?? "",
+          projectRoot: admitted.projectRoot,
+          failureLabel: "secretariat unbound summons",
+          attachmentPaths: admitted.attachments.map((attachment) => attachment.frozenPath),
+          correlationId: admitted.runId,
+        }, env, io);
+      } catch (error) {
+        return await presentControlledFailure(admitted, {
+          timedOut: false, code: null, stderr: "", thrown: error,
+        }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
+      }
       if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
         await recordChildDiaristRun(admitted, outcome.admitted.runId);
       }
-      if (outcome.identity.kind === "escalate" || outcome.failedWithoutEscalate !== undefined) {
-        const diagnostic = outcome.identity.kind === "escalate"
-          ? outcome.identity.diagnostic
-          : outcome.failedWithoutEscalate?.diagnostic ?? "";
+      if (outcome.failedWithoutEscalate !== undefined) {
         return await presentControlledFailure(admitted, {
-          timedOut: false,
-          code: null,
-          stderr: "",
-          thrown: new Error(diagnostic),
+          timedOut: false, code: null, stderr: "",
+          thrown: new Error(outcome.failedWithoutEscalate.diagnostic),
         }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
       }
-      if (outcome.identity.kind === "ticket") {
-        try {
-          if (outcome.admitted === undefined) throw new Error("court diarist ticket has no admitted run");
-          await bindAdmittedTicketNumber(outcome.admitted, outcome.identity.ticketNumber);
-          await relocateAdmittedRunToTicket(outcome.admitted, env.principalAuthority);
-          await bindAdmittedTicketNumber(admitted, outcome.identity.ticketNumber);
-          await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
-        } catch (error) {
-          return await presentControlledFailure(admitted, {
-            timedOut: false,
-            code: null,
-            stderr: "",
-            thrown: error,
-          }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
-        }
+      if (outcome.identity.kind === "escalate" && outcome.terminal !== undefined) {
+        io.stdout(formatTerminalResult(outcome.terminal));
+        return { exitCode: 0, admitted, terminal: outcome.terminal };
       }
     }
     return dispatchAdmitted(admitted, env, io);
@@ -855,4 +836,26 @@ export async function runPublicInstructionSeatResume(
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
+}
+
+/** Continue the parent once any escalated child has submitted. */
+export async function continueParentAfterChild(
+  parentRunId: string,
+  child: AdmittedRoleInvocation,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult> {
+  const loaded = await loadResumablePublicRole(env.home, parentRunId, env.principalAuthority, true);
+  if (loaded.run.state !== "admitted") {
+    return runPublicInstructionSeatResume({ runId: parentRunId }, env, io);
+  }
+  const admitted = loaded.admitted;
+  if (admitted.role === "countersign" && admitted.ticketNumber !== undefined) {
+    const refresh = await runCountersignCourtDiaristStation(admitted, env, io, child.ticketNumber);
+    if (refresh !== undefined) {
+      io.stdout(formatTerminalResult(refresh.terminal));
+      return { exitCode: 0, admitted, terminal: refresh.terminal };
+    }
+  }
+  return dispatchAdmitted(admitted, env, io);
 }

@@ -77,7 +77,8 @@ import {
   type PublicRoleOptionOwner,
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
-import { runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
+import { continueParentAfterChild, runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
+import { courtDiaristEscalated } from "./countersign-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
 import {
   AUTO_RESUME_LIMIT,
@@ -1229,7 +1230,22 @@ export async function runAkRole(
         }),
         io,
       );
-      return cliResultFromRoleRun(result);
+      let current = result;
+      while (
+        current.exitCode === 0 && current.admitted?.correlationId !== undefined
+        && current.terminal?.roleOutcome.kind === "accepted"
+        && !courtDiaristEscalated(current.terminal.roleOutcome)
+      ) {
+        const parentRunId = current.admitted.correlationId;
+        const parentRole = await peekRoleRunRole(home, parentRunId);
+        if (parentRole === undefined) break;
+        const parentSeat = resolveEffectiveSeat(config, parentRole, credentials, invocationFromParsed(parsed));
+        const parentEnv = createRoleEnvironment(env, {
+          role: parentRole, home, agentDir, cwd, credentials, seat: parentSeat, config,
+        });
+        current = await continueParentAfterChild(parentRunId, current.admitted, parentEnv, io);
+      }
+      return cliResultFromRoleRun(current);
     }
 
     if (

@@ -223,8 +223,9 @@ function withOnceSuccessfulBeforeDispatch<
     ...adapters,
     beforeDispatch: async (admitted, lease) => {
       if (succeeded) return;
-      await hook(admitted, lease);
+      const result = await hook(admitted, lease);
       succeeded = true;
+      return result;
     },
   };
 }
@@ -352,7 +353,8 @@ export type PostAdmissionAdapters<
     result: RoleTurnResult;
     sessionFile: string;
   }) => Promise<RoleTurnKnownFailure | undefined>;
-  beforeDispatch?: (admitted: A, lease?: RunWriterLease) => Promise<void> | void;
+  /** A child office may pause this run with its unchanged terminal before a host turn starts. */
+  beforeDispatch?: (admitted: A, lease?: RunWriterLease) => Promise<T | void> | T | void;
   /**
    * After the host turn settles and before any held writer lease is released.
    * Post-turn bind/relocate (e.g. Diarist first assert) must run here so a
@@ -709,9 +711,8 @@ export async function dispatchPostAdmissionTurn<
       };
     }
     try {
-      // #858: an unbound seat may assert its ticket on the existing receipt.
-      // Read the original accepted payload; do not rewrite it, infer from prose,
-      // or reject missing/malformed declarations. An existing binding wins.
+      // #858: the first typed assertion files an unbound run. Later receipts
+      // remain untouched; this seam does not adjudicate a ticket change.
       if (admitted.ticketNumber === undefined) {
         const rows = await readRecordedSubmissionRows(
           admitted.projectRoot,
@@ -825,7 +826,10 @@ export async function dispatchPostAdmissionTurn<
     // (#840 父子不层叠).
     if (adapters.beforeDispatch !== undefined) {
       try {
-        await adapters.beforeDispatch(admitted, lease);
+        const paused = await adapters.beforeDispatch(admitted, lease);
+        if (paused !== undefined) {
+          return { exitCode: 0, admitted, terminal: paused, skipAutoResume: true as const };
+        }
       } catch (error) {
         const settled = (await presentControlledFailure(
           admitted,

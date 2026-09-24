@@ -1,10 +1,9 @@
 /**
  * Shared same-parent resume seam for gate / officer seats (#635 / #637 / #747 / #987).
  *
- * Lookup key is parent run path only (#747 / #987 Result 7). Public seats no
- * longer select a prior run by ticket number — callers use explicit
- * `ak-role resume <runId>`. Officer and gate countersign same-parent re-summons
- * keep this seam. Lookup/resume failures propagate (失败诚实) — never wash into
+ * Lookup uses the parent run path; a typed ticket narrows same-ticket gate
+ * re-summons, never creates an issue identity. Callers can also use explicit
+ * `ak-role resume <runId>`. Lookup/resume failures propagate (失败诚实) — never wash into
  * a fresh mint. Returns undefined when the caller declared an explicit fresh
  * summons (`ak-role new`) or when no prior run exists; both mint new.
  * freshSummons is required so no seat can drift back into its own skip branch.
@@ -18,7 +17,7 @@ import {
 
 /**
  * Sole same-seat → resume decision by parent run path (#637 / #724 / #747 / #987).
- * A typed ticket number is a bind key, not a resume key. When a prior run is
+ * A supplied typed ticket only narrows the prior-run search. When a prior run is
  * found, resume carries this summons' materials. Lookup/resume failures
  * propagate (失败诚实) — never wash into a fresh mint. Returns undefined when
  * the caller declared an explicit fresh summons (`ak-role new`), the parent
@@ -45,9 +44,7 @@ export async function tryResumeSameTicketSeatRun<T>(input: {
     bookKey: resolveBookKeyFromGit(input.projectRoot),
     role: input.role,
     parentRunPath: input.parentRunPath,
-    ...(input.ticketNumber === undefined
-      ? {}
-      : { ticketNumber: input.ticketNumber }),
+    ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
   });
   if (previousRunId === undefined) return undefined;
   return await input.resume(previousRunId, input.summons);

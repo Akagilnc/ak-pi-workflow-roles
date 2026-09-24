@@ -27,6 +27,7 @@ import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
 import {
   ensureRoleRunDirectory,
   ensureRoleRunPlacement,
+  listBookRunDirectories,
   roleRunArtifactsDirectory,
   roleRunPlacement,
   type RoleRunSubject,
@@ -539,19 +540,13 @@ export async function persistAdmittedSourceRunPath(
 /**
  * Bind a post-admission resolved ticketNumber onto the in-memory admitted
  * object and both durable pages (invocation.json + admitted-request.json).
- * Used by known-ticket reuse when admission was unbound (#635 / #709).
- * Never clears an existing binding.
+ * A later typed role receipt replaces an earlier assertion (#1025).
  */
 export async function bindAdmittedTicketNumber(
   admitted: AdmittedRoleInvocation,
   ticketNumber: number,
 ): Promise<void> {
-  if (admitted.ticketNumber !== undefined) {
-    if (admitted.ticketNumber === ticketNumber) return;
-    throw new Error(
-      `bindAdmittedTicketNumber refuses to replace existing ticket #${admitted.ticketNumber} with #${ticketNumber}`,
-    );
-  }
+  if (admitted.ticketNumber === ticketNumber) return;
   await bindTicketNumberOnRunDirectory(admitted.runDirectory, ticketNumber);
   (admitted as { ticketNumber?: number }).ticketNumber = ticketNumber;
 }
@@ -642,7 +637,7 @@ export async function bindCourtTicketNumbersOnAdmitted(
   admitted.courtTicketNumbers = frozen;
 }
 
-/** Move a settled first-entry run from unbound to its asserted ticket directory. */
+/** File a role run under its latest typed ticket identity. */
 export async function relocateAdmittedRunToTicket(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
@@ -668,6 +663,8 @@ export async function relocateAdmittedRunToTicket(
     for (const childRunId of Array.isArray(childRunIds) ? childRunIds : []) {
       if (typeof childRunId !== "string") continue;
       const childDirectory = join(dirname(oldRunDirectory), `${childRunId}@diarist`);
+      // A child that already filed under a ticket keeps its own assertion.
+      if (!existsSync(childDirectory)) continue;
       const childTarget = roleRunPlacement(ledgerHome, {
         bookKey: admitted.bookKey,
         subject: { ticketNumber: admitted.ticketNumber },
@@ -675,7 +672,6 @@ export async function relocateAdmittedRunToTicket(
         role: "diarist",
       });
       authority.seal(childTarget);
-      if (!existsSync(childDirectory) && existsSync(childTarget.runDirectory)) continue;
       await bindTicketNumberOnRunDirectory(childDirectory, admitted.ticketNumber);
       await rehomeUnboundTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
       ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));
@@ -683,14 +679,13 @@ export async function relocateAdmittedRunToTicket(
     }
   }
 
-  // An identity diarist can file before its caller obtains a ticket. Both its
-  // own bind and the caller's later bind use this existing relocation seam.
+  // The first ticket assignment moves only an unbound diarist's own diary.
   if (admitted.role === "diarist") {
     await rehomeUnboundTicketProvenance(oldRunDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
   }
 
-  // Rename commits the run placement. Diary assignment above is an idempotent
-  // Sitian append, not part of an atomic transaction with this directory move.
+  // Rename commits the run placement. Diary assignment above is a Sitian append
+  // outside the atomic directory move.
   // Persisted paths are resolved from typed run identity on read.
   await rename(oldRunDirectory, target.runDirectory);
 
@@ -752,34 +747,11 @@ export async function bindTicketNumberOnRunDirectory(
     "bindTicketNumberOnRunDirectory",
   );
   const admittedPath = join(runDirectory, "admitted-request.json");
-  const invocationPath = join(runDirectory, "invocation.json");
   const admitted = JSON.parse(await readFile(admittedPath, "utf8")) as Record<
     string,
     unknown
   >;
-  const existing = admitted.ticketNumber;
-  if (typeof existing === "number") {
-    if (existing === ticketNumber) return;
-    throw new Error(
-      `bindTicketNumberOnRunDirectory refuses to replace existing ticket #${existing} with #${ticketNumber}`,
-    );
-  }
-  // Conflict guard before any write: crash window of bindAdmittedTicketNumber
-  // can leave invocation bound while admitted-request is still unbound — refuse
-  // silent rebind. Read-before-merge; never check the page just overwritten.
-  if (existsSync(invocationPath)) {
-    const invocation = JSON.parse(
-      await readFile(invocationPath, "utf8"),
-    ) as Record<string, unknown>;
-    if (
-      typeof invocation.ticketNumber === "number" &&
-      invocation.ticketNumber !== ticketNumber
-    ) {
-      throw new Error(
-        `bindTicketNumberOnRunDirectory refuses to replace invocation ticket #${invocation.ticketNumber} with #${ticketNumber}`,
-      );
-    }
-  }
+  if (admitted.ticketNumber === ticketNumber) return;
   await writeFile(
     admittedPath,
     `${JSON.stringify({ ...admitted, ticketNumber }, null, 2)}\n`,

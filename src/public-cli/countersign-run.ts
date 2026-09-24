@@ -45,8 +45,8 @@ export type CountersignRunEnv = PostAdmissionEnv & {
    */
   gateReviewInstruction?: string;
   /**
-   * #969 / #987 gate path: parent run durable board ticket handoff for bind only.
-   * Resume lookup uses parentRunPath — never this ticket number (#987 Result 7).
+   * #969 / #987 gate path: parent run durable board ticket handoff for bind.
+   * Same-ticket resume lookup narrows the parent path by this typed number.
    */
   boundTicketNumber?: number;
   /**
@@ -79,6 +79,7 @@ export type CourtDiaristIdentity =
 export type CourtDiaristInvocationResult = {
   readonly identity: CourtDiaristIdentity;
   readonly admitted?: import("./invocation.ts").AdmittedRoleInvocation;
+  readonly terminal?: import("./terminal.ts").TerminalResult;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
 
@@ -161,7 +162,7 @@ export type CourtDiaristSummonEnv = Pick<
  * - Multiple submissions: last qualifying set wins.
  * Live path never shape-rejects the role turn; durable damage is a separate seam.
  */
-function courtTicketNumbersFromOutcome(
+export function courtTicketNumbersFromOutcome(
   roleOutcome: TerminalRoleOutcome | undefined,
   principalTicket: number,
   submissions?: readonly unknown[],
@@ -199,7 +200,7 @@ function courtTicketNumbersFromOutcome(
 }
 
 /** Routing boolean over the child's own typed sequence — does not pick or rewrite a sole row. */
-function courtDiaristEscalated(
+export function courtDiaristEscalated(
   roleOutcome: TerminalRoleOutcome | undefined,
 ): boolean {
   if (roleOutcome === undefined) return false;
@@ -280,6 +281,7 @@ export async function invokeCourtDiarist(
         diagnostic: courtDiaristEscalateDiagnostic(roleOutcome, submissions),
       },
       ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
+      ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
     };
   }
 
@@ -328,14 +330,15 @@ export async function invokeCourtDiarist(
  * Missing ticketNumber (true-unbound / identity deferred) skips the refresh
  * station — no diary is minted for a true-unbound run. First-entry identity
  * lives on the shared countersign entry (typed 起居郎 key for bind). Bound refresh:
- * 起居郎 failure propagates (失败诚实).
+ * technical failure propagates; LLM escalation remains a recorded conclusion.
  * Path delivery onto materials is not this station's job — post-admission owns it.
  */
 export async function runCountersignCourtDiaristStation(
   admitted: AdmittedCountersignInvocation,
   env: CountersignRunEnv,
   io: CliIo,
-): Promise<void> {
+  afterTicketNumber?: number,
+): Promise<{ readonly terminal: import("./terminal.ts").TerminalResult; readonly childRunId?: string } | undefined> {
   if (env.runCourtDiaristStation !== undefined) {
     await env.runCourtDiaristStation(admitted);
     return;
@@ -362,7 +365,8 @@ export async function runCountersignCourtDiaristStation(
     refreshTickets = [admitted.ticketNumber];
   }
 
-  for (const ticketNumber of refreshTickets) {
+  const completedIndex = afterTicketNumber === undefined ? -1 : refreshTickets.indexOf(afterTicketNumber);
+  for (const ticketNumber of refreshTickets.slice(completedIndex + 1)) {
     const outcome = await invokeCourtDiarist(
       {
         instruction: `整理 #${ticketNumber} 的本案依据。`,
@@ -376,13 +380,16 @@ export async function runCountersignCourtDiaristStation(
       io,
     );
 
-    if (outcome.identity.kind === "escalate") {
-      throw new StationChildExhaustedError(outcome.identity.diagnostic);
-    }
     if (outcome.failedWithoutEscalate !== undefined) {
       throw new StationChildExhaustedError(
         outcome.failedWithoutEscalate.diagnostic,
       );
+    }
+    if (outcome.identity.kind === "escalate" && outcome.terminal !== undefined) {
+      return {
+        terminal: outcome.terminal,
+        ...(outcome.admitted === undefined ? {} : { childRunId: outcome.admitted.runId }),
+      };
     }
   }
 }

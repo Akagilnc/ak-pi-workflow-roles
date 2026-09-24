@@ -55,11 +55,12 @@ const TICKET_MAIN_MATERIALS = {
     "souls/ticket-law.md",
     "souls/gate-output-guide.md",
   ],
-  countersign: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md"],
+  countersign: ["CLAUDE.md", "souls/countersign.md", "souls/ticket-law.md", "resources/countersign-ticket-issue.md"],
   secretariat: [
     "CLAUDE.md",
     "souls/secretariat.md",
     "souls/ticket-law.md",
+    "resources/secretariat-ticket-identity.md",
     "souls/countersign.md",
     "souls/notary.md",
   ],

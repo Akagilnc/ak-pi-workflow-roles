@@ -33,6 +33,7 @@
 
 - 认得出本庭对象：`status: completed` 且 `ticketNumber: N`，并交边界。
 - 真无票对象（方案/派单/处置案等）：`status: completed` 且 `ticketNumber: null`（或省略）。真无票是合法结果，不入录。
+- 本庭明确要新建票、但 issue 尚未建号：不是认票失败。以 `status: completed`、`ticketNumber: null` 交出已辨明的本案对话边界；起居录先随无号 run 暂存，建号后由既有归卷流程补归该号。不要借用旁票号。
 - 认不出本庭对象是哪一张：`status: escalate` 并写明 `reason`。识别不了就上抛，不得省略票号假装无录，也不得猜一个号。
 - 不得从旁及的他票或任何猜测里挑一个号顶替认不出的身份。
 - 传召文自然会提轮次、决定编号、commit sha、邻票号；你认的是本庭对象，不是文中出现的每一个数字。

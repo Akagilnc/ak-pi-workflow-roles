@@ -1127,11 +1127,10 @@ async function runHasFormedSessionPrincipal(runDirectory: string): Promise<boole
 /**
  * Locate the latest retained run for one seat under a book (#637 / #747).
  * Same walk surface as findRunDirectoryById (listBookRunDirectories). Match by
- * parent run path (officer / gate seats, #747 / #987). A typed ticket number
- * does not select a run. runId is UUIDv7 — lexicographic max is latest among
- * runs that formed a session principal. No parallel index. Public ticket-number
- * selection of a prior run was deleted (#987 Result 7); callers use explicit
- * `ak-role resume <runId>`.
+ * parent run path (officer / gate seats, #747 / #987), narrowed to a supplied
+ * typed ticket for same-ticket gate re-summons. runId is UUIDv7 — lexicographic
+ * max is latest among runs that formed a session principal. No parallel index;
+ * callers can use explicit `ak-role resume <runId>`.
  * Only a truly missing book directory means no history; damage/permission errors propagate.
  */
 export async function findLatestRunIdForSeatTicket(input: {
@@ -1148,12 +1147,8 @@ export async function findLatestRunIdForSeatTicket(input: {
   const bookDir = activationBookDirectory(ledgerHome, input.bookKey);
   let runDirectories: string[];
   try {
-    // A typed ticket narrows the existing walk surface to that ticket's runs;
-    // same-parent matching below still selects the actual prior leg.
     runDirectories = await listBookRunDirectories(
-      input.ticketNumber === undefined
-        ? bookDir
-        : join(bookDir, String(input.ticketNumber)),
+      input.ticketNumber === undefined ? bookDir : join(bookDir, String(input.ticketNumber)),
     );
   } catch (error) {
     if (errorCodeOf(error) === "ENOENT") return undefined;
@@ -1167,7 +1162,9 @@ export async function findLatestRunIdForSeatTicket(input: {
     const runId = entry.slice(0, entry.length - suffix.length);
     if (runId.length === 0) continue;
     const parentPath = await readRunParentPath(runDirectory);
-    if (parentPath !== input.parentRunPath) continue;
+    // The parent's ticket can change after this child was admitted. Within one
+    // book the run leaf is its stable identity; directory placement is not.
+    if (parentPath !== input.parentRunPath && basename(parentPath ?? "") !== basename(input.parentRunPath)) continue;
     // Durable fact: never resume-select a provisional that never formed principal.
     if (!(await runHasFormedSessionPrincipal(runDirectory))) continue;
     if (best === undefined || runId > best) best = runId;
@@ -1328,6 +1325,7 @@ async function loadResumableRunRecord(
   home: string,
   runId: string,
   authority: DurablePrincipalAuthority,
+  allowUnformedAdmitted = false,
 ): Promise<{
   readonly run: RoleRunRecord;
   readonly principal: DurablePrincipal;
@@ -1350,7 +1348,7 @@ async function loadResumableRunRecord(
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
   const { run, principal } = materialized;
-  if (!(await isDurablePrincipalAvailable(principal, authority))) {
+  if (!(allowUnformedAdmitted && run.state === "admitted") && !(await isDurablePrincipalAvailable(principal, authority))) {
     throw new CliUsageError(
       `role run Pi session principal is unavailable: ${runId}`,
     );
@@ -1757,8 +1755,9 @@ export async function loadResumablePublicRole(
   home: string,
   runId: string,
   authority: DurablePrincipalAuthority,
+  allowUnformedAdmitted = false,
 ): Promise<LoadedResumablePublicRole> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
+  const loaded = await loadResumableRunRecord(home, runId, authority, allowUnformedAdmitted);
   return seatLoadedResult(loaded, admitResumedRole(loaded));
 }
 
