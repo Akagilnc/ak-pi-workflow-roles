@@ -65,15 +65,26 @@ export async function warnMissingMethodSkills(
   }
 }
 
-function addSkills(source: string, skills: readonly string[], home: string): boolean {
-  if (skills.length === 0) return true;
-  const result = spawnSync("npx", [
-    "--yes", "skills", "add", source,
-    ...skills.flatMap((skill) => ["--skill", skill]),
-    "--agent", "codex", "--global", "--yes",
-  ], { stdio: "inherit", env: { ...process.env, HOME: home } });
+function runSkillsCli(args: readonly string[], home: string): boolean {
+  const result = spawnSync("npx", ["--yes", "skills", ...args], {
+    stdio: "inherit",
+    env: { ...process.env, HOME: home },
+  });
   if (result.error !== undefined) throw result.error;
   return result.status === 0;
+}
+
+function addSkills(source: string, skills: readonly string[], home: string): boolean {
+  if (skills.length === 0) return true;
+  return runSkillsCli([
+    "add", source,
+    ...skills.flatMap((skill) => ["--skill", skill]),
+    "--agent", "codex", "--global", "--yes",
+  ], home);
+}
+
+function updateRequiredSkills(home: string): boolean {
+  return runSkillsCli(["update", "-g", "-y", ...MATT_SKILLS, ...AK_SKILLS], home);
 }
 
 /** Explicit user-run setup; delegates acquisition/install to the ecosystem Skills CLI. */
@@ -93,6 +104,7 @@ export async function runMachineSkillSetup(home: string, stdout: (text: string) 
   for (const name of AK_SKILLS) await queue(name, missingAk);
   if (!addSkills("mattpocock/skills", missingMatt, home)) return 1;
   if (!addSkills("Akagilnc/ak-cross-m-review", missingAk, home)) return 1;
+  if (!updateRequiredSkills(home)) return 1;
 
   for (const host of ["claude-code", "hermes"] as const) {
     const root = linkedSkillRoot(home, host)!;
