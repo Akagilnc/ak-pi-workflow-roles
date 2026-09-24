@@ -25,7 +25,6 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -109,8 +108,8 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
       assert.equal(req.activation.phase, "apply");
       assert.equal(
         req.methods.some((m) => m.kind === "skill" && m.path.includes("tdd")),
-        true,
-        "apply must bind TDD method",
+        false,
+        "missing machine Skill must not be bound",
       );
       assert.equal(req.continuation.kind, "initial");
       // Host-neutral transport: no Pi `/skill:` on the shared request face (#822).
@@ -182,8 +181,8 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
       assert.equal(req.activation.phase, "apply");
       assert.equal(
         req.methods.some((m) => m.kind === "skill" && m.path.includes("tdd")),
-        true,
-        "resumed apply must bind TDD method",
+        false,
+        "missing machine Skill must not be bound on resume",
       );
       // The two-argument invocation above selects the no-explicit-message branch;
       // its structured request must still carry resume continuation semantics.
@@ -192,7 +191,7 @@ test("coder apply/plan/resume project typed RoleTurnRequest: apply binds TDD met
   });
 });
 
-test("lawful coder Terminal settlement publishes report/evidence with method provenance", async () => {
+test("lawful coder Terminal settlement publishes report and evidence", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -208,7 +207,6 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       createRunId: () => "run-coder-settle-001",
     });
     await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
-    const material = await loadPackagedMethodSkillMaterial(packageRoot, "tdd");
     const receipt = {
       status: "completed" as const,
       report:
@@ -256,9 +254,7 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
       toolCallId: "c1",
     });
 
-    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
-      methodProvenance: material.provenance,
-    });
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
     assert.equal(terminal.roleOutcome.role, "coder");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
@@ -268,42 +264,6 @@ test("lawful coder Terminal settlement publishes report/evidence with method pro
     assert.ok((await readFile(report.path, "utf8")).includes(receipt.report));
     assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
 
-    const evidence = JSON.parse(
-      await readFile(
-        terminal.artifacts.find((a) => a.kind === "evidence")!.path,
-        "utf8",
-      ),
-    ) as {
-      methodProvenance: {
-        upstream: {
-          repository: string;
-          attribution: string;
-          commit: string;
-          tag?: string;
-        };
-        files: Record<string, { sha256: string; gitBlob: string }>;
-      };
-    };
-    assert.equal(
-      evidence.methodProvenance.upstream.repository,
-      "https://github.com/mattpocock/skills",
-    );
-    assert.equal(evidence.methodProvenance.upstream.attribution, "mattpocock/skills");
-    assert.equal(
-      evidence.methodProvenance.upstream.commit,
-      material.provenance.upstream.commit,
-    );
-    assert.equal(
-      evidence.methodProvenance.files["SKILL.md"]?.sha256,
-      material.provenance.files["SKILL.md"]!.sha256,
-    );
-    assert.equal(
-      evidence.methodProvenance.files["SKILL.md"]?.gitBlob,
-      material.provenance.files["SKILL.md"]!.gitBlob,
-    );
-    // Evidence must not point at ambient home Skill discovery.
-    const evidenceText = JSON.stringify(evidence);
-    assert.equal(evidenceText.includes(".agents/skills"), false);
   });
 });
 
@@ -497,9 +457,9 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
         captured![captured!.indexOf("--ak-coder-phase") + 1],
         "apply",
       );
-      assert.equal(captured!.includes("--skill"), true);
+      assert.equal(captured!.includes("--skill"), false);
       // Pi native skill invocation rides typed stdin, not argv (#822/#879).
-      assert.equal(readUserDialogueStdin(capturedStdin ?? "").startsWith("/skill:tdd "), true);
+      assert.equal(readUserDialogueStdin(capturedStdin ?? "").startsWith("/skill:tdd "), false);
     }
   });
 });

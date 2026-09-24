@@ -137,7 +137,7 @@ test("canonical binding snapshots the configured Skill and accepts only its nati
 
 test("canonical binding fails closed for unavailable and empty Skills", async () => {
   await withHome(async (home) => {
-    const missing = resolve(home, ".agents/skills/tdd/SKILL.md");
+    const missing = resolve(home, ".pi/agent/skills/tdd/SKILL.md");
     await assert.rejects(
       loadCanonicalSkillBinding("tdd"),
       (error: unknown) => {

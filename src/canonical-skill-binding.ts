@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 
 import { stripFrontmatter } from "@earendil-works/pi-coding-agent";
 import type { HostSkillExpansionEvidence } from "./host-contracts.ts";
+import { installedMethodSkillPath } from "./public-cli/machine-method-skills.ts";
 export type CanonicalSkillName = "tdd" | "ak-cross-m-review";
 
 export type CanonicalSkillSnapshot = Readonly<{
@@ -85,10 +86,9 @@ export function isCanonicalSkillMissing(error: unknown): error is CanonicalSkill
 export async function loadCanonicalSkillBinding(
   name: CanonicalSkillName,
 ): Promise<AnyCanonicalSkillBinding> {
-  const configuredPath = resolve(
-    homedir(),
-    `.pi/agent/skills/${name}/SKILL.md`,
-  );
+  const home = homedir();
+  const configuredPath = installedMethodSkillPath(home, "pi", name)
+    ?? resolve(home, `.pi/agent/skills/${name}/SKILL.md`);
   let path: string;
   let raw: string;
   try {

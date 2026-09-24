@@ -24,7 +24,6 @@ import { MERGER_OUTPUT_TOOL_NAME } from "../../src/merger-contracts.ts";
 import { validateMergerInput } from "../../src/merger-contracts.ts";
 import {
   loadPackagedMethodSkillMaterial,
-  resolvePackagedMethodSkillPath,
 } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
@@ -256,10 +255,6 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       packageRoot,
       "resolving-merge-conflicts",
     );
-    const configuredPath = resolvePackagedMethodSkillPath(
-      packageRoot,
-      "resolving-merge-conflicts",
-    );
     const skillBody = material.body;
     const expectedContent = `References are relative to ${material.rootDirectory}.\n\n${skillBody}`;
     const expansionText = `<skill name="resolving-merge-conflicts" location="${material.skillPath}">\n${expectedContent}\n</skill>\n\nComplete the merge.`;
@@ -319,11 +314,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       toolCallId: "m1",
     });
 
-    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
-      methodProvenance: material.provenance,
-      methodSkillPath: material.skillPath,
-      methodSkillConfiguredPath: configuredPath,
-    });
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
     assert.equal(terminal.roleOutcome.role, "merger");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(
@@ -356,9 +347,6 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
         "utf8",
       ),
     ) as {
-      methodProvenance: { packageAdaptation: string; upstream: { path: string } };
-      methodInvocationObserved: boolean;
-      methodInvocations: Array<{ name: string }>;
       derived: {
         targetObjectId: string;
         sourceObjectId: string;
@@ -366,14 +354,6 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
         resolutionScope: string[];
       };
     };
-    assert.deepEqual(evidence.methodProvenance.packageAdaptation,
-      "merger-merge-only-escalate-new-intent",
-    );
-    assert.deepEqual(evidence.methodProvenance.upstream.path,
-      "skills/engineering/resolving-merge-conflicts",
-    );
-    assert.equal(evidence.methodInvocationObserved, true);
-    assert.equal(evidence.methodInvocations[0]?.name, "resolving-merge-conflicts");
     assert.equal(evidence.derived.targetObjectId, fixture.target);
     assert.equal(evidence.derived.sourceObjectId, fixture.source);
     assert.deepEqual(evidence.derived.expectedConflictPaths, [
@@ -434,11 +414,7 @@ test("lawful merger Terminal settlement publishes report/evidence with method + 
       details: escalateReceiptBound,
       toolCallId: "m2",
     });
-    const escalateTerminal = await settleSeatTerminalResult(escalateAdmitted, piDurablePrincipalAuthority, {
-      methodProvenance: material.provenance,
-      methodSkillPath: material.skillPath,
-      methodSkillConfiguredPath: configuredPath,
-    });
+    const escalateTerminal = await settleSeatTerminalResult(escalateAdmitted, piDurablePrincipalAuthority);
     assert.equal(escalateTerminal.roleOutcome.kind, "accepted");
     assert.deepEqual(
       escalateTerminal.roleOutcome.kind === "accepted"
@@ -578,14 +554,8 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured!.includes("--ak-role"), true);
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "merger");
-      assert.equal(captured!.includes("--skill"), true);
-      assert.equal(
-        captured![captured!.indexOf("--skill") + 1]?.includes(
-          "resolving-merge-conflicts",
-        ),
-        true,
-      );
-      assert.equal(readUserDialogueStdin(capturedStdin ?? "").startsWith("/skill:resolving-merge-conflicts"), true);
+      assert.equal(captured!.includes("--skill"), false);
+      assert.equal(readUserDialogueStdin(capturedStdin ?? "").startsWith("/skill:resolving-merge-conflicts"), false);
       assert.match(stdout.join(""), /merger\taccepted\t/);
       assert.match(stdout.join(""), /completed/);
     }
@@ -675,7 +645,7 @@ test("ak-role resume continues merger with package method and exact session", as
           args[args.indexOf("--ak-merger-input") + 1],
           admitted.mergerInputPath,
         );
-        assert.equal(args.includes("--skill"), true);
+        assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(
           args.some((a) => a.includes("[ak-role:resume-continue]")),

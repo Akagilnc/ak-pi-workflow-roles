@@ -189,7 +189,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
 });
 
 
-test("lawful fixer Terminal records diagnosis provenance and optional invocation observation", async () => {
+test("lawful fixer Terminal accepts a receipt with or without Skill expansion", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -273,11 +273,7 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       toolCallId: "f1",
     });
 
-    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
-      methodProvenance: material.provenance,
-      methodSkillPath: material.skillPath,
-      methodSkillConfiguredPath: configuredPath,
-    });
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
     assert.equal(terminal.roleOutcome.role, "fixer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
@@ -291,27 +287,10 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
         terminal.artifacts.find((a) => a.kind === "evidence")!.path,
         "utf8",
       ),
-    ) as {
-      methodProvenance: {
-        name: string;
-        packageAdaptation: string;
-        upstream: { commit: string; attribution: string };
-      };
-      methodInvocationObserved: boolean;
-      methodInvocations: Array<{ name: string; location: string }>;
-    };
-    assert.equal(evidence.methodProvenance.name, "diagnosing-bugs");
-    assert.equal(
-      evidence.methodProvenance.packageAdaptation,
-      "fixer-boundary-no-external-skill-chain",
-    );
-    assert.equal(evidence.methodProvenance.upstream.attribution, "mattpocock/skills");
-    assert.equal(evidence.methodInvocationObserved, true);
-    assert.equal(evidence.methodInvocations.length, 1);
-    assert.equal(evidence.methodInvocations[0]?.name, "diagnosing-bugs");
-    assert.equal(JSON.stringify(evidence).includes(".agents/skills"), false);
+    ) as Record<string, unknown>;
+    assert.equal("methodProvenance" in evidence, false);
 
-    // Without skill expansion, provenance remains and invocation is not forced/observed.
+    // Without skill expansion, terminal settlement remains accepted.
     const noDiag = await admitFixerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
       home,
@@ -345,19 +324,8 @@ test("lawful fixer Terminal records diagnosis provenance and optional invocation
       details: receipt,
       toolCallId: "f2",
     });
-    const terminalNoDiag = await settleSeatTerminalResult(noDiag, piDurablePrincipalAuthority, {
-      methodProvenance: material.provenance,
-      methodSkillPath: material.skillPath,
-      methodSkillConfiguredPath: configuredPath,
-    });
-    const evidenceNoDiag = JSON.parse(
-      await readFile(
-        terminalNoDiag.artifacts.find((a) => a.kind === "evidence")!.path,
-        "utf8",
-      ),
-    ) as { methodInvocationObserved: boolean; methodInvocations: unknown[] };
-    assert.equal(evidenceNoDiag.methodInvocationObserved, false);
-    assert.equal(evidenceNoDiag.methodInvocations.length, 0);
+    const terminalNoDiag = await settleSeatTerminalResult(noDiag, piDurablePrincipalAuthority);
+    assert.equal(terminalNoDiag.roleOutcome.kind, "accepted");
   });
 });
 
@@ -596,7 +564,7 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
         assert.equal(args[args.indexOf("--ak-role") + 1], "fixer");
         assert.equal(args[args.indexOf("--ak-fixer-phase") + 1], "plan");
         assert.equal(args[args.indexOf("--ak-fix-packet") + 1], admitted.packetPath);
-        assert.equal(args.includes("--skill"), true);
+        assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(args.includes("[ak-role:resume-continue]"), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);
@@ -671,18 +639,7 @@ async function settleFixerSession(
     details,
     toolCallId: "f-out",
   });
-  const material = await loadPackagedMethodSkillMaterial(
-    packageRoot,
-    "diagnosing-bugs",
-  );
-  return settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
-    methodProvenance: material.provenance,
-    methodSkillPath: material.skillPath,
-    methodSkillConfiguredPath: resolvePackagedMethodSkillPath(
-      packageRoot,
-      "diagnosing-bugs",
-    ),
-  });
+  return settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
 }
 
 test("public CLI retains declared prerequisite_unmet judgment as accepted Terminal (not usage/failure)", async () => {

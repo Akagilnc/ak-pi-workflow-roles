@@ -519,7 +519,7 @@ test("admitReviewerInvocation persists fixed base, lens, authority; caller text 
   });
 });
 
-test("lawful reviewer Terminal records method provenance and typed expansion evidence", async () => {
+test("lawful reviewer Terminal preserves review evidence", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -619,11 +619,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       toolCallId: "r1",
     });
 
-    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
-      methodProvenance: material.provenance,
-      methodSkillPath: material.skillPath,
-      methodSkillConfiguredPath: skillPath,
-    });
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
     assert.equal(terminal.roleOutcome.role, "reviewer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
@@ -640,19 +636,6 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     ) as Record<string, unknown> & {
       baseRevision?: string;
       callerProvenance?: string;
-      methodProvenance: {
-        name: string;
-        packageAdaptation: string;
-        upstream: {
-          repository: string;
-          attribution: string;
-          commit: string;
-          path: string;
-        };
-        files: Record<string, { sha256: string; gitBlob: string }>;
-      };
-      methodInvocationObserved: boolean;
-      methodInvocations: Array<{ name: string; location: string }>;
     };
     assert.equal("taskPath" in evidence, false);
     assert.equal("taskSha256" in evidence, false);
@@ -662,15 +645,6 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
     ]);
     assert.equal(evidence.callerProvenance, "Review completeness and correctness lenses.");
-    assert.equal(evidence.methodProvenance.name, "ak-cross-m-review");
-    assert.equal(
-      evidence.methodProvenance.packageAdaptation,
-      "verbatim-upstream",
-    );
-    assert.equal(evidence.methodInvocationObserved, true);
-    assert.equal(evidence.methodInvocations.length, 1);
-    assert.equal(evidence.methodInvocations[0]?.name, "ak-cross-m-review");
-    assert.equal(evidence.methodInvocations[0]?.location, material.skillPath);
     const evidenceText = JSON.stringify(evidence);
     assert.equal(evidenceText.includes(".agents/skills"), false);
   });
@@ -796,7 +770,7 @@ test("default dual-lens admits both axes without a parent run", async () => {
     );
     for (const args of captured) {
       assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
-      assert.equal(args.includes("--skill"), true);
+      assert.equal(args.includes("--skill"), false);
       assert.equal(args.includes("--ak-review-task"), false);
       // Ordinary single-axis public semantics: dual-lens legs are not station children.
       assert.equal(args.includes("--ak-station-child"), false);
@@ -1008,7 +982,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     const okDialogue = readUserDialogueStdin(capturedStdin ?? "");
     assert.equal(
       okDialogue.startsWith(
-        "/skill:ak-cross-m-review --base HEAD~1 --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
+        "--base HEAD~1 --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
       ),
       true,
       okDialogue,
@@ -1319,7 +1293,7 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(args.includes("--ak-review-task"), false);
         assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
         assert.equal(args[args.indexOf("--ak-review-lens") + 1], "correctness");
-        assert.equal(args.includes("--skill"), true);
+        assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         const resumeDialogue = readUserDialogueStdin(resumeStdin ?? "");
         assert.equal(resumeDialogue, "调用者原话");

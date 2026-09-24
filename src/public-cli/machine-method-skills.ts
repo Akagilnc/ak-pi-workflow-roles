@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -6,33 +7,38 @@ const MATT_SKILLS = ["tdd", "diagnosing-bugs", "resolving-merge-conflicts"] as c
 const AK_SKILLS = ["ak-cross-m-review"] as const;
 const HOSTS = ["claude-code", "pi", "codex"] as const;
 
-function skillRoot(home: string, host: string): string {
-  const relative = host === "claude-code"
+function skillRoots(home: string, host: string): string[] {
+  if (host !== "claude-code" && host !== "pi" && host !== "codex") return [];
+  const native = host === "claude-code"
     ? ".claude/skills"
     : host === "pi"
       ? ".pi/agent/skills"
-      : ".agents/skills";
-  return join(home, relative);
+      : ".codex/skills";
+  return [join(home, native), ...(host === "pi" || host === "codex" ? [join(home, ".agents/skills")] : [])];
 }
 
-async function installed(home: string, host: string, name: string): Promise<boolean> {
-  try {
-    await lstat(join(skillRoot(home, host), name, "SKILL.md"));
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
+export function installedMethodSkillPath(home: string, host: string, name: string): string | undefined {
+  for (const root of skillRoots(home, host)) {
+    const path = join(root, name, "SKILL.md");
+    try {
+      if (statSync(path).isFile()) return path;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ENOTDIR") throw error;
+    }
   }
+  return undefined;
 }
 
 async function skillNameOccupied(home: string, host: string, name: string): Promise<boolean> {
-  try {
-    await lstat(join(skillRoot(home, host), name));
-    return true;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
+  for (const root of skillRoots(home, host)) {
+    try {
+      await lstat(join(root, name));
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
+  return false;
 }
 
 export async function warnMissingMethodSkills(
@@ -46,7 +52,7 @@ export async function warnMissingMethodSkills(
   const supportedHost = HOSTS.find((candidate) => candidate === nativeHost);
   const missing: string[] = [];
   for (const skill of skills) {
-    if (supportedHost === undefined || !(await installed(home, supportedHost, skill))) missing.push(skill);
+    if (supportedHost === undefined || installedMethodSkillPath(home, supportedHost, skill) === undefined) missing.push(skill);
   }
   for (const skill of missing) {
     stdout(`Warning: required machine Skill "${skill}" is missing for ${role}; its method guidance may be unavailable and reduce work quality. Run \`ak-role setup\` to install required Skills.\n`);

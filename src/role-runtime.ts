@@ -1438,8 +1438,8 @@ export function createRoleRuntimeExtension(
       }
       navigatorAttendance?.prepare();
       // Envelope-owned Reviewer expansion capture + parent prompt assembly (no role-module callback).
-      if (activeReviewerParent?.skillBinding !== undefined && selectedRole === role) {
-        if (!reviewerExpansionCaptured) {
+      if (activeReviewerParent !== undefined && selectedRole === role) {
+        if (activeReviewerParent.skillBinding !== undefined && !reviewerExpansionCaptured) {
           if (reviewerOriginalRequest !== undefined) {
             activeReviewerParent.skillBinding.captureExpansion(
               roleHost.capabilities?.skillExpansion(prompt),

@@ -435,7 +435,7 @@ export function createCoderRoleRuntime(
             }
             const output = validateWorkerOutput(parameters, phase, "Coder");
             // #836: skill-expansion evidence rejection deleted (陛下「2.4/5 删」).
-            // Skill still ships with the package (ADR 0052); code no longer refuses on it.
+            // Missing method Skills do not reject a receipt.
             assertAcceptableThroughHost(
               submissionGate,
               workerStatusOf(output),
@@ -496,12 +496,6 @@ export function createCoderRoleRuntime(
         pi.on("before_agent_start", (event, ctx) => {
           if (soul === undefined) throw new Error("将作监职分未装载");
           if (phase === "apply") {
-            if (binding === undefined) {
-              hostActions.failInfrastructure(
-                new Error("Coder canonical tdd Skill binding was not initialized"),
-                ctx,
-              );
-            }
             if (expansionPending) {
               expansionPending = false;
             }

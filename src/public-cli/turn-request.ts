@@ -17,6 +17,7 @@ import {
 } from "../packaged-role-registry.ts";
 import type { SeatModelConfig } from "./config.ts";
 import type { AdmittedRoleInvocation } from "./invocation.ts";
+import { installedMethodSkillPath } from "./machine-method-skills.ts";
 import { parentRunPathFromGatePointerInstruction } from "./run-lifecycle.ts";
 import type { PublicThinkingLevel } from "./registry.ts";
 
@@ -158,15 +159,14 @@ function methodBindings(
   }
   const apply = packagedSettleSkill(admitted);
   if (apply !== undefined && !names.includes(apply)) names.push(apply);
-  const root = host === "claude" || host === "claude-code"
-    ? ".claude/skills"
-    : host === "pi" || host === undefined
-      ? ".pi/agent/skills"
-      : ".agents/skills";
-  return names.map((name) => ({
-    kind: "skill" as const,
-    path: `${home}/${root}/${name}/SKILL.md`,
-  }));
+  const nativeHost = host === "claude" ? "claude-code" : host ?? "pi";
+  return names.flatMap((name) => {
+    const path = installedMethodSkillPath(home, nativeHost, name);
+    return path === undefined ? [] : [{
+      kind: "skill" as const,
+      path,
+    }];
+  });
 }
 
 /** Registry activation and method bindings for one admitted public seat. */
