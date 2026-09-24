@@ -50,8 +50,9 @@ const infrastructureFailureDeclarationSchema = Type.Object(
 
 /**
  * Compose declarations shared by terminating output tools: infrastructure failure
- * and the optional role-asserted ticket identity. Returns an open object (additionalProperties: true,
- * required: []) with the base schema's properties plus the shared declaration.
+ * and the optional role-asserted ticket identity. Returns an open object (additionalProperties: true)
+ * with the base schema's properties plus the shared declaration. Incoming required
+ * keys that still exist are kept; every other key stays optional.
  * Static typing is preserved on the base (`as S`), so existing
  * `Static<typeof ...>` derived parameter types are unchanged.
  */
@@ -78,7 +79,11 @@ export function withTerminatingOutputDeclarations<
       ],
   };
   const object = Type.Object(properties, { additionalProperties: true });
-  (object as unknown as { required: string[] }).required = [];
+  const incoming = (schema as { required?: unknown }).required;
+  const preserved = Array.isArray(incoming)
+    ? incoming.filter((key): key is string => typeof key === "string" && Object.hasOwn(properties, key))
+    : [];
+  (object as unknown as { required: string[] }).required = preserved;
   return object as unknown as S;
 }
 
@@ -115,7 +120,7 @@ function isInfrastructureFailureDeclaration(
 }
 
 /** Non-empty trimmed diagnostic from the declaration, else undefined. */
-function infrastructureFailureDiagnostic(
+export function infrastructureFailureDiagnostic(
   parameters: unknown,
 ): string | undefined {
   if (!isInfrastructureFailureDeclaration(parameters)) return undefined;

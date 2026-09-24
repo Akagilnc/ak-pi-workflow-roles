@@ -314,7 +314,8 @@ export {
   gateOfficerForSubject,
 };
 export type { GatekeeperResult, GatekeeperSubject, SubmissionGateNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
-import { ParentQueueReaskError } from "./submission-errors.ts";
+import { ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
+import { REVIEW_QUEUE_STATUSES } from "./review-submission.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
@@ -872,8 +873,6 @@ function readDiaristRunCoordinates(ctx: HostContext): {
 const DIARIST_BOUNDS_REASK =
   "边界无法使用。请重交 sessions：每卷 path + ranges，每端以原生 id 或本轮行号二选一指名。" as const;
 const DIARIST_ROUTING_STATUSES = new Set(["completed", "escalate"]);
-const DIARIST_STATUS_REASK =
-  "status 不是 completed、escalate 之一。请重新交卷，status 写明其一。" as const;
 
 /**
  * #708 / #779 / #901: 起居郎 public seat on the shared filed-officer envelope.
@@ -900,7 +899,7 @@ export function createDiaristRoleRuntime(
         // before interpreting any other submitted field; caller-owned data stays open.
         const status = submitted?.status;
         if (typeof status !== "string" || !DIARIST_ROUTING_STATUSES.has(status)) {
-          throw new ParentQueueReaskError(DIARIST_STATUS_REASK);
+          throw new ParentQueueReaskError(unreadableDiscriminatorNotice("status", submitted?.status));
         }
         if (status === "escalate") return parameters;
         const assertion = readDiaristTicketAssertion(submitted);
@@ -943,25 +942,8 @@ export function createDiaristRoleRuntime(
   );
 }
 
-/** Shared review-submission status words the queue reads (#1028). */
-const COUNTERSIGN_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]);
-
-/**
- * Plain-language re-ask when status is not a known queue word.
- * Back to countersign itself — notary is not summoned (#753).
- */
-const COUNTERSIGN_STATUS_REASK =
-  "status 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
-
-/** Secretariat status words the submission gate reads. */
+/** Secretariat status words the submission gate reads. Not the review three-state field. */
 const SECRETARIAT_QUEUE_STATUSES = new Set(["converged", "escalate"]);
-
-/**
- * Plain-language re-ask when secretariatStatus is not a known queue word.
- * Back to secretariat itself — 给事中 is not summoned for escalation.
- */
-const SECRETARIAT_STATUS_REASK =
-  "secretariatStatus 不是 converged、escalate 之一。请重新交卷，status 写明其一。" as const;
 
 /**
  * Secretariat output is terminal; converged submissions enter the shared
@@ -989,7 +971,9 @@ export function createSecretariatRoleRuntime(
               ? record.secretariatStatus
               : undefined;
           if (status === undefined || !SECRETARIAT_QUEUE_STATUSES.has(status)) {
-            throw new ParentQueueReaskError(SECRETARIAT_STATUS_REASK);
+            throw new ParentQueueReaskError(
+              unreadableDiscriminatorNotice("secretariatStatus", record?.secretariatStatus),
+            );
           }
           if (status === "escalate") {
             // Parent escalate → throw to caller as-is; countersign does not attend.
@@ -1132,10 +1116,10 @@ export function createCountersignRoleRuntime(
             record !== undefined && typeof record.status === "string"
               ? record.status
               : undefined;
-          if (status === undefined || !COUNTERSIGN_QUEUE_STATUSES.has(status)) {
+          if (status === undefined || !REVIEW_QUEUE_STATUSES.has(status)) {
             // Parent status unreadable → back to countersign itself; do not summon notary,
             // do not forge an officer bounce face (#753).
-            throw new ParentQueueReaskError(COUNTERSIGN_STATUS_REASK);
+            throw new ParentQueueReaskError(unreadableDiscriminatorNotice("status", record?.status));
           }
           if (status === "escalate") {
             // Parent escalate → throw to caller as-is; notary does not attend (#753).
