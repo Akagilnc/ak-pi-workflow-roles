@@ -2,13 +2,7 @@ import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } fro
 import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
-import { CorrectableSubmissionError } from "./submission-correctable-error.ts";
 
-import type {
-  AnyCanonicalSkillBinding,
-  CanonicalSkillBinding,
-} from "./canonical-skill-binding.ts";
-import { isCanonicalSkillMissing } from "./canonical-skill-binding.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
 import { projectGatekeeperEscalation } from "./audit-escalation.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
@@ -113,25 +107,6 @@ function isWorkerPhase(value: unknown): value is WorkerPhase {
 
 export type WorkerRoleHostActions = HostGatekeeperActions;
 
-/** Stable code for completed apply without host skill-expansion capability evidence (#525). */
-export const CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE =
-  "coder_skill_expansion_evidence_missing" as const;
-
-export type CoderSkillExpansionEvidenceMissingResult = {
-  readonly code: typeof CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE;
-};
-
-/** Correct completed rejection — not infrastructure; projected via submission non-pass bridge. */
-export class CoderSkillExpansionEvidenceMissingError extends CorrectableSubmissionError {
-  readonly code = CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE;
-  readonly result: CoderSkillExpansionEvidenceMissingResult;
-  constructor() {
-    super("Coder completed requires host skill-expansion capability evidence");
-    this.name = "CoderSkillExpansionEvidenceMissingError";
-    this.result = Object.freeze({ code: CODER_SKILL_EXPANSION_EVIDENCE_MISSING_CODE });
-  }
-}
-
 export type FixerRoleDependencies = {
   loadSoul(): Promise<string>;
   loadPacket(path: string): Promise<string>;
@@ -140,9 +115,6 @@ export type FixerRoleDependencies = {
 export type CoderRoleDependencies = {
   loadSoul(): Promise<string>;
   loadTask(path: string): Promise<string>;
-  loadCanonicalSkillBinding?(
-    name: "tdd",
-  ): Promise<AnyCanonicalSkillBinding>;
 };
 
 export type WorkerRoleRuntime = {
@@ -359,10 +331,6 @@ export function createCoderRoleRuntime(
   let soul: string | undefined;
   let task: string | undefined;
   let phase: WorkerPhase | undefined;
-  let binding: CanonicalSkillBinding<"tdd"> | undefined;
-  let tddInvocationInjected = false;
-  let originalRequest: string | undefined;
-  let expansionPending = false;
   let lifecycleRegistered = false;
   const submissionGate = createWorkerSubmissionGate();
 
@@ -378,11 +346,6 @@ export function createCoderRoleRuntime(
 
   return {
     async activate(ctx) {
-      // Each activation owns its own Skill capture state; prior-session flags must
-      // not authorize a later apply completed (same RoleHost, sequential activate).
-      tddInvocationInjected = false;
-      originalRequest = undefined;
-      expansionPending = false;
       soul = (await dependencies.loadSoul()).trim();
       if (soul.length === 0) throw new Error("Coder soul is empty");
       const selectedPhase = pi.getFlag("ak-coder-phase");
@@ -398,28 +361,6 @@ export function createCoderRoleRuntime(
       }
       task = (await dependencies.loadTask(taskPath)).trim();
       if (task.length === 0) throw new Error("Coder task is empty");
-      binding = undefined;
-      if (phase === "apply") {
-        if (dependencies.loadCanonicalSkillBinding === undefined) {
-          throw new Error("Coder canonical Skill binding loader is not configured");
-        }
-        try {
-          const loaded = await dependencies.loadCanonicalSkillBinding("tdd");
-          if (loaded.name !== "tdd") {
-            throw new Error(
-              "Canonical Skill binding loader returned ak-cross-m-review for tdd",
-            );
-          }
-          binding = loaded;
-        } catch (error) {
-          if (isCanonicalSkillMissing(error)) {
-            binding = undefined;
-          } else {
-            if (ctx === undefined) throw error;
-            hostActions.failInfrastructure(error, ctx);
-          }
-        }
-      }
 
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
@@ -478,28 +419,8 @@ export function createCoderRoleRuntime(
             };
           },
         });
-        pi.on("input", (event) => {
-          if (phase !== "apply" || tddInvocationInjected) {
-            return { action: "continue" as const };
-          }
-          tddInvocationInjected = true;
-          expansionPending = true;
-          // Original request via host capability when Pi argv already carries native form;
-          // non-pi keeps plain original bytes (no consumer trim; #822 r3 / reviewer-aligned).
-          // Role never emits or parses `/skill:` (ADR 0082).
-          originalRequest = binding === undefined
-            ? event.text
-            : (pi.capabilities?.skillOriginalRequest?.(binding.name, event.text)
-              ?? event.text);
-          return { action: "continue" as const };
-        });
         pi.on("before_agent_start", (event, ctx) => {
           if (soul === undefined) throw new Error("将作监职分未装载");
-          if (phase === "apply") {
-            if (expansionPending) {
-              expansionPending = false;
-            }
-          }
           return {
             systemPrompt:
               `${event.systemPrompt}\n\n<coder_soul>\n${soul}\n</coder_soul>\n\n<coder_phase>\n${phase ?? ""}\n</coder_phase>\n\n<coder_task>\n${task ?? ""}\n</coder_task>`,

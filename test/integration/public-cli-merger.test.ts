@@ -533,8 +533,6 @@ test("ak-role merger dispatches and settles escalate without active merge and co
       assert.equal(Array.isArray(captured), true);
       assert.equal(captured!.includes("--ak-role"), true);
       assert.equal(captured![captured!.indexOf("--ak-role") + 1], "merger");
-      assert.equal(captured!.includes("--skill"), false);
-      assert.equal(readUserDialogueStdin(capturedStdin ?? "").startsWith("/skill:resolving-merge-conflicts"), false);
       assert.match(stdout.join(""), /merger\taccepted\t/);
       assert.match(stdout.join(""), /completed/);
     }

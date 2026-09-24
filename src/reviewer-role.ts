@@ -3,8 +3,6 @@ import { Type } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
-import { isCanonicalSkillMissing, type AnyCanonicalSkillBinding, type CanonicalSkillBinding } from "./canonical-skill-binding.ts";
-export type { CanonicalSkillBinding };
 import { REVIEWER_OUTPUT_TOOL_NAME, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
@@ -59,7 +57,6 @@ export const reviewerOutputSchema = withTerminatingOutputDeclarations(
 );
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
-  loadCanonicalSkillBinding(name: "ak-cross-m-review"): Promise<AnyCanonicalSkillBinding>;
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
 
@@ -67,8 +64,6 @@ export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: 
 export type ReviewerActivation = Readonly<{
   fixedBaseRevision: string;
   soul: string;
-  /** Frozen ak-cross-m-review binding — envelope owns expansion capture against this data. */
-  skillBinding?: CanonicalSkillBinding<"ak-cross-m-review">;
 }>;
 
 /**
@@ -84,7 +79,6 @@ export function createReviewerRoleRuntime(
   activate(ctx: HostContext | undefined, admitted: ReviewerAdmittedInputs): Promise<ReviewerActivation>;
 } {
   let soul: string | undefined;
-  let binding: CanonicalSkillBinding<"ak-cross-m-review"> | undefined;
   let registered = false;
   let fixedBaseRevision: string | undefined;
 
@@ -93,14 +87,6 @@ export function createReviewerRoleRuntime(
       soul = (await dependencies.loadSoul()).trim();
       if (!soul) throw new Error("Reviewer soul is empty");
       fixedBaseRevision = admitted.baseRevision;
-      try {
-        const loaded = await dependencies.loadCanonicalSkillBinding("ak-cross-m-review");
-        if (loaded.name !== "ak-cross-m-review") throw new Error("Canonical Skill binding loader returned tdd for ak-cross-m-review");
-        binding = loaded;
-      } catch (error) {
-        if (!isCanonicalSkillMissing(error)) throw error;
-        binding = undefined;
-      }
 
       if (!registered) {
         registered = true;
@@ -116,11 +102,9 @@ export function createReviewerRoleRuntime(
       }
       const activatedSoul = soul;
       const activatedBase = fixedBaseRevision;
-      const activatedBinding = binding;
       return Object.freeze({
         fixedBaseRevision: activatedBase,
         soul: activatedSoul,
-        ...(activatedBinding === undefined ? {} : { skillBinding: activatedBinding }),
       });
     },
   };

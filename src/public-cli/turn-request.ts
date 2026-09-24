@@ -62,6 +62,7 @@ export function projectRoleTurnRequest(
   roleDetails: {
     activation: RoleTurnActivation;
     methods?: readonly MethodBinding[];
+    methodSkillNames?: readonly string[];
   },
   options: RoleTurnRequestProjectionOptions,
 ): RoleTurnRequest {
@@ -74,6 +75,7 @@ export function projectRoleTurnRequest(
     principal: admitted.principal,
     activation: roleDetails.activation,
     methods: roleDetails.methods ?? [],
+    methodSkillNames: roleDetails.methodSkillNames ?? [],
     continuation: options.continuation,
     ...(options.model === undefined ? {} : { model: options.model }),
     ...pickEngineAxis(options),
@@ -162,9 +164,9 @@ function methodBindings(
   home: string,
   host: string | undefined,
 ): readonly MethodBinding[] {
-  const nativeHost = host === "claude" ? "claude-code" : host ?? "pi";
+  if (host !== undefined && host !== "pi") return [];
   return requiredMethodSkills(admitted).flatMap((name) => {
-    const path = installedMethodSkillPath(home, nativeHost, name);
+    const path = installedMethodSkillPath(home, name);
     return path === undefined ? [] : [{
       kind: "skill" as const,
       path,
@@ -180,9 +182,11 @@ export function admittedSeatTurnDetails(
 ): {
   readonly activation: RoleTurnActivation;
   readonly methods: readonly MethodBinding[];
+  readonly methodSkillNames: readonly string[];
 } {
   return {
     activation: activationForAdmitted(admitted),
     methods: methodBindings(admitted, home, host),
+    methodSkillNames: requiredMethodSkills(admitted),
   };
 }

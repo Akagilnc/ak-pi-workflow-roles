@@ -66,7 +66,7 @@ ak-role config set-auto-resume-limit 3
 
 **宿主 provider 表（#788）：** 席位行只写一份 provider 名。owner 手改 `~/.ak-roles/host-providers.json`（形如 `{ "hermes": { "xai": "xai-oauth" } }`）；代码只读。表里没有的问宿主目录（本票 hermes）：唯一即用，零个或多个响亮失败。优先级：表 > 唯一 > 失败，代码无裁量。`config show` 原样打印该表。
 
-**机器方法 Skill：** 方法 Skill 只从用户机器读取，不随包复制或链接。运行 `ak-role setup` 可为 Claude Code、Pi、Codex 安装所需上游 Skill；同名机器 Skill 不覆盖。角色发现所需 Skill 缺失时会向 stdout 警告，说明质量影响并继续。Pi 使用原生 `--skill`（单个 Skill 时也用其 slash command）；Claude Code print harness 仅在角色绑定一个 Skill 时发原生 slash command。Codex 不接收合成调用或包专属限制，遵从自身原生 Skill 发现。Hermes ACP 与 Grok ACP 当前 harness 无法强制 Skill。本包不修改宿主 trust 或配置。
+**机器方法 Skill：** 运行 `ak-role setup`，在 `~/.agents/skills` 安装所需上游 Skill；setup 为已安装的 Claude Code、Hermes 建必要软链，同名项不覆盖。该目录是唯一机器安装源。角色发现所需 Skill 缺失时向 stdout 警告并继续。Pi 仅从该目录向原生 `--skill` 传路径；Claude Code 按次使用原生 `Skill(name)` 权限。Codex 遵从原生 Skill 发现；Hermes ACP 与 Grok ACP 当前 harness 无法强制 Skill。本包不拼剥角色任务文本中的 Skill 命令，也不修改宿主 trust 或配置。
 
 门下省官席解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。配置用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。持久配置是全机共享单文件、多 CLI 版本同读：本构建不认识的席位键读时跳过（不报错）；已知席位上的未知字段沿用现行容忍。
 

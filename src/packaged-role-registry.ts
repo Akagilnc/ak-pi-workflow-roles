@@ -156,7 +156,6 @@ export const PUBLIC_ROLE_RECORDS = [
     worker: true,
     applyMethod: "tdd",
     /** Method-material load failure keeps the activation cause (not reviewer/fixer). */
-    methodLoadFailureCause: "activation",
     boardPlacement: "coder",
     phases: ["plan", "apply"],
     outputTool: CODER_OUTPUT_TOOL_NAME,
@@ -307,7 +306,6 @@ export const PUBLIC_ROLE_RECORDS = [
     methodSkills: ["resolving-merge-conflicts"],
     settleMethod: "resolving-merge-conflicts",
     /** Method-material load failure keeps the activation cause (not reviewer/fixer). */
-    methodLoadFailureCause: "activation",
     phases: [null],
     outputTool: MERGER_OUTPUT_TOOL_NAME,
     settlement: "residual",
@@ -644,13 +642,6 @@ export function packagedRolePhaseFlag(role: string): string | undefined {
 
 export function packagedRoleOutputTool(role: string): string | undefined {
   return packagedRoleMetadata(role)?.outputTool;
-}
-
-/** Method-material load failure cause declared on the seat. Absent means no typed cause. */
-export function packagedMethodLoadFailureCause(role: string): "activation" | undefined {
-  const record = packagedRoleMetadata(role);
-  if (record === undefined || !("methodLoadFailureCause" in record)) return undefined;
-  return record.methodLoadFailureCause;
 }
 
 /** Diarist binds a board ticket onto its own run. Other seats do not. */

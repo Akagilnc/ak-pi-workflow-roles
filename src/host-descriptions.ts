@@ -56,9 +56,8 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
  * Headless CLI family (#645 / #646). Claude print-mode is the first row;
  * codex exec (#646) adds another. Protocol-specific argv/parse live in
  * headless-host helpers (#752 per-host impl).
- * Claude fixedArgs: print mode, full permissions. stream-json + verbose: live
- * host events for sitian records (#811); result is last line. Forced methods
- * ride `--plugin-dir` (#922); operator skill/setting surfaces stay open.
+ * Claude fixedArgs: print mode. stream-json + verbose: live
+ * host events for sitian records (#811); result is last line.
  */
 export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDescription>> = Object.freeze({
   "claude": Object.freeze({
@@ -70,7 +69,6 @@ export const HEADLESS_HOST_DESCRIPTIONS: Readonly<Record<string, HeadlessHostDes
       "--output-format", "stream-json",
       // Intermediate assistant/tool/system events require verbose with stream-json.
       "--verbose",
-      "--permission-mode", "bypassPermissions",
     ]),
     promptFlag: "-p",
     modelFlag: "--model",

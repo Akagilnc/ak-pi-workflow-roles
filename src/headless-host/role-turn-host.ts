@@ -10,7 +10,6 @@ import { writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { RoleTurnHost, RoleTurnRequest, RoleTurnResult } from "../host-contracts.ts";
-import { applyClaudeSkillInvocation } from "../host-native-method.ts";
 import {
   createSerializedRoleTurnHost,
   driveExternalRoleTurnRounds,
@@ -409,6 +408,7 @@ function buildTurnArgs(options: {
   readonly outputSchemaPath?: string;
   readonly model?: string;
   readonly effort?: string;
+  readonly methodSkillNames?: readonly string[];
   readonly sessionId: string | undefined;
   readonly sessionKind: "new" | "resume";
   readonly cwd: string;
@@ -444,6 +444,7 @@ function buildTurnArgs(options: {
     mcpConfigPath: options.mcpConfigPath,
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.effort === undefined ? {} : { effort: options.effort }),
+    ...(options.methodSkillNames === undefined ? {} : { methodSkillNames: options.methodSkillNames }),
     session: { kind: options.sessionKind, id: options.sessionId },
   });
 }
@@ -454,9 +455,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
     const prepared = await config.prepare(request);
     const systemPrompt = renderSystemPromptOverride(prepared.systemPrompt);
       const codex = isCodexExecDescription(config.description);
-      const applyMethodPrompt = codex
-        ? (value: string) => value
-        : (value: string) => applyClaudeSkillInvocation(request.methods, value);
     let outcome: RoleTurnResult = failure("session", "HeadlessNoOutcome", "no-outcome");
     try {
       // Claude mints a package UUID for --session-id; codex waits for thread.started.
@@ -522,6 +520,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               ...(outputSchemaPath === undefined ? {} : { outputSchemaPath }),
               ...(request.model?.model !== undefined ? { model: request.model.model } : {}),
               ...(request.model?.thinking !== undefined ? { effort: request.model.thinking } : {}),
+              methodSkillNames: request.methodSkillNames ?? [],
               sessionId,
               sessionKind,
               cwd: request.cwd,
@@ -543,7 +542,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               args,
               cwd: request.cwd,
               env,
-              stdin: request.continuation.kind === "resume" ? prompt : applyMethodPrompt(prompt),
+              stdin: prompt,
               ...(abortSignal === undefined ? {} : { signal: abortSignal }),
               ...(request.timeoutMs === undefined ? {} : { timeoutMs: request.timeoutMs }),
               onStdoutLine(line) {

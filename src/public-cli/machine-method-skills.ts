@@ -7,28 +7,18 @@ import { HEADLESS_HOST_DESCRIPTIONS, HOST_DESCRIPTIONS } from "../host-descripti
 const MATT_SKILLS = ["tdd", "diagnosing-bugs", "resolving-merge-conflicts"] as const;
 const AK_SKILLS = ["ak-cross-m-review"] as const;
 
-function skillRoots(home: string, host: string): string[] {
-  if (host === "grok-build") return [join(home, ".agents/skills")];
-  if (host === "hermes") return [join(home, ".hermes/skills")];
-  if (host !== "claude-code" && host !== "pi" && host !== "codex") return [];
-  const native = host === "claude-code"
-    ? join(process.env.CLAUDE_CONFIG_DIR?.trim() || join(home, ".claude"), "skills")
-    : host === "pi"
-      ? join(home, ".pi/agent/skills")
-      : join(process.env.CODEX_HOME?.trim() || join(home, ".codex"), "skills");
-  return [native, ...(host === "pi" || host === "codex" ? [join(home, ".agents/skills")] : [])];
+function skillRoot(home: string): string {
+  return join(home, ".agents/skills");
 }
 
-export function installedMethodSkillPath(home: string, host: string, name: string): string | undefined {
-  for (const root of skillRoots(home, host)) {
-    const path = join(root, name, "SKILL.md");
-    try {
-      if (statSync(path).isFile()) return path;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ENOTDIR") throw error;
-    }
+export function installedMethodSkillPath(home: string, name: string): string | undefined {
+  const path = join(skillRoot(home), name, "SKILL.md");
+  try {
+    return statSync(path).isFile() ? path : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ENOTDIR") throw error;
+    return undefined;
   }
-  return undefined;
 }
 
 async function occupied(path: string): Promise<boolean> {
@@ -43,16 +33,14 @@ async function occupied(path: string): Promise<boolean> {
 
 export async function warnMissingMethodSkills(
   home: string,
-  host: string | undefined,
+  _host: string | undefined,
   role: string,
   skills: readonly string[],
   stdout: (text: string) => void,
 ): Promise<void> {
-  const nativeHost = host === undefined ? "pi" : host === "claude" ? "claude-code" : host;
-  if (skillRoots(home, nativeHost).length === 0) return;
   const missing: string[] = [];
   for (const skill of skills) {
-    if (installedMethodSkillPath(home, nativeHost, skill) === undefined) missing.push(skill);
+    if (installedMethodSkillPath(home, skill) === undefined) missing.push(skill);
   }
   for (const skill of missing) {
     stdout(`Warning: required machine Skill "${skill}" is missing for ${role}; its method guidance may be unavailable and reduce work quality. Run \`ak-role setup\` to install required Skills.\n`);
@@ -72,7 +60,7 @@ function addSkills(source: string, skills: readonly string[], home: string): boo
 
 /** Explicit user-run setup; delegates acquisition/install to the ecosystem Skills CLI. */
 export async function runMachineSkillSetup(home: string, stdout: (text: string) => void): Promise<number> {
-  const canonical = join(home, ".agents/skills");
+  const canonical = skillRoot(home);
   const missingMatt: string[] = [];
   for (const name of MATT_SKILLS) if (!(await occupied(join(canonical, name)))) missingMatt.push(name);
   const missingAk: string[] = [];
@@ -81,7 +69,9 @@ export async function runMachineSkillSetup(home: string, stdout: (text: string) 
   if (!addSkills("Akagilnc/ak-cross-m-review", missingAk, home)) return 1;
 
   for (const host of ["claude-code", "hermes"] as const) {
-    const root = skillRoots(home, host)[0]!;
+    const root = host === "claude-code"
+      ? join(process.env.CLAUDE_CONFIG_DIR?.trim() || join(home, ".claude"), "skills")
+      : join(home, ".hermes/skills");
     const binaryFromHome = host === "claude-code"
       ? HEADLESS_HOST_DESCRIPTIONS.claude!.binaryFromHome
       : HOST_DESCRIPTIONS.hermes!.binaryFromHome;
@@ -93,7 +83,7 @@ export async function runMachineSkillSetup(home: string, stdout: (text: string) 
     }
     for (const name of [...MATT_SKILLS, ...AK_SKILLS]) {
       const target = join(canonical, name);
-      if (installedMethodSkillPath(home, "grok-build", name) === undefined) continue;
+      if (installedMethodSkillPath(home, name) === undefined) continue;
       const link = join(root, name);
       if (await occupied(link)) continue;
       await mkdir(root, { recursive: true });

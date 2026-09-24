@@ -7,7 +7,6 @@ import { loadDoctorCase } from "./doctor-evidence.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "./navigator-attendance.ts";
 import { loadNavigatorWorkContext } from "./navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "./notary-source-run.ts";
-import { loadCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "./role-runtime.ts";
 import {
   loadAuditorReferenceMaterialsFromSubjectInput,
@@ -58,18 +57,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     loadDoctorCase,
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
-    async loadCanonicalSkillBinding(name) {
-      switch (name) {
-        case "tdd":
-          return loadCanonicalSkillBinding(name);
-        case "ak-cross-m-review":
-          return loadCanonicalSkillBinding(name);
-        default: {
-          const unexpected: never = name;
-          throw new Error(`Canonical skill is not packaged: ${String(unexpected)}`);
-        }
-      }
-    },
     // #590: doctor compliance still on disposeCompliance path; judge→auditor is gate queue (#756).
     auditDoctorCompliance: (options) => doctorAuditor(options),
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext({

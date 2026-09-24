@@ -218,10 +218,6 @@ export async function prepareRoleEnvelope(options: {
     deliverSubmissionRejection(_value) {
       // #836 删 1/A4.5: do not arm closeRound retry with「终局交卷并非本轮唯一工具调用」.
     },
-    capabilities: {
-      // #922: native loaders own expansion; package does not pre-read bodies (ADR 0032).
-      skillExpansion() { return undefined; },
-    },
     registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); },
     getFlag(name) { return flags.get(name); },
     registerTool(tool) { tools.set(tool.name, tool); },

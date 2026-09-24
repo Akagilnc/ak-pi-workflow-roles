@@ -446,9 +446,6 @@ test("ak-role coder defaults apply, preserves plan, and rejects blank task struc
         captured![captured!.indexOf("--ak-coder-phase") + 1],
         "apply",
       );
-      assert.equal(captured!.includes("--skill"), false);
-      // Pi native skill invocation rides typed stdin, not argv (#822/#879).
-      assert.equal(readUserDialogueStdin(capturedStdin ?? "").startsWith("/skill:tdd "), false);
     }
   });
 });
