@@ -1,0 +1,41 @@
+{
+  "name": "ak-cross-m-review",
+  "kind": "role-method-skill",
+  "upstream": {
+    "repository": "https://github.com/Akagilnc/ak-cross-m-review",
+    "path": ".",
+    "commit": "57b10e2cea9ff008e2b36b98b55610e58cdfd512",
+    "version": "0.5.2.0",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2026 Akagi",
+    "attribution": "Akagilnc/ak-cross-m-review"
+  },
+  "packageAdaptation": "verbatim-upstream",
+  "files": {
+    "SKILL.md": {
+      "sha256": "e9c984d0fb11a1a8e3f978b6ad6cf459d8d8a777842c2e8364085f03e0d8919f",
+      "byteLength": 9592,
+      "gitBlob": "157283884aa6a4b3459762466295b269737d7d48"
+    },
+    "CONTEXT.md": {
+      "sha256": "4ae006edaba39c81de6d95bfedccbc23f5c3993a67c61310249c99cbdd23ffc6",
+      "byteLength": 2054,
+      "gitBlob": "5ba9bfb40e7436f8134bcdbfaa30dbfae43dfe54"
+    },
+    "LICENSE": {
+      "sha256": "ae4c4604769b4766a2cf410ed87da6662a08e348455201cb18b39c09255535a5",
+      "byteLength": 1062,
+      "gitBlob": "a7d27a019e0fb2ed41205a8051332f63e43f7963"
+    },
+    "prompts/cmr-completeness.md": {
+      "sha256": "d4fd08d02fbbf08f1b3c3ea9e4a2597eb9abb5cb4225cc7da34353a114fd7250",
+      "byteLength": 5706,
+      "gitBlob": "9bd86e431ebdacf6c4e0a7550ce37a1bc1369377"
+    },
+    "prompts/cmr-reviewer.md": {
+      "sha256": "c843e6fed654a531bcfa745f54180be00ab36ac047fc102359253cfdeeb0f3fa",
+      "byteLength": 5648,
+      "gitBlob": "b017ef1fac754a201d1ce85ed3b4d197a2f7351e"
+    }
+  }
+}
