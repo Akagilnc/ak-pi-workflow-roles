@@ -931,7 +931,12 @@ test("preliminary diarist technical failure settles the admitted Secretariat run
         createRunId: () => "01a0sec1025-0000-7000-8000-000000000003",
         roleTurnHost: host, hostAdapters: [adapter("pi", host)] },
     );
-    assert.ok(result.terminal, "failure is settled in the admitted run, not thrown from the CLI");
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure", "failure is settled in the admitted run");
+    if (result.terminal?.roleOutcome.kind === "failure") {
+      assert.equal(result.terminal.roleOutcome.diagnostic.includes("diarist host unavailable"), true,
+        "the original host failure remains visible in the structured terminal");
+    }
     assert.equal(gateCalls.length, 0);
   });
 });
