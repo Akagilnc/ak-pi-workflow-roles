@@ -13,7 +13,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
@@ -2546,11 +2546,6 @@ test("public resume says which confirmed fact failed and where to look", async (
     if (missingSubject.result.resumeFailure?.kind === "auditor-subject-missing") {
       assert.equal(missingSubject.result.resumeFailure.sourceRunPath, sourceRun);
       assert.equal(missingSubject.result.resumeFailure.resumeRunId, "1058-auditor");
-      assert.equal(missingSubject.result.resumeFailure.provide.includes("ak-role auditor"), false);
-      assert.equal(
-        missingSubject.result.resumeFailure.provide.includes(`ak-role resume ${missingSubject.result.resumeFailure.resumeRunId}`),
-        true,
-      );
       assert.equal(missingSubject.result.resumeFailure.runDirectory, auditor.runDirectory);
     }
     assert.equal(missingSubject.stderr.includes(sourceRun), true);
@@ -2571,9 +2566,37 @@ test("public resume says which confirmed fact failed and where to look", async (
     const fact = missingSubject.result.resumeFailure;
     assert.equal(fact?.kind, "auditor-subject-missing");
     if (fact?.kind === "auditor-subject-missing") {
+      assert.equal(fact.provide, fact.sameRunCommands.join("\n"));
+      const stubDir = join(home, "ak-role-stub");
+      const stubOut = join(home, "ak-role-stub-out");
+      await mkdir(stubDir, { recursive: true });
+      await mkdir(stubOut, { recursive: true });
+      const subjectFile = join(stubOut, "subject");
+      const argvFile = join(stubOut, "argv");
+      const stub = [
+        "#!/bin/sh",
+        `printf '%s\\n' "$AK_ROLE_AUDITOR_SUBJECT" > ${JSON.stringify(subjectFile)}`,
+        `printf '%s\\n' "$@" > ${JSON.stringify(argvFile)}`,
+        "",
+      ].join("\n");
+      await writeFile(join(stubDir, "ak-role"), stub, "utf8");
+      await chmod(join(stubDir, "ak-role"), 0o755);
+      const observed: string[] = [];
+      for (const command of fact.sameRunCommands) {
+        const shelled = spawnSync("sh", ["-c", command], {
+          env: { ...process.env, PATH: `${stubDir}:${process.env.PATH ?? ""}` },
+          encoding: "utf8",
+        });
+        assert.equal(shelled.status, 0, `${command}\n${shelled.stderr}`);
+        const subject = (await readFile(subjectFile, "utf8")).trim();
+        const argv = (await readFile(argvFile, "utf8")).trim().split("\n");
+        assert.equal(subject === "judge" || subject === "doctor", true, subject);
+        assert.deepEqual(argv, ["resume", fact.resumeRunId]);
+        observed.push(subject);
+      }
       const runsRoot = join(home, ".ak-roles", "books", bookKey, "unbound", "runs");
       const before = await readdir(runsRoot);
-      process.env[fact.subjectEnv] = "judge";
+      process.env[fact.subjectEnv] = observed[0]!;
       try {
         const supplied = await resume(fact.resumeRunId);
         assert.equal(supplied.result.resumeFailure, undefined);

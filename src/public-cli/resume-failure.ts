@@ -42,7 +42,8 @@ export type ResumeFailureFact =
       readonly subjectEnv: typeof AK_ROLE_AUDITOR_SUBJECT_ENV;
       readonly sourceRunPath?: string;
       readonly recordedSubject?: string;
-      /** Same-run input. Not an `ak-role auditor` invocation. */
+      /** Shell-executable same-run commands, one per concrete subject. */
+      readonly sameRunCommands: readonly string[];
       readonly provide: string;
     };
 
@@ -135,7 +136,7 @@ export function formatResumeFailure(fact: ResumeFailureFact): string {
       const source = fact.sourceRunPath === undefined
         ? "受理记录里没有被审来源路径。"
         : `被审来源仍是：${fact.sourceRunPath}。`;
-      return `审刑院续跑缺少被审席位。${recorded}ak-role resume 不收 --subject。不要改跑 ak-role auditor，那会另起一条腿。要续同一条 run，先设置 ${fact.subjectEnv}，再执行：${fact.provide}。可查卷宗：${fact.runDirectory}。${source}`;
+      return `审刑院续跑缺少被审席位。${recorded}ak-role resume 不收 --subject。不要改跑 ak-role auditor，那会另起一条腿。要续同一条 run，选一条直接执行：\n${fact.provide}\n可查卷宗：${fact.runDirectory}。${source}`;
     }
   }
 }
@@ -196,7 +197,10 @@ async function auditorSubjectFact(admitted: {
     return undefined;
   }
   const stored = await readStoredAuditorContext(admitted.admittedRequestPath, admitted.role);
-  const subjectToken = stored.recordedSubject ?? `<${choices.join("|")}>`;
+  const subjects = stored.recordedSubject === undefined ? [...choices] : [stored.recordedSubject];
+  const sameRunCommands = subjects.map((subject) =>
+    `${AK_ROLE_AUDITOR_SUBJECT_ENV}=${shellSingleQuote(subject)} ak-role resume ${shellSingleQuote(admitted.runId)}`,
+  );
   return {
     kind: "auditor-subject-missing",
     runDirectory: admitted.runDirectory,
@@ -204,8 +208,13 @@ async function auditorSubjectFact(admitted: {
     ...(stored.recordedSubject === undefined ? {} : { recordedSubject: stored.recordedSubject }),
     resumeRunId: admitted.runId,
     subjectEnv: AK_ROLE_AUDITOR_SUBJECT_ENV,
-    provide: `${AK_ROLE_AUDITOR_SUBJECT_ENV}=${subjectToken} ak-role resume ${admitted.runId}`,
+    sameRunCommands,
+    provide: sameRunCommands.join("\n"),
   };
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 async function readStoredAuditorContext(
