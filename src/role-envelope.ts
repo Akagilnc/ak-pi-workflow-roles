@@ -496,7 +496,7 @@ export async function prepareRoleEnvelope(options: {
       return { content: projected.content, isError: projected.isError };
     } catch (error) {
       if (error instanceof OfficerEscalationParkError) {
-        // Park is already on the parent session. Do not seal, retry, or fail the turn.
+        // Officer escalation is that officer's run. Do not seal, retry, or fail the parent turn.
         return { content: [], isError: false };
       }
       let content: ContentPart[];

@@ -29,7 +29,7 @@ import {
   runGatekeeper,
   type GateOfficerSummon,
 } from "../../src/gatekeeper-role.ts";
-import { ParentQueueReaskError } from "../../src/submission-errors.ts";
+import { OfficerEscalationParkError, ParentQueueReaskError } from "../../src/submission-errors.ts";
 
 import type { AuditorSummon } from "../../src/compliance-transport.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
@@ -2461,17 +2461,20 @@ test("role outputs run nested audits through converged, continue, and escalation
         await escalated.runtime.activate();
         const escalationTool = escalated.harness.tools.get(tool.name);
         if (role === "judge") {
-          // Escalation terminates into the existing audit-escalation face; no
-          // officer verdict is delivered back to the judge's conversation.
+          // Officer escalation stays on the officer. The judge tool does not
+          // return it as the judge's own audit_escalation face.
           const escBare = outputContext(tool.name, `${role}-escalate`, outputs[role] as unknown as JsonObject);
           const escCtx = await withPassingGatekeeper(escBare);
           escalated.armJudgeGateDecision();
-          const paused = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, escCtx);
-          assert.deepEqual(paused.content, []);
-          assert.equal(paused.details.kind, "audit_escalation");
-          assert.deepEqual(paused.details.audit.conflicts, escalation);
-          assert.equal(paused.details.audit.officer, "auditor");
-          assert.deepEqual(paused.details.audit.auditDecisionGate, escalation.decisionGate);
+          await assert.rejects(
+            () => escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, escCtx),
+            (error: unknown) => {
+              assert.ok(error instanceof OfficerEscalationParkError);
+              assert.equal(error.result.status, "escalate");
+              assert.equal(error.result.officer, "auditor");
+              return true;
+            },
+          );
           assert.equal(escalated.auditCalls, 1);
           continue;
         }

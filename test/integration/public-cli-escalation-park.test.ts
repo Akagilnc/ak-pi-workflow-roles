@@ -1,7 +1,8 @@
 /**
- * #1057: 审核上呈停在上呈者本人 run，父席等待；公开 resume 不另附 subject
- * 也能交卷。通过原话回到父席，父席自己决定是否再交；未完成的审刑院闸继续跑。
- * 结论不是三态时重开该发言者。真正宿主失败不封成通过。
+ * #1057: public judge entry, officer escalation stays on that officer,
+ * and `resume <runId> <ruling>` passes the ruling through. The parent is
+ * resumed once with that conclusion. No second audit order, no sealed
+ * stand-in when the judge does not submit again.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
@@ -19,13 +20,11 @@ import {
   savePublicCliConfig,
   setPersistentSeatConfig,
 } from "../../src/public-cli/config.ts";
-import {
-  findRunDirectoryById,
-  readRoleRunIdentity,
-} from "../../src/public-cli/run-lifecycle.ts";
+import { readRoleRunIdentity } from "../../src/public-cli/run-lifecycle.ts";
 import { listBookRunDirectories } from "../../src/role-run-placement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -39,40 +38,40 @@ import {
 } from "../helpers/failure-settlement-kit.ts";
 
 const packageRoot = join(import.meta.dirname, "../..");
+const VERDICT = { status: "converged", mark: 1 } as const;
+const RULING = "ruling-1057";
 
 function adapter(name: string, host: RoleTurnHost): NamedRoleTurnHostAdapter {
   return { name, create: () => ({ ok: true as const, host }) };
 }
 
 function latestPayload(terminal: {
-  roleOutcome: { kind: string; payloads?: readonly unknown[]; status?: string };
+  roleOutcome: { kind: string; payloads?: readonly unknown[] };
 } | undefined): Record<string, unknown> | undefined {
-  const outcome = terminal?.roleOutcome;
-  if (outcome === undefined) return undefined;
-  const payloads = outcome.payloads ?? [];
+  const payloads = terminal?.roleOutcome.payloads ?? [];
   const latest = payloads[payloads.length - 1];
   return latest !== null && typeof latest === "object" && !Array.isArray(latest)
     ? latest as Record<string, unknown>
     : undefined;
 }
 
-type ParkObservation = {
+type Observation = {
   readonly home: string;
-  readonly escalated: CliResult;
+  readonly project: string;
+  readonly first: CliResult;
   readonly parentRunId: string;
   readonly parentRunDirectory: string;
-  readonly bookKey: string;
   readonly judgeSubmissions: readonly unknown[];
   readonly parentPrompts: readonly string[];
   readonly officerPrompts: readonly string[];
   readonly resumeStderr: string[];
-  resume(): Promise<CliResult>;
+  resume(message?: string): Promise<CliResult>;
 };
 
-async function observeParkedEscalation(
+async function runJudge(
   officerRunner: LegacyFauxPiRunner,
   onParentResume: (prompt: string) => { code: number; stderr: string; verdict?: unknown },
-  assertIn: (observed: ParkObservation) => Promise<void>,
+  assertIn: (observed: Observation) => Promise<void>,
 ): Promise<void> {
   const temps: string[] = [];
   try {
@@ -144,7 +143,7 @@ async function observeParkedEscalation(
             }
             return submitVerdict(request, resumed.verdict);
           }
-          return submitVerdict(request, { status: "converged", note: "原判词" });
+          return submitVerdict(request, VERDICT);
         },
       };
       const routed: RoleTurnHost = {
@@ -155,7 +154,7 @@ async function observeParkedEscalation(
         },
       };
       const capture = captureIo();
-      const escalated = await runAkRole(
+      const first = await runAkRole(
         ["judge", "--model", "test/caller-seat:high", "--project", project, "review"],
         {
           packageRoot,
@@ -167,28 +166,29 @@ async function observeParkedEscalation(
           hostAdapters: [adapter("pi", routed)],
         },
       );
-      assert.equal(escalated.exitCode, 0, capture.stderr.join("") || capture.stdout.join(""));
+      assert.equal(first.exitCode, 0, capture.stderr.join("") || capture.stdout.join(""));
       const books = await readdir(join(home, ".ak-roles", "books"));
       const runs = (await Promise.all(books.map((book) => listBookRunDirectories(join(home, ".ak-roles", "books", book))))).flat();
       const identities = (await Promise.all(runs.map((runDirectory) => readRoleRunIdentity(runDirectory))))
         .filter((identity) => identity !== undefined);
       const parent = identities.find((identity) => identity.role === "judge");
-      assert.ok(parent, `judge run missing: ${JSON.stringify(identities)}`);
+      assert.ok(parent, `judge run missing: ${JSON.stringify(identities.map((identity) => identity.role))}`);
       await assertIn({
         home,
-        escalated,
+        project,
+        first,
         parentRunId: parent.runId,
         parentRunDirectory: parent.runDirectory,
-        bookKey: parent.bookKey,
         judgeSubmissions,
         parentPrompts,
         officerPrompts,
         resumeStderr: observedResumeStderr,
-        async resume() {
-          const officerRunId = escalated.terminal?.runId;
+        async resume(message?: string) {
+          const officerRunId = first.terminal?.runId;
           assert.equal(typeof officerRunId, "string");
           const resumeCapture = captureIo();
-          const result = await runAkRole(["resume", officerRunId!], {
+          const args = message === undefined ? ["resume", officerRunId!] : ["resume", officerRunId!, message];
+          const result = await runAkRole(args, {
             packageRoot,
             home,
             cwd: project,
@@ -206,7 +206,51 @@ async function observeParkedEscalation(
   }
 }
 
-test("#1057 auditor escalation pauses the auditor and the waiting parent receives the pass words", async () => {
+function bothPass(): LegacyFauxPiRunner {
+  return async (args, options) => {
+    const role = argvFlagValue(args, "--ak-role");
+    if (role === "notary") {
+      return scriptedTerminatingToolSession({
+        role: "notary",
+        toolName: NOTARY_OUTPUT_TOOL_NAME,
+        details: { status: "converged", mark: 2 },
+      })(args, options);
+    }
+    if (role === "auditor") {
+      return scriptedTerminatingToolSession({
+        role: "auditor",
+        toolName: AUDITOR_OUTPUT_TOOL_NAME,
+        details: { status: "converged", mark: 3 },
+      })(args, options);
+    }
+    throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
+  };
+}
+
+test("#1057 public judge entry passes both audits once and keeps that verdict", async () => {
+  let notaryCalls = 0;
+  let auditorCalls = 0;
+  const officerRunner: LegacyFauxPiRunner = async (args, options) => {
+    const role = argvFlagValue(args, "--ak-role");
+    if (role === "notary") notaryCalls += 1;
+    if (role === "auditor") auditorCalls += 1;
+    return bothPass()(args, options);
+  };
+  await runJudge(officerRunner, () => ({ code: 0, stderr: "" }), async (observed) => {
+    assert.equal(notaryCalls, 1);
+    assert.equal(auditorCalls, 1);
+    assert.equal(observed.judgeSubmissions.length, 1);
+    assert.equal(observed.first.terminal?.roleOutcome.role, "judge");
+    assert.equal(observed.first.terminal?.roleOutcome.kind, "accepted");
+    assert.deepEqual(latestPayload(observed.first.terminal), VERDICT);
+    assert.equal((observed.first.terminal?.roleOutcome.payloads ?? []).length, 1);
+    assert.equal((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
+  });
+});
+
+test("#1057 auditor escalation is the auditor run and the parent is not that escalation", async () => {
+  const escalated = { status: "escalate", mark: 4 };
+  const passed = { status: "converged", mark: 5 };
   let auditorCalls = 0;
   const officerRunner: LegacyFauxPiRunner = async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
@@ -214,76 +258,54 @@ test("#1057 auditor escalation pauses the auditor and the waiting parent receive
       return scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "converged", note: "符宝郎通过" },
+        details: { status: "converged", mark: 2 },
       })(args, options);
     }
     if (role === "auditor") {
       auditorCalls += 1;
-      const details = auditorCalls === 1
-        ? { status: "escalate", decisionGate: { question: "请陛下裁决" }, explanation: "完整审刑院原话" }
-        : { status: "converged", explanation: "上呈后交卷" };
       return scriptedTerminatingToolSession({
         role: "auditor",
         toolName: AUDITOR_OUTPUT_TOOL_NAME,
-        details,
+        details: auditorCalls === 1 ? escalated : passed,
       })(args, options);
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   };
-  await observeParkedEscalation(officerRunner, () => ({ code: 0, stderr: "" }), async (observed) => {
-    assert.notEqual(observed.escalated.terminal?.runId, observed.parentRunId);
-    assert.equal(observed.escalated.terminal?.roleOutcome.role, "auditor");
-    assert.notEqual(observed.escalated.terminal?.roleOutcome.kind, "audit_escalation");
-    assert.equal(latestPayload(observed.escalated.terminal)?.status, "escalate");
-    assert.equal(latestPayload(observed.escalated.terminal)?.explanation, "完整审刑院原话");
-    assert.equal(observed.judgeSubmissions.length, 1);
-    const parentBefore = await readRoleRunIdentity(observed.parentRunDirectory);
-    assert.notEqual(parentBefore?.state, "terminal");
+  await runJudge(officerRunner, () => ({ code: 0, stderr: "" }), async (observed) => {
+    assert.notEqual(observed.first.terminal?.runId, observed.parentRunId);
+    assert.equal(observed.first.terminal?.roleOutcome.role, "auditor");
+    assert.equal(latestPayload(observed.first.terminal)?.status, "escalate");
+    assert.deepEqual(latestPayload(observed.first.terminal), escalated);
+    assert.notEqual((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
+    const parentRows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
+    assert.equal(parentRows.some((row) => row.kind === "accepted" || row.kind === "audit-escalation"), false);
 
-    const continued = await observed.resume();
+    const continued = await observed.resume(RULING);
     assert.equal(continued.exitCode, 0, observed.resumeStderr.join(""));
+    assert.equal(observed.officerPrompts[0], RULING);
     assert.equal(auditorCalls, 2);
     assert.equal(observed.judgeSubmissions.length, 1);
     assert.equal(observed.parentPrompts.length, 1);
-    assert.equal(observed.parentPrompts[0]?.includes("上呈后交卷"), true);
-    const parentAfter = await readRoleRunIdentity(observed.parentRunDirectory);
-    assert.equal(parentAfter?.state, "terminal");
+    assert.deepEqual(JSON.parse(observed.parentPrompts[0] ?? ""), passed);
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
-    assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
-    assert.notEqual(continued.terminal?.roleOutcome.kind, "audit_escalation");
-    const parentPayloads = continued.terminal?.roleOutcome.kind === "accepted"
-      ? continued.terminal.roleOutcome.payloads ?? []
-      : [];
-    assert.equal(parentPayloads.length, 1);
-    assert.deepEqual(parentPayloads[0], { status: "converged", note: "原判词" });
-    assert.deepEqual(continued.terminal?.roleOutcome.decisiveFacts?.officerReceipt, {
-      status: "converged",
-      explanation: "上呈后交卷",
-    });
-    const auditorDir = await findRunDirectoryById(
-      observed.home,
-      observed.escalated.terminal?.runId ?? "",
-      observed.bookKey,
-      "auditor",
-    );
-    assert.equal(typeof auditorDir, "string");
+    assert.equal(continued.terminal?.roleOutcome.kind, "no_receipt");
+    const after = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
+    assert.equal(after.some((row) => row.kind === "accepted" || row.kind === "audit-escalation"), false);
   });
 });
 
-test("#1057 notary pass after escalation still runs the auditor and returns both original words", async () => {
+test("#1057 a notary pass does not open a second auditor gate", async () => {
+  const notaryPass = { status: "converged", mark: 6 };
   let notaryCalls = 0;
   let auditorCalls = 0;
   const officerRunner: LegacyFauxPiRunner = async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
     if (role === "notary") {
       notaryCalls += 1;
-      const details = notaryCalls === 1
-        ? { status: "escalate", explanation: "符宝郎上呈原话" }
-        : { status: "converged", explanation: "符宝郎通过原话" };
       return scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details,
+        details: notaryCalls === 1 ? { status: "escalate", mark: 7 } : notaryPass,
       })(args, options);
     }
     if (role === "auditor") {
@@ -291,34 +313,26 @@ test("#1057 notary pass after escalation still runs the auditor and returns both
       return scriptedTerminatingToolSession({
         role: "auditor",
         toolName: AUDITOR_OUTPUT_TOOL_NAME,
-        details: { status: "converged", explanation: "审刑院通过原话" },
+        details: { status: "converged", mark: 8 },
       })(args, options);
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   };
-  await observeParkedEscalation(officerRunner, () => ({ code: 0, stderr: "" }), async (observed) => {
-    assert.equal(observed.escalated.terminal?.roleOutcome.role, "notary");
-    assert.equal(latestPayload(observed.escalated.terminal)?.explanation, "符宝郎上呈原话");
+  await runJudge(officerRunner, () => ({ code: 0, stderr: "" }), async (observed) => {
+    assert.equal(observed.first.terminal?.roleOutcome.role, "notary");
+    assert.equal(latestPayload(observed.first.terminal)?.status, "escalate");
     assert.equal(auditorCalls, 0);
-    const continued = await observed.resume();
+    const continued = await observed.resume(RULING);
     assert.equal(continued.exitCode, 0, observed.resumeStderr.join(""));
     assert.equal(notaryCalls, 2);
-    assert.equal(auditorCalls, 1);
+    assert.equal(auditorCalls, 0);
     assert.equal(observed.judgeSubmissions.length, 1);
-    assert.equal(observed.parentPrompts.length, 1);
-    assert.equal(observed.parentPrompts[0]?.includes("符宝郎通过原话"), true);
-    assert.equal(observed.parentPrompts[0]?.includes("审刑院通过原话"), true);
-    assert.equal(continued.terminal?.roleOutcome.role, "judge");
-    assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
-    const parentPayloads = continued.terminal?.roleOutcome.kind === "accepted"
-      ? continued.terminal.roleOutcome.payloads ?? []
-      : [];
-    assert.equal(parentPayloads.length, 1);
-    assert.deepEqual(parentPayloads[0], { status: "converged", note: "原判词" });
+    assert.deepEqual(JSON.parse(observed.parentPrompts[0] ?? ""), notaryPass);
+    assert.equal(continued.terminal?.roleOutcome.kind, "no_receipt");
   });
 });
 
-test("#1057 a conclusion outside the three states reopens that officer", async () => {
+test("#1057 a conclusion outside the three states returns to that officer", async () => {
   let auditorCalls = 0;
   const officerRunner: LegacyFauxPiRunner = async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
@@ -326,16 +340,16 @@ test("#1057 a conclusion outside the three states reopens that officer", async (
       return scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "converged", note: "符宝郎通过" },
+        details: { status: "converged", mark: 2 },
       })(args, options);
     }
     if (role === "auditor") {
       auditorCalls += 1;
       const details = auditorCalls === 1
-        ? { status: "escalate", explanation: "先上呈" }
+        ? { status: "escalate", mark: 4 }
         : auditorCalls === 2
-          ? { status: "undecidable", explanation: "读不出" }
-          : { status: "converged", explanation: "重开后通过" };
+          ? { status: "undecidable", mark: 5 }
+          : { status: "converged", mark: 6 };
       return scriptedTerminatingToolSession({
         role: "auditor",
         toolName: AUDITOR_OUTPUT_TOOL_NAME,
@@ -344,19 +358,18 @@ test("#1057 a conclusion outside the three states reopens that officer", async (
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   };
-  await observeParkedEscalation(officerRunner, () => ({ code: 0, stderr: "" }), async (observed) => {
-    const continued = await observed.resume();
+  await runJudge(officerRunner, () => ({ code: 0, stderr: "" }), async (observed) => {
+    const continued = await observed.resume(RULING);
     assert.equal(continued.exitCode, 0, observed.resumeStderr.join(""));
     assert.equal(auditorCalls, 3);
-    assert.equal(observed.officerPrompts.some((prompt) => prompt.includes(OFFICER_CONCLUSION_REASK)), true);
-    assert.equal(observed.parentPrompts.some((prompt) => prompt.includes("重开后通过")), true);
+    assert.equal(observed.officerPrompts[0], RULING);
+    assert.equal(observed.officerPrompts.some((prompt) => prompt === OFFICER_CONCLUSION_REASK), true);
     assert.equal(observed.judgeSubmissions.length, 1);
-    assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
-    assert.equal(continued.terminal?.roleOutcome.role, "judge");
+    assert.deepEqual(JSON.parse(observed.parentPrompts[0] ?? ""), { status: "converged", mark: 6 });
   });
 });
 
-test("#1057 a parent host failure after the pass is not sealed as acceptance", async () => {
+test("#1057 a parent host failure after the officer conclusion is not a pass", async () => {
   let auditorCalls = 0;
   const officerRunner: LegacyFauxPiRunner = async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
@@ -364,33 +377,32 @@ test("#1057 a parent host failure after the pass is not sealed as acceptance", a
       return scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "converged", note: "符宝郎通过" },
+        details: { status: "converged", mark: 2 },
       })(args, options);
     }
     if (role === "auditor") {
       auditorCalls += 1;
-      const details = auditorCalls === 1
-        ? { status: "escalate", explanation: "先上呈" }
-        : { status: "converged", explanation: "通过后宿主失败" };
       return scriptedTerminatingToolSession({
         role: "auditor",
         toolName: AUDITOR_OUTPUT_TOOL_NAME,
-        details,
+        details: auditorCalls === 1
+          ? { status: "escalate", mark: 4 }
+          : { status: "converged", mark: 5 },
       })(args, options);
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   };
-  await observeParkedEscalation(officerRunner, () => ({ code: 1, stderr: "judge host failed" }), async (observed) => {
-    const continued = await observed.resume();
+  await runJudge(officerRunner, () => ({ code: 1, stderr: "judge host failed" }), async (observed) => {
+    const continued = await observed.resume(RULING);
     assert.notEqual(continued.exitCode, 0);
     assert.notEqual(continued.terminal?.roleOutcome.kind, "accepted");
     assert.notEqual(continued.terminal?.roleOutcome.kind, "audit_escalation");
     assert.equal(observed.judgeSubmissions.length, 1);
-    assert.equal(observed.parentPrompts.some((prompt) => prompt.includes("通过后宿主失败")), true);
   });
 });
 
-test("#1057 a new verdict after the pass re-enters audit instead of sealing the old one", async () => {
+test("#1057 a new verdict after the officer conclusion re-enters the judge gates", async () => {
+  const next = { status: "converged", mark: 9 };
   let notaryCalls = 0;
   let auditorCalls = 0;
   const officerRunner: LegacyFauxPiRunner = async (args, options) => {
@@ -400,35 +412,34 @@ test("#1057 a new verdict after the pass re-enters audit instead of sealing the 
       return scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: { status: "converged", note: "符宝郎通过" },
+        details: { status: "converged", mark: 2 },
       })(args, options);
     }
     if (role === "auditor") {
       auditorCalls += 1;
-      const details = auditorCalls === 1
-        ? { status: "escalate", explanation: "完整审刑院原话" }
-        : { status: "converged", explanation: "上呈后交卷" };
       return scriptedTerminatingToolSession({
         role: "auditor",
         toolName: AUDITOR_OUTPUT_TOOL_NAME,
-        details,
+        details: auditorCalls === 1
+          ? { status: "escalate", mark: 4 }
+          : { status: "converged", mark: 5 },
       })(args, options);
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   };
-  await observeParkedEscalation(
+  await runJudge(
     officerRunner,
-    () => ({ code: 0, stderr: "", verdict: { status: "converged", note: "新判词" } }),
+    () => ({ code: 0, stderr: "", verdict: next }),
     async (observed) => {
-      const continued = await observed.resume();
+      const continued = await observed.resume(RULING);
       assert.equal(continued.exitCode, 0, observed.resumeStderr.join(""));
-      assert.equal(observed.parentPrompts.some((prompt) => prompt.includes("上呈后交卷")), true);
+      assert.equal(observed.officerPrompts[0], RULING);
       assert.equal(notaryCalls, 2);
       assert.equal(auditorCalls, 3);
       assert.equal(observed.judgeSubmissions.length, 2);
       assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
-      assert.equal(latestPayload(continued.terminal)?.note, "新判词");
-      assert.notEqual(latestPayload(continued.terminal)?.note, "原判词");
+      assert.equal(continued.terminal?.roleOutcome.role, "judge");
+      assert.deepEqual(latestPayload(continued.terminal), next);
     },
   );
 });

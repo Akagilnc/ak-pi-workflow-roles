@@ -7,7 +7,7 @@
  *   parent submit → summon officer → read conclusion field
  *   converged → accept end
  *   continue → raw officer receipt as a nonterminal result; parent may resubmit
- *   escalate → park the officer; parent waits. Do not hang the escalation on the parent.
+ *   escalate → the officer's own run waits. Do not seal it as the parent's escalation.
  *   unrecognized status → resume officer with plain-language re-ask (no round cap)
  *   transport / no_receipt → present honestly
  * Four pairs: countersign↔notary, judge↔auditor, worker↔inspector, secretariat↔countersign (#969).
@@ -29,71 +29,6 @@ import {
 import { OfficerEscalationParkError } from "./submission-errors.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
-
-/** Durable parent-session fact: this turn's officer escalate is waiting on that officer. */
-export const OFFICER_ESCALATION_PARK_ENTRY_TYPE = "ak-role-officer-escalation-park" as const;
-
-export type OfficerEscalationPark = {
-  readonly officerRunId?: string;
-  readonly officerRunDirectory?: string;
-  readonly submission?: unknown;
-  readonly toolCallId?: string;
-  readonly receipt?: unknown;
-  readonly courtAttemptId?: string;
-  readonly attemptHeaderId?: string;
-};
-
-function parkFromData(data: Record<string, unknown>): OfficerEscalationPark {
-  return {
-    ...(typeof data.officerRunId === "string" && data.officerRunId.trim() !== ""
-      ? { officerRunId: data.officerRunId }
-      : {}),
-    ...(typeof data.officerRunDirectory === "string" && data.officerRunDirectory.trim() !== ""
-      ? { officerRunDirectory: data.officerRunDirectory }
-      : {}),
-    ...(data.submission === undefined ? {} : { submission: data.submission }),
-    ...(typeof data.toolCallId === "string" && data.toolCallId.trim() !== ""
-      ? { toolCallId: data.toolCallId }
-      : {}),
-    ...(data.receipt === undefined ? {} : { receipt: data.receipt }),
-    ...(typeof data.courtAttemptId === "string" && data.courtAttemptId.trim() !== ""
-      ? { courtAttemptId: data.courtAttemptId }
-      : {}),
-    ...(typeof data.attemptHeaderId === "string" && data.attemptHeaderId.trim() !== ""
-      ? { attemptHeaderId: data.attemptHeaderId }
-      : {}),
-  };
-}
-
-/** Latest park fact on the parent session. Missing file is absence, not damage. */
-export async function readOfficerEscalationPark(
-  sessionFile: string,
-): Promise<OfficerEscalationPark | undefined> {
-  const { readFile } = await import("node:fs/promises");
-  let text: string;
-  try {
-    text = await readFile(sessionFile, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
-    throw error;
-  }
-  let latest: OfficerEscalationPark | undefined;
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line) as unknown;
-    } catch {
-      continue;
-    }
-    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
-    const entry = parsed as { type?: unknown; customType?: unknown; data?: unknown };
-    if (entry.type !== "custom" || entry.customType !== OFFICER_ESCALATION_PARK_ENTRY_TYPE) continue;
-    if (entry.data === null || typeof entry.data !== "object" || Array.isArray(entry.data)) continue;
-    latest = parkFromData(entry.data as Record<string, unknown>);
-  }
-  return latest;
-}
 
 /** Queue word of the latest this-terminal payload. History does not outrank it. */
 export function latestQueueStatus(terminal: TerminalResult | undefined): string | undefined {
@@ -281,34 +216,10 @@ export async function requireSubmissionGate(options: {
       });
       options.hostActions.failInfrastructure(failure, options.context, options.toolCallId);
     }
-    // Escalation pauses the officer. The parent waits; the verdict is not delivered to it.
+    // The officer run already holds the escalation. The parent tool must not seal it.
+    // The existing auditor-roles pointer is the parent link.
     if (gatekeeper.status === "escalate") {
-      const officerRunDirectory = projected.summoned?.runDirectory;
-      const session = options.context.sessionManager;
-      const courtAttemptId = "courtAttemptId" in options.context
-        ? options.context.courtAttemptId
-        : undefined;
-      const headerId = session.getHeader?.()?.id;
-      if ("appendCustomEntry" in session && session.appendCustomEntry !== undefined) {
-        await session.appendCustomEntry(OFFICER_ESCALATION_PARK_ENTRY_TYPE, {
-          ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
-            ? { officerRunId: gatekeeper.runId }
-            : {}),
-          ...(typeof officerRunDirectory === "string" && officerRunDirectory.trim() !== ""
-            ? { officerRunDirectory }
-            : {}),
-          ...(options.submission === undefined ? {} : { submission: options.submission }),
-          toolCallId: options.toolCallId,
-          receipt: gatekeeper.receipt,
-          ...(typeof courtAttemptId === "string" && courtAttemptId.trim() !== ""
-            ? { courtAttemptId }
-            : {}),
-          ...(typeof headerId === "string" && headerId.trim() !== ""
-            ? { attemptHeaderId: headerId }
-            : {}),
-        });
-      }
-      throw new OfficerEscalationParkError(gatekeeper, officerRunDirectory);
+      throw new OfficerEscalationParkError(gatekeeper, projected.summoned?.runDirectory);
     }
     // no_receipt: keep the lifecycle failure channel; continue is an ordinary
     // nonterminal tool result above, not an exception or correctable rejection.

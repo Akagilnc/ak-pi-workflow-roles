@@ -1,7 +1,7 @@
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -556,6 +556,7 @@ test("recorded officer escalation does not wash a current host failure", async (
           await prepared.closeRound();
         } finally {
           await prepared.dispose?.();
+          await rm(socketDir, { recursive: true, force: true });
         }
         return {
           code: 1,

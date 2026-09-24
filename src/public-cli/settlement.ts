@@ -180,16 +180,18 @@ function roleOutcomeFromRows(
     (row) => row.kind === "accepted" || row.kind === "audit-escalation",
   );
   if (terminal.length === 0) return undefined;
-  // Role-result block is the full recorded sequence for this seat, not a sole pick.
+  // Full sequence stays on payloads. The queue kind follows the latest terminal
+  // row only — an earlier escalation must not outrank a later acceptance or
+  // keep that earlier receipt (#1057).
   const payloads = mine.map((row) => row.accepted);
-  if (terminal.some((row) => row.kind === "audit-escalation")) {
-    const audited = terminal.slice().reverse().find((row) => row.kind === "audit-escalation" && Object.hasOwn(row, "auditReceipt"));
+  const latest = terminal[terminal.length - 1]!;
+  if (latest.kind === "audit-escalation") {
     return {
       kind: "audit_escalation", role, status: "audit_escalation", payloads,
-      ...(audited === undefined ? {} : { decisiveFacts: {
-        auditEscalationReceipt: audited.auditReceipt,
-        ...(Object.hasOwn(audited, "auditOfficer") ? { auditEscalationOfficer: audited.auditOfficer } : {}),
-      } }),
+      ...(Object.hasOwn(latest, "auditReceipt") ? { decisiveFacts: {
+        auditEscalationReceipt: latest.auditReceipt,
+        ...(Object.hasOwn(latest, "auditOfficer") ? { auditEscalationOfficer: latest.auditOfficer } : {}),
+      } } : {}),
     };
   }
   return { kind: "accepted", role, payloads };

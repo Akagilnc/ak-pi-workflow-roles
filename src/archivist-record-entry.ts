@@ -521,3 +521,58 @@ export function bookDirectOfficerRunPointer(options: {
   );
   return pointer;
 }
+
+/** Pointers this parent already booked. Missing nest is absence. A damaged file is thrown. */
+export function listDirectOfficerRunPointers(parentSessionFile: string): readonly {
+  readonly pointer: DirectOfficerRunPointer;
+  readonly mtimeMs: number;
+}[] {
+  const nest = join(dirname(parentSessionFile), "auditor-roles");
+  let names: string[];
+  try {
+    names = readdirSync(nest);
+  } catch (error) {
+    if (errnoCode(error) === "ENOENT") return [];
+    throw error;
+  }
+  const listed: { pointer: DirectOfficerRunPointer; mtimeMs: number }[] = [];
+  for (const name of names) {
+    if (!name.endsWith(".pointer.json")) continue;
+    const path = join(nest, name);
+    const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error(`officer pointer is not a record: ${path}`);
+    }
+    const record = raw as {
+      kind?: unknown;
+      officer?: unknown;
+      sessionFile?: unknown;
+      runDirectory?: unknown;
+    };
+    if (record.kind !== DIRECT_OFFICER_RUN_POINTER_KIND) continue;
+    if (typeof record.sessionFile !== "string" || record.sessionFile.trim() === "") {
+      throw new Error(`officer pointer missing sessionFile: ${path}`);
+    }
+    if (
+      record.officer !== "inspector"
+      && record.officer !== "notary"
+      && record.officer !== "auditor"
+      && record.officer !== "countersign"
+    ) {
+      throw new Error(`officer pointer has no officer: ${path}`);
+    }
+    listed.push({
+      pointer: {
+        version: 1,
+        kind: DIRECT_OFFICER_RUN_POINTER_KIND,
+        officer: record.officer,
+        sessionFile: record.sessionFile,
+        ...(typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
+          ? { runDirectory: record.runDirectory }
+          : {}),
+      },
+      mtimeMs: statSync(path).mtimeMs,
+    });
+  }
+  return listed;
+}

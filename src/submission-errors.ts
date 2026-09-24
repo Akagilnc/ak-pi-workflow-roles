@@ -25,7 +25,7 @@ function gatekeeperNonPassMessage(result: SubmissionGateNonPassResult): string {
 }
 
 /** Structured non-pass; `.result` is session-projected via tool_result, message feeds the model. */
-/** Officer escalate stays on that officer. Not a parent bounce and not parent infrastructure. */
+/** Officer escalate stays on that officer. Not a parent seal and not parent infrastructure. */
 export class OfficerEscalationParkError extends Error {
   readonly result: SubmissionGateNonPassResult;
   readonly officerRunDirectory?: string;
