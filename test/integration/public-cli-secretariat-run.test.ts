@@ -474,7 +474,7 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
         {
           details: {
             status: "continue",
-            fix: { summary: "删伪 authority" },
+            fix: { summary: "补齐实际 GitHub issue 身份" },
           },
         },
         { details: { status: "converged", note: "署" } },
@@ -483,7 +483,7 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
       steps: [
         {
           kind: "output",
-          details: { secretariatStatus: "converged", ticketNumber: 924 },
+          details: { secretariatStatus: "converged" },
         },
         {
           kind: "output",
@@ -498,7 +498,7 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
         "test/caller-seat:high",
         "--project",
         project,
-        "整理 #924 票面并送庭。",
+        "整理票面并送庭。",
       ],
       {
         home,
@@ -526,6 +526,8 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
     };
     assert.equal(facts.secretariatStatus, "converged");
     assert.equal(facts.ticketNumber, 924);
+    assert.equal((payloads[0] as { ticketNumber?: number }).ticketNumber, undefined,
+      "the first unnumbered output must remain in the ledger before officer re-submission");
     // #969: 公开终局呈现给事中判词与 runId（settlement 唯一权威）.
     const countersignTerminal = result.terminal.roleOutcome.decisiveFacts
       ?.countersignTerminal as
