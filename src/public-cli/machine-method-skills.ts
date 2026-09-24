@@ -1,5 +1,5 @@
 import { accessSync, constants, statSync } from "node:fs";
-import { lstat, mkdir, symlink } from "node:fs/promises";
+import { lstat, mkdir, realpath, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { HEADLESS_HOST_DESCRIPTIONS, HOST_DESCRIPTIONS } from "../host-descriptions.ts";
@@ -33,13 +33,24 @@ function linkedSkillRoot(home: string, host: string | undefined): string | undef
   return undefined;
 }
 
-async function occupied(path: string): Promise<boolean> {
+async function pathExists(path: string): Promise<boolean> {
   try {
     await lstat(path);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return false;
+  }
+}
+
+/** Same directory after resolution. A broken link or a different copy is not connected. */
+async function resolvesTo(path: string, canonical: string): Promise<boolean> {
+  try {
+    return await realpath(path) === await realpath(canonical);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP") return false;
+    throw error;
   }
 }
 
@@ -76,9 +87,20 @@ function addSkills(source: string, skills: readonly string[], home: string): boo
 export async function runMachineSkillSetup(home: string, stdout: (text: string) => void): Promise<number> {
   const canonical = skillRoot(home);
   const missingMatt: string[] = [];
-  for (const name of MATT_SKILLS) if (!(await occupied(join(canonical, name)))) missingMatt.push(name);
   const missingAk: string[] = [];
-  for (const name of AK_SKILLS) if (!(await occupied(join(canonical, name)))) missingAk.push(name);
+  let blocked = false;
+  const classify = async (name: string, missing: string[]): Promise<void> => {
+    const path = join(canonical, name);
+    if (installedSkillPath(canonical, name) !== undefined) return;
+    if (await pathExists(path)) {
+      blocked = true;
+      stdout(`Setup left "${name}" untouched at ${path}; the path is occupied but has no usable Skill, so it was not installed.\n`);
+      return;
+    }
+    missing.push(name);
+  };
+  for (const name of MATT_SKILLS) await classify(name, missingMatt);
+  for (const name of AK_SKILLS) await classify(name, missingAk);
   if (!addSkills("mattpocock/skills", missingMatt, home)) return 1;
   if (!addSkills("Akagilnc/ak-cross-m-review", missingAk, home)) return 1;
 
@@ -97,11 +119,17 @@ export async function runMachineSkillSetup(home: string, stdout: (text: string) 
       const target = join(canonical, name);
       if (installedMethodSkillPath(home, name) === undefined) continue;
       const link = join(root, name);
-      if (await occupied(link)) continue;
-      await mkdir(root, { recursive: true });
-      await symlink(target, link, "dir");
+      if (!(await pathExists(link))) {
+        await mkdir(root, { recursive: true });
+        await symlink(target, link, "dir");
+        continue;
+      }
+      if (await resolvesTo(link, target)) continue;
+      blocked = true;
+      stdout(`Setup left "${name}" untouched at ${link}; it does not point at the machine Skill ${target}, so the host is not connected.\n`);
     }
   }
+  if (blocked) return 1;
   stdout("Machine method Skills setup finished. Existing same-name Skills were left untouched.\n");
   return 0;
 }
