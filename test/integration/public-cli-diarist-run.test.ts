@@ -793,6 +793,52 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   };
 }
 
+test("public diarist reasks an unreadable routing status before projecting other fields", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    let sawStatusReask = false;
+
+    const { io, stdout } = captureIo();
+    const result = await runAkRole(
+      ["diarist", "--model", "test/caller-seat:high", "--project", project, `整理 #${TICKET} 起居录`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => "01a0diar00-0000-7000-8000-0000000000c1",
+        principalAuthority: immutablePrincipalAuthority,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: immutablePrincipalAuthority,
+          piRunner: diaristEnvelopeRunner((round: number) => {
+            if (round === 1) {
+              return {
+                status: { value: "completed" },
+                ticketNumber: TICKET,
+                sessions: [],
+              };
+            }
+            sawStatusReask = true;
+            return {
+              status: "completed",
+              ticketNumber: TICKET,
+              sessions: [],
+              reason: { callerOwnsThisNarrativeField: true },
+            };
+          }),
+        }),
+      },
+    );
+
+    assert.equal(result.exitCode, 0, stdout.join("") || "diarist did not settle");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(sawStatusReask, true);
+  });
+});
+
 test("ak-role diarist projects dialogue bounds and preserves unparsable source bytes", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");

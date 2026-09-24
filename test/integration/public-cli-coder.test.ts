@@ -1,6 +1,9 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import {
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
@@ -19,7 +22,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
 
@@ -28,6 +31,9 @@ import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-outpu
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
+import type { HostContext, RoleHost } from "../../src/host-contracts.ts";
+import { ParentQueueReaskError } from "../../src/submission-errors.ts";
+import { createCoderRoleRuntime } from "../../src/worker-role.ts";
 import {
   createWorkerSubmissionGate,
   WorkerCommitReminderError,
@@ -69,6 +75,119 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["config", "user.email", "coder@test.local"], { cwd: root });
   execFileSync("git", ["config", "user.name", "Coder Test"], { cwd: root });
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
+}
+
+test("public coder reasks only an unreadable status and accepts an open-shaped other field", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+
+    const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
+    const corrected = { status: "planned", report: { unvalidated: true } };
+    const reaskCodes: string[] = [];
+    let accepted: { details?: unknown } | undefined;
+
+    const result = await runAkRole(
+      ["coder", "--model", "test/caller-seat:high", "plan", "--project", project, "Propose a plan."],
+      {
+        packageRoot,
+        home,
+        cwd: project,
+        credentials: { "openai-codex": true, xai: true },
+        createRunId: () => "run-cli-coder-status-reask",
+        io: captureIo().io,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: piDurablePrincipalAuthority,
+          piRunner: async (args, options) => {
+            let registered: {
+              name: string;
+              execute(
+                toolCallId: string,
+                parameters: unknown,
+                signal: undefined,
+                update: undefined,
+                context: HostContext,
+              ): Promise<{ details?: unknown }>;
+            } | undefined;
+            const flags = new Map<string, string | undefined>([
+              ["ak-coder-task", flagValue(args, "--ak-coder-task")],
+              ["ak-coder-phase", flagValue(args, "--ak-coder-phase")],
+            ]);
+            const host = {
+              registerFlag() {},
+              getFlag(name: string) { return flags.get(name); },
+              registerTool(tool: unknown) { registered = tool as typeof registered; },
+              getAllTools: () => registered === undefined ? [] : [{ name: registered.name }],
+              setActiveTools() {},
+              getActiveTools: () => registered === undefined ? [] : [registered.name],
+              on() {},
+            } as unknown as RoleHost;
+            const runtime = createCoderRoleRuntime(host, {
+              loadSoul: async () => "Coder test soul",
+              loadTask: async () => "Approved plan input",
+            }, {
+              failInfrastructure(error: unknown): never { throw error; },
+              bindSubmissionNonPass() {},
+            });
+            await runtime.activate();
+            assert.ok(registered);
+
+            const sessionFile = flagValue(args, "--session");
+            assert.ok(sessionFile);
+            const sessionDirectory = dirname(sessionFile);
+            await mkdir(sessionDirectory, { recursive: true });
+            await writeFile(sessionFile, "", "utf8");
+            const context = {
+              cwd: project,
+              mode: "tui",
+              model: undefined,
+              sessionManager: {
+                getLeafEntry: () => undefined,
+                getLeafId: () => undefined,
+                getEntries: () => [],
+                getSessionDir: () => sessionDirectory,
+                getSessionFile: () => sessionFile,
+              },
+              abort() {},
+            } as HostContext;
+
+            for (const [round, submission] of [unreadable, corrected].entries()) {
+              try {
+                accepted = await registered.execute(
+                  `coder-status-${round}`,
+                  submission,
+                  undefined,
+                  undefined,
+                  context,
+                );
+                break;
+              } catch (error) {
+                if (!(error instanceof ParentQueueReaskError)) throw error;
+                reaskCodes.push(error.code);
+              }
+            }
+            assert.ok(accepted, "coder did not accept a readable status after reask");
+            return scriptedTerminatingToolSession({
+              role: "coder",
+              toolName: CODER_OUTPUT_TOOL_NAME,
+              details: accepted.details,
+            })(args, options);
+          },
+        }),
+      },
+    );
+
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(reaskCodes, ["parent_queue_reask"]);
+    assert.deepEqual(accepted?.details, corrected);
+  });
+});
+
+function flagValue(args: readonly string[], flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  return index < 0 ? undefined : args[index + 1];
 }
 
 
