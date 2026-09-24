@@ -574,6 +574,20 @@ export function packagedRoleMetadata(role: string): PackagedRoleMetadata | undef
   return PACKAGED_ROLE_REGISTRY.find((entry) => entry.role === role);
 }
 
+/** Names any public seat may require. Setup and missing-Skill checks both read this. */
+export function packagedMethodSkillNames(): readonly string[] {
+  const names: string[] = [];
+  for (const record of PACKAGED_ROLE_REGISTRY) {
+    if ("methodSkills" in record && record.methodSkills !== undefined) {
+      for (const name of record.methodSkills) if (!names.includes(name)) names.push(name);
+    }
+    if ("applyMethod" in record && record.applyMethod !== undefined && !names.includes(record.applyMethod)) {
+      names.push(record.applyMethod);
+    }
+  }
+  return names;
+}
+
 /** Review officers (台院 / 符宝郎 / 审刑院). Absent on every other seat. */
 export function isOfficerReviewSeat(role: string): boolean {
   const record = packagedRoleMetadata(role);

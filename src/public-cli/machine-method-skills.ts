@@ -3,9 +3,15 @@ import { lstat, mkdir, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { HEADLESS_HOST_DESCRIPTIONS, HOST_DESCRIPTIONS } from "../host-descriptions.ts";
+import { packagedMethodSkillNames } from "../packaged-role-registry.ts";
 
-const MATT_SKILLS = ["tdd", "diagnosing-bugs", "resolving-merge-conflicts"] as const;
-const AK_SKILLS = ["ak-cross-m-review"] as const;
+/** Install source only. Which names are required comes from the role registry. */
+const SKILL_SOURCE: Readonly<Record<string, string>> = {
+  tdd: "mattpocock/skills",
+  "diagnosing-bugs": "mattpocock/skills",
+  "resolving-merge-conflicts": "mattpocock/skills",
+  "ak-cross-m-review": "Akagilnc/ak-cross-m-review",
+};
 
 function skillRoot(home: string): string {
   return join(home, ".agents/skills");
@@ -23,7 +29,7 @@ function installedSkillPath(root: string, name: string): string | undefined {
     return path;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM") return undefined;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "EACCES" || code === "EPERM" || code === "ELOOP") return undefined;
     throw error;
   }
 }
@@ -87,26 +93,36 @@ function addSkills(source: string, skills: readonly string[], home: string): boo
 }
 
 function updateRequiredSkills(home: string): boolean {
-  return runSkillsCli(["update", "-g", "-y", ...MATT_SKILLS, ...AK_SKILLS], home);
+  const names = packagedMethodSkillNames();
+  if (names.length === 0) return true;
+  return runSkillsCli(["update", "-g", "-y", ...names], home);
 }
 
 /** Explicit user-run setup; delegates acquisition/install to the ecosystem Skills CLI. */
 export async function runMachineSkillSetup(home: string, stdout: (text: string) => void): Promise<number> {
   const canonical = skillRoot(home);
-  const missingMatt: string[] = [];
-  const missingAk: string[] = [];
-  const queue = async (name: string, missing: string[]): Promise<void> => {
+  const missingBySource = new Map<string, string[]>();
+  let unsourced = false;
+  for (const name of packagedMethodSkillNames()) {
     const path = join(canonical, name);
     if (await occupied(path)) {
       warnOccupied(path, stdout);
-      return;
+      continue;
     }
+    const source = SKILL_SOURCE[name];
+    if (source === undefined) {
+      unsourced = true;
+      stdout(`Warning: required machine Skill "${name}" has no install source; setup did not install it.\n`);
+      continue;
+    }
+    const missing = missingBySource.get(source) ?? [];
     missing.push(name);
-  };
-  for (const name of MATT_SKILLS) await queue(name, missingMatt);
-  for (const name of AK_SKILLS) await queue(name, missingAk);
-  if (!addSkills("mattpocock/skills", missingMatt, home)) return 1;
-  if (!addSkills("Akagilnc/ak-cross-m-review", missingAk, home)) return 1;
+    missingBySource.set(source, missing);
+  }
+  for (const [source, missing] of missingBySource) {
+    if (!addSkills(source, missing, home)) return 1;
+  }
+  if (unsourced) return 1;
   if (!updateRequiredSkills(home)) return 1;
 
   for (const host of ["claude-code", "hermes"] as const) {
@@ -120,7 +136,7 @@ export async function runMachineSkillSetup(home: string, stdout: (text: string) 
       if (["ENOENT", "ENOTDIR", "EACCES"].includes((error as NodeJS.ErrnoException).code ?? "")) continue;
       throw error;
     }
-    for (const name of [...MATT_SKILLS, ...AK_SKILLS]) {
+    for (const name of packagedMethodSkillNames()) {
       const target = join(canonical, name);
       if (installedMethodSkillPath(home, name) === undefined) continue;
       const link = join(root, name);
