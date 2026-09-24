@@ -119,10 +119,10 @@ export async function runMachineSkillSetup(home: string, stdout: (text: string) 
     missing.push(name);
     missingBySource.set(source, missing);
   }
-  let installFailed = false;
   for (const [source, missing] of missingBySource) {
-    if (!addSkills(source, missing, home)) installFailed = true;
+    if (!addSkills(source, missing, home)) return 1;
   }
+  if (unsourced) return 1;
 
   for (const host of ["claude-code", "hermes"] as const) {
     const root = linkedSkillRoot(home, host)!;
@@ -147,7 +147,6 @@ export async function runMachineSkillSetup(home: string, stdout: (text: string) 
       await symlink(target, link, "dir");
     }
   }
-  if (installFailed || unsourced) return 1;
   if (!updateRequiredSkills(home)) return 1;
   stdout("Machine method Skills setup finished. Existing same-name Skills were left untouched.\n");
   return 0;
