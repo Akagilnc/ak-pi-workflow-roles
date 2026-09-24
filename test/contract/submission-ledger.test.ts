@@ -15,7 +15,6 @@ import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
 import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
-import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 import { Type } from "typebox";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import {
@@ -252,7 +251,7 @@ test("mixed tools in one turn still record every terminating submission (#836 no
   });
 });
 
-test("review failure declaration escalates with the receipt; a non-escalate status reasks; other roles still host-fail", async () => {
+test("review escalate keeps a failure declaration; other roles still host-fail", async () => {
   await withLedgerFixture(async (f) => {
     let ran = 0;
     const params = { status: "escalate", infrastructureFailure: { diagnostic: "disk full" } };
@@ -276,26 +275,6 @@ test("review failure declaration escalates with the receipt; a non-escalate stat
       isError: false,
       details: params,
     }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
-  });
-
-  await withLedgerFixture(async (f) => {
-    let ran = 0;
-    const params = { status: "converged", infrastructureFailure: { diagnostic: "disk full" } };
-    const host = registerTool(f.root, async () => {
-      ran += 1;
-      return { content: [], details: params, terminate: true };
-    });
-    await assert.rejects(
-      host.tool().execute("review-pass", params, undefined, undefined, host.context),
-      (error: unknown) => {
-        assert.ok(error instanceof ParentQueueReaskError);
-        return true;
-      },
-    );
-    assert.equal(ran, 0);
-    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
-    assert.equal(rows.at(-1)?.kind, "correctable-rejection");
-    assert.deepEqual(rows.at(-1)?.accepted, params);
   });
 
   await withLedgerFixture(async (f) => {

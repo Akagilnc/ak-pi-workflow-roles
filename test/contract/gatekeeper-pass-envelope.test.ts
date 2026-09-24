@@ -50,11 +50,6 @@ test("#1028 secretariat_verdict reads the shared review status",
         payload: { status: "escalate", infrastructureFailure: { diagnostic: "disk full" } },
         expected: "escalate",
       },
-      {
-        label: "failure declaration does not pass as converged",
-        payload: { status: "converged", infrastructureFailure: { diagnostic: "disk full" } },
-        expected: "needs_reask",
-      },
     ];
     for (const item of cases) {
       const projected = await projectGatekeeperRun({

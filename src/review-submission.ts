@@ -1,8 +1,7 @@
 /** One shared terminating receipt contract for review officers (#1028 / #1055). */
 import { Type } from "typebox";
 
-import { infrastructureFailureDiagnostic, withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
-import { readableGateItem } from "./readable-gate-item.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
 export const REVIEW_SUBMISSION_OUTPUT_TOOL_NAME = "ak_submission_output" as const;
 
@@ -10,13 +9,6 @@ export const REVIEW_SUBMISSION_OUTPUT_TOOL_NAME = "ak_submission_output" as cons
 export const REVIEW_QUEUE_WORDS = ["converged", "continue", "escalate"] as const;
 export type ReviewQueueWord = (typeof REVIEW_QUEUE_WORDS)[number];
 export const REVIEW_QUEUE_STATUSES: ReadonlySet<string> = new Set(REVIEW_QUEUE_WORDS);
-
-/** Seats that share this receipt. Non-review tools keep the host-failure declaration path. */
-export const REVIEW_QUEUE_ROLES = ["judge", "countersign", "notary", "auditor", "inspector"] as const;
-
-export function isReviewQueueRole(role: string): boolean {
-  return (REVIEW_QUEUE_ROLES as readonly string[]).includes(role);
-}
 
 /**
  * One object root. Codex structured output rejects a root anyOf, and status
@@ -47,31 +39,5 @@ export const reviewSubmissionSchema = withTerminatingOutputDeclarations(
       decisionGate: Type.Optional(Type.Unknown({ description: "需人权威处置的问题与选项；可说明 question、options，原样留存" })),
     }, { additionalProperties: true }),
 );
-
-export type ReviewInfrastructureRoute =
-  | { readonly kind: "none" }
-  | { readonly kind: "escalate" }
-  | { readonly kind: "reask"; readonly receivedStatus: unknown };
-
-/** Real failure declaration on a review receipt. Escalate keeps it; any other status is not a pass or reject. */
-export function reviewInfrastructureRoute(parameters: unknown): ReviewInfrastructureRoute {
-  if (infrastructureFailureDiagnostic(parameters) === undefined) return { kind: "none" };
-  const record = parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
-    ? parameters as Record<string, unknown>
-    : undefined;
-  if (record?.status === "escalate") return { kind: "escalate" };
-  return {
-    kind: "reask",
-    receivedStatus: record !== undefined && Object.hasOwn(record, "status") ? record.status : undefined,
-  };
-}
-
-/** Reask the same seat. Carries the received status and does not name the enum. */
-export function reviewInfrastructureReask(receivedStatus: unknown): string {
-  const received = receivedStatus === undefined
-    ? "读不出 status"
-    : `收到的 status：${readableGateItem(receivedStatus)}`;
-  return `有基础设施失败声明，不能按放行或封驳收卷。${received}`;
-}
 
 export type ReviewSubmission = { readonly status?: unknown; readonly [key: string]: unknown };

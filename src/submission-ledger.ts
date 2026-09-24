@@ -20,9 +20,8 @@ import type { SitianRecord } from "./sitian-contracts.ts";
 import { findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
 import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
-import { failOnInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
-import { isReviewQueueRole, reviewInfrastructureReask, reviewInfrastructureRoute } from "./review-submission.ts";
-import { ParentQueueReaskError } from "./submission-errors.ts";
+import { failOnInfrastructureFailureDeclaration, infrastructureFailureDiagnostic } from "./package-contracts/terminating-infrastructure.ts";
+import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 
 export type SubmissionCall = { readonly id: string; readonly name: string };
 export type SubmissionOutcomeKind = "correctable-rejection" | "audit-escalation" | "infrastructure";
@@ -680,16 +679,16 @@ export function createSubmissionLedgerHost(
           });
           let result: HostToolResult<unknown>;
           try {
-            // Review seats that can still submit record an external-dependency
-            // failure as escalate. The declaration is not a host abort and not
-            // a pass or reject. Other roles keep the host-failure seam.
-            const reviewFailure = isReviewQueueRole(role)
-              ? reviewInfrastructureRoute(params)
-              : { kind: "none" as const };
-            if (reviewFailure.kind === "reask") {
-              throw new ParentQueueReaskError(reviewInfrastructureReask(reviewFailure.receivedStatus));
-            }
-            if (reviewFailure.kind !== "escalate") {
+            // A review escalate that carries the failure declaration is the
+            // seat's own submission. Every other declaration stays on the
+            // host-failure seam. Tool identity comes from the registry map.
+            const reviewEscalate = tool.name === REVIEW_SUBMISSION_OUTPUT_TOOL_NAME
+              && infrastructureFailureDiagnostic(params) !== undefined
+              && params !== null
+              && typeof params === "object"
+              && !Array.isArray(params)
+              && (params as Record<string, unknown>).status === "escalate";
+            if (!reviewEscalate) {
               failOnInfrastructureFailureDeclaration(
                 params,
                 {
