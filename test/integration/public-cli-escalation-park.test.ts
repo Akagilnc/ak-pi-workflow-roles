@@ -66,6 +66,7 @@ type Observation = {
   readonly officerPrompts: readonly string[];
   readonly resumeStderr: string[];
   resume(message?: string): Promise<CliResult>;
+  resumeRun(runId: string, message?: string): Promise<CliResult>;
 };
 
 async function runJudge(
@@ -186,11 +187,9 @@ async function runJudge(
         parentPrompts,
         officerPrompts,
         resumeStderr: observedResumeStderr,
-        async resume(message?: string) {
-          const officerRunId = first.terminal?.runId;
-          assert.equal(typeof officerRunId, "string");
+        async resumeRun(runId: string, message?: string) {
           const resumeCapture = captureIo();
-          const args = message === undefined ? ["resume", officerRunId!] : ["resume", officerRunId!, message];
+          const args = message === undefined ? ["resume", runId] : ["resume", runId, message];
           const result = await runAkRole(args, {
             packageRoot,
             home,
@@ -201,6 +200,11 @@ async function runJudge(
           });
           observedResumeStderr.push(resumeCapture.stderr.join(""));
           return result;
+        },
+        resume(message?: string) {
+          const officerRunId = first.terminal?.runId;
+          assert.equal(typeof officerRunId, "string");
+          return this.resumeRun(officerRunId!, message);
         },
       });
     }, { prefix: "ak-1057-park-" });
@@ -408,6 +412,56 @@ test("#1057 a parent host failure after the officer conclusion is not a pass", a
     assert.notEqual(continued.terminal?.roleOutcome.kind, "accepted");
     assert.notEqual(continued.terminal?.roleOutcome.kind, "audit_escalation");
     assert.equal(observed.judgeSubmissions.length, 1);
+  });
+});
+
+test("#1057 an earlier candidate does not block the verdict that passed", async () => {
+  const next = { status: "converged", mark: 9 };
+  let parentResumes = 0;
+  let auditorCalls = 0;
+  const officerRunner: LegacyFauxPiRunner = async (args, options) => {
+    const role = argvFlagValue(args, "--ak-role");
+    if (role === "notary") {
+      return scriptedTerminatingToolSession({
+        role: "notary",
+        toolName: NOTARY_OUTPUT_TOOL_NAME,
+        details: { status: "converged", mark: 2 },
+      })(args, options);
+    }
+    if (role === "auditor") {
+      auditorCalls += 1;
+      const details = auditorCalls === 1
+        ? { status: "escalate", mark: 4 }
+        : auditorCalls === 2
+          ? { status: "converged", mark: 5 }
+          : auditorCalls === 3
+            ? { status: "escalate", mark: 7 }
+            : { status: "converged", mark: 8 };
+      return scriptedTerminatingToolSession({
+        role: "auditor",
+        toolName: AUDITOR_OUTPUT_TOOL_NAME,
+        details,
+      })(args, options);
+    }
+    throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
+  };
+  await runJudge(officerRunner, () => {
+    parentResumes += 1;
+    return parentResumes === 1
+      ? { code: 0, stderr: "", verdict: next }
+      : { code: 0, stderr: "" };
+  }, async (observed) => {
+    const opened = await observed.resume(RULING);
+    assert.equal(opened.exitCode, 0, observed.resumeStderr.join(""));
+    assert.equal(opened.terminal?.roleOutcome.role, "auditor");
+    assert.equal(latestPayload(opened.terminal)?.status, "escalate");
+    const secondId = opened.terminal?.runId;
+    assert.equal(typeof secondId, "string");
+    const settled = await observed.resumeRun(secondId!, RULING);
+    assert.equal(settled.exitCode, 0, observed.resumeStderr.join(""));
+    assert.equal(settled.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(settled.terminal?.roleOutcome.role, "judge");
+    assert.deepEqual(latestPayload(settled.terminal), next);
   });
 });
 

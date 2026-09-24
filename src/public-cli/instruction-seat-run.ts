@@ -1123,8 +1123,9 @@ async function finishOpenJudgeVerdict(
     buffered.replay(io);
     return turn;
   }
+  const beforeIds = new Set(rows.flatMap((row) => row.toolCallId === undefined ? [] : [row.toolCallId]));
   const after = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, env.home);
-  const newerVerdict = after.some((row) => row.toolCallId !== undefined && row.toolCallId !== open.toolCallId);
+  const newerVerdict = after.some((row) => row.toolCallId !== undefined && !beforeIds.has(row.toolCallId));
   const turnedToOfficer = turn.terminal?.roleOutcome.role !== undefined
     && turn.terminal.roleOutcome.role !== admitted.role;
   if (newerVerdict || turnedToOfficer) {
