@@ -3,7 +3,7 @@ import type { Static } from "typebox";
 import { reviewSubmissionSchema } from "./review-submission.ts";
 import { GatekeeperDecisionError, ParentQueueReaskError } from "./submission-errors.ts";
 import { projectGatekeeperEscalation } from "./audit-escalation.ts";
-
+import type { GatekeeperSubject } from "./gatekeeper-role.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
@@ -17,6 +17,43 @@ const JUDGE_STATUS_REASK =
 
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
+
+/** The only judge audit order: 符宝郎, then 审刑院. */
+const JUDGE_GATES: readonly GatekeeperSubject[] = [
+  { kind: "judge_draft" },
+  { kind: "judge_compliance" },
+];
+
+export async function runJudgeGates(input: {
+  readonly gateAlreadyConverged: (subject: GatekeeperSubject) => Promise<boolean>;
+  readonly runGate: (
+    subject: GatekeeperSubject,
+  ) => Promise<{ readonly status?: unknown; readonly receipt?: unknown } | void>;
+}): Promise<{
+  readonly status: "converged" | "continue";
+  readonly passes: readonly {
+    readonly subject: GatekeeperSubject;
+    readonly status: "converged" | "continue";
+    readonly receipt: unknown;
+  }[];
+}> {
+  const passes: {
+    subject: GatekeeperSubject;
+    status: "converged" | "continue";
+    receipt: unknown;
+  }[] = [];
+  for (const subject of JUDGE_GATES) {
+    if (await input.gateAlreadyConverged(subject)) continue;
+    const pass = await input.runGate(subject);
+    const status = pass?.status;
+    if (pass === undefined || (status !== "converged" && status !== "continue")) {
+      throw new Error("judge gate returned no conclusion");
+    }
+    passes.push({ subject, status, receipt: pass.receipt });
+    if (status === "continue") return { status: "continue", passes };
+  }
+  return { status: "converged", passes };
+}
 
 // #836 r16 class 1: fix/classes/note/decisionGate are LLM/human-read narrative
 // content — 符宝郎/审刑院 read the raw receipt, no code branches on their length
@@ -85,50 +122,25 @@ export function createJudgeRoleRuntime(
             const verdict = validateVerdict(parameters);
             // Candidate verdict is already on the parent session books as this
             // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
-            // #753: 符宝郎内闸 — continue returns the raw receipt as a nonterminal tool result.
-            let draftPass: { status: "converged" | "continue"; receipt: unknown } | undefined;
+            // One order: 符宝郎 then 审刑院. continue returns the raw receipts.
             try {
-              const obtainedDraftPass = await pi.requireSubmissionGate!({
-                context: ctx,
-                subject: { kind: "judge_draft" },
-                ...(signal === undefined ? {} : { signal }),
-                hostActions,
-                toolCallId,
-                // #879: this-turn typed payload — identity-bound at submit site.
-                submission: parameters,
+              const chain = await runJudgeGates({
+                gateAlreadyConverged: async () => false,
+                runGate: (subject) => pi.requireSubmissionGate!({
+                  context: ctx,
+                  subject,
+                  ...(signal === undefined ? {} : { signal }),
+                  hostActions,
+                  toolCallId,
+                  submission: parameters,
+                }),
               });
-              draftPass = obtainedDraftPass || undefined;
-              if (draftPass?.status === "continue") {
-                return {
-                  content: [{ type: "text" as const, text: readableGateItem(draftPass.receipt) }],
-                  details: verdict,
-                  terminate: false,
-                };
-              }
-              if (draftPass !== undefined) hostActions.bindPriorGatePass(toolCallId, draftPass.receipt);
-              // #756: 审刑院合规路径 — same review-queue law as 符宝郎/台院.
-              // converged → accept; continue → raw auditor receipt; escalate → pause;
-              // not three-state → resume auditor; no round cap; no disposeCompliance mapping.
-              const compliancePass = await pi.requireSubmissionGate!({
-                context: ctx,
-                subject: { kind: "judge_compliance" },
-                ...(signal === undefined ? {} : { signal }),
-                hostActions,
-                toolCallId,
-                // #879: same parent payload for 审刑院; not recovered from session latest.
-                submission: parameters,
-              });
-              if (compliancePass?.status === "continue") {
-                return {
-                  content: [draftPass, compliancePass].filter((pass) => pass !== undefined).map((pass) => ({ type: "text" as const, text: readableGateItem(pass.receipt) })),
-                  details: verdict,
-                  terminate: false,
-                };
-              }
+              const draftPass = chain.passes.find((pass) => pass.subject.kind === "judge_draft");
+              if (draftPass?.status === "converged") hostActions.bindPriorGatePass(toolCallId, draftPass.receipt);
               return {
-                content: [draftPass, compliancePass].filter((pass) => pass !== undefined).map((pass) => ({ type: "text" as const, text: readableGateItem(pass.receipt) })),
+                content: chain.passes.map((pass) => ({ type: "text" as const, text: readableGateItem(pass.receipt) })),
                 details: verdict,
-                terminate: true as const,
+                terminate: chain.status === "converged",
               };
             } catch (error) {
               if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {

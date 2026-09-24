@@ -288,14 +288,16 @@ test("#1057 auditor escalation is the auditor run and the parent is not that esc
     assert.equal(observed.parentPrompts.length, 1);
     assert.deepEqual(JSON.parse(observed.parentPrompts[0] ?? ""), passed);
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
-    assert.equal(continued.terminal?.roleOutcome.kind, "no_receipt");
+    assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
+    assert.deepEqual(latestPayload(continued.terminal), VERDICT);
     const after = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
-    assert.equal(after.some((row) => row.kind === "accepted" || row.kind === "audit-escalation"), false);
+    assert.equal(after.some((row) => row.kind === "accepted"), true);
   });
 });
 
-test("#1057 a notary pass does not open a second auditor gate", async () => {
+test("#1057 a notary pass continues the judge auditor gate and settles the original verdict", async () => {
   const notaryPass = { status: "converged", mark: 6 };
+  const auditorPass = { status: "converged", mark: 8 };
   let notaryCalls = 0;
   let auditorCalls = 0;
   const officerRunner: LegacyFauxPiRunner = async (args, options) => {
@@ -313,7 +315,7 @@ test("#1057 a notary pass does not open a second auditor gate", async () => {
       return scriptedTerminatingToolSession({
         role: "auditor",
         toolName: AUDITOR_OUTPUT_TOOL_NAME,
-        details: { status: "converged", mark: 8 },
+        details: auditorPass,
       })(args, options);
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
@@ -325,10 +327,15 @@ test("#1057 a notary pass does not open a second auditor gate", async () => {
     const continued = await observed.resume(RULING);
     assert.equal(continued.exitCode, 0, observed.resumeStderr.join(""));
     assert.equal(notaryCalls, 2);
-    assert.equal(auditorCalls, 0);
+    assert.equal(auditorCalls, 1);
     assert.equal(observed.judgeSubmissions.length, 1);
-    assert.deepEqual(JSON.parse(observed.parentPrompts[0] ?? ""), notaryPass);
-    assert.equal(continued.terminal?.roleOutcome.kind, "no_receipt");
+    assert.deepEqual(
+      (observed.parentPrompts[0] ?? "").split("; ").map((part) => JSON.parse(part)),
+      [notaryPass, auditorPass],
+    );
+    assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(continued.terminal?.roleOutcome.role, "judge");
+    assert.deepEqual(latestPayload(continued.terminal), VERDICT);
   });
 });
 
