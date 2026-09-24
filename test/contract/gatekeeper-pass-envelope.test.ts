@@ -6,7 +6,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { readableGateItem } from "../../src/readable-gate-item.ts";
 import { requireSubmissionGate } from "../../src/submission-gate.ts";
 import {
   GatekeeperDecisionError,
@@ -117,9 +116,37 @@ test("#1028 secretariat_verdict reads the shared review status",
     assert.equal(reasks.length, 2, "non-queue status reasks, then the queue word is accepted");
     assert.equal(typeof reasks[1], "string");
 
+    const compatProjected = await projectGatekeeperRun({
+      context: {
+        cwd: process.cwd(),
+        sessionManager: { getSessionFile: () => "/tmp/unused" },
+      } as never,
+      subject: { kind: "secretariat_verdict" },
+      runDirectory: "/tmp/runs/parent",
+      summonOfficer: async () => ({
+        exitCode: 0,
+        runDirectory: "/tmp/runs/01a0cs969-compat-7000-8000-000000000001@countersign",
+        terminal: {
+          roleOutcome: { kind: "accepted", role: "countersign", status: "other" },
+          navigator: { disposition: "no-advice" },
+          artifacts: [],
+          runId: "01a0cs969-compat-7000-8000-000000000001",
+        },
+      }),
+    });
+    assert.equal(compatProjected.result.status, "needs_reask");
+    assert.equal(
+      compatProjected.result.status === "needs_reask" ? compatProjected.result.receivedStatus : undefined,
+      "other",
+    );
+    assert.equal(
+      compatProjected.result.status === "needs_reask" ? compatProjected.result.receipt : "forged",
+      undefined,
+    );
+
     const compatReasks: Array<string | undefined> = [];
     let compatRound = 0;
-    await requireSubmissionGate({
+    const compat = await requireSubmissionGate({
       context: {
         cwd: process.cwd(),
         sessionManager: { getSessionFile: () => "/tmp/unused" },
@@ -152,9 +179,8 @@ test("#1028 secretariat_verdict reads the shared review status",
         };
       },
     });
-    assert.equal(compatReasks[0], undefined);
     assert.equal(compatReasks.length, 2);
-    assert.equal(compatReasks[1]?.includes(readableGateItem("other")), true);
+    assert.equal(compat?.receipt && (compat.receipt as { status?: unknown }).status, "converged");
   },
 );
 

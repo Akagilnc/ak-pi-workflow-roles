@@ -1,11 +1,8 @@
 /** One shared terminating receipt contract for review officers (#1028 / #1055). */
-import { Type, type TSchema } from "typebox";
+import { Type } from "typebox";
 
 import { openToolObject } from "./open-tool-schema.ts";
-import {
-  INFRASTRUCTURE_FAILURE_DECLARATION_KEY,
-  withTerminatingOutputDeclarations,
-} from "./package-contracts/terminating-infrastructure.ts";
+import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
 export const REVIEW_SUBMISSION_OUTPUT_TOOL_NAME = "ak_submission_output" as const;
 
@@ -14,8 +11,13 @@ export const REVIEW_QUEUE_WORDS = ["converged", "continue", "escalate"] as const
 export type ReviewQueueWord = (typeof REVIEW_QUEUE_WORDS)[number];
 export const REVIEW_QUEUE_STATUSES: ReadonlySet<string> = new Set(REVIEW_QUEUE_WORDS);
 
-/** Open receipt: the queue reads only status; all other submitted fields ride unchanged. */
-const reviewVerdictSchema = withTerminatingOutputDeclarations(
+/**
+ * One open object. Codex structured output rejects a root anyOf, so the
+ * no-status failure exception cannot be a second root branch. Status stays an
+ * enum when present and is not schema-required; a real infrastructure-failure
+ * declaration may omit it. The package does not reject on format.
+ */
+export const reviewSubmissionSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       status: Type.Union(
@@ -25,7 +27,7 @@ const reviewVerdictSchema = withTerminatingOutputDeclarations(
           Type.Literal(REVIEW_QUEUE_WORDS[2]),
         ],
         {
-          description: "审核队列判别。宿主生成端枚举约束；包侧不因格式拒收。",
+          description: "审核队列判别。宿主生成端枚举约束；真实基础设施失败声明可以不带本字段。包侧不因格式拒收。",
         },
       ),
       findings: Type.Optional(Type.Unknown({ description: "审核发现，原样留存" })),
@@ -38,25 +40,7 @@ const reviewVerdictSchema = withTerminatingOutputDeclarations(
       evidence: Type.Optional(Type.Unknown({ description: "留存证据" })),
       decisionGate: Type.Optional(Type.Unknown({ description: "需人权威处置的问题与选项；可说明 question、options，原样留存" })),
     }),
-    { required: ["status"] },
   ),
 );
-
-/** Same tool, no review status: only a real infrastructure-failure declaration (#1055). */
-function reviewInfrastructureFailureSchema(verdict: TSchema & { properties?: Record<string, TSchema> }): TSchema {
-  const declaration = verdict.properties?.[INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
-  if (declaration === undefined) throw new Error("review schema lost the infrastructure failure declaration");
-  const branch = Type.Object(
-    { [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: declaration },
-    { additionalProperties: true },
-  );
-  (branch as unknown as { required: string[] }).required = [INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
-  return branch;
-}
-
-export const reviewSubmissionSchema = Type.Union([
-  reviewVerdictSchema,
-  reviewInfrastructureFailureSchema(reviewVerdictSchema),
-]);
 
 export type ReviewSubmission = { readonly status?: unknown; readonly [key: string]: unknown };

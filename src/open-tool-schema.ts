@@ -35,24 +35,17 @@ export function openToolObjectFromUnion(schema: UnionSchema): TSchema {
   return object;
 }
 
-/**
- * Open a pre-existing object transport schema without changing declarations.
- * `required` names stay required and are not wrapped optional — only the
- * three-state review discriminator uses this (#1055). Every other field stays optional.
- */
+/** Open a pre-existing object transport schema. Every field stays optional. */
 export function openToolObject(
   schema: TSchema & { properties: Record<string, TSchema> },
-  options?: { readonly required?: readonly string[] },
 ): TSchema {
-  const required = [...new Set(options?.required ?? [])];
-  const requiredNames = new Set(required);
   const object = Type.Object(
     Object.fromEntries(Object.entries(schema.properties).map(([name, declaration]) => [
       name,
-      requiredNames.has(name) ? described(name, declaration) : Type.Optional(described(name, declaration)),
+      Type.Optional(described(name, declaration)),
     ])),
     { additionalProperties: true },
   );
-  (object as unknown as { required: string[] }).required = required;
+  (object as unknown as { required: string[] }).required = [];
   return object;
 }

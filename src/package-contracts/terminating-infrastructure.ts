@@ -52,7 +52,7 @@ const infrastructureFailureDeclarationSchema = Type.Object(
  * Compose declarations shared by terminating output tools: infrastructure failure
  * and the optional role-asserted ticket identity. Returns an open object (additionalProperties: true)
  * with the base schema's properties plus the shared declaration. Incoming required
- * keys that still exist are kept (three-state discriminator only); every other key stays optional.
+ * keys that still exist are kept; every other key stays optional.
  * Static typing is preserved on the base (`as S`), so existing
  * `Static<typeof ...>` derived parameter types are unchanged.
  */
