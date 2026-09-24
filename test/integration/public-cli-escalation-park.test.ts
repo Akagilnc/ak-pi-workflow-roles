@@ -1,11 +1,11 @@
 /**
  * #1057: public judge entry, officer escalation stays on that officer,
  * and `resume <runId> <ruling>` passes the ruling through. The parent is
- * resumed once with every officer receipt, including identical text.
+ * resumed once. Officer receipts stay on their structured submissions.
  * The standing verdict is sealed only when this resume adds no new tool call.
  */
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -64,6 +64,7 @@ type Observation = {
   readonly judgeSubmissions: readonly unknown[];
   readonly parentPrompts: readonly string[];
   readonly officerPrompts: readonly string[];
+  readonly officerReceipts: readonly { readonly role: string; readonly details: unknown }[];
   readonly resumeStderr: string[];
   resume(message?: string): Promise<CliResult>;
   resumeRun(runId: string, message?: string): Promise<CliResult>;
@@ -89,6 +90,7 @@ async function runJudge(
       const judgeSubmissions: unknown[] = [];
       const parentPrompts: string[] = [];
       const officerPrompts: string[] = [];
+      const officerReceipts: { role: string; details: unknown }[] = [];
       const observedResumeStderr: string[] = [];
       const officerHost = roleTurnHostFromLegacyPiRunner({
         packageRoot,
@@ -98,7 +100,13 @@ async function runJudge(
       const recordingOfficer: RoleTurnHost = {
         async executeTurn(request) {
           if (request.continuation.kind === "resume") officerPrompts.push(request.continuation.prompt);
-          return officerHost.executeTurn(request);
+          const result = await officerHost.executeTurn(request);
+          const role = request.activation.role;
+          if (role === "notary" || role === "auditor") {
+            const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
+            officerReceipts.push({ role, details: await latestClosureDetails(sessionFile) });
+          }
+          return result;
         },
       };
       const officerAdapters = [adapter("pi", recordingOfficer)];
@@ -186,6 +194,7 @@ async function runJudge(
         judgeSubmissions,
         parentPrompts,
         officerPrompts,
+        officerReceipts,
         resumeStderr: observedResumeStderr,
         async resumeRun(runId: string, message?: string) {
           const resumeCapture = captureIo();
@@ -211,6 +220,17 @@ async function runJudge(
   } finally {
     await Promise.all(temps.map((dir) => rm(dir, { recursive: true, force: true })));
   }
+}
+
+async function latestClosureDetails(sessionFile: string): Promise<unknown> {
+  const text = await readFile(sessionFile, "utf8");
+  let details: unknown;
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    const row = JSON.parse(line) as { customType?: string; data?: { details?: unknown } };
+    if (row.customType === "ak-role-submission-closure") details = row.data?.details;
+  }
+  return details;
 }
 
 function bothPass(): LegacyFauxPiRunner {
@@ -293,7 +313,7 @@ test("#1057 auditor escalation is the auditor run and the parent is not that esc
     assert.equal(auditorCalls, 2);
     assert.equal(observed.judgeSubmissions.length, 1);
     assert.equal(observed.parentPrompts.length, 1);
-    assert.deepEqual(JSON.parse(observed.parentPrompts[0] ?? ""), passed);
+    assert.deepEqual(observed.officerReceipts.at(-1), { role: "auditor", details: passed });
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(latestPayload(continued.terminal), VERDICT);
@@ -303,8 +323,9 @@ test("#1057 auditor escalation is the auditor run and the parent is not that esc
 });
 
 test("#1057 a notary pass continues the judge auditor gate and settles the original verdict", async () => {
+  const notaryEscalate = { status: "escalate", mark: 7 };
   const notaryPass = { status: "converged", mark: 6 };
-  const auditorPass = notaryPass;
+  const auditorPass = { status: "converged", mark: 8 };
   let notaryCalls = 0;
   let auditorCalls = 0;
   const officerRunner: LegacyFauxPiRunner = async (args, options) => {
@@ -314,7 +335,7 @@ test("#1057 a notary pass continues the judge auditor gate and settles the origi
       return scriptedTerminatingToolSession({
         role: "notary",
         toolName: NOTARY_OUTPUT_TOOL_NAME,
-        details: notaryCalls === 1 ? { status: "escalate", mark: 7 } : notaryPass,
+        details: notaryCalls === 1 ? notaryEscalate : notaryPass,
       })(args, options);
     }
     if (role === "auditor") {
@@ -336,10 +357,12 @@ test("#1057 a notary pass continues the judge auditor gate and settles the origi
     assert.equal(notaryCalls, 2);
     assert.equal(auditorCalls, 1);
     assert.equal(observed.judgeSubmissions.length, 1);
-    assert.deepEqual(
-      (observed.parentPrompts[0] ?? "").split("; ").map((part) => JSON.parse(part)),
-      [notaryPass, auditorPass],
-    );
+    assert.equal(observed.parentPrompts.length, 1);
+    assert.deepEqual(observed.officerReceipts, [
+      { role: "notary", details: notaryEscalate },
+      { role: "notary", details: notaryPass },
+      { role: "auditor", details: auditorPass },
+    ]);
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
     assert.deepEqual(latestPayload(continued.terminal), VERDICT);
@@ -379,7 +402,11 @@ test("#1057 a conclusion outside the three states returns to that officer", asyn
     assert.equal(observed.officerPrompts[0], RULING);
     assert.equal(observed.officerPrompts.some((prompt) => prompt === OFFICER_CONCLUSION_REASK), true);
     assert.equal(observed.judgeSubmissions.length, 1);
-    assert.deepEqual(JSON.parse(observed.parentPrompts[0] ?? ""), { status: "converged", mark: 6 });
+    assert.equal(observed.parentPrompts.length, 1);
+    assert.deepEqual(observed.officerReceipts.at(-1), {
+      role: "auditor",
+      details: { status: "converged", mark: 6 },
+    });
   });
 });
 
