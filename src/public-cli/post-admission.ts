@@ -16,7 +16,7 @@ import {
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import { CliUsageError } from "./cli-errors.ts";
-import { AK_ROLE_AUDITOR_SUBJECT_ENV } from "../auditor-soul.ts";
+import { AK_ROLE_AUDITOR_SUBJECT_ENV, resolveAuditorSubject } from "../auditor-soul.ts";
 import {
   packagedAdmittedSubject,
   packagedSubjectChoices,
@@ -31,7 +31,11 @@ import {
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
-import { readStoredHostSessionId, resolveHostAwareSessionAvailability } from "../session-identity.ts";
+import {
+  readHostAwareSessionAvailability,
+  readStoredHostSessionId,
+  resolveHostAwareSessionAvailability,
+} from "../session-identity.ts";
 import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
 import type {
@@ -81,7 +85,6 @@ import {
   markRunRunning,
   readCurrentCourt,
   recordCurrentCourt,
-  readHostSessionAvailability,
   renderResumeCommand,
   sessionUnavailableHint,
   type CurrentCourtState,
@@ -1536,7 +1539,11 @@ export async function runPostAdmissionSeatResume<
     }
     throw error;
   }
-  const sessionBlock = await blockedHostSession(input.env.principalAuthority, loaded.admitted.principal);
+  const sessionBlock = await blockedHostSession(
+    input.env.host,
+    input.env.principalAuthority,
+    loaded.admitted.principal,
+  );
   if (sessionBlock !== undefined) {
     const pointer = await publishResumeErrorPointer(
       loaded.admitted,
@@ -1546,14 +1553,14 @@ export async function runPostAdmissionSeatResume<
     presentStructuralRejection({ message: `${sessionBlock.hint} ${pointer}` }, input.io);
     return { exitCode: 2 };
   }
-  const missingSubject = await missingAuditorSubject(loaded.admitted);
-  if (missingSubject !== undefined) {
+  const rejectedSubject = await rejectedAuditorSubject(loaded.admitted);
+  if (rejectedSubject !== undefined) {
     const pointer = await publishResumeErrorPointer(
       loaded.admitted,
       input.env.principalAuthority,
-      missingSubject.record,
+      rejectedSubject.record,
     );
-    presentStructuralRejection({ message: `${missingSubject.hint} ${pointer}` }, input.io);
+    presentStructuralRejection({ message: `${rejectedSubject.hint} ${pointer}` }, input.io);
     return { exitCode: 2 };
   }
 
@@ -1798,26 +1805,29 @@ function isSpawnEnoent(error: unknown): boolean {
   return false;
 }
 
-async function missingAuditorSubject(admitted: {
+async function rejectedAuditorSubject(admitted: {
   readonly role: string;
   readonly runId: string;
   readonly admittedRequestPath: string;
 }): Promise<{ readonly hint: string; readonly record: string } | undefined> {
   const choices = packagedSubjectChoices(admitted.role);
   if (choices === undefined) return undefined;
-  const raw = process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
-  if (typeof raw === "string" && packagedAdmittedSubject(admitted.role, raw.trim()) !== undefined) {
+  let diagnosis: string;
+  try {
+    resolveAuditorSubject();
     return undefined;
+  } catch (error) {
+    diagnosis = error instanceof Error && error.message.trim() !== ""
+      ? error.message
+      : String(error);
   }
-  let sourceRunPath: string | undefined;
+  const raw = process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
+  const trimmed = typeof raw === "string" ? raw.trim() : "";
   let recordedSubject: string | undefined;
   try {
     const parsed: unknown = JSON.parse(await readFile(admitted.admittedRequestPath, "utf8"));
     if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
       const record = parsed as Record<string, unknown>;
-      if (typeof record.sourceRunPath === "string" && record.sourceRunPath.trim() !== "") {
-        sourceRunPath = record.sourceRunPath;
-      }
       if (typeof record.subject === "string") {
         recordedSubject = packagedAdmittedSubject(admitted.role, record.subject.trim());
       }
@@ -1826,28 +1836,19 @@ async function missingAuditorSubject(admitted: {
     // Unreadable admitted page is not a stored subject.
   }
   const subjects = recordedSubject === undefined ? [...choices] : [recordedSubject];
-  const commands = subjects.map((subject) =>
-    `${AK_ROLE_AUDITOR_SUBJECT_ENV}=${shellSingleQuote(subject)} ak-role resume ${shellSingleQuote(admitted.runId)}`,
-  );
-  const named = subjects.join(" 或 ");
-  return {
-    hint: `审刑院续跑缺少被审席位；把 ${AK_ROLE_AUDITOR_SUBJECT_ENV} 设为 ${named} 后执行 ak-role resume ${admitted.runId}`,
-    record: [
-      ...(sourceRunPath === undefined ? [] : [`sourceRunPath: ${sourceRunPath}`]),
-      ...commands,
-    ].join("\n"),
-  };
-}
-
-function shellSingleQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
+  const supply = `把 ${AK_ROLE_AUDITOR_SUBJECT_ENV} 设为 ${subjects.join(" 或 ")} 后执行 ak-role resume ${admitted.runId}`;
+  const fact = trimmed === ""
+    ? "审刑院续跑缺少被审席位"
+    : `审刑院续跑的被审席位不是合法值：${trimmed}`;
+  return { hint: `${fact}；${supply}`, record: diagnosis };
 }
 
 async function blockedHostSession(
+  host: string | undefined,
   authority: DurablePrincipalAuthority,
   principal: DurablePrincipal,
 ): Promise<{ readonly hint: string; readonly diagnostic: string } | undefined> {
-  const availability = await readHostSessionAvailability(authority, principal);
+  const availability = await readHostAwareSessionAvailability(host, authority, principal);
   if (availability.available) return undefined;
   const diagnostic = availability.absent
     ? `ENOENT: ${availability.sessionFile}`

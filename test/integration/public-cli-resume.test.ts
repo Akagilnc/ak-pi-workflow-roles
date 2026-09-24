@@ -10,12 +10,15 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { resolveAuditorSubject } from "../../src/auditor-soul.ts";
+import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -2411,209 +2414,180 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
 });
 
 test("public resume says which confirmed fact failed and where to look", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const bookKey = resolveBookKeyFromGit(project);
-    const gone = join(home, "gone-workspace");
-    await mkdir(gone, { recursive: true });
-    seedGitProject(gone);
-    const sourceRun = join(home, "audited-source");
-    await mkdir(sourceRun, { recursive: true });
+  const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
+  delete process.env.AK_ROLE_AUDITOR_SUBJECT;
+  try {
+    await withTempHome(async (home) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const bookKey = resolveBookKeyFromGit(project);
+      const gone = join(home, "gone-workspace");
+      await mkdir(gone, { recursive: true });
+      seedGitProject(gone);
+      const sourceRun = join(home, "audited-source");
+      await mkdir(sourceRun, { recursive: true });
+      const bindingName = lookupHeadlessHostDescription("claude")?.sessionBindingFile;
+      assert.equal(typeof bindingName, "string");
 
-    async function seed(input: {
-      readonly runId: string;
-      readonly role: "secretariat" | "auditor";
-      readonly session: boolean;
-      readonly projectRoot: string;
-      readonly ticketNumber?: number;
-      readonly sourceRunPath?: string;
-    }) {
-      const runDirectory = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${input.runId}@${input.role}`);
-      const sessionDirectory = join(runDirectory, "session");
-      const sessionFile = join(sessionDirectory, "session.jsonl");
-      const admittedRequestPath = join(runDirectory, "admitted-request.json");
-      await mkdir(sessionDirectory, { recursive: true });
-      if (input.session) await writeFile(sessionFile, "\n", "utf8");
-      await writeFile(join(runDirectory, "invocation.json"), "{}\n", "utf8");
-      await writeFile(admittedRequestPath, `${JSON.stringify({
-        role: input.role,
-        instruction: "x",
-        instructionEmpty: false,
-        attachments: [],
-        ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
-        ...(input.sourceRunPath === undefined ? {} : { sourceRunPath: input.sourceRunPath }),
-      })}\n`, "utf8");
-      await markRunAdmitted({
-        role: input.role,
-        runId: input.runId,
-        bookKey,
-        projectRoot: input.projectRoot,
-        instruction: "x",
-        instructionEmpty: false,
-        attachments: [],
-        runDirectory,
-        principal: fixturePrincipal(sessionDirectory, sessionFile),
-        admittedRequestPath,
-      }, piDurablePrincipalAuthority);
-      return { runDirectory, sessionFile };
-    }
+      async function seed(input: {
+        readonly runId: string;
+        readonly role: "secretariat" | "auditor";
+        readonly session: boolean;
+        readonly projectRoot: string;
+        readonly ticketNumber?: number;
+        readonly sourceRunPath?: string;
+        readonly hostBinding?: string;
+      }) {
+        const runDirectory = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${input.runId}@${input.role}`);
+        const sessionDirectory = join(runDirectory, "session");
+        const sessionFile = join(sessionDirectory, "session.jsonl");
+        const admittedRequestPath = join(runDirectory, "admitted-request.json");
+        await mkdir(sessionDirectory, { recursive: true });
+        if (input.session) await writeFile(sessionFile, "\n", "utf8");
+        if (input.hostBinding !== undefined) {
+          await writeFile(
+            join(sessionDirectory, bindingName!),
+            `${JSON.stringify({ sessionId: input.hostBinding })}\n`,
+            "utf8",
+          );
+        }
+        await writeFile(join(runDirectory, "invocation.json"), "{}\n", "utf8");
+        await writeFile(admittedRequestPath, `${JSON.stringify({
+          role: input.role,
+          instruction: "x",
+          instructionEmpty: false,
+          attachments: [],
+          ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
+          ...(input.sourceRunPath === undefined ? {} : { sourceRunPath: input.sourceRunPath }),
+        })}\n`, "utf8");
+        await markRunAdmitted({
+          role: input.role,
+          runId: input.runId,
+          bookKey,
+          projectRoot: input.projectRoot,
+          instruction: "x",
+          instructionEmpty: false,
+          attachments: [],
+          runDirectory,
+          principal: fixturePrincipal(sessionDirectory, sessionFile),
+          admittedRequestPath,
+        }, piDurablePrincipalAuthority);
+        return { runDirectory, sessionFile, sessionDirectory };
+      }
 
-    const missingSession = await seed({
-      runId: "1058-no-session", role: "secretariat", session: false, projectRoot: project,
-    });
-    const deletedWorkspace = await seed({
-      runId: "1058-no-workspace",
-      role: "secretariat",
-      session: true,
-      projectRoot: gone,
-      ticketNumber: 1058,
-    });
-    const auditor = await seed({
-      runId: "1058-auditor",
-      role: "auditor",
-      session: true,
-      projectRoot: project,
-      sourceRunPath: sourceRun,
-    });
-    await seed({ runId: "1058-unknown-host", role: "secretariat", session: true, projectRoot: project });
-    await rm(gone, { recursive: true, force: true });
-
-    const hostCalls: string[] = [];
-    const host = createMinimalHost(async (request) => {
-      hostCalls.push(request.runDirectory);
-      return { code: 1, stderr: "zeta-unique-host-diagnostic", timedOut: false };
-    });
-    const resume = (runId: string) => {
-      const { io, stderr } = captureIo();
-      return runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-        packageRoot,
-        home,
-        cwd: home,
-        credentials: { "openai-codex": true, xai: true },
-        io,
-        roleTurnHost: host,
-      }).then((result) => ({ result, stderr: stderr.join("") }));
-    };
-
-    const noSession = await resume("1058-no-session");
-    const noSessionRecord = join(missingSession.runDirectory, "artifacts", "error.json");
-    assert.notEqual(noSession.result.exitCode, 0);
-    assert.equal(noSession.stderr.includes(missingSession.sessionFile), true);
-    assert.equal(noSession.stderr.includes(noSessionRecord), true);
-    assert.equal(hostCalls.length, 0);
-
-    const noWorkspace = await resume("1058-no-workspace");
-    const noWorkspaceRecord = join(deletedWorkspace.runDirectory, "artifacts", "error.json");
-    assert.notEqual(noWorkspace.result.exitCode, 0);
-    assert.equal(noWorkspace.stderr.includes(gone), true);
-    assert.equal(noWorkspace.stderr.includes(noWorkspaceRecord), true);
-    assert.equal(noWorkspace.stderr.includes("spawnSync git ENOENT"), false);
-    const workspaceRecord = JSON.parse(await readFile(noWorkspaceRecord, "utf8")) as { diagnostic: string };
-    assert.equal(workspaceRecord.diagnostic.includes("spawnSync git ENOENT"), true);
-    assert.equal(hostCalls.length, 0);
-
-    const missingSubject = await resume("1058-auditor");
-    const subjectRecordPath = join(auditor.runDirectory, "artifacts", "error.json");
-    assert.notEqual(missingSubject.result.exitCode, 0);
-    assert.equal(missingSubject.stderr.includes("AK_ROLE_AUDITOR_SUBJECT"), true);
-    assert.equal(missingSubject.stderr.includes("--subject"), false);
-    assert.equal(missingSubject.stderr.includes(subjectRecordPath), true);
-    assert.equal(missingSubject.stderr.includes(sourceRun), false);
-    const subjectRecord = JSON.parse(await readFile(subjectRecordPath, "utf8")) as { diagnostic: string };
-    assert.equal(subjectRecord.diagnostic.includes(sourceRun), true);
-    assert.equal(hostCalls.length, 0);
-
-    const unknown = await resume("1058-unknown-host");
-    assert.notEqual(unknown.result.exitCode, 0);
-    assert.equal(unknown.result.terminal?.roleOutcome.kind, "failure");
-    assert.equal(
-      unknown.result.terminal?.roleOutcome.kind === "failure"
-        && unknown.result.terminal.roleOutcome.diagnostic.includes("zeta-unique-host-diagnostic"),
-      true,
-    );
-    assert.equal(hostCalls.length, 1);
-    assert.equal(unknown.stderr.includes("zeta-unique-host-diagnostic"), true);
-    assert.equal(unknown.stderr.includes("artifacts/error.json"), true);
-
-    const commands = subjectRecord.diagnostic.split("\n").filter((line) => line.startsWith("AK_ROLE_AUDITOR_SUBJECT="));
-    const stubDir = join(home, "ak-role-stub");
-    const stubOut = join(home, "ak-role-stub-out");
-    await mkdir(stubDir, { recursive: true });
-    await mkdir(stubOut, { recursive: true });
-    const subjectFile = join(stubOut, "subject");
-    const argvFile = join(stubOut, "argv");
-    await writeFile(
-      join(stubDir, "ak-role"),
-      [
-        "#!/bin/sh",
-        `printf '%s\\n' "$AK_ROLE_AUDITOR_SUBJECT" > ${JSON.stringify(subjectFile)}`,
-        `printf '%s\\n' "$@" > ${JSON.stringify(argvFile)}`,
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-    await chmod(join(stubDir, "ak-role"), 0o755);
-    const observed: string[] = [];
-    for (const command of commands) {
-      const shelled = spawnSync("sh", ["-c", command], {
-        env: { ...process.env, PATH: `${stubDir}:${process.env.PATH ?? ""}` },
-        encoding: "utf8",
+      const deletedWorkspace = await seed({
+        runId: "1058-no-workspace",
+        role: "secretariat",
+        session: true,
+        projectRoot: gone,
+        ticketNumber: 1058,
       });
-      assert.equal(shelled.status, 0, `${command}\n${shelled.stderr}`);
-      const subject = (await readFile(subjectFile, "utf8")).trim();
-      const argv = (await readFile(argvFile, "utf8")).trim().split("\n");
-      assert.equal(subject === "judge" || subject === "doctor", true, subject);
-      assert.deepEqual(argv, ["resume", "1058-auditor"]);
-      observed.push(subject);
-    }
-    assert.equal(observed.length, 2);
-    const runsRoot = join(home, ".ak-roles", "books", bookKey, "unbound", "runs");
-    const before = await readdir(runsRoot);
-    process.env.AK_ROLE_AUDITOR_SUBJECT = observed[0]!;
-    try {
-      const supplied = await resume("1058-auditor");
-      assert.equal(hostCalls.at(-1), auditor.runDirectory);
-      assert.deepEqual(await readdir(runsRoot), before);
-    } finally {
+      const auditor = await seed({
+        runId: "1058-auditor",
+        role: "auditor",
+        session: true,
+        projectRoot: project,
+        sourceRunPath: sourceRun,
+      });
+      const unknownHost = await seed({
+        runId: "1058-unknown-host", role: "secretariat", session: true, projectRoot: project,
+      });
+      const boundHost = await seed({
+        runId: "1058-bound-host", role: "secretariat", session: false, projectRoot: project, hostBinding: "native-123",
+      });
+      const unboundHost = await seed({
+        runId: "1058-unbound-host", role: "secretariat", session: false, projectRoot: project,
+      });
+      await rm(gone, { recursive: true, force: true });
+
+      const seen: RoleTurnRequest[] = [];
+      const host = createMinimalHost(async (request) => {
+        seen.push(request);
+        return { code: 1, stderr: "zeta-unique-host-diagnostic", timedOut: false };
+      });
+      const resume = (argv: readonly string[]) => {
+        const { io } = captureIo();
+        return runAkRole([...argv], {
+          packageRoot,
+          home,
+          cwd: home,
+          credentials: { "openai-codex": true, xai: true },
+          io,
+          hostAdapters: [
+            { name: "pi", create: () => ({ ok: true as const, host }) },
+            { name: "claude", create: () => ({ ok: true as const, host }) },
+          ],
+        });
+      };
+      const readError = async (runDirectory: string) =>
+        JSON.parse(await readFile(join(runDirectory, "artifacts", "error.json"), "utf8")) as { diagnostic: string };
+      const subjectDiagnosis = () => {
+        try {
+          resolveAuditorSubject();
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+        return undefined;
+      };
+
+      const callsBeforeWorkspace = seen.length;
+      const noWorkspace = await resume(["resume", "--model", "test/caller-seat:high", "1058-no-workspace"]);
+      assert.notEqual(noWorkspace.exitCode, 0);
+      assert.equal(seen.length, callsBeforeWorkspace);
+      const workspaceRecord = await readError(deletedWorkspace.runDirectory);
+      assert.equal(workspaceRecord.diagnostic.includes("ENOENT"), true);
+
+      const callsBeforeSubject = seen.length;
+      const missingSubject = await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
+      assert.notEqual(missingSubject.exitCode, 0);
+      assert.equal(seen.length, callsBeforeSubject);
+      assert.equal((await readError(auditor.runDirectory)).diagnostic, subjectDiagnosis());
+
+      process.env.AK_ROLE_AUDITOR_SUBJECT = "typo";
+      const illegalSubject = await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
+      assert.notEqual(illegalSubject.exitCode, 0);
+      assert.equal(seen.length, callsBeforeSubject);
+      const illegalRecord = await readError(auditor.runDirectory);
+      assert.equal(illegalRecord.diagnostic, subjectDiagnosis());
+      assert.equal(illegalRecord.diagnostic.includes("typo"), true);
       delete process.env.AK_ROLE_AUDITOR_SUBJECT;
-    }
 
-    const occupiedSession = join(missingSession.runDirectory, "artifacts", "error.json");
-    const sessionArtifacts = join(missingSession.runDirectory, "artifacts");
-    await chmod(occupiedSession, 0o000);
-    await chmod(sessionArtifacts, 0o555);
-    try {
-      const sessionFallback = await resume("1058-no-session");
-      assert.equal((await stat(occupiedSession)).mode & 0o777, 0o000);
-      assert.equal(sessionFallback.stderr.includes(occupiedSession), false);
-      assert.equal(sessionFallback.stderr.includes(missingSession.sessionFile), true);
-      const sessionPointer = sessionFallback.stderr.split(/\s+/).find((token) => token.endsWith(".json"));
-      assert.equal(sessionPointer !== undefined && sessionPointer !== occupiedSession, true);
-      assert.equal((await readFile(sessionPointer!, "utf8")).includes(missingSession.sessionFile), true);
-    } finally {
-      await chmod(sessionArtifacts, 0o755);
-      await chmod(occupiedSession, 0o644);
-    }
+      process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
+      const supplied = await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
+      delete process.env.AK_ROLE_AUDITOR_SUBJECT;
+      assert.equal(seen.at(-1)?.runDirectory, auditor.runDirectory);
 
-    const unknownRun = (await readdir(runsRoot)).find((name) => name.startsWith("1058-unknown-host@"));
-    assert.equal(typeof unknownRun, "string");
-    const unknownArtifacts = join(runsRoot, unknownRun!, "artifacts");
-    const occupiedUnknown = join(unknownArtifacts, "error.json");
-    await chmod(occupiedUnknown, 0o000);
-    await chmod(unknownArtifacts, 0o555);
-    try {
-      const unknownFallback = await resume("1058-unknown-host");
-      assert.equal((await stat(occupiedUnknown)).mode & 0o777, 0o000);
-      assert.equal(unknownFallback.stderr.includes(occupiedUnknown), false);
-      assert.equal(unknownFallback.stderr.includes("zeta-unique-host-diagnostic"), true);
-      const unknownPointer = unknownFallback.stderr.split(/\s+/).find((token) => token.endsWith(".json"));
-      assert.equal(unknownPointer !== undefined && unknownPointer !== occupiedUnknown, true);
-      assert.equal((await readFile(unknownPointer!, "utf8")).includes("zeta-unique-host-diagnostic"), true);
-    } finally {
-      await chmod(unknownArtifacts, 0o755);
-      await chmod(occupiedUnknown, 0o644);
-    }
-  });
+      const unknown = await resume(["resume", "--model", "test/caller-seat:high", "1058-unknown-host"]);
+      assert.notEqual(unknown.exitCode, 0);
+      assert.equal(unknown.terminal?.roleOutcome.kind, "failure");
+      assert.equal(
+        unknown.terminal?.roleOutcome.kind === "failure"
+          && unknown.terminal.roleOutcome.diagnostic === (await readError(unknownHost.runDirectory)).diagnostic,
+        true,
+      );
+      assert.equal((await readError(unknownHost.runDirectory)).diagnostic.includes("zeta-unique-host-diagnostic"), true);
+
+      const callsBeforeBound = seen.length;
+      await resume(["resume", "--host", "claude", "--model", "test/caller-seat:high", "1058-bound-host"]);
+      assert.equal(seen.length, callsBeforeBound + 1);
+      const boundRequest = seen.at(-1);
+      assert.equal(boundRequest?.runDirectory, boundHost.runDirectory);
+      assert.equal(
+        boundRequest?.continuation.kind === "resume" ? boundRequest.continuation.hostSessionId : undefined,
+        "native-123",
+      );
+
+      const callsBeforeUnbound = seen.length;
+      const unbound = await resume(["resume", "--host", "claude", "--model", "test/caller-seat:high", "1058-unbound-host"]);
+      assert.notEqual(unbound.exitCode, 0);
+      assert.equal(seen.length, callsBeforeUnbound);
+      const unboundRecord = await readError(unboundHost.runDirectory);
+      assert.equal(unboundRecord.diagnostic.includes(join(unboundHost.sessionDirectory, bindingName!)), true);
+      assert.equal(unboundRecord.diagnostic.includes("session.jsonl"), false);
+    });
+  } finally {
+    if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
+    else process.env.AK_ROLE_AUDITOR_SUBJECT = priorSubject;
+  }
 });

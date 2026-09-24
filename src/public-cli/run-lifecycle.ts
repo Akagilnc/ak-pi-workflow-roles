@@ -32,6 +32,7 @@ export {
 import type { FixerPhase } from "../package-contracts/fixer-output.ts";
 import type { FixerPrerequisite } from "../package-contracts/fixer-packet.ts";
 import { parseCollectorRepository } from "../collector-config.ts";
+import { readHostAwareSessionAvailability } from "../session-identity.ts";
 import {
   interpretDurableCourtTicketNumbers,
   sameCourtTicketNumbers,
@@ -2042,10 +2043,5 @@ export async function readHostSessionAvailability(
   authority: DurablePrincipalAuthority,
   principal: DurablePrincipal,
 ): Promise<HostSessionAvailability> {
-  if (authority.readSessionAvailability !== undefined) {
-    return authority.readSessionAvailability(principal);
-  }
-  const sessionFile = authority.decode(principal).sessionFile;
-  if (await authority.isAvailable(principal)) return { available: true, sessionFile };
-  return { available: false, sessionFile, absent: false };
+  return readHostAwareSessionAvailability(undefined, authority, principal);
 }
