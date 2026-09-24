@@ -6,7 +6,7 @@
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { randomUUID } from "node:crypto";
-import { writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -18,7 +18,6 @@ import {
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import { CliUsageError } from "./cli-errors.ts";
-import { resolveAuditorSubject } from "../auditor-soul.ts";
 import type { RoleTurnRequestProjectionOptions } from "./turn-request.ts";
 import {
   bindAdmittedTicketNumber,
@@ -44,7 +43,7 @@ import type {
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
-import { isOfficerReviewSeat, packagedSubjectChoices } from "../packaged-role-registry.ts";
+import { isOfficerReviewSeat } from "../packaged-role-registry.ts";
 import { deliverCaseDossierAsAttachment } from "./case-dossier-delivery.ts";
 
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
@@ -1543,16 +1542,6 @@ export async function runPostAdmissionSeatResume<
     }
     throw error;
   }
-  const subjectFact = rejectedSubjectFact(loaded.admitted.role);
-  if (subjectFact !== undefined) {
-    await presentResumeFailurePointer(
-      loaded.admitted,
-      input.env.principalAuthority,
-      input.io,
-      subjectFact,
-    );
-    return { exitCode: 2 };
-  }
 
   let adapters = input.adapters;
   if (input.afterAdmittedLoad !== undefined) {
@@ -1797,16 +1786,6 @@ async function pointExistingRunFailure(
   }
 }
 
-function rejectedSubjectFact(role: string): string | undefined {
-  if (packagedSubjectChoices(role) === undefined) return undefined;
-  try {
-    resolveAuditorSubject();
-    return undefined;
-  } catch (error) {
-    return error instanceof Error && error.message.trim() !== "" ? error.message : String(error);
-  }
-}
-
 function writeResumeFailurePointer(io: CliIo, errorPath: string): void {
   io.stderr(formatCliDiagnostic(`续跑失败，当次错误记录：${errorPath}`));
 }
@@ -1838,11 +1817,37 @@ async function presentResumeFailurePointer(
   }
 }
 
+async function existingSuccessReport(runDirectory: string): Promise<boolean> {
+  try {
+    const info = await stat(join(runDirectory, "artifacts", "report.json"));
+    return info.isFile();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/**
+ * Pre-dispatch resume failures are not a new terminal settlement.
+ * publishFailureArtifacts clears the success face, including report.json.
+ * When that face is already present, keep it and write the diagnostic aside.
+ */
 async function publishResumeErrorPointer(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   diagnostic: string,
 ): Promise<string> {
+  if (await existingSuccessReport(admitted.runDirectory)) {
+    const dir = join(admitted.runDirectory, "artifacts");
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, `resume-diagnostic-${randomUUID()}.json`);
+    await writeFile(
+      path,
+      `${JSON.stringify({ runId: admitted.runId, role: admitted.role, diagnostic }, null, 2)}\n`,
+      { encoding: "utf8", flag: "wx" },
+    );
+    return path;
+  }
   const published = await publishFailureArtifacts(admitted, { diagnostic }, authority);
   const error = published.find((artifact) => artifact.kind === "error");
   if (error === undefined) {

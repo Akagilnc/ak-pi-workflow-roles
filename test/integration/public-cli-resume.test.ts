@@ -10,7 +10,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { execFileSync, spawn } from "node:child_process";
@@ -38,6 +38,7 @@ import {
 import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { hasRecordedSubmission, readRecordedSubmissions } from "../../src/submission-ledger.ts";
@@ -2149,6 +2150,10 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
       () => loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),
     );
 
+    const reportPath = join(runDirectory, "artifacts", "report.json");
+    await mkdir(join(runDirectory, "artifacts"), { recursive: true });
+    const reportBody = `${JSON.stringify({ role: "judge", runId })}\n`;
+    await writeFile(reportPath, reportBody, "utf8");
     const { io, stdout, stderr } = captureIo();
     let dispatches = 0;
     const blocked = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
@@ -2171,15 +2176,19 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
       },
       }),
     });
-    const errorRecord = join(runDirectory, "artifacts", "error.json");
-    const recorded = JSON.parse(await readFile(errorRecord, "utf8")) as { kind?: unknown; runId?: unknown; diagnostic?: unknown };
     assert.equal(dispatches, 0);
     assert.equal(stdout.length, 0);
     assert.notEqual(blocked.exitCode, 0);
-    assert.equal(recorded.kind, "error");
-    assert.equal(recorded.runId, runId);
-    assert.equal(typeof recorded.diagnostic, "string");
-    assert.equal(stderr.join("").includes(errorRecord), true);
+    assert.equal(await readFile(reportPath, "utf8"), reportBody);
+    const face = await readRunTerminalArtifact(runDirectory);
+    assert.equal(face.status, "present");
+    assert.equal(face.status === "present" ? face.file : undefined, "report.json");
+    const notedNames = (await readdir(join(runDirectory, "artifacts"))).filter((name) => name !== "report.json");
+    assert.equal(notedNames.length, 1);
+    const pointer = join(runDirectory, "artifacts", notedNames[0]!);
+    assert.equal(stderr.join("").includes(pointer), true);
+    const noted = JSON.parse(await readFile(pointer, "utf8")) as { diagnostic?: unknown };
+    assert.equal(typeof noted.diagnostic, "string");
   });
 });
 
@@ -2524,22 +2533,12 @@ test("public resume says which confirmed fact failed and where to look", async (
       assert.equal(noWorkspace.stderr.includes(errorRecord(deletedWorkspace.runDirectory)), true);
 
       const callsBeforeSubject = seen.length;
-      const missingSubject = await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
-      assert.notEqual(missingSubject.exitCode, 0);
-      assert.equal(seen.length, callsBeforeSubject);
-      await readError(auditor.runDirectory, "1058-auditor");
-      assert.equal(missingSubject.stderr.includes(errorRecord(auditor.runDirectory)), true);
-
-      process.env.AK_ROLE_AUDITOR_SUBJECT = "typo";
-      const illegalSubject = await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
-      assert.notEqual(illegalSubject.exitCode, 0);
-      assert.equal(seen.length, callsBeforeSubject);
-      await readError(auditor.runDirectory, "1058-auditor");
-      assert.equal(illegalSubject.stderr.includes(errorRecord(auditor.runDirectory)), true);
-      delete process.env.AK_ROLE_AUDITOR_SUBJECT;
+      await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
+      assert.equal(seen.at(-1)?.runDirectory, auditor.runDirectory);
+      assert.equal(seen.length, callsBeforeSubject + 1);
 
       process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
-      const supplied = await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
+      await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
       delete process.env.AK_ROLE_AUDITOR_SUBJECT;
       assert.equal(seen.at(-1)?.runDirectory, auditor.runDirectory);
 
