@@ -472,6 +472,18 @@ test("typed TerminalResult owns complete role, navigator, artifact, and run fact
   assert.ok(formatted.length > 0);
 });
 
+test("extractNavigatorFact keeps a native playbook read failure on the existing diagnostic", () => {
+  const missing = extractNavigatorFact([
+    {
+      type: "custom",
+      customType: "ak-navigator-route-playbook-failure",
+      data: { message: "ENOENT: missing playbook" },
+    },
+  ]);
+  assert.equal(missing.disposition, "unavailable");
+  assert.equal(missing.advisoryDiagnostic, "ENOENT: missing playbook");
+});
+
 test("extractNavigatorFact keeps three-state attendance: affirmative no-advice vs missing/uncorrelated/unparseable", () => {
   const invocationId = "019f8c2a-1111-7111-8111-111111111111";
   const correlated = {

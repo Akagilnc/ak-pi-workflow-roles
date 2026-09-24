@@ -65,6 +65,7 @@ test("Navigator early prepare from parent start; settle feeds result for output"
     assert.equal(fed.subjectKey, "/repo/.ak/work/issues/28");
     assert.equal(typeof fed.invocationId, "string");
     assert.equal("authority" in fed, false);
+    harness.setRoutePlaybookReadFailure("ENOENT: missing playbook");
     await Promise.resolve();
     assert.equal(settled, false);
     await harness.tool().execute("prepare", proseAdvice(), undefined, undefined, {} as never);
@@ -72,6 +73,7 @@ test("Navigator early prepare from parent start; settle feeds result for output"
     await waiting;
     assert.equal(events.length, 1);
     assert.equal(events[0].disposition, "advice");
+    assert.equal(events[0].routePlaybookReadFailure, "ENOENT: missing playbook");
     assert.equal(typeof events[0].prose, "string");
     assert.ok(events[0].prose.trim().length > 0);
     const invocation = harness.entries.find((entry: any) => entry.customType === "ak-navigator-invocation");

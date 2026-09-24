@@ -63,6 +63,8 @@ import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./
 import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
+/** Native playbook read failure recorded by the navigator process that read the file. */
+export const NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY = "ak-navigator-route-playbook-failure" as const;
 
 /**
  * Role-input document bytes win verbatim over work-root file authority when non-empty.
@@ -283,6 +285,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let settlementTail: Promise<void> = Promise.resolve();
   let settlementFailure: unknown;
   let preparationFailure: unknown;
+  let observedRoutePlaybookFailure: string | undefined;
   let disposed = false;
   /** In-flight session teardown; repeat dispose returns the same promise (#959 mutation proof). */
   let closing: Promise<void> | undefined;
@@ -502,6 +505,10 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         preparedProse = normalizePrepareProse(output);
         return preparedProse;
       } finally {
+        const playbookFailure = activeSession.routePlaybookReadFailure?.();
+        if (typeof playbookFailure === "string" && playbookFailure.trim() !== "") {
+          observedRoutePlaybookFailure = playbookFailure;
+        }
         outputSink = undefined;
       }
   };
@@ -646,6 +653,9 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           // Empty/no-receipt prepare → affirmative no-advice (never inferred later).
           report = { disposition: "no-advice" };
         }
+      }
+      if (observedRoutePlaybookFailure !== undefined) {
+        report = { ...report, routePlaybookReadFailure: observedRoutePlaybookFailure };
       }
       const event: NavigatorEvent = {
         version: 1,

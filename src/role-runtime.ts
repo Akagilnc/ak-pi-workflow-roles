@@ -100,7 +100,7 @@ import {
   type AuditorRuntimeDependencies,
 } from "./auditor-role.ts";
 
-import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
@@ -796,6 +796,7 @@ export function createNavigatorRoleRuntime(
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           if (message.trim() === "") return;
+          dependencies.recordRoutePlaybookReadFailure?.(message);
           return append(message);
         }
       });
@@ -1863,6 +1864,9 @@ export function createRoleRuntimeExtension(
     });
     const navigator = createNavigatorRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("navigator"),
+      recordRoutePlaybookReadFailure: (message) => {
+        envelopeHost.appendEntry(NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, { message });
+      },
     });
     const auditor = createAuditorRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("auditor"),

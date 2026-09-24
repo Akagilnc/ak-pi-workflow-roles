@@ -1257,3 +1257,32 @@ test("navigator system prompt carries soul and route playbook, not a code-writte
   assert.equal(playbookReads, 1);
   assert.equal(returned.some((text) => text.includes("本轮为待命轮") || text.includes("本轮为结算投喂轮")), false);
 });
+
+test("navigator playbook read failure is the native message on the existing diagnostic outlet", async () => {
+  const starts: Array<(event: { systemPrompt: string }) => Promise<unknown> | unknown> = [];
+  const tools = new Map<string, { name: string }>();
+  const host = {
+    registerTool(tool: { name: string }) { tools.set(tool.name, tool); },
+    getAllTools: () => [...tools.values()],
+    on(event: string, handler: (event: { systemPrompt: string }) => Promise<unknown> | unknown) {
+      if (event === "before_agent_start") starts.push(handler);
+    },
+  };
+  const recorded: string[] = [];
+  const runtime = createNavigatorRoleRuntime(host as never, {
+    loadSoul: async () => "route judgment",
+    loadRoutePlaybook: async () => {
+      throw new Error("ENOENT: missing playbook");
+    },
+    recordRoutePlaybookReadFailure: (message) => {
+      recorded.push(message);
+    },
+  });
+  await runtime.activate();
+  const returned: unknown[] = [];
+  for (const handler of starts) {
+    returned.push(await handler({ systemPrompt: "BASE" }));
+  }
+  assert.deepEqual(recorded, ["ENOENT: missing playbook"]);
+  assert.equal(returned.some((result) => result !== null && typeof result === "object" && "systemPrompt" in result && result.systemPrompt === "BASE\n\nENOENT: missing playbook"), true);
+});

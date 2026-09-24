@@ -130,6 +130,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
 
     let providerFailure: NavigatorProviderFailureFact | undefined;
     let noReceipt: NoReceiptLifecycleFacts | undefined;
+    let routePlaybookReadFailure: string | undefined;
     let disposed = false;
     /** In-factory host run id for CLI resume; durable pointer also lives on the nest. */
     let hostRunId = readNavigatorHostRunPointer(sessionManager.getEntries() as readonly unknown[]);
@@ -186,6 +187,10 @@ export function createNativeNavigatorSessionFactory(deps?: {
           // Cancel ownership stays on attendance/envelope; this only closes side effects (#959).
           if (disposed) return;
 
+          const playbookFailure = summoned.terminal?.navigator?.advisoryDiagnostic;
+          if (typeof playbookFailure === "string" && playbookFailure.trim() !== "") {
+            routePlaybookReadFailure = playbookFailure;
+          }
           const outcome = summoned.terminal?.roleOutcome;
           if (outcome === undefined) {
             const detail = summoned.stderr?.trim() || `exit ${summoned.exitCode}`;
@@ -258,6 +263,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
       },
       providerFailure: () => providerFailure,
       noReceipt: () => noReceipt,
+      routePlaybookReadFailure: () => routePlaybookReadFailure,
       appendEntry: (customType, data) => {
         sessionManager.appendCustomEntry(customType, data);
         try {

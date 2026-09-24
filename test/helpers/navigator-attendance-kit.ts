@@ -31,6 +31,7 @@ export function sessionHarness() {
   const rejectedPrepareReasons: string[] = [];
   const transportFailures: string[] = [];
   let providerFailure: { source: "transport"; cause: "transport" } | undefined;
+  let playbookReadFailure: string | undefined;
   const sessionNoReceipts: NoReceiptLifecycleFacts[] = [];
   let noReceipt: NoReceiptLifecycleFacts | undefined;
   const session: NavigatorPreparationSession = {
@@ -60,6 +61,7 @@ export function sessionHarness() {
     entries: () => entries,
     providerFailure: () => providerFailure,
     noReceipt: () => noReceipt,
+    routePlaybookReadFailure: () => playbookReadFailure,
     async setModel(model, thinkingLevel) {
       modelSettings.push(
         thinkingLevel === undefined ? { model } : { model, thinkingLevel },
@@ -82,6 +84,7 @@ export function sessionHarness() {
     promptTexts: () => promptTexts,
     rejectPrepare(...reasons: string[]) { rejectedPrepareReasons.push(...reasons); },
     failTransport(...reasons: string[]) { transportFailures.push(...reasons); },
+    setRoutePlaybookReadFailure(message: string) { playbookReadFailure = message; },
     /** Next prompt settles the session itself without an accepted receipt (#675 nested no-receipt). */
     settleWithoutReceipt(...rejectedReasons: string[]) {
       sessionNoReceipts.push({
