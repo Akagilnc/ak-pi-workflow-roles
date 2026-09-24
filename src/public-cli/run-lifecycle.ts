@@ -20,6 +20,11 @@ import { listBookRunDirectories } from "../role-run-placement.ts";
 import { isSafePositiveTicketNumber } from "../run-ticket-number.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import {
+  readHostSessionAvailability,
+  ResumeFailureError,
+  unavailableHostSessionFact,
+} from "./resume-failure.ts";
+import {
   readLatestTypedProviderHttpObservation,
 } from "../typed-provider-http.ts";
 export {
@@ -1348,10 +1353,14 @@ async function loadResumableRunRecord(
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
   const { run, principal } = materialized;
-  if (!(allowUnformedAdmitted && run.state === "admitted") && !(await isDurablePrincipalAvailable(principal, authority))) {
-    throw new CliUsageError(
-      `role run Pi session principal is unavailable: ${runId}`,
-    );
+  if (!(allowUnformedAdmitted && run.state === "admitted")) {
+    const availability = await readHostSessionAvailability(authority, principal);
+    if (!availability.available) {
+      throw new ResumeFailureError(unavailableHostSessionFact({
+        runDirectory: run.runDirectory,
+        availability,
+      }));
+    }
   }
   // Reconstruct admitted identity from durable run record + admitted-request.json.
   let instruction = "";

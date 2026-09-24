@@ -13,6 +13,7 @@ import test from "node:test";
 import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import { ResumeFailureError } from "../../src/public-cli/resume-failure.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { payloadFacts , objectPayloads} from "../helpers/terminal-payload.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
@@ -197,14 +198,15 @@ test("block1: session principal unavailable still fails honestly", async()=>{
     const bookKey=resolveBookKeyFromGit(project);
     const runDir=join(home,".ak-roles","books",bookKey,"unbound","runs",`${runId}@judge`);
     await rm(join(runDir,"session","session.jsonl"),{force:true});
-    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),/Pi session principal is unavailable/);
+    const sessionFile=join(runDir,"session","session.jsonl");
+    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),(error: unknown)=>error instanceof ResumeFailureError && error.fact.kind==="host-session-absent" && error.fact.sessionFile===sessionFile);
     const {io:io2,stderr}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,io:io2,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                       packageRoot,
                                                                                       principalAuthority: piDurablePrincipalAuthority,
                                                                                       piRunner: async(a)=>{dispatched=true;return{code:0,stderr:"",timedOut:false,args:[...a]};},
                                                                                     })});
-    assert.equal(dispatched,false);assert.ok(stderr.join("").includes("Pi session principal is unavailable"));assert.notEqual(res.exitCode,0);
+    assert.equal(dispatched,false);assert.equal(res.resumeFailure?.kind,"host-session-absent");assert.equal(stderr.join("").includes(sessionFile),true);assert.notEqual(res.exitCode,0);
   });
 });
 

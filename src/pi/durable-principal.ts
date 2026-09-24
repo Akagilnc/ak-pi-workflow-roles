@@ -5,6 +5,7 @@ import type {
   DurablePrincipal,
   DurablePrincipalAuthority,
   DurablePrincipalCoordinates,
+  HostSessionAvailability,
   NewDurablePrincipalRequest,
 } from "../host-contracts.ts";
 import { resolveBookKeyFromGit } from "../activation-ledger-git.ts";
@@ -73,13 +74,34 @@ export const piDurablePrincipalAuthority: DurablePrincipalAuthority = {
           : join(record.sessionDirectory, "session.jsonl"),
     };
   },
+  readSessionAvailability(principal: DurablePrincipal): Promise<HostSessionAvailability> {
+    return readPiSessionAvailability(this, principal);
+  },
   async isAvailable(principal: DurablePrincipal): Promise<boolean> {
-    const { sessionFile } = this.decode(principal);
-    try {
-      const stat = await lstat(sessionFile);
-      return stat.isFile() && !stat.isSymbolicLink();
-    } catch {
-      return false;
-    }
+    return (await readPiSessionAvailability(this, principal)).available;
   },
 };
+
+async function readPiSessionAvailability(
+  authority: DurablePrincipalAuthority,
+  principal: DurablePrincipal,
+): Promise<HostSessionAvailability> {
+  const { sessionFile } = authority.decode(principal);
+  try {
+    const stat = await lstat(sessionFile);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      return {
+        available: false,
+        sessionFile,
+        absent: false,
+        cause: new Error("session path is not a regular file"),
+      };
+    }
+    return { available: true, sessionFile };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return { available: false, sessionFile, absent: true };
+    }
+    return { available: false, sessionFile, absent: false, cause: error };
+  }
+}

@@ -19,7 +19,8 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { createMinimalHost, roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { ResumeFailureError } from "../../src/public-cli/resume-failure.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
@@ -2147,8 +2148,10 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     await assert.rejects(
       () => loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),
       (error: unknown) =>
-        error instanceof Error &&
-        error.message.includes("Pi session principal is unavailable"),
+        error instanceof ResumeFailureError &&
+        error.fact.kind === "host-session-absent" &&
+        error.fact.sessionFile === sessionFile &&
+        error.fact.runDirectory === runDirectory,
     );
 
     const { io, stdout, stderr } = captureIo();
@@ -2176,10 +2179,15 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     assert.equal(dispatches, 0);
     assert.equal(stdout.length, 0);
     assert.notEqual(blocked.exitCode, 0);
+    assert.equal(blocked.resumeFailure?.kind, "host-session-absent");
     assert.equal(
-      stderr.join("").includes("Pi session principal is unavailable"),
-      true,
+      blocked.resumeFailure?.kind === "host-session-absent"
+        ? blocked.resumeFailure.sessionFile
+        : undefined,
+      sessionFile,
     );
+    assert.equal(stderr.join("").includes(sessionFile), true);
+    assert.equal(stderr.join("").includes(runDirectory), true);
   });
 });
 
@@ -2410,6 +2418,159 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
         assert.notEqual(rejected.exitCode, 0);
         assert.match(stderr.join(""), /usage: ak-role resume/);
       }
+    }
+  });
+});
+
+test("public resume says which confirmed fact failed and where to look", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "proj");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const bookKey = resolveBookKeyFromGit(project);
+    const gone = join(home, "gone-workspace");
+    await mkdir(gone, { recursive: true });
+    seedGitProject(gone);
+    const sourceRun = join(home, "audited-source");
+    await mkdir(sourceRun, { recursive: true });
+
+    async function seed(input: {
+      readonly runId: string;
+      readonly role: "secretariat" | "auditor";
+      readonly session: boolean;
+      readonly projectRoot: string;
+      readonly ticketNumber?: number;
+      readonly sourceRunPath?: string;
+    }) {
+      const runDirectory = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${input.runId}@${input.role}`);
+      const sessionDirectory = join(runDirectory, "session");
+      const sessionFile = join(sessionDirectory, "session.jsonl");
+      const admittedRequestPath = join(runDirectory, "admitted-request.json");
+      await mkdir(sessionDirectory, { recursive: true });
+      if (input.session) await writeFile(sessionFile, "\n", "utf8");
+      await writeFile(join(runDirectory, "invocation.json"), "{}\n", "utf8");
+      await writeFile(admittedRequestPath, `${JSON.stringify({
+        role: input.role,
+        instruction: "x",
+        instructionEmpty: false,
+        attachments: [],
+        ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
+        ...(input.sourceRunPath === undefined ? {} : { sourceRunPath: input.sourceRunPath }),
+      })}\n`, "utf8");
+      await markRunAdmitted({
+        role: input.role,
+        runId: input.runId,
+        bookKey,
+        projectRoot: input.projectRoot,
+        instruction: "x",
+        instructionEmpty: false,
+        attachments: [],
+        runDirectory,
+        principal: fixturePrincipal(sessionDirectory, sessionFile),
+        admittedRequestPath,
+      }, piDurablePrincipalAuthority);
+      return { runDirectory, sessionFile };
+    }
+
+    const missingSession = await seed({
+      runId: "1058-no-session", role: "secretariat", session: false, projectRoot: project,
+    });
+    const deletedWorkspace = await seed({
+      runId: "1058-no-workspace",
+      role: "secretariat",
+      session: true,
+      projectRoot: gone,
+      ticketNumber: 1058,
+    });
+    const auditor = await seed({
+      runId: "1058-auditor",
+      role: "auditor",
+      session: true,
+      projectRoot: project,
+      sourceRunPath: sourceRun,
+    });
+    await seed({ runId: "1058-unknown-host", role: "secretariat", session: true, projectRoot: project });
+    await rm(gone, { recursive: true, force: true });
+
+    const hostCalls: string[] = [];
+    const host = createMinimalHost(async () => {
+      hostCalls.push("turn");
+      return { code: 1, stderr: "zeta-unique-host-diagnostic", timedOut: false };
+    });
+    const resume = (runId: string) => {
+      const { io, stderr } = captureIo();
+      return runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+        packageRoot,
+        home,
+        cwd: home,
+        credentials: { "openai-codex": true, xai: true },
+        io,
+        roleTurnHost: host,
+      }).then((result) => ({ result, stderr: stderr.join("") }));
+    };
+
+    const noSession = await resume("1058-no-session");
+    assert.notEqual(noSession.result.exitCode, 0);
+    assert.equal(noSession.result.resumeFailure?.kind, "host-session-absent");
+    assert.equal(
+      noSession.result.resumeFailure?.kind === "host-session-absent"
+        ? noSession.result.resumeFailure.sessionFile
+        : undefined,
+      missingSession.sessionFile,
+    );
+    assert.equal(noSession.stderr.includes(missingSession.runDirectory), true);
+    assert.equal(hostCalls.length, 0);
+
+    const noWorkspace = await resume("1058-no-workspace");
+    assert.notEqual(noWorkspace.result.exitCode, 0);
+    assert.equal(noWorkspace.result.resumeFailure?.kind, "workspace-missing");
+    assert.equal(
+      noWorkspace.result.resumeFailure?.kind === "workspace-missing"
+        ? noWorkspace.result.resumeFailure.projectRoot
+        : undefined,
+      gone,
+    );
+    assert.equal(
+      noWorkspace.result.resumeFailure?.kind === "workspace-missing"
+        ? noWorkspace.result.resumeFailure.diagnostic.includes("spawnSync git ENOENT")
+        : false,
+      true,
+    );
+    assert.equal(noWorkspace.stderr.includes(gone), true);
+    assert.equal(noWorkspace.stderr.includes(deletedWorkspace.runDirectory), true);
+    assert.equal(hostCalls.length, 0);
+
+    const missingSubject = await resume("1058-auditor");
+    assert.notEqual(missingSubject.result.exitCode, 0);
+    assert.equal(missingSubject.result.resumeFailure?.kind, "auditor-subject-missing");
+    if (missingSubject.result.resumeFailure?.kind === "auditor-subject-missing") {
+      assert.equal(missingSubject.result.resumeFailure.sourceRunPath, sourceRun);
+      assert.equal(missingSubject.result.resumeFailure.provide.includes("--subject"), true);
+      assert.equal(missingSubject.result.resumeFailure.provide.includes(sourceRun), true);
+      assert.equal(missingSubject.result.resumeFailure.runDirectory, auditor.runDirectory);
+    }
+    assert.equal(missingSubject.stderr.includes(sourceRun), true);
+    assert.equal(missingSubject.stderr.includes("--subject"), true);
+    assert.equal(hostCalls.length, 0);
+
+    const unknown = await resume("1058-unknown-host");
+    assert.notEqual(unknown.result.exitCode, 0);
+    assert.equal(unknown.result.resumeFailure, undefined);
+    assert.equal(unknown.result.terminal?.roleOutcome.kind, "failure");
+    assert.equal(
+      unknown.result.terminal?.roleOutcome.kind === "failure"
+        && unknown.result.terminal.roleOutcome.diagnostic.includes("zeta-unique-host-diagnostic"),
+      true,
+    );
+    assert.equal(hostCalls.length, 1);
+
+    process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
+    try {
+      const supplied = await resume("1058-auditor");
+      assert.equal(supplied.result.resumeFailure?.kind, undefined);
+      assert.equal(hostCalls.length, 2);
+    } finally {
+      delete process.env.AK_ROLE_AUDITOR_SUBJECT;
     }
   });
 });

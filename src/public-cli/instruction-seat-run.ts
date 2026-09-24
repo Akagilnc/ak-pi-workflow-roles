@@ -24,6 +24,7 @@ import {
 } from "../packaged-role-registry.ts";
 import { isAuditorSoulRole } from "../auditor-soul.ts";
 import { CliUsageError } from "./cli-errors.ts";
+import type { ResumeFailureFact } from "./resume-failure.ts";
 import {
   admitPublicRole,
   bindAdmittedTicketNumber,
@@ -93,6 +94,7 @@ type SeatRunResult = {
   exitCode: number;
   admitted?: AdmittedRoleInvocation;
   terminal?: TerminalResult;
+  resumeFailure?: ResumeFailureFact;
 };
 
 function roleRecord(role: PackagedRole) {

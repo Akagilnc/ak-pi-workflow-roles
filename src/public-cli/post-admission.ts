@@ -16,6 +16,13 @@ import {
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import { CliUsageError } from "./cli-errors.ts";
+import {
+  confirmResumeBlocker,
+  formatResumeFailure,
+  missingWorkspaceOnEnoent,
+  ResumeFailureError,
+  type ResumeFailureFact,
+} from "./resume-failure.ts";
 import type { RoleTurnRequestProjectionOptions } from "./turn-request.ts";
 import {
   bindAdmittedTicketNumber,
@@ -1511,7 +1518,7 @@ export async function runPostAdmissionSeatResume<
     admitted: A,
   ) => Promise<AfterAdmittedLoadResult<A, T>>;
   effectiveEngine?: string;
-}): Promise<{ exitCode: number; admitted?: A; terminal?: T }> {
+}): Promise<{ exitCode: number; admitted?: A; terminal?: T; resumeFailure?: ResumeFailureFact }> {
   let request = input.request;
 
   // Load once for runDirectory / structural rejection / afterAdmittedLoad.
@@ -1522,11 +1529,20 @@ export async function runPostAdmissionSeatResume<
   try {
     loaded = await input.load(request);
   } catch (error) {
+    if (error instanceof ResumeFailureError) {
+      presentStructuralRejection(error, input.io);
+      return { exitCode: 2, resumeFailure: error.fact };
+    }
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, input.io);
       return { exitCode: 2 };
     }
     throw error;
+  }
+  const blocker = await confirmResumeBlocker(loaded.admitted);
+  if (blocker !== undefined) {
+    presentStructuralRejection({ message: formatResumeFailure(blocker) }, input.io);
+    return { exitCode: 2, resumeFailure: blocker };
   }
 
   let adapters = input.adapters;
@@ -1720,9 +1736,18 @@ export async function runPostAdmissionSeatResume<
     });
   } catch (error) {
     // Turn construction may still surface structural rejection.
+    if (error instanceof ResumeFailureError) {
+      presentStructuralRejection(error, input.io);
+      return { exitCode: 2, resumeFailure: error.fact };
+    }
     if (error instanceof CliUsageError) {
       presentStructuralRejection(error, input.io);
       return { exitCode: 2 };
+    }
+    const missingWorkspace = await missingWorkspaceOnEnoent(error, loaded.admitted);
+    if (missingWorkspace !== undefined) {
+      presentStructuralRejection({ message: formatResumeFailure(missingWorkspace) }, input.io);
+      return { exitCode: 1, resumeFailure: missingWorkspace };
     }
     throw error;
   }

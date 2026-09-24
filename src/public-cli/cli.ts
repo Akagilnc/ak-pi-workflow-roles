@@ -47,6 +47,7 @@ import {
 import { packagedModelParent } from "../packaged-role-registry.ts";
 import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
+import type { ResumeFailureFact } from "./resume-failure.ts";
 import type { CliIo } from "./cli-io.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
 import type { RoleTurnHost } from "../host-contracts.ts";
@@ -366,6 +367,8 @@ export type CliResult = {
   /** Settled Terminal when an admitted Role run produced one (programmatic/tests). */
   terminal?: TerminalResult;
   hostFailure?: HostSelectionFailure;
+  /** Confirmable resume failure. Human stderr is the same fact, not a second diagnosis. */
+  resumeFailure?: ResumeFailureFact;
 };
 
 function cliResultFromRoleRun(result: {
@@ -1245,7 +1248,10 @@ export async function runAkRole(
         });
         current = await continueParentAfterChild(parentRunId, current.admitted, parentEnv, io);
       }
-      return cliResultFromRoleRun(current);
+      return {
+        ...cliResultFromRoleRun(current),
+        ...(current.resumeFailure === undefined ? {} : { resumeFailure: current.resumeFailure }),
+      };
     }
 
     if (
