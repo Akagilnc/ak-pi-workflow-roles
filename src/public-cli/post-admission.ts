@@ -718,17 +718,16 @@ export async function dispatchPostAdmissionTurn<
           admitted.runId,
           { home: homeFromRunDirectory(admitted.runDirectory), sessionParent: join(admitted.runDirectory, "session", "session.jsonl") },
         );
-        const asserted = rows
+        const lastSubmission = rows
           .filter((row) => row.kind === "accepted" && row.role === admitted.role)
           .map((row) => row.accepted)
-          .find((payload) => {
-            if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return false;
-            const value = (payload as { ticketNumber?: unknown }).ticketNumber;
-            return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-          });
-        const ticketNumber = asserted === undefined
-          ? undefined
-          : (asserted as { ticketNumber: number }).ticketNumber;
+          .at(-1);
+        const claimedTicket = lastSubmission !== null && typeof lastSubmission === "object" && !Array.isArray(lastSubmission)
+          ? (lastSubmission as { ticketNumber?: unknown }).ticketNumber
+          : undefined;
+        const ticketNumber = typeof claimedTicket === "number" && Number.isSafeInteger(claimedTicket) && claimedTicket > 0
+          ? claimedTicket
+          : undefined;
         if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
       }
       // #863: shared post-admission bind must relocate unbound→ticket in-home

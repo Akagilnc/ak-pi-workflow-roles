@@ -998,13 +998,6 @@ export function createSecretariatRoleRuntime(
             return undefined;
           }
           try {
-            const ticketNumber = record?.ticketNumber;
-            if (typeof ticketNumber === "number" && Number.isSafeInteger(ticketNumber) && ticketNumber > 0) {
-              const runDirectory = runDirectoryFromHostContext(ctx);
-              if (runDirectory !== undefined) {
-                await bindTicketNumberOnRunDirectory(runDirectory, ticketNumber);
-              }
-            }
             const pass = await roleHost.requireSubmissionGate!({
               context: ctx,
               subject: { kind: "secretariat_verdict" },

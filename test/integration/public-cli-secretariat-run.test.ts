@@ -462,6 +462,7 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
           ? "01a0sec969-gate-7000-8000-000000000021"
           : "01a0sec969-gate-7000-8000-000000000031";
     const capture = captureIo();
+    const firstTicket = hostName === "pi" ? undefined : 923;
     const gateCalls: Array<{ kind: string }> = [];
     const countersignRequests: RoleTurnRequest[] = [];
     const host = secretariatHostDrivingRealTools({
@@ -483,7 +484,7 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
       steps: [
         {
           kind: "output",
-          details: { secretariatStatus: "converged" },
+          details: { secretariatStatus: "converged", ...(firstTicket === undefined ? {} : { ticketNumber: firstTicket }) },
         },
         {
           kind: "output",
@@ -526,8 +527,11 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
     };
     assert.equal(facts.secretariatStatus, "converged");
     assert.equal(facts.ticketNumber, 924);
-    assert.equal((payloads[0] as { ticketNumber?: number }).ticketNumber, undefined,
-      "the first unnumbered output must remain in the ledger before officer re-submission");
+    assert.equal((payloads[0] as { ticketNumber?: number }).ticketNumber, firstTicket,
+      "the initial receipt must remain in the ledger before officer re-submission");
+    assert.equal(await findRunDirectoryById(home, runId, undefined, "secretariat"),
+      join(home, ".ak-roles", "books", "project", "924", "runs", `${runId}@secretariat`),
+      "only the final reviewed ticket owns the run");
     // #969: 公开终局呈现给事中判词与 runId（settlement 唯一权威）.
     const countersignTerminal = result.terminal.roleOutcome.decisiveFacts
       ?.countersignTerminal as
