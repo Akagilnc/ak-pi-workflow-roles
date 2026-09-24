@@ -203,6 +203,8 @@ export type NavigatorPreparationSession = {
    * independent summon rather than press the session that owes the receipt.
    */
   noReceipt?(): NoReceiptLifecycleFacts | undefined;
+  /** Native message from the nested playbook read, when that read failed. */
+  routePlaybookReadFailure?(): string | undefined;
   setModel?(model: string, thinkingLevel?: string): Promise<void>;
   getThinkingLevel?(): string | undefined;
   recordPointer(): string;

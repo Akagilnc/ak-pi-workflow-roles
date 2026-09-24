@@ -17,12 +17,12 @@ export { validateRecordedGleanerLeftOutput };
 
 // #836 r16 class 1: pointer/statement are LLM/human-read narrative content — no
 // code branches on their presence.
-/** 左拾遗弹章交卷形状；形状指引，非 schema 闸。 */
+/** 左拾遗弹章交卷形状。 */
 export const gleanerLeftOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       status: Type.Unknown({
-        description: "completed — 形状指引，非 schema 闸",
+        description: "completed",
       }),
       findings: Type.Array(
         Type.Object(

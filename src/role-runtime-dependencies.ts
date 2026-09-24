@@ -7,7 +7,7 @@ import { loadDoctorCase } from "./doctor-evidence.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "./navigator-attendance.ts";
 import { loadNavigatorWorkContext } from "./navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "./notary-source-run.ts";
-import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "./role-runtime.ts";
+import { type RoleRuntimeDependencies } from "./role-runtime.ts";
 import {
   loadAuditorReferenceMaterialsFromSubjectInput,
   loadAuditorSoulFromSubjectInput,
@@ -42,7 +42,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
   // packageRoot is the install root (resources/ lives there). Never resolve via
   // import.meta.url — headless/acp production-host bundles live under dist/*/
   // and would otherwise look for dist/resources/ (#962).
-  const navigatorRoutePlaybookPath = join(packageRoot, "resources/navigator-route-playbook.md");
   const collectorHandbookSeedPath = join(packageRoot, "resources/collector-bot-handbook.md");
   const doctorAuditor = createPiDoctorAuditor();
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
@@ -72,9 +71,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
       subject: options.subject,
       authority: options.authority,
       invocationId: options.invocationId,
-      loadSoul: () => loadRegisteredRoleSoul("navigator"),
-      loadRoutePlaybook: () => readFile(navigatorRoutePlaybookPath, "utf8"),
-      loadRoleHelp: async (role) => formatNavigatorRoleHelp(role),
       createSession: navigatorSessionFactory,
       ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
       onEvent: options.onEvent,

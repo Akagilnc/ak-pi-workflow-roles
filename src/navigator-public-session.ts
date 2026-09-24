@@ -6,6 +6,7 @@
  * host conversation continuity uses CLI resume (`resumeRunId`), not a package
  * advice ledger (development-closure: do not invent package-level memory).
  */
+import { existsSync } from "node:fs";
 import { basename } from "node:path";
 
 import { sitianReport } from "./sitian-facade.ts";
@@ -23,6 +24,10 @@ import { runDirectoryFromHostContext, type HostContext } from "./host-contracts.
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { CliUsageError } from "./public-cli/cli-errors.ts";
 import { isNavigatorSeat } from "./packaged-role-registry.ts";
+import {
+  attachWorkContextPointer,
+  navigatorWorkContextFile,
+} from "./navigator-work-base.ts";
 
 /**
  * Ledger process home for navigator attendance: admitted HostContext.runDirectory
@@ -130,6 +135,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
 
     let providerFailure: NavigatorProviderFailureFact | undefined;
     let noReceipt: NoReceiptLifecycleFacts | undefined;
+    let routePlaybookReadFailure: string | undefined;
     let disposed = false;
     /** In-factory host run id for CLI resume; durable pointer also lives on the nest. */
     let hostRunId = readNavigatorHostRunPointer(sessionManager.getEntries() as readonly unknown[]);
@@ -147,18 +153,23 @@ export function createNativeNavigatorSessionFactory(deps?: {
         }
         providerFailure = undefined;
         noReceipt = undefined;
+        routePlaybookReadFailure = undefined;
         try {
           const summonHome = await resolveNavigatorLedgerHome(context);
           // Admission after every await: dispose during preflight must not start summon
           // (ADR 0018 / #959 — legal HostContext may omit signal).
           if (disposed) return;
           const resumeRunId = hostRunId;
+          const workContextPath = navigatorWorkContextFile(sessionManager.getSessionDir());
+          const argvText = existsSync(workContextPath)
+            ? attachWorkContextPointer(text, workContextPath)
+            : text;
 
           // Call contract only: forward shared-lifecycle signal; do not own AbortController here
           // (ADR 0018 / #959 — cancel ownership stays on the attendance/envelope seam).
           const baseSummon = {
             role: "navigator" as const,
-            argv: [text] as const,
+            argv: [argvText] as const,
             cwd: context.cwd,
             ...(summonHome === undefined ? {} : { home: summonHome }),
             ...(context.signal === undefined ? {} : { signal: context.signal }),
@@ -186,6 +197,10 @@ export function createNativeNavigatorSessionFactory(deps?: {
           // Cancel ownership stays on attendance/envelope; this only closes side effects (#959).
           if (disposed) return;
 
+          const playbookFailure = summoned.terminal?.navigator?.advisoryDiagnostic;
+          routePlaybookReadFailure = typeof playbookFailure === "string" && playbookFailure.trim() !== ""
+            ? playbookFailure
+            : undefined;
           const outcome = summoned.terminal?.roleOutcome;
           if (outcome === undefined) {
             const detail = summoned.stderr?.trim() || `exit ${summoned.exitCode}`;
@@ -258,6 +273,7 @@ export function createNativeNavigatorSessionFactory(deps?: {
       },
       providerFailure: () => providerFailure,
       noReceipt: () => noReceipt,
+      routePlaybookReadFailure: () => routePlaybookReadFailure,
       appendEntry: (customType, data) => {
         sessionManager.appendCustomEntry(customType, data);
         try {

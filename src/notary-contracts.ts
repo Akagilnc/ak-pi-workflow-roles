@@ -23,10 +23,6 @@ export const NOTARY_TICKET_FLAG = {
   },
 } as const;
 
-/** Package-owned kickoff only — callers supply zero prompt bytes (ADR 0067 / #448). */
-export const NOTARY_FIXED_KICKOFF =
-  "符宝郎案卷已受理；来源 run 定位见会话材料。";
-
 export const notaryOutputSchema = reviewSubmissionSchema;
 
 export type NotarySourceRunLocator = {

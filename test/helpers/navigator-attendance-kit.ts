@@ -24,17 +24,20 @@ export function proseAdvice(prose = "下一步送 reviewer 独立审阅实现。
 export function sessionHarness() {
   const entries: unknown[] = [];
   const modelSettings: Array<{ model: string; thinkingLevel?: string }> = [];
+  const promptTexts: string[] = [];
   let tool: any;
   let prompts = 0;
   let releasePrompt: (() => void) | undefined;
   const rejectedPrepareReasons: string[] = [];
   const transportFailures: string[] = [];
   let providerFailure: { source: "transport"; cause: "transport" } | undefined;
+  let playbookReadFailure: string | undefined;
   const sessionNoReceipts: NoReceiptLifecycleFacts[] = [];
   let noReceipt: NoReceiptLifecycleFacts | undefined;
   const session: NavigatorPreparationSession = {
-    async prompt(_text) {
+    async prompt(text: string) {
       prompts += 1;
+      promptTexts.push(text);
       providerFailure = undefined;
       noReceipt = sessionNoReceipts.shift();
       // A session that settled without an accepted receipt returns its turn.
@@ -58,6 +61,7 @@ export function sessionHarness() {
     entries: () => entries,
     providerFailure: () => providerFailure,
     noReceipt: () => noReceipt,
+    routePlaybookReadFailure: () => playbookReadFailure,
     async setModel(model, thinkingLevel) {
       modelSettings.push(
         thinkingLevel === undefined ? { model } : { model, thinkingLevel },
@@ -77,8 +81,10 @@ export function sessionHarness() {
       release?.();
     },
     prompts: () => prompts,
+    promptTexts: () => promptTexts,
     rejectPrepare(...reasons: string[]) { rejectedPrepareReasons.push(...reasons); },
     failTransport(...reasons: string[]) { transportFailures.push(...reasons); },
+    setRoutePlaybookReadFailure(message: string) { playbookReadFailure = message; },
     /** Next prompt settles the session itself without an accepted receipt (#675 nested no-receipt). */
     settleWithoutReceipt(...rejectedReasons: string[]) {
       sessionNoReceipts.push({
@@ -105,15 +111,11 @@ export async function attendance(
   path: string,
   harness: ReturnType<typeof sessionHarness>,
   events: any[],
-  loadRoleHelp: (role: string) => Promise<string> = async (role) => `pi --ak-role ${role} --help`,
   home?: string,
 ) {
   return createNavigatorAttendance({
     context: context(home), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
     subject: "Fix issue 28", authority: "owner decision",
-    loadSoul: async () => "route judgment",
-    loadRoutePlaybook: async () => "arbitrary advisory prose",
-    loadRoleHelp,
     createSession: harness.factory,
     modelSettingPath: path,
     onEvent: async (event) => { events.push(event); },
@@ -128,27 +130,19 @@ async function waitForEventLoop(condition: () => boolean): Promise<void> {
 }
 
 /**
- * Release the early ready-wait prompt gate while prepare() is still in flight.
- * Fixed setImmediate budgets raced createSession under load and deadlocked
- * (#959 CI file timeouts). Gate state + live isPreparing (not prompt count):
- * - slow createSession: wait until parked, then release
- * - already parked: release immediately
- * - non-parking early prompt already finished: isPreparing false → no wait
+ * Standby either finishes without a model round, or a round has already started.
+ * Waiting only on isPreparing() parks forever when the old ready-wait prompt is restored.
  */
-async function releaseEarlyReadyWait(
+export async function waitForStandbyOrModelRound(
   nav: { isPreparing(): boolean },
-  harness: ReturnType<typeof sessionHarness>,
+  harness: { prompts(): number; isPromptParked(): boolean },
 ): Promise<void> {
-  await waitForEventLoop(() => !nav.isPreparing() || harness.isPromptParked());
-  if (!harness.isPromptParked()) return;
-  harness.release();
-  // Prompt continuation finishes the early turn on the next macrotask.
-  await new Promise<void>((resolve) => setImmediate(resolve));
+  await waitForEventLoop(() => !nav.isPreparing() || harness.prompts() > 0 || harness.isPromptParked());
 }
 
 /**
- * #959: early prepare() runs the host round from parent start (ready and wait);
- * settle feeds currentSettlement and takes the output prompt.
+ * Standby prepare records attendance and does not prompt. Wait it out, then
+ * settle feeds the typed settlement and takes the only model round.
  */
 export async function settleWithAdvice(
   nav: Awaited<ReturnType<typeof attendance>>,
@@ -157,9 +151,8 @@ export async function settleWithAdvice(
   body: unknown = proseAdvice(),
   toolCallId = "prepare",
 ): Promise<void> {
-  // Live in-flight only (resolved early prepare no longer reports isPreparing).
-  if (nav.isPreparing()) {
-    await releaseEarlyReadyWait(nav, harness);
+  while (nav.isPreparing()) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
   const targetPrompts = harness.prompts() + 1;
   const waiting = nav.settle(settlement as never);

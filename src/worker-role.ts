@@ -48,7 +48,7 @@ export type { WorkerOutput };
 // One shared description across every variant
 // so openToolObjectFromUnion's identical-declaration collapse drops none of it.
 const CODER_STATUS_DESCRIPTION =
-  "planned | completed | refused | partially_completed | unfinished — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据；unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。" as const;
+  "planned | completed | refused | partially_completed | unfinished。unfinished：缺前置或违宪约束致本局未完成。" as const;
 const coderOutputVariants = Type.Union([
   Type.Object({
     status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
@@ -254,7 +254,7 @@ export function createFixerRoleRuntime(
         pi.registerTool({
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "修内司输出",
-          description: "提交修内司终局回执；基础设施失败走 abort，不经本工具。",
+          description: "提交修内司终局回执。",
           promptSnippet: "提交修内司终局回执",
           parameters: fixerOutputSchema,
           async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
@@ -381,7 +381,7 @@ export function createCoderRoleRuntime(
         pi.registerTool({
           name: CODER_OUTPUT_TOOL_NAME,
           label: "将作监输出",
-          description: "提交将作监终局回执；本工具无 escalate 通道。",
+          description: "提交将作监终局回执。",
           promptSnippet: "提交将作监终局回执",
           parameters: coderOutputSchema,
           async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {

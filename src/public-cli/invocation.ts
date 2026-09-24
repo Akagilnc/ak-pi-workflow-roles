@@ -87,7 +87,6 @@ import { sha256Hex } from "../sha256.ts";
 import { rehomeUnboundTicketProvenance } from "../ticket-provenance.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import {
-  NOTARY_FIXED_KICKOFF,
   type NotarySourceRunLocator,
 } from "../notary-contracts.ts";
 import {
@@ -2150,6 +2149,7 @@ type InstructionTransportSource = {
   readonly baseRevision?: string;
   readonly lens?: ReviewerLens;
   readonly authorityRefs?: readonly string[];
+  readonly sourceRunPath?: string;
 };
 
 function admittedTransportPromptKind(
@@ -2172,13 +2172,16 @@ export function buildInstructionTransportPrompt(
 ): string {
   const kind = admittedTransportPromptKind(admitted);
   if (kind === "fixed-kickoff") {
-    return appendEngineSessionMaterial([NOTARY_FIXED_KICKOFF], engineMaterial).join("\n");
+    if (admitted.sourceRunPath === undefined || admitted.sourceRunPath.trim() === "") {
+      throw new Error("fixed-kickoff transport prompt is missing the source run pointer");
+    }
+    return appendEngineSessionMaterial([admitted.sourceRunPath], engineMaterial).join("\n");
   }
   if (kind === "baseline") {
     if (admitted.baseRevision === undefined) {
       throw new Error("baseline transport prompt is missing the bound revision");
     }
-    const lines = [`左拾遗案已受理。比较基线：${admitted.baseRevision}`];
+    const lines = [admitted.baseRevision];
     if (!admitted.instructionEmpty) {
       lines.push("", admitted.instruction);
     }
