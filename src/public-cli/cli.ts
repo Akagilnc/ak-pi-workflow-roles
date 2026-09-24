@@ -77,7 +77,8 @@ import {
   type PublicRoleOptionOwner,
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
-import { runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
+import { continueParentAfterDiarist, runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
+import { courtDiaristEscalated } from "./countersign-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
 import {
   AUTO_RESUME_LIMIT,
@@ -1229,6 +1230,46 @@ export async function runAkRole(
         }),
         io,
       );
+      const parentRunId = result.admitted?.role === "diarist" ? result.admitted.correlationId : undefined;
+      const parentRole = parentRunId === undefined ? undefined : await peekRoleRunRole(home, parentRunId);
+      if (
+        result.exitCode === 0 && parentRunId !== undefined && result.terminal !== undefined
+        && result.terminal.roleOutcome.kind === "accepted"
+        && !courtDiaristEscalated(result.terminal.roleOutcome)
+        && (parentRole === "secretariat" || parentRole === "countersign")
+      ) {
+        const parentSeat = resolveEffectiveSeat(config, parentRole, credentials, invocationFromParsed(parsed));
+        const continued = await continueParentAfterDiarist(
+          parentRunId,
+          result.admitted!,
+          createRoleEnvironment(env, {
+            role: parentRole, home, agentDir, cwd, credentials, seat: parentSeat, config,
+          }),
+          io,
+        );
+        if (continued !== undefined) {
+          // A Countersign gate can have paused its Secretariat caller while its
+          // own diarist was up for decision. Resume that caller only after the
+          // exact Countersign child has concluded; no second escalation channel.
+          const callerRunId = continued.admitted?.role === "countersign"
+            ? continued.admitted.correlationId : undefined;
+          const callerRole = callerRunId === undefined ? undefined : await peekRoleRunRole(home, callerRunId);
+          if (
+            continued.exitCode === 0 && continued.terminal?.roleOutcome.kind === "accepted"
+            && callerRunId !== undefined && callerRole === "secretariat"
+          ) {
+            const callerSeat = resolveEffectiveSeat(config, callerRole, credentials, invocationFromParsed(parsed));
+            return cliResultFromRoleRun(await runPublicInstructionSeatResume(
+              { runId: callerRunId },
+              createRoleEnvironment(env, {
+                role: callerRole, home, agentDir, cwd, credentials, seat: callerSeat, config,
+              }),
+              io,
+            ));
+          }
+          return cliResultFromRoleRun(continued);
+        }
+      }
       return cliResultFromRoleRun(result);
     }
 

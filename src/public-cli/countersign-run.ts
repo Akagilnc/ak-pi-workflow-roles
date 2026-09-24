@@ -79,6 +79,7 @@ export type CourtDiaristIdentity =
 export type CourtDiaristInvocationResult = {
   readonly identity: CourtDiaristIdentity;
   readonly admitted?: import("./invocation.ts").AdmittedRoleInvocation;
+  readonly terminal?: import("./terminal.ts").TerminalResult;
   readonly failedWithoutEscalate?: { readonly diagnostic: string };
 };
 
@@ -199,7 +200,7 @@ function courtTicketNumbersFromOutcome(
 }
 
 /** Routing boolean over the child's own typed sequence — does not pick or rewrite a sole row. */
-function courtDiaristEscalated(
+export function courtDiaristEscalated(
   roleOutcome: TerminalRoleOutcome | undefined,
 ): boolean {
   if (roleOutcome === undefined) return false;
@@ -280,6 +281,7 @@ export async function invokeCourtDiarist(
         diagnostic: courtDiaristEscalateDiagnostic(roleOutcome, submissions),
       },
       ...(result.admitted === undefined ? {} : { admitted: result.admitted }),
+      ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
     };
   }
 
@@ -335,7 +337,7 @@ export async function runCountersignCourtDiaristStation(
   admitted: AdmittedCountersignInvocation,
   env: CountersignRunEnv,
   io: CliIo,
-): Promise<void> {
+): Promise<{ readonly terminal: import("./terminal.ts").TerminalResult; readonly childRunId?: string } | undefined> {
   if (env.runCourtDiaristStation !== undefined) {
     await env.runCourtDiaristStation(admitted);
     return;
@@ -380,6 +382,12 @@ export async function runCountersignCourtDiaristStation(
       throw new StationChildExhaustedError(
         outcome.failedWithoutEscalate.diagnostic,
       );
+    }
+    if (outcome.identity.kind === "escalate" && outcome.terminal !== undefined) {
+      return {
+        terminal: outcome.terminal,
+        ...(outcome.admitted === undefined ? {} : { childRunId: outcome.admitted.runId }),
+      };
     }
   }
 }

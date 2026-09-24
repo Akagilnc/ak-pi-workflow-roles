@@ -1122,7 +1122,6 @@ export async function findLatestRunIdForSeatTicket(input: {
   readonly bookKey: string;
   readonly role: RoleRunRecord["role"];
   readonly parentRunPath: string;
-  readonly ticketNumber?: number;
 }): Promise<string | undefined> {
   if (input.parentRunPath.trim() === "") {
     return undefined;
@@ -1131,13 +1130,7 @@ export async function findLatestRunIdForSeatTicket(input: {
   const bookDir = activationBookDirectory(ledgerHome, input.bookKey);
   let runDirectories: string[];
   try {
-    // A typed ticket narrows the existing walk surface to that ticket's runs;
-    // same-parent matching below still selects the actual prior leg.
-    runDirectories = await listBookRunDirectories(
-      input.ticketNumber === undefined
-        ? bookDir
-        : join(bookDir, String(input.ticketNumber)),
-    );
+    runDirectories = await listBookRunDirectories(bookDir);
   } catch (error) {
     if (errorCodeOf(error) === "ENOENT") return undefined;
     throw error;
@@ -1311,6 +1304,7 @@ async function loadResumableRunRecord(
   home: string,
   runId: string,
   authority: DurablePrincipalAuthority,
+  allowUnformedAdmitted = false,
 ): Promise<{
   readonly run: RoleRunRecord;
   readonly principal: DurablePrincipal;
@@ -1333,7 +1327,7 @@ async function loadResumableRunRecord(
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
   const { run, principal } = materialized;
-  if (!(await isDurablePrincipalAvailable(principal, authority))) {
+  if (!(allowUnformedAdmitted && run.state === "admitted") && !(await isDurablePrincipalAvailable(principal, authority))) {
     throw new CliUsageError(
       `role run Pi session principal is unavailable: ${runId}`,
     );
@@ -1740,8 +1734,9 @@ export async function loadResumablePublicRole(
   home: string,
   runId: string,
   authority: DurablePrincipalAuthority,
+  allowUnformedAdmitted = false,
 ): Promise<LoadedResumablePublicRole> {
-  const loaded = await loadResumableRunRecord(home, runId, authority);
+  const loaded = await loadResumableRunRecord(home, runId, authority, allowUnformedAdmitted);
   return seatLoadedResult(loaded, admitResumedRole(loaded));
 }
 

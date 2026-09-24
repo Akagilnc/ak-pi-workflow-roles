@@ -533,7 +533,16 @@ export async function summonPublicRole(
   }
 
   const stderr = captured?.stderrText();
-  const runDirectory = result.admitted?.runDirectory;
+  // A parked officer can return its court diarist's escalation verbatim. The
+  // terminal's independent run, not the parked officer, is the gate pointer.
+  const runDirectory = result.terminal !== undefined
+    && result.terminal.roleOutcome.role !== options.role
+    && typeof result.terminal.runId === "string"
+    ? await (await import("./public-cli/run-lifecycle.ts")).findRunDirectoryById(
+      options.home,
+      result.terminal.runId,
+    )
+    : result.admitted?.runDirectory;
   return {
     exitCode: result.exitCode,
     ...(result.terminal === undefined ? {} : { terminal: result.terminal }),
@@ -849,8 +858,12 @@ export async function summonGateOfficer(options: {
         `countersign gate summon requires parent runId from sourceRunDirectory: ${options.sourceRunDirectory}`,
       );
     }
-    const { readBoardTicketNumber } = await import("./run-ticket-number.ts");
+    const { isSafePositiveTicketNumber, readBoardTicketNumber } = await import("./run-ticket-number.ts");
     const parentTicket = await readBoardTicketNumber(options.sourceRunDirectory);
+    const submittedTicket = options.submission !== null && typeof options.submission === "object" && !Array.isArray(options.submission)
+      ? (options.submission as { ticketNumber?: unknown }).ticketNumber
+      : undefined;
+    const courtTicket = isSafePositiveTicketNumber(submittedTicket) ? submittedTicket : parentTicket;
     // Argv instruction = reask or parent payload bytes only (never a fabricated line).
     const instruction = options.reask ?? gateReviewInstruction ?? "";
     return summonPublicRole({
@@ -859,7 +872,7 @@ export async function summonGateOfficer(options: {
       ...common,
       correlationId,
       parentRunPath: options.sourceRunDirectory,
-      ...(parentTicket === undefined ? {} : { boundTicketNumber: parentTicket }),
+      ...(courtTicket === undefined ? {} : { boundTicketNumber: courtTicket }),
     });
   }
   // Inspector: argv stays pure 卷宗指针 (#747 parentRunPath lookup key).

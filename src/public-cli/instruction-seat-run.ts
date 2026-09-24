@@ -5,6 +5,7 @@
  * identity on this entry; the court diarist station stays in countersign-run.
  */
 import { resolve, sep } from "node:path";
+import { readFile } from "node:fs/promises";
 
 import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contracts.ts";
 import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
@@ -388,9 +389,6 @@ async function runCountersignBody(
       projectRoot: resolve(parsed.project ?? env.cwd),
       role: "countersign",
       parentRunPath: gateParentRunPath,
-      ...(env.boundTicketNumber === undefined
-        ? {}
-        : { ticketNumber: env.boundTicketNumber }),
       freshSummons: env.freshSummons,
       summons: {
         sourceRunPath: gateParentRunPath,
@@ -432,7 +430,8 @@ async function runCountersignBody(
         : undefined;
       let typedCourtTicketNumbers: readonly number[] | undefined;
       let identityDiaristRan = false;
-      let unboundDiaristRunId: string | undefined;
+      let childDiaristRunId: string | undefined;
+      let pausedDiaristTerminal: TerminalResult | undefined;
 
       if (gateParentRunPath === undefined && env.runCourtDiaristStation === undefined) {
         let outcome: Awaited<ReturnType<typeof invokeCourtDiarist>>;
@@ -441,6 +440,7 @@ async function runCountersignBody(
             instruction: parsed.instruction ?? "",
             projectRoot: admitted.projectRoot,
             failureLabel: "unbound summons",
+            correlationId: admitted.runId,
             ...(env.boundTicketNumber === undefined ? {} : { boundTicketNumber: env.boundTicketNumber }),
           }, env, io);
         } catch (error) {
@@ -456,15 +456,16 @@ async function runCountersignBody(
           }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
         }
         identityDiaristRan = true;
-        if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
-          unboundDiaristRunId = outcome.admitted.runId;
+        if (outcome.identity.kind === "escalate") pausedDiaristTerminal = outcome.terminal;
+        if (outcome.admitted !== undefined) {
+          childDiaristRunId = outcome.admitted.runId;
         }
         if (outcome.failedWithoutEscalate !== undefined) {
           const diagnostic = outcome.failedWithoutEscalate.diagnostic;
           await materializeAdmission(
             isSafePositiveTicketNumber(env.boundTicketNumber) ? env.boundTicketNumber : undefined,
           );
-          if (unboundDiaristRunId !== undefined) await recordChildDiaristRun(admitted, unboundDiaristRunId);
+          if (childDiaristRunId !== undefined) await recordChildDiaristRun(admitted, childDiaristRunId);
           await markRunAdmitted(admitted, env.principalAuthority);
           return await presentControlledFailure(admitted, {
             timedOut: false,
@@ -485,8 +486,13 @@ async function runCountersignBody(
 
       await materializeAdmission(typedTicket);
       await markRunAdmitted(admitted, env.principalAuthority);
-      if (unboundDiaristRunId !== undefined) {
-        await recordChildDiaristRun(admitted, unboundDiaristRunId);
+      if (childDiaristRunId !== undefined) {
+        await recordChildDiaristRun(admitted, childDiaristRunId);
+      }
+      if (pausedDiaristTerminal !== undefined) {
+        // The child already submitted its own pause; no parent turn exists yet.
+        io.stdout(formatTerminalResult(pausedDiaristTerminal));
+        return { exitCode: 0, admitted, terminal: pausedDiaristTerminal };
       }
       if (gateParentRunPath !== undefined) {
         await persistAdmittedSourceRunPath(admitted, gateParentRunPath);
@@ -540,7 +546,12 @@ async function runCountersignBody(
           beforeDispatch: async (admittedSeat, lease) => {
             if (!packagedAdmitsCountersign(admittedSeat.role)) return;
             if (!identityDiaristRan || typedTicket !== undefined) {
-              await runCountersignCourtDiaristStation(admittedSeat, env, io);
+              const refresh = await runCountersignCourtDiaristStation(admittedSeat, env, io);
+              if (refresh !== undefined) {
+                if (refresh.childRunId !== undefined) await recordChildDiaristRun(admittedSeat, refresh.childRunId);
+                io.stdout(formatTerminalResult(refresh.terminal));
+                return refresh.terminal;
+              }
             }
             await relocateAdmittedRunToTicket(admittedSeat, env.principalAuthority, lease);
             Object.assign(turnRequest, buildInstructionSeatTurnRequest(admittedSeat, turnProjection));
@@ -628,7 +639,6 @@ export async function runPublicInstructionSeat(
         projectRoot,
         role,
         parentRunPath: sourceDirectory,
-        ...(auditorTicket === undefined ? {} : { ticketNumber: auditorTicket }),
         freshSummons: env.freshSummons,
         summons,
         resume: (runId, materials) => runPublicInstructionSeatResume(
@@ -657,7 +667,6 @@ export async function runPublicInstructionSeat(
         projectRoot,
         role,
         parentRunPath,
-        ...(env.boundTicketNumber === undefined ? {} : { ticketNumber: env.boundTicketNumber }),
         freshSummons: env.freshSummons,
         summons,
         resume: (runId, materials) => runPublicInstructionSeatResume(
@@ -686,7 +695,6 @@ export async function runPublicInstructionSeat(
       throw error;
     }
     const resumeInstruction = env.reviewReask ?? env.gateReviewInstruction;
-    const knownTicket = (await readBoardTicketNumber(source.runDirectory)) ?? env.boundTicketNumber;
     const summons: SameTicketSummonsMaterials = {
       sourceRunPath: source.runDirectory,
       sourceRun: source,
@@ -697,7 +705,6 @@ export async function runPublicInstructionSeat(
       projectRoot,
       role,
       parentRunPath: source.runDirectory,
-      ...(knownTicket === undefined ? {} : { ticketNumber: knownTicket }),
       freshSummons: env.freshSummons,
       summons,
       resume: (runId, materials) => runPublicInstructionSeatResume(
@@ -751,8 +758,10 @@ export async function runPublicInstructionSeat(
       if (outcome.failedWithoutEscalate !== undefined) {
         throw new Error(outcome.failedWithoutEscalate.diagnostic);
       }
-      // An LLM escalation is its own recorded conclusion, not a code-level
-      // reason to reject the Secretariat's turn. Its ticket may be minted later.
+      if (outcome.identity.kind === "escalate" && outcome.terminal !== undefined) {
+        io.stdout(formatTerminalResult(outcome.terminal));
+        return { exitCode: 0, admitted, terminal: outcome.terminal };
+      }
       if (outcome.identity.kind === "ticket") {
         await bindAdmittedTicketNumber(admitted, outcome.identity.ticketNumber);
         await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
@@ -828,4 +837,23 @@ export async function runPublicInstructionSeatResume(
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });
+}
+
+/** Resume a parked parent only after its exact diarist child concludes. */
+export async function continueParentAfterDiarist(
+  parentRunId: string,
+  child: AdmittedRoleInvocation,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult | undefined> {
+  const loaded = await loadResumablePublicRole(env.home, parentRunId, env.principalAuthority, true);
+  if (loaded.run.state !== "admitted" || !["secretariat", "countersign"].includes(loaded.admitted.role)) return undefined;
+  const page = JSON.parse(await readFile(loaded.admitted.admittedRequestPath, "utf8")) as Record<string, unknown>;
+  if (!Array.isArray(page.childDiaristRunIds) || !page.childDiaristRunIds.includes(child.runId)) return undefined;
+  const admitted = loaded.admitted;
+  if (isSafePositiveTicketNumber(child.ticketNumber)) {
+    await bindAdmittedTicketNumber(admitted, child.ticketNumber);
+    await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+  }
+  return dispatchAdmitted(admitted, env, io);
 }

@@ -30,7 +30,6 @@ export async function tryResumeSameTicketSeatRun<T>(input: {
   readonly projectRoot: string;
   readonly role: RoleRunRecord["role"];
   readonly parentRunPath: string;
-  readonly ticketNumber?: number;
   readonly freshSummons: true | undefined;
   readonly summons?: SameTicketSummonsMaterials;
   readonly resume: (
@@ -45,9 +44,6 @@ export async function tryResumeSameTicketSeatRun<T>(input: {
     bookKey: resolveBookKeyFromGit(input.projectRoot),
     role: input.role,
     parentRunPath: input.parentRunPath,
-    ...(input.ticketNumber === undefined
-      ? {}
-      : { ticketNumber: input.ticketNumber }),
   });
   if (previousRunId === undefined) return undefined;
   return await input.resume(previousRunId, input.summons);

@@ -44,7 +44,7 @@ import {
   runPublicInstructionSeatResume,
 } from "../../src/public-cli/instruction-seat-run.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
-import { readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
+import { findRunDirectoryById, readRoleRunState } from "../../src/public-cli/run-lifecycle.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { roleRunPlacement } from "../../src/role-run-placement.ts";
@@ -1392,14 +1392,14 @@ function courtPipelinePiRunner(
               ? { status: "escalate" as const, reason: "cannot identify court target" }
               : undefined;
         const params =
-          boundTicket !== undefined
+          escalateParams !== undefined
+            ? escalateParams
+            : boundTicket !== undefined
             ? {
                 status: "completed" as const,
                 ticketNumber: boundTicket,
                 sessions: [] as const,
               }
-            : escalateParams !== undefined
-              ? escalateParams
               : ticketAssertion === null
                 ? { status: "completed" as const, ticketNumber: null, sessions: [] as const }
                 : {
@@ -2081,15 +2081,20 @@ test("public countersign relocates its unbound diarist when the body asserts a t
   });
 });
 
-test("public countersign continues with an already-recorded diarist escalation", async () => {
+test("public countersign pauses on a recorded diarist escalation", async () => {
   await withCountersignProject(async ({ home, project }) => {
     const sessionPath = join(home, ".claude", "projects", "escalated-child", "session.jsonl");
     await mkdir(dirname(sessionPath), { recursive: true });
     await writeFile(sessionPath, `${JSON.stringify({ type: "user", uuid: "escalated-child-owner", message: { role: "user", content: "证言" }, origin: { kind: "human" } })}\n`);
+    let diaristTurns = 0;
     const host = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
-      piRunner: courtPipelinePiRunner("escalate", undefined, undefined, sessionPath),
+      piRunner: (args, options) => {
+        const assertion = argvFlagValue(args, "--ak-role") === "diarist" && diaristTurns++ === 0
+          ? "escalate" : null;
+        return courtPipelinePiRunner(assertion, undefined, undefined, sessionPath)(args, options);
+      },
     });
     const result = await runPublicInstructionSeat(
       ["裁票"],
@@ -2103,10 +2108,70 @@ test("public countersign continues with an already-recorded diarist escalation",
     );
     assert.equal(result.exitCode, 0);
     assert.ok(result.admitted);
+    assert.equal(result.terminal?.roleOutcome.role, "diarist");
+    assert.equal((await readRoleRunState(result.admitted.runDirectory, piDurablePrincipalAuthority))?.state, "admitted");
+    const childDirectory = await findRunDirectoryById(home, result.terminal!.runId!);
+    assert.ok(childDirectory);
+    await writeFile(join(childDirectory, "session", "session.jsonl"), "", "utf8");
+    const resumed = await runAkRole(["resume", result.terminal!.runId!], {
+      home, packageRoot, cwd: project, io: captureIo().io,
+      roleTurnHost: host, hostAdapters: [adapter("pi", host)],
+    });
+    assert.equal(resumed.exitCode, 0);
+    assert.equal(resumed.terminal?.roleOutcome.role, "countersign");
     const parent = result.admitted;
     await bindAdmittedTicketNumber(parent, 582);
     await relocateAdmittedRunToTicket(parent, piDurablePrincipalAuthority);
     assert.equal((await readTicketProvenance(582, project, home)).lines[0]?.id, "escalated-child-owner");
+  });
+});
+
+test("bound Countersign refresh pauses on the diarist's own escalation", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    ensureTicketProvenanceVolume(582, project, home);
+    const source = await runPublicInstructionSeat(
+      ["裁票"],
+      countersignPathEnv({ home, project, runId: "01a0sign00-0000-7000-8000-00000000e201" }),
+      captureIo().io,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
+    );
+    assert.ok(source.admitted);
+    let parentTurns = 0;
+    let diaristTurns = 0;
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: (args, options) => {
+        const role = argvFlagValue(args, "--ak-role");
+        if (role === "countersign") parentTurns += 1;
+        return courtPipelinePiRunner(role === "diarist" && diaristTurns++ === 0 ? "escalate" : 582)(args, options);
+      },
+    });
+    const result = await runPublicInstructionSeat(
+      ["裁票"],
+      { home, agentDir: join(home, ".pi"), packageRoot, cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: host, hostAdapters: [adapter("pi", host)],
+        createRunId: () => "01a0sign00-0000-7000-8000-00000000e202",
+        parentRunPath: source.admitted.runDirectory, boundTicketNumber: 582, freshSummons: true },
+      captureIo().io,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.role, "diarist");
+    assert.equal(parentTurns, 0);
+    assert.equal((await readRoleRunState(result.admitted!.runDirectory, piDurablePrincipalAuthority))?.state, "admitted");
+    const childDirectory = await findRunDirectoryById(home, result.terminal!.runId!);
+    assert.ok(childDirectory);
+    await writeFile(join(childDirectory, "session", "session.jsonl"), "", "utf8");
+    const resumed = await runAkRole(["resume", result.terminal!.runId!], {
+      home, packageRoot, cwd: project, io: captureIo().io,
+      roleTurnHost: host, hostAdapters: [adapter("pi", host)],
+    });
+    assert.equal(resumed.exitCode, 0);
+    assert.equal(resumed.terminal?.roleOutcome.role, "countersign");
+    assert.equal(parentTurns, 1);
   });
 });
 
