@@ -86,7 +86,7 @@ function buildMethodArgs(methods: readonly MethodBinding[]): string[] {
   const skillArgs: string[] = [];
   for (const method of methods) {
     if (method.kind === "skill") {
-      skillArgs.push("--skill", method.path);
+      skillArgs.push("--skill", dirname(method.path));
     }
   }
   return skillArgs;

@@ -48,6 +48,7 @@ import { packagedModelParent } from "../packaged-role-registry.ts";
 import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
+import { runMachineSkillSetup } from "./machine-method-skills.ts";
 import type { PostAdmissionEnv } from "./post-admission.ts";
 import type { RoleTurnHost } from "../host-contracts.ts";
 import { appendPiSessionCustomEntry } from "../pi/role-turn-host.ts";
@@ -1176,6 +1177,11 @@ export async function runAkRole(
       return {
         exitCode: await runConfigCommand(parsed.args, home, env.packageRoot, io),
       };
+    }
+
+    if (parsed.command === "setup") {
+      if (parsed.args.length !== 0) throw new CliUsageError("setup takes no arguments");
+      return { exitCode: await runMachineSkillSetup(home, io.stdout) };
     }
 
     // #724 explicit fresh summons: `ak-role new <role> …` — same role argv, always mint.

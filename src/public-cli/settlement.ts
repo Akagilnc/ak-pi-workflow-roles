@@ -93,14 +93,6 @@ import {
   SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
 } from "../secretariat-contracts.ts";
 import {
-  observePackagedMethodSkillInvocation,
-  resolvePackagedMethodSkillPath,
-  type ObservedPackagedMethodSkillInvocation,
-  type PackagedMethodSkillMaterial,
-  type PackagedMethodSkillName,
-  type PackagedMethodSkillProvenance,
-} from "../package-resources/method-skill.ts";
-import {
   classifyPackagedRoleTerminalResult,
   findLatestDurablePackagedRoleTerminal,
   hasNavigatorInfrastructureFailureBase,
@@ -2482,21 +2474,14 @@ async function publishAcceptedTerminalArtifacts(
   ];
 }
 
-type MethodPublicationOptions = {
-  readonly methodProvenance?: PackagedMethodSkillProvenance;
-  readonly methodSkillPath?: string;
-  readonly methodSkillConfiguredPath?: string;
-};
-
 /** Publish one accepted seat's report/evidence face from the shared leaf table. */
 export async function publishSeatAcceptedArtifacts(
   admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
   entries: readonly SessionEntry[] = [],
-  options: MethodPublicationOptions = {},
 ): Promise<TerminalArtifactRef[]> {
-  return publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries, options);
+  return publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries);
 }
 
 /**
@@ -2623,13 +2608,12 @@ async function settleSealedAcceptedOrToolResidual(
 /**
  * One settlement for every registered seat. The registry `settlement` leaf
  * picks sealed ledger, sealed-or-residual, or the accepted-tool scan.
- * Seat evidence and the observed-method tail stay on the artifact face.
+ * Seat evidence stays on the artifact face.
  */
 async function settleSeat(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined,
-  options: MethodPublicationOptions,
 ): Promise<TerminalResult | undefined> {
   const record = packagedRoleMetadata(admitted.role);
   if (record === undefined) {
@@ -2642,7 +2626,7 @@ async function settleSeat(
     roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
     coordinates: DurablePrincipalCoordinates,
     entries: readonly SessionEntry[],
-  ) => publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries, options);
+  ) => publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries);
   if (record.settlement === "residual") {
     return settleSealedAcceptedOrToolResidual(
       admitted,
@@ -2669,10 +2653,10 @@ async function settleSeat(
 export async function trySettleSeatTerminalResult(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  options: MethodPublicationOptions = {},
+  _obsoleteMethodPublication?: object,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleSeat(admitted, authority, scope, options);
+  return settleSeat(admitted, authority, scope);
 }
 
 /**
@@ -2682,10 +2666,10 @@ export async function trySettleSeatTerminalResult(
 export async function settleSeatTerminalResult(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  options: MethodPublicationOptions = {},
+  _obsoleteMethodPublication?: object,
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleSeat(admitted, authority, scope, options);
+  const settled = await settleSeat(admitted, authority, scope);
   if (settled === undefined) {
     const label = admitted.role.charAt(0).toUpperCase() + admitted.role.slice(1);
     throw new Error(
@@ -2693,71 +2677,6 @@ export async function settleSeatTerminalResult(
     );
   }
   return settled;
-}
-
-function sessionMessageText(message: SessionMessage | undefined): string {
-  if (message === undefined) return "";
-  if (typeof message.content === "string") return message.content;
-  if (!Array.isArray(message.content)) return "";
-  const parts: string[] = [];
-  for (const part of message.content) {
-    if (
-      typeof part === "object" &&
-      part !== null &&
-      !Array.isArray(part) &&
-      (part as { type?: unknown }).type === "text" &&
-      typeof (part as { text?: unknown }).text === "string"
-    ) {
-      parts.push((part as { text: string }).text);
-    }
-  }
-  return parts.join("\n");
-}
-
-/**
- * Locations a loaded packaged method may be observed at.
- * The name is the loaded material; the configured path is the package copy.
- */
-export function observedMethodSkillOptions(
-  packageRoot: string,
-  material: PackagedMethodSkillMaterial,
-): {
-  readonly methodProvenance: PackagedMethodSkillProvenance;
-  readonly methodSkillPath: string;
-  readonly methodSkillConfiguredPath: string;
-} {
-  return {
-    methodProvenance: material.provenance,
-    methodSkillPath: material.skillPath,
-    methodSkillConfiguredPath: resolvePackagedMethodSkillPath(packageRoot, material.name),
-  };
-}
-
-/**
- * Observe packaged method Skill expansions from the session.
- * The skill name is the caller's packaged method; home locations never count.
- */
-function extractObservedMethodInvocations(
-  entries: readonly SessionEntry[],
-  options: {
-    readonly name: PackagedMethodSkillName;
-    readonly allowedLocations: readonly string[];
-  },
-): readonly ObservedPackagedMethodSkillInvocation[] {
-  const observed: ObservedPackagedMethodSkillInvocation[] = [];
-  for (const entry of entries) {
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "user") continue;
-    const text = sessionMessageText(message);
-    if (text.length === 0) continue;
-    const hit = observePackagedMethodSkillInvocation(text, {
-      name: options.name,
-      allowedLocations: options.allowedLocations,
-    });
-    if (hit !== undefined) observed.push(hit);
-  }
-  return Object.freeze(observed);
 }
 
 /**
@@ -2834,49 +2753,11 @@ function doctorReportFacts(
   };
 }
 
-function observedMethodTail(
-  face: PackagedArtifactFace,
-  entries: readonly SessionEntry[],
-  options: {
-    readonly methodProvenance?: PackagedMethodSkillProvenance;
-    readonly methodSkillPath?: string;
-    readonly methodSkillConfiguredPath?: string;
-  },
-): Record<string, unknown> {
-  if (face.method === undefined) return {};
-  if (face.method === "optional") {
-    return options.methodProvenance === undefined
-      ? {}
-      : { methodProvenance: options.methodProvenance };
-  }
-  if (
-    options.methodProvenance === undefined
-    || options.methodSkillPath === undefined
-    || options.methodSkillConfiguredPath === undefined
-  ) {
-    throw new Error("observed method publication is missing packaged method coordinates");
-  }
-  const methodInvocations = extractObservedMethodInvocations(entries, {
-    name: options.methodProvenance.name,
-    allowedLocations: [options.methodSkillPath, options.methodSkillConfiguredPath],
-  });
-  return {
-    methodProvenance: options.methodProvenance,
-    methodInvocationObserved: methodInvocations.length > 0,
-    methodInvocations,
-  };
-}
-
 async function publishDeclaredSeatArtifacts(
   admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
   entries: readonly SessionEntry[],
-  options: {
-    readonly methodProvenance?: PackagedMethodSkillProvenance;
-    readonly methodSkillPath?: string;
-    readonly methodSkillConfiguredPath?: string;
-  } = {},
 ): Promise<TerminalArtifactRef[]> {
   const face = seatArtifactFace(admitted.role);
   const phase = face.reportPhase === true
@@ -2898,7 +2779,6 @@ async function publishDeclaredSeatArtifacts(
       sessionFile: coordinates.sessionFile,
       admittedRequestPath: admitted.admittedRequestPath,
       attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-      ...observedMethodTail(face, entries, options),
     },
   });
 }
@@ -3040,18 +2920,8 @@ export async function trySettlePublicSeat(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope: { readonly courtAttemptId?: string } | undefined,
-  material: PackagedMethodSkillMaterial | undefined,
-  packageRoot: string,
 ): Promise<TerminalResult | undefined> {
-  const face = seatArtifactFace(admitted.role);
-  if (face.method === "observed" && material === undefined) return undefined;
-  const options: MethodPublicationOptions =
-    face.method === "observed" && material !== undefined
-      ? observedMethodSkillOptions(packageRoot, material)
-      : face.method === "optional" && material !== undefined
-        ? { methodProvenance: material.provenance }
-        : {};
-  return settleSeat(admitted, authority, scope, options);
+  return settleSeat(admitted, authority, scope);
 }
 
 /**

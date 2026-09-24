@@ -42,7 +42,6 @@ export type PackagedArtifactFace = {
   readonly reportPhase?: true;
   readonly evidenceRole?: true;
   readonly leaves: readonly PackagedArtifactLeaf[];
-  readonly method?: "optional" | "observed";
   readonly doctorReportFacts?: true;
 };
 
@@ -132,7 +131,6 @@ export const PUBLIC_ROLE_RECORDS = [
         { key: "prerequisitesPath", omitUndefined: true },
         { key: "prerequisites" },
       ],
-      method: "observed",
     },
     boardPlacement: "marshal",
     activationFlags: [
@@ -170,7 +168,6 @@ export const PUBLIC_ROLE_RECORDS = [
         { key: "phase" },
         { key: "taskPath" },
       ],
-      method: "optional",
     },
     activationFlags: [
       { field: "taskPath", flag: "ak-coder-task", binds: "input" },
@@ -212,7 +209,6 @@ export const PUBLIC_ROLE_RECORDS = [
         { key: "authorityRefs", copyArray: true },
         { key: "callerProvenance", callerProvenance: true },
       ],
-      method: "observed",
     },
     /** Frozen base/lens/authority become the initial prompt; instruction follows. */
     transportPrompt: "skill-args",
@@ -324,7 +320,6 @@ export const PUBLIC_ROLE_RECORDS = [
         { key: "mergerInputPath" },
         { key: "derived" },
       ],
-      method: "observed",
     },
     activationFlags: [
       { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },

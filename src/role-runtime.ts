@@ -1374,7 +1374,7 @@ export function createRoleRuntimeExtension(
       // Reviewer: recover original request; Pi argv may already carry native form.
       if (
         admitted
-        && activeReviewerParent !== undefined
+        && activeReviewerParent?.skillBinding !== undefined
         && selectedRole === role
         && reviewerOriginalRequest === undefined
       ) {
@@ -1438,7 +1438,7 @@ export function createRoleRuntimeExtension(
       }
       navigatorAttendance?.prepare();
       // Envelope-owned Reviewer expansion capture + parent prompt assembly (no role-module callback).
-      if (activeReviewerParent !== undefined && selectedRole === role) {
+      if (activeReviewerParent?.skillBinding !== undefined && selectedRole === role) {
         if (!reviewerExpansionCaptured) {
           if (reviewerOriginalRequest !== undefined) {
             activeReviewerParent.skillBinding.captureExpansion(

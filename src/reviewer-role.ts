@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
-import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
+import { isCanonicalSkillMissing, type AnyCanonicalSkillBinding, type CanonicalSkillBinding } from "./canonical-skill-binding.ts";
 export type { CanonicalSkillBinding };
 import { REVIEWER_OUTPUT_TOOL_NAME, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
@@ -68,7 +68,7 @@ export type ReviewerActivation = Readonly<{
   fixedBaseRevision: string;
   soul: string;
   /** Frozen ak-cross-m-review binding — envelope owns expansion capture against this data. */
-  skillBinding: CanonicalSkillBinding<"ak-cross-m-review">;
+  skillBinding?: CanonicalSkillBinding<"ak-cross-m-review">;
 }>;
 
 /**
@@ -93,15 +93,20 @@ export function createReviewerRoleRuntime(
       soul = (await dependencies.loadSoul()).trim();
       if (!soul) throw new Error("Reviewer soul is empty");
       fixedBaseRevision = admitted.baseRevision;
-      const loaded = await dependencies.loadCanonicalSkillBinding("ak-cross-m-review");
-      if (loaded.name !== "ak-cross-m-review") throw new Error("Canonical Skill binding loader returned tdd for ak-cross-m-review");
-      binding = loaded;
+      try {
+        const loaded = await dependencies.loadCanonicalSkillBinding("ak-cross-m-review");
+        if (loaded.name !== "ak-cross-m-review") throw new Error("Canonical Skill binding loader returned tdd for ak-cross-m-review");
+        binding = loaded;
+      } catch (error) {
+        if (!isCanonicalSkillMissing(error)) throw error;
+        binding = undefined;
+      }
 
       if (!registered) {
         registered = true;
         pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台终局回执。本席自调 ak-cross-m-review skill。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
           async execute(_id: string, parameters: unknown): Promise<HostToolResult<unknown>> {
-            if (!soul || !binding) throw new Error("御史台输入未装载");
+            if (!soul) throw new Error("御史台输入未装载");
             return {
               content: [],
               details: parameters,
@@ -115,7 +120,7 @@ export function createReviewerRoleRuntime(
       return Object.freeze({
         fixedBaseRevision: activatedBase,
         soul: activatedSoul,
-        skillBinding: activatedBinding,
+        ...(activatedBinding === undefined ? {} : { skillBinding: activatedBinding }),
       });
     },
   };

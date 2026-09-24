@@ -75,12 +75,19 @@ export class CanonicalSkillUnavailableError extends Error {
   }
 }
 
+export function isCanonicalSkillMissing(error: unknown): error is CanonicalSkillUnavailableError {
+  if (!(error instanceof CanonicalSkillUnavailableError)) return false;
+  const cause = error.cause;
+  return typeof cause === "object" && cause !== null && "code" in cause
+    && ((cause as { code?: unknown }).code === "ENOENT" || (cause as { code?: unknown }).code === "ENOTDIR");
+}
+
 export async function loadCanonicalSkillBinding(
   name: CanonicalSkillName,
 ): Promise<AnyCanonicalSkillBinding> {
   const configuredPath = resolve(
     homedir(),
-    `.agents/skills/${name}/SKILL.md`,
+    `.pi/agent/skills/${name}/SKILL.md`,
   );
   let path: string;
   let raw: string;

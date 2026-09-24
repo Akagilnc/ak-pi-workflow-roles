@@ -74,7 +74,7 @@ export class ExplicitInternalActivationError extends Error {
   }
 }
 
-/** Packaged method skill binding (zero/one/many). */
+/** Required machine-installed method Skill (zero/one/many). */
 export type MethodBinding = {
   readonly kind: "skill";
   readonly path: string;

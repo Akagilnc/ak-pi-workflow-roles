@@ -9,11 +9,8 @@ import type {
   RoleTurnActivation,
   RoleTurnRequest,
 } from "../host-contracts.ts";
+import type { PackagedMethodSkillName } from "../package-resources/method-skill.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
-import {
-  resolvePackagedMethodSkillPath,
-  type PackagedMethodSkillName,
-} from "../package-resources/method-skill.ts";
 import {
   packagedRoleActivationFlags,
   packagedRoleMetadata,
@@ -33,6 +30,7 @@ export type ResumeModelConfig = {
 export type RoleTurnRequestProjectionOptions = {
   packageRoot: string;
   home: string;
+  host?: string;
   agentDir: string;
   model?: SeatModelConfig;
   engine?: string;
@@ -150,7 +148,8 @@ function activationForAdmitted(admitted: AdmittedRoleInvocation): RoleTurnActiva
 /** Skill bindings declared on the composition-root record for this admitted run. */
 function methodBindings(
   admitted: AdmittedRoleInvocation,
-  packageRoot: string,
+  home: string,
+  host: string | undefined,
 ): readonly MethodBinding[] {
   const record = packagedRoleMetadata(admitted.role);
   const names: PackagedMethodSkillName[] = [];
@@ -159,22 +158,28 @@ function methodBindings(
   }
   const apply = packagedSettleSkill(admitted);
   if (apply !== undefined && !names.includes(apply)) names.push(apply);
+  const root = host === "claude" || host === "claude-code"
+    ? ".claude/skills"
+    : host === "pi" || host === undefined
+      ? ".pi/agent/skills"
+      : ".agents/skills";
   return names.map((name) => ({
     kind: "skill" as const,
-    path: resolvePackagedMethodSkillPath(packageRoot, name),
+    path: `${home}/${root}/${name}/SKILL.md`,
   }));
 }
 
 /** Registry activation and method bindings for one admitted public seat. */
 export function admittedSeatTurnDetails(
   admitted: AdmittedRoleInvocation,
-  packageRoot: string,
+  home: string,
+  host: string | undefined,
 ): {
   readonly activation: RoleTurnActivation;
   readonly methods: readonly MethodBinding[];
 } {
   return {
     activation: activationForAdmitted(admitted),
-    methods: methodBindings(admitted, packageRoot),
+    methods: methodBindings(admitted, home, host),
   };
 }

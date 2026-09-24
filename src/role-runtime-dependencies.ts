@@ -7,7 +7,7 @@ import { loadDoctorCase } from "./doctor-evidence.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "./navigator-attendance.ts";
 import { loadNavigatorWorkContext } from "./navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "./notary-source-run.ts";
-import { loadPackagedCanonicalSkillBinding } from "./package-resources/method-skill-binding.ts";
+import { loadCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import { formatNavigatorRoleHelp, type RoleRuntimeDependencies } from "./role-runtime.ts";
 import {
   loadAuditorReferenceMaterialsFromSubjectInput,
@@ -61,9 +61,9 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     async loadCanonicalSkillBinding(name) {
       switch (name) {
         case "tdd":
-          return loadPackagedCanonicalSkillBinding(packageRoot, name);
+          return loadCanonicalSkillBinding(name);
         case "ak-cross-m-review":
-          return loadPackagedCanonicalSkillBinding(packageRoot, name);
+          return loadCanonicalSkillBinding(name);
         default: {
           const unexpected: never = name;
           throw new Error(`Canonical skill is not packaged: ${String(unexpected)}`);

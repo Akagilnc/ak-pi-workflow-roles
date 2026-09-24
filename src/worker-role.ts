@@ -8,6 +8,7 @@ import type {
   AnyCanonicalSkillBinding,
   CanonicalSkillBinding,
 } from "./canonical-skill-binding.ts";
+import { isCanonicalSkillMissing } from "./canonical-skill-binding.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
 import { projectGatekeeperEscalation } from "./audit-escalation.ts";
 import { GatekeeperDecisionError } from "./submission-errors.ts";
@@ -411,8 +412,12 @@ export function createCoderRoleRuntime(
           }
           binding = loaded;
         } catch (error) {
-          if (ctx === undefined) throw error;
-          hostActions.failInfrastructure(error, ctx);
+          if (isCanonicalSkillMissing(error)) {
+            binding = undefined;
+          } else {
+            if (ctx === undefined) throw error;
+            hostActions.failInfrastructure(error, ctx);
+          }
         }
       }
 
