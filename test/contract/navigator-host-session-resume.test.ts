@@ -15,11 +15,13 @@ import {
   readNavigatorHostRunPointer,
   runIdFromNavigatorDirectory,
 } from "../../src/navigator-public-session.ts";
-import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
+import { renderSystemPromptOverride } from "../../src/prepared-role-turn.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
-import { createNavigatorRoleRuntime } from "../../src/role-runtime.ts";
+import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 
 test("runId is derived from navigator run directory basename", () => {
   assert.equal(runIdFromNavigatorDirectory("/book/runs/01abc@navigator"), "01abc");
@@ -427,56 +429,30 @@ test("fresh navigator settlement keeps subject and authority on the nest base", 
       assert.equal(stored.authority, authority);
     }
 
-    const starts: Array<(
-      event: { prompt: string; systemPrompt: string; systemPromptOptions: Record<string, never> },
-      ctx: unknown,
-    ) => Promise<{ systemPrompt?: string } | undefined>> = [];
-    const tools: Array<{ name: string }> = [];
-    const pi = {
-      on(name: string, handler: (
-        event: { prompt: string; systemPrompt: string; systemPromptOptions: Record<string, never> },
-        ctx: unknown,
-      ) => Promise<{ systemPrompt?: string } | undefined>) {
-        if (name === "before_agent_start") starts.push(handler);
+    const delivered = summons[0] ?? "";
+    const runDirectory = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navdeliver@navigator");
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    const prepared = await prepareRoleEnvelope({
+      request: {
+        principal: fixturePrincipal(join(runDirectory, "session")),
+        activation: { role: "navigator" },
+        methods: [],
+        continuation: { kind: "initial", prompt: delivered },
+        cwd: root,
+        home: root,
+        agentDir: join(root, "agent"),
+        runDirectory,
       },
-      registerFlag() {},
-      getFlag() { return undefined; },
-      registerTool(tool: { name: string }) { tools.push(tool); },
-      getAllTools() { return tools; },
-      setActiveTools() {},
-      getActiveTools() { return []; },
-    };
-    const { host } = createPiRoleHostAdapter(pi as never);
-    await createNavigatorRoleRuntime(host, {
-      loadSoul: async () => "navigator soul",
-      loadRoutePlaybook: async () => "route playbook",
-    }).activate();
-    const ctx = {
-      cwd: root,
-      mode: "agent",
-      sessionManager: {
-        getLeafEntry() { return undefined; },
-        getLeafId() { return null; },
-        getEntries() { return []; },
-        getSessionDir() { return parentRun; },
-        getSessionFile() { return join(parentRun, "session.jsonl"); },
-        getHeader() { return null; },
-        setSessionFile() {},
-      },
-    };
-    let systemPrompt = "";
-    for (const argv of summons) {
-      systemPrompt = "";
-      for (const start of starts) {
-        const folded = await start({
-          prompt: argv,
-          systemPrompt,
-          systemPromptOptions: {},
-        }, ctx);
-        if (typeof folded?.systemPrompt === "string") systemPrompt = folded.systemPrompt;
-      }
-      assert.equal(systemPrompt.includes(subject), true);
-      assert.equal(systemPrompt.includes(authority), true);
+      dependencies: createRoleRuntimeDependencies(packageRoot),
+      socketPath: join(root, "mcp.sock"),
+    });
+    try {
+      assert.equal(prepared.prompt, delivered);
+      const modelInput = renderSystemPromptOverride(prepared.systemPrompt);
+      assert.equal(modelInput.includes(subject), true);
+      assert.equal(modelInput.includes(authority), true);
+    } finally {
+      await prepared.dispose?.();
     }
     await nav.dispose();
   });
