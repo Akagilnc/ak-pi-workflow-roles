@@ -878,7 +878,7 @@ test("diarist escalation pauses Secretariat, whose final ticket does not rebind 
         diaristTurns += 1;
         return courtDiaristWithDetails(diaristTurns === 1
           ? { status: "escalate", reason: "uncertain bounds", ticketNumber: 923 }
-          : { status: "converged", ticketNumber: 923 })(args, options);
+          : { status: "completed", ticketNumber: 923 })(args, options);
       },
       nestedDiaristRunner: courtDiaristWithDetails({ status: "completed", ticketNumber: 924 }),
       countersignSequence: [{ details: { status: "converged", note: "署" } }],
@@ -911,6 +911,28 @@ test("diarist escalation pauses Secretariat, whose final ticket does not rebind 
     assert.equal(parentDirectory, join(book, "924", "runs", `${parentRunId}@secretariat`));
     assert.equal(await findRunDirectoryById(home, result.terminal.runId!, undefined, "diarist"),
       join(book, "923", "runs", `${result.terminal.runId}@diarist`));
+  });
+});
+
+test("preliminary diarist technical failure settles the admitted Secretariat run", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const gateCalls: Array<{ kind: string }> = [];
+    const host = secretariatHostDrivingRealTools({
+      packageRoot, home, gateCalls, submissionGateHost: "codex",
+      parentDiaristRunner: async () => { throw new Error("diarist host unavailable"); },
+      countersignSequence: [], steps: [],
+    });
+    const result = await runAkRole(
+      ["secretariat", "--model", "test/caller-seat:high", "--project", project, "请辨认本票。"],
+      { home, packageRoot, cwd: project, io: captureIo().io,
+        createRunId: () => "01a0sec1025-0000-7000-8000-000000000003",
+        roleTurnHost: host, hostAdapters: [adapter("pi", host)] },
+    );
+    assert.ok(result.terminal, "failure is settled in the admitted run, not thrown from the CLI");
+    assert.equal(gateCalls.length, 0);
   });
 });
 

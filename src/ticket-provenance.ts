@@ -4,7 +4,7 @@
  * 读取时折叠全部提交得到累计 sessions 与对话视图。既有首行册子头＋裸对话行的
  * snapshot 继续可读，但后续不为升级回写旧卷。
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -243,6 +243,22 @@ export async function readTicketProvenance(
     throw error;
   }
   const physical = text.split("\n");
+  // Relocation leaves the immutable source rows in place. The last assignment
+  // for each row identity determines which ticket presents it on the read face.
+  const assignedTicket = new Map<string, number>();
+  for (const raw of physical) {
+    try {
+      const row: unknown = JSON.parse(raw);
+      if (row === null || typeof row !== "object" || Array.isArray(row)) continue;
+      const payload = (row as { payload?: unknown }).payload;
+      if (payload === null || typeof payload !== "object" || Array.isArray(payload)) continue;
+      const move = payload as { type?: unknown; ticketNumber?: unknown; records?: unknown };
+      if (move.type !== "ticket-provenance-rehome" || !isSafePositiveTicketNumber(move.ticketNumber) || !Array.isArray(move.records)) continue;
+      for (const identity of move.records) {
+        if (typeof identity === "string") assignedTicket.set(identity, move.ticketNumber);
+      }
+    } catch { /* Preserve malformed stock below. */ }
+  }
   let header: TicketProvenanceHeader | undefined;
   const lines: TicketProvenanceLine[] = [];
   const unprojectedRaw: string[] = [];
@@ -285,6 +301,12 @@ export async function readTicketProvenance(
       // Stock / damaged rows stay unprojected — keep raw bytes on rewrite.
       unprojectedRaw.push(raw);
       continue;
+    }
+    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+      const row = parsed as { identity?: unknown; payload?: { type?: unknown } };
+      if (row.payload?.type === "ticket-provenance-rehome") continue;
+      if (typeof row.identity === "string" && assignedTicket.has(row.identity)
+        && assignedTicket.get(row.identity) !== ticketNumber) continue;
     }
     if (!sawFirst) {
       sawFirst = true;
@@ -378,14 +400,45 @@ export async function rehomeRunOwnedTicketProvenance(
   home: string,
 ): Promise<void> {
   const source = join(runDirectory, "records.jsonl");
-  let content: string;
+  const prior = Number(basename(dirname(dirname(runDirectory))));
+  const ownerRunId = basename(runDirectory).split("@")[0];
+  let content = "";
   try {
     content = await readFile(source, "utf8");
   } catch (error) {
-    if (errnoCode(error) === "ENOENT") return;
-    throw error;
+    if (errnoCode(error) !== "ENOENT") throw error;
   }
-  appendSitianRecordBlock(ticketProvenanceRecordInput(ticketNumber, cwd, home), content);
+  if (isSafePositiveTicketNumber(prior) && prior !== ticketNumber) {
+    const oldVolume = resolveTicketProvenanceVolume(prior, cwd, home);
+    try {
+      const oldContent = await readFile(oldVolume.recordFile, "utf8");
+      content += oldContent.split("\n").filter((raw) => {
+        try {
+          const row = JSON.parse(raw) as { payload?: { ownerRunId?: unknown } };
+          return row.payload?.ownerRunId === ownerRunId;
+        } catch { return false; }
+      }).join("\n") + "\n";
+    } catch (error) {
+      if (errnoCode(error) !== "ENOENT") throw error;
+    }
+  }
+  if (content.trim() === "") return;
+  const target = ticketProvenanceRecordInput(ticketNumber, cwd, home);
+  appendSitianRecordBlock(target, content);
+  if (!isSafePositiveTicketNumber(prior) || prior === ticketNumber) return;
+  const records = content.split("\n").flatMap((raw) => {
+    try {
+      const row: unknown = JSON.parse(raw);
+      return row !== null && typeof row === "object" && !Array.isArray(row)
+        && typeof (row as { identity?: unknown }).identity === "string"
+        ? [(row as { identity: string }).identity] : [];
+    } catch { return []; }
+  });
+  if (records.length === 0) return;
+  const identity = `ticket-provenance-rehome:${randomUUID()}`;
+  const payload = { type: "ticket-provenance-rehome", ticketNumber, records };
+  appendSitianRecord({ ...target, identity, payload });
+  appendSitianRecord({ ...ticketProvenanceRecordInput(prior, cwd, home), identity, payload });
 }
 
 export type ReprojectTicketProvenanceResult = {
@@ -831,6 +884,7 @@ export async function reprojectTicketProvenance(input: {
     identity,
     payload: {
       type: "ticket-provenance-append",
+      ...(input.runDirectory === undefined ? {} : { ownerRunId: basename(input.runDirectory).split("@")[0] }),
       sessions: merged.sessions,
       lines: [...fresh, ...raw],
     },

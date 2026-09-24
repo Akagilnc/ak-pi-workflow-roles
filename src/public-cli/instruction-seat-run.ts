@@ -738,18 +738,28 @@ export async function runPublicInstructionSeat(
   const runAdmitted = async (): Promise<SeatRunResult> => {
     await markRunAdmitted(admitted, env.principalAuthority);
     if (role === "secretariat") {
-      const outcome = await invokeCourtDiarist({
-        instruction: parsed.instruction ?? "",
-        projectRoot: admitted.projectRoot,
-        failureLabel: "secretariat unbound summons",
-        attachmentPaths: admitted.attachments.map((attachment) => attachment.frozenPath),
-        correlationId: admitted.runId,
-      }, env, io);
+      let outcome: Awaited<ReturnType<typeof invokeCourtDiarist>>;
+      try {
+        outcome = await invokeCourtDiarist({
+          instruction: parsed.instruction ?? "",
+          projectRoot: admitted.projectRoot,
+          failureLabel: "secretariat unbound summons",
+          attachmentPaths: admitted.attachments.map((attachment) => attachment.frozenPath),
+          correlationId: admitted.runId,
+        }, env, io);
+      } catch (error) {
+        return await presentControlledFailure(admitted, {
+          timedOut: false, code: null, stderr: "", thrown: error,
+        }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
+      }
       if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
         await recordChildDiaristRun(admitted, outcome.admitted.runId);
       }
       if (outcome.failedWithoutEscalate !== undefined) {
-        throw new Error(outcome.failedWithoutEscalate.diagnostic);
+        return await presentControlledFailure(admitted, {
+          timedOut: false, code: null, stderr: "",
+          thrown: new Error(outcome.failedWithoutEscalate.diagnostic),
+        }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
       }
       if (outcome.identity.kind === "escalate" && outcome.terminal !== undefined) {
         io.stdout(formatTerminalResult(outcome.terminal));

@@ -2424,6 +2424,20 @@ test("pre-bound diarist records its own ticket assertion, including null", async
         assert.equal(existsSync(runDir), true);
         const admitted = JSON.parse(await readFile(join(runDir, "admitted-request.json"), "utf8"));
         assert.equal(admitted.ticketNumber, assertedTicket);
+        const correctionIo = captureIo();
+        const corrected = await runAkRole(["resume", "--model", "test/caller-seat:high", result.terminal!.runId!], {
+          home, packageRoot, cwd: project, io: correctionIo.io,
+          roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            packageRoot, principalAuthority: piDurablePrincipalAuthority,
+            piRunner: diaristEnvelopeRunner({ status: "completed", ticketNumber: TICKET + 2,
+              sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }],
+            }),
+          }),
+        });
+        assert.equal(corrected.exitCode, 0, correctionIo.stderr.join(""));
+        assert.equal((await readTicketProvenance(assertedTicket, project, home)).lines.length, 0,
+          "superseded ticket no longer owns the run's diary");
+        assert.equal((await readTicketProvenance(TICKET + 2, project, home)).lines[0]?.id, "bound-assertion-owner");
       }
     });
   }

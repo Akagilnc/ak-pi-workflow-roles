@@ -1230,45 +1230,26 @@ export async function runAkRole(
         }),
         io,
       );
-      const parentRunId = result.admitted?.correlationId;
-      const parentRole = parentRunId === undefined ? undefined : await peekRoleRunRole(home, parentRunId);
-      if (
-        result.exitCode === 0 && parentRunId !== undefined && result.terminal !== undefined
-        && result.terminal.roleOutcome.kind === "accepted"
-        && !courtDiaristEscalated(result.terminal.roleOutcome)
-        && (parentRole === "secretariat" || parentRole === "countersign")
+      let current = result;
+      while (
+        current.exitCode === 0 && current.admitted?.correlationId !== undefined
+        && current.terminal?.roleOutcome.kind === "accepted"
+        && !courtDiaristEscalated(current.terminal.roleOutcome)
       ) {
+        const parentRunId = current.admitted.correlationId;
+        const parentRole = await peekRoleRunRole(home, parentRunId);
+        if (parentRole === undefined) break;
         const parentSeat = resolveEffectiveSeat(config, parentRole, credentials, invocationFromParsed(parsed));
         const parentEnv = createRoleEnvironment(env, {
           role: parentRole, home, agentDir, cwd, credentials, seat: parentSeat, config,
         });
-        const continued = result.admitted?.role === "diarist"
-          ? await continueParentAfterDiarist(parentRunId, result.admitted, parentEnv, io)
+        const continued = current.admitted.role === "diarist" && (parentRole === "secretariat" || parentRole === "countersign")
+          ? await continueParentAfterDiarist(parentRunId, current.admitted, parentEnv, io)
           : await runPublicInstructionSeatResume({ runId: parentRunId }, parentEnv, io);
-        if (continued !== undefined) {
-          // A Countersign gate can have paused its Secretariat caller while its
-          // own diarist was up for decision. Continue that caller after the
-          // Countersign submission; no second escalation channel.
-          const callerRunId = continued.admitted?.role === "countersign"
-            ? continued.admitted.correlationId : undefined;
-          const callerRole = callerRunId === undefined ? undefined : await peekRoleRunRole(home, callerRunId);
-          if (
-            continued.exitCode === 0 && continued.terminal?.roleOutcome.kind === "accepted"
-            && callerRunId !== undefined && callerRole === "secretariat"
-          ) {
-            const callerSeat = resolveEffectiveSeat(config, callerRole, credentials, invocationFromParsed(parsed));
-            return cliResultFromRoleRun(await runPublicInstructionSeatResume(
-              { runId: callerRunId },
-              createRoleEnvironment(env, {
-                role: callerRole, home, agentDir, cwd, credentials, seat: callerSeat, config,
-              }),
-              io,
-            ));
-          }
-          return cliResultFromRoleRun(continued);
-        }
+        if (continued === undefined) break;
+        current = continued;
       }
-      return cliResultFromRoleRun(result);
+      return cliResultFromRoleRun(current);
     }
 
     if (

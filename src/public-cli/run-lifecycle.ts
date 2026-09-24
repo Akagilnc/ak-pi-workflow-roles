@@ -1145,7 +1145,9 @@ export async function findLatestRunIdForSeatTicket(input: {
     const runId = entry.slice(0, entry.length - suffix.length);
     if (runId.length === 0) continue;
     const parentPath = await readRunParentPath(runDirectory);
-    if (parentPath !== input.parentRunPath) continue;
+    // The parent's ticket can change after this child was admitted. Within one
+    // book the run leaf is its stable identity; directory placement is not.
+    if (parentPath !== input.parentRunPath && basename(parentPath ?? "") !== basename(input.parentRunPath)) continue;
     // Durable fact: never resume-select a provisional that never formed principal.
     if (!(await runHasFormedSessionPrincipal(runDirectory))) continue;
     if (best === undefined || runId > best) best = runId;
