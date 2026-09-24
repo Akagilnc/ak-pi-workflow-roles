@@ -2565,25 +2565,7 @@ test("public resume failures point to their recorded diagnostics", async () => {
         projectRoot: project,
       });
       await rm(join(unreadable.runDirectory, "admitted-request.json"));
-      const callsBeforeUnreadable = seen.length;
-      const unreadableResume = await resume(["resume", "--model", "test/caller-seat:high", "1058-unreadable"]);
-      assert.notEqual(unreadableResume.exitCode, 0);
-      assert.equal(seen.length, callsBeforeUnreadable);
-      assert.equal(unreadableResume.stderr.includes(errorRecord(unreadable.runDirectory)), true);
-      const unreadableRecord = JSON.parse(await readFile(errorRecord(unreadable.runDirectory), "utf8")) as {
-        kind?: unknown;
-        runId?: unknown;
-        diagnostic?: unknown;
-        details?: unknown;
-      };
-      assert.equal(unreadableRecord.kind, "error");
-      assert.equal(unreadableRecord.runId, "1058-unreadable");
-      assert.equal(typeof unreadableRecord.diagnostic, "string");
-      assert.equal(
-        unreadableRecord.details !== null && typeof unreadableRecord.details === "object" && !Array.isArray(unreadableRecord.details),
-        true,
-      );
-      assert.equal(typeof (unreadableRecord.details as { error?: unknown }).error, "string");
+      await assertRecordedFailurePointer(unreadable.runDirectory, "1058-unreadable");
 
       const corruptRunState = await seed({
         runId: "1058-corrupt-run-state",
@@ -2623,12 +2605,20 @@ test("public resume failures point to their recorded diagnostics", async () => {
         session: true,
         projectRoot: project,
       });
+      const sessionBeforeSelectionFailure = await readFile(
+        seatSelectionFailure.sessionFile,
+        "utf8",
+      );
       const selectionFailureResult = await assertRecordedFailurePointer(
         seatSelectionFailure.runDirectory,
         "1058-seat-selection-failure",
         ["resume", "--host", "unregistered", "--model", "test/caller-seat:high", "1058-seat-selection-failure"],
       );
       assert.equal(selectionFailureResult.hostFailure?.kind, "host-unregistered");
+      assert.equal(
+        await readFile(seatSelectionFailure.sessionFile, "utf8"),
+        sessionBeforeSelectionFailure,
+      );
 
       const parent = await seed({
         runId: "1058-parent-preload-failure",
@@ -2717,12 +2707,7 @@ test("public resume failures point to their recorded diagnostics", async () => {
         true,
       );
 
-      const callsBeforeWorkspace = seen.length;
-      const noWorkspace = await resume(["resume", "--model", "test/caller-seat:high", "1058-no-workspace"]);
-      assert.notEqual(noWorkspace.exitCode, 0);
-      assert.equal(seen.length, callsBeforeWorkspace);
-      await readError(deletedWorkspace.runDirectory, "1058-no-workspace");
-      assert.equal(noWorkspace.stderr.includes(errorRecord(deletedWorkspace.runDirectory)), true);
+      await assertRecordedFailurePointer(deletedWorkspace.runDirectory, "1058-no-workspace");
 
       const callsBeforeSubject = seen.length;
       await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);

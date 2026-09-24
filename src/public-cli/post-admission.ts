@@ -6,7 +6,7 @@
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { randomUUID } from "node:crypto";
-import { stat, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -109,7 +109,6 @@ import {
   settleFailureTerminalResult,
   settleHostEndedNoReceipt,
   attachRecordedSubmissions,
-  publishFailureArtifacts,
   type ControlledFailure,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -1748,10 +1747,11 @@ export async function runPostAdmissionSeatResume<
     await presentResumeFailurePointer(
       input.io,
       error,
-      (failure) => publishResumeErrorPointer(
-        loaded.admitted,
-        input.env.principalAuthority,
+      (failure) => writeResumeDiagnosticFile(
+        loaded.admitted.runDirectory,
+        loaded.admitted.runId,
         failure,
+        loaded.admitted.role,
       ),
     );
     return { exitCode: error instanceof CliUsageError ? 2 : 1 };
@@ -1800,7 +1800,7 @@ async function pointExistingRunFailure(
     admittedRequestPath: record.admittedRequestPath,
   } as AdmittedRoleInvocation;
   await presentResumeFailurePointer(io, thrown, (failure) =>
-    publishResumeErrorPointer(admitted, authority, failure),
+    writeResumeDiagnosticFile(runDirectory, runId, failure, record.role),
   );
   return true;
 }
@@ -1855,42 +1855,6 @@ async function presentResumeFailurePointer(
       cause,
     }, io);
   }
-}
-
-async function existingSuccessReport(runDirectory: string): Promise<boolean> {
-  try {
-    const info = await stat(join(runDirectory, "artifacts", "report.json"));
-    return info.isFile();
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
-    throw error;
-  }
-}
-
-/**
- * Pre-dispatch resume failures are not a new terminal settlement.
- * publishFailureArtifacts clears the success face, including report.json.
- * When that face is already present, keep it and write the diagnostic aside.
- */
-async function publishResumeErrorPointer(
-  admitted: AdmittedRoleInvocation,
-  authority: DurablePrincipalAuthority,
-  failure: ControlledFailure,
-): Promise<string> {
-  if (await existingSuccessReport(admitted.runDirectory)) {
-    return await writeResumeDiagnosticFile(
-      admitted.runDirectory,
-      admitted.runId,
-      failure,
-      admitted.role,
-    );
-  }
-  const published = await publishFailureArtifacts(admitted, failure, authority);
-  const error = published.find((artifact) => artifact.kind === "error");
-  if (error === undefined) {
-    throw new Error("failure publication returned no error record");
-  }
-  return error.path;
 }
 
 async function writeResumeDiagnosticFile(
