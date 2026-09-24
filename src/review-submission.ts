@@ -1,8 +1,11 @@
 /** One shared terminating receipt contract for review officers (#1028 / #1055). */
-import { Type } from "typebox";
+import { Type, type TSchema } from "typebox";
 
 import { openToolObject } from "./open-tool-schema.ts";
-import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
+import {
+  INFRASTRUCTURE_FAILURE_DECLARATION_KEY,
+  withTerminatingOutputDeclarations,
+} from "./package-contracts/terminating-infrastructure.ts";
 
 export const REVIEW_SUBMISSION_OUTPUT_TOOL_NAME = "ak_submission_output" as const;
 
@@ -12,7 +15,7 @@ export type ReviewQueueWord = (typeof REVIEW_QUEUE_WORDS)[number];
 export const REVIEW_QUEUE_STATUSES: ReadonlySet<string> = new Set(REVIEW_QUEUE_WORDS);
 
 /** Open receipt: the queue reads only status; all other submitted fields ride unchanged. */
-export const reviewSubmissionSchema = withTerminatingOutputDeclarations(
+const reviewVerdictSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       status: Type.Union(
@@ -38,5 +41,22 @@ export const reviewSubmissionSchema = withTerminatingOutputDeclarations(
     { required: ["status"] },
   ),
 );
+
+/** Same tool, no review status: only a real infrastructure-failure declaration (#1055). */
+function reviewInfrastructureFailureSchema(verdict: TSchema & { properties?: Record<string, TSchema> }): TSchema {
+  const declaration = verdict.properties?.[INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
+  if (declaration === undefined) throw new Error("review schema lost the infrastructure failure declaration");
+  const branch = Type.Object(
+    { [INFRASTRUCTURE_FAILURE_DECLARATION_KEY]: declaration },
+    { additionalProperties: true },
+  );
+  (branch as unknown as { required: string[] }).required = [INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
+  return branch;
+}
+
+export const reviewSubmissionSchema = Type.Union([
+  reviewVerdictSchema,
+  reviewInfrastructureFailureSchema(reviewVerdictSchema),
+]);
 
 export type ReviewSubmission = { readonly status?: unknown; readonly [key: string]: unknown };

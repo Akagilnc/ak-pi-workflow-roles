@@ -4,7 +4,7 @@ import type { HostContext } from "./host-contracts.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { packagedGateStageLabel } from "./packaged-role-registry.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
-import { GatekeeperDecisionError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
+import { GatekeeperDecisionError, receivedDiscriminator, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { REVIEW_QUEUE_STATUSES } from "./review-submission.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
@@ -67,6 +67,8 @@ export type GatekeeperResult =
       readonly status: "needs_reask";
       readonly officer: GateOfficer;
       readonly receipt: unknown;
+      /** Discriminator the queue already read. Not written back onto the receipt. */
+      readonly receivedStatus?: unknown;
       readonly runId?: string;
     }
   | { readonly status: "no_receipt"; readonly stage: GateOfficer; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
@@ -233,7 +235,7 @@ function projectOfficerDecision(
   if (queueStatus === "continue" || queueStatus === "escalate") {
     return { status: queueStatus, officer, receipt };
   }
-  return { status: "needs_reask", officer, receipt };
+  return { status: "needs_reask", officer, receipt, receivedStatus: status };
 }
 
 /**
@@ -369,12 +371,14 @@ function projectOfficerTerminal(
       summoned,
     );
   }
+  const receipt = thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome);
   return withOfficerRunId(
     {
       status: "needs_reask",
       officer,
       // This-court receipt only (#879).
-      receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
+      receipt,
+      receivedStatus: receivedDiscriminator(receipt, "status"),
     },
     summoned,
   );

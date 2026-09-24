@@ -63,35 +63,40 @@ test("review officers expose one shared output tool and receipt schema", () => {
     [REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME],
   );
   assert.ok([countersignVerdictSchema, judgeVerdictSchema, notaryOutputSchema, auditorOutputSchema, inspectorOutputSchema].every((schema) => schema === reviewSubmissionSchema));
-  const shape = reviewSubmissionSchema as {
-    properties: Record<string, { description?: unknown; anyOf?: unknown }>;
+  const branches = (reviewSubmissionSchema as { anyOf?: Array<{
+    properties?: Record<string, { description?: unknown }>;
     required?: string[];
     additionalProperties?: unknown;
-  };
+  }> }).anyOf ?? [];
+  const shape = branches.find((branch) => branch.required?.includes("status"));
+  assert.ok(shape);
   assert.deepEqual(shape.required ?? [], ["status"]);
   assert.equal(shape.additionalProperties, true);
-  assert.equal(typeof shape.properties.status?.description, "string");
-  assert.ok(shape.properties.status?.description !== "");
+  assert.equal(typeof shape.properties?.status?.description, "string");
+  assert.ok(shape.properties?.status?.description !== "");
   for (const word of REVIEW_QUEUE_WORDS) {
     assert.equal(Value.Check(reviewSubmissionSchema, { status: word, extra: true }), true, word);
   }
   assert.equal(Value.Check(reviewSubmissionSchema, { note: "missing status" }), false);
   assert.equal(Value.Check(reviewSubmissionSchema, { status: "not-a-status" }), false);
+  assert.equal(Value.Check(reviewSubmissionSchema, { infrastructureFailure: { diagnostic: "disk full" } }), true);
   for (const field of ["fix", "classes", "decisionGate"]) {
-    assert.equal(typeof (shape.properties[field] as { description?: unknown }).description, "string");
+    assert.equal(typeof shape.properties?.[field]?.description, "string");
     assert.equal(shape.required?.includes(field) ?? false, false);
   }
   for (const field of ["fix", "classes", "decisionGate"]) {
     assert.equal(Value.Check(reviewSubmissionSchema, { status: "continue", [field]: "readable submission" }), true);
   }
   const closed = closeJsonSchemaForCodex(terminatingToolJsonSchema(reviewSubmissionSchema)) as {
-    required?: string[];
-    properties?: Record<string, unknown>;
+    anyOf?: Array<{ required?: string[]; properties?: Record<string, unknown> }>;
   };
-  assert.equal(closed.required?.includes("status"), true);
-  assert.equal(JSON.stringify(closed.properties?.status).includes('"null"'), false);
+  const closedVerdict = closed.anyOf?.find((branch) => branch.required?.includes("status"));
+  const closedFailure = closed.anyOf?.find((branch) => branch.required?.includes("infrastructureFailure") && !branch.required.includes("status"));
+  assert.ok(closedVerdict);
+  assert.ok(closedFailure);
+  assert.equal(JSON.stringify(closedVerdict.properties?.status).includes('"null"'), false);
   for (const word of REVIEW_QUEUE_WORDS) {
-    assert.equal(JSON.stringify(closed.properties?.status).includes(word), true);
+    assert.equal(JSON.stringify(closedVerdict.properties?.status).includes(word), true);
   }
 });
 
@@ -130,8 +135,8 @@ test("Countersign execute accepts as-is and terminates — sole-final barrier is
   await runtime.activate();
   const tool = h.tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
   assert.ok(tool);
-  const declared = tool.parameters as { required?: readonly string[] };
-  assert.equal(declared.required?.includes("status"), true);
+  const declared = tool.parameters as { anyOf?: Array<{ required?: readonly string[] }> };
+  assert.equal(declared.anyOf?.some((branch) => branch.required?.includes("status")), true);
 
   const result = await tool.execute(
     "one",

@@ -42,15 +42,22 @@ type Declared = {
   properties?: Record<string, unknown>;
   additionalProperties?: unknown;
 };
-type SchemaObj = { properties: Record<string, unknown> };
+type SchemaObj = { properties?: Record<string, unknown>; anyOf?: SchemaObj[] };
+
+function infrastructureDeclaration(schema: SchemaObj): Declared | undefined {
+  const direct = schema.properties?.[INFRASTRUCTURE_FAILURE_DECLARATION_KEY];
+  if (direct !== undefined && direct !== null && typeof direct === "object") return direct as Declared;
+  for (const branch of schema.anyOf ?? []) {
+    const found = infrastructureDeclaration(branch);
+    if (found !== undefined) return found;
+  }
+  return undefined;
+}
 
 test("every terminating output tool schema advertises the same nested infrastructure-failure declaration", () => {
   const shapes: string[] = [];
   for (const [name, schema] of TERMINATING_ROLE_SCHEMAS) {
-    const obj = schema as unknown as SchemaObj;
-    const declaration = obj.properties?.[INFRASTRUCTURE_FAILURE_DECLARATION_KEY] as
-      | Declared
-      | undefined;
+    const declaration = infrastructureDeclaration(schema as unknown as SchemaObj);
     assert.ok(
       declaration && typeof declaration === "object",
       `${name} must explicitly advertise an infrastructureFailure property`,
