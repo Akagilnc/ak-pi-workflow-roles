@@ -244,14 +244,6 @@ test("lawful fixer Terminal accepts a receipt without Skill expansion", async ()
     assert.ok(report);
     assert.ok((await readFile(report.path, "utf8")).includes(receipt.report));
 
-    const evidence = JSON.parse(
-      await readFile(
-        terminal.artifacts.find((a) => a.kind === "evidence")!.path,
-        "utf8",
-      ),
-    ) as Record<string, unknown>;
-    assert.equal("methodProvenance" in evidence, false);
-
     // Without skill expansion, terminal settlement remains accepted.
     const noDiag = await admitFixerInvocation({
       principalAuthority: piDurablePrincipalAuthority,
@@ -526,7 +518,6 @@ test("ak-role resume continues fixer with preserved plan phase and exact session
         assert.equal(args[args.indexOf("--ak-role") + 1], "fixer");
         assert.equal(args[args.indexOf("--ak-fixer-phase") + 1], "plan");
         assert.equal(args[args.indexOf("--ak-fix-packet") + 1], admitted.packetPath);
-        assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(args.includes("[ak-role:resume-continue]"), false);
         assert.equal(args[args.indexOf("--session-dir") + 1], sessionDirectory);

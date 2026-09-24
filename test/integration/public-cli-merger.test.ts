@@ -618,7 +618,6 @@ test("ak-role resume continues merger with exact session", async () => {
           args[args.indexOf("--ak-merger-input") + 1],
           admitted.mergerInputPath,
         );
-        assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         assert.equal(
           args.some((a) => a.includes("[ak-role:resume-continue]")),

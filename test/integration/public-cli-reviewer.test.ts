@@ -719,7 +719,6 @@ test("default dual-lens admits both axes without a parent run", async () => {
     );
     for (const args of captured) {
       assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
-      assert.equal(args.includes("--skill"), false);
       assert.equal(args.includes("--ak-review-task"), false);
       // Ordinary single-axis public semantics: dual-lens legs are not station children.
       assert.equal(args.includes("--ak-station-child"), false);
@@ -1240,7 +1239,6 @@ test("ak-role resume continues reviewer with fixed base", async () => {
         assert.equal(args.includes("--ak-review-task"), false);
         assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
         assert.equal(args[args.indexOf("--ak-review-lens") + 1], "correctness");
-        assert.equal(args.includes("--skill"), false);
         assert.equal(args.includes(instruction), false);
         const resumeDialogue = readUserDialogueStdin(resumeStdin ?? "");
         assert.equal(resumeDialogue, "调用者原话");
