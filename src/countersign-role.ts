@@ -11,14 +11,10 @@ export type { CountersignVerdict };
 // #836 r16 class 1: fix/note/decisionGate are LLM/human-read narrative content —
 // no code branches on their length or nested presence. `status` alone is the
 // machine discriminator the queue reads.
-// #836 (2026-09-11 御批 / ADR 0003 Amendment): registered-to-provider closed
-// value domains reject an unknown status before the submission
-// ledger ever records it, defeating 读不出三态→resume 说话者本人. Kept open
-// (Type.Unknown) like every other gate-queue status field in this package
-// (notary/auditor/gatekeeper/navigator); src/role-runtime.ts:997-1025 still
-// classifies the recorded value and reasks the countersign itself when it
-// isn't one of the three states — code, not the transport, does that work.
-/** 给事中票庭审读五问的交卷形状（ADR 0074）。 */
+// #1055: the three-state field is an enum+required host generation constraint
+// on reviewSubmissionSchema. Package execute still does not reject; an unreadable
+// value reasks the countersign itself with the received value.
+/** 给事中票庭审读五问的交卷形状（ADR 0074）；形状指引，非 schema 闸。 */
 export const countersignVerdictSchema = reviewSubmissionSchema;
 export type CountersignVerdictParameters = import("./review-submission.ts").ReviewSubmission;
 

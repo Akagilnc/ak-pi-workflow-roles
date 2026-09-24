@@ -36,8 +36,6 @@
     "schemas",
     "packets",
     "resources",
-    "!resources/methods",
-    "!resources/methods/**",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",

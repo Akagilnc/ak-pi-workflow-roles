@@ -1,19 +1,15 @@
 import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
 import type { Static } from "typebox";
-import { reviewSubmissionSchema } from "./review-submission.ts";
-import { GatekeeperDecisionError, ParentQueueReaskError } from "./submission-errors.ts";
+import { REVIEW_QUEUE_STATUSES, reviewSubmissionSchema } from "./review-submission.ts";
+import { GatekeeperDecisionError, ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { projectGatekeeperEscalation } from "./audit-escalation.ts";
 
 import { readableGateItem } from "./readable-gate-item.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
-  validateAcceptedJudgeDetails,
   type JudgeVerdict,
 } from "./package-contracts/judge-output.ts";
 
-const JUDGE_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]);
-const JUDGE_STATUS_REASK =
-  "status 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
 
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
@@ -25,8 +21,6 @@ export type { JudgeVerdict };
 // The shared open schema preserves role-specific prose without adding another contract.
 export const judgeVerdictSchema = reviewSubmissionSchema;
 
-type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
-
 export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;
 };
@@ -35,10 +29,6 @@ export type JudgeRoleHostActions = HostGatekeeperActions & {
   /** Preserve the first officer's pass as a separate model-visible result item if the second gate fails. */
   bindPriorGatePass(toolCallId: string, receipt: unknown): void;
 };
-
-export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
-  return validateAcceptedJudgeDetails(verdict);
-}
 
 
 export function createJudgeRoleRuntime(
@@ -70,19 +60,21 @@ export function createJudgeRoleRuntime(
               && typeof (parameters as Record<string, unknown>).status === "string"
                 ? (parameters as Record<string, unknown>).status as string
                 : undefined;
-            if (rawStatus === undefined || !JUDGE_QUEUE_STATUSES.has(rawStatus)) {
-              throw new ParentQueueReaskError(JUDGE_STATUS_REASK);
+            if (rawStatus === undefined || !REVIEW_QUEUE_STATUSES.has(rawStatus)) {
+              const received = parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
+                ? (parameters as Record<string, unknown>).status
+                : undefined;
+              throw new ParentQueueReaskError(unreadableDiscriminatorNotice("status", received));
             }
             if (rawStatus === "escalate") {
               // Parent escalate → throw to caller as-is; officers do not attend (#753 / #756).
-              const verdict = validateVerdict(parameters);
               return {
                 content: [],
-                details: verdict,
+                details: parameters,
                 terminate: true as const,
               };
             }
-            const verdict = validateVerdict(parameters);
+            // Queue membership above is the only three-state check. The receipt is not re-judged.
             // Candidate verdict is already on the parent session books as this
             // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
             // #753: 符宝郎内闸 — continue returns the raw receipt as a nonterminal tool result.
@@ -101,7 +93,7 @@ export function createJudgeRoleRuntime(
               if (draftPass?.status === "continue") {
                 return {
                   content: [{ type: "text" as const, text: readableGateItem(draftPass.receipt) }],
-                  details: verdict,
+                  details: parameters,
                   terminate: false,
                 };
               }
@@ -121,18 +113,18 @@ export function createJudgeRoleRuntime(
               if (compliancePass?.status === "continue") {
                 return {
                   content: [draftPass, compliancePass].filter((pass) => pass !== undefined).map((pass) => ({ type: "text" as const, text: readableGateItem(pass.receipt) })),
-                  details: verdict,
+                  details: parameters,
                   terminate: false,
                 };
               }
               return {
                 content: [draftPass, compliancePass].filter((pass) => pass !== undefined).map((pass) => ({ type: "text" as const, text: readableGateItem(pass.receipt) })),
-                details: verdict,
+                details: parameters,
                 terminate: true as const,
               };
             } catch (error) {
               if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
-                return projectGatekeeperEscalation(error.result, verdict);
+                return projectGatekeeperEscalation(error.result, parameters);
               }
               throw error;
             }

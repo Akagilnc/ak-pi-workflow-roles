@@ -1,3 +1,0 @@
-interface:
-  display_name: "Resolving Merge Conflicts"
-  short_description: "Resolve ordinary two-parent merge conflicts; escalate new authority"
