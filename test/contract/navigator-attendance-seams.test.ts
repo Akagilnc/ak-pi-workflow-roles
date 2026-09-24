@@ -8,7 +8,6 @@ import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createNavigatorRoleRuntime, createRoleRuntimeExtension } from "../../src/role-runtime.ts";
-import { readPackageMaterial } from "../../src/session-opening-materials.ts";
 import { buildNavigatorInfrastructureFailureFact } from "../../src/navigator-invocation-identity.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_EVENT_TYPE, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
@@ -232,7 +231,13 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
         true,
       );
       assert.equal(harness.prompts(), 1, "standby does not prompt; settlement is the only model round");
-      assert.equal(harness.promptTexts()[0], JSON.stringify({ kind: "accepted", role: "coder", phase: "apply", status: "completed" }));
+      const settlementPrompt = harness.promptTexts()[0];
+      assert.equal(typeof settlementPrompt, "string");
+      const fed = JSON.parse(settlementPrompt ?? "") as Record<string, unknown>;
+      assert.equal(fed.kind, "accepted");
+      assert.equal(fed.status, "completed");
+      assert.equal(fed.subjectKey, "/repo/.ak/work/issues/28");
+      assert.equal(typeof fed.invocationId, "string");
     }
 
     {
@@ -1230,19 +1235,25 @@ test("navigator system prompt carries soul and route playbook, not a code-writte
       if (event === "before_agent_start") starts.push(handler);
     },
   };
+  let playbookReads = 0;
   const runtime = createNavigatorRoleRuntime(host as never, {
     loadSoul: async () => "route judgment",
+    loadRoutePlaybook: async () => {
+      playbookReads += 1;
+      return "standing playbook";
+    },
   });
   await runtime.activate();
   const returned: string[] = [];
   for (const handler of starts) {
+    await handler({ systemPrompt: "BASE" });
     const result = await handler({ systemPrompt: "BASE" });
     if (result !== null && typeof result === "object" && "systemPrompt" in result && typeof result.systemPrompt === "string") {
       returned.push(result.systemPrompt);
     }
   }
-  const playbook = await readPackageMaterial("resources/navigator-route-playbook.md");
   assert.equal(returned.some((text) => text.includes("<navigator_soul>") && text.includes("route judgment")), true);
-  assert.equal(returned.some((text) => text.startsWith("BASE") && text.includes(playbook)), true);
+  assert.equal(returned.some((text) => text.startsWith("BASE") && text.includes("standing playbook")), true);
+  assert.equal(playbookReads, 1);
   assert.equal(returned.some((text) => text.includes("本轮为待命轮") || text.includes("本轮为结算投喂轮")), false);
 });

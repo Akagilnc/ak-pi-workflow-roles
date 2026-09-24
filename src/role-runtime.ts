@@ -39,7 +39,7 @@ import {
 } from "./engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
-import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
 import type { AnyCanonicalSkillBinding } from "./canonical-skill-binding.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
 import type { CollectorGitHubTransport } from "./collector-github.ts";
@@ -308,7 +308,6 @@ import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
-  createGatekeeperOutputTool,
   runGatekeeper,
   gateOfficerForSubject,
 } from "./gatekeeper-role.ts";
@@ -316,7 +315,6 @@ export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
-  createGatekeeperOutputTool,
   runGatekeeper,
   gateOfficerForSubject,
 };
@@ -482,8 +480,7 @@ export function formatNavigatorRoleHelp(role: NavigatorTargetRole): string {
   return lines.join("\n");
 }
 
-type NavigatorAttendanceDependency = Omit<NavigatorAttendance, "knownRoutePlaybookReadFailure"> &
-  Partial<Pick<NavigatorAttendance, "knownRoutePlaybookReadFailure">>;
+type NavigatorAttendanceDependency = NavigatorAttendance;
 
 export type RoleRuntimeDependencies = {
   /** Package root for packaged engine-note resolution (#879). */
@@ -783,13 +780,17 @@ export function createNavigatorRoleRuntime(
       playbookBound = true;
       // Standing system prompt, not a per-turn user message. Native read failure
       // is the explanation (ADR 0061); no code-written sentence.
+      const loadRoutePlaybook = dependencies.loadRoutePlaybook
+        ?? (() => readPackageMaterial("resources/navigator-route-playbook.md"));
+      let playbookRead: Promise<string> | undefined;
       roleHost.on("before_agent_start", async (event) => {
         const base = typeof event.systemPrompt === "string" ? event.systemPrompt : "";
         const append = (text: string) => ({
           systemPrompt: base.trim() === "" ? text : `${base}\n\n${text}`,
         });
         try {
-          const content = await readPackageMaterial("resources/navigator-route-playbook.md");
+          playbookRead ??= loadRoutePlaybook();
+          const content = await playbookRead;
           if (content.trim() === "") return;
           return append(content);
         } catch (error) {
@@ -1368,13 +1369,11 @@ export function createRoleRuntimeExtension(
         const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
         if (raced.status !== "timeout") return;
         if (pendingNavigatorPresentation === undefined) {
-          const routePlaybookReadFailure = attendance.knownRoutePlaybookReadFailure?.();
           const report: NavigatorReport = {
             disposition: "unavailable",
             unavailableReason: "Navigator exceeded post-role delivery grace",
             unavailableSource: "unknown",
             unavailableCause: "unknown",
-            ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
           };
           const event: NavigatorEvent = {
             version: 1,
@@ -1386,7 +1385,6 @@ export function createRoleRuntimeExtension(
             unavailableReason: "Navigator exceeded post-role delivery grace",
             unavailableSource: "unknown",
             unavailableCause: "unknown",
-            ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
           };
           pendingNavigatorPresentation = { event, report };
         }
@@ -1680,7 +1678,7 @@ export function createRoleRuntimeExtension(
         } catch {}
         envelopeHost.sendMessage({
           customType: "ak-receipt-delivery-prompt",
-          content: RECEIPT_DELIVERY_PROMPT,
+          content: JSON.stringify(receiptDelivery.deliveryState()),
           display: false,
         }, { triggerTurn: true, deliverAs: "followUp" });
       } else if (receiptDelivery.nextAction() === "no-receipt" && !noReceiptRecorded) {

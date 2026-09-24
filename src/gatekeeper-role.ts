@@ -9,7 +9,6 @@ import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 import {
   GATEKEEPER_OUTPUT_TOOL_NAME,
-  gatekeeperDecisionSchema,
   gatekeeperOutputSchema,
 } from "./package-contracts/gatekeeper-output.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
@@ -159,7 +158,7 @@ export type SubmissionGateHostActions = {
 export const GATEKEEPER_TOOL_SPEC = {
   name: GATEKEEPER_OUTPUT_TOOL_NAME,
   label: "门下省决议",
-  description: "门下省终局决议，状态为 dispatch 或 pass。",
+  description: "门下省终局决议。status 为 converged、continue 或 escalate。",
   promptSnippet: "门下省决议",
   parameters: gatekeeperOutputSchema,
 } as const;
@@ -167,22 +166,6 @@ export const GATEKEEPER_TOOL_SPEC = {
 export type GatekeeperRuntimeDependencies = {
   loadSoul(): Promise<string>;
 };
-
-function result(content: string, details: unknown) {
-  return { content: [{ type: "text" as const, text: content }], details };
-}
-
-/** Gatekeeper province decision tool — open transport; package-contract projection owns legality. */
-export function createGatekeeperOutputTool() {
-  return {
-    name: GATEKEEPER_OUTPUT_TOOL_NAME,
-    description: "提交门下省派官决定。",
-    parameters: gatekeeperDecisionSchema,
-    async execute(_id: string, args: unknown) {
-      return result(`已收 ${String((args as { status?: unknown })?.status)}`, args);
-    },
-  };
-}
 
 function failureReason(error: unknown): string {
   if (error instanceof AggregateError) return error.errors.map(failureReason).join("; ");

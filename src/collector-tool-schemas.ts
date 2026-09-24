@@ -66,10 +66,10 @@ export const collectorOpenWaitWindowArgsSchema = Type.Object({
  */
 export const collectorBindTargetArgsSchema = Type.Object({
   prNumber: Type.Optional(Type.Unknown({
-    description: "角色判定的本仓 PR 号（正整数）。与 issueNumber 二选一或同指唯一目标。形状指引，非 schema 闸。",
+    description: "本仓 PR 号（正整数）。",
   })),
   issueNumber: Type.Optional(Type.Unknown({
-    description: "角色判定的本仓 issue 号（正整数）；runtime 经线上关联解析唯一 PR。形状指引，非 schema 闸。",
+    description: "本仓 issue 号（正整数）。",
   })),
 }, { additionalProperties: true });
 
@@ -96,7 +96,7 @@ const collectorFindingItemDeclaration = (() => {
     {
       additionalProperties: true,
       description:
-        "单条 finding 指针：evidenceId + 可选 category/summary。形状指引，非 schema 闸。",
+        "单条 finding 指针：evidenceId，以及可选 category、summary。",
     },
   );
   (item as unknown as { required: string[] }).required = [];
@@ -113,12 +113,12 @@ export const collectorOutputBaseSchema = openToolObject(
     // Nested item declarations ride `items` for registration preservation (ADR 0057).
     findings: Type.Unsafe({
       description:
-        "本次收集到的逐条 findings（指针数组为规范形）。零 finding 的模板通知不得进入；正常完工无 finding 时省略。形状指引，非 schema 闸。",
+        "本次收集到的逐条 findings 指针。",
       items: collectorFindingItemDeclaration,
     }),
     unfinishedReasons: Type.Unknown({
       description:
-        "未完成原因字符串数组（额度/故障/等待届满等现场依据）；不得把未完成表述为无问题。无可报告时省略。形状指引，非 schema 闸。",
+        "未完成原因。",
     }),
   }),
 );

@@ -113,7 +113,6 @@ export async function attendance(
   return createNavigatorAttendance({
     context: context(home), role: "coder", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
     subject: "Fix issue 28", authority: "owner decision",
-    loadRoutePlaybook: async () => "arbitrary advisory prose",
     createSession: harness.factory,
     modelSettingPath: path,
     onEvent: async (event) => { events.push(event); },

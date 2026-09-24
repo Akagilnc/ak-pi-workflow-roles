@@ -59,7 +59,7 @@ export {
 export { createNativeNavigatorSessionFactory };
 export { resolveNavigatorSeatSelection };
 import { issueRoot, subjectPath } from "./work-subject-identity.ts";
-import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
 import { navigatorProseFromUnknown } from "./package-contracts/navigator-output.ts";
 
 export const NAVIGATOR_EVENT_TYPE = "ak-navigator-attendance" as const;
@@ -144,7 +144,6 @@ export type NavigatorAttendanceOptions = {
   role: string;
   phase: NavigatorPhase;
   subjectKey: string;
-  loadRoutePlaybook?: () => Promise<string>;
   createSession: NavigatorSessionFactory;
   modelSettingPath?: string;
   subject: string;
@@ -255,7 +254,7 @@ export function createNavigatorPrepareTool(onOutput: (value: PrepareOutput) => v
 export function formatNavigatorReport(report: NavigatorReport): string {
   const playbookFailure = report.routePlaybookReadFailure === undefined
     ? []
-    : [`路书读取失败：${report.routePlaybookReadFailure}`];
+    : [report.routePlaybookReadFailure];
   if (report.disposition === "no-advice") return playbookFailure.join("\n");
   if (report.disposition === "unavailable") {
     return [...playbookFailure, ...(report.unavailableReason ? [report.unavailableReason] : [])].join("\n");
@@ -284,7 +283,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
   let settlementTail: Promise<void> = Promise.resolve();
   let settlementFailure: unknown;
   let preparationFailure: unknown;
-  let routePlaybookReadFailure: string | undefined;
   let disposed = false;
   /** In-flight session teardown; repeat dispose returns the same promise (#959 mutation proof). */
   let closing: Promise<void> | undefined;
@@ -310,7 +308,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       unavailableCause: failure.unavailableCause,
     };
   };
-  let routePlaybookSettlement: Promise<void> | undefined;
   /**
    * Settlement is the only model round. Standby records attendance and does not prompt.
    * Soul and route playbook stay on the navigator system prompt, not this user turn.
@@ -325,16 +322,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         new Error("controlling authority content was not supplied as typed work context"),
       );
     }
-    routePlaybookReadFailure = undefined;
-    const routePlaybookPromise = (async () => {
-      if (options.loadRoutePlaybook === undefined) return;
-      try {
-        await options.loadRoutePlaybook();
-      } catch (error) {
-        routePlaybookReadFailure = error instanceof Error ? error.message : String(error);
-      }
-    })();
-    routePlaybookSettlement = routePlaybookPromise.then(() => undefined);
     const modelPromise = (async () => {
       try {
         const resolved = await resolveNavigatorSeatSelection(options.context);
@@ -344,10 +331,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
         throw navigatorUnavailableError("model", error);
       }
     })();
-    const [modelSetting] = await Promise.all([
-      modelPromise,
-      routePlaybookPromise,
-    ]);
+    const modelSetting = await modelPromise;
     let model: ReturnType<typeof parseNavigatorModelSetting>;
     try {
       model = parseNavigatorModelSetting(modelSetting);
@@ -422,7 +406,11 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     const activeSession = existingSession ?? await loadMaterialsAndSession(invocationId);
       // Standby records the invocation entry and does not call the model.
       if (boundSettlement === undefined) return undefined;
-      const request = JSON.stringify(boundSettlement);
+      const request = JSON.stringify({
+        ...boundSettlement,
+        invocationId,
+        subjectKey,
+      });
       try {
         try {
           if (disposed) throw navigatorUnavailableError("session", new Error("Navigator attendance was disposed"));
@@ -468,7 +456,7 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           // does not 催交 final advice (owner: prepare then wait for settlement feed).
           if (boundSettlement !== undefined) {
             while (output === undefined && prepareBatchRejected && delivery.nextAction() === "request-delivery") {
-              await promptAllowingRejectedPrepare(RECEIPT_DELIVERY_PROMPT, true);
+              await promptAllowingRejectedPrepare(JSON.stringify(delivery.deliveryState()), true);
             }
             if (output === undefined && delivery.nextAction() === "request-delivery") {
               while (delivery.nextAction() === "request-delivery") {
@@ -546,9 +534,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
     },
     isPreparing(): boolean {
       return preparationInFlight;
-    },
-    knownRoutePlaybookReadFailure(): string | undefined {
-      return routePlaybookReadFailure;
     },
     settle(settlement: NavigatorSettlement): Promise<void> {
       const next = settlementTail.then(() => settleOnce(settlement));
@@ -662,13 +647,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
           report = { disposition: "no-advice" };
         }
       }
-      // A primary preparation failure may reject Promise.all before the optional
-      // routebook read finishes. Preserve that primary unavailable cause while
-      // waiting for, and independently attaching, the routebook diagnostic.
-      await routePlaybookSettlement;
-      if (routePlaybookReadFailure !== undefined) {
-        report = { ...report, routePlaybookReadFailure };
-      }
       const event: NavigatorEvent = {
         version: 1,
         disposition: report.disposition,
@@ -698,8 +676,6 @@ export function createNavigatorAttendance(options: NavigatorAttendanceOptions) {
       sessionReady = undefined;
       preparedProse = undefined;
       preparationFailure = undefined;
-      routePlaybookSettlement = undefined;
-      routePlaybookReadFailure = undefined;
   }
 }
 

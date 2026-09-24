@@ -53,7 +53,7 @@ export type { WorkerOutput };
 // (src/countersign-role.ts) — one shared description across every variant
 // so openToolObjectFromUnion's identical-declaration collapse drops none of it.
 const CODER_STATUS_DESCRIPTION =
-  "planned | completed | refused | partially_completed | unfinished — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据；unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。" as const;
+  "planned | completed | refused | partially_completed | unfinished。unfinished：缺前置或违宪约束致本局未完成。" as const;
 const coderOutputVariants = Type.Union([
   Type.Object({
     status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),

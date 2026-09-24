@@ -43,7 +43,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
   // packageRoot is the install root (resources/ lives there). Never resolve via
   // import.meta.url — headless/acp production-host bundles live under dist/*/
   // and would otherwise look for dist/resources/ (#962).
-  const navigatorRoutePlaybookPath = join(packageRoot, "resources/navigator-route-playbook.md");
   const collectorHandbookSeedPath = join(packageRoot, "resources/collector-bot-handbook.md");
   const doctorAuditor = createPiDoctorAuditor();
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
@@ -85,7 +84,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
       subject: options.subject,
       authority: options.authority,
       invocationId: options.invocationId,
-      loadRoutePlaybook: () => readFile(navigatorRoutePlaybookPath, "utf8"),
       createSession: navigatorSessionFactory,
       ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
       onEvent: options.onEvent,

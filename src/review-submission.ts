@@ -11,7 +11,7 @@ export const reviewSubmissionSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       status: Type.Optional(Type.Unknown({
-        description: "converged | continue | escalate — 非三态时请重读后重交，勿改标。",
+        description: "converged | continue | escalate",
       })),
       findings: Type.Optional(Type.Unknown({ description: "审核发现，原样留存" })),
       reason: Type.Optional(Type.Unknown({ description: "上呈理由" })),
