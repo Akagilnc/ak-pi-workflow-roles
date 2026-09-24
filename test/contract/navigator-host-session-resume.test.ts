@@ -15,7 +15,9 @@ import {
   readNavigatorHostRunPointer,
   runIdFromNavigatorDirectory,
 } from "../../src/navigator-public-session.ts";
+import { createPiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
+import { createNavigatorRoleRuntime } from "../../src/role-runtime.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { seedGitRepository } from "../helpers/pi-test-harness.ts";
 
@@ -423,6 +425,58 @@ test("fresh navigator settlement keeps subject and authority on the nest base", 
       };
       assert.equal(stored.subject, subject);
       assert.equal(stored.authority, authority);
+    }
+
+    const starts: Array<(
+      event: { prompt: string; systemPrompt: string; systemPromptOptions: Record<string, never> },
+      ctx: unknown,
+    ) => Promise<{ systemPrompt?: string } | undefined>> = [];
+    const tools: Array<{ name: string }> = [];
+    const pi = {
+      on(name: string, handler: (
+        event: { prompt: string; systemPrompt: string; systemPromptOptions: Record<string, never> },
+        ctx: unknown,
+      ) => Promise<{ systemPrompt?: string } | undefined>) {
+        if (name === "before_agent_start") starts.push(handler);
+      },
+      registerFlag() {},
+      getFlag() { return undefined; },
+      registerTool(tool: { name: string }) { tools.push(tool); },
+      getAllTools() { return tools; },
+      setActiveTools() {},
+      getActiveTools() { return []; },
+    };
+    const { host } = createPiRoleHostAdapter(pi as never);
+    await createNavigatorRoleRuntime(host, {
+      loadSoul: async () => "navigator soul",
+      loadRoutePlaybook: async () => "route playbook",
+    }).activate();
+    const ctx = {
+      cwd: root,
+      mode: "agent",
+      sessionManager: {
+        getLeafEntry() { return undefined; },
+        getLeafId() { return null; },
+        getEntries() { return []; },
+        getSessionDir() { return parentRun; },
+        getSessionFile() { return join(parentRun, "session.jsonl"); },
+        getHeader() { return null; },
+        setSessionFile() {},
+      },
+    };
+    let systemPrompt = "";
+    for (const argv of summons) {
+      systemPrompt = "";
+      for (const start of starts) {
+        const folded = await start({
+          prompt: argv,
+          systemPrompt,
+          systemPromptOptions: {},
+        }, ctx);
+        if (typeof folded?.systemPrompt === "string") systemPrompt = folded.systemPrompt;
+      }
+      assert.equal(systemPrompt.includes(subject), true);
+      assert.equal(systemPrompt.includes(authority), true);
     }
     await nav.dispose();
   });

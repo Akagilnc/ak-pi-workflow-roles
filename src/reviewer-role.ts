@@ -90,7 +90,7 @@ export function createReviewerRoleRuntime(
 
       if (!registered) {
         registered = true;
-        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台终局回执。本席自调 ak-cross-m-review skill。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
+        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台终局回执。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
           async execute(_id: string, parameters: unknown): Promise<HostToolResult<unknown>> {
             if (!soul) throw new Error("御史台输入未装载");
             return {

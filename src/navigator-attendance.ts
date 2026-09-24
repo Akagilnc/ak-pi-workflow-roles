@@ -137,7 +137,7 @@ export type NavigatorEvent = {
 // never a gate — every object root reaches execute exactly once (Rule 0).
 const prepareSchema = Type.Object({
   prose: Type.Optional(Type.Unknown({
-    description: "游奕使散文建议，原样呈现。不要求 candidates/next 结构。非受理闸",
+    description: "游奕使散文建议，原样呈现。不要求 candidates/next 结构。",
   })),
 }, { additionalProperties: true });
 type PrepareOutput = Static<typeof prepareSchema>;

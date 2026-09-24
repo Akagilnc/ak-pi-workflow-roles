@@ -256,7 +256,7 @@ export function createFixerRoleRuntime(
         pi.registerTool({
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "修内司输出",
-          description: "提交修内司终局回执；基础设施失败走 abort，不经本工具。",
+          description: "提交修内司终局回执。",
           promptSnippet: "提交修内司终局回执",
           parameters: fixerOutputSchema,
           async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
@@ -383,7 +383,7 @@ export function createCoderRoleRuntime(
         pi.registerTool({
           name: CODER_OUTPUT_TOOL_NAME,
           label: "将作监输出",
-          description: "提交将作监终局回执；本工具无 escalate 通道。",
+          description: "提交将作监终局回执。",
           promptSnippet: "提交将作监终局回执",
           parameters: coderOutputSchema,
           async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {

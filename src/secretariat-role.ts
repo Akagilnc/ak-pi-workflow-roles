@@ -44,7 +44,7 @@ export type SecretariatVerdictParameters = Static<typeof secretariatVerdictSchem
 export const SECRETARIAT_OUTPUT_TOOL_SPEC = {
   name: SECRETARIAT_OUTPUT_TOOL_NAME,
   label: "中书省输出",
-  description: "中书省终局回执（署或上呈）；给事中封驳须改票重送，不在此终局。",
+  description: "中书省终局回执。",
   promptSnippet: "中书省终局回执",
   parameters: secretariatVerdictSchema,
 } as const;

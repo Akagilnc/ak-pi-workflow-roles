@@ -58,7 +58,7 @@ export function createJudgeRoleRuntime(
         pi.registerTool({
           name: JUDGE_OUTPUT_TOOL_NAME,
           label: "大理寺输出",
-          description: "提交大理寺终局判词；受理前经符宝郎内闸与审刑院合规审核。",
+          description: "提交大理寺终局判词。",
           promptSnippet: "提交大理寺终局判词",
           parameters: judgeVerdictSchema,
           async execute(toolCallId: string, parameters: Static<typeof judgeVerdictSchema>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
