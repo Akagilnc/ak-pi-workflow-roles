@@ -2081,7 +2081,7 @@ test("public countersign relocates its unbound diarist when the body asserts a t
   });
 });
 
-test("public countersign retains an already-recorded diarist child when the child escalates", async () => {
+test("public countersign continues with an already-recorded diarist escalation", async () => {
   await withCountersignProject(async ({ home, project }) => {
     const sessionPath = join(home, ".claude", "projects", "escalated-child", "session.jsonl");
     await mkdir(dirname(sessionPath), { recursive: true });
@@ -2101,7 +2101,7 @@ test("public countersign retains an already-recorded diarist child when the chil
       }, captureIo().io,
       "countersign", (args) => parsePublicSeatArgv("countersign", args),
     );
-    assert.notEqual(result.exitCode, 0);
+    assert.equal(result.exitCode, 0);
     assert.ok(result.admitted);
     const parent = result.admitted;
     await bindAdmittedTicketNumber(parent, 582);

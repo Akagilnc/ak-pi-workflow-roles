@@ -328,7 +328,7 @@ export async function invokeCourtDiarist(
  * Missing ticketNumber (true-unbound / identity deferred) skips the refresh
  * station — no diary is minted for a true-unbound run. First-entry identity
  * lives on the shared countersign entry (typed 起居郎 key for bind). Bound refresh:
- * 起居郎 failure propagates (失败诚实).
+ * technical failure propagates; LLM escalation remains a recorded conclusion.
  * Path delivery onto materials is not this station's job — post-admission owns it.
  */
 export async function runCountersignCourtDiaristStation(
@@ -376,9 +376,6 @@ export async function runCountersignCourtDiaristStation(
       io,
     );
 
-    if (outcome.identity.kind === "escalate") {
-      throw new StationChildExhaustedError(outcome.identity.diagnostic);
-    }
     if (outcome.failedWithoutEscalate !== undefined) {
       throw new StationChildExhaustedError(
         outcome.failedWithoutEscalate.diagnostic,

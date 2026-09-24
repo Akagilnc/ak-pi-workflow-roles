@@ -46,6 +46,7 @@ import {
   sealAcceptedSubmission,
 } from "../helpers/submission-ledger-fixture.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
+import { readTicketProvenance } from "../../src/ticket-provenance.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { connect } from "node:net";
 import {
@@ -801,6 +802,9 @@ test("public secretariat reaches its turn before an unnumbered new issue exists"
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const sessionPath = join(home, ".claude", "projects", "ticket", "session.jsonl");
+    await mkdir(dirname(sessionPath), { recursive: true });
+    await writeFile(sessionPath, `${JSON.stringify({ type: "user", uuid: "new-ticket-owner", message: { role: "user", content: "请辨认并建立本票。" }, origin: { kind: "human" } })}\n`, "utf8");
     const gateCalls: Array<{ kind: string }> = [];
     const countersignRequests: RoleTurnRequest[] = [];
     const host = secretariatHostDrivingRealTools({
@@ -809,7 +813,8 @@ test("public secretariat reaches its turn before an unnumbered new issue exists"
       gateCalls,
       countersignRequests,
       submissionGateHost: "codex",
-      parentDiaristRunner: courtDiaristWithDetails({ status: "escalate", reason: "issue not yet created" }),
+      parentDiaristRunner: courtDiaristWithDetails({ status: "completed", ticketNumber: null,
+        sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }] }),
       nestedDiaristRunner: courtDiaristWithDetails({ status: "escalate", reason: "no prior bound ticket" }),
       countersignSequence: [{ details: { status: "converged", note: "署" } }],
       steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
@@ -831,6 +836,30 @@ test("public secretariat reaches its turn before an unnumbered new issue exists"
       924,
       "the completed new-ticket run must be archived under its ticket",
     );
+    assert.equal((await readTicketProvenance(924, project, home)).lines[0]?.id, "new-ticket-owner");
+  });
+});
+
+test("diarist escalation remains a recorded conclusion, not a Secretariat stop", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const gateCalls: Array<{ kind: string }> = [];
+    const host = secretariatHostDrivingRealTools({
+      packageRoot, home, gateCalls, submissionGateHost: "codex",
+      parentDiaristRunner: courtDiaristWithDetails({ status: "escalate", reason: "uncertain bounds" }),
+      nestedDiaristRunner: courtDiaristWithDetails({ status: "escalate", reason: "no prior bound ticket" }),
+      countersignSequence: [{ details: { status: "converged", note: "署" } }],
+      steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
+    });
+    const result = await runAkRole(
+      ["secretariat", "--model", "test/caller-seat:high", "--project", project, "请建立本票。"],
+      { home, packageRoot, cwd: project, io: captureIo().io,
+        roleTurnHost: host, hostAdapters: [adapter("pi", host)] },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.ok(gateCalls.some((call) => call.kind === "secretariat_verdict"));
   });
 });
 

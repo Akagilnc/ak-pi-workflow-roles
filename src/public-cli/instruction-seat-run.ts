@@ -459,10 +459,8 @@ async function runCountersignBody(
         if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
           unboundDiaristRunId = outcome.admitted.runId;
         }
-        if (outcome.identity.kind === "escalate" || outcome.failedWithoutEscalate !== undefined) {
-          const diagnostic = outcome.identity.kind === "escalate"
-            ? outcome.identity.diagnostic
-            : outcome.failedWithoutEscalate?.diagnostic ?? "";
+        if (outcome.failedWithoutEscalate !== undefined) {
+          const diagnostic = outcome.failedWithoutEscalate.diagnostic;
           await materializeAdmission(
             isSafePositiveTicketNumber(env.boundTicketNumber) ? env.boundTicketNumber : undefined,
           );
@@ -739,6 +737,27 @@ export async function runPublicInstructionSeat(
 
   const runAdmitted = async (): Promise<SeatRunResult> => {
     await markRunAdmitted(admitted, env.principalAuthority);
+    if (role === "secretariat") {
+      const outcome = await invokeCourtDiarist({
+        instruction: parsed.instruction ?? "",
+        projectRoot: admitted.projectRoot,
+        failureLabel: "secretariat unbound summons",
+        attachmentPaths: admitted.attachments.map((attachment) => attachment.frozenPath),
+        correlationId: admitted.runId,
+      }, env, io);
+      if (outcome.admitted?.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) {
+        await recordChildDiaristRun(admitted, outcome.admitted.runId);
+      }
+      if (outcome.failedWithoutEscalate !== undefined) {
+        throw new Error(outcome.failedWithoutEscalate.diagnostic);
+      }
+      // An LLM escalation is its own recorded conclusion, not a code-level
+      // reason to reject the Secretariat's turn. Its ticket may be minted later.
+      if (outcome.identity.kind === "ticket") {
+        await bindAdmittedTicketNumber(admitted, outcome.identity.ticketNumber);
+        await relocateAdmittedRunToTicket(admitted, env.principalAuthority);
+      }
+    }
     return dispatchAdmitted(admitted, env, io);
   };
 
