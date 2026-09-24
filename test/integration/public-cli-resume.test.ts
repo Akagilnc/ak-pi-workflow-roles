@@ -2423,7 +2423,7 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
   });
 });
 
-test("public resume says which confirmed fact failed and where to look", async () => {
+test("public resume failures point to their recorded diagnostics", async () => {
   const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
   delete process.env.AK_ROLE_AUDITOR_SUBJECT;
   try {
@@ -2524,6 +2524,32 @@ test("public resume says which confirmed fact failed and where to look", async (
         assert.equal(typeof record.diagnostic, "string");
         return record;
       };
+      const assertRecordedFailurePointer = async (runDirectory: string, runId: string) => {
+        const callsBefore = seen.length;
+        const result = await resume(["resume", "--model", "test/caller-seat:high", runId]);
+        assert.notEqual(result.exitCode, 0);
+        assert.equal(seen.length, callsBefore);
+        const directory = join(runDirectory, "artifacts");
+        assert.equal(existsSync(directory), true, result.stderr);
+        const diagnosticPath = (await readdir(directory))
+          .map((name) => join(directory, name))
+          .find((path) => result.stderr.includes(path));
+        assert.ok(diagnosticPath);
+        const record = JSON.parse(await readFile(diagnosticPath, "utf8")) as {
+          runId?: unknown;
+          diagnostic?: unknown;
+          details?: unknown;
+        };
+        assert.equal(record.runId, runId);
+        assert.equal(typeof record.diagnostic, "string");
+        assert.equal(
+          record.details !== null && typeof record.details === "object" && !Array.isArray(record.details),
+          true,
+        );
+        const errorDetails = (record.details as { error?: unknown }).error;
+        assert.equal(typeof errorDetails, "string");
+        assert.notEqual((errorDetails as string).length, 0);
+      };
 
       const unreadable = await seed({
         runId: "1058-unreadable",
@@ -2551,6 +2577,38 @@ test("public resume says which confirmed fact failed and where to look", async (
         true,
       );
       assert.equal(typeof (unreadableRecord.details as { error?: unknown }).error, "string");
+
+      const corruptRunState = await seed({
+        runId: "1058-corrupt-run-state",
+        role: "secretariat",
+        session: true,
+        projectRoot: project,
+      });
+      const priorReportPath = join(corruptRunState.runDirectory, "artifacts", "report.json");
+      await mkdir(join(corruptRunState.runDirectory, "artifacts"), { recursive: true });
+      await writeFile(priorReportPath, '{"status":"prior"}\n', "utf8");
+      await writeFile(join(corruptRunState.runDirectory, "run-state.json"), "{}\n", "utf8");
+      await assertRecordedFailurePointer(corruptRunState.runDirectory, "1058-corrupt-run-state");
+      assert.equal(await readFile(join(corruptRunState.runDirectory, "run-state.json"), "utf8"), "{}\n");
+      assert.equal(
+        (JSON.parse(await readFile(priorReportPath, "utf8")) as { status?: unknown }).status,
+        "prior",
+      );
+
+      const invalidResumeMetadata = await seed({
+        runId: "1058-invalid-resume-metadata",
+        role: "secretariat",
+        session: true,
+        projectRoot: project,
+      });
+      const invalidStatePath = join(invalidResumeMetadata.runDirectory, "run-state.json");
+      const invalidState = JSON.parse(await readFile(invalidStatePath, "utf8")) as Record<string, unknown>;
+      delete invalidState.projectRoot;
+      await writeFile(invalidStatePath, `${JSON.stringify(invalidState)}\n`, "utf8");
+      await assertRecordedFailurePointer(
+        invalidResumeMetadata.runDirectory,
+        "1058-invalid-resume-metadata",
+      );
 
       const callsBeforeWorkspace = seen.length;
       const noWorkspace = await resume(["resume", "--model", "test/caller-seat:high", "1058-no-workspace"]);

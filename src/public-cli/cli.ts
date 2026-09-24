@@ -49,7 +49,10 @@ import { seatModelOnly } from "./registry.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
 import { runMachineSkillSetup } from "./machine-method-skills.ts";
-import type { PostAdmissionEnv } from "./post-admission.ts";
+import {
+  presentLocatedResumeLoadFailure,
+  type PostAdmissionEnv,
+} from "./post-admission.ts";
 import type { RoleTurnHost } from "../host-contracts.ts";
 import { appendPiSessionCustomEntry } from "../pi/role-turn-host.ts";
 import {
@@ -1213,10 +1216,28 @@ export async function runAkRole(
       const credentials =
         env.credentials ?? (await loadCredentialProviders(agentDir));
       const resumeRequest = parseResumeRequest(parsed.args);
-      const resumeRole = await peekRoleRunRole(home, resumeRequest.runId);
+      const peekResumeRole = async (
+        runId: string,
+      ): Promise<{ role?: Awaited<ReturnType<typeof peekRoleRunRole>>; exitCode?: number }> => {
+        try {
+          return { role: await peekRoleRunRole(home, runId) };
+        } catch (error) {
+          const recorded = await presentLocatedResumeLoadFailure(
+            home,
+            runId,
+            env.principalAuthority ?? piDurablePrincipalAuthority,
+            io,
+            error,
+          );
+          if (!recorded) throw error;
+          return { exitCode: error instanceof CliUsageError ? 2 : 1 };
+        }
+      };
+      const resumeRole = await peekResumeRole(resumeRequest.runId);
+      if (resumeRole.exitCode !== undefined) return { exitCode: resumeRole.exitCode };
       // Missing durable role keeps the judge seat table. The resume entry
       // itself is one function; it reads the stored run.
-      const seatRole = resumeRole ?? "judge";
+      const seatRole = resumeRole.role ?? "judge";
       const seat = resolveEffectiveSeat(
         config,
         seatRole,
@@ -1243,7 +1264,11 @@ export async function runAkRole(
         && !courtDiaristEscalated(current.terminal.roleOutcome)
       ) {
         const parentRunId = current.admitted.correlationId;
-        const parentRole = await peekRoleRunRole(home, parentRunId);
+        const parentResumeRole = await peekResumeRole(parentRunId);
+        if (parentResumeRole.exitCode !== undefined) {
+          return { exitCode: parentResumeRole.exitCode };
+        }
+        const parentRole = parentResumeRole.role;
         if (parentRole === undefined) break;
         const parentSeat = resolveEffectiveSeat(config, parentRole, credentials, invocationFromParsed(parsed));
         const parentEnv = createRoleEnvironment(env, {
