@@ -21,6 +21,7 @@ import { composeAnalystMetricFamilySections } from "./analyst-metric-family.ts";
 
 /** Required run sources that may render a loud unreadable exclusion. */
 export type AnalystMissingSource =
+  | "run-state"
   | "session-timeline"
   | "tool-association"
   | "terminal-artifact"

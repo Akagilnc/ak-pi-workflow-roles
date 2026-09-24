@@ -217,7 +217,10 @@ function buildMethodContext(activation: CollectorActivation): string {
 function parsePositiveTicket(raw: unknown, label: string): number | undefined {
   if (raw === undefined || raw === null) return undefined;
   if (typeof raw === "number" && Number.isSafeInteger(raw) && raw >= 1) return raw;
-  if (typeof raw === "string" && /^[1-9]\d*$/.test(raw.trim())) return Number(raw.trim());
+  if (typeof raw === "string" && /^[1-9]\d*$/.test(raw.trim())) {
+    const value = Number(raw.trim());
+    if (Number.isSafeInteger(value)) return value;
+  }
   throw new CollectorTargetBindError(`通进司绑定 ${label} 须为正安全整数`);
 }
 

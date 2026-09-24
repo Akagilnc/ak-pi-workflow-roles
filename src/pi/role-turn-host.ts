@@ -521,13 +521,11 @@ export async function appendPiSessionCustomEntry(
     timestamp,
   })}\n`;
   await appendFile(sessionFile, pointerLine, "utf8");
-  try {
-    sitianReport({
-      level: "event",
-      kind: "dispatch-error",
-      sessionParent: sessionFile,
-      payload: { customType, data },
-      source: "pi-role-turn-host",
-    });
-  } catch {}
+  sitianReport({
+    level: "event",
+    kind: "dispatch-error",
+    sessionParent: sessionFile,
+    payload: { customType, data },
+    source: "pi-role-turn-host",
+  });
 }

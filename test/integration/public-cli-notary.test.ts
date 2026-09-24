@@ -8,6 +8,7 @@ import { execFileSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
+  readFile,
   readdir,
   realpath,
   rm,
@@ -302,7 +303,10 @@ test("notary rejects canonical ledger run with illegal retained role record (exi
       "utf8",
     );
 
-    assert.equal(await readRoleRunState(runDirectory, piDurablePrincipalAuthority), undefined);
+    await assert.rejects(
+      () => readRoleRunState(runDirectory, piDurablePrincipalAuthority),
+      TypeError,
+    );
 
     const { io } = captureIo();
     const bare = `${runId}@${inventedRole}`;
@@ -385,6 +389,18 @@ test("notary admits canonical ledger source-run and bare runId@role; rejects pro
     );
     assert.equal(rejectedProjection.exitCode, 2);
     assert.equal(rejectedProjection.terminal, undefined);
+
+    // Locator consumes retained identity, not the full resumable run record.
+    const statePath = join(sourceRunPath, "run-state.json");
+    const state = JSON.parse(await readFile(statePath, "utf8")) as Record<string, unknown>;
+    delete state.projectRoot;
+    await writeFile(statePath, JSON.stringify(state), "utf8");
+    const identityOnly = await resolveNotarySourceRunLocator({
+      projectRoot: project,
+      sourceRun: bare,
+      home,
+    });
+    assert.equal(identityOnly.runDirectory, sourceRunPath);
   });
 });
 
