@@ -1124,7 +1124,10 @@ async function finishOpenJudgeVerdict(
     return turn;
   }
   const after = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, env.home);
-  if (after.some((row) => row.kind === "accepted")) {
+  const newerVerdict = after.some((row) => row.toolCallId !== undefined && row.toolCallId !== open.toolCallId);
+  const turnedToOfficer = turn.terminal?.roleOutcome.role !== undefined
+    && turn.terminal.roleOutcome.role !== admitted.role;
+  if (newerVerdict || turnedToOfficer) {
     buffered.replay(io);
     return turn;
   }

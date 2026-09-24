@@ -120,6 +120,9 @@ async function runJudge(
           await prepared.ingestStructuredOutput(verdict);
           const closed = await prepared.closeRound();
           if (!closed.accepted) {
+            if ("retry" in closed) {
+              return { code: 0, stderr: "", timedOut: false as const };
+            }
             const failure = "failure" in closed ? closed.failure : undefined;
             return {
               code: 1,
@@ -406,6 +409,49 @@ test("#1057 a parent host failure after the officer conclusion is not a pass", a
     assert.notEqual(continued.terminal?.roleOutcome.kind, "audit_escalation");
     assert.equal(observed.judgeSubmissions.length, 1);
   });
+});
+
+test("#1057 an unfinished new verdict does not seal the standing one", async () => {
+  const next = { status: "converged", mark: 9 };
+  let auditorCalls = 0;
+  const officerRunner: LegacyFauxPiRunner = async (args, options) => {
+    const role = argvFlagValue(args, "--ak-role");
+    if (role === "notary") {
+      return scriptedTerminatingToolSession({
+        role: "notary",
+        toolName: NOTARY_OUTPUT_TOOL_NAME,
+        details: { status: "converged", mark: 2 },
+      })(args, options);
+    }
+    if (role === "auditor") {
+      auditorCalls += 1;
+      const details = auditorCalls === 1
+        ? { status: "escalate", mark: 4 }
+        : auditorCalls === 2
+          ? { status: "converged", mark: 5 }
+          : { status: "continue", mark: 6 };
+      return scriptedTerminatingToolSession({
+        role: "auditor",
+        toolName: AUDITOR_OUTPUT_TOOL_NAME,
+        details,
+      })(args, options);
+    }
+    throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
+  };
+  await runJudge(
+    officerRunner,
+    () => ({ code: 0, stderr: "", verdict: next }),
+    async (observed) => {
+      const continued = await observed.resume(RULING);
+      assert.equal(continued.exitCode, 0, observed.resumeStderr.join(""));
+      assert.equal(auditorCalls, 3);
+      assert.equal(observed.judgeSubmissions.length, 2);
+      assert.notEqual(continued.terminal?.roleOutcome.kind, "accepted");
+      const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
+      assert.equal(rows.some((row) => row.kind === "accepted"), false);
+      assert.equal(rows.some((row) => row.kind === "candidate" && row.accepted !== null && typeof row.accepted === "object" && (row.accepted as { mark?: unknown }).mark === next.mark), true);
+    },
+  );
 });
 
 test("#1057 a new verdict after the officer conclusion re-enters the judge gates", async () => {
