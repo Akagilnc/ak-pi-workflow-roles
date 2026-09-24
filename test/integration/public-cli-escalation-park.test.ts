@@ -71,7 +71,7 @@ type ParkObservation = {
 
 async function observeParkedEscalation(
   officerRunner: LegacyFauxPiRunner,
-  onParentResume: (prompt: string) => { code: number; stderr: string },
+  onParentResume: (prompt: string) => { code: number; stderr: string; verdict?: unknown },
   assertIn: (observed: ParkObservation) => Promise<void>,
 ): Promise<void> {
   const temps: string[] = [];
@@ -102,44 +102,49 @@ async function observeParkedEscalation(
         },
       };
       const officerAdapters = [adapter("pi", recordingOfficer)];
+      const submitVerdict = async (request: RoleTurnRequest, verdict: unknown) => {
+        judgeSubmissions.push(verdict);
+        const coords = piDurablePrincipalAuthority.decode(request.principal);
+        const socketDir = await mkdtemp(join(tmpdir(), "ak-1057-judge-"));
+        temps.push(socketDir);
+        const prepared = await prepareRoleEnvelope({
+          request: { ...request, host: "pi" },
+          dependencies: {
+            ...createRoleRuntimeDependencies(packageRoot),
+            hostAdapters: officerAdapters,
+          },
+          socketPath: join(socketDir, "mcp.sock"),
+          listTerminatingToolOnMcp: false,
+          sessionFile: coords.sessionFile,
+        });
+        try {
+          await prepared.ingestStructuredOutput(verdict);
+          const closed = await prepared.closeRound();
+          if (!closed.accepted) {
+            const failure = "failure" in closed ? closed.failure : undefined;
+            return {
+              code: 1,
+              stderr: failure?.diagnostic ?? "judge round failed",
+              timedOut: false as const,
+              ...(failure === undefined ? {} : { knownFailure: failure }),
+            };
+          }
+          return { code: 0, stderr: "", timedOut: false as const };
+        } finally {
+          await prepared.dispose?.();
+        }
+      };
       const judgeHost: RoleTurnHost = {
         async executeTurn(request: RoleTurnRequest) {
           if (request.continuation.kind === "resume") {
             parentPrompts.push(request.continuation.prompt);
             const resumed = onParentResume(request.continuation.prompt);
-            return { ...resumed, timedOut: false };
-          }
-          const verdict = { status: "converged", note: "原判词" };
-          judgeSubmissions.push(verdict);
-          const coords = piDurablePrincipalAuthority.decode(request.principal);
-          const socketDir = await mkdtemp(join(tmpdir(), "ak-1057-judge-"));
-          temps.push(socketDir);
-          const prepared = await prepareRoleEnvelope({
-            request: { ...request, host: "pi" },
-            dependencies: {
-              ...createRoleRuntimeDependencies(packageRoot),
-              hostAdapters: officerAdapters,
-            },
-            socketPath: join(socketDir, "mcp.sock"),
-            listTerminatingToolOnMcp: false,
-            sessionFile: coords.sessionFile,
-          });
-          try {
-            await prepared.ingestStructuredOutput(verdict);
-            const closed = await prepared.closeRound();
-            if (!closed.accepted) {
-              const failure = "failure" in closed ? closed.failure : undefined;
-              return {
-                code: 1,
-                stderr: failure?.diagnostic ?? "judge round failed",
-                timedOut: false,
-                ...(failure === undefined ? {} : { knownFailure: failure }),
-              };
+            if (resumed.verdict === undefined) {
+              return { code: resumed.code, stderr: resumed.stderr, timedOut: false };
             }
-            return { code: 0, stderr: "", timedOut: false };
-          } finally {
-            await prepared.dispose?.();
+            return submitVerdict(request, resumed.verdict);
           }
+          return submitVerdict(request, { status: "converged", note: "原判词" });
         },
       };
       const routed: RoleTurnHost = {
@@ -383,4 +388,47 @@ test("#1057 a parent host failure after the pass is not sealed as acceptance", a
     assert.equal(observed.judgeSubmissions.length, 1);
     assert.equal(observed.parentPrompts.some((prompt) => prompt.includes("通过后宿主失败")), true);
   });
+});
+
+test("#1057 a new verdict after the pass re-enters audit instead of sealing the old one", async () => {
+  let notaryCalls = 0;
+  let auditorCalls = 0;
+  const officerRunner: LegacyFauxPiRunner = async (args, options) => {
+    const role = argvFlagValue(args, "--ak-role");
+    if (role === "notary") {
+      notaryCalls += 1;
+      return scriptedTerminatingToolSession({
+        role: "notary",
+        toolName: NOTARY_OUTPUT_TOOL_NAME,
+        details: { status: "converged", note: "符宝郎通过" },
+      })(args, options);
+    }
+    if (role === "auditor") {
+      auditorCalls += 1;
+      const details = auditorCalls === 1
+        ? { status: "escalate", explanation: "完整审刑院原话" }
+        : { status: "converged", explanation: "上呈后交卷" };
+      return scriptedTerminatingToolSession({
+        role: "auditor",
+        toolName: AUDITOR_OUTPUT_TOOL_NAME,
+        details,
+      })(args, options);
+    }
+    throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
+  };
+  await observeParkedEscalation(
+    officerRunner,
+    () => ({ code: 0, stderr: "", verdict: { status: "converged", note: "新判词" } }),
+    async (observed) => {
+      const continued = await observed.resume();
+      assert.equal(continued.exitCode, 0, observed.resumeStderr.join(""));
+      assert.equal(observed.parentPrompts.some((prompt) => prompt.includes("上呈后交卷")), true);
+      assert.equal(notaryCalls, 2);
+      assert.equal(auditorCalls, 3);
+      assert.equal(observed.judgeSubmissions.length, 2);
+      assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
+      assert.equal(latestPayload(continued.terminal)?.note, "新判词");
+      assert.notEqual(latestPayload(continued.terminal)?.note, "原判词");
+    },
+  );
 });
