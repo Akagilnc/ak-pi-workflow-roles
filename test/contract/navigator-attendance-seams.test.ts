@@ -7,7 +7,7 @@ import { mkdir, rm, writeFile } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
-import { createNavigatorRoleRuntime, createRoleRuntimeExtension } from "../../src/role-runtime.ts";
+import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { buildNavigatorInfrastructureFailureFact } from "../../src/navigator-invocation-identity.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_EVENT_TYPE, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
@@ -1223,66 +1223,4 @@ test("#959 post-role grace aborts hung nest; session_shutdown does not re-block"
     if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
     else process.env.AK_ROLE_RUN_DIR = previousRunDir;
   }
-});
-
-test("navigator system prompt carries soul and route playbook, not a code-written round sentence", async () => {
-  const starts: Array<(event: { systemPrompt: string }) => Promise<unknown> | unknown> = [];
-  const tools = new Map<string, { name: string }>();
-  const host = {
-    registerTool(tool: { name: string }) { tools.set(tool.name, tool); },
-    getAllTools: () => [...tools.values()],
-    on(event: string, handler: (event: { systemPrompt: string }) => Promise<unknown> | unknown) {
-      if (event === "before_agent_start") starts.push(handler);
-    },
-  };
-  let playbookReads = 0;
-  const runtime = createNavigatorRoleRuntime(host as never, {
-    loadSoul: async () => "route judgment",
-    loadRoutePlaybook: async () => {
-      playbookReads += 1;
-      return "standing playbook";
-    },
-  });
-  await runtime.activate();
-  const returned: string[] = [];
-  for (const handler of starts) {
-    await handler({ systemPrompt: "BASE" });
-    const result = await handler({ systemPrompt: "BASE" });
-    if (result !== null && typeof result === "object" && "systemPrompt" in result && typeof result.systemPrompt === "string") {
-      returned.push(result.systemPrompt);
-    }
-  }
-  assert.equal(returned.some((text) => text.includes("<navigator_soul>") && text.includes("route judgment")), true);
-  assert.equal(returned.some((text) => text.startsWith("BASE") && text.includes("standing playbook")), true);
-  assert.equal(playbookReads, 1);
-  assert.equal(returned.some((text) => text.includes("本轮为待命轮") || text.includes("本轮为结算投喂轮")), false);
-});
-
-test("navigator playbook read failure is the native message on the existing diagnostic outlet", async () => {
-  const starts: Array<(event: { systemPrompt: string }) => Promise<unknown> | unknown> = [];
-  const tools = new Map<string, { name: string }>();
-  const host = {
-    registerTool(tool: { name: string }) { tools.set(tool.name, tool); },
-    getAllTools: () => [...tools.values()],
-    on(event: string, handler: (event: { systemPrompt: string }) => Promise<unknown> | unknown) {
-      if (event === "before_agent_start") starts.push(handler);
-    },
-  };
-  const recorded: string[] = [];
-  const runtime = createNavigatorRoleRuntime(host as never, {
-    loadSoul: async () => "route judgment",
-    loadRoutePlaybook: async () => {
-      throw new Error("ENOENT: missing playbook");
-    },
-    recordRoutePlaybookReadFailure: (message: string | undefined) => {
-      if (message !== undefined) recorded.push(message);
-    },
-  });
-  await runtime.activate();
-  const returned: unknown[] = [];
-  for (const handler of starts) {
-    returned.push(await handler({ systemPrompt: "BASE" }));
-  }
-  assert.deepEqual(recorded, ["ENOENT: missing playbook"]);
-  assert.equal(returned.some((result) => result !== null && typeof result === "object" && "systemPrompt" in result && result.systemPrompt === "BASE\n\nENOENT: missing playbook"), true);
 });

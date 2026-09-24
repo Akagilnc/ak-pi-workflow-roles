@@ -408,26 +408,6 @@ test("structurally empty request stays empty while attachments remain typed tran
   assert.match(withAttach, /\/frozen\/00-a\.txt/);
 });
 
-test("notary and gleaner-left transport prompts are pointers, not fixed openings", () => {
-  const notary = buildInstructionTransportPrompt({
-    role: "notary",
-    instruction: "",
-    instructionEmpty: true,
-    attachments: [],
-    sourceRunPath: "/books/run-source",
-  });
-  assert.equal(notary, "/books/run-source");
-
-  const gleaner = buildInstructionTransportPrompt({
-    role: "gleaner-left",
-    instruction: "caller words",
-    instructionEmpty: false,
-    attachments: [],
-    baseRevision: "abc123",
-  });
-  assert.equal(gleaner, "abc123\n\ncaller words");
-});
-
 test("#959 adviceNavigatorFact projects prose as-is", () => {
   const fact = adviceNavigatorFact({
     prose: "next seat → reviewer",

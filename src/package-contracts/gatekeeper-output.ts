@@ -1,6 +1,6 @@
 /**
  * Public Gatekeeper (门下省) terminating receipt contracts (#639).
- * Direct public seat decision shape. status field semantics: converged | continue | escalate.
+ * Direct public seat decision shape. status field semantics: dispatch | pass.
  * No usable result is infrastructure failure via public settlement, not a judgment status (#475).
  */
 import { Type } from "typebox";
@@ -14,13 +14,13 @@ export const GATEKEEPER_OUTPUT_TOOL_NAME = "ak_gatekeeper_output";
 export const gatekeeperDecisionSchema = openToolObject(
   Type.Object({
     status: Type.Unknown({
-      description: "converged | continue | escalate",
+      description: "dispatch | pass",
     }),
     officer: Type.Unknown({
-      description: "inspector | notary",
+      description: "status 为 dispatch 时为 inspector | notary",
     }),
     findings: Type.Unknown({
-      description: "findings",
+      description: "status 为 pass 时可选 string[] findings",
     }),
   }),
 );

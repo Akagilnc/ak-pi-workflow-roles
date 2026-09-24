@@ -158,7 +158,7 @@ export type SubmissionGateHostActions = {
 export const GATEKEEPER_TOOL_SPEC = {
   name: GATEKEEPER_OUTPUT_TOOL_NAME,
   label: "门下省决议",
-  description: "门下省终局决议。status 为 converged、continue 或 escalate。",
+  description: "门下省终局决议。status 为 dispatch 或 pass。",
   promptSnippet: "门下省决议",
   parameters: gatekeeperOutputSchema,
 } as const;
