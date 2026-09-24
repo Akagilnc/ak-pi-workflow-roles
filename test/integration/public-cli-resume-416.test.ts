@@ -483,6 +483,7 @@ test("nested public summon validates persistent seat axes before dispatch", asyn
       seats: { reviewer: { provider: "openai-codex", model: "test/model", engine: "../escape" } },
     }));
 
+    let dispatches = 0;
     await assert.rejects(
       () => summonPublicRole({
         role: "reviewer",
@@ -492,10 +493,12 @@ test("nested public summon validates persistent seat axes before dispatch", asyn
         packageRoot,
         credentials: { "openai-codex": true, xai: true },
         roleTurnHost: createMinimalHost(async () => {
-          throw new Error("dispatch reached with an illegal persistent engine");
+          dispatches += 1;
+          return { code: 0, stderr: "", timedOut: false };
         }),
       }),
     );
+    assert.equal(dispatches, 0);
   });
 });
 

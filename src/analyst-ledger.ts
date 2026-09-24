@@ -492,7 +492,13 @@ async function classifyScopedRun(input: {
   // #855: writer-lease ghost check is independent of terminal artifact status.
   // present → still emit metrics; unreadable → still enter missingSources;
   // admitted|running + non-live lease → still list in ghostLegs (ticket #4).
-  const lifecycle = await readExistingRunLifecycleState(input.runDirectory);
+  let lifecycle: string | undefined;
+  try {
+    lifecycle = await readExistingRunLifecycleState(input.runDirectory);
+  } catch (error) {
+    missingSources.push("run-state");
+    reasons.push(errorText(error));
+  }
   let ghostLeg: AnalystGhostLeg | undefined;
   if (lifecycle === "admitted" || lifecycle === "running") {
     const ghost = await classifyGhostCandidate({

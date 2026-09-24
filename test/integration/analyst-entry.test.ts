@@ -1097,10 +1097,9 @@ test("analyst entry does not turn a malformed live run state into no-receipt", a
       await rm(join(runDirectory, "artifacts", "report.json"));
       await writeFile(join(runDirectory, "run-state.json"), "{broken", "utf8");
 
-      await assert.rejects(
-        () => runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home }),
-        SyntaxError,
-      );
+      const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
+      const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);
+      assert.deepEqual(damaged?.missingSources, ["run-state"]);
     });
   });
 });
@@ -1112,9 +1111,9 @@ test("analyst entry does not turn an incomplete live run state into no-receipt",
       await rm(join(runDirectory, "artifacts", "report.json"));
       await writeFile(join(runDirectory, "run-state.json"), JSON.stringify({ state: "running" }), "utf8");
 
-      await assert.rejects(
-        () => runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home }),
-      );
+      const result = await runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home });
+      const damaged = result.page.unreadable.find((run) => run.runId === LEG_A1_RUN);
+      assert.deepEqual(damaged?.missingSources, ["run-state"]);
     });
   });
 });
