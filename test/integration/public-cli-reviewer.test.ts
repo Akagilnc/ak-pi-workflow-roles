@@ -25,10 +25,6 @@ import { execFileSync } from "node:child_process";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/reviewer-output.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
-import {
-  loadPackagedMethodSkillMaterial,
-  resolvePackagedMethodSkillPath,
-} from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import {
@@ -519,7 +515,7 @@ test("admitReviewerInvocation persists fixed base, lens, authority; caller text 
   });
 });
 
-test("lawful reviewer Terminal records method provenance and typed expansion evidence", async () => {
+test("lawful reviewer Terminal preserves review evidence", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -541,11 +537,6 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       createRunId: () => "run-reviewer-settle-001",
     });
     await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
-    const material = await loadPackagedMethodSkillMaterial(
-      packageRoot,
-      "ak-cross-m-review",
-    );
-    const skillPath = resolvePackagedMethodSkillPath(packageRoot, "ak-cross-m-review");
     const receipt = {
       ...lawfulReviewerReceipt("completeness"),
       auditNoReceipt: {
@@ -559,24 +550,12 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
         acceptedReceipt: false,
       },
     };
-    // Skill-tag fixture only — method extraction does not consume opening prose (#495 S4).
-    const expansion = `<skill name="ak-cross-m-review" location="${material.skillPath}">\n${material.body}\n</skill>`;
     const sessionLines = [
       JSON.stringify({
         type: "message",
         message: {
           role: "user",
-          content: [{
-            type: "text",
-            text: `<skill name="ak-cross-m-review" location="${join(home, ".agents/skills/ak-cross-m-review/SKILL.md")}">\nbody\n</skill>\n\nreq`,
-          }],
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: expansion }],
+          content: [{ type: "text", text: "Review completeness and correctness lenses." }],
         },
       }),
       JSON.stringify({
@@ -619,11 +598,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       toolCallId: "r1",
     });
 
-    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority, {
-      methodProvenance: material.provenance,
-      methodSkillPath: material.skillPath,
-      methodSkillConfiguredPath: skillPath,
-    });
+    const terminal = await settleSeatTerminalResult(admitted, piDurablePrincipalAuthority);
     assert.equal(terminal.roleOutcome.role, "reviewer");
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["completed"]);
@@ -640,19 +615,6 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
     ) as Record<string, unknown> & {
       baseRevision?: string;
       callerProvenance?: string;
-      methodProvenance: {
-        name: string;
-        packageAdaptation: string;
-        upstream: {
-          repository: string;
-          attribution: string;
-          commit: string;
-          path: string;
-        };
-        files: Record<string, { sha256: string; gitBlob: string }>;
-      };
-      methodInvocationObserved: boolean;
-      methodInvocations: Array<{ name: string; location: string }>;
     };
     assert.equal("taskPath" in evidence, false);
     assert.equal("taskSha256" in evidence, false);
@@ -662,31 +624,7 @@ test("lawful reviewer Terminal records method provenance and typed expansion evi
       "https://github.com/Akagilnc/ming-salvage-sim/issues/1185#issuecomment-5290856369",
     ]);
     assert.equal(evidence.callerProvenance, "Review completeness and correctness lenses.");
-    assert.equal(evidence.methodProvenance.name, "ak-cross-m-review");
-    assert.equal(
-      evidence.methodProvenance.packageAdaptation,
-      "verbatim-upstream",
-    );
-    assert.equal(evidence.methodInvocationObserved, true);
-    assert.equal(evidence.methodInvocations.length, 1);
-    assert.equal(evidence.methodInvocations[0]?.name, "ak-cross-m-review");
-    assert.equal(evidence.methodInvocations[0]?.location, material.skillPath);
-    const evidenceText = JSON.stringify(evidence);
-    assert.equal(evidenceText.includes(".agents/skills"), false);
   });
-});
-
-test("package ak-cross-m-review method is verbatim upstream single-lens CMR", async () => {
-  const material = await loadPackagedMethodSkillMaterial(packageRoot, "ak-cross-m-review");
-  assert.equal(material.name, "ak-cross-m-review");
-  assert.equal(material.provenance.packageAdaptation, "verbatim-upstream");
-  assert.equal(
-    material.provenance.upstream.commit,
-    "57b10e2cea9ff008e2b36b98b55610e58cdfd512",
-  );
-  assert.equal(material.provenance.upstream.version, "0.5.2.0");
-  assert.equal(material.skillPath.includes(packageRoot), true);
-  assert.equal(material.skillPath.includes(".agents/skills"), false);
 });
 
 /** Shortest lawful child turn: write receipt from --ak-review-lens (or override). */
@@ -698,7 +636,6 @@ async function lawfulChildTurn(
     readonly axisKey?: string;
     readonly report?: string;
     readonly empty?: boolean;
-    readonly includeSkillExpansion?: boolean;
     readonly toolCallId?: string;
   },
 ) {
@@ -714,20 +651,6 @@ async function lawfulChildTurn(
   const details = lawfulReviewerReceipt(lens, options?.status ?? "completed", options);
   const toolCallId = options?.toolCallId ?? `ok-${lens}`;
   const lines: string[] = [];
-  if (options?.includeSkillExpansion) {
-    const material = await loadPackagedMethodSkillMaterial(packageRoot, "ak-cross-m-review");
-    const skillPath = resolvePackagedMethodSkillPath(packageRoot, "ak-cross-m-review");
-    lines.push(JSON.stringify({
-      type: "message",
-      message: {
-        role: "user",
-        content: [{
-          type: "text",
-          text: `<skill name="ak-cross-m-review" location="${skillPath}">\n${material.body}\n</skill>`,
-        }],
-      },
-    }));
-  }
   lines.push(JSON.stringify({
     type: "message",
     message: {
@@ -796,7 +719,6 @@ test("default dual-lens admits both axes without a parent run", async () => {
     );
     for (const args of captured) {
       assert.equal(args[args.indexOf("--ak-role") + 1], "reviewer");
-      assert.equal(args.includes("--skill"), true);
       assert.equal(args.includes("--ak-review-task"), false);
       // Ordinary single-axis public semantics: dual-lens legs are not station children.
       assert.equal(args.includes("--ak-station-child"), false);
@@ -926,7 +848,6 @@ test("explicit single-lens hard-stop refused still lands mismatched axis key", a
           status: "refused",
           axisKey: "not-a-declared-axis",
           report: "partial-report-before-stop",
-          includeSkillExpansion: true,
           toolCallId: "r-refused",
         })),
     });
@@ -994,7 +915,6 @@ test("explicit single-lens projects admitted lens and optional caller provenance
         // Deliberate receipt/lens mismatch must still land (仓级第 0 条).
         return lawfulChildTurn(args, {
           lens: "completeness",
-          includeSkillExpansion: true,
           toolCallId: "ok1",
         });
       }),
@@ -1008,7 +928,7 @@ test("explicit single-lens projects admitted lens and optional caller provenance
     const okDialogue = readUserDialogueStdin(capturedStdin ?? "");
     assert.equal(
       okDialogue.startsWith(
-        "/skill:ak-cross-m-review --base HEAD~1 --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
+        "--base HEAD~1 --lens correctness --authority CLAUDE.md --authority docs/adr/0001-roles-grow-by-demand.md",
       ),
       true,
       okDialogue,
@@ -1245,7 +1165,7 @@ test("resume rejects blank/inline authorityRefs via unique --authority-ref gramm
   });
 });
 
-test("ak-role resume continues reviewer with fixed base and package skill", async () => {
+test("ak-role resume continues reviewer with fixed base", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -1319,7 +1239,6 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         assert.equal(args.includes("--ak-review-task"), false);
         assert.equal(args[args.indexOf("--ak-review-base") + 1], admitted.baseRevision);
         assert.equal(args[args.indexOf("--ak-review-lens") + 1], "correctness");
-        assert.equal(args.includes("--skill"), true);
         assert.equal(args.includes(instruction), false);
         const resumeDialogue = readUserDialogueStdin(resumeStdin ?? "");
         assert.equal(resumeDialogue, "调用者原话");
@@ -1331,7 +1250,6 @@ test("ak-role resume continues reviewer with fixed base and package skill", asyn
         resumeCwd = options.cwd;
         return lawfulChildTurn(args, {
           lens: "correctness",
-          includeSkillExpansion: true,
           toolCallId: "rr1",
         });
       }),

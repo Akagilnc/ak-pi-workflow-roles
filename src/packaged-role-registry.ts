@@ -42,7 +42,6 @@ export type PackagedArtifactFace = {
   readonly reportPhase?: true;
   readonly evidenceRole?: true;
   readonly leaves: readonly PackagedArtifactLeaf[];
-  readonly method?: "optional" | "observed";
   readonly doctorReportFacts?: true;
 };
 
@@ -132,7 +131,6 @@ export const PUBLIC_ROLE_RECORDS = [
         { key: "prerequisitesPath", omitUndefined: true },
         { key: "prerequisites" },
       ],
-      method: "observed",
     },
     boardPlacement: "marshal",
     activationFlags: [
@@ -158,7 +156,6 @@ export const PUBLIC_ROLE_RECORDS = [
     worker: true,
     applyMethod: "tdd",
     /** Method-material load failure keeps the activation cause (not reviewer/fixer). */
-    methodLoadFailureCause: "activation",
     boardPlacement: "coder",
     phases: ["plan", "apply"],
     outputTool: CODER_OUTPUT_TOOL_NAME,
@@ -170,7 +167,6 @@ export const PUBLIC_ROLE_RECORDS = [
         { key: "phase" },
         { key: "taskPath" },
       ],
-      method: "optional",
     },
     activationFlags: [
       { field: "taskPath", flag: "ak-coder-task", binds: "input" },
@@ -212,7 +208,6 @@ export const PUBLIC_ROLE_RECORDS = [
         { key: "authorityRefs", copyArray: true },
         { key: "callerProvenance", callerProvenance: true },
       ],
-      method: "observed",
     },
     /** Frozen base/lens/authority become the initial prompt; instruction follows. */
     transportPrompt: "skill-args",
@@ -311,7 +306,6 @@ export const PUBLIC_ROLE_RECORDS = [
     methodSkills: ["resolving-merge-conflicts"],
     settleMethod: "resolving-merge-conflicts",
     /** Method-material load failure keeps the activation cause (not reviewer/fixer). */
-    methodLoadFailureCause: "activation",
     phases: [null],
     outputTool: MERGER_OUTPUT_TOOL_NAME,
     settlement: "residual",
@@ -324,7 +318,6 @@ export const PUBLIC_ROLE_RECORDS = [
         { key: "mergerInputPath" },
         { key: "derived" },
       ],
-      method: "observed",
     },
     activationFlags: [
       { field: "inputPath", from: "mergerInputPath", flag: "ak-merger-input", binds: "input" },
@@ -582,6 +575,20 @@ export function packagedRoleMetadata(role: string): PackagedRoleMetadata | undef
   return PACKAGED_ROLE_REGISTRY.find((entry) => entry.role === role);
 }
 
+/** Names any public seat may require. Setup and missing-Skill checks both read this. */
+export function packagedMethodSkillNames(): readonly string[] {
+  const names: string[] = [];
+  for (const record of PACKAGED_ROLE_REGISTRY) {
+    if ("methodSkills" in record && record.methodSkills !== undefined) {
+      for (const name of record.methodSkills) if (!names.includes(name)) names.push(name);
+    }
+    if ("applyMethod" in record && record.applyMethod !== undefined && !names.includes(record.applyMethod)) {
+      names.push(record.applyMethod);
+    }
+  }
+  return names;
+}
+
 /** Review officers (台院 / 符宝郎 / 审刑院). Absent on every other seat. */
 export function isOfficerReviewSeat(role: string): boolean {
   const record = packagedRoleMetadata(role);
@@ -650,13 +657,6 @@ export function packagedRolePhaseFlag(role: string): string | undefined {
 
 export function packagedRoleOutputTool(role: string): string | undefined {
   return packagedRoleMetadata(role)?.outputTool;
-}
-
-/** Method-material load failure cause declared on the seat. Absent means no typed cause. */
-export function packagedMethodLoadFailureCause(role: string): "activation" | undefined {
-  const record = packagedRoleMetadata(role);
-  if (record === undefined || !("methodLoadFailureCause" in record)) return undefined;
-  return record.methodLoadFailureCause;
 }
 
 /** Diarist binds a board ticket onto its own run. Other seats do not. */
