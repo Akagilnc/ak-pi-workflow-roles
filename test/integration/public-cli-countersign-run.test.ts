@@ -2122,11 +2122,10 @@ test("public countersign pauses on a recorded diarist escalation", async () => {
     const parent = result.admitted;
     const relocated = await findRunDirectoryById(home, parent.runId, undefined, "countersign");
     assert.equal(relocated,
-      join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "582", "runs", `${parent.runId}@countersign`));
+      join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${parent.runId}@countersign`));
     const page = JSON.parse(await readFile(join(relocated!, "admitted-request.json"), "utf8"));
-    assert.equal(page.ticketNumber, 582);
-    assert.deepEqual(page.courtTicketNumbers, [582, 583]);
-    assert.ok((await readTicketProvenance(583, project, home)).recordFile);
+    assert.equal(page.ticketNumber, undefined, "the child's receipt does not pre-bind Countersign");
+    assert.equal(page.courtTicketNumbers, undefined);
     assert.equal((await readTicketProvenance(582, project, home)).lines[0]?.id, "escalated-child-owner");
   });
 });
@@ -2317,12 +2316,6 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     });
     assert.equal(completedA.terminal?.roleOutcome.role, "diarist");
     assert.equal(countersignBodyTurns, 0, "parent still waits for the second escalated member");
-    const replayA = await runAkRole(["resume", first.terminal!.runId!], {
-      home, packageRoot, cwd: project, io: captureIo().io,
-      roleTurnHost: host, hostAdapters: [adapter("pi", host)],
-    });
-    assert.equal(replayA.terminal?.roleOutcome.role, "diarist");
-    assert.equal(countersignBodyTurns, 0, "replaying an earlier child cannot overtake the pending child");
     const completedFirst = await runAkRole(["resume", completedA.terminal!.runId!], {
       home, packageRoot, cwd: project, io: captureIo().io,
       roleTurnHost: host, hostAdapters: [adapter("pi", host)],
@@ -2334,7 +2327,7 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
     assert.equal(countersignBodyTurns, 1, "countersign body runs once per court");
     assert.deepEqual(
       boundRefreshTickets,
-      [parent, childA, childA, childB, childA, childB],
+      [parent, childA, childA, childB, childB],
       "each escalated member resumes before the parent turn",
     );
     await assertReadableSubject(parent);

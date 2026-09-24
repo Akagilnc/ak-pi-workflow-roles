@@ -871,7 +871,7 @@ test("diarist escalation pauses Secretariat, whose final ticket does not rebind 
       parentDiaristRunner: async (args, options) => {
         diaristTurns += 1;
         return courtDiaristWithDetails(diaristTurns === 1
-          ? { status: "escalate", reason: "uncertain bounds" }
+          ? { status: "escalate", reason: "uncertain bounds", ticketNumber: 923 }
           : { status: "converged", ticketNumber: 923 })(args, options);
       },
       nestedDiaristRunner: courtDiaristWithDetails({ status: "completed", ticketNumber: 924 }),

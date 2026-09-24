@@ -2420,6 +2420,10 @@ test("pre-bound diarist records its own ticket assertion, including null", async
         assert.equal(rows[0]?.payload?.lines?.[0]?.id, "bound-assertion-owner");
       } else {
         assert.equal((await readTicketProvenance(assertedTicket, project, home)).lines[0]?.id, "bound-assertion-owner");
+        const runDir = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), String(assertedTicket), "runs", "01a0diar00-0000-7000-8000-0000000000b1@diarist");
+        assert.equal(existsSync(runDir), true);
+        const admitted = JSON.parse(await readFile(join(runDir, "admitted-request.json"), "utf8"));
+        assert.equal(admitted.ticketNumber, assertedTicket);
       }
     });
   }

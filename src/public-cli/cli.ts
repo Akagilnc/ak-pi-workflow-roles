@@ -1242,7 +1242,6 @@ export async function runAkRole(
         const continued = await continueParentAfterDiarist(
           parentRunId,
           result.admitted!,
-          result.terminal,
           createRoleEnvironment(env, {
             role: parentRole, home, agentDir, cwd, credentials, seat: parentSeat, config,
           }),
@@ -1250,8 +1249,8 @@ export async function runAkRole(
         );
         if (continued !== undefined) {
           // A Countersign gate can have paused its Secretariat caller while its
-          // own diarist was up for decision. Resume that caller only after the
-          // exact Countersign child has concluded; no second escalation channel.
+          // own diarist was up for decision. Continue that caller after the
+          // Countersign submission; no second escalation channel.
           const callerRunId = continued.admitted?.role === "countersign"
             ? continued.admitted.correlationId : undefined;
           const callerRole = callerRunId === undefined ? undefined : await peekRoleRunRole(home, callerRunId);

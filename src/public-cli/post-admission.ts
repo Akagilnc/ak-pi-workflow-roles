@@ -711,10 +711,10 @@ export async function dispatchPostAdmissionTurn<
       };
     }
     try {
-      // #858: an unbound seat may assert its ticket on the existing receipt.
+      // #858/#1025: a seat may assert or revise its ticket on the existing receipt.
       // Read the original accepted payload; do not rewrite it, infer from prose,
-      // or reject missing/malformed declarations. An existing binding wins.
-      if (admitted.ticketNumber === undefined) {
+      // or reject missing/malformed declarations. The latest typed assertion wins.
+      if (admitted.role === "diarist" || admitted.role === "secretariat" || admitted.role === "countersign" || admitted.ticketNumber === undefined) {
         const rows = await readRecordedSubmissionRows(
           admitted.projectRoot,
           admitted.runId,
