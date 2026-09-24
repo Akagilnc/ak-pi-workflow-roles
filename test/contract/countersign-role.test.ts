@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { Value } from "typebox/value";
 
+import { closeJsonSchemaForCodex } from "../../src/headless-host/description.ts";
+import { terminatingToolJsonSchema } from "../../src/role-envelope.ts";
 import {
   COUNTERSIGN_OUTPUT_TOOL_NAME,
   validateRecordedCountersignOutput,
@@ -13,7 +15,7 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { judgeVerdictSchema } from "../../src/judge-role.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME, auditorOutputSchema } from "../../src/package-contracts/auditor-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME, notaryOutputSchema } from "../../src/notary-contracts.ts";
-import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, reviewSubmissionSchema } from "../../src/review-submission.ts";
+import { REVIEW_QUEUE_WORDS, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, reviewSubmissionSchema } from "../../src/review-submission.ts";
 import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
 
 /** Shared mock host harness for the Countersign runtime. */
@@ -61,13 +63,35 @@ test("review officers expose one shared output tool and receipt schema", () => {
     [REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME],
   );
   assert.ok([countersignVerdictSchema, judgeVerdictSchema, notaryOutputSchema, auditorOutputSchema, inspectorOutputSchema].every((schema) => schema === reviewSubmissionSchema));
-  const shape = reviewSubmissionSchema as { properties: Record<string, unknown>; required?: string[] };
-  assert.deepEqual(shape.required ?? [], []);
+  const shape = reviewSubmissionSchema as {
+    properties: Record<string, { description?: unknown; anyOf?: unknown }>;
+    required?: string[];
+    additionalProperties?: unknown;
+  };
+  assert.deepEqual(shape.required ?? [], ["status"]);
+  assert.equal(shape.additionalProperties, true);
+  assert.equal(typeof shape.properties.status?.description, "string");
+  assert.ok(shape.properties.status?.description !== "");
+  for (const word of REVIEW_QUEUE_WORDS) {
+    assert.equal(Value.Check(reviewSubmissionSchema, { status: word, extra: true }), true, word);
+  }
+  assert.equal(Value.Check(reviewSubmissionSchema, { note: "missing status" }), false);
+  assert.equal(Value.Check(reviewSubmissionSchema, { status: "not-a-status" }), false);
   for (const field of ["fix", "classes", "decisionGate"]) {
     assert.equal(typeof (shape.properties[field] as { description?: unknown }).description, "string");
+    assert.equal(shape.required?.includes(field) ?? false, false);
   }
   for (const field of ["fix", "classes", "decisionGate"]) {
     assert.equal(Value.Check(reviewSubmissionSchema, { status: "continue", [field]: "readable submission" }), true);
+  }
+  const closed = closeJsonSchemaForCodex(terminatingToolJsonSchema(reviewSubmissionSchema)) as {
+    required?: string[];
+    properties?: Record<string, unknown>;
+  };
+  assert.equal(closed.required?.includes("status"), true);
+  assert.equal(JSON.stringify(closed.properties?.status).includes('"null"'), false);
+  for (const word of REVIEW_QUEUE_WORDS) {
+    assert.equal(JSON.stringify(closed.properties?.status).includes(word), true);
   }
 });
 
@@ -107,7 +131,7 @@ test("Countersign execute accepts as-is and terminates — sole-final barrier is
   const tool = h.tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME);
   assert.ok(tool);
   const declared = tool.parameters as { required?: readonly string[] };
-  assert.equal(declared.required?.includes("status") ?? false, false, "missing status must reach the ledger for speaker re-ask");
+  assert.equal(declared.required?.includes("status"), true);
 
   const result = await tool.execute(
     "one",

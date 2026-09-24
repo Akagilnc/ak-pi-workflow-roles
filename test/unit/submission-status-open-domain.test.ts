@@ -45,8 +45,18 @@ const rows: ReadonlyArray<{ readonly name: string; readonly schema: TSchema; rea
   { name: "reviewer", schema: reviewerOutputSchema, payload: { status: "not-a-status" } },
 ];
 
-test("every registered submission-tool status field stays open to an unrecognized value at the provider seam", () => {
+test("non-three-state submission tools stay open to an unrecognized status at the provider seam", () => {
   for (const row of rows) {
+    if (row.name === "countersign" || row.name === "judge") continue;
     assert.equal(Value.Check(row.schema, row.payload), true, `${row.name}: ${JSON.stringify(row.payload)}`);
+  }
+});
+
+test("review three-state status is a required enum at the provider seam and other fields stay open", () => {
+  for (const row of rows) {
+    if (row.name !== "countersign" && row.name !== "judge") continue;
+    assert.equal(Value.Check(row.schema, row.payload), false, row.name);
+    assert.equal(Value.Check(row.schema, { status: "continue", note: "ok", extra: 1 }), true, row.name);
+    assert.equal(Value.Check(row.schema, { note: "missing" }), false, row.name);
   }
 });

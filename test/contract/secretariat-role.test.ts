@@ -283,7 +283,12 @@ test("secretariat converged receipt enters the submission gate on every host",
             abort() {},
           },
         ),
-      (error: unknown) => error instanceof ParentQueueReaskError,
+      (error: unknown) => {
+        assert.ok(error instanceof ParentQueueReaskError);
+        assert.match(error.message, /unexpected/);
+        assert.match(error.message, /secretariatStatus/);
+        return true;
+      },
     );
   },
 );

@@ -59,6 +59,15 @@ export class WorkerUnfinishedReasonReminderError extends Error {
 }
 
 /**
+ * Host constraint missed a routing discriminator (#1055).
+ * Names live only in the submission schema. This notice carries the field and the received value.
+ */
+export function unreadableDiscriminatorNotice(field: string, received: unknown): string {
+  if (received === undefined) return `读不出 ${field}`;
+  return `读不出 ${field}：${readableGateItem(received)}`;
+}
+
+/**
  * Parent seat status unreadable for queueing (#753).
  * Correctable back to the parent itself — not a gate officer bounce, no officer field.
  */

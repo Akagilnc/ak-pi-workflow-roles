@@ -109,7 +109,7 @@ test("countersign status unreadable returns to countersign without Notary (#753)
     (error: unknown) => {
       // Parent re-ask — not a forged officer bounce face (#753).
       assert.ok(error instanceof ParentQueueReaskError);
-      assert.match(error.message, /status/);
+      assert.match(error.message, /not-a-status/);
       return true;
     },
   );

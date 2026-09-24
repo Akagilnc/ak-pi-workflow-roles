@@ -8,8 +8,8 @@ import test from "node:test";
 
 import { requireSubmissionGate } from "../../src/submission-gate.ts";
 import {
-  OFFICER_CONCLUSION_REASK,
   GatekeeperDecisionError,
+  officerConclusionReask,
   projectGatekeeperRun,
 } from "../../src/gatekeeper-role.ts";
 
@@ -114,7 +114,8 @@ test("#1028 secretariat_verdict reads the shared review status",
       },
     });
     assert.equal(reasks[0], undefined, "first summon has no reask");
-    assert.equal(reasks[1], OFFICER_CONCLUSION_REASK);
+    assert.equal(reasks[1], officerConclusionReask({ status: "pass" }));
+    assert.match(reasks[1] ?? "", /pass/);
   },
 );
 

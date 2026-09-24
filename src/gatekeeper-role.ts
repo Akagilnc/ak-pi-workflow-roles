@@ -4,7 +4,8 @@ import type { HostContext } from "./host-contracts.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { packagedGateStageLabel } from "./packaged-role-registry.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
-import { GatekeeperDecisionError } from "./submission-errors.ts";
+import { GatekeeperDecisionError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
+import { REVIEW_QUEUE_STATUSES } from "./review-submission.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
 import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 import {
@@ -210,12 +211,9 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
  * `fallbackStatus` is the terminal outcome.status when the receipt body has no status key
  * (keeps missing-args sentinel intact as the receipt).
  */
-/** Map the shared review verdict onto the gate queue words (#1028). */
+/** Map the shared review verdict onto the gate queue words (#1028 / #1055). */
 function reviewQueueStatus(status: string): string | undefined {
-  if (status === "converged") return "converged";
-  if (status === "continue") return "continue";
-  if (status === "escalate") return "escalate";
-  return undefined;
+  return REVIEW_QUEUE_STATUSES.has(status) ? status : undefined;
 }
 
 function projectOfficerDecision(
@@ -391,16 +389,11 @@ export type GatekeeperProjection = {
 };
 
 /**
- * Plain-language re-ask when the officer conclusion is not converged|continue|escalate.
- * Not a packaged engine handbook line (#755 exception for 读不出三态).
- * Every review officer uses the same `status` field and three queue words (#1028).
+ * Officer conclusion was missing or not a queue word (#1055).
+ * Resume the speaker with the received value. Status names stay in the schema.
  */
-export const OFFICER_CONCLUSION_REASK =
-  "上次交卷的 status 不是 converged、continue、escalate 三态之一。请重新输出，status 写明其一；continue 或 escalate 的话就是给对方看的原文。" as const;
-
-/** Pick the re-ask line for the officer under review. */
-export function officerConclusionReask(officer: GateOfficer): string {
-  return OFFICER_CONCLUSION_REASK;
+export function officerConclusionReask(received: unknown): string {
+  return unreadableDiscriminatorNotice("status", received);
 }
 
 /**

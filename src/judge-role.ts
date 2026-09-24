@@ -1,7 +1,7 @@
 import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
 import type { Static } from "typebox";
-import { reviewSubmissionSchema } from "./review-submission.ts";
-import { GatekeeperDecisionError, ParentQueueReaskError } from "./submission-errors.ts";
+import { REVIEW_QUEUE_STATUSES, reviewSubmissionSchema } from "./review-submission.ts";
+import { GatekeeperDecisionError, ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { projectGatekeeperEscalation } from "./audit-escalation.ts";
 
 import { readableGateItem } from "./readable-gate-item.ts";
@@ -11,9 +11,6 @@ import {
   type JudgeVerdict,
 } from "./package-contracts/judge-output.ts";
 
-const JUDGE_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]);
-const JUDGE_STATUS_REASK =
-  "status 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
 
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
@@ -70,8 +67,11 @@ export function createJudgeRoleRuntime(
               && typeof (parameters as Record<string, unknown>).status === "string"
                 ? (parameters as Record<string, unknown>).status as string
                 : undefined;
-            if (rawStatus === undefined || !JUDGE_QUEUE_STATUSES.has(rawStatus)) {
-              throw new ParentQueueReaskError(JUDGE_STATUS_REASK);
+            if (rawStatus === undefined || !REVIEW_QUEUE_STATUSES.has(rawStatus)) {
+              const received = parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
+                ? (parameters as Record<string, unknown>).status
+                : undefined;
+              throw new ParentQueueReaskError(unreadableDiscriminatorNotice("status", received));
             }
             if (rawStatus === "escalate") {
               // Parent escalate → throw to caller as-is; officers do not attend (#753 / #756).

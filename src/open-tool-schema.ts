@@ -12,7 +12,7 @@ function declarationIdentity(schema: TSchema): string {
   return JSON.stringify(semantic);
 }
 
-/** Collapse transport variants into one provider-compatible, zero-required open object. */
+/** Collapse transport variants into one provider-compatible open object. Non-three-state tools stay zero-required. */
 export function openToolObjectFromUnion(schema: UnionSchema): TSchema {
   const declarations = new Map<string, TSchema[]>();
   for (const variant of schema.anyOf) {
@@ -35,12 +35,24 @@ export function openToolObjectFromUnion(schema: UnionSchema): TSchema {
   return object;
 }
 
-/** Open a pre-existing object transport schema without changing declarations. */
-export function openToolObject(schema: TSchema & { properties: Record<string, TSchema> }): TSchema {
+/**
+ * Open a pre-existing object transport schema without changing declarations.
+ * `required` names stay required and are not wrapped optional — only the
+ * three-state review discriminator uses this (#1055). Every other field stays optional.
+ */
+export function openToolObject(
+  schema: TSchema & { properties: Record<string, TSchema> },
+  options?: { readonly required?: readonly string[] },
+): TSchema {
+  const required = [...new Set(options?.required ?? [])];
+  const requiredNames = new Set(required);
   const object = Type.Object(
-    Object.fromEntries(Object.entries(schema.properties).map(([name, declaration]) => [name, Type.Optional(described(name, declaration))])),
+    Object.fromEntries(Object.entries(schema.properties).map(([name, declaration]) => [
+      name,
+      requiredNames.has(name) ? described(name, declaration) : Type.Optional(described(name, declaration)),
+    ])),
     { additionalProperties: true },
   );
-  (object as unknown as { required: string[] }).required = [];
+  (object as unknown as { required: string[] }).required = required;
   return object;
 }
