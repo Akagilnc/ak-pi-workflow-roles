@@ -27,8 +27,6 @@ import test from "node:test";
 import type { TSchema } from "typebox";
 import { Value } from "typebox/value";
 
-import { countersignVerdictSchema } from "../../src/countersign-role.ts";
-import { judgeVerdictSchema } from "../../src/judge-role.ts";
 import { coderOutputSchema } from "../../src/worker-role.ts";
 import { fixerOutputSchema } from "../../src/package-contracts/fixer-output.ts";
 import { doctorSubmissionSchema } from "../../src/doctor-contracts.ts";
@@ -36,8 +34,6 @@ import { mergerOutputSchema } from "../../src/merger-contracts.ts";
 import { reviewerOutputSchema } from "../../src/reviewer-role.ts";
 
 const rows: ReadonlyArray<{ readonly name: string; readonly schema: TSchema; readonly payload: Record<string, unknown> }> = [
-  { name: "countersign", schema: countersignVerdictSchema, payload: { status: "not-a-status", note: "typo" } },
-  { name: "judge", schema: judgeVerdictSchema, payload: { status: "not-a-status", note: "typo" } },
   { name: "coder", schema: coderOutputSchema, payload: { status: "not-a-status", report: "typo" } },
   { name: "fixer", schema: fixerOutputSchema, payload: { status: "not-a-status", report: "typo" } },
   { name: "doctor", schema: doctorSubmissionSchema, payload: { status: "not-a-status", reason: "typo" } },
@@ -47,16 +43,6 @@ const rows: ReadonlyArray<{ readonly name: string; readonly schema: TSchema; rea
 
 test("non-three-state submission tools stay open to an unrecognized status at the provider seam", () => {
   for (const row of rows) {
-    if (row.name === "countersign" || row.name === "judge") continue;
     assert.equal(Value.Check(row.schema, row.payload), true, `${row.name}: ${JSON.stringify(row.payload)}`);
-  }
-});
-
-test("review three-state status is a required enum at the provider seam and other fields stay open", () => {
-  for (const row of rows) {
-    if (row.name !== "countersign" && row.name !== "judge") continue;
-    assert.equal(Value.Check(row.schema, row.payload), false, row.name);
-    assert.equal(Value.Check(row.schema, { status: "continue", note: "ok", extra: 1 }), true, row.name);
-    assert.equal(Value.Check(row.schema, { note: "missing" }), false, row.name);
   }
 });

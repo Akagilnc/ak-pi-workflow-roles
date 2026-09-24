@@ -1,7 +1,7 @@
 /** Package-owned Judge output leaf — no role registration surface. */
 
 
-import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "../review-submission.ts";
+import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "../review-submission.ts";
 
 export const JUDGE_OUTPUT_TOOL_NAME: string = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
@@ -39,9 +39,7 @@ export function validateAcceptedJudgeDetails(verdict: unknown): JudgeVerdict {
   if (typeof status !== "string") {
     throw new Error("Judge verdict has no execution discriminator");
   }
-  if (
-    ["converged", "continue", "escalate"].includes(status)
-  ) {
+  if (REVIEW_QUEUE_STATUSES.has(status)) {
     return verdict as JudgeVerdict;
   }
   throw new Error("Judge verdict has no execution discriminator");

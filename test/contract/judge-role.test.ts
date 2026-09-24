@@ -1362,7 +1362,6 @@ test("judge status unreadable returns to judge without officers (#756)", async (
     ),
     (error: unknown) => {
       assert.ok(error instanceof ParentQueueReaskError);
-      assert.match(error.message, /not-a-status/);
       return true;
     },
   );

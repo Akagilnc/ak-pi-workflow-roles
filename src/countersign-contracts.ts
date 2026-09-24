@@ -5,7 +5,7 @@
  * is defaulted, rewritten, or dropped (ADR 0055).
  */
 
-import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
+import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 
 export const COUNTERSIGN_OUTPUT_TOOL_NAME = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 
@@ -37,7 +37,7 @@ export function validateRecordedCountersignOutput(verdict: unknown): Countersign
   if (typeof status !== "string") {
     throw new Error("Countersign verdict has no execution discriminator");
   }
-  if (["converged", "continue", "escalate"].includes(status)) {
+  if (REVIEW_QUEUE_STATUSES.has(status)) {
     return verdict as CountersignVerdict;
   }
   throw new Error("Countersign verdict has no execution discriminator");

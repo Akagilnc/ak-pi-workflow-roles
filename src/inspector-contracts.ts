@@ -4,7 +4,7 @@
  * Dual path: gate-dispatched and independently callable (#568 / ADR 0074).
  */
 
-import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
+import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 
 export const INSPECTOR_OUTPUT_TOOL_NAME: string = REVIEW_SUBMISSION_OUTPUT_TOOL_NAME;
 export const INSPECTOR_SOURCE_RUN_FLAG = {
@@ -30,7 +30,10 @@ export function validateRecordedInspectorOutput(value: unknown): InspectorOutput
   } catch {
     throw new Error("Inspector output has no execution discriminator");
   }
-  if (status === "converged" || status === "continue" || status === "escalate") {
+  if (typeof status !== "string") {
+    throw new Error("Inspector output has no execution discriminator");
+  }
+  if (REVIEW_QUEUE_STATUSES.has(status)) {
     return value as InspectorOutput;
   }
   throw new Error("Inspector output has no execution discriminator");
