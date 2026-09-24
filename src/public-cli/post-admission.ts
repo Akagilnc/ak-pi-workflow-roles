@@ -1021,31 +1021,6 @@ export async function dispatchPostAdmissionTurn<
           ? env.principalAuthority.decode(admitted.principal).sessionFile
           : "";
       const park = sessionFile === "" ? undefined : await readOfficerEscalationPark(sessionFile);
-      if (park?.officerRunId !== undefined) {
-        const officer = await loadResumablePublicRole(
-          env.home,
-          park.officerRunId,
-          env.principalAuthority,
-          true,
-        );
-        const officerTerminal = await trySettlePublicSeat(
-          officer.admitted,
-          env.principalAuthority,
-          undefined,
-          undefined,
-          env.packageRoot,
-        );
-        if (officerTerminal !== undefined && latestQueueStatus(officerTerminal) === "escalate") {
-          await markRunAdmitted(admitted, env.principalAuthority);
-          return await finishAfterTurn({
-            exitCode: 0,
-            admitted,
-            terminal: officerTerminal as T,
-            skipAutoResume: true,
-            turnDispatched: true,
-          });
-        }
-      }
       const runnerKnownFailure =
         adapters.resolveRunnerKnownFailure !== undefined && sessionFile !== ""
           ? await adapters.resolveRunnerKnownFailure({ result, sessionFile })
@@ -1079,6 +1054,38 @@ export async function dispatchPostAdmissionTurn<
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
         || resolution.knownFailure !== undefined;
+      // Waiting on an officer is not a successful host turn. Project it only
+      // after the current failure signals have been read and found absent.
+      if (
+        !hostSignalFailed
+        && stderrLogWriteFailure === undefined
+        && processCancelName === undefined
+        && park?.officerRunId !== undefined
+      ) {
+        const officer = await loadResumablePublicRole(
+          env.home,
+          park.officerRunId,
+          env.principalAuthority,
+          true,
+        );
+        const officerTerminal = await trySettlePublicSeat(
+          officer.admitted,
+          env.principalAuthority,
+          undefined,
+          undefined,
+          env.packageRoot,
+        );
+        if (officerTerminal !== undefined && latestQueueStatus(officerTerminal) === "escalate") {
+          await markRunAdmitted(admitted, env.principalAuthority);
+          return await finishAfterTurn({
+            exitCode: 0,
+            admitted,
+            terminal: officerTerminal as T,
+            skipAutoResume: true,
+            turnDispatched: true,
+          });
+        }
+      }
 
       settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
       if (settled !== undefined) {
