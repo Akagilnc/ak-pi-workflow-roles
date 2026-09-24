@@ -15,6 +15,10 @@ const entries = [
   // (#590: published non-bundle graph must stay closed under its own relative edges).
   "navigator-public-session",
   "navigator-session-contracts",
+  // Static import of navigator-attendance and navigator-public-session.
+  "navigator-work-base",
+  // Static import of navigator-work-base.
+  "atomic-write",
   "public-role-summons",
   "pi/in-process-session",
   "activation-ledger-git",
