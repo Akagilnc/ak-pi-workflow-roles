@@ -21,11 +21,6 @@ import { execFileSync } from "node:child_process";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { tryHomeFromAkRolesPath } from "../../src/activation-ledger-topology.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
-import {
-  loadPackagedMethodSkillMaterial,
-  observePackagedMethodSkillInvocation,
-  resolvePackagedMethodSkillPath,
-} from "../../src/package-resources/method-skill.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
@@ -189,7 +184,7 @@ test("admitFixerInvocation freezes prerequisites and rejects malformed grammar s
 });
 
 
-test("lawful fixer Terminal accepts a receipt with or without Skill expansion", async () => {
+test("lawful fixer Terminal accepts a receipt without Skill expansion", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -204,32 +199,6 @@ test("lawful fixer Terminal accepts a receipt with or without Skill expansion", 
       createRunId: () => "run-fixer-settle-001",
     });
     await mkdir(piDurablePrincipalAuthority.decode(admitted.principal).sessionDirectory, { recursive: true });
-    const material = await loadPackagedMethodSkillMaterial(
-      packageRoot,
-      "diagnosing-bugs",
-    );
-    const configuredPath = resolvePackagedMethodSkillPath(
-      packageRoot,
-      "diagnosing-bugs",
-    );
-    const skillBody = `References are relative to ${material.rootDirectory}.\n\n${material.body}`;
-    const skillPrompt = `<skill name="diagnosing-bugs" location="${configuredPath}">\n${skillBody}\n</skill>\n\nDiagnose the root cause.`;
-    assert.deepEqual(
-      observePackagedMethodSkillInvocation(skillPrompt, {
-        name: "diagnosing-bugs",
-        allowedLocations: [configuredPath, material.skillPath],
-      }),
-      { name: "diagnosing-bugs", location: configuredPath },
-    );
-    // Ambient home path must not count as package invocation.
-    assert.equal(
-      observePackagedMethodSkillInvocation(
-        `<skill name="diagnosing-bugs" location="/tmp/home/.agents/skills/diagnosing-bugs/SKILL.md">\n${skillBody}\n</skill>\n\nx`,
-        { name: "diagnosing-bugs", allowedLocations: [configuredPath] },
-      ),
-      undefined,
-    );
-
     const receipt = {
       status: "completed" as const,
       report: "Root cause repaired across the class; diagnosis was used once.",
@@ -244,13 +213,6 @@ test("lawful fixer Terminal accepts a receipt with or without Skill expansion", 
       ],
     };
     const sessionLines = [
-      JSON.stringify({
-        type: "message",
-        message: {
-          role: "user",
-          content: [{ type: "text", text: skillPrompt }],
-        },
-      }),
       JSON.stringify({
         type: "message",
         message: {

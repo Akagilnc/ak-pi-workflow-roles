@@ -9,7 +9,6 @@ import type {
   RoleTurnActivation,
   RoleTurnRequest,
 } from "../host-contracts.ts";
-import type { PackagedMethodSkillName } from "../package-resources/method-skill.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import {
   packagedRoleActivationFlags,
@@ -102,7 +101,7 @@ export function projectRoleTurnRequest(
  */
 export function packagedSettleSkill(
   admitted: AdmittedRoleInvocation,
-): PackagedMethodSkillName | undefined {
+): string | undefined {
   const record = packagedRoleMetadata(admitted.role);
   if (record === undefined) return undefined;
   if ("applyMethod" in record && record.applyMethod !== undefined) {
@@ -147,9 +146,9 @@ function activationForAdmitted(admitted: AdmittedRoleInvocation): RoleTurnActiva
 }
 
 /** Skill bindings declared on the composition-root record for this admitted run. */
-export function requiredMethodSkills(admitted: AdmittedRoleInvocation): readonly PackagedMethodSkillName[] {
+export function requiredMethodSkills(admitted: AdmittedRoleInvocation): readonly string[] {
   const record = packagedRoleMetadata(admitted.role);
-  const names: PackagedMethodSkillName[] = [];
+  const names: string[] = [];
   if (record !== undefined && "methodSkills" in record && record.methodSkills !== undefined) {
     names.push(...record.methodSkills);
   }
