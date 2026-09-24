@@ -5,6 +5,7 @@ import type { HostContext } from "./host-contracts.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import { officerConclusionReask } from "./gatekeeper-role.ts";
+import { receivedDiscriminator } from "./submission-errors.ts";
 import { coalesceSubmissionRows } from "./public-cli/terminal.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
 
@@ -226,7 +227,7 @@ export async function runComplianceAudit(options: RunComplianceAuditOptions): Pr
     const summoned = await summon(subject, runDirectory, options.signal, reask, submission);
     const decision = await projectAuditorTerminal(summoned);
     if (decision.status === "received") {
-      reask = officerConclusionReask(decision.reply);
+      reask = officerConclusionReask(receivedDiscriminator(decision.reply, "status"));
       continue;
     }
     return decision;

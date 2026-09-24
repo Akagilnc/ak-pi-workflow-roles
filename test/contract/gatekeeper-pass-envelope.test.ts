@@ -95,7 +95,7 @@ test("#1028 secretariat_verdict reads the shared review status",
         round += 1;
         const payload =
           round === 1
-            ? { status: "pass" }
+            ? { status: "pass", findings: "不得回放的正文", reason: "也不得回放" }
             : { status: "converged", note: "署 after reask" };
         return {
           exitCode: 0,
@@ -114,8 +114,10 @@ test("#1028 secretariat_verdict reads the shared review status",
       },
     });
     assert.equal(reasks[0], undefined, "first summon has no reask");
-    assert.equal(reasks[1], officerConclusionReask({ status: "pass" }));
+    assert.equal(reasks[1], officerConclusionReask("pass"));
     assert.match(reasks[1] ?? "", /pass/);
+    assert.equal((reasks[1] ?? "").includes("不得回放的正文"), false);
+    assert.equal((reasks[1] ?? "").includes("也不得回放"), false);
   },
 );
 

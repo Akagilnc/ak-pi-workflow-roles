@@ -67,6 +67,13 @@ export function unreadableDiscriminatorNotice(field: string, received: unknown):
   return `读不出 ${field}：${readableGateItem(received)}`;
 }
 
+/** The received discriminator only — never the rest of the receipt. */
+export function receivedDiscriminator(receipt: unknown, field: string): unknown {
+  if (receipt === null || typeof receipt !== "object" || Array.isArray(receipt)) return undefined;
+  if (!Object.hasOwn(receipt, field)) return undefined;
+  return (receipt as Record<string, unknown>)[field];
+}
+
 /**
  * Parent seat status unreadable for queueing (#753).
  * Correctable back to the parent itself — not a gate officer bounce, no officer field.

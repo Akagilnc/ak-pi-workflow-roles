@@ -27,6 +27,7 @@ import {
   type GateOfficerSummon,
 } from "./gatekeeper-role.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
+import { receivedDiscriminator } from "./submission-errors.ts";
 import { sessionFileFromPublicSummon } from "./session-assistant-usage.ts";
 
 /**
@@ -178,7 +179,7 @@ export async function requireSubmissionGate(options: {
       };
     }
     if (gatekeeper.status === "needs_reask") {
-      reask = officerConclusionReask(gatekeeper.receipt);
+      reask = officerConclusionReask(receivedDiscriminator(gatekeeper.receipt, "status"));
       continue;
     }
     if (gatekeeper.status === "transport_failure") {

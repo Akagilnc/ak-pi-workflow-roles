@@ -390,7 +390,7 @@ export type GatekeeperProjection = {
 
 /**
  * Officer conclusion was missing or not a queue word (#1055).
- * Resume the speaker with the received value. Status names stay in the schema.
+ * `received` is the status value only, not the rest of the receipt.
  */
 export function officerConclusionReask(received: unknown): string {
   return unreadableDiscriminatorNotice("status", received);
