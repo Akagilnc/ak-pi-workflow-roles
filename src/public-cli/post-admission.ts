@@ -6,7 +6,7 @@
  * Role runners supply only turn request projection and narrow settlement adapters.
  */
 import { randomUUID } from "node:crypto";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -16,11 +16,7 @@ import {
   type SameTicketSummonsMaterials,
 } from "./run-lifecycle.ts";
 import { CliUsageError } from "./cli-errors.ts";
-import { AK_ROLE_AUDITOR_SUBJECT_ENV, resolveAuditorSubject } from "../auditor-soul.ts";
-import {
-  packagedAdmittedSubject,
-  packagedSubjectChoices,
-} from "../packaged-role-registry.ts";
+import { resolveAuditorSubject } from "../auditor-soul.ts";
 import type { RoleTurnRequestProjectionOptions } from "./turn-request.ts";
 import {
   bindAdmittedTicketNumber,
@@ -48,7 +44,7 @@ import type {
   RoleTurnResult,
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
-import { isOfficerReviewSeat } from "../packaged-role-registry.ts";
+import { isOfficerReviewSeat, packagedSubjectChoices } from "../packaged-role-registry.ts";
 import { deliverCaseDossierAsAttachment } from "./case-dossier-delivery.ts";
 
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
@@ -86,7 +82,7 @@ import {
   readCurrentCourt,
   recordCurrentCourt,
   renderResumeCommand,
-  sessionUnavailableHint,
+  sessionUnavailableFact,
   type CurrentCourtState,
   type RunWriterLease,
   type TypedProviderHttpObservation,
@@ -1539,28 +1535,28 @@ export async function runPostAdmissionSeatResume<
     }
     throw error;
   }
-  const sessionBlock = await blockedHostSession(
+  const sessionFact = await blockedHostSessionFact(
     input.env.host,
     input.env.principalAuthority,
     loaded.admitted.principal,
   );
-  if (sessionBlock !== undefined) {
-    const pointer = await publishResumeErrorPointer(
+  if (sessionFact !== undefined) {
+    await presentResumeFailurePointer(
       loaded.admitted,
       input.env.principalAuthority,
-      sessionBlock.diagnostic,
+      input.io,
+      sessionFact,
     );
-    presentStructuralRejection({ message: `${sessionBlock.hint} ${pointer}` }, input.io);
     return { exitCode: 2 };
   }
-  const rejectedSubject = await rejectedAuditorSubject(loaded.admitted);
-  if (rejectedSubject !== undefined) {
-    const pointer = await publishResumeErrorPointer(
+  const subjectFact = rejectedSubjectFact(loaded.admitted.role);
+  if (subjectFact !== undefined) {
+    await presentResumeFailurePointer(
       loaded.admitted,
       input.env.principalAuthority,
-      rejectedSubject.record,
+      input.io,
+      subjectFact,
     );
-    presentStructuralRejection({ message: `${rejectedSubject.hint} ${pointer}` }, input.io);
     return { exitCode: 2 };
   }
 
@@ -1568,6 +1564,7 @@ export async function runPostAdmissionSeatResume<
   if (input.afterAdmittedLoad !== undefined) {
     const prepared = await input.afterAdmittedLoad(loaded.admitted);
     if (prepared.kind === "terminal") {
+      await showResumeErrorPointer(input.io, prepared.exitCode, prepared.terminal);
       return {
         exitCode: prepared.exitCode,
         admitted: prepared.admitted,
@@ -1753,109 +1750,70 @@ export async function runPostAdmissionSeatResume<
         : { effectiveEngine: input.effectiveEngine }),
       buildRequestAfterLease,
     });
-    const publishedError = resumed.terminal?.artifacts.find((artifact) => artifact.kind === "error")?.path;
-    if (resumed.exitCode !== 0 && publishedError !== undefined) {
-      input.io.stderr(`${publishedError}\n`);
-    }
+    await showResumeErrorPointer(input.io, resumed.exitCode, resumed.terminal);
     return resumed;
   } catch (error) {
-    // Turn construction may still surface structural rejection.
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, input.io);
-      return { exitCode: 2 };
-    }
-    if (await isMissingWorkspaceSpawn(error, loaded.admitted.projectRoot)) {
-      const diagnostic = error instanceof Error ? error.message : String(error);
-      const pointer = await publishResumeErrorPointer(
-        loaded.admitted,
-        input.env.principalAuthority,
-        diagnostic,
-      );
-      presentStructuralRejection({
-        message: `工作目录不存在：${loaded.admitted.projectRoot} ${pointer}`,
-      }, input.io);
-      return { exitCode: 1 };
-    }
-    throw error;
+    if (error instanceof TurnDispatchedFailure) throw error;
+    const diagnostic = error instanceof Error ? error.message : String(error);
+    await presentResumeFailurePointer(
+      loaded.admitted,
+      input.env.principalAuthority,
+      input.io,
+      diagnostic,
+    );
+    return { exitCode: error instanceof CliUsageError ? 2 : 1 };
   }
 }
 
-async function isMissingWorkspaceSpawn(error: unknown, projectRoot: string): Promise<boolean> {
-  if (!isSpawnEnoent(error)) return false;
-  try {
-    await stat(projectRoot);
-    return false;
-  } catch (statError) {
-    return (statError as NodeJS.ErrnoException).code === "ENOENT";
-  }
-}
-
-function isSpawnEnoent(error: unknown): boolean {
-  let current: unknown = error;
-  for (let depth = 0; depth < 4 && current != null; depth += 1) {
-    if (typeof current === "object" && "code" in current && "syscall" in current) {
-      const record = current as { code?: unknown; syscall?: unknown };
-      if (record.code === "ENOENT" && typeof record.syscall === "string" && record.syscall.startsWith("spawn")) {
-        return true;
-      }
-    }
-    if (!(current instanceof Error)) return false;
-    current = current.cause;
-  }
-  return false;
-}
-
-async function rejectedAuditorSubject(admitted: {
-  readonly role: string;
-  readonly runId: string;
-  readonly admittedRequestPath: string;
-}): Promise<{ readonly hint: string; readonly record: string } | undefined> {
-  const choices = packagedSubjectChoices(admitted.role);
-  if (choices === undefined) return undefined;
-  let diagnosis: string;
+function rejectedSubjectFact(role: string): string | undefined {
+  if (packagedSubjectChoices(role) === undefined) return undefined;
   try {
     resolveAuditorSubject();
     return undefined;
   } catch (error) {
-    diagnosis = error instanceof Error && error.message.trim() !== ""
-      ? error.message
-      : String(error);
+    return error instanceof Error && error.message.trim() !== "" ? error.message : String(error);
   }
-  const raw = process.env[AK_ROLE_AUDITOR_SUBJECT_ENV];
-  const trimmed = typeof raw === "string" ? raw.trim() : "";
-  let recordedSubject: string | undefined;
-  try {
-    const parsed: unknown = JSON.parse(await readFile(admitted.admittedRequestPath, "utf8"));
-    if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
-      const record = parsed as Record<string, unknown>;
-      if (typeof record.subject === "string") {
-        recordedSubject = packagedAdmittedSubject(admitted.role, record.subject.trim());
-      }
-    }
-  } catch {
-    // Unreadable admitted page is not a stored subject.
-  }
-  const subjects = recordedSubject === undefined ? [...choices] : [recordedSubject];
-  const supply = `把 ${AK_ROLE_AUDITOR_SUBJECT_ENV} 设为 ${subjects.join(" 或 ")} 后执行 ak-role resume ${admitted.runId}`;
-  const fact = trimmed === ""
-    ? "审刑院续跑缺少被审席位"
-    : `审刑院续跑的被审席位不是合法值：${trimmed}`;
-  return { hint: `${fact}；${supply}`, record: diagnosis };
 }
 
-async function blockedHostSession(
+async function blockedHostSessionFact(
   host: string | undefined,
   authority: DurablePrincipalAuthority,
   principal: DurablePrincipal,
-): Promise<{ readonly hint: string; readonly diagnostic: string } | undefined> {
+): Promise<string | undefined> {
   const availability = await readHostAwareSessionAvailability(host, authority, principal);
   if (availability.available) return undefined;
-  const diagnostic = availability.absent
-    ? `ENOENT: ${availability.sessionFile}`
-    : availability.cause instanceof Error && availability.cause.message.trim() !== ""
-      ? availability.cause.message
-      : `session unavailable: ${availability.sessionFile}`;
-  return { hint: sessionUnavailableHint(availability), diagnostic };
+  return sessionUnavailableFact(availability);
+}
+
+function writeResumeFailurePointer(io: CliIo, errorPath: string): void {
+  io.stderr(formatCliDiagnostic(`续跑失败，当次错误记录：${errorPath}`));
+}
+
+function showResumeErrorPointer(
+  io: CliIo,
+  exitCode: number,
+  terminal: { readonly artifacts: readonly { readonly kind: string; readonly path: string }[] } | undefined,
+): void {
+  if (exitCode === 0 || terminal === undefined) return;
+  const publishedError = terminal.artifacts.find((artifact) => artifact.kind === "error")?.path;
+  if (publishedError === undefined) return;
+  writeResumeFailurePointer(io, publishedError);
+}
+
+async function presentResumeFailurePointer(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  io: CliIo,
+  diagnostic: string,
+): Promise<void> {
+  try {
+    writeResumeFailurePointer(io, await publishResumeErrorPointer(admitted, authority, diagnostic));
+  } catch (publishError) {
+    presentStructuralRejection(
+      publishError instanceof Error ? { message: diagnostic, cause: publishError } : { message: diagnostic },
+      io,
+    );
+  }
 }
 
 async function publishResumeErrorPointer(

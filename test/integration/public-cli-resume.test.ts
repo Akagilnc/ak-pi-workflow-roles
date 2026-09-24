@@ -2174,11 +2174,13 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
       },
       }),
     });
+    const errorRecord = join(runDirectory, "artifacts", "error.json");
+    const recorded = JSON.parse(await readFile(errorRecord, "utf8")) as { diagnostic: string };
     assert.equal(dispatches, 0);
     assert.equal(stdout.length, 0);
     assert.notEqual(blocked.exitCode, 0);
-    assert.equal(stderr.join("").includes(sessionFile), true);
-    assert.equal(stderr.join("").includes(join(runDirectory, "artifacts", "error.json")), true);
+    assert.equal(recorded.diagnostic.includes(sessionFile), true);
+    assert.equal(stderr.join("").includes(errorRecord), true);
   });
 });
 
@@ -2506,20 +2508,22 @@ test("public resume says which confirmed fact failed and where to look", async (
         seen.push(request);
         return { code: 1, stderr: "zeta-unique-host-diagnostic", timedOut: false };
       });
-      const resume = (argv: readonly string[]) => {
-        const { io } = captureIo();
-        return runAkRole([...argv], {
+      const resume = async (argv: readonly string[]) => {
+        const captured = captureIo();
+        const result = await runAkRole([...argv], {
           packageRoot,
           home,
           cwd: home,
           credentials: { "openai-codex": true, xai: true },
-          io,
+          io: captured.io,
           hostAdapters: [
             { name: "pi", create: () => ({ ok: true as const, host }) },
             { name: "claude", create: () => ({ ok: true as const, host }) },
           ],
         });
+        return { ...result, stderr: captured.stderr.join("") };
       };
+      const errorRecord = (runDirectory: string) => join(runDirectory, "artifacts", "error.json");
       const readError = async (runDirectory: string) =>
         JSON.parse(await readFile(join(runDirectory, "artifacts", "error.json"), "utf8")) as { diagnostic: string };
       const subjectDiagnosis = () => {
@@ -2535,14 +2539,17 @@ test("public resume says which confirmed fact failed and where to look", async (
       const noWorkspace = await resume(["resume", "--model", "test/caller-seat:high", "1058-no-workspace"]);
       assert.notEqual(noWorkspace.exitCode, 0);
       assert.equal(seen.length, callsBeforeWorkspace);
+      const workspaceRecordPath = errorRecord(deletedWorkspace.runDirectory);
       const workspaceRecord = await readError(deletedWorkspace.runDirectory);
       assert.equal(workspaceRecord.diagnostic.includes("ENOENT"), true);
+      assert.equal(noWorkspace.stderr.includes(workspaceRecordPath), true);
 
       const callsBeforeSubject = seen.length;
       const missingSubject = await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
       assert.notEqual(missingSubject.exitCode, 0);
       assert.equal(seen.length, callsBeforeSubject);
       assert.equal((await readError(auditor.runDirectory)).diagnostic, subjectDiagnosis());
+      assert.equal(missingSubject.stderr.includes(errorRecord(auditor.runDirectory)), true);
 
       process.env.AK_ROLE_AUDITOR_SUBJECT = "typo";
       const illegalSubject = await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
@@ -2560,6 +2567,7 @@ test("public resume says which confirmed fact failed and where to look", async (
 
       const unknown = await resume(["resume", "--model", "test/caller-seat:high", "1058-unknown-host"]);
       assert.notEqual(unknown.exitCode, 0);
+      assert.equal(unknown.stderr.includes(errorRecord(unknownHost.runDirectory)), true);
       assert.equal(unknown.terminal?.roleOutcome.kind, "failure");
       assert.equal(
         unknown.terminal?.roleOutcome.kind === "failure"
@@ -2585,6 +2593,7 @@ test("public resume says which confirmed fact failed and where to look", async (
       const unboundRecord = await readError(unboundHost.runDirectory);
       assert.equal(unboundRecord.diagnostic.includes(join(unboundHost.sessionDirectory, bindingName!)), true);
       assert.equal(unboundRecord.diagnostic.includes("session.jsonl"), false);
+      assert.equal(unbound.stderr.includes(errorRecord(unboundHost.runDirectory)), true);
     });
   } finally {
     if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;

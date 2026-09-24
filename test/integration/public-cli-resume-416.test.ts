@@ -206,7 +206,11 @@ test("block1: session principal unavailable still fails honestly", async()=>{
                                                                                       piRunner: async(a)=>{dispatched=true;return{code:0,stderr:"",timedOut:false,args:[...a]};},
                                                                                     })});
     const errorRecord=join(runDir,"artifacts","error.json");
-    assert.equal(dispatched,false);assert.equal(stderr.join("").includes(sessionFile),true);assert.equal(stderr.join("").includes(errorRecord),true);assert.notEqual(res.exitCode,0);
+    const recorded=JSON.parse(await readFile(errorRecord,"utf8")) as {diagnostic:string};
+    assert.equal(dispatched,false);
+    assert.equal(recorded.diagnostic.includes(sessionFile),true);
+    assert.equal(stderr.join("").includes(errorRecord),true);
+    assert.notEqual(res.exitCode,0);
   });
 });
 

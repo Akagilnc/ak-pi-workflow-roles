@@ -1354,7 +1354,7 @@ async function loadResumableRunRecord(
   if (!deferSessionGate && !(allowUnformedAdmitted && run.state === "admitted")) {
     const availability = await readHostSessionAvailability(authority, principal);
     if (!availability.available) {
-      throw new CliUsageError(sessionUnavailableHint(availability));
+      throw new CliUsageError(sessionUnavailableFact(availability));
     }
   }
   // Reconstruct admitted identity from durable run record + admitted-request.json.
@@ -2032,11 +2032,16 @@ function resumedWorkerPhase(
   throw new CliUsageError(`role run admitted ${role} phase is missing: ${runId}`);
 }
 
-export function sessionUnavailableHint(availability: HostSessionAvailability): string {
+/** Original session fact for the error record. ENOENT is the only confirmed absence. */
+export function sessionUnavailableFact(availability: HostSessionAvailability): string {
   if (availability.available) return availability.sessionFile;
-  return availability.absent
-    ? `没有可续的宿主会话，预期会话文件不存在：${availability.sessionFile}`
-    : `现在不能续宿主会话，会话文件：${availability.sessionFile}`;
+  const sessionFile = availability.sessionFile;
+  const fact = availability.absent
+    ? "ENOENT"
+    : availability.cause instanceof Error && availability.cause.message.trim() !== ""
+      ? availability.cause.message
+      : "session unavailable";
+  return fact.includes(sessionFile) ? fact : `${fact}: ${sessionFile}`;
 }
 
 export async function readHostSessionAvailability(
