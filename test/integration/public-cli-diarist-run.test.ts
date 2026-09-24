@@ -1,7 +1,7 @@
 /**
  * #708 / #779 / #901 public 起居郎 seat — `ak-role diarist` is a role like the other seats.
  * LLM submits bounds; mechanical layer reprojects records.jsonl.
- * Single seam: real entry, scripted host, on-disk session fixture, assert the unique diary file.
+ * Real public entry; diary projection uses on-disk sessions, status reask uses the real envelope.
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
@@ -42,8 +42,10 @@ import {
 } from "../../src/ticket-provenance.ts";
 import { createDiaristRoleRuntime } from "../../src/role-runtime.ts";
 import { ParentQueueReaskError } from "../../src/submission-errors.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
+  roleTurnHostFromStructuredOutputRounds,
   scriptedTerminatingToolSession,
   type LegacyFauxPiRunner,
 } from "../helpers/role-turn-host-fixture.ts";
@@ -53,6 +55,7 @@ import {
 } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
 
 const TICKET = 708;
 
@@ -792,6 +795,53 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     rangeBLine: 2,
   };
 }
+
+test("public diarist reasks an unreadable routing status but escalates without reading bounds", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "01a0diar00-0000-7000-8000-0000000000c1";
+    const unreadable = {
+      status: { value: "completed" },
+      ticketNumber: TICKET,
+      sessions: [],
+    };
+    const corrected = {
+      status: "escalate",
+      reason: "无法辨认本庭对象",
+      sessions: [{}],
+    };
+    const roleTurnHost = roleTurnHostFromStructuredOutputRounds({
+      packageRoot,
+      principalAuthority: immutablePrincipalAuthority,
+      submissions: [unreadable, corrected],
+    });
+
+    const { io, stdout } = captureIo();
+    const result = await runAkRole(
+      ["diarist", "--model", "test/caller-seat:high", "--project", project, `整理 #${TICKET} 起居录`],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io,
+        createRunId: () => runId,
+        principalAuthority: immutablePrincipalAuthority,
+        roleTurnHost,
+      },
+    );
+
+    assert.equal(result.exitCode, 0, stdout.join("") || "diarist did not settle");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
+    const submissions = await readRecordedSubmissionRows(project, runId, home);
+    assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
+      { kind: "correctable-rejection", accepted: unreadable },
+      { kind: "accepted", accepted: corrected },
+    ]);
+  });
+});
 
 test("ak-role diarist projects dialogue bounds and preserves unparsable source bytes", async () => {
   await withTempHome(async (home) => {

@@ -250,12 +250,22 @@ function nonNullLeaves(schema: unknown): unknown[] {
  * Required → closed non-null leaf(s). Optional → closed leaf(s) + null.
  */
 function closePropertySchema(schema: unknown, optional: boolean): unknown {
+  const description =
+    isPlainObject(schema) && typeof schema.description === "string"
+      ? { description: schema.description }
+      : {};
   const leaves = nonNullLeaves(schema).map(closeSchemaNode);
-  if (leaves.length === 0) return { type: "null" };
+  if (leaves.length === 0) return { type: "null", ...description };
   if (!optional) {
-    return leaves.length === 1 ? leaves[0] : { anyOf: leaves };
+    const closed = leaves.length === 1 ? leaves[0] : { anyOf: leaves };
+    // Codex strict does not allow sibling keys on $ref; put property guidance
+    // on an enclosing schema instead of losing it or weakening the free-JSON ref.
+    if (isPlainObject(closed) && typeof closed.$ref === "string") {
+      return { anyOf: [closed], ...description };
+    }
+    return isPlainObject(closed) ? { ...closed, ...description } : closed;
   }
-  return { anyOf: [...leaves, { type: "null" }] };
+  return { anyOf: [...leaves, { type: "null" }], ...description };
 }
 
 /**

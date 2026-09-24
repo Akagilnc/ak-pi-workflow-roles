@@ -10,7 +10,7 @@ import type {
 } from "./canonical-skill-binding.ts";
 import { readableGateItem } from "./readable-gate-item.ts";
 import { projectGatekeeperEscalation } from "./audit-escalation.ts";
-import { GatekeeperDecisionError } from "./submission-errors.ts";
+import { GatekeeperDecisionError, ParentQueueReaskError } from "./submission-errors.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -53,7 +53,7 @@ export type { WorkerOutput };
 // (src/countersign-role.ts) — one shared description across every variant
 // so openToolObjectFromUnion's identical-declaration collapse drops none of it.
 const CODER_STATUS_DESCRIPTION =
-  "planned | completed | refused | unfinished — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据；unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。" as const;
+  "planned | completed | refused | partially_completed | unfinished — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据；unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。" as const;
 const coderOutputVariants = Type.Union([
   Type.Object({
     status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
@@ -154,15 +154,30 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/**
- * Read the accepted receipt's own `status` word as submitted (#836: `status`
- * stays an open Type.Unknown provider field, so FixerOutput's Static type no
- * longer narrows it to a literal union — code still just reads whatever
- * string the role wrote; a non-string status reads as "" and simply misses
- * every known-status gate below, same as any other unrecognized status).
- */
-function workerStatusOf(output: WorkerOutput): string {
-  return typeof output.status === "string" ? output.status : "";
+/** Routing words shared by Coder and Fixer; provider schemas remain open. */
+const WORKER_ROUTING_STATUSES = new Set([
+  "planned",
+  "completed",
+  "refused",
+  "partially_completed",
+  "unfinished",
+]);
+const WORKER_STATUS_REASK =
+  "status 不是 planned、completed、refused、partially_completed、unfinished 之一。请重新交卷，status 写明其一。" as const;
+
+/** Read only the field that selects the worker's next package-owned path. */
+function workerStatusOf(output: WorkerOutput): string | undefined {
+  return isRecord(output) && typeof output.status === "string"
+    ? output.status
+    : undefined;
+}
+
+function requireReadableWorkerStatus(output: WorkerOutput): string {
+  const status = workerStatusOf(output);
+  if (status === undefined || !WORKER_ROUTING_STATUSES.has(status)) {
+    throw new ParentQueueReaskError(WORKER_STATUS_REASK);
+  }
+  return status;
 }
 
 function deepFreeze<T>(value: T): T {
@@ -276,9 +291,10 @@ export function createFixerRoleRuntime(
               throw new Error("修内司修理包与阶段未装载");
             }
             const output = deepFreeze(validateFixerOutput(parameters, phase));
+            const status = requireReadableWorkerStatus(output);
             assertAcceptableThroughHost(
               submissionGate,
-              workerStatusOf(output),
+              status,
               output,
               hostActions,
               ctx,
@@ -286,7 +302,7 @@ export function createFixerRoleRuntime(
             );
             let pass;
             try {
-              pass = WORKER_DONE_STATUSES.has(workerStatusOf(output))
+              pass = WORKER_DONE_STATUSES.has(status)
                 ? await pi.requireSubmissionGate!({
                     context: ctx,
                     subject: { kind: "worker_completion" },
@@ -429,11 +445,12 @@ export function createCoderRoleRuntime(
               throw new Error("将作监任务与阶段未装载");
             }
             const output = validateWorkerOutput(parameters, phase, "Coder");
+            const status = requireReadableWorkerStatus(output);
             // #836: skill-expansion evidence rejection deleted (陛下「2.4/5 删」).
             // Skill still ships with the package (ADR 0052); code no longer refuses on it.
             assertAcceptableThroughHost(
               submissionGate,
-              workerStatusOf(output),
+              status,
               output,
               hostActions,
               ctx,
@@ -441,7 +458,7 @@ export function createCoderRoleRuntime(
             );
             let pass;
             try {
-              pass = WORKER_DONE_STATUSES.has(workerStatusOf(output))
+              pass = WORKER_DONE_STATUSES.has(status)
                 ? await pi.requireSubmissionGate!({
                     context: ctx,
                     subject: { kind: "worker_completion" },

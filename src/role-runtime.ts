@@ -883,6 +883,9 @@ function readDiaristRunCoordinates(ctx: HostContext): {
 /** Plain-language re-ask when diarist bounds cannot be used (#901 / reask-not-explode). */
 const DIARIST_BOUNDS_REASK =
   "边界无法使用。请重交 sessions：每卷 path + ranges，每端以原生 id 或本轮行号二选一指名。" as const;
+const DIARIST_ROUTING_STATUSES = new Set(["completed", "escalate"]);
+const DIARIST_STATUS_REASK =
+  "status 不是 completed、escalate 之一。请重新交卷，status 写明其一。" as const;
 
 /**
  * #708 / #779 / #901: 起居郎 public seat on the shared filed-officer envelope.
@@ -905,6 +908,13 @@ export function createDiaristRoleRuntime(
           parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
             ? (parameters as Record<string, unknown>)
             : undefined;
+        // This status selects package-owned continuation vs escalation. Check it
+        // before interpreting any other submitted field; caller-owned data stays open.
+        const status = submitted?.status;
+        if (typeof status !== "string" || !DIARIST_ROUTING_STATUSES.has(status)) {
+          throw new ParentQueueReaskError(DIARIST_STATUS_REASK);
+        }
+        if (status === "escalate") return parameters;
         const assertion = readDiaristTicketAssertion(submitted);
         const coords = readDiaristRunCoordinates(ctx);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.

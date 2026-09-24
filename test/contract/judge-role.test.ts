@@ -1752,6 +1752,16 @@ test("fixer completed and partially_completed traverse the direct Inspector gate
     passingRuns: 2,
   });
   const submissionContext = (id: string) => tracer.context(id, FIXER_OUTPUT_TOOL_NAME);
+  await assert.rejects(
+    completedTool.execute(
+      "unreadable-status",
+      { status: { value: "unknown" }, report: { callerOwnsThisNarrativeField: true } },
+      undefined,
+      undefined,
+      submissionContext("unreadable-status"),
+    ),
+    (error: unknown) => error instanceof ParentQueueReaskError,
+  );
   await tracer.assertRejectSequence();
   assert.equal((await completedTool.execute("converged", completed, undefined, undefined, submissionContext("converged"))).terminate, true);
 

@@ -19,7 +19,7 @@ export const CODER_OUTPUT_TOOL_NAME = "ak_coder_output";
 export type WorkerRoleLabel = "Coder" | "Fixer";
 export type CoderOutput =
   | { status: "planned"; report: string }
-  | { status: "completed" | "refused"; report: string }
+  | { status: "completed" | "refused" | "partially_completed"; report: string }
   | { status: "unfinished"; report: string; remainingScope: string; reason?: string };
 export type WorkerOutput = CoderOutput | FixerOutput;
 
