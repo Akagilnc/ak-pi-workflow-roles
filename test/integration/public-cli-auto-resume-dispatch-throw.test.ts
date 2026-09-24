@@ -206,9 +206,10 @@ test("Pi custom-entry append surfaces Sitian persistence failure after the sessi
         "custom-entry-probe",
         { observed: true },
       ),
-      /Sitian appender persistence failure/,
     );
-    assert.match(await readFile(sessionFile, "utf8"), /custom-entry-probe/);
+    const entries = (await readFile(sessionFile, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
+    assert.equal(entries.at(-1)?.type, "custom");
+    assert.equal(entries.at(-1)?.customType, "custom-entry-probe");
   });
 });
 

@@ -329,15 +329,15 @@ async function readRoleRunStateDisk(
     throw error;
   }
   if (raw === null || typeof raw !== "object" || Array.isArray(raw)) {
-    return undefined;
+    throw new TypeError("Invalid run-state.json");
   }
   const record = raw as Record<string, unknown>;
   if (typeof record.runId !== "string" || record.runId.trim() === "") {
-    return undefined;
+    throw new TypeError("Invalid run-state.json");
   }
   const role = typeof record.role === "string" ? packagedRoleMetadata(record.role)?.role : undefined;
   if (role === undefined) {
-    return undefined;
+    throw new TypeError("Invalid run-state.json");
   }
   if (
     record.state !== "admitted" &&
@@ -345,12 +345,12 @@ async function readRoleRunStateDisk(
     record.state !== "resumable" &&
     record.state !== "terminal"
   ) {
-    return undefined;
+    throw new TypeError("Invalid run-state.json");
   }
-  if (typeof record.bookKey !== "string") return undefined;
-  if (typeof record.projectRoot !== "string") return undefined;
-  if (typeof record.sessionDirectory !== "string") return undefined;
-  if (typeof record.admittedRequestPath !== "string") return undefined;
+  if (typeof record.bookKey !== "string") throw new TypeError("Invalid run-state.json");
+  if (typeof record.projectRoot !== "string") throw new TypeError("Invalid run-state.json");
+  if (typeof record.sessionDirectory !== "string") throw new TypeError("Invalid run-state.json");
+  if (typeof record.admittedRequestPath !== "string") throw new TypeError("Invalid run-state.json");
   const storedRunDirectory =
     typeof record.runDirectory === "string" && record.runDirectory.trim() !== ""
       ? record.runDirectory

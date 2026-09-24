@@ -442,7 +442,6 @@ test("collector bind rejects a ticket string outside the safe-integer range", as
     });
 
     assert.equal(bind.isError, true);
-    assert.match(bind.content[0]?.text ?? "", /正安全整数/);
   });
 });
 

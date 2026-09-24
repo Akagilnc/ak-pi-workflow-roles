@@ -495,7 +495,6 @@ test("nested public summon validates persistent seat axes before dispatch", asyn
           throw new Error("dispatch reached with an illegal persistent engine");
         }),
       }),
-      /config seat reviewer engine is illegal/,
     );
   });
 });

@@ -1105,6 +1105,20 @@ test("analyst entry does not turn a malformed live run state into no-receipt", a
   });
 });
 
+test("analyst entry does not turn an incomplete live run state into no-receipt", async () => {
+  await withBusinessRepo(async () => {
+    await withTempHome(async (home) => {
+      const runDirectory = join(home, ".ak-roles", "books", BOOK, "runs", LEG_A1_DIR);
+      await rm(join(runDirectory, "artifacts", "report.json"));
+      await writeFile(join(runDirectory, "run-state.json"), JSON.stringify({ state: "running" }), "utf8");
+
+      await assert.rejects(
+        () => runAnalyst({ mode: "issue", projectRoot: ISSUE_PROJECT_ROOT }, { home }),
+      );
+    });
+  });
+});
+
 test("analyst issue-mode entry: analyst path symlink into consumer repo is refused without porcelain change", async () => {
   await withBusinessRepo(async (businessRepo) => {
     await withTempHome(async (home) => {
