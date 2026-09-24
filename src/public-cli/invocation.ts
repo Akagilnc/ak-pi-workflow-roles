@@ -84,7 +84,7 @@ import {
   type MergerInput,
 } from "../merger-contracts.ts";
 import { sha256Hex } from "../sha256.ts";
-import { rehomeRunOwnedTicketProvenance } from "../ticket-provenance.ts";
+import { rehomeUnboundTicketProvenance } from "../ticket-provenance.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import {
   NOTARY_FIXED_KICKOFF,
@@ -643,7 +643,7 @@ export async function relocateAdmittedRunToTicket(
   authority: DurablePrincipalAuthority,
   heldLease?: { relocate(runDirectory: string): void },
 ): Promise<{ oldRunDirectory: string; newRunDirectory: string } | undefined> {
-  if (admitted.ticketNumber === undefined) return undefined;
+  if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return undefined;
   const oldRunDirectory = admitted.runDirectory;
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(oldRunDirectory));
   const target = roleRunPlacement(ledgerHome, {
@@ -652,7 +652,6 @@ export async function relocateAdmittedRunToTicket(
     runId: admitted.runId,
     role: admitted.role,
   });
-  if (oldRunDirectory === target.runDirectory) return undefined;
   ensureRoleRunDirectory(ledgerHome, dirname(target.runDirectory));
   // Host sealing is pure identity projection, but may reject the coordinates.
   // Keep that failure before the filesystem commit point.
@@ -661,14 +660,11 @@ export async function relocateAdmittedRunToTicket(
   if (admitted.role !== "diarist") {
     const parentPage = JSON.parse(await readFile(admitted.admittedRequestPath, "utf8")) as Record<string, unknown>;
     const childRunIds = parentPage.childDiaristRunIds;
-    const childLocations = await listBookRunDirectories(activationBookDirectory(ledgerHome, admitted.bookKey));
     for (const childRunId of Array.isArray(childRunIds) ? childRunIds : []) {
       if (typeof childRunId !== "string") continue;
       const childDirectory = join(dirname(oldRunDirectory), `${childRunId}@diarist`);
-      const locations = childLocations.filter((directory) => basename(directory) === `${childRunId}@diarist`);
-      if (locations.length !== 1) throw new Error(`expected one diarist run ${childRunId}, found ${locations.length}`);
-      // Only a child previously filed with this parent follows its later ticket change.
-      if (locations[0] !== childDirectory) continue;
+      // A child that already filed under a ticket keeps its own assertion.
+      if (!existsSync(childDirectory)) continue;
       const childTarget = roleRunPlacement(ledgerHome, {
         bookKey: admitted.bookKey,
         subject: { ticketNumber: admitted.ticketNumber },
@@ -677,19 +673,19 @@ export async function relocateAdmittedRunToTicket(
       });
       authority.seal(childTarget);
       await bindTicketNumberOnRunDirectory(childDirectory, admitted.ticketNumber);
-      await rehomeRunOwnedTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
+      await rehomeUnboundTicketProvenance(childDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
       ensureRoleRunDirectory(ledgerHome, dirname(childTarget.runDirectory));
       await rename(childDirectory, childTarget.runDirectory);
     }
   }
 
-  // A run-owned diary follows each typed ticket change, including later corrections.
-  if (admitted.role === "diarist" || admitted.role === "secretariat") {
-    await rehomeRunOwnedTicketProvenance(oldRunDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
+  // The first ticket assignment moves only an unbound diarist's own diary.
+  if (admitted.role === "diarist") {
+    await rehomeUnboundTicketProvenance(oldRunDirectory, admitted.ticketNumber, admitted.projectRoot, homeFromRunDirectory(oldRunDirectory));
   }
 
-  // Rename commits the run placement. Diary assignment above is an idempotent
-  // Sitian append, not part of an atomic transaction with this directory move.
+  // Rename commits the run placement. Diary assignment above is a Sitian append
+  // outside the atomic directory move.
   // Persisted paths are resolved from typed run identity on read.
   await rename(oldRunDirectory, target.runDirectory);
 

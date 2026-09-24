@@ -838,15 +838,17 @@ export async function runPublicInstructionSeatResume(
   });
 }
 
-/** Continue a parked parent after its diarist's accepted submission. */
-export async function continueParentAfterDiarist(
+/** Continue the parent once any escalated child has submitted. */
+export async function continueParentAfterChild(
   parentRunId: string,
   child: AdmittedRoleInvocation,
   env: InstructionSeatRunEnv,
   io: CliIo,
-): Promise<SeatRunResult | undefined> {
+): Promise<SeatRunResult> {
   const loaded = await loadResumablePublicRole(env.home, parentRunId, env.principalAuthority, true);
-  if (loaded.run.state !== "admitted" || !["secretariat", "countersign"].includes(loaded.admitted.role)) return undefined;
+  if (loaded.run.state !== "admitted") {
+    return runPublicInstructionSeatResume({ runId: parentRunId }, env, io);
+  }
   const admitted = loaded.admitted;
   if (admitted.role === "countersign" && admitted.ticketNumber !== undefined) {
     const refresh = await runCountersignCourtDiaristStation(admitted, env, io, child.ticketNumber);

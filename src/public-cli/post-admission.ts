@@ -711,23 +711,25 @@ export async function dispatchPostAdmissionTurn<
       };
     }
     try {
-      // #858/#1025: ticket-identifying seats may revise their assertion; ordinary
-      // seats keep their first typed identity. A bound Countersign judges any
-      // conflict itself rather than letting its own receipt rebind the dossier.
-      if (admitted.role === "diarist" || admitted.role === "secretariat" || admitted.ticketNumber === undefined) {
+      // #858: the first typed assertion files an unbound run. Later receipts
+      // remain untouched; this seam does not adjudicate a ticket change.
+      if (admitted.ticketNumber === undefined) {
         const rows = await readRecordedSubmissionRows(
           admitted.projectRoot,
           admitted.runId,
           { home: homeFromRunDirectory(admitted.runDirectory), sessionParent: join(admitted.runDirectory, "session", "session.jsonl") },
         );
-        const assertions = rows
+        const asserted = rows
           .filter((row) => row.kind === "accepted" && row.role === admitted.role)
           .map((row) => row.accepted)
-          .map((accepted) => accepted !== null && typeof accepted === "object" && !Array.isArray(accepted)
-            ? (accepted as { ticketNumber?: unknown }).ticketNumber : undefined)
-          .filter((value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0);
-        const ticketNumber = admitted.role === "diarist" || admitted.role === "secretariat"
-          ? assertions.at(-1) : assertions[0];
+          .find((payload) => {
+            if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return false;
+            const value = (payload as { ticketNumber?: unknown }).ticketNumber;
+            return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+          });
+        const ticketNumber = asserted === undefined
+          ? undefined
+          : (asserted as { ticketNumber: number }).ticketNumber;
         if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
       }
       // #863: shared post-admission bind must relocate unbound→ticket in-home

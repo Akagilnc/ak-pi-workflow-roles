@@ -77,7 +77,7 @@ import {
   type PublicRoleOptionOwner,
   type TypedOptionConsumer,
 } from "./option-definitions.ts";
-import { continueParentAfterDiarist, runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
+import { continueParentAfterChild, runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
 import { courtDiaristEscalated } from "./countersign-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
 import {
@@ -1243,11 +1243,7 @@ export async function runAkRole(
         const parentEnv = createRoleEnvironment(env, {
           role: parentRole, home, agentDir, cwd, credentials, seat: parentSeat, config,
         });
-        const continued = current.admitted.role === "diarist" && (parentRole === "secretariat" || parentRole === "countersign")
-          ? await continueParentAfterDiarist(parentRunId, current.admitted, parentEnv, io)
-          : await runPublicInstructionSeatResume({ runId: parentRunId }, parentEnv, io);
-        if (continued === undefined) break;
-        current = continued;
+        current = await continueParentAfterChild(parentRunId, current.admitted, parentEnv, io);
       }
       return cliResultFromRoleRun(current);
     }
