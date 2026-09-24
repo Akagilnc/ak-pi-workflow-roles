@@ -10,15 +10,10 @@ import type { DurablePrincipalAuthority, RoleTurnRequest } from "../host-contrac
 import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
-import {
-  loadPackagedMethodSkillMaterial,
-  type PackagedMethodSkillMaterial,
-} from "../package-resources/method-skill.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
 import {
   packagedAdmitsCountersign,
   packagedBindsBoardTicket,
-  packagedMethodLoadFailureCause,
   packagedRebindSourceOnResume,
   packagedRoleMetadata,
 } from "../packaged-role-registry.ts";
@@ -42,7 +37,6 @@ import {
 import {
   presentControlledFailure,
   prepareSummonsResumeMaterials,
-  resolveResumeMethodMaterialAdapters,
   roleTurnOptions,
   runPostAdmissionOneShot,
   runPostAdmissionResumable,
@@ -67,6 +61,7 @@ import {
   trySettlePublicSeat,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
+import { warnMissingMethodSkills } from "./machine-method-skills.ts";
 import {
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
@@ -74,8 +69,8 @@ import {
 } from "./terminal.ts";
 import {
   admittedSeatTurnDetails,
-  packagedSettleSkill,
   projectRoleTurnRequest,
+  requiredMethodSkills,
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
 import {
@@ -110,7 +105,7 @@ export function buildInstructionSeatTurnRequest(
 ): RoleTurnRequest {
   return projectRoleTurnRequest(
     admitted,
-    admittedSeatTurnDetails(admitted, options.packageRoot),
+    admittedSeatTurnDetails(admitted, options.home, options.host),
     options,
   );
 }
@@ -160,13 +155,12 @@ async function bindAndRelocateDiarist(
 function seatAdapters(
   admitted: AdmittedRoleInvocation,
   env: InstructionSeatRunEnv,
-  material?: PackagedMethodSkillMaterial,
 ): PostAdmissionAdapters<AdmittedRoleInvocation> {
   const record = roleRecord(admitted.role);
   const present = "presentSettled" in record ? record.presentSettled : "default";
   return {
     trySettle: (seat, authority, scope) =>
-      trySettlePublicSeat(seat, authority, scope, material, env.packageRoot),
+      trySettlePublicSeat(seat, authority, scope),
     ...(present === "always" ? { shouldPresentSettled: () => true } : {}),
     ...(present === "typed"
       ? { shouldPresentSettled: (terminal: TerminalResult) => isLawfulTypedTerminalOutcome(terminal.roleOutcome) }
@@ -233,23 +227,8 @@ async function dispatchAdmitted(
   io: CliIo,
 ): Promise<SeatRunResult> {
   const record = roleRecord(admitted.role);
-  let material: PackagedMethodSkillMaterial | undefined;
-  const skill = packagedSettleSkill(admitted);
-  if (skill !== undefined) {
-    try {
-      material = await loadPackagedMethodSkillMaterial(env.packageRoot, skill);
-    } catch (error) {
-      const knownCause = packagedMethodLoadFailureCause(admitted.role);
-      return await presentControlledFailure(admitted, {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error,
-        ...(knownCause === undefined ? {} : { knownCause }),
-      }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
-    }
-  }
-  const adapters = seatAdapters(admitted, env, material);
+  await warnMissingMethodSkills(env.home, env.host, admitted.role, requiredMethodSkills(admitted), io.stdout);
+  const adapters = seatAdapters(admitted, env);
   const execute = async (activeEnv: InstructionSeatRunEnv): Promise<SeatRunResult> => {
     const auto = "inCallAutoResume" in record && record.inCallAutoResume === true;
     if (auto) {
@@ -818,21 +797,9 @@ export async function runPublicInstructionSeatResume(
     adapters: {
       trySettle: async () => undefined,
     },
-    afterAdmittedLoad: (admitted) => {
-      const skill = packagedSettleSkill(admitted);
-      if (skill === undefined) {
-        return Promise.resolve({ kind: "continue" as const, adapters: seatAdapters(admitted, env) });
-      }
-      const knownCause = packagedMethodLoadFailureCause(admitted.role);
-      return resolveResumeMethodMaterialAdapters({
-        admitted,
-        authority: env.principalAuthority,
-        io,
-        loadMaterial: () => loadPackagedMethodSkillMaterial(env.packageRoot, skill),
-        adaptersWith: (material) => seatAdapters(admitted, env, material),
-        emptyAdapters: seatAdapters(admitted, env),
-        ...(knownCause === undefined ? {} : { knownCause }),
-      });
+    afterAdmittedLoad: async (admitted) => {
+      await warnMissingMethodSkills(env.home, env.host, admitted.role, requiredMethodSkills(admitted), io.stdout);
+      return { kind: "continue" as const, adapters: seatAdapters(admitted, env) };
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
   });

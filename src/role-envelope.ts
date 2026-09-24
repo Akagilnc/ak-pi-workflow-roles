@@ -22,7 +22,6 @@ import type {
   RoleTurnKnownFailure,
   RoleTurnRequest,
 } from "./host-contracts.ts";
-import { hostMethodSkills, installWorkspaceMethodSkills } from "./host-native-method.ts";
 import { packagedRoleOutputTool } from "./packaged-role-registry.ts";
 import {
   createRoleRuntimeExtension,
@@ -218,10 +217,6 @@ export async function prepareRoleEnvelope(options: {
   const host: RoleHost = {
     deliverSubmissionRejection(_value) {
       // #836 删 1/A4.5: do not arm closeRound retry with「终局交卷并非本轮唯一工具调用」.
-    },
-    capabilities: {
-      // #922: native loaders own expansion; package does not pre-read bodies (ADR 0032).
-      skillExpansion() { return undefined; },
     },
     registerFlag(name, definition) { if (!flags.has(name) && definition.default !== undefined) flags.set(name, definition.default); },
     getFlag(name) { return flags.get(name); },
@@ -729,14 +724,6 @@ export async function prepareRoleEnvelope(options: {
       throw new Error(`terminating tool not registered after activation: ${terminatingToolName}`);
     }
     const jsonSchema = terminatingToolJsonSchema(terminating.parameters);
-
-    if (request.host === "codex" && hostMethodSkills(request.methods).length > 0) {
-      const packageRoot = options.dependencies.packageRoot;
-      if (typeof packageRoot !== "string" || packageRoot === "") {
-        throw new Error("codex project Skill catalog requires packageRoot");
-      }
-      await installWorkspaceMethodSkills(request.cwd, packageRoot);
-    }
 
     return {
       mcpServers: [{

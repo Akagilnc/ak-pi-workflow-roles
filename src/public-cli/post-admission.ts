@@ -1367,6 +1367,7 @@ export function resumeTurnRequestProjectionOptions(
   return {
     packageRoot: env.packageRoot,
     home: env.home,
+    ...(env.host === undefined ? {} : { host: env.host }),
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...pickEngineAxis(env),
@@ -1393,6 +1394,7 @@ export function roleTurnOptions(
   return {
     packageRoot: env.packageRoot,
     home: env.home,
+    ...(env.host === undefined ? {} : { host: env.host }),
     agentDir: env.agentDir,
     ...(env.model === undefined ? {} : { model: env.model }),
     ...pickEngineAxis(env),
