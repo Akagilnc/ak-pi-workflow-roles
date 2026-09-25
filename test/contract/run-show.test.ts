@@ -129,6 +129,17 @@ async function writeCodexHostSessionRecords(
   );
 }
 
+function codexSessionsDay(machineHome: string): string {
+  return join(machineHome, ".codex", "sessions", "2026", "09", "25");
+}
+
+function codexRolloutPath(machineHome: string, threadId: string): string {
+  return join(
+    codexSessionsDay(machineHome),
+    `rollout-2026-09-25T00-00-00-${threadId}.jsonl`,
+  );
+}
+
 async function writeCodexRunFixture(machineHome: string): Promise<string> {
   const runDirectory = join(
     machineHome,
@@ -144,9 +155,7 @@ async function writeCodexRunFixture(machineHome: string): Promise<string> {
     recursive: true,
   });
   await mkdir(join(runDirectory, "session", "host-session"), { recursive: true });
-  await mkdir(join(machineHome, ".codex", "sessions", "2026", "09", "25"), {
-    recursive: true,
-  });
+  await mkdir(codexSessionsDay(machineHome), { recursive: true });
 
   await writeFile(
     join(runDirectory, "artifacts", "report.json"),
@@ -195,15 +204,7 @@ async function writeCodexRunFixture(machineHome: string): Promise<string> {
     "utf8",
   );
 
-  const rolloutPath = join(
-    machineHome,
-    ".codex",
-    "sessions",
-    "2026",
-    "09",
-    "25",
-    `rollout-2026-09-25T00-00-00-${THREAD_ID}.jsonl`,
-  );
+  const rolloutPath = codexRolloutPath(machineHome, THREAD_ID);
   await writeFile(
     rolloutPath,
     [
@@ -218,15 +219,7 @@ async function writeCodexRunFixture(machineHome: string): Promise<string> {
 
   // Decoy rollout for another thread: must not leak into this run's facts.
   await writeFile(
-    join(
-      machineHome,
-      ".codex",
-      "sessions",
-      "2026",
-      "09",
-      "25",
-      `rollout-2026-09-25T00-00-00-${DECOY_THREAD_ID}.jsonl`,
-    ),
+    codexRolloutPath(machineHome, DECOY_THREAD_ID),
     [
       JSON.stringify({ type: "compacted", payload: { message: "" } }),
       JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 9 } } } }),
@@ -324,15 +317,7 @@ test("run show: codex run — all five fact kinds reach the public result", asyn
     const runDirectory = await writeCodexRunFixture(machineHome);
     const initial = await runPublicRunShow(runDirectory, machineHome);
 
-    const decoyRolloutPath = join(
-      machineHome,
-      ".codex",
-      "sessions",
-      "2026",
-      "09",
-      "25",
-      `rollout-2026-09-25T00-00-00-${DECOY_THREAD_ID}.jsonl`,
-    );
+    const decoyRolloutPath = codexRolloutPath(machineHome, DECOY_THREAD_ID);
     await writeFile(
       decoyRolloutPath,
       [
@@ -386,15 +371,7 @@ test("run show: codex run — all five fact kinds reach the public result", asyn
     const changedThread = await runPublicRunShow(runDirectory, machineHome);
     assert.notEqual(changedThread, changedSeals);
 
-    const rolloutPath = join(
-      machineHome,
-      ".codex",
-      "sessions",
-      "2026",
-      "09",
-      "25",
-      `rollout-2026-09-25T00-00-00-${THREAD_ID}.jsonl`,
-    );
+    const rolloutPath = codexRolloutPath(machineHome, THREAD_ID);
     const originalRollout = await readFile(rolloutPath, "utf8");
     await writeFile(
       rolloutPath,
@@ -457,15 +434,7 @@ test("run show: pi run — carriers on the run's own session volume", async () =
 test("run show: Codex falls back to run-written usage when rollout usage is unavailable", async () => {
   await withTempRoot("ak-run-show-codex-host-usage-", async (machineHome) => {
     const runDirectory = await writeCodexRunFixture(machineHome);
-    const rolloutPath = join(
-      machineHome,
-      ".codex",
-      "sessions",
-      "2026",
-      "09",
-      "25",
-      `rollout-2026-09-25T00-00-00-${THREAD_ID}.jsonl`,
-    );
+    const rolloutPath = codexRolloutPath(machineHome, THREAD_ID);
 
     // A missing rollout already falls back to the run's direct-write usage.
     await unlink(rolloutPath);
