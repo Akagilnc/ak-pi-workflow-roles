@@ -4,15 +4,19 @@
  * External contracts, driven through the real public CLI entry (runAkRole):
  *   1. codex-run tracer: each of the five source facts affects the terminal
  *      result (the decoy rollout proves the thread-id filter).
- *   2. pi-run carriers: each assistant turn contributes to the public result.
- *   3. missing-material honesty: a sparse run still exits 0; damaged seal JSONL
+ *   2. pi-run carriers: each assistant turn contributes to the public result,
+ *      including readable `reasoning` token totals.
+ *   3. host chronology: a later host-session family (e.g. grok-build) drives
+ *      compaction/usage over earlier Codex materials; ACP params.sessionId
+ *      supplies the thread id when the binding file is absent.
+ *   4. missing-material honesty: a sparse run still exits 0; damaged seal JSONL
  *      differs from every valid seal subset (including empty — the false friend
  *      of unavailable), and Codex run-written usage affects the public result
  *      when native rollout usage is absent or damaged.
- *   4. read-only: two views leave the whole home tree byte-identical and add
+ *   5. read-only: two views leave the whole home tree byte-identical and add
  *      no run directories (the ledger is never written).
- *   5. usage rejects: wrong subcommand / missing or extra argv / nonexistent
- *      run directory exit 2 with one stderr diagnostic.
+ *   6. usage rejects: wrong subcommand / missing or extra argv / nonexistent
+ *      or non-run directory exit 2 with one stderr diagnostic.
  *
  * Oracle: the fixture values the test itself writes (ground truth). Terminal
  * output is observed opaquely: changing a source fact must change the public
@@ -428,6 +432,151 @@ test("run show: pi run — carriers on the run's own session volume", async () =
     await writeFile(sessionPath, changedSecondTurn, "utf8");
     const changedLastTurn = await runPublicRunShow(runDirectory, machineHome);
     assert.notEqual(changedLastTurn, initial);
+
+    // Reasoning is a readable Pi Usage field — projection must retain it.
+    const changedReasoning = originalSession.replace(
+      JSON.stringify(PI_SECOND_USAGE),
+      JSON.stringify({
+        ...PI_SECOND_USAGE,
+        reasoning: PI_SECOND_USAGE.reasoning + 1,
+      }),
+    );
+    await writeFile(sessionPath, changedReasoning, "utf8");
+    const withChangedReasoning = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(withChangedReasoning, initial);
+  });
+});
+
+const GROK_SESSION_ID = "01aatest1-0005-7000-8000-000000000005";
+const GROK_USAGE = {
+  inputTokens: 100,
+  outputTokens: 20,
+  totalTokens: 120,
+  reasoningTokens: 5,
+} as const;
+
+async function writeHostChronologyRunFixture(machineHome: string): Promise<string> {
+  const runDirectory = await writeCodexRunFixture(machineHome);
+  // Later ACP turn on the same durable run — no grok binding file, so session id
+  // must come from host-session params; metrics must follow this host, not Codex.
+  await writeFile(
+    join(runDirectory, "session", "host-session", "records.jsonl"),
+    [
+      JSON.stringify({
+        level: "event",
+        kind: "host-session",
+        host: "codex",
+        source: "headless-host",
+        timestamp: "2026-09-25T00:00:00.000Z",
+        payload: { type: "thread.started", thread_id: THREAD_ID },
+      }),
+      JSON.stringify({
+        level: "event",
+        kind: "host-session",
+        host: "codex",
+        source: "headless-host",
+        timestamp: "2026-09-25T00:00:01.000Z",
+        payload: { type: "turn.completed", usage: CODEX_HOST_TURN_USAGE },
+      }),
+      JSON.stringify({
+        level: "event",
+        kind: "host-session",
+        host: "grok-build",
+        source: "acp-host",
+        timestamp: "2026-09-25T01:00:00.000Z",
+        payload: {
+          method: "session/update",
+          params: {
+            sessionId: GROK_SESSION_ID,
+            update: { sessionUpdate: "agent_message_chunk" },
+          },
+        },
+      }),
+      JSON.stringify({
+        level: "event",
+        kind: "host-session",
+        host: "grok-build",
+        source: "acp-host",
+        timestamp: "2026-09-25T01:00:01.000Z",
+        payload: {
+          method: "_x.ai/session_notification",
+          params: {
+            sessionId: GROK_SESSION_ID,
+            update: { sessionUpdate: "auto_compact_completed" },
+          },
+        },
+      }),
+      JSON.stringify({
+        level: "event",
+        kind: "host-session",
+        host: "grok-build",
+        source: "acp-host",
+        timestamp: "2026-09-25T01:00:02.000Z",
+        payload: {
+          method: "session/prompt",
+          result: { stopReason: "end_turn", _meta: { usage: GROK_USAGE } },
+        },
+      }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
+  return runDirectory;
+}
+
+test("run show: later host-session carriers win over earlier Codex materials", async () => {
+  await withTempRoot("ak-run-show-host-chronology-", async (machineHome) => {
+    const runDirectory = await writeHostChronologyRunFixture(machineHome);
+    const initial = await runPublicRunShow(runDirectory, machineHome);
+
+    // Stale Codex rollout must not drive compaction/usage after a later ACP turn.
+    const rolloutPath = codexRolloutPath(machineHome, THREAD_ID);
+    const originalRollout = await readFile(rolloutPath, "utf8");
+    await writeFile(
+      rolloutPath,
+      `${originalRollout}${JSON.stringify({ type: "compacted", payload: { message: "" } })}\n`,
+      "utf8",
+    );
+    assert.equal(await runPublicRunShow(runDirectory, machineHome), initial);
+
+    const hostSessionPath = join(runDirectory, "session", "host-session", "records.jsonl");
+    const originalHost = await readFile(hostSessionPath, "utf8");
+    await writeFile(
+      hostSessionPath,
+      originalHost.replace(
+        JSON.stringify(GROK_USAGE),
+        JSON.stringify({ ...GROK_USAGE, totalTokens: GROK_USAGE.totalTokens + 1 }),
+      ),
+      "utf8",
+    );
+    const changedUsage = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(changedUsage, initial);
+
+    await writeFile(
+      hostSessionPath,
+      `${originalHost}${JSON.stringify({
+        level: "event",
+        kind: "host-session",
+        host: "grok-build",
+        source: "acp-host",
+        timestamp: "2026-09-25T01:00:03.000Z",
+        payload: {
+          method: "_x.ai/session_notification",
+          params: {
+            sessionId: GROK_SESSION_ID,
+            update: { sessionUpdate: "auto_compact_completed" },
+          },
+        },
+      })}\n`,
+      "utf8",
+    );
+    const changedCompaction = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(changedCompaction, changedUsage);
+
+    // Binding-less ACP session id still reaches the public result.
+    const withoutGrokId = originalHost.replaceAll(GROK_SESSION_ID, "01aatest1-0006-7000-8000-000000000006");
+    await writeFile(hostSessionPath, withoutGrokId, "utf8");
+    const changedThread = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(changedThread, initial);
   });
 });
 
@@ -548,12 +697,16 @@ test("run show: two views leave the ledger byte-identical and add no runs", asyn
 test("run show: usage rejects exit 2 with one stderr diagnostic", async () => {
   await withTempRoot("ak-run-show-usage-", async (machineHome) => {
     const runDirectory = await writeCodexRunFixture(machineHome);
+    const plainDirectory = join(machineHome, "not-a-role-run");
+    await mkdir(plainDirectory, { recursive: true });
     const cases: readonly string[][] = [
       ["run"],
       ["run", "show"],
       ["run", "show", runDirectory, "extra"],
       ["run", "glance", runDirectory],
       ["run", "show", join(machineHome, "no-such-run")],
+      // Existing directory without run identity (e.g. truncated paste of runs/).
+      ["run", "show", plainDirectory],
     ];
     for (const argv of cases) {
       const { io, stderr } = captureIo();

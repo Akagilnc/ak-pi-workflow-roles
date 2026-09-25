@@ -13,13 +13,15 @@
  * - verdict payload: `<run>/artifacts/report.json` → `outcome.payloads` last
  * - seal records: `<run>/session/submission-ledger/records.jsonl` `sealed` rows
  * - host thread id: run session binding files (host description table) +
- *   codex `thread.started` host-session rows + pi session volume header
- * - compaction count: codex rollout `compacted` rows (via thread id under the
- *   operator codex sessions root) | claude `compact_boundary` host-session rows
- *   | pi session volume `compaction` rows
- * - token usage: codex rollout last `token_count` info, else last host-session
- *   `turn.completed.usage` | claude host-session last `result` usage | pi
- *   session volume summed assistant usage (`session-assistant-usage`)
+ *   codex `thread.started` host-session rows + claude `session_id` /
+ *   ACP `params.sessionId` host-session fallbacks + pi session volume header
+ * - compaction count: chronologically latest host family on the run —
+ *   codex rollout `compacted` | claude `compact_boundary` |
+ *   grok-build `_x.ai/session_notification` `auto_compact_completed` |
+ *   pi session volume `compaction` rows
+ * - token usage: same latest-host routing — codex rollout / turn.completed |
+ *   claude result usage | grok-build `session/prompt` `_meta.usage` |
+ *   pi session volume summed assistant usage (`session-assistant-usage`)
  *
  * Missing carriers and damaged JSONL lines print as unavailable — never a
  * known-zero count or a silent partial list (#1064 / failure-honesty).
@@ -32,6 +34,7 @@ import {
   HEADLESS_HOST_DESCRIPTIONS,
   HOST_DESCRIPTIONS,
 } from "../host-descriptions.ts";
+import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
 import { readAssistantUsageFromSessionFile } from "../session-assistant-usage.ts";
 import { codexSessionsRoot } from "../ticket-provenance.ts";
 import { CliUsageError } from "./cli-errors.ts";
@@ -263,6 +266,9 @@ export async function projectRunShowFacts(
   let claudeCompactBoundaries = 0;
   let claudeResultUsage: unknown;
   let codexTurnCompletedUsage: unknown;
+  let grokAutoCompacts = 0;
+  let grokPromptUsage: unknown;
+  let latestHostSessionHost: string | undefined;
   if (hostSessionText !== null) {
     externalHostPointer ??= HOST_SESSION_RECORDS_PATH;
     const parsed = parseJsonlRows(hostSessionText);
@@ -270,27 +276,61 @@ export async function projectRunShowFacts(
     if (!hostSessionDamaged) {
       for (const row of parsed.rows) {
         if (!isPlainObject(row)) continue;
+        const host = nonEmptyString(row.host);
+        if (host !== undefined) latestHostSessionHost = host;
         const payload = isPlainObject(row.payload) ? row.payload : undefined;
         if (payload === undefined) continue;
+
+        // Host thread id fallbacks when binding files are missing/damaged.
         if (payload.type === "thread.started") {
           const threadId = nonEmptyString(payload.thread_id);
           if (threadId !== undefined) {
             addThreadId(threadId, HOST_SESSION_RECORDS_PATH);
             if (row.host === "codex") codexThreadIds.add(threadId);
           }
-          continue;
         }
+        const claudeSessionId = nonEmptyString(payload.session_id);
+        if (row.host === "claude" && claudeSessionId !== undefined) {
+          addThreadId(claudeSessionId, HOST_SESSION_RECORDS_PATH);
+        }
+        const params = isPlainObject(payload.params) ? payload.params : undefined;
+        const acpSessionId = params === undefined
+          ? undefined
+          : nonEmptyString(params.sessionId);
+        if (acpSessionId !== undefined) {
+          addThreadId(acpSessionId, HOST_SESSION_RECORDS_PATH);
+        }
+
         if (row.host === "codex" && payload.type === "turn.completed" && isPlainObject(payload.usage)) {
           // Cumulative session total on each turn.completed (matches rollout
           // total_token_usage); keep the last readable value.
           codexTurnCompletedUsage = payload.usage;
-          continue;
-        }
-        if (row.host !== "claude") continue;
-        if (payload.type === "system" && payload.subtype === "compact_boundary") {
-          claudeCompactBoundaries += 1;
-        } else if (payload.type === "result" && isPlainObject(payload.usage)) {
-          claudeResultUsage = payload.usage;
+        } else if (row.host === "claude") {
+          if (payload.type === "system" && payload.subtype === "compact_boundary") {
+            claudeCompactBoundaries += 1;
+          } else if (payload.type === "result" && isPlainObject(payload.usage)) {
+            claudeResultUsage = payload.usage;
+          }
+        } else if (row.host === "grok-build") {
+          // #971 carriers: prompt result `_meta.usage` + auto_compact_completed.
+          if (
+            payload.method === "session/prompt" &&
+            isPlainObject(payload.result)
+          ) {
+            const meta = isPlainObject(payload.result._meta)
+              ? payload.result._meta
+              : undefined;
+            if (meta !== undefined && "usage" in meta) {
+              grokPromptUsage = meta.usage;
+            }
+          } else if (
+            payload.method === "_x.ai/session_notification" &&
+            params !== undefined &&
+            isPlainObject(params.update) &&
+            params.update.sessionUpdate === "auto_compact_completed"
+          ) {
+            grokAutoCompacts += 1;
+          }
         }
       }
     }
@@ -319,58 +359,74 @@ export async function projectRunShowFacts(
     ? { ids }
     : {
         unavailable:
-          "no host session id on this run (no session binding file, no thread.started record, no pi session header)",
+          "no host session id on this run (no session binding file, no thread.started / session_id / params.sessionId record, no pi session header)",
       };
 
-  // Compaction count + token usage follow the run's host family carriers.
+  // Metric carriers follow the chronologically latest host on the run — an
+  // earlier Codex binding must not hide a later Claude/ACP/Pi turn's facts.
+  const metricHost = !hostSessionDamaged && latestHostSessionHost !== undefined
+    ? latestHostSessionHost
+    : claudeHostPointer !== undefined
+      ? "claude"
+      : codexThreadIds.size > 0
+        ? "codex"
+        : externalHostPointer !== undefined
+          ? "external"
+          : "pi";
+
   let compactionCount: RunShowFacts["compactionCount"];
   let tokenUsage: RunShowFacts["tokenUsage"];
-  if (codexThreadIds.size > 0) {
-    const threadIdList = [...codexThreadIds];
-    const rollout = await findCodexRollout(machineHome, threadIdList);
-    let rolloutUsage: { readonly usage: unknown; readonly source: string } | undefined;
-    let rolloutUsageUnavailable: string;
-    if (rollout === undefined) {
-      const reason =
-        `no codex rollout found for thread ${threadIdList.join(", ")} under ${codexSessionsRoot(machineHome)}`;
-      compactionCount = { unavailable: reason };
-      rolloutUsageUnavailable = hostSessionDamaged
-        ? `${HOST_SESSION_RECORDS_PATH} has damaged JSONL line(s)`
-        : hostSessionText === null
-          ? `${HOST_SESSION_RECORDS_PATH} is missing`
-          : `no turn.completed.usage in ${HOST_SESSION_RECORDS_PATH} and ${reason}`;
+  if (metricHost === "codex") {
+    if (codexThreadIds.size === 0) {
+      compactionCount = { unavailable: "no codex thread id on this run" };
+      tokenUsage = { unavailable: "no codex thread id on this run" };
     } else {
-      const { rows, damagedLineCount } = parseJsonlRows(rollout.text);
-      if (damagedLineCount > 0) {
-        rolloutUsageUnavailable = `${rollout.path} has ${damagedLineCount} damaged JSONL line(s)`;
-        compactionCount = { unavailable: rolloutUsageUnavailable };
+      const threadIdList = [...codexThreadIds];
+      const rollout = await findCodexRollout(machineHome, threadIdList);
+      let rolloutUsage: { readonly usage: unknown; readonly source: string } | undefined;
+      let rolloutUsageUnavailable: string;
+      if (rollout === undefined) {
+        const reason =
+          `no codex rollout found for thread ${threadIdList.join(", ")} under ${codexSessionsRoot(machineHome)}`;
+        compactionCount = { unavailable: reason };
+        rolloutUsageUnavailable = hostSessionDamaged
+          ? `${HOST_SESSION_RECORDS_PATH} has damaged JSONL line(s)`
+          : hostSessionText === null
+            ? `${HOST_SESSION_RECORDS_PATH} is missing`
+            : `no turn.completed.usage in ${HOST_SESSION_RECORDS_PATH} and ${reason}`;
       } else {
-        compactionCount = {
-          count: rows.filter((row) => isPlainObject(row) && row.type === "compacted").length,
-          source: rollout.path,
-        };
-        rolloutUsageUnavailable = `no token_count event in ${rollout.path}`;
-        for (const row of rows) {
-          if (!isPlainObject(row) || row.type !== "event_msg") continue;
-          const payload = isPlainObject(row.payload) ? row.payload : undefined;
-          if (payload === undefined || payload.type !== "token_count") continue;
-          if (isPlainObject(payload.info)) {
-            rolloutUsage = { usage: payload.info, source: rollout.path };
+        const { rows, damagedLineCount } = parseJsonlRows(rollout.text);
+        if (damagedLineCount > 0) {
+          rolloutUsageUnavailable = `${rollout.path} has ${damagedLineCount} damaged JSONL line(s)`;
+          compactionCount = { unavailable: rolloutUsageUnavailable };
+        } else {
+          compactionCount = {
+            count: rows.filter((row) => isPlainObject(row) && row.type === "compacted").length,
+            source: rollout.path,
+          };
+          rolloutUsageUnavailable = `no token_count event in ${rollout.path}`;
+          for (const row of rows) {
+            if (!isPlainObject(row) || row.type !== "event_msg") continue;
+            const payload = isPlainObject(row.payload) ? row.payload : undefined;
+            if (payload === undefined || payload.type !== "token_count") continue;
+            if (isPlainObject(payload.info)) {
+              rolloutUsage = { usage: payload.info, source: rollout.path };
+            }
           }
         }
       }
+      // A readable native value takes precedence; otherwise use the run's own
+      // complete direct-write record (ADR 0077), independent of rollout state.
+      tokenUsage = rolloutUsage !== undefined
+        ? rolloutUsage
+        : !hostSessionDamaged && codexTurnCompletedUsage !== undefined
+          ? {
+              usage: codexTurnCompletedUsage,
+              source: HOST_SESSION_RECORDS_PATH,
+            }
+          : { unavailable: rolloutUsageUnavailable };
     }
-    // A readable native value takes precedence; otherwise use the run's own
-    // complete direct-write record (ADR 0077), independent of rollout state.
-    tokenUsage = rolloutUsage !== undefined
-      ? rolloutUsage
-      : !hostSessionDamaged && codexTurnCompletedUsage !== undefined
-        ? {
-            usage: codexTurnCompletedUsage,
-            source: HOST_SESSION_RECORDS_PATH,
-          }
-        : { unavailable: rolloutUsageUnavailable };
-  } else if (claudeHostPointer !== undefined) {
+  } else if (metricHost === "claude") {
     if (hostSessionText === null) {
       compactionCount = { unavailable: `${HOST_SESSION_RECORDS_PATH} is missing` };
       tokenUsage = { unavailable: `${HOST_SESSION_RECORDS_PATH} is missing` };
@@ -387,31 +443,51 @@ export async function projectRunShowFacts(
         ? { unavailable: `no result usage record in ${HOST_SESSION_RECORDS_PATH}` }
         : { usage: claudeResultUsage, source: HOST_SESSION_RECORDS_PATH };
     }
-  } else if (externalHostPointer !== undefined) {
+  } else if (metricHost === "grok-build") {
+    if (hostSessionText === null) {
+      compactionCount = { unavailable: `${HOST_SESSION_RECORDS_PATH} is missing` };
+      tokenUsage = { unavailable: `${HOST_SESSION_RECORDS_PATH} is missing` };
+    } else if (hostSessionDamaged) {
+      const reason = `${HOST_SESSION_RECORDS_PATH} has damaged JSONL line(s)`;
+      compactionCount = { unavailable: reason };
+      tokenUsage = { unavailable: reason };
+    } else {
+      compactionCount = {
+        count: grokAutoCompacts,
+        source: HOST_SESSION_RECORDS_PATH,
+      };
+      tokenUsage = grokPromptUsage === undefined
+        ? { unavailable: `no session/prompt _meta.usage record in ${HOST_SESSION_RECORDS_PATH}` }
+        : { usage: grokPromptUsage, source: HOST_SESSION_RECORDS_PATH };
+    }
+  } else if (metricHost === "pi") {
+    if (sessionVolumeText === null) {
+      compactionCount = { unavailable: `${SESSION_VOLUME_PATH} is missing` };
+      tokenUsage = { unavailable: `${SESSION_VOLUME_PATH} is missing` };
+    } else if (sessionVolumeDamaged) {
+      const reason = `${SESSION_VOLUME_PATH} has ${sessionParsed.damagedLineCount} damaged JSONL line(s)`;
+      compactionCount = { unavailable: reason };
+      tokenUsage = { unavailable: reason };
+    } else {
+      compactionCount = {
+        count: sessionRows.filter(
+          (row) => isPlainObject(row) && row.type === "compaction",
+        ).length,
+        source: SESSION_VOLUME_PATH,
+      };
+      // Whole-run assistant usage — reuse the shared summer; never invent a
+      // parallel last-message projection (#1064).
+      const usage = await readAssistantUsageFromSessionFile(
+        join(runDirectory, SESSION_VOLUME_PATH),
+      );
+      tokenUsage = usage === undefined
+        ? { unavailable: `no usage record in ${SESSION_VOLUME_PATH}` }
+        : { usage, source: SESSION_VOLUME_PATH };
+    }
+  } else {
+    // hermes / other external hosts / unknown latest host — no metric carriers.
     compactionCount = { unavailable: "no compaction record on this run" };
     tokenUsage = { unavailable: "no token usage record on this run" };
-  } else if (sessionVolumeText === null) {
-    compactionCount = { unavailable: `${SESSION_VOLUME_PATH} is missing` };
-    tokenUsage = { unavailable: `${SESSION_VOLUME_PATH} is missing` };
-  } else if (sessionVolumeDamaged) {
-    const reason = `${SESSION_VOLUME_PATH} has ${sessionParsed.damagedLineCount} damaged JSONL line(s)`;
-    compactionCount = { unavailable: reason };
-    tokenUsage = { unavailable: reason };
-  } else {
-    compactionCount = {
-      count: sessionRows.filter(
-        (row) => isPlainObject(row) && row.type === "compaction",
-      ).length,
-      source: SESSION_VOLUME_PATH,
-    };
-    // Whole-run assistant usage — reuse the shared summer; never invent a
-    // parallel last-message projection (#1064).
-    const usage = await readAssistantUsageFromSessionFile(
-      join(runDirectory, SESSION_VOLUME_PATH),
-    );
-    tokenUsage = usage === undefined
-      ? { unavailable: `no usage record in ${SESSION_VOLUME_PATH}` }
-      : { usage, source: SESSION_VOLUME_PATH };
   }
 
   return {
@@ -506,6 +582,13 @@ export async function runPublicRunShow(
     }
     if (!stats.isDirectory()) {
       throw new CliUsageError(`run directory is not a directory: ${args[1]}`);
+    }
+    // Existing non-run directories (e.g. a truncated paste of `runs/`) must not
+    // present as a sparse run. Reuse the sole runDirectory→runId parser.
+    if (runIdFromRunDirectory(runDirectory) === undefined) {
+      throw new CliUsageError(
+        `not a role run directory (expected <runId>@<role>): ${args[1]}`,
+      );
     }
     const facts = await projectRunShowFacts(runDirectory, env);
     io.stdout(renderRunShowFacts(facts));

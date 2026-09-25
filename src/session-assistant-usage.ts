@@ -38,6 +38,8 @@ export async function readAssistantUsageFromSessionFile(
   let output = 0;
   let cacheRead = 0;
   let cacheWrite = 0;
+  let reasoning = 0;
+  let sawReasoning = false;
   let costInput = 0;
   let costOutput = 0;
   let costCacheRead = 0;
@@ -53,6 +55,10 @@ export async function readAssistantUsageFromSessionFile(
     output += usage.output ?? 0;
     cacheRead += usage.cacheRead ?? 0;
     cacheWrite += usage.cacheWrite ?? 0;
+    if (usage.reasoning !== undefined) {
+      sawReasoning = true;
+      reasoning += usage.reasoning;
+    }
     if (usage.cost !== undefined) {
       sawCost = true;
       costInput += usage.cost.input ?? 0;
@@ -69,6 +75,7 @@ export async function readAssistantUsageFromSessionFile(
     cacheRead,
     cacheWrite,
     totalTokens: total > 0 ? total : input + output + cacheRead + cacheWrite,
+    ...(sawReasoning ? { reasoning } : {}),
   };
   // Cost only when session rows carried it — unknown stays absent (not zero).
   if (!sawCost) return base as Usage;
