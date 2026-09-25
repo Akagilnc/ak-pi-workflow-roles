@@ -11,11 +11,19 @@ parameters.
 
 The machine entrypoint is `codex`. Run from the role project root. Non-interactive
 labor uses `codex exec` (alias `e`). Always pass `--skip-git-repo-check` so the
-labor subprocess can start outside a Git work tree when needed:
+labor subprocess can start outside a Git work tree when needed. When the dispatch
+order specifies a model, pass it with `-m` / `--model`:
 
 ```bash
 codex exec --skip-git-repo-check "YOUR_LABOR_PROMPT"
 ```
+
+```bash
+codex exec --skip-git-repo-check -m <MODEL_ID> "YOUR_LABOR_PROMPT"
+```
+
+When no model is specified in the dispatch order, omit `-m` and let Codex use
+its configured default.
 
 For concurrent or disposable labor turns, add `--ephemeral` so session files are
 not persisted to disk:

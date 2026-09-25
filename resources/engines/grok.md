@@ -12,13 +12,13 @@ The machine entrypoint is `grok`. Run from the role project root.
 Non-interactive labor reads the prompt from a file and prints plain output:
 
 ```bash
-grok --prompt-file /path/to/labor-prompt.md --reasoning-effort <EFFORT> --always-approve --output-format plain
+grok --trust --prompt-file /path/to/labor-prompt.md --reasoning-effort <EFFORT> --always-approve --output-format plain
 ```
 
 When the dispatch order specifies a model, pass it with `-m`:
 
 ```bash
-grok --prompt-file /path/to/labor-prompt.md -m <MODEL_ID> --reasoning-effort <EFFORT> --always-approve --output-format plain
+grok --trust --prompt-file /path/to/labor-prompt.md -m <MODEL_ID> --reasoning-effort <EFFORT> --always-approve --output-format plain
 ```
 
 - `-m <MODEL_ID>` selects the model; `grok models` lists valid ids. Without a

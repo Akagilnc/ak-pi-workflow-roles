@@ -16,14 +16,14 @@ Print mode with `--output-format text` returns the labor body on stdout;
 stderr carries banners only. Measured with separate fd redirects (`1>` / `2>`):
 
 ```bash
-claude -p --output-format text "YOUR_LABOR_PROMPT"
+claude -p --dangerously-skip-permissions --output-format text "YOUR_LABOR_PROMPT"
 ```
 
 Pass the model requested by the labor mandate through `--model` when one is
 specified:
 
 ```bash
-claude -p --model <MODEL_ID> --output-format text "YOUR_LABOR_PROMPT"
+claude -p --dangerously-skip-permissions --model <MODEL_ID> --output-format text "YOUR_LABOR_PROMPT"
 ```
 
 Use `--output-format text` (the default): stdout is the labor body and nothing
