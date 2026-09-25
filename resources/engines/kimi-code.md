@@ -1,7 +1,7 @@
-# kimi engine method material
+# kimi-code engine method material
 
-This file is packaged technical material for the `kimi` labor engine
-(Kimi Code CLI on the host).
+This file is packaged technical material for labor using the Kimi Code CLI on
+the host.
 
 Before invoking the engine, read `../engine-dispatch.md`, resolving that path
 relative to this note. This note only covers this engine's CLI technical
@@ -22,16 +22,16 @@ those flags to prompt-mode argv:
 kimi -p "YOUR_LABOR_PROMPT"
 ```
 
-Pin a model alias configured in the host `config.toml` when the seat needs a
-known Kimi model id (example alias shape measured: `kimi-code/k3-256k`):
+Pass the model requested by the labor mandate through `-m` when one is
+specified:
 
 ```bash
-kimi -m <model-alias> -p "YOUR_LABOR_PROMPT"
+kimi -m <MODEL_ID> -p "YOUR_LABOR_PROMPT"
 ```
 
 Use `--output-format text` (the default). Do not use `stream-json` for labor:
 the returned body goes back into the seat's context and the event stream is
-noise (see `opus.md` for the measured ratio). Progress observability belongs to
+noise (see `claude-code.md` for the measured ratio). Progress observability belongs to
 the runner's process watch, not to the returned body. Measured on this host
 with separate fd redirects (`1>` / `2>`): stdout is the labor answer body;
 stderr carries the version line, thinking bullets, and the trailing

@@ -10,10 +10,19 @@ parameters.
 ## Invocation examples (local OpenCode CLI)
 
 The machine entrypoint is `opencode`. Run from the role project root.
-Non-interactive labor uses `run` with `--auto` and an explicit model:
+Non-interactive labor uses `run` with `--auto`. When the labor order specifies
+an engine model, pass it with `-m`:
 
 ```bash
 opencode run --auto -m <MODEL_ID> "YOUR_LABOR_PROMPT"
+```
+
+When no engine model is specified, omit `-m` and let OpenCode choose: it uses
+the model configured in OpenCode, then the last-used model, then its internally
+prioritized first model.
+
+```bash
+opencode run --auto "YOUR_LABOR_PROMPT"
 ```
 
 - `--auto` is required: it auto-approves permissions that are not explicitly

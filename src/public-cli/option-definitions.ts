@@ -1298,7 +1298,7 @@ const SUPPORT_COMMAND_HELP = {
     examples: [
       "ak-role config set judge openai-codex/gpt-5.6-sol:high",
       "ak-role config unset gatekeeper",
-      "ak-role config set-engine judge opus",
+      "ak-role config set-engine judge claude-code",
       "ak-role config set-engine coder cursor cursor-grok-4.6-high",
       "ak-role config set-engine-model coder cursor-grok-4.6-high",
       "ak-role config set-host judge grok-build",

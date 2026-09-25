@@ -40,8 +40,8 @@ ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
 ak-role config unset gatekeeper
 # persistent labor engine (callable roles); one-shot override remains --engine
-# optional model id for multi-model engines (cursor/opencode/agy); omit for name-is-model engines
-ak-role config set-engine judge opus
+# optional model id is a separate coordinate from the CLI engine name
+ak-role config set-engine judge claude-code
 ak-role config set-engine coder cursor cursor-grok-4.6-high
 ak-role config set-engine-model coder cursor-grok-4.6-high
 ak-role config unset-engine-model coder

@@ -11,11 +11,19 @@ parameters.
 
 The machine entrypoint is `codex`. Run from the role project root. Non-interactive
 labor uses `codex exec` (alias `e`). Always pass `--skip-git-repo-check` so the
-labor subprocess can start outside a Git work tree when needed:
+labor subprocess can start outside a Git work tree when needed. When the dispatch
+order specifies a model, pass it with `-m` / `--model`:
 
 ```bash
 codex exec --skip-git-repo-check "YOUR_LABOR_PROMPT"
 ```
+
+```bash
+codex exec --skip-git-repo-check -m <MODEL_ID> "YOUR_LABOR_PROMPT"
+```
+
+When no model is specified in the dispatch order, omit `-m` and let Codex use
+its configured default.
 
 For concurrent or disposable labor turns, add `--ephemeral` so session files are
 not persisted to disk:
@@ -33,7 +41,7 @@ codex exec --skip-git-repo-check --ephemeral -C "$PROJECT_ROOT" "YOUR_LABOR_PROM
 Default (non-`--json`) mode prints the session banner and progress on stderr
 (measured on this host). Collect the labor body from stdout so that stderr log
 noise is not mixed into the returned body. Never use `--json` for labor: its
-JSONL event rows go back into the seat's context as noise (see `opus.md` for the
+JSONL event rows go back into the seat's context as noise (see `claude-code.md` for the
 measured ratio).
 
 Prefer `codex exec --help` on the host over any remembered flag set. Do not wrap
