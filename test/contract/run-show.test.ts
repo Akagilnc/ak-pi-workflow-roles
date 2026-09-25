@@ -402,29 +402,51 @@ test("run show: pi run — carriers on the run's own session volume", async () =
   });
 });
 
-test("run show: codex without rollout still projects turn.completed.usage", async () => {
+test("run show: codex rollout damage preserves run-written turn.completed.usage", async () => {
   await withTempRoot("ak-run-show-codex-host-usage-", async (machineHome) => {
     const runDirectory = await writeCodexRunFixture(machineHome);
-    // Drop the matching rollout so the only readable usage is the direct-write
-    // host-session turn.completed.usage (ADR 0077).
-    await unlink(
-      join(
-        machineHome,
-        ".codex",
-        "sessions",
-        "2026",
-        "09",
-        "25",
-        `rollout-2026-09-25T00-00-00-${THREAD_ID}.jsonl`,
-      ),
+    const rolloutPath = join(
+      machineHome,
+      ".codex",
+      "sessions",
+      "2026",
+      "09",
+      "25",
+      `rollout-2026-09-25T00-00-00-${THREAD_ID}.jsonl`,
     );
 
-    const facts = await projectRunShowFacts(runDirectory, { machineHome });
-    assert.deepEqual(facts.tokenUsage, {
-      usage: CODEX_HOST_TURN_USAGE,
-      source: "session/host-session/records.jsonl",
+    // A missing rollout already falls back to the run's direct-write usage.
+    await unlink(rolloutPath);
+    const missingIo = captureIo();
+    const missingResult = await runAkRole(["run", "show", runDirectory], {
+      packageRoot,
+      home: machineHome,
+      io: missingIo.io,
     });
-    assert.ok("unavailable" in facts.compactionCount);
+    assert.equal(missingResult.exitCode, 0);
+    assert.equal(
+      missingIo.stdout[0]!.includes(
+        `token usage: ${JSON.stringify(CODEX_HOST_TURN_USAGE)} (session/host-session/records.jsonl)`,
+      ),
+      true,
+    );
+
+    // A damaged rollout must not hide the same readable usage.
+    await writeFile(rolloutPath, "{not-json\n", "utf8");
+    const damagedIo = captureIo();
+    const damagedResult = await runAkRole(["run", "show", runDirectory], {
+      packageRoot,
+      home: machineHome,
+      io: damagedIo.io,
+    });
+    assert.equal(damagedResult.exitCode, 0);
+    assert.equal(
+      damagedIo.stdout[0]!.includes(
+        `token usage: ${JSON.stringify(CODEX_HOST_TURN_USAGE)} (session/host-session/records.jsonl)`,
+      ),
+      true,
+    );
+    assert.equal(damagedIo.stdout[0]!.includes("compaction count: unavailable"), true);
   });
 });
 
@@ -446,13 +468,20 @@ test("run show: Claude binding without host-session is unavailable, not zero", a
       "utf8",
     );
 
-    const facts = await projectRunShowFacts(runDirectory, { machineHome });
-    assert.ok("unavailable" in facts.compactionCount);
+    const { io, stdout } = captureIo();
+    const result = await runAkRole(["run", "show", runDirectory], {
+      packageRoot,
+      home: machineHome,
+      io,
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(stdout[0]!.includes("compaction count: unavailable"), true);
     assert.equal(
-      facts.compactionCount.unavailable.includes("host-session/records.jsonl"),
+      stdout[0]!.includes("session/host-session/records.jsonl is missing"),
       true,
     );
-    assert.ok("unavailable" in facts.tokenUsage);
+    assert.equal(stdout[0]!.includes("token usage: unavailable"), true);
   });
 });
 
@@ -480,9 +509,20 @@ test("run show: damaged seal JSONL is unavailable, not a silent partial", async 
       "utf8",
     );
 
-    const facts = await projectRunShowFacts(runDirectory, { machineHome });
-    assert.ok("unavailable" in facts.sealRecords);
-    assert.equal(facts.sealRecords.unavailable.includes("damaged"), true);
+    const { io, stdout } = captureIo();
+    const result = await runAkRole(["run", "show", runDirectory], {
+      packageRoot,
+      home: machineHome,
+      io,
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(stdout[0]!.includes("seal records: unavailable"), true);
+    assert.equal(
+      stdout[0]!.includes("session/submission-ledger/records.jsonl"),
+      true,
+    );
+    assert.equal(stdout[0]!.includes("damaged JSONL line(s)"), true);
   });
 });
 

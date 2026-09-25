@@ -355,7 +355,14 @@ export async function projectRunShowFacts(
       if (damagedLineCount > 0) {
         const reason = `${rollout.path} has ${damagedLineCount} damaged JSONL line(s)`;
         compactionCount = { unavailable: reason };
-        tokenUsage = { unavailable: reason };
+        // The damaged rollout cannot provide a complete usage projection, but
+        // it must not hide valid usage already written to this run (ADR 0077).
+        tokenUsage = !hostSessionDamaged && codexTurnCompletedUsage !== undefined
+          ? {
+              usage: codexTurnCompletedUsage,
+              source: HOST_SESSION_RECORDS_PATH,
+            }
+          : { unavailable: reason };
       } else {
         compactionCount = {
           count: rows.filter((row) => isPlainObject(row) && row.type === "compacted").length,
