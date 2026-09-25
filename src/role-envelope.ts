@@ -9,10 +9,6 @@ import {
   ENGINE_MODEL_FLAG_NAME,
   normalizeEngineName,
 } from "./engine-detour.ts";
-import {
-  createDefaultGateOfficerSummon,
-  requireSubmissionGate,
-} from "./submission-gate.ts";
 import type {
   HostContext,
   HostEventRegistration,
@@ -234,34 +230,6 @@ export async function prepareRoleEnvelope(options: {
     // seat remains reachable through MCP.
     setActiveTools(names) { preferredTools = [...names]; },
     getActiveTools() { return [...preferredTools]; },
-    async requireSubmissionGate(gateOptions) {
-      const packageRoot =
-        typeof options.dependencies.packageRoot === "string"
-          ? options.dependencies.packageRoot
-          : undefined;
-      return requireSubmissionGate({
-        context: gateOptions.context,
-        subject: gateOptions.subject,
-        ...(gateOptions.signal === undefined ? {} : { signal: gateOptions.signal }),
-        hostActions: {
-          failInfrastructure: (error, _context, toolCallId) =>
-            gateOptions.hostActions.failInfrastructure(error, gateOptions.context, toolCallId),
-          bindSubmissionNonPass: gateOptions.hostActions.bindSubmissionNonPass,
-        },
-        toolCallId: gateOptions.toolCallId,
-        ...(gateOptions.submission === undefined ? {} : { submission: gateOptions.submission }),
-        // #969: package root + home reach nested 给事中/符宝郎 summons.
-        // hostAdapters (when set on deps) forward nested seat selection — production unset.
-        summonOfficer: createDefaultGateOfficerSummon({
-          cwd: gateOptions.context.cwd ?? request.cwd,
-          home: request.home,
-          ...(packageRoot === undefined ? {} : { packageRoot }),
-          ...(options.dependencies.hostAdapters === undefined
-            ? {}
-            : { hostAdapters: options.dependencies.hostAdapters }),
-        }),
-      });
-    },
     on(...registration: HostEventRegistration) {
       const [event, handler] = registration;
       const list = handlers.get(event) ?? [];

@@ -1830,6 +1830,8 @@ function snapshotAuditDetails(details: Record<string, unknown>): Record<string, 
  * terminal identity; the retained response must be this seat's real escalate
  * decision and its projected audit-owned fields must agree with it.
  */
+// Historical pre-#1057 session artifacts may still contain this old projection;
+// no current submission path writes it, but resume/settlement must read it.
 function boundAuditEscalationForResult(
   entries: readonly SessionEntry[],
   resultIndex: number,

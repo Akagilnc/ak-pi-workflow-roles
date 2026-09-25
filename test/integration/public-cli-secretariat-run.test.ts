@@ -2,7 +2,7 @@
  * Public Secretariat submission-gate path — through-line + escalate branch.
  * Real public CLI entry; faux host activates real secretariat runtime and
  * submits through production gate. Nested countersign goes through real runtime +
- * 符宝郎内闸 (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
+ * Public-entry audit (requireSubmissionGate); body rewrite attribution = dirty-ticket real run.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -40,11 +40,8 @@ import {
   createCountersignRoleRuntime,
   createDiaristRoleRuntime,
   createSecretariatRoleRuntime,
-  GatekeeperDecisionError,
 } from "../../src/role-runtime.ts";
-import { isAuditEscalationProjection } from "../../src/audit-escalation.ts";
 import {
-  recordAuditEscalationSubmission,
   sealAcceptedSubmission,
 } from "../helpers/submission-ledger-fixture.ts";
 import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
@@ -268,24 +265,11 @@ function nestedCountersignHost(input: {
         getFlag() {
           return "secretariat";
         },
-        async requireSubmissionGate(options: { subject: { kind: string } }) {
-          // Minimal fake 符宝郎内闸 host — records structured pass/escalation.
-          input.gateCalls.push({ kind: options.subject.kind });
-          if (step.notaryEscalation !== undefined) {
-            throw new GatekeeperDecisionError({ status: "escalate", officer: "notary", receipt: step.notaryEscalation });
-          }
-        },
       } as unknown as RoleHost;
 
       await createCountersignRoleRuntime(
         roleHost,
         { loadSoul: async () => "给事中职分（测试装载）" },
-        {
-          failInfrastructure(): never {
-            throw new Error("nested countersign infra");
-          },
-          bindSubmissionNonPass() {},
-        },
       ).activate();
 
       const tool = tools.get("ak_submission_output");
@@ -345,9 +329,8 @@ function nestedCountersignHost(input: {
 }
 
 /**
- * Activate the real secretariat runtime through the shared submission gate.
- * `submissionGateHost` drives the production prepareRoleEnvelope.requireSubmissionGate path (no harness
- * reimplementation of the envelope summon closure).
+ * Activate the real secretariat runtime before the public-entry audit.
+ * `submissionGateHost` selects the parent host; the entry summons reviewers afterward.
  */
 function secretariatHostDrivingRealTools(input: {
   packageRoot: string;
@@ -383,14 +366,13 @@ function secretariatHostDrivingRealTools(input: {
   });
   let nextStep = 0;
 
-  // Production envelope wiring (home/packageRoot/hostAdapters).
+  // Production public-entry wiring (home/packageRoot/hostAdapters).
   // Gate entry observed via nested countersignRequests — no harness
   // reimplementation of requireSubmissionGate / createDefaultGateOfficerSummon.
   {
     // Capture narrowed host for the closure (exactOptionalPropertyTypes).
     const submissionGateHost = input.submissionGateHost;
-    // Always track nested summons so gate entry is observable without a custom
-    // requireSubmissionGate push (tests may omit countersignRequests).
+    // Track nested summons so public gate entry is observable.
     const nestRequests = input.countersignRequests ?? [];
     const nestedTracked = nestedCountersignHost({
       packageRoot: input.packageRoot,
@@ -970,9 +952,8 @@ async function distinctCourtAttemptIds(input: {
 
 /**
  * #969 shortest adapter convergence boundary.
- * Real headless (codex/claude) / ACP (grok-build) adapter → prepareRoleEnvelope
- * production requireSubmissionGate. Nested 给事中 reuses nestedCountersignHost so
- * the envelope summon closure is bitten without copying the full gate flow.
+ * Real headless (codex/claude) / ACP (grok-build) adapter → public-entry
+ * reviewer summons. Nested 给事中 reuses nestedCountersignHost.
  */
 async function adapterBoundaryCase(input: {
   hostName: "codex" | "claude" | "grok-build";

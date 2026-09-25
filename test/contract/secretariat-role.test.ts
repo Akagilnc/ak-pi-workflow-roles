@@ -127,8 +127,7 @@ test("secretariat output records any status without shape reject (第 0 条)", a
 
 test("secretariat tool finishes before audit on every host",
   async () => {
-    async function arm(host: string | undefined, statusOnly = false) {
-      const gateCalls: string[] = [];
+    async function arm(host: string | undefined) {
       const tools = new Map<string, { execute: Function }>();
       const roleHost = {
         registerTool(tool: { name: string; execute: Function }) {
@@ -139,18 +138,10 @@ test("secretariat tool finishes before audit on every host",
         setActiveTools() {},
         getActiveTools: () => [...tools.keys()],
         getFlag() { return undefined; },
-        async requireSubmissionGate(options: { subject: { kind: string } }) {
-          gateCalls.push(options.subject.kind);
-          return { officer: "countersign", receipt: statusOnly ? undefined : { status: "converged", note: "署原话" } };
-        },
       };
       await createSecretariatRoleRuntime(
         roleHost as never,
         { loadSoul: async () => "中书省" },
-        {
-          failInfrastructure(): never { throw new Error("fail"); },
-          bindSubmissionNonPass() {},
-        },
       ).activate();
       const hostCtx = {
         cwd: "/tmp",
@@ -171,14 +162,12 @@ test("secretariat tool finishes before audit on every host",
       assert.equal(result.content.length, 0);
       assert.equal(result.terminate, true);
       assert.deepEqual(result.details, { secretariatStatus: "converged", ticketNumber: 969 });
-      return gateCalls;
     }
 
     for (const host of ["codex", "claude", "grok-build", "pi"] as const) {
-      assert.deepEqual(await arm(host), [], host);
+      await arm(host);
     }
-    assert.deepEqual(await arm(undefined), []);
-    assert.deepEqual(await arm(undefined, true), []);
+    await arm(undefined);
 
     await withTempRoot("ak-sec-gate-", async (root) => {
       const ungated = new Map<string, { execute: Function }>();
@@ -202,10 +191,6 @@ test("secretariat tool finishes before audit on every host",
       await createSecretariatRoleRuntime(
         ledgerHost,
         { loadSoul: async () => "中书省" },
-        {
-          failInfrastructure(error): never { throw error; },
-          bindSubmissionNonPass() {},
-        },
       ).activate();
       const params = { secretariatStatus: "converged", ticketNumber: 969 };
       const runDirectory = `${root}/.ak-roles/books/fixture/unbound/runs/run-ledger@secretariat`;
@@ -250,17 +235,10 @@ test("secretariat tool finishes before audit on every host",
       setActiveTools() {},
       getActiveTools: () => [...tools.keys()],
       getFlag() { return undefined; },
-      async requireSubmissionGate() {
-        throw new Error("gate must not run");
-      },
     };
     await createSecretariatRoleRuntime(
       roleHost as never,
       { loadSoul: async () => "中书省" },
-      {
-        failInfrastructure(): never { throw new Error("fail"); },
-        bindSubmissionNonPass() {},
-      },
     ).activate();
     const unknown = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
           "bad",

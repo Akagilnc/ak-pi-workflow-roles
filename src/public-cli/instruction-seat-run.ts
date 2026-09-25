@@ -10,7 +10,7 @@ import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 import { bookDirectOfficerRunPointer } from "../archivist-record-entry.ts";
 
 import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "../host-contracts.ts";
-import { OFFICER_CONCLUSION_REASK } from "../gatekeeper-role.ts";
+import { OFFICER_CONCLUSION_REASK, gateOfficerForSubject } from "../gatekeeper-role.ts";
 import { runJudgeGates } from "../judge-role.ts";
 import { WORKER_DONE_STATUSES } from "../worker-submission-gates.ts";
 import { SECRETARIAT_GATE_OFFICER_ENTRY_TYPE } from "../secretariat-contracts.ts";
@@ -1128,8 +1128,7 @@ async function auditSubmittedRole(
         : admitted.role === "secretariat"
           ? { kind: "secretariat_verdict" as const }
           : { kind: "countersign_verdict" as const };
-      const officer = admitted.role === "fixer" || admitted.role === "coder"
-        ? "inspector" : admitted.role === "secretariat" ? "countersign" : "notary";
+      const officer = gateOfficerForSubject(subject);
       if (passedOfficer === officer) {
         chain = { status: "converged", passes: [] };
       } else {

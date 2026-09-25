@@ -2,7 +2,6 @@ import {
   type RoleHost,
   type HostContext,
   type HostToolResult,
-  type HostGatekeeperActions,
 } from "./host-contracts.ts";
 import type { Static } from "typebox";
 import { reviewSubmissionSchema } from "./review-submission.ts";
@@ -71,11 +70,6 @@ export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;
 };
 
-export type JudgeRoleHostActions = HostGatekeeperActions & {
-  /** Preserve the first officer's pass as a separate model-visible result item if the second gate fails. */
-  bindPriorGatePass(toolCallId: string, receipt: unknown): void;
-};
-
 export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   return validateAcceptedJudgeDetails(verdict);
 }
@@ -83,7 +77,6 @@ export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
 export function createJudgeRoleRuntime(
   pi: RoleHost,
   dependencies: JudgeRoleDependencies,
-  hostActions: JudgeRoleHostActions,
 ): { activate(): Promise<void> } {
   let soul: string | undefined;
   let lifecycleRegistered = false;

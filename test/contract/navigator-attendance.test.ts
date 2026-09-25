@@ -19,7 +19,6 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { extractNavigatorFact } from "../../src/public-cli/settlement.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
 import { buildNavigatorInfrastructureFailureFact, publicNavigatorSettlement } from "../../src/role-runtime.ts";
-import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import {
   proseAdvice,
   sessionHarness,
@@ -452,60 +451,6 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
       assert.equal(terminalNavigator.reason, diagnostic);
     }
   });
-});
-
-test("Navigator accepts only the audit-owned in-memory projection across all four seats", () => {
-  const seats = [
-    { role: "judge", phase: null, toolName: JUDGE_OUTPUT_TOOL_NAME },
-    { role: "fixer", phase: "apply", toolName: FIXER_OUTPUT_TOOL_NAME },
-    { role: "reviewer", phase: null, toolName: REVIEWER_OUTPUT_TOOL_NAME },
-    { role: "doctor", phase: null, toolName: DOCTOR_OUTPUT_TOOL_NAME },
-  ] as const;
-  for (const seat of seats) {
-    const projected = buildAuditEscalationResult({
-      status: "escalate",
-      conflicts: [`${seat.role} conflict`],
-      decisionGate: { question: `${seat.role} question`, options: ["owner", "audit"] } }, { [seat.role]: "role output" });
-    assert.deepEqual(
-      publicNavigatorSettlement(seat.role, seat.phase, {
-        toolName: seat.toolName,
-        isError: false,
-        details: projected }),
-      { kind: "human_decision", role: seat.role, phase: seat.phase, status: "audit_escalation" },
-      seat.role,
-    );
-    // The same visible shape, including every audit-owned field/value, is
-    // still only role-authored data after the object identity is copied.
-    assert.notEqual(
-      publicNavigatorSettlement(seat.role, seat.phase, {
-        toolName: seat.toolName,
-        isError: false,
-        details: { ...projected } })?.kind,
-      "human_decision",
-      `${seat.role}: copied role-shaped details must not escalate Navigator`,
-    );
-    const auditConflicts = Array.isArray((projected.audit as { conflicts?: unknown } | undefined)?.conflicts)
-      ? [...((projected.audit as { conflicts: readonly unknown[] }).conflicts)]
-      : Array.isArray(projected.conflicts)
-        ? [...(projected.conflicts as readonly unknown[])]
-        : [];
-    for (const forged of [
-      { ...projected, status: "pass" },
-      { ...projected, kind: "audit_escalation", auditDecisionGate: undefined },
-      { ...projected, conflicts: ["wrong"] },
-      { ...projected, conflicts: [...auditConflicts, "duplicate"] },
-      { ...projected, conflicts: [...auditConflicts].reverse() },
-    ]) {
-      assert.notEqual(
-        publicNavigatorSettlement(seat.role, seat.phase, {
-          toolName: seat.toolName,
-          isError: false,
-          details: { ...forged } })?.kind,
-        "human_decision",
-        `${seat.role}: forged audit evidence must not escalate Navigator`,
-      );
-    }
-  }
 });
 
 test("navigator open failures classify typed reason/status/code, not Error.message prose", () => {

@@ -7,12 +7,10 @@ import {
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
 import type { Static, TSchema } from "typebox";
-import type { SubmissionGateNonPassResult, GatekeeperSubject } from "../gatekeeper-role.ts";
-import { requireSubmissionGate } from "../submission-gate.ts";
+import type { SubmissionGateNonPassResult } from "../gatekeeper-role.ts";
 import type {
   HostContext,
   HostEventRegistration,
-  HostGatekeeperActions,
   HostToolDefinition,
   HostToolResult,
   RoleEnvelopeHost,
@@ -82,35 +80,6 @@ export function toPiContext(context: HostContext): ExtensionContext {
   const piContext = piContexts.get(context);
   if (piContext === undefined) throw new Error("Host context is not backed by the Pi adapter");
   return piContext;
-}
-
-/** Gatekeeper receives HostContext directly (#518 §1③) without recovering raw ExtensionContext via WeakMap. */
-function requirePiSubmissionGate(options: {
-  context: HostContext;
-  subject: GatekeeperSubject;
-  signal?: AbortSignal;
-  hostActions: HostGatekeeperActions;
-  toolCallId: string;
-  submission?: unknown;
-}): Promise<void | {
-  readonly status: "converged" | "continue";
-  readonly officer: string;
-  readonly receipt: unknown;
-  readonly runId?: string;
-}> {
-  return requireSubmissionGate({
-    context: options.context,
-    subject: options.subject,
-    ...(options.signal === undefined ? {} : { signal: options.signal }),
-    hostActions: {
-      failInfrastructure(error, _context, toolCallId) {
-        options.hostActions.failInfrastructure(error, options.context, toolCallId);
-      },
-      bindSubmissionNonPass: options.hostActions.bindSubmissionNonPass,
-    },
-    toolCallId: options.toolCallId,
-    ...(options.submission === undefined ? {} : { submission: options.submission }),
-  });
 }
 
 function toPiResult<D>(result: HostToolResult<D>): HostToolResult<D> {
@@ -204,7 +173,6 @@ export function createPiRoleHostAdapter(
     })),
     setActiveTools: (names) => pi.setActiveTools(names),
     getActiveTools: () => pi.getActiveTools(),
-    requireSubmissionGate: requirePiSubmissionGate,
     on(...registration: HostEventRegistration) {
       const context = (value: ExtensionContext) => projectPiContext(value, options.transcriptFromContext);
       if (registration[0] === "before_agent_start") {

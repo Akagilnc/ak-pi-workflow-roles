@@ -18,7 +18,6 @@ import { appendFile, chmod, mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path";
 import test from "node:test";
 
-import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import {
   ENGINE_DETOUR_CALL_RECORD_FILE_RELATIVE,
   ENGINE_DETOUR_TOOL_USAGE_FACT_KEY,
@@ -37,14 +36,15 @@ import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { packageRoot, withHermeticHome } from "../helpers/pi-test-harness.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import {
-  recordAuditEscalationSubmission,
   sealAcceptedSubmission,
 } from "../helpers/submission-ledger-fixture.ts";
 import { objectPayloads } from "../helpers/terminal-payload.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 const ENGINE = "kimi";
+const reviewReadyHost: typeof createMinimalHost = (run) => withPassingReviewHost(createMinimalHost(run));
 const JUDGE_ACCEPTED = { judgeStatus: "converged" as const };
 /** Non-ASCII stdout — UTF-8 byte length is the ticket metric (你好 = 6). */
 const ECHO_STDOUT = "你好";
@@ -59,7 +59,6 @@ type TurnPlan = {
   }[];
   readonly terminal:
     | { readonly kind: "accepted" }
-    | { readonly kind: "audit_escalation" }
     | { readonly kind: "no_receipt" }
     | {
         readonly kind: "failure";
@@ -216,41 +215,6 @@ async function finishTerminal(input: {
     return { code: 0, stderr: "", timedOut: false };
   }
 
-  if (plan.terminal.kind === "audit_escalation") {
-    const projected = buildAuditEscalationResult(
-      {
-        status: "escalate",
-        conflicts: ["authority"],
-        decisionGate: { question: "who?", options: ["owner"] },
-      },
-      { role: "judge" },
-    );
-    await appendFile(
-      sessionFile,
-      `${JSON.stringify({
-        type: "message",
-        message: {
-          role: "toolResult",
-          toolCallId: "judge-esc",
-          toolName: JUDGE_OUTPUT_TOOL_NAME,
-          isError: false,
-          details: projected,
-        },
-      })}\n`,
-      "utf8",
-    );
-    await recordAuditEscalationSubmission({
-      cwd: request.cwd,
-      home: request.home,
-      runId,
-      runDirectory: request.runDirectory,
-      role: "judge",
-      details: projected,
-      toolCallId: "judge-esc",
-    });
-    return { code: 0, stderr: "", timedOut: false };
-  }
-
   if (plan.terminal.kind === "no_receipt") {
     return { code: 0, stderr: "", timedOut: false };
   }
@@ -291,7 +255,7 @@ async function runPublicJudge(input: {
     credentials: { "openai-codex": true, xai: true },
     createRunId: () => input.runId,
     principalAuthority: piDurablePrincipalAuthority,
-    roleTurnHost: createMinimalHost(async (request) => {
+    roleTurnHost: reviewReadyHost(async (request) => {
       const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
         request.principal,
       );
@@ -336,6 +300,7 @@ async function withDetourProject(
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    await configurePassingReviewSeats(home);
     await fn({ home, project });
   });
 }
@@ -408,16 +373,6 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
         expectCallCount: 1,
         expectToolCallId: "c-header",
         headerOnlySession: true,
-      },
-      {
-        label: "audit-escalation-once",
-        plan: {
-          detours: [{ toolCallId: "c-esc", kind: "ok" }],
-          terminal: { kind: "audit_escalation" },
-        },
-        expectKind: "audit_escalation",
-        expectCallCount: 1,
-        expectToolCallId: "c-esc",
       },
       {
         label: "no-receipt-zero",
@@ -595,10 +550,19 @@ test("public entry: one tracer for terminals, counts, payload, host, utf8, heade
           principalAuthority: piDurablePrincipalAuthority,
           hostAdapters: [
             {
+              name: "pi",
+              create: () => ({
+                ok: true as const,
+                host: withPassingReviewHost({
+                  executeTurn: async () => { throw new Error("unexpected parent role on pi"); },
+                }),
+              }),
+            },
+            {
               name: "codex",
               create: () => ({
                 ok: true as const,
-                host: createMinimalHost(async (request) => {
+                host: reviewReadyHost(async (request) => {
                   const { sessionDirectory, sessionFile } =
                     piDurablePrincipalAuthority.decode(request.principal);
                   await mkdir(sessionDirectory, { recursive: true });
@@ -684,7 +648,7 @@ test("public entry: in-place auto-resume keeps one invocation scope across detou
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         principalAuthority: piDurablePrincipalAuthority,
-        roleTurnHost: createMinimalHost(async (request) => {
+        roleTurnHost: reviewReadyHost(async (request) => {
           const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
             request.principal,
           );
@@ -794,7 +758,7 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
           credentials: { "openai-codex": true, xai: true },
           createRunId: () => runId,
           principalAuthority: piDurablePrincipalAuthority,
-          roleTurnHost: createMinimalHost(async (request) => {
+          roleTurnHost: reviewReadyHost(async (request) => {
             const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(
               request.principal,
             );
@@ -898,7 +862,7 @@ test("public entry: explicit resume is a new scope; reused toolCallId stays isol
       credentials: { "openai-codex": true, xai: true },
       io,
       principalAuthority: piDurablePrincipalAuthority,
-      roleTurnHost: createMinimalHost(async (request) => {
+      roleTurnHost: reviewReadyHost(async (request) => {
         const { sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
         await appendFile(
           sessionFile,
