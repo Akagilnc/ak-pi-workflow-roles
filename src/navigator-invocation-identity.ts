@@ -29,6 +29,8 @@ import { isUuidV7, uuidv7 } from "./uuidv7.ts";
 import { workSubjectKeysEqual } from "./work-subject-identity.ts";
 
 export const NAVIGATOR_INVOCATION_ENTRY = "ak-navigator-invocation" as const;
+/** Native playbook read failure recorded by the navigator process that read the file. */
+export const NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY = "ak-navigator-route-playbook-failure" as const;
 
 /** Typed durable infrastructure-failure fact on a packaged role output toolResult. */
 export const NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND = "role_infrastructure_failure" as const;

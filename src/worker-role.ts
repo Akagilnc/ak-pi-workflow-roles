@@ -5,7 +5,7 @@ import { withTerminatingOutputDeclarations } from "./package-contracts/terminati
 
 import { readableGateItem } from "./readable-gate-item.ts";
 import { projectGatekeeperEscalation } from "./audit-escalation.ts";
-import { GatekeeperDecisionError, ParentQueueReaskError } from "./submission-errors.ts";
+import { GatekeeperDecisionError, ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -44,11 +44,11 @@ export type { WorkerOutput };
 // no code branches on their length. `reason` alone keeps minLength: the worker
 // gate reads `reason.trim().length > 0` to pick typed-reminder-bounce vs accept
 // (src/worker-submission-gates.ts:159-163,297-302).
-// #836 (ADR 0003 Amendment): status kept open like countersignStatus
-// (src/countersign-role.ts) — one shared description across every variant
+// Worker status is not the review three-state field (#1055): schema stays open.
+// One shared description across every variant
 // so openToolObjectFromUnion's identical-declaration collapse drops none of it.
 const CODER_STATUS_DESCRIPTION =
-  "planned | completed | refused | partially_completed | unfinished — 形状指引，非 schema 闸；completed 回执含 TDD、同模式、引入回归、行为事实四项证据；unfinished 缺前置或违宪约束致本局未完成时可用，缺待决 owner 决定或答复属缺前置。" as const;
+  "planned | completed | refused | partially_completed | unfinished。unfinished：缺前置或违宪约束致本局未完成。" as const;
 const coderOutputVariants = Type.Union([
   Type.Object({
     status: Type.Unknown({ description: CODER_STATUS_DESCRIPTION }),
@@ -135,8 +135,6 @@ const WORKER_ROUTING_STATUSES = new Set([
   "partially_completed",
   "unfinished",
 ]);
-const WORKER_STATUS_REASK =
-  "status 不是 planned、completed、refused、partially_completed、unfinished 之一。请重新交卷，status 写明其一。" as const;
 
 /** Read only the field that selects the worker's next package-owned path. */
 function workerStatusOf(output: WorkerOutput): string | undefined {
@@ -148,7 +146,7 @@ function workerStatusOf(output: WorkerOutput): string | undefined {
 function requireReadableWorkerStatus(output: WorkerOutput): string {
   const status = workerStatusOf(output);
   if (status === undefined || !WORKER_ROUTING_STATUSES.has(status)) {
-    throw new ParentQueueReaskError(WORKER_STATUS_REASK);
+    throw new ParentQueueReaskError(unreadableDiscriminatorNotice("status", isRecord(output) ? output.status : undefined));
   }
   return status;
 }
@@ -256,7 +254,7 @@ export function createFixerRoleRuntime(
         pi.registerTool({
           name: FIXER_OUTPUT_TOOL_NAME,
           label: "修内司输出",
-          description: "提交修内司终局回执；基础设施失败走 abort，不经本工具。",
+          description: "提交修内司终局回执。",
           promptSnippet: "提交修内司终局回执",
           parameters: fixerOutputSchema,
           async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
@@ -383,7 +381,7 @@ export function createCoderRoleRuntime(
         pi.registerTool({
           name: CODER_OUTPUT_TOOL_NAME,
           label: "将作监输出",
-          description: "提交将作监终局回执；本工具无 escalate 通道。",
+          description: "提交将作监终局回执。",
           promptSnippet: "提交将作监终局回执",
           parameters: coderOutputSchema,
           async execute(toolCallId: string, parameters: unknown, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {

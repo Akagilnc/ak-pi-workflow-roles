@@ -4,12 +4,11 @@ import type { HostContext } from "./host-contracts.ts";
 import { auditorRunDirectory } from "./auditor-dossier-tool.ts";
 import { packagedGateStageLabel } from "./packaged-role-registry.ts";
 import type { NoReceiptLifecycleFacts } from "./receipt-delivery-policy.ts";
-import { GatekeeperDecisionError } from "./submission-errors.ts";
+import { GatekeeperDecisionError, receivedDiscriminator, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "./inspector-contracts.ts";
-import { REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
+import { REVIEW_QUEUE_STATUSES, REVIEW_SUBMISSION_OUTPUT_TOOL_NAME } from "./review-submission.ts";
 import {
   GATEKEEPER_OUTPUT_TOOL_NAME,
-  gatekeeperDecisionSchema,
   gatekeeperOutputSchema,
 } from "./package-contracts/gatekeeper-output.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
@@ -66,6 +65,8 @@ export type GatekeeperResult =
       readonly status: "needs_reask";
       readonly officer: GateOfficer;
       readonly receipt: unknown;
+      /** Discriminator the queue already read. Not written back onto the receipt. */
+      readonly receivedStatus?: unknown;
       readonly runId?: string;
     }
   | { readonly status: "no_receipt"; readonly stage: GateOfficer; readonly reason: string; readonly facts: NoReceiptLifecycleFacts }
@@ -159,7 +160,7 @@ export type SubmissionGateHostActions = {
 export const GATEKEEPER_TOOL_SPEC = {
   name: GATEKEEPER_OUTPUT_TOOL_NAME,
   label: "门下省决议",
-  description: "门下省终局决议，状态为 dispatch 或 pass。",
+  description: "门下省终局决议。status 为 dispatch 或 pass。",
   promptSnippet: "门下省决议",
   parameters: gatekeeperOutputSchema,
 } as const;
@@ -167,22 +168,6 @@ export const GATEKEEPER_TOOL_SPEC = {
 export type GatekeeperRuntimeDependencies = {
   loadSoul(): Promise<string>;
 };
-
-function result(content: string, details: unknown) {
-  return { content: [{ type: "text" as const, text: content }], details };
-}
-
-/** Gatekeeper province decision tool — open transport; package-contract projection owns legality. */
-export function createGatekeeperOutputTool() {
-  return {
-    name: GATEKEEPER_OUTPUT_TOOL_NAME,
-    description: "提交门下省派官决定。",
-    parameters: gatekeeperDecisionSchema,
-    async execute(_id: string, args: unknown) {
-      return result(`已收 ${String((args as { status?: unknown })?.status)}`, args);
-    },
-  };
-}
 
 function failureReason(error: unknown): string {
   if (error instanceof AggregateError) return error.errors.map(failureReason).join("; ");
@@ -210,12 +195,9 @@ function readRecord(value: unknown): Record<string, unknown> | undefined {
  * `fallbackStatus` is the terminal outcome.status when the receipt body has no status key
  * (keeps missing-args sentinel intact as the receipt).
  */
-/** Map the shared review verdict onto the gate queue words (#1028). */
+/** Map the shared review verdict onto the gate queue words (#1028 / #1055). */
 function reviewQueueStatus(status: string): string | undefined {
-  if (status === "converged") return "converged";
-  if (status === "continue") return "continue";
-  if (status === "escalate") return "escalate";
-  return undefined;
+  return REVIEW_QUEUE_STATUSES.has(status) ? status : undefined;
 }
 
 function projectOfficerDecision(
@@ -235,7 +217,7 @@ function projectOfficerDecision(
   if (queueStatus === "continue" || queueStatus === "escalate") {
     return { status: queueStatus, officer, receipt };
   }
-  return { status: "needs_reask", officer, receipt };
+  return { status: "needs_reask", officer, receipt, receivedStatus: status };
 }
 
 /**
@@ -371,12 +353,14 @@ function projectOfficerTerminal(
       summoned,
     );
   }
+  const receipt = thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome);
   return withOfficerRunId(
     {
       status: "needs_reask",
       officer,
       // This-court receipt only (#879).
-      receipt: thisCourt.length > 0 ? thisCourt[thisCourt.length - 1] : retainedReceipt(outcome),
+      receipt,
+      receivedStatus: receivedDiscriminator(receipt, "status"),
     },
     summoned,
   );
@@ -391,16 +375,11 @@ export type GatekeeperProjection = {
 };
 
 /**
- * Plain-language re-ask when the officer conclusion is not converged|continue|escalate.
- * Not a packaged engine handbook line (#755 exception for 读不出三态).
- * Every review officer uses the same `status` field and three queue words (#1028).
+ * Officer conclusion was missing or not a queue word (#1055).
+ * `received` is the status value only, not the rest of the receipt.
  */
-export const OFFICER_CONCLUSION_REASK =
-  "上次交卷的 status 不是 converged、continue、escalate 三态之一。请重新输出，status 写明其一；continue 或 escalate 的话就是给对方看的原文。" as const;
-
-/** Pick the re-ask line for the officer under review. */
-export function officerConclusionReask(officer: GateOfficer): string {
-  return OFFICER_CONCLUSION_REASK;
+export function officerConclusionReask(received: unknown): string {
+  return unreadableDiscriminatorNotice("status", received);
 }
 
 /**

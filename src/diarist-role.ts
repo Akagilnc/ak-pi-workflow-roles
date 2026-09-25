@@ -16,14 +16,14 @@ export type { DiaristOutput };
 export { validateRecordedDiaristOutput };
 
 /**
- * 起居郎交卷形状；形状指引，非 schema 闸。
+ * 起居郎交卷形状。
  * #901：交边界（sessions）；正文与不可解析原字节由机械投影。
  */
 export const diaristOutputSchema = withTerminatingOutputDeclarations(
   openToolObject(
     Type.Object({
       status: Type.Unknown({
-        description: "completed | escalate — 形状指引，非 schema 闸",
+        description: "completed | escalate",
       }),
       ticketNumber: Type.Optional(
         Type.Unknown({

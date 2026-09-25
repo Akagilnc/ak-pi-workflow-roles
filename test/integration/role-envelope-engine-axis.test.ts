@@ -146,6 +146,7 @@ test("shared envelope keeps seat identity separate from typed reference material
           "souls/audit-law.md",
           "souls/quality-law.md",
           "souls/judge-output-guide.md",
+          "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
         ]),
       }]);
     } finally {
@@ -181,6 +182,7 @@ test("shared envelope keeps seat identity separate from typed reference material
           "CLAUDE.md",
           "souls/audit-law.md",
           "souls/quality-law.md",
+          "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
         ]),
       }]);
     } finally {
@@ -207,6 +209,7 @@ test("Pi production root supplies typed main and auditor reference materials", a
           "souls/audit-law.md",
           "souls/quality-law.md",
           "souls/judge-output-guide.md",
+          "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
         ]),
       }]);
     } finally {
@@ -240,6 +243,7 @@ test("Pi production root supplies typed main and auditor reference materials", a
           "CLAUDE.md",
           "souls/audit-law.md",
           "souls/quality-law.md",
+          "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
         ]),
       }]);
     } finally {

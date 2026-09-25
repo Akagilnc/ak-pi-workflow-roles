@@ -1,6 +1,5 @@
 /** Shared accepted-receipt delivery budget for role, auditor, and Navigator sessions (#288). */
 export const RECEIPT_DELIVERY_TURN_LIMIT = 2 as const;
-export const RECEIPT_DELIVERY_PROMPT = "本会话尚无已接受的 typed 回执。";
 
 export const NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle" as const;
 
@@ -103,6 +102,15 @@ export function createReceiptDeliveryPolicy() {
     nextAction(): "accepted" | "request-delivery" | "no-receipt" {
       if (accepted) return "accepted";
       return deliveryTurns < RECEIPT_DELIVERY_TURN_LIMIT ? "request-delivery" : "no-receipt";
+    },
+    /** Current typed delivery facts. No prose. */
+    deliveryState() {
+      return {
+        terminalToolCalled,
+        rejectedReceipts: rejectedReceipts.map((item) => ({ ...item })),
+        deliveryTurns,
+        acceptedReceipt: false as const,
+      };
     },
     facts(binding: { runPointer: string; attemptPointer: string }): NoReceiptLifecycleFacts {
       return noReceiptLifecycleFacts({ terminalToolCalled, rejectedReceipts: [...rejectedReceipts], deliveryTurns, ...binding });

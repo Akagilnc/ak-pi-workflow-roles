@@ -169,7 +169,7 @@ test("prepare provider schema admits object-root free-form through real Tool val
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events, undefined, root);
+      const nav = await attendance(setting, harness, events, root);
       nav.prepare();
       await settleWithAdvice(
         nav,
@@ -186,7 +186,7 @@ test("prepare provider schema admits object-root free-form through real Tool val
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events, undefined, root);
+      const nav = await attendance(setting, harness, events, root);
       nav.prepare();
       await settleWithAdvice(
         nav,
@@ -214,7 +214,7 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events, undefined, root);
+      const nav = await attendance(setting, harness, events, root);
       nav.prepare();
       await settleWithAdvice(
         nav,
@@ -226,15 +226,24 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
       assert.equal(events.length, 1);
       assert.equal(events[0].disposition, "advice");
       assert.equal(events[0].prose, "下一步送 fixer apply");
-      assert.equal(harness.retainedContext()?.currentSettlement?.kind, "accepted");
-      // early ready-wait + settlement feed output
-      assert.equal(harness.prompts(), 2, "early prepare then settlement-fed output");
+      assert.equal(
+        harness.entries.some((entry: any) => entry.customType === "ak-navigator-settlement" && entry.data?.kind === "accepted"),
+        true,
+      );
+      assert.equal(harness.prompts(), 1, "standby does not prompt; settlement is the only model round");
+      const settlementPrompt = harness.promptTexts()[0];
+      assert.equal(typeof settlementPrompt, "string");
+      const fed = JSON.parse(settlementPrompt ?? "") as Record<string, unknown>;
+      assert.equal(fed.kind, "accepted");
+      assert.equal(fed.status, "completed");
+      assert.equal(fed.subjectKey, "/repo/.ak/work/issues/28");
+      assert.equal(typeof fed.invocationId, "string");
     }
 
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events, undefined, root);
+      const nav = await attendance(setting, harness, events, root);
       nav.prepare();
       await settleWithAdvice(
         nav,
@@ -251,7 +260,7 @@ test("#959 prose prepare settles advice; empty body is no-advice not unavailable
     {
       const harness = sessionHarness();
       const events: any[] = [];
-      const nav = await attendance(setting, harness, events, undefined, root);
+      const nav = await attendance(setting, harness, events, root);
       nav.prepare();
       await settleWithAdvice(
         nav,
@@ -312,8 +321,6 @@ test("#959 empty prepare body is no-advice; explicit prose settles as advice wit
       const nav = createNavigatorAttendance({
         context: context(root), role, phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
         subject: "work", authority: "owner decision",
-        loadSoul: async () => "route judgment",
-        loadRoleHelp: async (r) => `help ${r}`,
         createSession: harness.factory,
         modelSettingPath: setting,
         onEvent: async (event) => { events.push(event); } });
@@ -337,8 +344,6 @@ test("#959 empty prepare body is no-advice; explicit prose settles as advice wit
     const nav = createNavigatorAttendance({
       context: context(root), role: "fixer", phase: "apply", subjectKey: "/repo/.ak/work/issues/28",
       subject: "work", authority: "Controlling authority names coder apply next.",
-      loadSoul: async () => "route judgment",
-      loadRoleHelp: async (r) => `help ${r}`,
       createSession: harness.factory,
       modelSettingPath: setting,
       onEvent: async (event) => { events.push(event); } });
@@ -367,7 +372,7 @@ test("#959 package does not keep a prior-advice ledger; host session owns contin
 
     const harness = sessionHarness();
     const events: any[] = [];
-    const nav = await attendance(setting, harness, events, undefined, root);
+    const nav = await attendance(setting, harness, events, root);
 
     nav.prepare();
     await settleWithAdvice(
@@ -414,8 +419,6 @@ test("empty authority at prepare is honest context unavailable", async () => {
       subjectKey: "/repo/.ak/work",
       subject: "work subject: /repo/.ak/work",
       authority: "",
-      loadSoul: async () => "route law",
-      loadRoleHelp: async (role) => `Usage: ak-role ${role}`,
       modelSettingPath: setting,
       createSession: async () => {
         throw new Error("session must not open without authority");
@@ -1101,8 +1104,6 @@ async function withNavigatorInfraGraceEnvelope(
           ...(attendanceOptions.contextError === undefined
             ? {}
             : { contextError: attendanceOptions.contextError }),
-          loadSoul: async () => "navigator soul",
-          loadRoleHelp: async () => "Usage: ak-role navigator --help",
           modelSettingPath,
           createSession: async (sessionOptions) => {
             const created = await createNativeNavigatorSessionFactory({

@@ -23,6 +23,7 @@ import {
   durableSessionPointer,
   resolveBookKeyFromGit,
 } from "./activation-ledger.ts";
+import { readPackageMaterial } from "./session-opening-materials.ts";
 import { writeStderrJsonlRecord } from "./stderr-jsonl.ts";
 import {
   createToolExecutionObservationFace,
@@ -38,7 +39,7 @@ import {
 } from "./engine-detour.ts";
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
-import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, RECEIPT_DELIVERY_PROMPT } from "./receipt-delivery-policy.ts";
+import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
 import type { CollectorClock } from "./collector-evidence.ts";
 import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
@@ -98,7 +99,8 @@ import {
   type AuditorRuntimeDependencies,
 } from "./auditor-role.ts";
 
-import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorTargetRole, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
+import { loadNavigatorWorkBaseSuffix } from "./navigator-work-base.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
@@ -108,7 +110,7 @@ import {
 } from "./navigator-invocation-identity.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
-import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleActivationFlags, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleActivationFlags, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import { isAuditEscalationProjection } from "./audit-escalation.ts";
 import {
   createJudgeRoleRuntime,
@@ -301,7 +303,6 @@ import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
-  createGatekeeperOutputTool,
   runGatekeeper,
   gateOfficerForSubject,
 } from "./gatekeeper-role.ts";
@@ -309,12 +310,12 @@ export {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
   GatekeeperDecisionError,
-  createGatekeeperOutputTool,
   runGatekeeper,
   gateOfficerForSubject,
 };
 export type { GatekeeperResult, GatekeeperSubject, SubmissionGateNonPassResult, GateOfficer, RunGatekeeperOptions } from "./gatekeeper-role.ts";
-import { ParentQueueReaskError } from "./submission-errors.ts";
+import { ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
+import { REVIEW_QUEUE_STATUSES } from "./review-submission.ts";
 
 export {
   DOCTOR_EVIDENCE_TOOL_NAME,
@@ -451,29 +452,7 @@ export const ROLE_FLAG = {
   },
 } as const;
 
-/** Host-neutral in-process role help for Navigator prepare (Pi and Grok share this). */
-export function formatNavigatorRoleHelp(role: NavigatorTargetRole): string {
-  const metadata = packagedRoleMetadata(role);
-  const lines = [
-    `Usage: ak-role ${role}`,
-    ROLE_FLAG.definition.description,
-  ];
-  const inputFlag = packagedRoleInputFlag(role);
-  if (inputFlag !== undefined) {
-    lines.push(`  --${inputFlag} <value>    ${role} input material`);
-  }
-  const phaseFlag = packagedRolePhaseFlag(role);
-  if (phaseFlag !== undefined && metadata !== undefined) {
-    lines.push(
-      `  --${phaseFlag} <value>    ${role} phase: ${(metadata.phases.filter((p) => p !== null) as string[]).join(" | ")}`,
-    );
-  }
-  lines.push(`Public next-command form: ak-role ${role}`);
-  return lines.join("\n");
-}
-
-type NavigatorAttendanceDependency = Omit<NavigatorAttendance, "knownRoutePlaybookReadFailure"> &
-  Partial<Pick<NavigatorAttendance, "knownRoutePlaybookReadFailure">>;
+type NavigatorAttendanceDependency = NavigatorAttendance;
 
 export type RoleRuntimeDependencies = {
   /** Package root for packaged engine-note resolution (#879). */
@@ -753,7 +732,7 @@ export function createNavigatorRoleRuntime(
   roleHost: RoleHost,
   dependencies: NavigatorRuntimeDependencies,
 ) {
-  return createFiledOfficerRuntime(
+  const base = createFiledOfficerRuntime(
     roleHost,
     {
       role: "navigator",
@@ -762,6 +741,43 @@ export function createNavigatorRoleRuntime(
     },
     dependencies,
   );
+  let playbookBound = false;
+  return {
+    async activate() {
+      await base.activate();
+      if (playbookBound) return;
+      playbookBound = true;
+      // Standing system prompt, not a per-turn user message. Native read failure
+      // is the explanation (ADR 0061); no code-written sentence.
+      const loadRoutePlaybook = dependencies.loadRoutePlaybook
+        ?? (() => readPackageMaterial("resources/navigator-route-playbook.md"));
+      let playbookRead: Promise<string> | undefined;
+      roleHost.on("before_agent_start", async (event) => {
+        const basePrompt = typeof event.systemPrompt === "string" ? event.systemPrompt : "";
+        const parts: string[] = [];
+        try {
+          playbookRead ??= loadRoutePlaybook();
+          const content = await playbookRead;
+          dependencies.recordRoutePlaybookReadFailure?.(undefined);
+          if (content.trim() !== "") parts.push(content);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (message.trim() !== "") {
+            dependencies.recordRoutePlaybookReadFailure?.(message);
+            parts.push(message);
+          }
+        }
+        const prompt = typeof event.prompt === "string" ? event.prompt : "";
+        const work = await loadNavigatorWorkBaseSuffix(prompt);
+        if (work !== undefined && work.trim() !== "") parts.push(work);
+        if (parts.length === 0) return;
+        const text = parts.join("\n\n");
+        return {
+          systemPrompt: basePrompt.trim() === "" ? text : `${basePrompt}\n\n${text}`,
+        };
+      });
+    },
+  };
 }
 
 /** #675: public 审刑院 seat on the shared filed-officer envelope. */
@@ -872,8 +888,6 @@ function readDiaristRunCoordinates(ctx: HostContext): {
 const DIARIST_BOUNDS_REASK =
   "边界无法使用。请重交 sessions：每卷 path + ranges，每端以原生 id 或本轮行号二选一指名。" as const;
 const DIARIST_ROUTING_STATUSES = new Set(["completed", "escalate"]);
-const DIARIST_STATUS_REASK =
-  "status 不是 completed、escalate 之一。请重新交卷，status 写明其一。" as const;
 
 /**
  * #708 / #779 / #901: 起居郎 public seat on the shared filed-officer envelope.
@@ -900,7 +914,7 @@ export function createDiaristRoleRuntime(
         // before interpreting any other submitted field; caller-owned data stays open.
         const status = submitted?.status;
         if (typeof status !== "string" || !DIARIST_ROUTING_STATUSES.has(status)) {
-          throw new ParentQueueReaskError(DIARIST_STATUS_REASK);
+          throw new ParentQueueReaskError(unreadableDiscriminatorNotice("status", submitted?.status));
         }
         if (status === "escalate") return parameters;
         const assertion = readDiaristTicketAssertion(submitted);
@@ -943,25 +957,8 @@ export function createDiaristRoleRuntime(
   );
 }
 
-/** Shared review-submission status words the queue reads (#1028). */
-const COUNTERSIGN_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]);
-
-/**
- * Plain-language re-ask when status is not a known queue word.
- * Back to countersign itself — notary is not summoned (#753).
- */
-const COUNTERSIGN_STATUS_REASK =
-  "status 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
-
-/** Secretariat status words the submission gate reads. */
+/** Secretariat status words the submission gate reads. Not the review three-state field. */
 const SECRETARIAT_QUEUE_STATUSES = new Set(["converged", "escalate"]);
-
-/**
- * Plain-language re-ask when secretariatStatus is not a known queue word.
- * Back to secretariat itself — 给事中 is not summoned for escalation.
- */
-const SECRETARIAT_STATUS_REASK =
-  "secretariatStatus 不是 converged、escalate 之一。请重新交卷，status 写明其一。" as const;
 
 /**
  * Secretariat output is terminal; converged submissions enter the shared
@@ -989,7 +986,9 @@ export function createSecretariatRoleRuntime(
               ? record.secretariatStatus
               : undefined;
           if (status === undefined || !SECRETARIAT_QUEUE_STATUSES.has(status)) {
-            throw new ParentQueueReaskError(SECRETARIAT_STATUS_REASK);
+            throw new ParentQueueReaskError(
+              unreadableDiscriminatorNotice("secretariatStatus", record?.secretariatStatus),
+            );
           }
           if (status === "escalate") {
             // Parent escalate → throw to caller as-is; countersign does not attend.
@@ -1132,10 +1131,10 @@ export function createCountersignRoleRuntime(
             record !== undefined && typeof record.status === "string"
               ? record.status
               : undefined;
-          if (status === undefined || !COUNTERSIGN_QUEUE_STATUSES.has(status)) {
+          if (status === undefined || !REVIEW_QUEUE_STATUSES.has(status)) {
             // Parent status unreadable → back to countersign itself; do not summon notary,
             // do not forge an officer bounce face (#753).
-            throw new ParentQueueReaskError(COUNTERSIGN_STATUS_REASK);
+            throw new ParentQueueReaskError(unreadableDiscriminatorNotice("status", record?.status));
           }
           if (status === "escalate") {
             // Parent escalate → throw to caller as-is; notary does not attend (#753).
@@ -1327,13 +1326,11 @@ export function createRoleRuntimeExtension(
         const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
         if (raced.status !== "timeout") return;
         if (pendingNavigatorPresentation === undefined) {
-          const routePlaybookReadFailure = attendance.knownRoutePlaybookReadFailure?.();
           const report: NavigatorReport = {
             disposition: "unavailable",
             unavailableReason: "Navigator exceeded post-role delivery grace",
             unavailableSource: "unknown",
             unavailableCause: "unknown",
-            ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
           };
           const event: NavigatorEvent = {
             version: 1,
@@ -1345,7 +1342,6 @@ export function createRoleRuntimeExtension(
             unavailableReason: "Navigator exceeded post-role delivery grace",
             unavailableSource: "unknown",
             unavailableCause: "unknown",
-            ...(routePlaybookReadFailure === undefined ? {} : { routePlaybookReadFailure }),
           };
           pendingNavigatorPresentation = { event, report };
         }
@@ -1616,7 +1612,7 @@ export function createRoleRuntimeExtension(
         } catch {}
         envelopeHost.sendMessage({
           customType: "ak-receipt-delivery-prompt",
-          content: RECEIPT_DELIVERY_PROMPT,
+          content: JSON.stringify(receiptDelivery.deliveryState()),
           display: false,
         }, { triggerTurn: true, deliverAs: "followUp" });
       } else if (receiptDelivery.nextAction() === "no-receipt" && !noReceiptRecorded) {
@@ -1789,6 +1785,11 @@ export function createRoleRuntimeExtension(
     });
     const navigator = createNavigatorRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("navigator"),
+      recordRoutePlaybookReadFailure: (message) => {
+        envelopeHost.appendEntry(NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, {
+          message: message ?? "",
+        });
+      },
     });
     const auditor = createAuditorRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("auditor"),
@@ -2175,11 +2176,8 @@ export function createRoleRuntimeExtension(
               pendingNavigatorPresentation = { event: navigatorEvent, report };
             },
           });
-          // Warm live help during activation so prepare is not help-bound under load.
-          // Concrete work context also starts full preparation so session create
-          // overlaps the role run. Placeholder subjects wait for before_agent_start
-          // (user prompt may replace the subject key) but still inherit warm help.
-          navigatorAttendance.warmHelp?.();
+          // Concrete work context starts standby attendance (record only, no model).
+          // Placeholder subjects wait for before_agent_start (user prompt may replace the subject key).
           if (
             navigatorWorkContext.contextError === undefined &&
             navigatorWorkContext.subjectProvenance !== "placeholder"

@@ -13,7 +13,7 @@ export { INSPECTOR_OUTPUT_TOOL_NAME as INSPECTOR_OUTPUT_TOOL };
 export type { InspectorOutput };
 export { validateRecordedInspectorOutput };
 
-/** 台院事后察举交卷形状；形状指引，非 schema 闸。 */
+/** 台院事后察举交卷形状。 */
 export const inspectorOutputSchema = reviewSubmissionSchema;
 
 export type InspectorOutputParameters = Static<typeof inspectorOutputSchema>;

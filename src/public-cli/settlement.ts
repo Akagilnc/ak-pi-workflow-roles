@@ -99,6 +99,7 @@ import {
   isAcceptedPackagedRoleTerminalResult,
   isReceiptSettlementBindingClear,
   NAVIGATOR_INVOCATION_ENTRY,
+  NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
   parseInvocationMarkerIdentity,
   type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
@@ -2249,7 +2250,27 @@ async function withOptionalGateProjection<
   return attachEngineDetourToolUsage(next, sessionDirectory, gateContext);
 }
 
+function routePlaybookFailureMessage(entries: readonly SessionEntry[]): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "custom" || entry.customType !== NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY) continue;
+    const data = entry.data;
+    if (!isRecord(data) || typeof data.message !== "string" || data.message.trim() === "") return undefined;
+    return data.message;
+  }
+  return undefined;
+}
+
 export function extractNavigatorFact(
+  entries: readonly SessionEntry[],
+): TerminalNavigatorFact {
+  const fact = extractNavigatorAttendanceFact(entries);
+  if (fact.advisoryDiagnostic !== undefined) return fact;
+  const message = routePlaybookFailureMessage(entries);
+  return message === undefined ? fact : { ...fact, advisoryDiagnostic: message };
+}
+
+function extractNavigatorAttendanceFact(
   entries: readonly SessionEntry[],
 ): TerminalNavigatorFact {
   // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.

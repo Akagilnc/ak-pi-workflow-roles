@@ -5,18 +5,23 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { createNavigatorAttendance } from "../../src/navigator-attendance.ts";
 import {
   createNativeNavigatorSessionFactory,
   NAVIGATOR_HOST_RUN_POINTER_ENTRY,
   readNavigatorHostRunPointer,
   runIdFromNavigatorDirectory,
 } from "../../src/navigator-public-session.ts";
+import { renderSystemPromptOverride } from "../../src/prepared-role-turn.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
+import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
+import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
+import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { seedGitRepository } from "../helpers/pi-test-harness.ts";
+import { packageRoot, seedGitRepository } from "../helpers/pi-test-harness.ts";
 
 test("runId is derived from navigator run directory basename", () => {
   assert.equal(runIdFromNavigatorDirectory("/book/runs/01abc@navigator"), "01abc");
@@ -363,5 +368,92 @@ test("#959 typed non-resumable preflight allows one fresh mint", async () => {
     assert.equal(calls, 2, "non-resumable preflight → single fresh mint");
     assert.equal(readNavigatorHostRunPointer(session.entries() as readonly unknown[]), "01navminted");
     await session.dispose();
+  });
+});
+
+test("fresh navigator settlement keeps subject and authority on the nest base", async () => {
+  await withTempRoot("navigator-work-base-", async (root) => {
+    seedGitRepository(root);
+    await mkdir(join(root, ".ak-roles"), { recursive: true });
+    await writeFile(
+      join(root, ".ak-roles", "public-cli.json"),
+      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+    );
+    const parentRun = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "parent@coder");
+    await mkdir(join(parentRun, "session"), { recursive: true });
+    const authority = "authority-token-9f3c";
+    const subject = "task-bytes-9f3c";
+    const subjectKey = `${join(root, ".ak/work")}#ad-hoc`;
+    const summons: string[] = [];
+    const nav = createNavigatorAttendance({
+      context: {
+        cwd: root,
+        home: root,
+        runDirectory: parentRun,
+      } as never,
+      role: "coder",
+      phase: "apply",
+      subjectKey,
+      subject,
+      authority,
+      createSession: createNativeNavigatorSessionFactory({
+        summonPublicRole: async (options) => {
+          summons.push(options.argv[0] ?? "");
+          return {
+            exitCode: 0,
+            runDirectory: join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navbase@navigator"),
+            terminal: {
+              roleOutcome: { kind: "accepted", payloads: [{ prose: "下一步" }] },
+            },
+          } as never;
+        },
+        hostRunResumable: async () => false,
+      }),
+      onEvent: () => {},
+    });
+
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
+    assert.equal(summons.length, 2);
+    for (const argv of summons) {
+      assert.equal(argv.includes(authority), false);
+      assert.equal(argv.includes(subject), false);
+      const fed = JSON.parse(argv) as { workContextPath?: string; subjectKey?: string };
+      assert.equal(fed.subjectKey, subjectKey);
+      assert.equal(typeof fed.workContextPath, "string");
+      const stored = JSON.parse(await readFile(fed.workContextPath ?? "", "utf8")) as {
+        subject: string;
+        authority: string;
+      };
+      assert.equal(stored.subject, subject);
+      assert.equal(stored.authority, authority);
+    }
+
+    const delivered = summons[0] ?? "";
+    const runDirectory = join(root, ".ak-roles", "books", "probe", "unbound", "runs", "01navdeliver@navigator");
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    const prepared = await prepareRoleEnvelope({
+      request: {
+        principal: fixturePrincipal(join(runDirectory, "session")),
+        activation: { role: "navigator" },
+        methods: [],
+        continuation: { kind: "initial", prompt: delivered },
+        cwd: root,
+        home: root,
+        agentDir: join(root, "agent"),
+        runDirectory,
+      },
+      dependencies: createRoleRuntimeDependencies(packageRoot),
+      socketPath: join(root, "mcp.sock"),
+    });
+    try {
+      assert.equal(prepared.prompt, delivered);
+      const modelInput = renderSystemPromptOverride(prepared.systemPrompt);
+      assert.equal(modelInput.includes(subject), true);
+      assert.equal(modelInput.includes(authority), true);
+    } finally {
+      await prepared.dispose?.();
+    }
+    await nav.dispose();
   });
 });

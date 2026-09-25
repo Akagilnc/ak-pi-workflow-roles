@@ -36,6 +36,7 @@
     "schemas",
     "packets",
     "resources",
+    "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",
