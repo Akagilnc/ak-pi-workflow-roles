@@ -546,7 +546,7 @@ test("run show: damaged seal JSONL is unavailable, not a silent partial", async 
   });
 });
 
-test("run show: sparse run — missing materials do not prevent a view", async () => {
+test("run show: sparse run — each readable fact changes the public result", async () => {
   await withTempRoot("ak-run-show-sparse-", async (machineHome) => {
     const runDirectory = join(
       machineHome,
@@ -563,7 +563,60 @@ test("run show: sparse run — missing materials do not prevent a view", async (
       `${JSON.stringify({ runId: RUN_ID, role: "notary", state: "admitted" })}\n`,
       "utf8",
     );
-    await runPublicRunShow(runDirectory, machineHome);
+    const sparse = await runPublicRunShow(runDirectory, machineHome);
+
+    await mkdir(join(runDirectory, "artifacts"), { recursive: true });
+    await writeFile(
+      join(runDirectory, "artifacts", "report.json"),
+      `${JSON.stringify({
+        role: "judge",
+        runId: RUN_ID,
+        outcome: { kind: "accepted", role: "judge", payloads: [LAST_PAYLOAD] },
+      })}\n`,
+      "utf8",
+    );
+    const withVerdict = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(withVerdict, sparse);
+
+    const sealPath = join(runDirectory, "session", "submission-ledger", "records.jsonl");
+    await mkdir(join(runDirectory, "session", "submission-ledger"), { recursive: true });
+    await writeFile(sealPath, "", "utf8");
+    const withSealLedger = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(withSealLedger, withVerdict);
+
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    await writeFile(
+      join(runDirectory, "session", "codex-headless-session.json"),
+      `${JSON.stringify({ sessionId: THREAD_ID })}\n`,
+      "utf8",
+    );
+    const withThreadId = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(withThreadId, withSealLedger);
+
+    const codexSessions = join(machineHome, ".codex", "sessions", "2026", "09", "25");
+    await mkdir(codexSessions, { recursive: true });
+    const rolloutPath = join(
+      codexSessions,
+      `rollout-2026-09-25T00-00-00-${THREAD_ID}.jsonl`,
+    );
+    await writeFile(
+      rolloutPath,
+      `${JSON.stringify({ type: "compacted", payload: { message: "" } })}\n`,
+      "utf8",
+    );
+    const withCompaction = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(withCompaction, withThreadId);
+
+    await writeFile(
+      rolloutPath,
+      [
+        JSON.stringify({ type: "compacted", payload: { message: "" } }),
+        JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: TOKEN_COUNT_INFO } }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const withTokenUsage = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(withTokenUsage, withCompaction);
   });
 });
 
