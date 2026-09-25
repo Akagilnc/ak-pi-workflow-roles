@@ -522,19 +522,20 @@ test("run show: damaged seal JSONL is unavailable, not a silent partial", async 
     const damaged = await runPublicRunShow(runDirectory, machineHome);
 
     const ledgerPath = join(runDirectory, "session", "submission-ledger", "records.jsonl");
-    await writeFile(ledgerPath, submissionLedgerRow("sealed", SEALED_PAYLOAD_LAST), "utf8");
-    const validPartial = await runPublicRunShow(runDirectory, machineHome);
-    await writeFile(
-      ledgerPath,
-      [
-        submissionLedgerRow("sealed", SEALED_PAYLOAD_FIRST),
-        submissionLedgerRow("sealed", SEALED_PAYLOAD_LAST),
-      ].join(""),
-      "utf8",
-    );
-    const validComplete = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(damaged, validPartial);
-    assert.notEqual(damaged, validComplete);
+    const validSealSets = [
+      [],
+      [SEALED_PAYLOAD_FIRST],
+      [SEALED_PAYLOAD_LAST],
+      [SEALED_PAYLOAD_FIRST, SEALED_PAYLOAD_LAST],
+    ];
+    for (const records of validSealSets) {
+      await writeFile(
+        ledgerPath,
+        records.map((payload) => submissionLedgerRow("sealed", payload)).join(""),
+        "utf8",
+      );
+      assert.notEqual(damaged, await runPublicRunShow(runDirectory, machineHome));
+    }
   });
 });
 
