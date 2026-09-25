@@ -30,7 +30,6 @@ import {
   isCorrectableExecuteError,
   projectCorrectableExecuteRejection,
 } from "./submission-correctable-error.ts";
-import { OfficerEscalationParkError } from "./submission-errors.ts";
 import {
   buildNavigatorInfrastructureFailureFact,
   extractInfrastructureFailureEvidence,
@@ -463,11 +462,6 @@ export async function prepareRoleEnvelope(options: {
       // Candidate only: seal waits for closeRound after the host round boundary.
       return { content: projected.content, isError: projected.isError };
     } catch (error) {
-      if (error instanceof OfficerEscalationParkError) {
-        // Pause this tool call on the officer. Do not seal the parent and do not retry it
-        // in this process. A later resume of the parent carries the officer's words.
-        return { content: [], isError: false };
-      }
       let content: ContentPart[];
       let details: Record<string, unknown>;
       if (isCorrectableExecuteError(error)) {

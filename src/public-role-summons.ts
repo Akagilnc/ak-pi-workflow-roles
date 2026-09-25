@@ -535,8 +535,8 @@ export async function summonPublicRole(
   }
 
   const stderr = captured?.stderrText();
-  // A parked officer can return its court diarist's escalation verbatim. The
-  // terminal's independent run, not the parked officer, is the gate pointer.
+  // An escalated officer can return its court diarist's escalation verbatim.
+  // The terminal's independent run, not the officer, is the gate pointer.
   const runDirectory = result.terminal !== undefined
     && result.terminal.roleOutcome.role !== options.role
     && typeof result.terminal.runId === "string"

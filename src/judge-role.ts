@@ -30,29 +30,44 @@ export async function runJudgeGates(input: {
   readonly gateAlreadyConverged: (subject: GatekeeperSubject) => Promise<boolean>;
   readonly runGate: (
     subject: GatekeeperSubject,
-  ) => Promise<{ readonly status?: unknown; readonly receipt?: unknown } | void>;
+  ) => Promise<{
+    readonly status?: unknown;
+    readonly receipt?: unknown;
+    readonly runId?: string;
+    readonly runDirectory?: string;
+  } | void>;
 }): Promise<{
-  readonly status: "converged" | "continue";
+  readonly status: "converged" | "continue" | "escalate";
   readonly passes: readonly {
     readonly subject: GatekeeperSubject;
-    readonly status: "converged" | "continue";
+    readonly status: "converged" | "continue" | "escalate";
     readonly receipt: unknown;
+    readonly runId?: string;
+    readonly runDirectory?: string;
   }[];
 }> {
   const passes: {
     subject: GatekeeperSubject;
-    status: "converged" | "continue";
+    status: "converged" | "continue" | "escalate";
     receipt: unknown;
+    runId?: string;
+    runDirectory?: string;
   }[] = [];
   for (const subject of JUDGE_GATES) {
     if (await input.gateAlreadyConverged(subject)) continue;
     const pass = await input.runGate(subject);
     const status = pass?.status;
-    if (pass === undefined || (status !== "converged" && status !== "continue")) {
+    if (pass === undefined || (status !== "converged" && status !== "continue" && status !== "escalate")) {
       throw new Error("judge gate returned no conclusion");
     }
-    passes.push({ subject, status, receipt: pass.receipt });
-    if (status === "continue") return { status: "continue", passes };
+    passes.push({
+      subject,
+      status,
+      receipt: pass.receipt,
+      ...(pass.runId === undefined ? {} : { runId: pass.runId }),
+      ...(pass.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
+    });
+    if (status === "continue" || status === "escalate") return { status, passes };
   }
   return { status: "converged", passes };
 }

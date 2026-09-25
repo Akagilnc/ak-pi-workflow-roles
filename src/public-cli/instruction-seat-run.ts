@@ -16,7 +16,6 @@ import { WORKER_DONE_STATUSES } from "../worker-submission-gates.ts";
 import { SECRETARIAT_GATE_OFFICER_ENTRY_TYPE } from "../secretariat-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
-import { OfficerEscalationParkError } from "../submission-errors.ts";
 import { createDefaultGateOfficerSummon, requireSubmissionGate } from "../submission-gate.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { summonPublicRole, type PublicSummonResult } from "../public-role-summons.ts";
@@ -1104,52 +1103,59 @@ async function auditSubmittedRole(
   });
   let chain: Awaited<ReturnType<typeof runJudgeGates>>;
   let officerRunId = passedRunId;
-  try {
-    const runGate = (subject: Parameters<typeof requireSubmissionGate>[0]["subject"]) => requireSubmissionGate({
-        context,
-        subject,
-        toolCallId,
-        submission: accepted,
-        summonOfficer,
-        hostActions: {
-          failInfrastructure(error): never { throw error; },
-          bindSubmissionNonPass() {},
-        },
-      });
-    if (admitted.role === "judge") {
-      chain = await runJudgeGates({
-        gateAlreadyConverged: async (subject) => passedOfficer === "auditor"
-          || (passedOfficer === "notary" && subject.kind === "judge_draft"),
-        runGate,
-      });
+  const runGate = (subject: Parameters<typeof requireSubmissionGate>[0]["subject"]) =>
+    requireSubmissionGate({
+      context,
+      subject,
+      toolCallId,
+      submission: accepted,
+      summonOfficer,
+      hostActions: {
+        failInfrastructure(error): never { throw error; },
+        bindSubmissionNonPass() {},
+      },
+    });
+  if (admitted.role === "judge") {
+    chain = await runJudgeGates({
+      gateAlreadyConverged: async (subject) => passedOfficer === "auditor"
+        || (passedOfficer === "notary" && subject.kind === "judge_draft"),
+      runGate,
+    });
+  } else {
+    const subject = admitted.role === "fixer" || admitted.role === "coder"
+      ? { kind: "worker_completion" as const }
+      : admitted.role === "secretariat"
+        ? { kind: "secretariat_verdict" as const }
+        : { kind: "countersign_verdict" as const };
+    const officer = gateOfficerForSubject(subject);
+    if (passedOfficer === officer) {
+      chain = { status: "converged", passes: [] };
     } else {
-      const subject = admitted.role === "fixer" || admitted.role === "coder"
-        ? { kind: "worker_completion" as const }
-        : admitted.role === "secretariat"
-          ? { kind: "secretariat_verdict" as const }
-          : { kind: "countersign_verdict" as const };
-      const officer = gateOfficerForSubject(subject);
-      if (passedOfficer === officer) {
-        chain = { status: "converged", passes: [] };
-      } else {
-        const pass = await runGate(subject);
-        if (pass === undefined) throw new Error("audit gate returned no conclusion");
-        officerRunId = pass.runId;
-        chain = { status: pass.status, passes: [{ subject, status: pass.status, receipt: pass.receipt }] };
-      }
+      const pass = await runGate(subject);
+      if (pass === undefined) throw new Error("audit gate returned no conclusion");
+      officerRunId = pass.runId;
+      chain = {
+        status: pass.status,
+        passes: [{
+          subject,
+          status: pass.status,
+          receipt: pass.receipt,
+          ...(pass.runId === undefined ? {} : { runId: pass.runId }),
+          ...(pass.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
+        }],
+      };
     }
-  } catch (error) {
-    if (error instanceof OfficerEscalationParkError) {
-      const runId = error.result.status === "escalate" ? error.result.runId : undefined;
-      const officerRunId = runId ?? (error.officerRunDirectory === undefined
-        ? undefined : runIdFromRunDirectory(error.officerRunDirectory));
-      if (officerRunId === undefined) throw error;
-      const officer = await loadResumablePublicRole(env.home, officerRunId, env.principalAuthority, true);
-      const terminal = await trySettlePublicSeat(officer.admitted, env.principalAuthority, undefined, undefined, env.packageRoot);
-      if (terminal === undefined) throw error;
-      return { exitCode: 0, admitted: officer.admitted, terminal };
-    }
-    throw error;
+  }
+  if (chain.status === "escalate") {
+    const escalation = chain.passes.at(-1);
+    const escalatedRunId = escalation?.runId
+      ?? (escalation?.runDirectory === undefined
+        ? undefined : runIdFromRunDirectory(escalation.runDirectory));
+    if (escalatedRunId === undefined) throw new Error("escalated audit has no resumable run identity");
+    const officer = await loadResumablePublicRole(env.home, escalatedRunId, env.principalAuthority, true);
+    const terminal = await trySettlePublicSeat(officer.admitted, env.principalAuthority, undefined, undefined, env.packageRoot);
+    if (terminal === undefined) throw new Error("escalated audit has no terminal result");
+    return { exitCode: 0, admitted: officer.admitted, terminal };
   }
   if (chain.status === "continue") {
     return runPublicInstructionSeatResume({

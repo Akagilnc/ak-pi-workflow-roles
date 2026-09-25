@@ -316,44 +316,6 @@ test("#881 reader projects non-sealed original params once per tool call (correc
   });
 });
 
-test("officer escalate via gate is correctable bounce-to-parent with raw receipt (#753)", async () => {
-  await withLedgerFixture(async (f) => {
-    const receipt = { status: "escalate", reason: "need owner", findings: ["f"] };
-    const bouncing = registerTool(
-      f.root,
-      async () => {
-        throw new GatekeeperDecisionError({
-          status: "escalate",
-          officer: "notary",
-          receipt,
-        });
-      },
-      packagedRoleOutputTool("coder")!,
-      "coder",
-    );
-    await bouncing.start("coder-officer-escalate", packagedRoleOutputTool("coder")!);
-    await assert.rejects(
-      bouncing.tool().execute("coder-officer-escalate", { status: "completed" }, undefined, undefined, bouncing.context),
-      (error: unknown) => {
-        assert.ok(error instanceof GatekeeperDecisionError);
-        assert.equal(error.result.status, "escalate");
-        assert.equal(error.message, JSON.stringify(receipt));
-        return true;
-      },
-    );
-    const outcome = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome").at(-1);
-    assert.equal(outcome?.payload && (outcome.payload as { outcome?: string }).outcome, "correctable-rejection");
-    // #881: original officer params remain projectable on correctable-rejection.
-    // Read via the coder run's sessionParent — bare runId is ambiguous across roles.
-    const coderScope = {
-      home: f.root,
-      sessionParent: join(String(bouncing.context.runDirectory), "session", "session.jsonl"),
-    };
-    assert.equal(await hasRecordedSubmission(f.root, "run-ledger", coderScope), true);
-    assert.deepEqual(await readRecordedSubmissions(f.root, "run-ledger", coderScope), [{ status: "completed" }]);
-  });
-});
-
 test("pipeline ledger refuses shared unbound run identity", async () => {
   await withLedgerFixture(async (f) => {
     delete process.env.AK_ROLE_RUN_DIR;

@@ -19,7 +19,6 @@ import type { SitianRecord } from "./sitian-contracts.ts";
 import { findRunDirectoryById } from "./public-cli/run-lifecycle.ts";
 import type { TerminalRoleName } from "./public-cli/terminal.ts";
 import { isCorrectableExecuteError } from "./submission-correctable-error.ts";
-import { OfficerEscalationParkError } from "./submission-errors.ts";
 import { failOnInfrastructureFailureDeclaration } from "./package-contracts/terminating-infrastructure.ts";
 
 export type SubmissionCall = { readonly id: string; readonly name: string };
@@ -691,7 +690,6 @@ export function createSubmissionLedgerHost(
             );
             result = await tool.execute(toolCallId, params, signal, update, context);
           } catch (error) {
-            if (error instanceof OfficerEscalationParkError) throw error;
             if (isCorrectableExecuteError(error)) {
               append({
                 type: "outcome",

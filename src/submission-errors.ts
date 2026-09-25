@@ -12,7 +12,7 @@ function serializeReceipt(receipt: unknown): string {
 }
 
 function gatekeeperNonPassMessage(result: SubmissionGateNonPassResult): string {
-  if (result.status === "continue" || result.status === "escalate") {
+  if (result.status === "continue") {
     return serializeReceipt(result.receipt);
   }
   if (result.status === "transport_failure") {
@@ -25,18 +25,6 @@ function gatekeeperNonPassMessage(result: SubmissionGateNonPassResult): string {
 }
 
 /** Structured non-pass; `.result` is session-projected via tool_result, message feeds the model. */
-/** Officer escalate stays on that officer. Not a parent seal and not parent infrastructure. */
-export class OfficerEscalationParkError extends Error {
-  readonly result: SubmissionGateNonPassResult;
-  readonly officerRunDirectory?: string;
-  constructor(result: SubmissionGateNonPassResult, officerRunDirectory?: string) {
-    super("officer escalation parked");
-    this.name = "OfficerEscalationParkError";
-    this.result = result;
-    if (officerRunDirectory !== undefined) this.officerRunDirectory = officerRunDirectory;
-  }
-}
-
 export class GatekeeperDecisionError extends Error {
   readonly result: SubmissionGateNonPassResult;
   constructor(result: SubmissionGateNonPassResult, message?: string) {

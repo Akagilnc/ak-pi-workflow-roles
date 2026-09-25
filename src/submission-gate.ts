@@ -3,11 +3,11 @@
  * Owns officer-pointer book + host abort/non-pass faces + review queue loop.
  * Role modules only project via projectGatekeeperRun / runGatekeeper — no book, no catch.
  *
- * Queue guarantee only (#753 / #756 / #750):
- *   parent submit → summon officer → read conclusion field
- *   converged → accept end
- *   continue → raw officer receipt as a nonterminal result; parent may resubmit
- *   escalate → the officer's own run waits. Do not seal it as the parent's escalation.
+ * Public continuation after submission settlement (#753 / #756 / #750):
+ *   accepted submission → summon officer → read conclusion field
+ *   converged → continue remaining review and settle
+ *   continue → raw officer receipt; caller resumes the submitted seat for revision
+ *   escalate → return the officer run so the caller can resume that officer directly
  *   unrecognized status → resume officer with plain-language re-ask (no round cap)
  *   transport / no_receipt → present honestly
  * Four pairs: countersign↔notary, judge↔auditor, worker↔inspector, secretariat↔countersign (#969).
@@ -26,7 +26,6 @@ import {
   type GateOfficer,
   type GateOfficerSummon,
 } from "./gatekeeper-role.ts";
-import { OfficerEscalationParkError } from "./submission-errors.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
 import type { TerminalResult } from "./public-cli/terminal.ts";
 
@@ -130,10 +129,11 @@ function bookDirectOfficerPointer(
  * public terminal without a second authority.
  */
 export type SubmissionGateOutcome = {
-  readonly status: "converged" | "continue";
+  readonly status: "converged" | "continue" | "escalate";
   readonly officer: GateOfficer;
   readonly receipt: unknown;
   readonly runId?: string;
+  readonly runDirectory?: string;
 };
 
 /**
@@ -216,10 +216,19 @@ export async function requireSubmissionGate(options: {
       });
       options.hostActions.failInfrastructure(failure, options.context, options.toolCallId);
     }
-    // The officer run already holds the escalation. The parent tool must not seal it.
-    // The existing auditor-roles pointer is the parent link.
     if (gatekeeper.status === "escalate") {
-      throw new OfficerEscalationParkError(gatekeeper, projected.summoned?.runDirectory);
+      return {
+        status: "escalate",
+        officer: projected.officer,
+        receipt: gatekeeper.receipt,
+        ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
+          ? { runId: gatekeeper.runId }
+          : {}),
+        ...(typeof projected.summoned?.runDirectory === "string"
+          && projected.summoned.runDirectory.trim() !== ""
+          ? { runDirectory: projected.summoned.runDirectory }
+          : {}),
+      };
     }
     // no_receipt: keep the lifecycle failure channel; continue is an ordinary
     // nonterminal tool result above, not an exception or correctable rejection.

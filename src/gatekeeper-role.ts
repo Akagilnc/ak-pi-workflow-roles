@@ -44,7 +44,7 @@ export type GatekeeperResult =
       readonly receipt: unknown;
       readonly runId?: string;
     }
-  /** continue | escalate: both return the officer receipt to the parent (#753 / #756). */
+  /** continue returns the receipt for a subject resubmission; escalate resumes this officer directly. */
   | {
       readonly status: "continue";
       readonly officer: GateOfficer;
@@ -80,7 +80,7 @@ export type GatekeeperResult =
 /** Non-pass faces returned to the parent session (correctable; #836 never kill leg). */
 export type SubmissionGateNonPassResult = Extract<
   GatekeeperResult,
-  { status: "continue" | "escalate" | "no_receipt" | "transport_failure" }
+  { status: "continue" | "no_receipt" | "transport_failure" }
 >;
 
 function gateSeatLabel(stage: GateOfficer): string {

@@ -12,7 +12,6 @@ import {
   GatekeeperDecisionError,
   projectGatekeeperRun,
 } from "../../src/gatekeeper-role.ts";
-import { OfficerEscalationParkError } from "../../src/submission-errors.ts";
 
 test("#1028 secretariat_verdict reads the shared review status",
   async () => {
@@ -119,62 +118,51 @@ test("#1028 secretariat_verdict reads the shared review status",
   },
 );
 
-test("#969 secretariat_verdict escalate throws without bindSubmissionNonPass (end-parent)",
+test("#969 secretariat_verdict returns escalation for direct officer resume",
   async () => {
     const nonPass: unknown[] = [];
     const receipt = {
       status: "escalate",
       decisionGate: { question: "q", options: ["a"] },
     };
-    let thrown: unknown;
-    await assert.rejects(
-      () =>
-        requireSubmissionGate({
-          context: {
-            cwd: process.cwd(),
-            sessionManager: { getSessionFile: () => "/tmp/unused" },
-          } as never,
-          subject: { kind: "secretariat_verdict" },
-          toolCallId: "t1",
-          hostActions: {
-            failInfrastructure(): never {
-              throw new Error("infra");
-            },
-            bindSubmissionNonPass(_id, result) {
-              nonPass.push(result);
-            },
-          },
-          summonOfficer: async () => ({
-            exitCode: 0,
-            runDirectory: "/tmp/runs/01a0cs969-esc-7000-8000-000000000099@countersign",
-            terminal: {
-              roleOutcome: {
-                kind: "accepted",
-                role: "countersign",
-                payloads: [receipt],
-              },
-              navigator: { disposition: "no-advice" },
-              artifacts: [],
-              runId: "01a0cs969-esc-7000-8000-000000000099",
-            },
-          }),
-        }),
-      (error: unknown) => {
-        thrown = error;
-        return (
-          error instanceof OfficerEscalationParkError
-          && error.result.status === "escalate"
-        );
+    const outcome = await requireSubmissionGate({
+      context: {
+        cwd: process.cwd(),
+        sessionManager: { getSessionFile: () => "/tmp/unused" },
+      } as never,
+      subject: { kind: "secretariat_verdict" },
+      toolCallId: "t1",
+      hostActions: {
+        failInfrastructure(): never {
+          throw new Error("infra");
+        },
+        bindSubmissionNonPass(_id, result) {
+          nonPass.push(result);
+        },
       },
-    );
+      summonOfficer: async () => ({
+        exitCode: 0,
+        runDirectory: "/tmp/runs/01a0cs969-esc-7000-8000-000000000099@countersign",
+        terminal: {
+          roleOutcome: {
+            kind: "accepted",
+            role: "countersign",
+            payloads: [receipt],
+          },
+          navigator: { disposition: "no-advice" },
+          artifacts: [],
+          runId: "01a0cs969-esc-7000-8000-000000000099",
+        },
+      }),
+    });
     assert.equal(nonPass.length, 0, "escalate must not arm parent retry bind");
-    assert.ok(thrown instanceof OfficerEscalationParkError);
-    assert.equal(thrown.result.status, "escalate");
-    assert.equal(
-      thrown.result.status === "escalate" ? thrown.result.runId : undefined,
-      "01a0cs969-esc-7000-8000-000000000099",
-      "escalate result must carry nested runId",
-    );
+    assert.deepEqual(outcome, {
+      status: "escalate",
+      officer: "countersign",
+      receipt,
+      runId: "01a0cs969-esc-7000-8000-000000000099",
+      runDirectory: "/tmp/runs/01a0cs969-esc-7000-8000-000000000099@countersign",
+    });
   },
 );
 

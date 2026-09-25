@@ -1,5 +1,5 @@
 /**
- * #1057: officer escalation pauses that officer.
+ * #1057: officer escalation resumes that officer before remaining review.
  * A finished Judge submission enters review only after its tool call returns.
  */
 import assert from "node:assert/strict";
@@ -201,7 +201,7 @@ async function runJudge(
           return this.resumeRun(officerRunId!, message);
         },
       });
-    }, { prefix: "ak-1057-park-" });
+    }, { prefix: "ak-1057-resume-" });
   } finally {
     await Promise.all(temps.map((dir) => rm(dir, { recursive: true, force: true })));
   }
