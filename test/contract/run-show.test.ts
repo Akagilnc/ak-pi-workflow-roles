@@ -383,7 +383,14 @@ test("run show: codex run — all five fact kinds reach the public result", asyn
 
     const changedTokenRollout = originalRollout.replace(
       JSON.stringify(TOKEN_COUNT_INFO),
-      JSON.stringify({ ...TOKEN_COUNT_INFO, model_context_window: 1 }),
+      JSON.stringify({
+        ...TOKEN_COUNT_INFO,
+        total_token_usage: {
+          ...TOKEN_COUNT_INFO.total_token_usage,
+          input_tokens: TOKEN_COUNT_INFO.total_token_usage.input_tokens + 1,
+          total_tokens: TOKEN_COUNT_INFO.total_token_usage.total_tokens + 1,
+        },
+      }),
     );
     await writeFile(
       rolloutPath,
@@ -565,8 +572,8 @@ test("run show: two views leave the ledger byte-identical and add no runs", asyn
     const runDirectory = await writeCodexRunFixture(machineHome);
     const before = await snapshotTree(machineHome);
 
-    const first = await runPublicRunShow(runDirectory, machineHome);
-    const second = await runPublicRunShow(runDirectory, machineHome);
+    await runPublicRunShow(runDirectory, machineHome);
+    await runPublicRunShow(runDirectory, machineHome);
     const after = await snapshotTree(machineHome);
     assert.deepEqual(after, before);
   });
