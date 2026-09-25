@@ -21,9 +21,8 @@ export async function readAssistantUsageFromSessionFile(
   let rows: Array<{ type?: string; message?: { role?: string; usage?: Usage } }>;
   try {
     rows = text
-      .trim()
       .split("\n")
-      .filter(Boolean)
+      .filter((line) => line.trim() !== "")
       .map((line) => JSON.parse(line) as {
         type?: string;
         message?: { role?: string; usage?: Usage };

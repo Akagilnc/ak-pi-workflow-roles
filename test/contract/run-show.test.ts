@@ -275,6 +275,7 @@ async function writePiRunFixture(machineHome: string): Promise<string> {
         id: "m1",
         message: { role: "assistant", usage: PI_FIRST_USAGE },
       }),
+      "   ",
       JSON.stringify({ type: "compaction", id: "c1", summary: "one" }),
       JSON.stringify({ type: "compaction", id: "c2", summary: "two" }),
       JSON.stringify({ type: "compaction", id: "c3", summary: "three" }),
