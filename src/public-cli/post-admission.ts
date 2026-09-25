@@ -110,6 +110,7 @@ import {
   settleFailureTerminalResult,
   settleHostEndedNoReceipt,
   attachRecordedSubmissions,
+  rewritePublishedFailureErrorPath,
   type ControlledFailure,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -147,6 +148,11 @@ function projectRelocatedTurnIdentity(
     }
   }
   if (result.terminal !== undefined) {
+    rewritePublishedFailureErrorPath(
+      result.terminal,
+      relocation.oldRunDirectory,
+      relocation.newRunDirectory,
+    );
     for (const artifact of result.terminal.artifacts) {
       artifact.path = rewrite(artifact.path) as string;
     }

@@ -116,6 +116,7 @@ import type {
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
+import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 import {
   listSeamOwnedUniqueErrorFacePaths,
   RUN_TERMINAL_ARTIFACT_FILES,
@@ -382,6 +383,20 @@ const privateFailureErrorPaths = new WeakMap<TerminalResult, string>();
 
 export function publishedFailureErrorPath(terminal: TerminalResult): string | undefined {
   return privateFailureErrorPaths.get(terminal);
+}
+
+export function rewritePublishedFailureErrorPath(
+  terminal: TerminalResult,
+  oldRunDirectory: string,
+  newRunDirectory: string,
+): void {
+  const errorPath = privateFailureErrorPaths.get(terminal);
+  if (errorPath !== undefined) {
+    privateFailureErrorPaths.set(
+      terminal,
+      rewriteRunDirectoryPathValue(errorPath, oldRunDirectory, newRunDirectory) as string,
+    );
+  }
 }
 
 /**
