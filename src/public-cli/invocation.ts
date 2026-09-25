@@ -308,6 +308,11 @@ export type AdmittedRoleInvocation =
   | AdmittedReviewerInvocation
   | AdmittedMergerInvocation;
 
+export type RunDirectoryRelocation = {
+  readonly oldRunDirectory: string;
+  readonly newRunDirectory: string;
+};
+
 /** Persistence projection only — not carried on Admitted (opaque principal owns identity). */
 type RoleInvocationLedgerSource = Pick<
   AdmittedRoleInvocationBase,
@@ -641,7 +646,7 @@ export async function relocateAdmittedRunToTicket(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   heldLease?: { relocate(runDirectory: string): void },
-): Promise<{ oldRunDirectory: string; newRunDirectory: string } | undefined> {
+): Promise<RunDirectoryRelocation | undefined> {
   if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return undefined;
   const oldRunDirectory = admitted.runDirectory;
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(oldRunDirectory));

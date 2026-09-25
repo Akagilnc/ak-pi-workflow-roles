@@ -56,6 +56,7 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
+import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 
 const TICKET = 708;
 
@@ -141,7 +142,10 @@ type DiaristSubmit = unknown | ((round: number, lastReask?: string) => unknown);
  */
 function diaristEnvelopeRunner(
   submitted: DiaristSubmit,
-  behavior?: { readonly afterAdmit?: "throw" },
+  behavior?: {
+    readonly afterAdmit?: "throw";
+    readonly afterReask?: () => Promise<boolean>;
+  },
 ): LegacyFauxPiRunner {
   return async (args, options) => {
     let registered: RegisteredTool | undefined;
@@ -201,6 +205,9 @@ function diaristEnvelopeRunner(
       } catch (error) {
         if (!(error instanceof ParentQueueReaskError)) throw error;
         lastReask = error.message;
+        if (await behavior?.afterReask?.()) {
+          return { code: 1, stderr: "", timedOut: false, args: [...args] };
+        }
         if (typeof submitted !== "function") throw error;
       }
     }
@@ -2616,5 +2623,104 @@ test("ak-role diarist auto-resume uses the relocated board-bound run", async () 
     assert.equal(attemptHistory[1]?.data?.role, "diarist");
     assert.equal(attemptHistory[1]?.data?.runId, runId);
     assert.match(ticketPlacement.runDirectory, new RegExp(`/${TICKET}/runs/`));
+  });
+});
+
+test("ak-role resume points at an after-dispatch diarist relocation", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await mkdir(join(home, ".ak-roles"), { recursive: true });
+    await writeFile(join(home, ".ak-roles", "public-cli.json"), '{"autoResumeLimit":0}\n');
+
+    const runId = "01a0diar00-0000-7000-8000-000000000005";
+    const bookKey = resolveBookKeyFromGit(project);
+    const unboundPlacement = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey,
+      subject: { unbound: true },
+      runId,
+      role: "diarist",
+    });
+    const ticketPlacement = roleRunPlacement(resolveActivationLedgerHome(home), {
+      bookKey,
+      subject: { ticketNumber: TICKET },
+      runId,
+      role: "diarist",
+    });
+    const { io, stderr } = captureIo();
+    const baseOptions = {
+      home,
+      packageRoot,
+      cwd: project,
+      io,
+      principalAuthority: immutablePrincipalAuthority,
+    };
+
+    const interrupted = await runAkRole(
+      ["diarist", "--model", "test/caller-seat:high", "--project", project, "resume fixture"],
+      {
+        ...baseOptions,
+        createRunId: () => runId,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: immutablePrincipalAuthority,
+          piRunner: async (args) => {
+            const sessionDirectory = args[args.indexOf("--session-dir") + 1]!;
+            await mkdir(sessionDirectory, { recursive: true });
+            await writeFile(join(sessionDirectory, "session.jsonl"), "\n", "utf8");
+            await observeTyped429ViaProductionHandler({
+              runDirectory: join(sessionDirectory, ".."),
+              provider: "xai",
+            });
+            return { code: 1, stderr: "", timedOut: false, args: [...args] };
+          },
+        }),
+      },
+    );
+    assert.equal(interrupted.exitCode, 1);
+    assert.ok(interrupted.terminal?.resume, JSON.stringify(interrupted.terminal));
+    stderr.length = 0;
+
+    const reaskThen429 = diaristEnvelopeRunner(
+      { status: "completed", ticketNumber: TICKET, sessions: [{ path: "x" }] },
+      {
+        afterReask: async () => {
+          await observeTyped429ViaProductionHandler({
+            runDirectory: unboundPlacement.runDirectory,
+            provider: "xai",
+          });
+          await writeFile(
+            join(unboundPlacement.runDirectory, "session", "session.jsonl"),
+            `${JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text: "retry" }] } })}\n${JSON.stringify({ type: "message", message: { role: "assistant", stopReason: "error", errorMessage: "upstream declined", provider: "xai", model: "probe", api: "openai-responses" } })}\n`,
+            "utf8",
+          );
+          return true;
+        },
+      },
+    );
+    const resumed = await runAkRole(
+      ["resume", "--model", "test/caller-seat:high", runId],
+      {
+        ...baseOptions,
+        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+          packageRoot,
+          principalAuthority: immutablePrincipalAuthority,
+          piRunner: reaskThen429,
+        }),
+      },
+    );
+    assert.equal(resumed.exitCode, 1);
+    assert.equal(existsSync(unboundPlacement.runDirectory), false);
+    const errorPath = join(ticketPlacement.runDirectory, "artifacts", "error.json");
+    assert.ok(stderr.join("").includes(errorPath));
+    const error = JSON.parse(await readFile(errorPath, "utf8")) as {
+      kind?: unknown;
+      runId?: unknown;
+      diagnostic?: unknown;
+    };
+    assert.equal(error.kind, "error");
+    assert.equal(error.runId, runId);
+    assert.equal(typeof error.diagnostic, "string");
   });
 });

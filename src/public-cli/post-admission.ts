@@ -114,7 +114,7 @@ import {
   type ControlledFailure,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import type { AdmittedRoleInvocation } from "./invocation.ts";
+import type { AdmittedRoleInvocation, RunDirectoryRelocation } from "./invocation.ts";
 import type { NamedRoleTurnHostAdapter } from "./role-turn-host-resolution.ts";
 import {
   type TerminalResult,
@@ -374,7 +374,12 @@ export type PostAdmissionAdapters<
    * held lease (when present) follows the run directory and failures stay
    * controlled. Public manual resume (#987) may omit the lease.
    */
-  afterDispatch?: (admitted: A, lease?: RunWriterLease) => Promise<void> | void;
+  afterDispatch?: (
+    admitted: A,
+    lease?: RunWriterLease,
+  ) => Promise<RunDirectoryRelocation | undefined>
+    | RunDirectoryRelocation
+    | void;
 };
 
 export type ControlledFailureInput = {
@@ -754,7 +759,12 @@ export async function dispatchPostAdmissionTurn<
       if (relocation !== undefined) {
         projectRelocatedTurnIdentity(request, result, admitted, relocation);
       }
-      if (adapters.afterDispatch !== undefined) await adapters.afterDispatch(admitted, lease);
+      const afterDispatchRelocation = adapters.afterDispatch === undefined
+        ? undefined
+        : await adapters.afterDispatch(admitted, lease);
+      if (afterDispatchRelocation !== undefined) {
+        projectRelocatedTurnIdentity(request, result, admitted, afterDispatchRelocation);
+      }
       return result;
     } catch (error) {
       if (result.terminal !== undefined) {

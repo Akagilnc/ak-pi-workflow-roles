@@ -33,6 +33,7 @@ import {
   type AdmittedCountersignInvocation,
   type AdmittedRoleInvocation,
   type PublicSeatParse,
+  type RunDirectoryRelocation,
 } from "./invocation.ts";
 import {
   presentControlledFailure,
@@ -144,13 +145,13 @@ async function bindAndRelocateDiarist(
   admitted: AdmittedRoleInvocation & { role: "diarist" },
   authority: DurablePrincipalAuthority,
   lease?: RunWriterLease,
-): Promise<void> {
+): Promise<RunDirectoryRelocation | undefined> {
   const boardTicket = await readBoardTicketNumber(admitted.runDirectory);
-  if (boardTicket === undefined) return;
+  if (boardTicket === undefined) return undefined;
   if (admitted.ticketNumber === undefined) {
     await bindAdmittedTicketNumber(admitted, boardTicket);
   }
-  await relocateAdmittedRunToTicket(admitted, authority, lease);
+  return await relocateAdmittedRunToTicket(admitted, authority, lease);
 }
 
 function seatAdapters(
@@ -177,8 +178,8 @@ function seatAdapters(
           await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
         },
         afterDispatch: async (seat: AdmittedRoleInvocation, lease?: RunWriterLease) => {
-          if (!isBoardTicketSeat(seat)) return;
-          await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
+          if (!isBoardTicketSeat(seat)) return undefined;
+          return await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
         },
       }
       : {}),
