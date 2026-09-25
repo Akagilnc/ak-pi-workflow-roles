@@ -529,23 +529,26 @@ export async function presentControlledFailure<
     await persistReturnedRunState(admitted, authority);
   }
 
-  const terminal = await attachRecordedSubmissions(
-    admitted,
-    await settleFailureTerminalResult(
-      admitted,
-      failure,
-      authority,
-      {
-        ...(resumable
-          ? { resume: { command: renderResumeCommand(admitted.runId) } }
-          : {}),
-        ...(failureInput.invocationScopeId === undefined ||
-          failureInput.invocationScopeId.length === 0
-          ? {}
-          : { invocationScopeId: failureInput.invocationScopeId }),
-      },
-    ),
-  );
+  let publishedErrorPath: string | undefined;
+  let terminal: TerminalResult;
+  try {
+    const settled = await settleFailureTerminalResult(admitted, failure, authority, {
+      ...(resumable
+        ? { resume: { command: renderResumeCommand(admitted.runId) } }
+        : {}),
+      ...(failureInput.invocationScopeId === undefined ||
+        failureInput.invocationScopeId.length === 0
+        ? {}
+        : { invocationScopeId: failureInput.invocationScopeId }),
+      onErrorPublished: (path) => { publishedErrorPath = path; },
+    });
+    terminal = await attachRecordedSubmissions(admitted, settled);
+  } catch (error) {
+    if (io.omitFailureStderrDiagnostic && publishedErrorPath !== undefined) {
+      writeResumeFailurePointer(io, publishedErrorPath);
+    }
+    throw error;
+  }
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),

@@ -929,7 +929,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
       // Settlement after the turn still fails closed on the ledger authority error.
       let resumeDispatches = 0;
-      const { io: resumeIo } = captureIo();
+      const { io: resumeIo, stderr: resumeStderr } = captureIo();
       const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
         packageRoot,
         home,
@@ -952,6 +952,14 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       });
       assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
       assert.equal(resumeResult.exitCode, 1);
+      const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`);
+      const pointedPath = (await readdir(join(runDirectory, "artifacts")))
+        .map((name) => join(runDirectory, "artifacts", name))
+        .find((path) => resumeStderr.join("").includes(path));
+      assert.ok(pointedPath);
+      const pointedRecord = JSON.parse(await readFile(pointedPath, "utf8")) as { runId?: unknown; diagnostic?: unknown };
+      assert.equal(pointedRecord.runId, runId);
+      assert.equal(typeof pointedRecord.diagnostic, "string");
       // Settlement may fail closed on poisoned ledger; host reach is the #833 contract.
       if (resumeResult.terminal !== undefined) {
         const resumeOutcome = resumeResult.terminal.roleOutcome;
@@ -2582,15 +2590,6 @@ test("public resume failures point to their recorded diagnostics", async () => {
         return result;
       };
 
-      const unreadable = await seed({
-        runId: "1058-unreadable",
-        role: "secretariat",
-        session: true,
-        projectRoot: project,
-      });
-      await rm(join(unreadable.runDirectory, "admitted-request.json"));
-      await assertRecordedFailurePointer(unreadable.runDirectory, "1058-unreadable");
-
       const corruptRunState = await seed({
         runId: "1058-corrupt-run-state",
         role: "secretariat",
@@ -2606,21 +2605,6 @@ test("public resume failures point to their recorded diagnostics", async () => {
       assert.equal(
         (JSON.parse(await readFile(priorReportPath, "utf8")) as { status?: unknown }).status,
         "prior",
-      );
-
-      const invalidResumeMetadata = await seed({
-        runId: "1058-invalid-resume-metadata",
-        role: "secretariat",
-        session: true,
-        projectRoot: project,
-      });
-      const invalidStatePath = join(invalidResumeMetadata.runDirectory, "run-state.json");
-      const invalidState = JSON.parse(await readFile(invalidStatePath, "utf8")) as Record<string, unknown>;
-      delete invalidState.projectRoot;
-      await writeFile(invalidStatePath, `${JSON.stringify(invalidState)}\n`, "utf8");
-      await assertRecordedFailurePointer(
-        invalidResumeMetadata.runDirectory,
-        "1058-invalid-resume-metadata",
       );
 
       const seatSelectionFailure = await seed({

@@ -3196,6 +3196,7 @@ export async function publishFailureArtifacts(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
   authority: DurablePrincipalAuthority,
+  onErrorPublished?: (path: string) => void,
 ): Promise<TerminalArtifactRef[]> {
   const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
   const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
@@ -3278,6 +3279,7 @@ export async function publishFailureArtifacts(
     errorPayloadBase,
     priorIssues,
   );
+  onErrorPublished?.(errorWrite.path);
 
   const evidencePayload: Record<string, unknown> = {
     runId: admitted.runId,
@@ -3317,6 +3319,7 @@ export async function settleFailureTerminalResult(
   authority: DurablePrincipalAuthority,
   options: SettlementCourtScope & {
     readonly resume?: TerminalResume;
+    readonly onErrorPublished?: (path: string) => void;
   } = {},
 ): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
@@ -3387,7 +3390,8 @@ export async function settleFailureTerminalResult(
   // Exact-session attendance only — never infer no-advice from caller omission.
   const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
-  const artifacts = await publishFailureArtifacts(admitted, failure, authority);
+  const artifacts = await publishFailureArtifacts(admitted, failure, authority, options.onErrorPublished);
+  const errorPath = artifacts.find((artifact) => artifact.kind === "error")?.path;
   const decisiveFacts: Record<string, unknown> = {
     ...(failure.cause === undefined ? {} : { cause: failure.cause }),
     diagnostic: failure.diagnostic,
@@ -3423,7 +3427,6 @@ export async function settleFailureTerminalResult(
       sessionDirectory,
       detourGateContext(admitted, options),
     );
-    const errorPath = artifacts.find((artifact) => artifact.kind === "error")?.path;
     if (errorPath !== undefined) privateFailureErrorPaths.set(terminal, errorPath);
     return terminal;
   }
