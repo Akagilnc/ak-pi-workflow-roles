@@ -14,7 +14,7 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   wt/            detached worktree at the judged HEAD (node_modules symlinked); run.py adds wt-<leg>/
   bin/ zdot/     gh shim + login-shell PATH glue
 """
-import argparse, json, os, shutil, subprocess, sys
+import argparse, hashlib, json, os, shutil, subprocess, sys
 from datetime import datetime, timezone
 
 SUPPORTED_HOSTS = ("codex", "pi")
@@ -143,7 +143,9 @@ def main():
         if path in frozen_sources:
             return frozen_sources[path]
         os.makedirs(f"{kit}/sources", exist_ok=True)
-        target = f"{kit}/sources/{os.path.basename(path)}"
+        # injective name: digest of the absolute path + basename (two hosts share leaf names)
+        digest = hashlib.sha1(path.encode()).hexdigest()[:10]
+        target = f"{kit}/sources/{digest}-{os.path.basename(path)}"
         n = 0
         with open(target, "w") as out:
             for row in jsonl(path):
@@ -178,15 +180,20 @@ def main():
     with open(f"{frozen_run}/session/submission-ledger/records.jsonl", "w") as f:
         for r in kept_ledger:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
-    sealed_before = sum(1 for r in kept_ledger if r.get("kind") == "sealed")
+    # The report face is rebuilt from the truncated ledger alone: payloads are the sealed rows'
+    # accepted bodies in order, and no post-cut terminal fields survive.
+    payloads_before = []
+    for r in kept_ledger:
+        if r.get("kind") != "sealed":
+            continue
+        accepted = (r.get("payload") or {}).get("accepted", r.get("accepted"))
+        if accepted is not None:
+            payloads_before.append(accepted)
+    sealed_before = len(payloads_before)
     if os.path.exists(f"{run}/artifacts/report.json"):
         os.makedirs(f"{frozen_run}/artifacts", exist_ok=True)
-        report = load_json(f"{run}/artifacts/report.json")
-        payloads = (report.get("outcome") or {}).get("payloads")
-        if isinstance(payloads, list):
-            report["outcome"]["payloads"] = payloads[:sealed_before]
         with open(f"{frozen_run}/artifacts/report.json", "w") as f:
-            json.dump(report, f, ensure_ascii=False, indent=1)
+            json.dump({"frozenAt": cut_raw, "outcome": {"payloads": payloads_before}}, f, ensure_ascii=False, indent=1)
     for rel in ("session/session.jsonl", "session/host-session/records.jsonl"):
         if os.path.exists(f"{run}/{rel}"):
             os.makedirs(os.path.dirname(f"{frozen_run}/{rel}"), exist_ok=True)
