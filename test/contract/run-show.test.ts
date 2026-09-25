@@ -100,6 +100,34 @@ function submissionLedgerRow(
   })}\n`;
 }
 
+async function writeCodexHostSessionRecords(
+  runDirectory: string,
+  usage: Readonly<{ input_tokens: number; output_tokens: number }>,
+): Promise<void> {
+  await writeFile(
+    join(runDirectory, "session", "host-session", "records.jsonl"),
+    [
+      JSON.stringify({
+        level: "event",
+        kind: "host-session",
+        host: "codex",
+        source: "headless-host",
+        timestamp: "2026-09-25T00:00:00.000Z",
+        payload: { type: "thread.started", thread_id: THREAD_ID },
+      }),
+      JSON.stringify({
+        level: "event",
+        kind: "host-session",
+        host: "codex",
+        source: "headless-host",
+        timestamp: "2026-09-25T00:00:01.000Z",
+        payload: { type: "turn.completed", usage },
+      }),
+    ].join("\n") + "\n",
+    "utf8",
+  );
+}
+
 async function writeCodexRunFixture(machineHome: string): Promise<string> {
   const runDirectory = join(
     machineHome,
@@ -150,28 +178,7 @@ async function writeCodexRunFixture(machineHome: string): Promise<string> {
     "utf8",
   );
 
-  await writeFile(
-    join(runDirectory, "session", "host-session", "records.jsonl"),
-    [
-      JSON.stringify({
-        level: "event",
-        kind: "host-session",
-        host: "codex",
-        source: "headless-host",
-        timestamp: "2026-09-25T00:00:00.000Z",
-        payload: { type: "thread.started", thread_id: THREAD_ID },
-      }),
-      JSON.stringify({
-        level: "event",
-        kind: "host-session",
-        host: "codex",
-        source: "headless-host",
-        timestamp: "2026-09-25T00:00:01.000Z",
-        payload: { type: "turn.completed", usage: CODEX_HOST_TURN_USAGE },
-      }),
-    ].join("\n") + "\n",
-    "utf8",
-  );
+  await writeCodexHostSessionRecords(runDirectory, CODEX_HOST_TURN_USAGE);
 
   // External-host runs keep a header-only session volume (ADR 0077 DK-4).
   await writeFile(
@@ -428,11 +435,20 @@ test("run show: Codex falls back to run-written usage when rollout usage is unav
     const missing = await runPublicRunShow(runDirectory, machineHome);
     assert.equal(missing.exitCode, 0);
     assert.notEqual(missing.output, "");
+
+    await writeCodexHostSessionRecords(runDirectory, { input_tokens: 12, output_tokens: 7 });
+    const missingWithChangedUsage = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(missingWithChangedUsage.output, missing.output);
+
     // A damaged rollout must not hide the same readable usage.
     await writeFile(rolloutPath, "{not-json\n", "utf8");
     const damaged = await runPublicRunShow(runDirectory, machineHome);
     assert.equal(damaged.exitCode, 0);
-    assert.notEqual(damaged.output, missing.output);
+    assert.notEqual(damaged.output, missingWithChangedUsage.output);
+
+    await writeCodexHostSessionRecords(runDirectory, { input_tokens: 13, output_tokens: 7 });
+    const damagedWithChangedUsage = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(damagedWithChangedUsage.output, damaged.output);
 
     // A well-formed rollout without token_count follows the same fallback.
     await writeFile(
@@ -444,28 +460,7 @@ test("run show: Codex falls back to run-written usage when rollout usage is unav
     assert.equal(noUsage.exitCode, 0);
     assert.notEqual(noUsage.output, damaged.output);
 
-    await writeFile(
-      join(runDirectory, "session", "host-session", "records.jsonl"),
-      [
-        JSON.stringify({
-          level: "event",
-          kind: "host-session",
-          host: "codex",
-          source: "headless-host",
-          timestamp: "2026-09-25T00:00:00.000Z",
-          payload: { type: "thread.started", thread_id: THREAD_ID },
-        }),
-        JSON.stringify({
-          level: "event",
-          kind: "host-session",
-          host: "codex",
-          source: "headless-host",
-          timestamp: "2026-09-25T00:00:01.000Z",
-          payload: { type: "turn.completed", usage: { input_tokens: 12, output_tokens: 7 } },
-        }),
-      ].join("\n") + "\n",
-      "utf8",
-    );
+    await writeCodexHostSessionRecords(runDirectory, { input_tokens: 14, output_tokens: 7 });
     const changedFallback = await runPublicRunShow(runDirectory, machineHome);
     assert.notEqual(changedFallback.output, noUsage.output);
   });
