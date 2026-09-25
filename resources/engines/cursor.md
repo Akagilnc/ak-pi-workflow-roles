@@ -39,14 +39,3 @@ cursor-agent -p -f --output-format text --model <MODEL_ID> "YOUR_LABOR_PROMPT"
 
 Prefer `cursor-agent --help` on the host over any remembered flag set. Do not
 wrap this engine behind `ak-role` flags.
-
-## Smoke test (run before first labor leg of a session)
-
-```bash
-cursor-agent -p -f --output-format text "Reply with exactly one word: OK"
-```
-
-Expected: stdout ends with exactly `OK`, exit code 0. This smoke test omits
-`--model` so it works when the dispatch order does not specify one; Cursor
-Agent uses its configured default. If it asks about directory trust, the `-f`
-flag (or `--trust`) is missing.
