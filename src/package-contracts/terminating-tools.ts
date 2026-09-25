@@ -10,7 +10,6 @@ import {
 } from "./collector-output.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
-  validateAcceptedJudgeDetails,
   type JudgeVerdict,
 } from "./judge-output.ts";
 import {
@@ -46,7 +45,6 @@ export {
   REVIEWER_OUTPUT_TOOL_NAME,
   MERGER_OUTPUT_TOOL_NAME,
   validateAcceptedCollectorReceipt,
-  validateAcceptedJudgeDetails,
   validateReviewerIntent,
   validateAcceptedWorkerDetails,
   validateDoctorSubmissionShape,
