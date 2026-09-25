@@ -199,6 +199,17 @@ export function courtTicketNumbersFromOutcome(
   return latest;
 }
 
+/** Latest payload only. An earlier escalate must not block a later non-escalate submission. */
+export function latestPayloadEscalated(
+  roleOutcome: TerminalRoleOutcome | undefined,
+): boolean {
+  if (roleOutcome === undefined) return false;
+  if (roleOutcome.kind === "audit_escalation") return true;
+  if (roleOutcome.kind !== "accepted") return false;
+  const payloads = roleOutcome.payloads ?? [];
+  return isEscalatePayload(payloads[payloads.length - 1]);
+}
+
 /** Routing boolean over the child's own typed sequence — does not pick or rewrite a sole row. */
 export function courtDiaristEscalated(
   roleOutcome: TerminalRoleOutcome | undefined,

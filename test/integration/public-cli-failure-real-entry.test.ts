@@ -1,18 +1,25 @@
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
 import assert from "node:assert/strict";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
-import { AUDIT_ESCALATION_KIND, buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { AUDITOR_SOUL_ROLES } from "../../src/auditor-soul.ts";
 import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
+import {
+  argvFlagValue,
+  roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
+} from "../helpers/role-turn-host-fixture.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
@@ -27,216 +34,8 @@ import {
   assertPublicFailureSettlement,
   multiTurnIntermediateRetained,
 } from "../helpers/failure-settlement-kit.ts";
-import { recordAuditEscalationSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 
-test("public CLI multi-turn audit escalate covers audited seats", async () => {
-  // #495 S6: reviewer-side auditor retired — seats follow AUDITOR_SOUL_ROLES (judge/doctor).
-  const seats = {
-    judge: {
-      output: JUDGE_OUTPUT_TOOL_NAME,
-      audit: JUDGE_AUDIT_TOOL_NAME,
-      argv: (project: string) => ["judge", "--model", "test/caller-seat:high", "--project", project, "multi-turn audit escalate"],
-    },
-    doctor: {
-      output: DOCTOR_OUTPUT_TOOL_NAME,
-      audit: DOCTOR_AUDIT_TOOL_NAME,
-      argv: (project: string) => [
-        "doctor",
-        "--model",
-        "test/caller-seat:high",
-        "--issue",
-        "373",
-        "--project",
-        project,
-        "multi-turn audit escalate",
-      ],
-    },
-  } as const;
-
-  const auditCandidate = {
-    status: "escalate" as const,
-    conflicts: ["authority conflict"],
-    decisionGate: { question: "Who decides?", options: ["owner", "caller"] },
-  };
-
-  /** One shared withTempHome/project/run/piRunner/session write for all scenes. */
-  async function runMultiTurnPublicCliScene<
-    T,
-  >(scene: {
-    label: string;
-    role: (typeof AUDITOR_SOUL_ROLES)[number];
-    argv: (project: string) => string[];
-    roleCallArguments: unknown;
-    auditArguments: unknown;
-    toolResult: { isError: boolean; details: unknown };
-    trailingSessionEntries?: readonly unknown[];
-  }, observe: (ctx: {
-    result: { exitCode: number; terminal?: TerminalResult };
-    stdout: string[];
-    stderr: string[];
-  }) => Promise<T>): Promise<T> {
-    return withTempHome(async (home) => {
-      const project = join(home, `proj-${scene.label}`);
-      await mkdir(project, { recursive: true });
-      seedGitProject(project);
-      if (scene.role === "doctor") {
-        await seedDoctorIssueRuns(home, resolveBookKeyFromGit(project), 373);
-      }
-      const runId = `run-${scene.label}`;
-      const roleCallId = `${scene.label}-call`;
-      const seat = seats[scene.role];
-      const { io, stdout, stderr } = captureIo();
-      const result = await runAkRole(scene.argv(project), {
-        packageRoot,
-        home,
-        cwd: project,
-        createRunId: () => runId,
-        io,
-        credentials: { "openai-codex": true, xai: true },
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          const sessionFile = args[args.indexOf("--session") + 1]!;
-          await mkdir(dirname(sessionFile), { recursive: true });
-          const entries = [
-            {
-              type: "message",
-              message: {
-                role: "assistant",
-                content: [{
-                  type: "toolCall",
-                  id: roleCallId,
-                  name: seat.output,
-                  arguments: scene.roleCallArguments,
-                }],
-              },
-            },
-            ...multiTurnIntermediateRetained(runId),
-            {
-              type: "custom",
-              customType: "ak_compliance_response",
-              data: {
-                version: 1,
-                response: {
-                  content: [{
-                    type: "toolCall",
-                    name: seat.audit,
-                    arguments: scene.auditArguments,
-                  }],
-                },
-              },
-            },
-            {
-              type: "message",
-              message: {
-                role: "toolResult",
-                toolCallId: roleCallId,
-                toolName: seat.output,
-                isError: scene.toolResult.isError,
-                details: scene.toolResult.details,
-              },
-            },
-            ...(scene.trailingSessionEntries ?? []),
-          ];
-          await writeFile(
-            sessionFile,
-            `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`,
-            "utf8",
-          );
-          // Live audit-escalation must be ledger-recorded (settlement no longer rebuilds from JSONL).
-          if (
-            scene.toolResult.isError === false &&
-            scene.toolResult.details !== null &&
-            typeof scene.toolResult.details === "object" &&
-            (scene.toolResult.details as { kind?: unknown }).kind === AUDIT_ESCALATION_KIND
-          ) {
-            const runDirectory = join(dirname(sessionFile), "..");
-            await recordAuditEscalationSubmission({
-              cwd: project,
-              runId,
-              role: scene.role,
-              details: scene.toolResult.details,
-              home,
-              runDirectory,
-              toolCallId: roleCallId,
-            });
-          }
-          return { code: 0, stderr: "", timedOut: false, args: [...args] };
-        },
-        }),
-      });
-      return observe({ result, stdout, stderr });
-    });
-  }
-
-  // (a) Audited-seat multi-turn escalate via real public CLI.
-  for (const role of AUDITOR_SOUL_ROLES) {
-    const seat = seats[role];
-    // Keep live registry projection for ledger recognition; clone only for session bytes.
-    const liveProjected = buildAuditEscalationResult(
-      {
-        status: "escalate",
-        conflicts: auditCandidate.conflicts,
-        decisionGate: auditCandidate.decisionGate,
-      },
-      { role },
-    );
-    const projected = JSON.parse(JSON.stringify(liveProjected));
-    await runMultiTurnPublicCliScene({
-      label: `${role}-escalate`,
-      role,
-      argv: seat.argv,
-      roleCallArguments: { role },
-      auditArguments: auditCandidate,
-      toolResult: { isError: false, details: liveProjected },
-    }, async ({ result, stdout, stderr }) => {
-      assert.equal(result.exitCode, 0, `${role}: ${stderr.join("") || stdout.join("") || "nonzero"}`);
-      assert.ok(result.terminal, `${role}: public CLI must settle a Terminal`);
-      const escalateOutcome = result.terminal!.roleOutcome;
-      const escalateKind: string = escalateOutcome.kind;
-      const escalateStatus =
-        "status" in escalateOutcome ? String(escalateOutcome.status) : undefined;
-      assert.equal(escalateKind, "audit_escalation", role);
-      assert.equal(escalateOutcome.role, role);
-      assert.equal(escalateStatus, "audit_escalation", role);
-      assert.equal(isLawfulTypedTerminalOutcome(escalateOutcome), true, role);
-      assert.equal(exitCodeForTerminalOutcome(escalateOutcome), 0, role);
-      // Escalate is typed-distinct from accepted receipt / completed / refused.
-      assert.notEqual(escalateKind, "accepted", role);
-      assert.notEqual(escalateStatus, "completed", role);
-      assert.notEqual(escalateStatus, "refused", role);
-      assert.equal(
-        (escalateOutcome as { acceptedReceipt?: unknown }).acceptedReceipt,
-        undefined,
-        `${role}: escalate must not set acceptedReceipt true`,
-      );
-      assert.equal(
-        (objectPayloads(escalateOutcome)[0] ?? {}).kind,
-        AUDIT_ESCALATION_KIND,
-        role,
-      );
-      // Not cause=output error.json — report artifact is the escalate face.
-      assert.equal(result.terminal!.artifacts.some((a) => a.kind === "error"), false, role);
-      assert.ok(result.terminal!.artifacts.some((a) => a.kind === "report"), role);
-      const reportPath = result.terminal!.artifacts.find((a) => a.kind === "report")!.path;
-      const reportBody = JSON.parse(await readFile(reportPath, "utf8")) as {
-        role?: string;
-        outcome?: { kind?: string; status?: string };
-        receipt?: { status?: string };
-      };
-      assert.equal(reportBody.role, role);
-      assert.equal(reportBody.outcome?.kind, "audit_escalation", role);
-      assert.equal(reportBody.outcome?.status, "audit_escalation", role);
-      // Escalate report is not an accepted role receipt (completed/refused).
-      assert.notEqual(reportBody.receipt?.status, "completed", role);
-      assert.notEqual(reportBody.receipt?.status, "refused", role);
-    });
-  }
-});
-// Publication errno matrix: lawful session, then publication fails on a hostile
-// destination — the errno identity must survive, never washed into output absence.
 test("public report publication failures retain typed errno identity", async () => {
   // #953 clears conventional faces before rewrite, so report.json-as-directory no
   // longer reaches writeFile. Lock artifacts/ instead — clear no-ops on absent
@@ -489,6 +288,7 @@ test("production knownFailure channel reaches settlement as provider with typed 
     }
   });
 });
+
 test("production ExplicitInternalActivationError throw keeps provider cause and identity", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -663,6 +463,10 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
+    let config = { seats: {} };
+    for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
+    await savePublicCliConfig(config, home);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "already settled"],
       {
@@ -674,7 +478,14 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
+          piRunner: async (args, options) => {
+          const role = argvFlagValue(args, "--ak-role");
+          if (role === "notary" || role === "auditor") {
+            return scriptedTerminatingToolSession({
+              role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
+              details: { status: "converged" },
+            })(args, options);
+          }
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(

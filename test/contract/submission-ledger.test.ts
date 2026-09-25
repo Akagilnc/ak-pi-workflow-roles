@@ -9,7 +9,6 @@ import type { HostContext, HostToolDefinition, HostToolResult, RoleHost } from "
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { readSitianRecords } from "../../src/sitian-reader.ts";
 import type { SitianRecord } from "../../src/sitian-contracts.ts";
-import { buildAuditEscalationResult } from "../../src/audit-escalation.ts";
 import { GatekeeperDecisionError } from "../../src/gatekeeper-role.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -136,27 +135,6 @@ async function withLedgerFixture(run: (value: Awaited<ReturnType<typeof fixture>
   );
 }
 
-
-
-test("audit escalation params enter submissions face even when result.details differ (#836 bounce)", async () => {
-  await withLedgerFixture(async (f) => {
-    const params = { status: "escalate", report: "from-params" };
-    const details = buildAuditEscalationResult(
-      { status: "escalate", conflicts: ["c1"], decisionGate: { question: "q", options: ["a"] } },
-      { status: "escalate", rewritten: true },
-    );
-    const host = registerTool(
-      f.root,
-      async () => ({ content: [], details, terminate: true }),
-    );
-    await host.start("a1");
-    await host.tool().execute("a1", params, undefined, undefined, host.context);
-    const all = await readRecordedSubmissions(f.root, "run-ledger", f.root);
-    assert.equal(all.length, 1);
-    assert.deepEqual(all[0], params, "audit submissions must keep LLM params");
-    assert.notDeepEqual(all[0], details);
-  });
-});
 
 
 test("non-object params stay raw on accepted/submissions — no envelope wrap (#836 bounce)", async () => {
@@ -383,63 +361,6 @@ test("#881 reader projects non-sealed original params once per tool call (correc
     assert.equal(kinds.filter((kind) => kind === "candidate").length, 2);
     assert.equal(kinds.filter((kind) => kind === "outcome").length, 2);
     assert.equal(kinds.includes("sealed"), false);
-  });
-});
-
-test("pipeline ledger records audit-escalation with original details and no rewrite (#836)", async () => {
-  await withLedgerFixture(async (f) => {
-    const details = buildAuditEscalationResult(
-      { status: "escalate", conflicts: ["c1"], decisionGate: { question: "q", options: ["a"] } },
-      { status: "escalate" },
-    );
-    const escalating = registerTool(f.root, async () => ({ content: [], details, terminate: true }));
-    await escalating.start("esc");
-    const result = await escalating.tool().execute("esc", details, undefined, undefined, escalating.context);
-    assert.equal(result.terminate, true);
-    assert.deepEqual(result.details, details, "original details reach the model");
-    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
-    assert.deepEqual(rows, [{ role: "judge", kind: "audit-escalation", accepted: details, auditReceipt: ["c1"], toolCallId: "esc" }]);
-    assert.deepEqual(escalating.closedSubmissions, [
-      { role: "judge", kind: "audit_escalation", accepted: details },
-    ]);
-  });
-});
-
-test("officer escalate via gate is correctable bounce-to-parent with raw receipt (#753)", async () => {
-  await withLedgerFixture(async (f) => {
-    const receipt = { status: "escalate", reason: "need owner", findings: ["f"] };
-    const bouncing = registerTool(
-      f.root,
-      async () => {
-        throw new GatekeeperDecisionError({
-          status: "escalate",
-          officer: "notary",
-          receipt,
-        });
-      },
-      packagedRoleOutputTool("coder")!,
-      "coder",
-    );
-    await bouncing.start("coder-officer-escalate", packagedRoleOutputTool("coder")!);
-    await assert.rejects(
-      bouncing.tool().execute("coder-officer-escalate", { status: "completed" }, undefined, undefined, bouncing.context),
-      (error: unknown) => {
-        assert.ok(error instanceof GatekeeperDecisionError);
-        assert.equal(error.result.status, "escalate");
-        assert.equal(error.message, JSON.stringify(receipt));
-        return true;
-      },
-    );
-    const outcome = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome").at(-1);
-    assert.equal(outcome?.payload && (outcome.payload as { outcome?: string }).outcome, "correctable-rejection");
-    // #881: original officer params remain projectable on correctable-rejection.
-    // Read via the coder run's sessionParent — bare runId is ambiguous across roles.
-    const coderScope = {
-      home: f.root,
-      sessionParent: join(String(bouncing.context.runDirectory), "session", "session.jsonl"),
-    };
-    assert.equal(await hasRecordedSubmission(f.root, "run-ledger", coderScope), true);
-    assert.deepEqual(await readRecordedSubmissions(f.root, "run-ledger", coderScope), [{ status: "completed" }]);
   });
 });
 

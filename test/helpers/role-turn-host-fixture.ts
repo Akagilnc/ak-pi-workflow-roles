@@ -55,6 +55,9 @@ export function roleTurnHostFromStructuredOutputRounds(input: {
   readonly principalAuthority: DurablePrincipalAuthority;
   readonly submissions: readonly unknown[];
 }): RoleTurnHost {
+  // Shared across executeTurn calls so a public post-submission resume can
+  // consume the next scripted receipt (#1057), not replay submissions[0].
+  let cursor = 0;
   return {
     async executeTurn(request) {
       const prepared = await prepareRoleEnvelope({
@@ -68,11 +71,13 @@ export function roleTurnHostFromStructuredOutputRounds(input: {
         return await driveExternalRoleTurnRounds(prepared, request, {
           roundLimitName: "StructuredOutputRoundLimit",
           currentSessionId: () => undefined,
-          async runRound({ attempt }) {
-            if (attempt >= input.submissions.length) {
+          async runRound() {
+            if (cursor >= input.submissions.length) {
               throw new Error("structured-output fixture ran out of submissions");
             }
-            await prepared.ingestStructuredOutput(input.submissions[attempt]);
+            const submission = input.submissions[cursor];
+            cursor += 1;
+            await prepared.ingestStructuredOutput(submission);
             return { status: "delivered" };
           },
         });

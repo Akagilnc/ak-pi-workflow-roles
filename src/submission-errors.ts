@@ -12,7 +12,7 @@ function serializeReceipt(receipt: unknown): string {
 }
 
 function gatekeeperNonPassMessage(result: SubmissionGateNonPassResult): string {
-  if (result.status === "continue" || result.status === "escalate") {
+  if (result.status === "continue") {
     return serializeReceipt(result.receipt);
   }
   if (result.status === "transport_failure") {

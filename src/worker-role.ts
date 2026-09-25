@@ -3,9 +3,6 @@ import { Type, type Static } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
-import { readableGateItem } from "./readable-gate-item.ts";
-import { projectGatekeeperEscalation } from "./audit-escalation.ts";
-import { GatekeeperDecisionError, ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -23,7 +20,6 @@ import {
 } from "./package-contracts/fixer-packet.ts";
 import {
   createWorkerSubmissionGate,
-  WORKER_DONE_STATUSES,
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
@@ -127,28 +123,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Routing words shared by Coder and Fixer; provider schemas remain open. */
-const WORKER_ROUTING_STATUSES = new Set([
-  "planned",
-  "completed",
-  "refused",
-  "partially_completed",
-  "unfinished",
-]);
-
 /** Read only the field that selects the worker's next package-owned path. */
 function workerStatusOf(output: WorkerOutput): string | undefined {
   return isRecord(output) && typeof output.status === "string"
     ? output.status
     : undefined;
-}
-
-function requireReadableWorkerStatus(output: WorkerOutput): string {
-  const status = workerStatusOf(output);
-  if (status === undefined || !WORKER_ROUTING_STATUSES.has(status)) {
-    throw new ParentQueueReaskError(unreadableDiscriminatorNotice("status", isRecord(output) ? output.status : undefined));
-  }
-  return status;
 }
 
 function deepFreeze<T>(value: T): T {
@@ -262,47 +241,18 @@ export function createFixerRoleRuntime(
               throw new Error("修内司修理包与阶段未装载");
             }
             const output = deepFreeze(validateFixerOutput(parameters, phase));
-            const status = requireReadableWorkerStatus(output);
-            assertAcceptableThroughHost(
-              submissionGate,
-              status,
-              output,
-              hostActions,
-              ctx,
-              toolCallId,
-            );
-            let pass;
-            try {
-              pass = WORKER_DONE_STATUSES.has(status)
-                ? await pi.requireSubmissionGate!({
-                    context: ctx,
-                    subject: { kind: "worker_completion" },
-                    ...(_signal === undefined ? {} : { signal: _signal }),
-                    hostActions,
-                    toolCallId,
-                    // #879: this-turn typed payload — identity-bound at submit site.
-                    submission: output,
-                  })
-                : undefined;
-            } catch (error) {
-              if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
-                return projectGatekeeperEscalation(error.result, output);
-              }
-              throw error;
+            const status = workerStatusOf(output);
+            if (status !== undefined) {
+              assertAcceptableThroughHost(
+                submissionGate,
+                status,
+                output,
+                hostActions,
+                ctx,
+                toolCallId,
+              );
             }
-            if (pass?.status === "continue") {
-              return {
-                content: [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
-                details: output,
-                terminate: false,
-              };
-            }
-            const acceptedDetails = output;
-            return {
-              content: pass === undefined ? [] : [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
-              details: acceptedDetails,
-              terminate: true as const,
-            };
+            return { content: [], details: output, terminate: true as const };
           },
         });
         pi.on("tool_call", (event) => {
@@ -389,49 +339,20 @@ export function createCoderRoleRuntime(
               throw new Error("将作监任务与阶段未装载");
             }
             const output = validateWorkerOutput(parameters, phase, "Coder");
-            const status = requireReadableWorkerStatus(output);
+            const status = workerStatusOf(output);
             // #836: skill-expansion evidence rejection deleted (陛下「2.4/5 删」).
-            // Missing method Skills do not reject a receipt.
-            assertAcceptableThroughHost(
-              submissionGate,
-              status,
-              output,
-              hostActions,
-              ctx,
-              toolCallId,
-            );
-            let pass;
-            try {
-              pass = WORKER_DONE_STATUSES.has(status)
-                ? await pi.requireSubmissionGate!({
-                    context: ctx,
-                    subject: { kind: "worker_completion" },
-                    ...(_signal === undefined ? {} : { signal: _signal }),
-                    hostActions,
-                    toolCallId,
-                    // #879: this-turn typed payload — identity-bound at submit site.
-                    submission: output,
-                  })
-                : undefined;
-            } catch (error) {
-              if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
-                return projectGatekeeperEscalation(error.result, output);
-              }
-              throw error;
+            // Skill still ships with the package (ADR 0052); code no longer refuses on it.
+            if (status !== undefined) {
+              assertAcceptableThroughHost(
+                submissionGate,
+                status,
+                output,
+                hostActions,
+                ctx,
+                toolCallId,
+              );
             }
-            if (pass?.status === "continue") {
-              return {
-                content: [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
-                details: output,
-                terminate: false,
-              };
-            }
-            const acceptedDetails = output;
-            return {
-              content: pass === undefined ? [] : [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
-              details: acceptedDetails,
-              terminate: true as const,
-            };
+            return { content: [], details: output, terminate: true as const };
           },
         });
         pi.on("before_agent_start", (event, ctx) => {

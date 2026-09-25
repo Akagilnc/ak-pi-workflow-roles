@@ -28,6 +28,7 @@ test("isolatedTestProcessEnv: options.home wins over default and env.HOME", asyn
         HOME: HOST_HOME,
         AK_ROLE_RUN_DIR: "/parent/runs/leaked@fixer",
         AK_ROLE_COURT_ATTEMPT: "leaked-court-attempt",
+        AK_ROLE_ENGINE: "opencode",
       },
       home: custom,
     });
@@ -38,6 +39,7 @@ test("isolatedTestProcessEnv: options.home wins over default and env.HOME", asyn
     assert.equal(env.AK_ROLE_RUN_DIR, undefined);
     assert.equal(env.AK_ROLE_COURT_ATTEMPT, undefined);
     assert.equal(env.PI_CODING_AGENT_DIR, undefined);
+    assert.equal(env.AK_ROLE_ENGINE, undefined);
     });
 });
 

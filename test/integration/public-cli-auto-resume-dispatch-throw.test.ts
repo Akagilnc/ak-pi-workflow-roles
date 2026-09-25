@@ -52,8 +52,8 @@ function alwaysThrowingDispatch(callsRef:{n:number}, messages:readonly string[],
 
 type PointerEntry={data?:{file?:unknown};};
 
-const sealedParams={judgeStatus:"converged",report:"sealed-before-throw"};
-const bounceParams={judgeStatus:"converged",report:"bounce-before-throw"};
+const sealedParams={status:"converged",report:"sealed-before-throw"};
+const bounceParams={status:"converged",report:"bounce-before-throw"};
 
 async function plantRecordedSubmissions(input:{
   readonly home:string;

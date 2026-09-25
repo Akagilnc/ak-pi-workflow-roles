@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { basename, join } from "node:path";
+
 import {
   joinPackageMaterials,
   readPackageMaterial,
@@ -101,4 +104,34 @@ export async function loadAuditorSoulFromSubjectInput(raw?: string): Promise<str
 
 export function loadAuditorReferenceMaterialsFromSubjectInput(raw?: string): Promise<string> {
   return loadAuditorReferenceMaterials(resolveAuditorSubject(raw));
+}
+
+function subjectFromSourceDirectory(sourceRunDirectory: string): AuditorSoulRole | undefined {
+  const role = basename(sourceRunDirectory).split("@")[1];
+  return isAuditorSoulRole(role) ? role : undefined;
+}
+
+/**
+ * Resume binding already on the admitted page.
+ * Explicit subject wins; otherwise the source-run role is the audited object.
+ */
+export async function readAuditorResumeBinding(runDirectory: string): Promise<
+  | { readonly subject: AuditorSoulRole; readonly sourceRunDirectory: string }
+  | undefined
+> {
+  let raw: unknown;
+  try {
+    raw = JSON.parse(await readFile(join(runDirectory, "admitted-request.json"), "utf8")) as unknown;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const record = raw as { sourceRunPath?: unknown; auditorSubject?: unknown };
+  if (typeof record.sourceRunPath !== "string" || record.sourceRunPath.trim() === "") return undefined;
+  const subject = isAuditorSoulRole(record.auditorSubject)
+    ? record.auditorSubject
+    : subjectFromSourceDirectory(record.sourceRunPath);
+  if (subject === undefined) return undefined;
+  return { subject, sourceRunDirectory: record.sourceRunPath };
 }

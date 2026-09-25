@@ -535,8 +535,8 @@ export async function summonPublicRole(
   }
 
   const stderr = captured?.stderrText();
-  // A parked officer can return its court diarist's escalation verbatim. The
-  // terminal's independent run, not the parked officer, is the gate pointer.
+  // An escalated officer can return its court diarist's escalation verbatim.
+  // The terminal's independent run, not the officer, is the gate pointer.
   const runDirectory = result.terminal !== undefined
     && result.terminal.roleOutcome.role !== options.role
     && typeof result.terminal.runId === "string"
@@ -805,6 +805,8 @@ export async function summonGateOfficer(options: {
     const { readableGateItem } = await import("./readable-gate-item.ts");
     gateReviewInstruction = readableGateItem(options.submission);
   }
+  const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
+  const parentRunId = runIdFromRunDirectory(options.sourceRunDirectory);
   const common = {
     cwd: options.cwd,
     ...(home === undefined ? {} : { home }),
@@ -818,6 +820,9 @@ export async function summonGateOfficer(options: {
     ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
     ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
     ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
+    ...(parentRunId === undefined || parentRunId.trim() === ""
+      ? {}
+      : { correlationId: parentRunId }),
   } as const;
   const { packagedGateSummon } = await import("./packaged-role-registry.ts");
   const gateSummon = packagedGateSummon(options.officer);
@@ -851,15 +856,13 @@ export async function summonGateOfficer(options: {
     // no code-authored summons prose (#924). Gate resume key = parentRunPath
     // (sourceRunDirectory); board ticket handoff is bind-only, never a resume
     // lookup (#987 Result 7). Receipt ticketNumber stays payload content.
-    // correlationId only on this officer — notary/auditor/inspector stay untouched.
     // Gate resume key is the parent run directory. The board ticket only binds.
-    const { runIdFromRunDirectory } = await import("./run-terminal-artifacts.ts");
-    const correlationId = runIdFromRunDirectory(options.sourceRunDirectory);
-    if (correlationId === undefined || correlationId.trim() === "") {
+    if (parentRunId === undefined || parentRunId.trim() === "") {
       throw new Error(
         `countersign gate summon requires parent runId from sourceRunDirectory: ${options.sourceRunDirectory}`,
       );
     }
+    const correlationId = parentRunId;
     const { isSafePositiveTicketNumber, readBoardTicketNumber } = await import("./run-ticket-number.ts");
     const parentTicket = await readBoardTicketNumber(options.sourceRunDirectory);
     const submittedTicket = options.submission !== null && typeof options.submission === "object" && !Array.isArray(options.submission)

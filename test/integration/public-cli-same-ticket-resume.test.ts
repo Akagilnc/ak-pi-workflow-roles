@@ -47,6 +47,7 @@ import {
   packageRoot,
   seedGitRepository,
 } from "../helpers/pi-test-harness.ts";
+import { configurePassingReviewSeats } from "../helpers/passing-review-host.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
@@ -1111,10 +1112,11 @@ test("#993 public new ordinary seat: explicit new is distinct from an existing c
   }
 });
 
-test("#993 public coder resume: worker completion gate bounce then pass is projected on Terminal", async () => {
+test("#993 public coder: post-submission Inspector bounce resumes same run, then pass settles", async () => {
   await rm(WORKTREE_SCRATCH, { recursive: true, force: true });
   const scratch = await openNotaryScratch("home-worker-gate-resume-");
   try {
+    await configurePassingReviewSeats(scratch.home);
     let coderTurns = 0;
     const officerRequests: RoleTurnRequest[] = [];
     const cliOutput: string[] = [];
@@ -1140,6 +1142,7 @@ test("#993 public coder resume: worker completion gate bounce then pass is proje
     };
     const inner: RoleTurnHost = {
       async executeTurn(request) {
+        if (request.activation.role === "inspector") return nested.executeTurn(request);
         assert.equal(request.activation.role, "coder");
         coderTurns += 1;
         const sessionFile = piDurablePrincipalAuthority.decode(request.principal).sessionFile;
@@ -1158,7 +1161,7 @@ test("#993 public coder resume: worker completion gate bounce then pass is proje
           execFileSync("git", ["-c", "user.name=Worker Test", "-c", "user.email=worker@test.invalid", "commit", "--allow-empty", "-m", `ak-roles: worker attempt ${coderTurns}`], { cwd: scratch.project });
           await prepared.ingestStructuredOutput({ status: "completed", report: "work submitted" });
           const closed = await prepared.closeRound();
-          assert.equal(closed.accepted, coderTurns === 2);
+          assert.equal(closed.accepted, true);
           return { code: 0, stderr: "", timedOut: false };
         } finally {
           await prepared.dispose?.();
@@ -1180,31 +1183,10 @@ test("#993 public coder resume: worker completion gate bounce then pass is proje
       },
     );
 
+    assert.equal(first.exitCode, 0, cliOutput.join(""));
     assert.ok(first.terminal);
-    assert.equal(first.terminal.roleOutcome.kind, "no_receipt");
-    assert.equal(first.terminal.gate?.rounds.at(-1)?.officer.status, "continue");
-    assert.equal(officerRequests.length, 1);
-
-    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", "run-worker-gate-resume-993"], {
-      packageRoot,
-      home: scratch.home,
-      cwd: scratch.project,
-      io,
-      credentials: scratch.credentials,
-      principalAuthority: piDurablePrincipalAuthority,
-      roleTurnHost: host,
-    });
-
-    assert.equal(resumed.exitCode, 0, cliOutput.join(""));
-    assert.ok(resumed.terminal);
-    assert.equal(resumed.terminal.runId, first.terminal.runId);
-    assert.equal(resumed.terminal.roleOutcome.kind, "accepted");
-    assert.equal(resumed.terminal.gate?.rounds.at(-1)?.officer.status, "converged");
+    assert.equal(first.terminal.roleOutcome.kind, "accepted");
     assert.equal(officerRequests.length, 2);
-    assert.deepEqual(
-      seen.filter((turn) => turn.kind === "initial" || turn.kind === "resume").map((turn) => turn.runId),
-      ["run-worker-gate-resume-993", "run-worker-gate-resume-993"],
-    );
     assert.equal(coderTurns, 2);
   } finally {
     await rm(scratch.home, { recursive: true, force: true });

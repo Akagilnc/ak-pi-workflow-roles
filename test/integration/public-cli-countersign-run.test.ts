@@ -25,6 +25,9 @@ import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import { DIARIST_OUTPUT_TOOL_NAME } from "../../src/diarist-contracts.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/auditor-role.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import type { HostContext, RoleHost, RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
 import { runAkRole, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { summonPublicRole } from "../../src/public-role-summons.ts";
@@ -151,16 +154,22 @@ function withTrueUnboundDiarist(inner: LegacyFauxPiRunner): LegacyFauxPiRunner {
     if (argvFlagValue(args, "--ak-role") === "diarist") {
       return courtPipelinePiRunner(null)(args, options);
     }
+    if (argvFlagValue(args, "--ak-role") === "notary") {
+      return scriptedTerminatingToolSession({
+        role: "notary", toolName: NOTARY_OUTPUT_TOOL_NAME,
+        details: { status: "converged" },
+      })(args, options);
+    }
     return inner(args, options);
   };
 }
 
 function scriptedCountersignSession(details: unknown) {
-  return scriptedTerminatingToolSession({
+  return withTrueUnboundDiarist(scriptedTerminatingToolSession({
     role: "countersign",
     toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
     details,
-  });
+  }));
 }
 
 test("countersign admission freezes attachments and binds the countersign role", async () => {
@@ -508,9 +517,11 @@ test("ak-role resume with message after sealed countersign dispatches a new cour
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async (args, options) => {
-          resumeDispatches += 1;
-          resumeArgs = [...args];
-          resumeStdin = options.stdin;
+          if (argvFlagValue(args, "--ak-role") === "countersign") {
+            resumeDispatches += 1;
+            resumeArgs = [...args];
+            resumeStdin = options.stdin;
+          }
           return scriptedCountersignSession({
             status: "continue",
             fix: { summary: "RESUMED-再审" },
@@ -773,10 +784,6 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
         );
       }
     };
-    const bounceThenPassGates = [
-      gateRound("direct-notary-bounce", 1000, "continue", gateFindings),
-      gateRound("direct-notary-pass", 1020, "converged", []),
-    ] as const;
     const passThenBounceGates = [
       gateRound("direct-notary-pass-rev", 2000, "converged", []),
       gateRound("direct-notary-bounce-rev", 2020, "continue", reverseGateFindings),
@@ -864,7 +871,6 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
           details: accepted,
           toolCallId: "call-accept",
         });
-        await seedGateRounds(sessionFile, bounceThenPassGates);
         return { code: 0, timedOut: false, stderr: "", args: [...args] };
       },
     );
@@ -900,13 +906,11 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
     assert.deepEqual(result.terminal.submissions, [seedAccepted, rejected, accepted]);
     assert.ok(result.terminal.gate);
     assert.deepEqual(result.terminal.gate!.actualSeats, ["notary"]);
-    assert.equal(result.terminal.gate!.rounds.length, 2);
+    assert.equal(result.terminal.gate!.rounds.length, 1);
     assert.equal(result.terminal.gate!.rounds[0]!.dispatch.kind, "direct");
     assert.equal(result.terminal.gate!.rounds[0]!.dispatch.officer, "notary");
-    assert.equal(result.terminal.gate!.rounds[0]!.officer.status, "continue");
-    assert.deepEqual(result.terminal.gate!.rounds[0]!.officer.findings, [...gateFindings]);
-    assert.equal(result.terminal.gate!.rounds[1]!.officer.status, "converged");
-    assert.deepEqual(result.terminal.gate!.rounds[1]!.officer.findings, []);
+    assert.equal(result.terminal.gate!.rounds[0]!.officer.status, "converged");
+    assert.deepEqual(result.terminal.gate!.rounds[0]!.officer.findings, []);
 
     // 2 / 2b / 2c) Bare resume residual bounces must stay failure — plain bounce,
     // bound missing-isError decoy, and unbound isError:false decoy must not wash
@@ -1089,14 +1093,14 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       "BOUNCED-AFTER-ACCEPT-VISIBLE",
     );
     assert.ok(reversed.terminal!.gate);
-    assert.equal(reversed.terminal!.gate!.rounds.length, 2);
-    assert.equal(reversed.terminal!.gate!.rounds[0]!.officer.status, "converged");
-    assert.deepEqual(reversed.terminal!.gate!.rounds[0]!.officer.findings, []);
-    assert.equal(reversed.terminal!.gate!.rounds[1]!.officer.status, "continue");
-    assert.deepEqual(
-      reversed.terminal!.gate!.rounds[1]!.officer.findings,
-      [...reverseGateFindings],
-    );
+    // Two seeded volumes plus the live notary pass required before settlement.
+    const reverseRounds = reversed.terminal!.gate!.rounds;
+    assert.equal(reverseRounds.length, 3);
+    assert.ok(reverseRounds.some((round) =>
+      round.officer.status === "converged" && round.officer.findings.length === 0));
+    const bounced = reverseRounds.filter((round) => round.officer.status === "continue");
+    assert.equal(bounced.length, 1);
+    assert.deepEqual(bounced[0]!.officer.findings, [...reverseGateFindings]);
   });
 });
 
@@ -1157,10 +1161,10 @@ function countersignPathEnv(input: {
         const base = roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: scriptedCountersignSession({
+          piRunner: withTrueUnboundDiarist(scriptedCountersignSession({
             status: "converged",
             note: "署",
-          }),
+          })),
         });
         return {
           async executeTurn(request: RoleTurnRequest) {
@@ -1246,8 +1250,7 @@ test("public countersign path: 起居郎 typed handoff binds ticket; dossier vol
         project,
         runId: "01a0sign00-0000-7000-8000-000000000p02",
         onTurn: (req) => {
-          turnTicket =
-            req.activation.role === "countersign" ? req.activation.ticketNumber : undefined;
+          if (req.activation.role === "countersign") turnTicket = req.activation.ticketNumber;
         },
         runCourtDiaristStation: async (admitted) => {
           await bindAdmittedTicketNumber(admitted, 582);
@@ -1445,7 +1448,12 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     await writeFile(
       publicCliConfigPath(home),
       `${JSON.stringify({
-        seats: { diarist: { provider: "openai-codex", model: "gpt-5.6-sol", host: "grok-build" } },
+        seats: {
+          diarist: { provider: "openai-codex", model: "gpt-5.6-sol", host: "grok-build" },
+          notary: { provider: "test", model: "caller-seat", host: "pi" },
+          auditor: { provider: "test", model: "caller-seat", host: "pi" },
+          inspector: { provider: "test", model: "caller-seat", host: "pi" },
+        },
       })}\n`,
       "utf8",
     );
@@ -1456,7 +1464,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     const parentBase = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
-      piRunner: courtPipelinePiRunner(),
+      piRunner: withTrueUnboundDiarist(courtPipelinePiRunner()),
     });
     const parentHost = {
       async executeTurn(request: RoleTurnRequest) {
@@ -1517,7 +1525,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       },
     );
     assert.equal(result.exitCode, 0, stderr.join("") || stdout.join(""));
-    assert.deepEqual(parentRoles, ["countersign"], "parent adapter must not execute the court diarist child");
+    assert.deepEqual(parentRoles, ["countersign", "notary"], "parent adapter runs the submitted body and its reviewer, not the court diarist child");
     assert.deepEqual(childRoles, ["diarist", "diarist"], "child seat adapter must execute court diarist station");
     assert.deepEqual(diaristPrompts, [
       "裁：继续审票 #582 是否足以开工。",
@@ -1602,11 +1610,19 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     const unboundBase = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
-      piRunner: scriptedTerminatingToolSession({
-        role: "judge",
-        toolName: JUDGE_OUTPUT_TOOL_NAME,
-        details: { status: "converged" },
-      }),
+      piRunner: (args, options) => {
+        const role = argvFlagValue(args, "--ak-role");
+        if (role === "notary" || role === "auditor") {
+          return scriptedTerminatingToolSession({
+            role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
+            details: { status: "converged" },
+          })(args, options);
+        }
+        return scriptedTerminatingToolSession({
+          role: "judge", toolName: JUDGE_OUTPUT_TOOL_NAME,
+          details: { status: "converged" },
+        })(args, options);
+      },
     });
     const unbound = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "Decide without a ticket."],
       {
@@ -1617,7 +1633,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
         createRunId: () => unboundId,
         roleTurnHost: {
           async executeTurn(request: RoleTurnRequest) {
-            unboundRunDirectory = request.runDirectory;
+            if (request.activation.role === "judge") unboundRunDirectory = request.runDirectory;
             return unboundBase.executeTurn(request);
           },
         },
@@ -1652,15 +1668,19 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     const coderBase = roleTurnHostFromLegacyPiRunner({
       packageRoot,
       principalAuthority: piDurablePrincipalAuthority,
-      piRunner: scriptedTerminatingToolSession({
-        role: "coder",
-        toolName: CODER_OUTPUT_TOOL_NAME,
-        details: {
-          status: "completed",
-          report: "work-seat typed self-report",
-          ticketNumber: 582,
-        },
-      }),
+      piRunner: (args, options) => argvFlagValue(args, "--ak-role") === "inspector"
+        ? scriptedTerminatingToolSession({
+            role: "inspector", toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+            details: { status: "converged" },
+          })(args, options)
+        : scriptedTerminatingToolSession({
+            role: "coder", toolName: CODER_OUTPUT_TOOL_NAME,
+            details: {
+              status: "completed",
+              report: "work-seat typed self-report",
+              ticketNumber: 582,
+            },
+          })(args, options),
     });
     let coderAdmissionDirectory = "";
     const coder = await runAkRole(
@@ -1674,7 +1694,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
         createRunId: () => coderId,
         roleTurnHost: {
           async executeTurn(request: RoleTurnRequest) {
-            coderAdmissionDirectory = request.runDirectory;
+            if (request.activation.role === "coder") coderAdmissionDirectory = request.runDirectory;
             return coderBase.executeTurn(request);
           },
         },
@@ -2183,6 +2203,92 @@ test("bound Countersign refresh pauses on the diarist's own escalation", async (
   });
 });
 
+test("#1057 bound Countersign notary resume does not refresh remaining diarists", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    const parent = 200;
+    const childA = 201;
+    const childB = 202;
+    for (const n of [parent, childA, childB]) {
+      ensureTicketProvenanceVolume(n, project, home);
+    }
+    await installGhFixture(join(home, "bin"), {
+      issues: {
+        [parent]: { body: "parent body", comments: [] },
+        [childA]: { body: "child A body", comments: [] },
+        [childB]: { body: "child B body", comments: [] },
+      },
+    });
+    let diaristTurns = 0;
+    let notaryCalls = 0;
+    let countersignBodyTurns = 0;
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = argvFlagValue(args, "--ak-role");
+        if (role === "diarist") {
+          diaristTurns += 1;
+          const runDir = options.env.AK_ROLE_RUN_DIR ?? "";
+          const ticketDirMatch = /[\\/](\d+)[\\/]runs[\\/][^\\/]+@diarist$/.exec(runDir);
+          const boundTicket =
+            ticketDirMatch !== null ? Number(ticketDirMatch[1]) : undefined;
+          if (boundTicket !== undefined) {
+            return courtPipelinePiRunner(boundTicket)(args, options);
+          }
+          return courtPipelinePiRunner(parent, undefined, [parent, childA, childB])(
+            args,
+            options,
+          );
+        }
+        if (role === "notary") {
+          notaryCalls += 1;
+          return scriptedTerminatingToolSession({
+            role: "notary", toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details: { status: notaryCalls === 1 ? "escalate" : "converged" },
+          })(args, options);
+        }
+        countersignBodyTurns += 1;
+        return courtPipelinePiRunner(parent)(args, options);
+      },
+    });
+    const first = await runPublicInstructionSeat(
+      ["裁：合审父子票。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+        createRunId: () => "01a0sign00-0000-7000-8000-000000001057",
+      },
+      captureIo().io,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
+    );
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.terminal?.roleOutcome.role, "notary");
+    assert.equal(notaryCalls, 1);
+    assert.equal(countersignBodyTurns, 1);
+    const diaristTurnsAtEscalation = diaristTurns;
+    assert.ok(diaristTurnsAtEscalation >= 3, "identity + co-review refresh must complete first");
+    const resumed = await runAkRole(["resume", first.terminal!.runId!, "owner ruling"], {
+      home, packageRoot, cwd: project, io: captureIo().io,
+      roleTurnHost: host, hostAdapters: [adapter("pi", host)],
+    });
+    assert.equal(resumed.exitCode, 0);
+    assert.equal(notaryCalls, 2);
+    assert.equal(
+      diaristTurns,
+      diaristTurnsAtEscalation,
+      "resuming a notary child must not refresh remaining court diarists",
+    );
+    assert.equal(countersignBodyTurns, 1, "notary resume must not re-run Countersign body");
+    assert.equal(resumed.terminal?.roleOutcome.role, "countersign");
+  });
+});
+
 /**
  * #871 sole tracer: typed co-review set on the real countersign entry.
  * Parent {100,101,102} → explicit resume keeps set → public re-summons mints
@@ -2260,6 +2366,12 @@ test("public countersign path: #871 typed co-review set refresh, resume keep, re
             return courtPipelinePiRunner(parent)(args, options);
           }
           return courtPipelinePiRunner(null)(args, options);
+        }
+        if (role === "notary") {
+          return scriptedTerminatingToolSession({
+            role: "notary", toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details: { status: "converged" },
+          })(args, options);
         }
         countersignBodyTurns += 1;
         return courtPipelinePiRunner(parent)(args, options);

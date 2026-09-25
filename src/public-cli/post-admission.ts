@@ -1084,7 +1084,6 @@ export async function dispatchPostAdmissionTurn<
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
         || resolution.knownFailure !== undefined;
-
       settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
       if (settled !== undefined) {
         settled = await attachRecordedSubmissions(admitted, settled, courtScope) as T;

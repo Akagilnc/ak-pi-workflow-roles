@@ -1,5 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #478 Terminal gate projection — real public CLI entry (runAkRole).
  *
@@ -27,6 +27,9 @@ import test from "node:test";
 
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { renderResumeCommand } from "../../src/public-cli/run-lifecycle.ts";
@@ -118,7 +121,7 @@ function acceptedJudgeSessionLine(): string {
       role: "toolResult",
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       isError: false,
-      details: { judgeStatus: "converged" },
+      details: { status: "converged" },
     },
   })}\n`;
 }
@@ -134,7 +137,7 @@ function auditIncompleteSessionRows(callId: string, candidate: unknown): string 
             type: "toolCall",
             id: callId,
             name: JUDGE_OUTPUT_TOOL_NAME,
-            arguments: { judgeStatus: "converged" },
+            arguments: { status: "converged" },
           },
         ],
       },
@@ -223,6 +226,10 @@ async function runJudgePublic(input: {
   /** When set, seals via production submission ledger (accepted path). */
   sealedAcceptance?: { readonly details: unknown };
 }): Promise<{ terminal: TerminalResult; exitCode: number; stdout: string[]; stderr: string[] }> {
+  const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
+  let config = { seats: {} };
+  for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
+  await savePublicCliConfig(config, input.home);
   const { io, stdout, stderr } = captureIo();
   const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", input.project, "gate projection"],
     {
@@ -234,7 +241,14 @@ async function runJudgePublic(input: {
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
+            piRunner: async (args, options) => {
+        const role = args[args.indexOf("--ak-role") + 1];
+        if (role === "notary" || role === "auditor") {
+          return scriptedTerminatingToolSession({
+            role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
+            details: { status: "converged" },
+          })(args, options);
+        }
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         const runDir = join(sessionDir, "..");
         await mkdir(sessionDir, { recursive: true });
@@ -279,7 +293,7 @@ test("public CLI projects normal gate dispatch + officer findings", async () => 
       home,
       project,
       runId: "run-gate-normal",
-      sealedAcceptance: { details: { judgeStatus: "converged" } },
+      sealedAcceptance: { details: { status: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         await seedGatePair(sessionDir, {
@@ -292,17 +306,19 @@ test("public CLI projects normal gate dispatch + officer findings", async () => 
     assert.equal(exitCode, 0);
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.ok(terminal.gate !== undefined);
-    assertGateNotaryRound(terminal.gate!, reason);
-    // Typed reason field projects fixture bytes as written (not re-trimmed).
-    {
-      const dispatch = terminal.gate!.rounds[0]!.dispatch;
-      assert.equal(dispatch.kind, "historical_dispatch");
-      if (dispatch.kind === "historical_dispatch") {
-        assert.equal(dispatch.reason, reason);
-      }
+    // Seeded historical pair stays byte-exact. The public converged judge also
+    // runs its notary, so that direct round sits beside the seed.
+    const historical = terminal.gate!.rounds.filter((round) => round.dispatch.kind === "historical_dispatch");
+    assert.equal(historical.length, 1);
+    const seeded = historical[0]!;
+    assert.equal(seeded.dispatch.officer, "notary");
+    if (seeded.dispatch.kind === "historical_dispatch") {
+      assert.equal(seeded.dispatch.reason, reason);
     }
-    assert.equal(terminal.gate!.rounds[0]!.officer.findings.length, findings.length);
-    assert.deepEqual(terminal.gate!.rounds[0]!.officer.findings, [...findings]);
+    assert.deepEqual(seeded.officer.findings, [...findings]);
+    const live = terminal.gate!.rounds.filter((round) => round.dispatch.kind === "direct");
+    assert.equal(live.length, 1);
+    assert.equal(live[0]!.dispatch.officer, "notary");
   }, { prefix: "ak-gate-normal-" });
 });
 
@@ -315,15 +331,17 @@ test("public CLI shows seat reduction without reason as reason-absent", async ()
       home,
       project,
       runId: "run-gate-no-reason",
-      sealedAcceptance: { details: { judgeStatus: "converged" } },
+      sealedAcceptance: { details: { status: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         await seedDirectOfficer(sessionDir, "inspector");
       },
     });
     assert.ok(terminal.gate !== undefined);
-    assert.deepEqual(terminal.gate!.actualSeats, ["inspector"]);
-    const round = terminal.gate!.rounds[0]!;
+    assert.ok(terminal.gate!.actualSeats.includes("inspector"));
+    const round = terminal.gate!.rounds.find((item) =>
+      item.dispatch.kind === "direct" && item.dispatch.officer === "inspector")!;
+    assert.ok(round);
     assert.equal(round.dispatch.kind, "direct");
     assert.equal(round.dispatch.officer, "inspector");
     assert.equal(
@@ -335,7 +353,7 @@ test("public CLI shows seat reduction without reason as reason-absent", async ()
   }, { prefix: "ak-gate-no-reason-" });
 });
 
-test("public CLI omits gate when no auditor-roles gate ran", async () => {
+test("public CLI converged judge with an empty nest still shows the audit it ran", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -344,18 +362,18 @@ test("public CLI omits gate when no auditor-roles gate ran", async () => {
       home,
       project,
       runId: "run-gate-no-gate",
-      sealedAcceptance: { details: { judgeStatus: "converged" } },
+      sealedAcceptance: { details: { status: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
       },
     });
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(terminal, "gate"),
-      false,
-      "no-gate run must keep gate omitted (zero change)",
-    );
-    assert.equal(terminal.gate, undefined);
+    assert.ok(terminal.gate);
+    assert.deepEqual(terminal.gate.actualSeats, ["notary"]);
+    assert.equal(terminal.gate.rounds.length, 1);
+    assert.equal(terminal.gate.rounds[0]!.dispatch.kind, "direct");
+    assert.equal(terminal.gate.rounds[0]!.dispatch.officer, "notary");
+    assert.equal(terminal.gate.rounds[0]!.officer.status, "converged");
   }, { prefix: "ak-gate-no-gate-" });
 });
 
@@ -370,7 +388,7 @@ test("public CLI keeps accepted Terminal when auditor-roles holds lawful provinc
       home,
       project,
       runId: "run-gate-province-pass",
-      sealedAcceptance: { details: { judgeStatus: "converged" } },
+      sealedAcceptance: { details: { status: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         const auditorDir = join(sessionDir, "auditor-roles");
@@ -390,7 +408,11 @@ test("public CLI keeps accepted Terminal when auditor-roles holds lawful provinc
     });
     assert.equal(exitCode, 0);
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(terminal.gate, undefined);
+    const historical = terminal.gate?.rounds.filter((round) => round.dispatch.kind === "historical_dispatch") ?? [];
+    assert.equal(historical.length, 0, "province pass opens no paired round");
+    assert.equal(terminal.gate?.rounds.length, 1);
+    assert.equal(terminal.gate?.rounds[0]?.dispatch.kind, "direct");
+    assert.equal(terminal.gate?.rounds[0]?.dispatch.officer, "notary");
   }, { prefix: "ak-gate-province-pass-" });
 });
 
@@ -403,7 +425,7 @@ test("public CLI does not wash damaged auditor-roles into no-gate", async () => 
       home,
       project,
       runId: "run-gate-damaged",
-      sealedAcceptance: { details: { judgeStatus: "converged" } },
+      sealedAcceptance: { details: { status: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         const auditorDir = join(sessionDir, "auditor-roles");

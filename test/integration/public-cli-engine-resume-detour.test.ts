@@ -22,9 +22,10 @@ import { join } from "node:path";
 import test from "node:test";
 
 import {
-  createMinimalHost,
+  createMinimalHost as rawMinimalHost,
   withNestedTrueUnboundDiarist,
 } from "../helpers/role-turn-host-fixture.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { captureIo, seedGitProject } from "../helpers/failure-settlement-kit.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
@@ -48,13 +49,14 @@ const ENGINE = "kimi";
 
 type CoreSeat = "judge" | "coder" | "fixer" | "reviewer" | "merger";
 type Seat = CoreSeat | "countersign" | "gleaner-left";
+const createMinimalHost: typeof rawMinimalHost = (run) => withPassingReviewHost(rawMinimalHost(run));
 
 /** Seat → terminating tool + accepted details (single table, no nested ternaries). */
 const SEAT_TERMINAL: Record<
   Seat,
   { readonly toolName: string; readonly details: Record<string, unknown> }
 > = {
-  judge: { toolName: JUDGE_OUTPUT_TOOL_NAME, details: { judgeStatus: "converged" } },
+  judge: { toolName: JUDGE_OUTPUT_TOOL_NAME, details: { status: "converged" } },
   coder: { toolName: CODER_OUTPUT_TOOL_NAME, details: { status: "completed", report: "engine proof" } },
   fixer: {
     toolName: FIXER_OUTPUT_TOOL_NAME,
@@ -308,6 +310,7 @@ test("engine stays effective across the auto-resume loop (initial + auto payload
 
 test("explicit ak-role resume re-projects engine onto the resumed typed request for all resumable seats", async () => {
   await withHermeticHome({ prefix: "ak-engine-resume-" }, async ({ home }) => {
+    await configurePassingReviewSeats(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -401,6 +404,7 @@ test("explicit ak-role resume re-projects engine onto the resumed typed request 
 
 test("#883 explicit resume re-projects engineModel from the live seat table", async () => {
   await withHermeticHome({ prefix: "ak-engine-model-resume-" }, async ({ home }) => {
+    await configurePassingReviewSeats(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -488,6 +492,7 @@ test("#883 explicit resume re-projects engineModel from the live seat table", as
 
 test("explicit resume clears invocation.engine when the live seat has no engine", async () => {
   await withHermeticHome({ prefix: "ak-engine-unset-resume-" }, async ({ home }) => {
+    await configurePassingReviewSeats(home);
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);

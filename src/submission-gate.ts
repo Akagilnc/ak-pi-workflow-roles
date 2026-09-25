@@ -3,18 +3,18 @@
  * Owns officer-pointer book + host abort/non-pass faces + review queue loop.
  * Role modules only project via projectGatekeeperRun / runGatekeeper — no book, no catch.
  *
- * Queue guarantee only (#753 / #756 / #750):
- *   parent submit → summon officer → read conclusion field
- *   converged → accept end
- *   continue → raw officer receipt as a nonterminal result; parent may resubmit
- *   escalate → audit_escalation terminal, without binding a correctable parent submission
+ * Public continuation after submission settlement (#753 / #756 / #750):
+ *   accepted submission → summon officer → read conclusion field
+ *   converged → continue remaining review and settle
+ *   continue → raw officer receipt; caller resumes the submitted seat for revision
+ *   escalate → return the officer run so the caller can resume that officer directly
  *   unrecognized status → resume officer with plain-language re-ask (no round cap)
  *   transport / no_receipt → present honestly
  * Four pairs: countersign↔notary, judge↔auditor, worker↔inspector, secretariat↔countersign (#969).
  * Code does not judge content, map next-step for parent, or label unreadable/unusable.
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { bookDirectOfficerRunPointer } from "./archivist-record-entry.ts";
+import { bookDirectOfficerRunPointer } from "./archivist-record-pointer.ts";
 import type { HostContext, RoleTurnHost } from "./host-contracts.ts";
 import {
   GatekeeperDecisionError,
@@ -27,7 +27,31 @@ import {
   type GateOfficerSummon,
 } from "./gatekeeper-role.ts";
 import type { PublicSummonResult } from "./public-role-summons.ts";
+import type { TerminalResult } from "./public-cli/terminal.ts";
 
+/** Queue word of the latest this-terminal payload. History does not outrank it. */
+export function latestQueueStatus(terminal: TerminalResult | undefined): string | undefined {
+  const outcome = terminal?.roleOutcome;
+  if (outcome === undefined) return undefined;
+  if (outcome.kind === "audit_escalation") return "escalate";
+  if (outcome.kind !== "accepted") return undefined;
+  const latest = outcome.payloads?.[outcome.payloads.length - 1];
+  if (latest !== null && typeof latest === "object" && !Array.isArray(latest)) {
+    const status = (latest as { status?: unknown }).status;
+    if (typeof status === "string" && status.trim() !== "") return status;
+  }
+  return typeof outcome.status === "string" && outcome.status.trim() !== ""
+    ? outcome.status
+    : undefined;
+}
+
+export function latestQueuePayload(terminal: TerminalResult | undefined): unknown {
+  const outcome = terminal?.roleOutcome;
+  if (outcome === undefined) return undefined;
+  if (outcome.kind !== "accepted" && outcome.kind !== "audit_escalation") return undefined;
+  const payloads = outcome.payloads ?? [];
+  return payloads.length === 0 ? undefined : payloads[payloads.length - 1];
+}
 import { sessionFileFromPublicSummon } from "./session-assistant-usage.ts";
 
 /**
@@ -38,6 +62,7 @@ export function createDefaultGateOfficerSummon(options: {
   readonly cwd: string;
   readonly home?: string;
   readonly packageRoot?: string;
+  readonly io?: import("./public-cli/cli-io.ts").CliIo;
   readonly roleTurnHost?: RoleTurnHost;
   /** Composition-root adapters for nested court stations (tests / #969). */
   readonly hostAdapters?: readonly import("./public-cli/role-turn-host-resolution.ts").NamedRoleTurnHostAdapter[];
@@ -54,6 +79,7 @@ export function createDefaultGateOfficerSummon(options: {
       ...(submission === undefined ? {} : { submission }),
       ...(options.home === undefined ? {} : { home: options.home }),
       ...(options.packageRoot === undefined ? {} : { packageRoot: options.packageRoot }),
+      ...(options.io === undefined ? {} : { io: options.io }),
       ...(options.roleTurnHost === undefined ? {} : { roleTurnHost: options.roleTurnHost }),
       ...(options.hostAdapters === undefined ? {} : { hostAdapters: options.hostAdapters }),
       ...(options.createRunId === undefined ? {} : { createRunId: options.createRunId }),
@@ -103,10 +129,11 @@ function bookDirectOfficerPointer(
  * public terminal without a second authority.
  */
 export type SubmissionGateOutcome = {
-  readonly status: "converged" | "continue";
+  readonly status: "converged" | "continue" | "escalate";
   readonly officer: GateOfficer;
   readonly receipt: unknown;
   readonly runId?: string;
+  readonly runDirectory?: string;
 };
 
 /**
@@ -189,10 +216,19 @@ export async function requireSubmissionGate(options: {
       });
       options.hostActions.failInfrastructure(failure, options.context, options.toolCallId);
     }
-    // Escalation ends the parent without a correctable tool error or resubmission.
-    // Each caller projects the existing audit_escalation terminal.
     if (gatekeeper.status === "escalate") {
-      throw new GatekeeperDecisionError(gatekeeper);
+      return {
+        status: "escalate",
+        officer: projected.officer,
+        receipt: gatekeeper.receipt,
+        ...(typeof gatekeeper.runId === "string" && gatekeeper.runId.trim() !== ""
+          ? { runId: gatekeeper.runId }
+          : {}),
+        ...(typeof projected.summoned?.runDirectory === "string"
+          && projected.summoned.runDirectory.trim() !== ""
+          ? { runDirectory: projected.summoned.runDirectory }
+          : {}),
+      };
     }
     // no_receipt: keep the lifecycle failure channel; continue is an ordinary
     // nonterminal tool result above, not an exception or correctable rejection.

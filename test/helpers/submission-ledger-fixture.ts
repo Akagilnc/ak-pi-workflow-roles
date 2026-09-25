@@ -4,7 +4,6 @@
  */
 import { join } from "node:path";
 import { Type } from "typebox";
-import { buildAuditEscalationResult, isAuditEscalationProjection } from "../../src/audit-escalation.ts";
 import type { HostContext, HostToolDefinition, RoleHost } from "../../src/host-contracts.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
@@ -229,43 +228,5 @@ export async function recordNonSealedSubmissionForSpawn(input: {
     ...(home === undefined ? {} : { home }),
     ...(input.toolCallId === undefined ? {} : { toolCallId: input.toolCallId }),
     ...(courtAttemptId === undefined ? {} : { courtAttemptId }),
-  });
-}
-
-/** Record a live audit-escalation outcome through the production ledger host. */
-export async function recordAuditEscalationSubmission(input: {
-  readonly cwd: string;
-  readonly runId: string;
-  readonly role: TerminalRoleName;
-  readonly details: unknown;
-  readonly home?: string;
-  readonly toolCallId?: string;
-  readonly runDirectory?: string;
-}): Promise<void> {
-  // Ensure details are live-registry projections so the ledger recognises them.
-  let details = input.details;
-  if (!isAuditEscalationProjection(details)) {
-    const record = details as { conflicts?: unknown; decisionGate?: unknown; auditDecisionGate?: unknown };
-    details = buildAuditEscalationResult(
-      {
-        status: "escalate",
-        ...(Object.hasOwn(record, "conflicts") ? { conflicts: record.conflicts } : {}),
-        ...(Object.hasOwn(record, "decisionGate")
-          ? { decisionGate: record.decisionGate }
-          : Object.hasOwn(record, "auditDecisionGate")
-            ? { decisionGate: record.auditDecisionGate }
-            : {}),
-      },
-      details,
-    );
-  }
-  await driveLedgerProducer({
-    cwd: input.cwd,
-    runId: input.runId,
-    role: input.role,
-    details,
-    toolCallId: input.toolCallId ?? "escalate-1",
-    ...(input.home === undefined ? {} : { home: input.home }),
-    ...(input.runDirectory === undefined ? {} : { runDirectory: input.runDirectory }),
   });
 }

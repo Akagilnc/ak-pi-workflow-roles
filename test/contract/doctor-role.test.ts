@@ -36,81 +36,33 @@ function context(id: string, abort = () => {}, candidates: unknown[] = []): Host
 }
 const refusal = { status: "refused" as const, reason: "Session bytes are incomplete.", missingEvidence: [{ need: "session header", targetKeys: ["case"] }] };
 
-test("Doctor activation exposes only paged session evidence and output tools", async () => { const h = harness(); const soul = crypto.randomUUID(); const runtime = createDoctorRoleRuntime(h.host, { loadSoul: async () => soul, loadCase: async () => patient, auditCompliance: async () => ({ status: "converged" }) }, { failInfrastructure(error) { throw error; } }); await runtime.activate(); assert.deepEqual(h.active(), [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.deepEqual([...h.tools.keys()], [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.equal(typeof h.tools.get(DOCTOR_EVIDENCE_TOOL_NAME)?.parameters, "object"); assert.equal(typeof h.tools.get(DOCTOR_OUTPUT_TOOL_NAME)?.parameters, "object"); const prompt = await h.beforeAgentStartResult(); assert.ok(prompt && typeof prompt === "object" && "systemPrompt" in prompt); assert.ok(typeof prompt.systemPrompt === "string"); assert.equal(prompt.systemPrompt.includes(soul), true); });
+test("Doctor activation exposes only paged session evidence and output tools", async () => { const h = harness(); const soul = crypto.randomUUID(); const runtime = createDoctorRoleRuntime(h.host, { loadSoul: async () => soul, loadCase: async () => patient }, { failInfrastructure(error) { throw error; } }); await runtime.activate(); assert.deepEqual(h.active(), [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.deepEqual([...h.tools.keys()], [DOCTOR_EVIDENCE_TOOL_NAME, DOCTOR_OUTPUT_TOOL_NAME]); assert.equal(typeof h.tools.get(DOCTOR_EVIDENCE_TOOL_NAME)?.parameters, "object"); assert.equal(typeof h.tools.get(DOCTOR_OUTPUT_TOOL_NAME)?.parameters, "object"); const prompt = await h.beforeAgentStartResult(); assert.ok(prompt && typeof prompt === "object" && "systemPrompt" in prompt); assert.ok(typeof prompt.systemPrompt === "string"); assert.equal(prompt.systemPrompt.includes(soul), true); });
 
-test("Doctor output audits testimony, records runtime cost beside it, and keeps failure behavior", async () => {
-  let decision: "converged" | "continue" | "failure" | "no-receipt" = "continue";
+test("Doctor output records testimony and runtime cost before post-submission audit", async () => {
   let aborts = 0;
-  let auditCalls = 0;
-  const auditedSubmissions: unknown[] = [];
-  // #775: structured violations must reach the parent seat with field content intact.
-  const structuredViolation = {
-    article: "method-proof",
-    reason: "missing method proof",
-    evidence: "case catalog lists no method bite",
-  };
-  // #836: the auditor's own no-receipt lifecycle facts — a machine fact about
-  // the audit leg, never merged into the accepted testimony.
-  const auditNoReceiptFacts = {
-    status: "no-receipt" as const,
-    terminalToolCalled: false,
-    rejectedReceipts: [],
-    deliveryTurns: 2 as const,
-    sessionCompletion: "settled-without-accepted-receipt" as const,
-    runPointer: "test-run",
-    attemptPointer: "test-attempt",
-    acceptedReceipt: false as const,
-  };
   const h = harness();
   const runtime = createDoctorRoleRuntime(h.host, {
     loadSoul: async () => "DOCTOR LAW",
     loadCase: async () => patient,
-    async auditCompliance(options) {
-      auditCalls += 1;
-      assert.ok(options.context);
-      auditedSubmissions.push(options.submission);
-      if (decision === "failure") throw new Error("provider unavailable");
-      if (decision === "no-receipt") return auditNoReceiptFacts;
-      return decision === "continue"
-        ? { status: "continue", violations: [structuredViolation], receipt: { status: "continue", violations: [structuredViolation], explanation: "full auditor answer" } }
-        : { status: "converged" };
-    },
-  }, {
-    failInfrastructure(error, ctx) { ctx.abort(); throw error; },
-  });
+  }, { failInfrastructure(error, ctx) { ctx.abort(); throw error; } });
   await runtime.activate();
   const output = h.tools.get(DOCTOR_OUTPUT_TOOL_NAME);
   assert.ok(output);
-  const continued = await output.execute("doctor", refusal, undefined, undefined, context("doctor"));
-  assert.equal(continued.terminate, false);
-  assert.deepEqual(continued.details, refusal);
-  decision = "converged";
-  assert.equal((await output.execute("doctor", refusal, undefined, undefined, context("doctor"))).terminate, true);
-  const testimony = { status: "completed" as const, case: patient.identity, findings: [] };
   const candidates: unknown[] = [];
-  const accepted = await output.execute("doctor", testimony, undefined, undefined, context("doctor", () => {}, candidates));
-  // #836: the accepted payload is the role's testimony, unmerged — runtime
-  // cost never gets injected into it.
-  assert.deepEqual(accepted.details, testimony);
-  // Runtime cost is still a fact — recorded beside the testimony in the
-  // candidate audit entry, not folded into the accepted payload.
-  assert.deepEqual(candidates, [{ version: 1, testimony, cost: patient.cost, readRecord: [], patientIdentity: patient.identity }]);
-  assert.deepEqual(auditedSubmissions, [refusal, refusal, testimony]);
-  assert.equal(auditCalls, 3);
-  decision = "no-receipt";
-  const noReceiptCandidates: unknown[] = [];
-  const noReceiptAccepted = await output.execute("doctor", testimony, undefined, undefined, context("doctor", () => {}, noReceiptCandidates));
-  // #836: audit-no-receipt is a fact about the audit leg, not the role's
-  // testimony — the accepted payload still equals testimony unmerged.
-  assert.deepEqual(noReceiptAccepted.details, testimony);
-  assert.equal(noReceiptAccepted.terminate, true);
-  // The submission candidate is recorded pre-audit as always; the audit-leg
-  // fact rides in its own second candidate entry alongside the same testimony.
-  assert.deepEqual(noReceiptCandidates, [
-    { version: 1, testimony, cost: patient.cost, readRecord: [], patientIdentity: patient.identity },
-    { version: 1, testimony, cost: patient.cost, auditNoReceipt: auditNoReceiptFacts, readRecord: [], patientIdentity: patient.identity },
-  ]);
-  decision = "failure";
-  await assert.rejects(output.execute("doctor", refusal, undefined, undefined, context("doctor", () => { aborts += 1; })), /provider unavailable/);
-  assert.equal(aborts, 1);
+  const result = await output.execute("doctor", refusal, undefined, undefined,
+    context("doctor", () => { aborts++; }, candidates));
+  assert.equal(result.terminate, true);
+  assert.deepEqual(result.details, refusal);
+  assert.deepEqual(result.content, []);
+  assert.deepEqual(candidates, [{
+    version: 1, testimony: refusal, cost: patient.cost,
+    readRecord: [], patientIdentity: patient.identity,
+  }]);
+  assert.equal(aborts, 0);
+
+  const testimony = { status: "completed" as const, case: patient.identity, findings: [] };
+  const completed = await output.execute("doctor-completed", testimony, undefined, undefined,
+    context("doctor-completed"));
+  assert.equal(completed.terminate, true);
+  assert.deepEqual(completed.details, testimony);
 });

@@ -16,6 +16,7 @@ import type {
 } from "../../src/host-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 
 /**
  * #517 §5(c) acceptance: the post-admission lifecycle is host-neutral. A faux
@@ -25,6 +26,7 @@ import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts"
  */
 test("acceptance c: host replacement with faux RoleTurnHost through composition root (no Pi dependency)", async () => {
   return await withTempRoot("ak-faux-host-test-", async (home) => {
+    await configurePassingReviewSeats(home);
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     execFileSync("git", ["init", "-b", "main"], { cwd: project });
@@ -58,7 +60,7 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
           runDirectory: request.runDirectory,
           home: request.home,
           role: "judge",
-          details: { judgeStatus: "converged", note: "faux host settled" },
+          details: { status: "converged", note: "faux host settled" },
         });
         return {
           code: 0,
@@ -81,7 +83,7 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
         home,
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
-        roleTurnHost: fauxHost,
+        roleTurnHost: withPassingReviewHost(fauxHost),
         io,
       },
     );
@@ -120,7 +122,7 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
     // #836: the published artifact carries the role's own original payload —
     // not a runtime-invented status.
     assert.equal(
-      (artifactBody.outcome?.payloads?.at(-1) as { judgeStatus?: string } | undefined)?.judgeStatus,
+      (artifactBody.outcome?.payloads?.at(-1) as { status?: string } | undefined)?.status,
       "converged",
     );
     });

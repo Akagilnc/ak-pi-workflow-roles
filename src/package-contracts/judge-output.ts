@@ -27,20 +27,3 @@ export type JudgeVerdict =
     note?: string;
     evidence?: unknown;
   };
-
-export function validateAcceptedJudgeDetails(verdict: unknown): JudgeVerdict {
-  if (verdict === null || typeof verdict !== "object" || Array.isArray(verdict)) throw new Error("Judge verdict has no execution discriminator");
-  let status: unknown;
-  try {
-    status = (verdict as Record<string, unknown>).status;
-  } catch {
-    throw new Error("Judge verdict has no execution discriminator");
-  }
-  if (typeof status !== "string") {
-    throw new Error("Judge verdict has no execution discriminator");
-  }
-  if (REVIEW_QUEUE_STATUSES.has(status)) {
-    return verdict as JudgeVerdict;
-  }
-  throw new Error("Judge verdict has no execution discriminator");
-}

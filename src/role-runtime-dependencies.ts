@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { createGhCollectorGitHubTransport } from "./collector-github.ts";
-import { createPiDoctorAuditor } from "./doctor-auditor.ts";
 import { loadDoctorCase } from "./doctor-evidence.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "./navigator-attendance.ts";
 import { loadNavigatorWorkContext } from "./navigator-work-context.ts";
@@ -43,7 +42,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
   // import.meta.url — headless/acp production-host bundles live under dist/*/
   // and would otherwise look for dist/resources/ (#962).
   const collectorHandbookSeedPath = join(packageRoot, "resources/collector-bot-handbook.md");
-  const doctorAuditor = createPiDoctorAuditor();
   const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   return {
     packageRoot,
@@ -56,8 +54,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     loadDoctorCase,
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
-    // #590: doctor compliance still on disposeCompliance path; judge→auditor is gate queue (#756).
-    auditDoctorCompliance: (options) => doctorAuditor(options),
     loadNavigatorWorkContext: (options) => loadNavigatorWorkContext({
       context: options.context,
       role: options.role,

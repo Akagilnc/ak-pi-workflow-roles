@@ -174,16 +174,18 @@ function roleOutcomeFromRows(
     (row) => row.kind === "accepted" || row.kind === "audit-escalation",
   );
   if (terminal.length === 0) return undefined;
-  // Role-result block is the full recorded sequence for this seat, not a sole pick.
+  // Full sequence stays on payloads. The queue kind follows the latest terminal
+  // row only — an earlier escalation must not outrank a later acceptance or
+  // keep that earlier receipt (#1057).
   const payloads = mine.map((row) => row.accepted);
-  if (terminal.some((row) => row.kind === "audit-escalation")) {
-    const audited = terminal.slice().reverse().find((row) => row.kind === "audit-escalation" && Object.hasOwn(row, "auditReceipt"));
+  const latest = terminal[terminal.length - 1]!;
+  if (latest.kind === "audit-escalation") {
     return {
       kind: "audit_escalation", role, status: "audit_escalation", payloads,
-      ...(audited === undefined ? {} : { decisiveFacts: {
-        auditEscalationReceipt: audited.auditReceipt,
-        ...(Object.hasOwn(audited, "auditOfficer") ? { auditEscalationOfficer: audited.auditOfficer } : {}),
-      } }),
+      ...(Object.hasOwn(latest, "auditReceipt") ? { decisiveFacts: {
+        auditEscalationReceipt: latest.auditReceipt,
+        ...(Object.hasOwn(latest, "auditOfficer") ? { auditEscalationOfficer: latest.auditOfficer } : {}),
+      } } : {}),
     };
   }
   return { kind: "accepted", role, payloads };
@@ -914,7 +916,7 @@ function sessionReadFailure(
  * Read the exact bound Pi session file principal.
  * Does not scan the session directory for "latest" — resume identity is the file.
  */
-async function readBoundSessionEntries(
+export async function readBoundSessionEntries(
   sessionFile: string,
 ): Promise<SessionEntry[]> {
   const text = await readFile(sessionFile, "utf8");
@@ -1847,6 +1849,8 @@ function snapshotAuditDetails(details: Record<string, unknown>): Record<string, 
  * terminal identity; the retained response must be this seat's real escalate
  * decision and its projected audit-owned fields must agree with it.
  */
+// Historical pre-#1057 session artifacts may still contain this old projection;
+// no current submission path writes it, but resume/settlement must read it.
 function boundAuditEscalationForResult(
   entries: readonly SessionEntry[],
   resultIndex: number,
@@ -3087,6 +3091,26 @@ async function applySecretariatCountersignTerminal(
   }
 
   return settled;
+}
+
+/**
+ * After the audit gate returns, attach gate rounds and the secretariat officer
+ * fact onto the terminal this turn already settled. Does not publish again —
+ * a second publish would append another attempt-history row for the same attempt.
+ */
+export async function attachPostAuditProjection(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  terminal: TerminalResult,
+): Promise<TerminalResult> {
+  const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
+  const gate = await extractGateFactFromSessionDirectory(sessionDirectory, {
+    runDirectory: admitted.runDirectory,
+    parentSessionFile: sessionFile,
+  });
+  const withGate = gate === undefined ? terminal : { ...terminal, gate };
+  if (admitted.role !== "secretariat") return withGate;
+  return applySecretariatCountersignTerminal(admitted, authority, withGate);
 }
 
 /** One failed attempt to place a durable failure artifact (path is private layout). */

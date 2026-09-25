@@ -3,6 +3,7 @@ import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   roleTurnHostFromStructuredOutputRounds,
+  scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
@@ -28,6 +29,7 @@ import { execFileSync } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { CODER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
@@ -74,7 +76,7 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-test("public coder reasks only an unreadable status and accepts an open-shaped other field", async () => {
+test("public coder accepts an unreadable status before routing it back for re-submission", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -105,7 +107,7 @@ test("public coder reasks only an unreadable status and accepts an open-shaped o
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["planned"]);
     const submissions = await readRecordedSubmissionRows(project, "run-cli-coder-status-reask", home);
     assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
-      { kind: "correctable-rejection", accepted: unreadable },
+      { kind: "accepted", accepted: unreadable },
       { kind: "accepted", accepted: corrected },
     ]);
   });
@@ -299,11 +301,21 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    await runAkRole(["config", "set", "inspector", "test/caller-seat:high"], {
+      packageRoot, home, io: captureIo().io,
+    });
+    const inspectorHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot, principalAuthority: piDurablePrincipalAuthority,
+      piRunner: scriptedTerminatingToolSession({
+        role: "inspector", toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+        details: { status: "converged" },
+      }),
+    });
     const receipt = {
       status: "completed" as const,
       report: "Alternate host sealed through production ledger producer.",
     };
-    const { io, stdout } = captureIo();
+    const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(["coder", "--model", "test/caller-seat:high", "--project", project, "Finish without a Pi session leaf."],
       {
         packageRoot,
@@ -312,6 +324,7 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
         createRunId: () => "run-coder-alternate-host",
         io,
         roleTurnHost: createMinimalHost(async (request) => {
+          if (request.activation.role === "inspector") return inspectorHost.executeTurn(request);
           const { sessionDirectory, sessionFile } =
             piDurablePrincipalAuthority.decode(request.principal);
           await mkdir(sessionDirectory, { recursive: true });
@@ -333,11 +346,49 @@ test("alternate host seals accepted Terminal without Pi acceptance leaf", async 
         }),
       },
     );
-    assert.equal(result.exitCode, 0, stdout.join("") || "alternate host failed");
+    assert.equal(result.exitCode, 0, stdout.join("") || stderr.join("") || "alternate host failed");
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "accepted");
     assert.equal(result.terminal!.roleOutcome.role, "coder");
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["completed"]);
+  });
+});
+
+test("Coder submission remains recorded when the later Inspector transport fails", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await runAkRole(["config", "set", "inspector", "test/caller-seat:high"], {
+      packageRoot, home, io: captureIo().io,
+    });
+    const receipt = { status: "completed" as const, report: "submitted before review" };
+    const runId = "run-coder-inspector-transport-failure";
+    const { io } = captureIo();
+    const result = await runAkRole(
+      ["coder", "--model", "test/caller-seat:high", "--project", project, "Complete the work."],
+      {
+        packageRoot, home, cwd: project, createRunId: () => runId, io,
+        roleTurnHost: createMinimalHost(async (request) => {
+          if (request.activation.role === "inspector") {
+            const rows = await readRecordedSubmissionRows(project, runId, home);
+            assert.equal(rows.at(-1)?.kind, "accepted", "the Coder tool has finished before Inspector dispatch");
+            return { code: 1, stderr: "provider unavailable", timedOut: false };
+          }
+          const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+          await mkdir(sessionDirectory, { recursive: true });
+          await writeFile(sessionFile, "", "utf8");
+          await sealAcceptedSubmission({
+            cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
+            role: "coder", details: receipt, toolCallId: "coder-finished",
+            ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+          });
+          return { code: 0, stderr: "", timedOut: false };
+        }),
+      },
+    );
+    assert.equal(result.exitCode, 1);
+    assert.equal((await readRecordedSubmissionRows(project, runId, home)).at(-1)?.kind, "accepted");
   });
 });
 
@@ -493,6 +544,9 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    await runAkRole(["config", "set", "inspector", "test/caller-seat:high"], {
+      packageRoot, home, io: captureIo().io,
+    });
     const runId = "run-cli-coder-resume-plan";
     const instruction = "Propose the first implementation plan for resume.";
     let staleUnboundFile: string | undefined;
@@ -510,7 +564,13 @@ test("ak-role resume continues a relocated coder gate despite its stale session 
           roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
+            piRunner: async (args, options) => {
+            if (args[args.indexOf("--ak-role") + 1] === "inspector") {
+              return scriptedTerminatingToolSession({
+                role: "inspector", toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+                details: { status: "converged" },
+              })(args, options);
+            }
             const sessionDir = args[args.indexOf("--session-dir") + 1]!;
             await mkdir(sessionDir, { recursive: true });
             const sessionFile = join(sessionDir, "session.jsonl");

@@ -143,7 +143,7 @@ test("#959 durable session entry flush failure is infrastructure not accepted", 
   });
 });
 
-test("#959 durable flush failure outranks correctable rejection retry", async () => {
+test("#959 durable flush failure outranks completed Doctor submission", async () => {
   await withTempEnvelopeHome("doctor", async ({ home, runDirectory, sessionDir, sessionFile, socketPath }) => {
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
@@ -169,14 +169,7 @@ test("#959 durable flush failure outranks correctable rejection retry", async ()
         runDirectory,
         stationChild: true,
       },
-      dependencies: {
-        ...base,
-        // Doctor path: appendCandidate (package durable) then GatekeeperDecisionError bounce.
-        auditDoctorCompliance: async () => ({
-          status: "continue" as const,
-          violations: [{ article: "method-proof", reason: "missing proof" }],
-        }),
-      },
+      dependencies: base,
       socketPath,
       sessionFile,
     });

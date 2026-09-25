@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { readableGateItem } from "./readable-gate-item.ts";
 import {
   ExplicitInternalActivationError,
 
@@ -110,8 +109,7 @@ import {
 } from "./navigator-invocation-identity.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
 import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
-import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleActivationFlags, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
-import { isAuditEscalationProjection } from "./audit-escalation.ts";
+import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleActivationFlags, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
 import {
   createJudgeRoleRuntime,
 } from "./judge-role.ts";
@@ -346,8 +344,6 @@ export { fixerOutputSchema, validateFixerOutput } from "./package-contracts/fixe
 export type { FixerBlocker, FixerClassResult, FixerPhase, FixerTestEvidence } from "./package-contracts/fixer-output.ts";
 export { fixerPrerequisiteSchema, fixerPrerequisitesSchema, parseFixerPrerequisites, validateFixerPrerequisites } from "./package-contracts/fixer-packet.ts";
 export type { FixerInvocationInput, FixerPrerequisite } from "./package-contracts/fixer-packet.ts";
-export { AUDIT_ESCALATION_KIND, buildAuditEscalationResult, disposeComplianceDecision, isAuditEscalationResult, projectAuditEscalation } from "./audit-escalation.ts";
-export type { AuditEscalationResult, AuditEscalationToolResult, ComplianceDecisionHandlers } from "./audit-escalation.ts";
 export {
   AUDITOR_SOUL_ROLES,
   AK_ROLE_AUDITOR_SUBJECT_ENV,
@@ -460,8 +456,8 @@ export type RoleRuntimeDependencies = {
   /**
    * Composition-root adapter table for nested gate officer summons (#969).
    * Production leaves unset (default pi + packaged externals). Tests inject
-   * faux nested hosts so prepareRoleEnvelope.requireSubmissionGate is bitten
-   * without reimplementing the envelope summon closure.
+   * faux nested hosts so the public entry's reviewer summons use the same
+   * host resolution as production.
    */
   hostAdapters?: readonly import("./public-cli/role-turn-host-resolution.ts").NamedRoleTurnHostAdapter[];
   /** Non-identity opening materials delivered in the ordinary role brief. */
@@ -476,7 +472,6 @@ export type RoleRuntimeDependencies = {
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerInput?(path: string): Promise<unknown>;
-  auditDoctorCompliance?(options: { context: HostContext; signal?: AbortSignal; submission: unknown }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
@@ -550,11 +545,6 @@ export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, e
   const details = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
     ? event.details as Record<string, unknown>
     : {};
-  // Live Navigator consumes only the audit-owned projection; persisted/replayed
-  // records are re-authenticated by settlement against retained audit evidence.
-  if (isAuditEscalationProjection(event.details)) {
-    return { kind: "human_decision", role, phase, status: "audit_escalation" };
-  }
   const status = typeof details.status === "string"
     ? details.status
     : receiptStatusFromRegistry(details);
@@ -597,7 +587,7 @@ type FiledOfficerBeforeAccept = (input: {
  * Shared registration envelope for filed officers (ADR 0018 / #572):
  * activate, tool register, before_agent_start prompt, inventory check.
  * Role module keeps label/soul/spec shape only; sole-final barrier is ledger-owned.
- * Optional beforeAccept is the sole extension seam (e.g. countersign Notary gate).
+ * Optional beforeAccept projects local submission facts before the tool returns.
  */
 function createFiledOfficerRuntime(
   roleHost: RoleHost,
@@ -606,7 +596,6 @@ function createFiledOfficerRuntime(
     tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
     soulTag: string;
     beforeAccept?: FiledOfficerBeforeAccept;
-    relayGatePass?: true;
   },
   dependencies: { loadSoul(): Promise<string> },
 ) {
@@ -631,25 +620,11 @@ function createFiledOfficerRuntime(
               spec.beforeAccept === undefined
                 ? undefined
                 : await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
-            if (isAuditEscalationProjection(projected)) {
-              return { content: [], details: projected, terminate: true as const };
-            }
-            if (projected !== null && typeof projected === "object" && "status" in projected
-              && projected.status === "continue" && "receipt" in projected) {
-              return {
-                content: [{ type: "text" as const, text: readableGateItem(projected.receipt) }],
-                details: projected,
-                terminate: false,
-              };
-            }
-            const pass = spec.relayGatePass === true && projected !== null && typeof projected === "object" && "officer" in projected && "receipt" in projected
-              ? projected
-              : undefined;
             // Accept-as-is + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
             return {
-              content: pass === undefined || pass.receipt === undefined ? [] : [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
-              details: pass === undefined ? (projected === undefined ? parameters : projected) : parameters,
+              content: [],
+              details: projected === undefined ? parameters : projected,
               terminate: true as const,
             };
           },
@@ -887,8 +862,6 @@ function readDiaristRunCoordinates(ctx: HostContext): {
 /** Plain-language re-ask when diarist bounds cannot be used (#901 / reask-not-explode). */
 const DIARIST_BOUNDS_REASK =
   "边界无法使用。请重交 sessions：每卷 path + ranges，每端以原生 id 或本轮行号二选一指名。" as const;
-const DIARIST_ROUTING_STATUSES = new Set(["completed", "escalate"]);
-
 /**
  * #708 / #779 / #901: 起居郎 public seat on the shared filed-officer envelope.
  * LLM judges ticket + dialogue bounds; mechanical layer reprojects the unique
@@ -910,13 +883,11 @@ export function createDiaristRoleRuntime(
           parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
             ? (parameters as Record<string, unknown>)
             : undefined;
-        // This status selects package-owned continuation vs escalation. Check it
-        // before interpreting any other submitted field; caller-owned data stays open.
+        // Routing belongs to the public seam after this tool call has returned.
+        // Only completed receipts need local diary projection; other statuses
+        // pass through verbatim for that seam to route.
         const status = submitted?.status;
-        if (typeof status !== "string" || !DIARIST_ROUTING_STATUSES.has(status)) {
-          throw new ParentQueueReaskError(unreadableDiscriminatorNotice("status", submitted?.status));
-        }
-        if (status === "escalate") return parameters;
+        if (status !== "completed") return parameters;
         const assertion = readDiaristTicketAssertion(submitted);
         const coords = readDiaristRunCoordinates(ctx);
         // #836 7.3: pre-bound ticket is material for the LLM, not an override.
@@ -957,126 +928,17 @@ export function createDiaristRoleRuntime(
   );
 }
 
-/** Secretariat status words the submission gate reads. Not the review three-state field. */
-const SECRETARIAT_QUEUE_STATUSES = new Set(["converged", "escalate"]);
-
-/**
- * Secretariat output is terminal; converged submissions enter the shared
- * submission gate on every host that mounts gatekeeper actions.
- */
+/** Secretariat files before the public post-submission audit starts. */
 export function createSecretariatRoleRuntime(
   roleHost: RoleHost,
   dependencies: SecretariatRuntimeDependencies,
-  hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
 ) {
-  const beforeAccept: FiledOfficerBeforeAccept | undefined =
-    hostActions !== undefined
-      ? async ({ toolCallId, parameters, signal, ctx }) => {
-          if (roleHost.requireSubmissionGate === undefined) {
-            const error = new Error("host cannot mount the secretariat submission gate");
-            error.name = "InfrastructureFailure";
-            return hostActions.failInfrastructure(error, ctx, toolCallId);
-          }
-          const record =
-            parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
-              ? (parameters as Record<string, unknown>)
-              : undefined;
-          const status =
-            record !== undefined && typeof record.secretariatStatus === "string"
-              ? record.secretariatStatus
-              : undefined;
-          if (status === undefined || !SECRETARIAT_QUEUE_STATUSES.has(status)) {
-            throw new ParentQueueReaskError(
-              unreadableDiscriminatorNotice("secretariatStatus", record?.secretariatStatus),
-            );
-          }
-          if (status === "escalate") {
-            // Parent escalate → throw to caller as-is; countersign does not attend.
-            return undefined;
-          }
-          try {
-            const pass = await roleHost.requireSubmissionGate!({
-              context: ctx,
-              subject: { kind: "secretariat_verdict" },
-              ...(signal === undefined ? {} : { signal }),
-              hostActions,
-              toolCallId,
-              // #879: this-turn typed payload — identity-bound at submit site.
-              submission: parameters,
-            });
-            // Book 给事中 署 snapshot for seat settlement projection (receipt + runId).
-            // Ledger accepted stays LLM params (#836); public terminal reads this entry.
-            if (
-              pass !== undefined
-              && pass !== null
-              && typeof pass === "object"
-              && pass.status === "converged"
-              && "receipt" in pass
-            ) {
-              const {
-                SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
-              } = await import("./secretariat-contracts.ts");
-              const runId =
-                typeof pass.runId === "string" && pass.runId.trim() !== ""
-                  ? pass.runId
-                  : undefined;
-              ctx.sessionManager.appendCustomEntry?.(SECRETARIAT_GATE_OFFICER_ENTRY_TYPE, {
-                officer: "countersign",
-                receipt: pass.receipt,
-                ...(runId === undefined ? {} : { runId }),
-              });
-            }
-            return pass;
-          } catch (error) {
-            // 给事中上呈 ends parent with officer receipt (no retry / 不擅改).
-            if (
-              error instanceof GatekeeperDecisionError
-              && error.result.status === "escalate"
-            ) {
-              const receipt = error.result.receipt;
-              const receiptRecord =
-                receipt !== null && typeof receipt === "object" && !Array.isArray(receipt)
-                  ? (receipt as Record<string, unknown>)
-                  : undefined;
-              const runId =
-                typeof error.result.runId === "string" && error.result.runId.trim() !== ""
-                  ? error.result.runId
-                  : undefined;
-              // Envelope persists custom entries only
-              // (toolResult rows are memory-only on headless/ACP — #617/#959).
-              const {
-                SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
-              } = await import("./secretariat-contracts.ts");
-              ctx.sessionManager.appendCustomEntry?.(SECRETARIAT_GATE_OFFICER_ENTRY_TYPE, {
-                officer: "countersign",
-                receipt,
-                ...(runId === undefined ? {} : { runId }),
-              });
-              const { buildAuditEscalationResult } = await import("./audit-escalation.ts");
-              return buildAuditEscalationResult(
-                {
-                  status: "escalate",
-                  officer: "countersign",
-                  ...(receiptRecord !== undefined
-                    && Object.prototype.hasOwnProperty.call(receiptRecord, "decisionGate")
-                    ? { decisionGate: receiptRecord.decisionGate }
-                    : {}),
-                },
-                receipt,
-              );
-            }
-            throw error;
-          }
-        }
-      : undefined;
   const base = createFiledOfficerRuntime(
     roleHost,
     {
       role: "secretariat",
-      relayGatePass: true,
       tool: SECRETARIAT_OUTPUT_TOOL_SPEC,
       soulTag: "secretariat",
-      ...(beforeAccept === undefined ? {} : { beforeAccept }),
     },
     dependencies,
   );
@@ -1114,64 +976,13 @@ export function createSecretariatRoleRuntime(
 export function createCountersignRoleRuntime(
   roleHost: RoleHost,
   dependencies: CountersignRuntimeDependencies,
-  hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
 ) {
-  // Notary inner gate difference only — lifecycle stays on the shared envelope.
-  // Pointer-only summons: officer self-fetches from run dossier (#632 / ADR 0079).
-  // #1028 queue: read shared status — escalate skips gate (thrown to caller);
-  // unreadable status returns to countersign; else notary inner gate.
-  const beforeAccept: FiledOfficerBeforeAccept | undefined =
-    hostActions !== undefined
-      ? async ({ toolCallId, parameters, signal, ctx }) => {
-          const record =
-            parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
-              ? (parameters as Record<string, unknown>)
-              : undefined;
-          const status =
-            record !== undefined && typeof record.status === "string"
-              ? record.status
-              : undefined;
-          if (status === undefined || !REVIEW_QUEUE_STATUSES.has(status)) {
-            // Parent status unreadable → back to countersign itself; do not summon notary,
-            // do not forge an officer bounce face (#753).
-            throw new ParentQueueReaskError(unreadableDiscriminatorNotice("status", record?.status));
-          }
-          if (status === "escalate") {
-            // Parent escalate → throw to caller as-is; notary does not attend (#753).
-            return undefined;
-          }
-          if (roleHost.requireSubmissionGate === undefined) {
-            const error = new Error("host cannot mount the countersign gate");
-            error.name = "InfrastructureFailure";
-            return hostActions.failInfrastructure(error, ctx, toolCallId);
-          }
-          try {
-            return await roleHost.requireSubmissionGate({
-              context: ctx,
-              subject: { kind: "countersign_verdict" },
-              ...(signal === undefined ? {} : { signal }),
-              hostActions,
-              toolCallId,
-              // #879: this-turn typed payload — identity-bound at submit site.
-              submission: parameters,
-            });
-          } catch (error) {
-            if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
-              const { buildAuditEscalationResult } = await import("./audit-escalation.ts");
-              return buildAuditEscalationResult({ status: "escalate", officer: "notary", conflicts: error.result.receipt }, parameters);
-            }
-            throw error;
-          }
-        }
-      : undefined;
   return createFiledOfficerRuntime(
     roleHost,
     {
       role: "countersign",
-      relayGatePass: true,
       tool: COUNTERSIGN_TOOL_SPEC,
       soulTag: "countersign",
-      ...(beforeAccept === undefined ? {} : { beforeAccept }),
     },
     dependencies,
   );
@@ -1265,7 +1076,6 @@ export function createRoleRuntimeExtension(
     const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
     // Envelope-owned execute→tool_result bridge for submission non-pass (ADR 0018 / #525).
     const pendingSubmissionNonPassByToolCallId = new Map<string, SubmissionGateNonPassResult>();
-    const pendingPriorGatePassByToolCallId = new Map<string, unknown>();
     let engineDetourRegistered = false;
     // #288 primary-session thin adapter. The policy is the sole budget owner;
     // terminating-tool rejections and mechanical delivery requests share two turns.
@@ -1483,11 +1293,6 @@ export function createRoleRuntimeExtension(
       return { readingMaterial: caseDossier };
     });
     roleHost.on("tool_result", async (event) => {
-      const priorGatePass = pendingPriorGatePassByToolCallId.get(event.toolCallId);
-      pendingPriorGatePassByToolCallId.delete(event.toolCallId);
-      const priorPassContent = priorGatePass !== undefined && event.isError
-        ? [{ type: "text" as const, text: readableGateItem(priorGatePass) }, ...(event.content ?? [])]
-        : undefined;
       const role = selectedRole;
       if (role === undefined) return;
       // #676 E / J1: collector operational bookkeeping on the shared tool_result seam.
@@ -1522,16 +1327,15 @@ export function createRoleRuntimeExtension(
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {
-        return { isError: true, ...(priorPassContent === undefined ? {} : { content: priorPassContent }) };
+        return { isError: true };
       }
       // Submission non-pass: throw kept message text for the model; project the
       // envelope-bound structured result onto session details at this tool_result seam.
       const submissionNonPass = pendingSubmissionNonPassByToolCallId.get(event.toolCallId);
       if (submissionNonPass !== undefined) {
         pendingSubmissionNonPassByToolCallId.delete(event.toolCallId);
-        return { details: submissionNonPass, isError: true, ...(priorPassContent === undefined ? {} : { content: priorPassContent }) };
+        return { details: submissionNonPass, isError: true };
       }
-      if (priorPassContent !== undefined) return { content: priorPassContent, isError: true };
     });
     // Queue receipt delivery before `agent_settled`: that event means Pi has
     // already decided no queued continuation will run, so a triggerTurn there is
@@ -1694,7 +1498,6 @@ export function createRoleRuntimeExtension(
       disposeNavigatorAttendanceNonBlocking(attendanceToDispose);
       pendingInfrastructureFailures.clear();
       pendingSubmissionNonPassByToolCallId.clear();
-      pendingPriorGatePassByToolCallId.clear();
       observationFace.reset();
     });
 
@@ -1708,9 +1511,6 @@ export function createRoleRuntimeExtension(
       bindSubmissionNonPass(toolCallId: string, result: SubmissionGateNonPassResult): void {
         pendingSubmissionNonPassByToolCallId.set(toolCallId, result);
       },
-      bindPriorGatePass(toolCallId: string, receipt: unknown): void {
-        pendingPriorGatePassByToolCallId.set(toolCallId, receipt);
-      },
     };
     const requireRoleSoul = (role: PackagedRole): Promise<string> => dependencies.loadRoleSoul(role);
     const judge = createJudgeRoleRuntime(
@@ -1718,7 +1518,6 @@ export function createRoleRuntimeExtension(
       {
         loadSoul: () => requireRoleSoul("judge"),
       },
-      hostActions,
     );
     const fixer = createFixerRoleRuntime(
       roleHost,
@@ -1756,7 +1555,6 @@ export function createRoleRuntimeExtension(
     const doctor = createDoctorRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("doctor"),
       async loadCase(path) { if (!dependencies.loadDoctorCase) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorCase(path); },
-      async auditCompliance(options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(options); },
     }, hostActions);
     const notary = createNotaryRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("notary"),
@@ -1767,7 +1565,7 @@ export function createRoleRuntimeExtension(
     }, hostActions);
     const countersign = createCountersignRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("countersign"),
-    }, hostActions);
+    });
     const gleanerLeftRuntime = createGleanerLeftRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("gleaner-left"),
     });
@@ -1802,7 +1600,7 @@ export function createRoleRuntimeExtension(
     );
     const secretariat = createSecretariatRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("secretariat"),
-    }, hostActions);
+    });
     const merger = createMergerRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("merger"),
       async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
@@ -2049,7 +1847,6 @@ export function createRoleRuntimeExtension(
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
       pendingSubmissionNonPassByToolCallId.clear();
-      pendingPriorGatePassByToolCallId.clear();
       navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.

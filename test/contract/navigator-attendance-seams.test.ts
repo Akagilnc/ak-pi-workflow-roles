@@ -654,6 +654,13 @@ test("station-child shared lifecycle omits Navigator attendance; top-level still
               details: { status: "completed", ticketNumber: 582, sessions: [] },
             })(args, options);
           }
+          if (role === "notary") {
+            return scriptedTerminatingToolSession({
+              role: "notary",
+              toolName: NOTARY_OUTPUT_TOOL_NAME,
+              details: { status: "converged", findings: [] },
+            })(args, options);
+          }
           return scriptedTerminatingToolSession({
             role: "countersign",
             toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,

@@ -82,7 +82,7 @@ import {
 } from "./option-definitions.ts";
 import { TurnDispatchedFailure } from "./auto-resume.ts";
 import { continueParentAfterChild, runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
-import { courtDiaristEscalated } from "./countersign-run.ts";
+import { latestPayloadEscalated } from "./countersign-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
 import {
   AUTO_RESUME_LIMIT,
@@ -1251,7 +1251,7 @@ export async function runAkRole(
       while (
         current.exitCode === 0 && current.admitted?.correlationId !== undefined
         && current.terminal?.roleOutcome.kind === "accepted"
-        && !courtDiaristEscalated(current.terminal.roleOutcome)
+        && !latestPayloadEscalated(current.terminal.roleOutcome)
       ) {
         const parentRunId = current.admitted.correlationId;
         resumeFailureContext = {

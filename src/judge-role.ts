@@ -1,18 +1,70 @@
-import type { RoleHost, HostContext, HostToolResult, HostGatekeeperActions } from "./host-contracts.ts";
+import {
+  type RoleHost,
+  type HostContext,
+  type HostToolResult,
+} from "./host-contracts.ts";
 import type { Static } from "typebox";
-import { REVIEW_QUEUE_STATUSES, reviewSubmissionSchema } from "./review-submission.ts";
-import { GatekeeperDecisionError, ParentQueueReaskError, unreadableDiscriminatorNotice } from "./submission-errors.ts";
-import { projectGatekeeperEscalation } from "./audit-escalation.ts";
-
-import { readableGateItem } from "./readable-gate-item.ts";
+import { reviewSubmissionSchema } from "./review-submission.ts";
+import { type GatekeeperSubject } from "./gatekeeper-role.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   type JudgeVerdict,
 } from "./package-contracts/judge-output.ts";
 
-
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
+
+/** The only judge audit order: 符宝郎, then 审刑院. */
+const JUDGE_GATES: readonly GatekeeperSubject[] = [
+  { kind: "judge_draft" },
+  { kind: "judge_compliance" },
+];
+
+export async function runJudgeGates(input: {
+  readonly gateAlreadyConverged: (subject: GatekeeperSubject) => Promise<boolean>;
+  readonly runGate: (
+    subject: GatekeeperSubject,
+  ) => Promise<{
+    readonly status?: unknown;
+    readonly receipt?: unknown;
+    readonly runId?: string;
+    readonly runDirectory?: string;
+  } | void>;
+}): Promise<{
+  readonly status: "converged" | "continue" | "escalate";
+  readonly passes: readonly {
+    readonly subject: GatekeeperSubject;
+    readonly status: "converged" | "continue" | "escalate";
+    readonly receipt: unknown;
+    readonly runId?: string;
+    readonly runDirectory?: string;
+  }[];
+}> {
+  const passes: {
+    subject: GatekeeperSubject;
+    status: "converged" | "continue" | "escalate";
+    receipt: unknown;
+    runId?: string;
+    runDirectory?: string;
+  }[] = [];
+  for (const subject of JUDGE_GATES) {
+    if (await input.gateAlreadyConverged(subject)) continue;
+    const pass = await input.runGate(subject);
+    const status = pass?.status;
+    if (pass === undefined || (status !== "converged" && status !== "continue" && status !== "escalate")) {
+      throw new Error("judge gate returned no conclusion");
+    }
+    passes.push({
+      subject,
+      status,
+      receipt: pass.receipt,
+      ...(pass.runId === undefined ? {} : { runId: pass.runId }),
+      ...(pass.runDirectory === undefined ? {} : { runDirectory: pass.runDirectory }),
+    });
+    if (status === "continue" || status === "escalate") return { status, passes };
+  }
+  return { status: "converged", passes };
+}
 
 // #836 r16 class 1: fix/classes/note/decisionGate are LLM/human-read narrative
 // content — 符宝郎/审刑院 read the raw receipt, no code branches on their length
@@ -25,16 +77,9 @@ export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;
 };
 
-export type JudgeRoleHostActions = HostGatekeeperActions & {
-  /** Preserve the first officer's pass as a separate model-visible result item if the second gate fails. */
-  bindPriorGatePass(toolCallId: string, receipt: unknown): void;
-};
-
-
 export function createJudgeRoleRuntime(
   pi: RoleHost,
   dependencies: JudgeRoleDependencies,
-  hostActions: JudgeRoleHostActions,
 ): { activate(): Promise<void> } {
   let soul: string | undefined;
   let lifecycleRegistered = false;
@@ -48,86 +93,14 @@ export function createJudgeRoleRuntime(
         pi.registerTool({
           name: JUDGE_OUTPUT_TOOL_NAME,
           label: "大理寺输出",
-          description: "提交大理寺终局判词。",
+          description: "提交大理寺终局判词；交卷调用结束后，由公开调用接缝按判词状态执行适用审核。",
           promptSnippet: "提交大理寺终局判词",
           parameters: judgeVerdictSchema,
           async execute(toolCallId: string, parameters: Static<typeof judgeVerdictSchema>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
             if (soul === undefined) throw new Error("大理寺职分未装载");
-            // #756 queue: read shared status only — escalate skips gates;
-            // unreadable status returns to judge; else 符宝郎内闸 then 审刑院合规.
-            const rawStatus =
-              parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
-              && typeof (parameters as Record<string, unknown>).status === "string"
-                ? (parameters as Record<string, unknown>).status as string
-                : undefined;
-            if (rawStatus === undefined || !REVIEW_QUEUE_STATUSES.has(rawStatus)) {
-              const received = parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
-                ? (parameters as Record<string, unknown>).status
-                : undefined;
-              throw new ParentQueueReaskError(unreadableDiscriminatorNotice("status", received));
-            }
-            if (rawStatus === "escalate") {
-              // Parent escalate → throw to caller as-is; officers do not attend (#753 / #756).
-              return {
-                content: [],
-                details: parameters,
-                terminate: true as const,
-              };
-            }
-            // Queue membership above is the only three-state check. The receipt is not re-judged.
-            // Candidate verdict is already on the parent session books as this
-            // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
-            // #753: 符宝郎内闸 — continue returns the raw receipt as a nonterminal tool result.
-            let draftPass: { status: "converged" | "continue"; receipt: unknown } | undefined;
-            try {
-              const obtainedDraftPass = await pi.requireSubmissionGate!({
-                context: ctx,
-                subject: { kind: "judge_draft" },
-                ...(signal === undefined ? {} : { signal }),
-                hostActions,
-                toolCallId,
-                // #879: this-turn typed payload — identity-bound at submit site.
-                submission: parameters,
-              });
-              draftPass = obtainedDraftPass || undefined;
-              if (draftPass?.status === "continue") {
-                return {
-                  content: [{ type: "text" as const, text: readableGateItem(draftPass.receipt) }],
-                  details: parameters,
-                  terminate: false,
-                };
-              }
-              if (draftPass !== undefined) hostActions.bindPriorGatePass(toolCallId, draftPass.receipt);
-              // #756: 审刑院合规路径 — same review-queue law as 符宝郎/台院.
-              // converged → accept; continue → raw auditor receipt; escalate → pause;
-              // not three-state → resume auditor; no round cap; no disposeCompliance mapping.
-              const compliancePass = await pi.requireSubmissionGate!({
-                context: ctx,
-                subject: { kind: "judge_compliance" },
-                ...(signal === undefined ? {} : { signal }),
-                hostActions,
-                toolCallId,
-                // #879: same parent payload for 审刑院; not recovered from session latest.
-                submission: parameters,
-              });
-              if (compliancePass?.status === "continue") {
-                return {
-                  content: [draftPass, compliancePass].filter((pass) => pass !== undefined).map((pass) => ({ type: "text" as const, text: readableGateItem(pass.receipt) })),
-                  details: parameters,
-                  terminate: false,
-                };
-              }
-              return {
-                content: [draftPass, compliancePass].filter((pass) => pass !== undefined).map((pass) => ({ type: "text" as const, text: readableGateItem(pass.receipt) })),
-                details: parameters,
-                terminate: true as const,
-              };
-            } catch (error) {
-              if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
-                return projectGatekeeperEscalation(error.result, parameters);
-              }
-              throw error;
-            }
+            // ADR 0003: record the original receipt and end the tool call first.
+            // The public seam reads status and chooses the next route.
+            return { content: [], details: parameters, terminate: true };
           },
         });
         pi.on("before_agent_start", (event) => {

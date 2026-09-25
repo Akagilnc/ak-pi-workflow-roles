@@ -10,8 +10,12 @@ import test from "node:test";
 
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
+import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
 import {
   captureIo,
   seedGitProject,
@@ -20,7 +24,9 @@ import {
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   createMinimalHost,
+  roleTurnHostFromStructuredOutputRounds,
   roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
@@ -60,6 +66,10 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
+    let config = { seats: {} };
+    for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
+    await savePublicCliConfig(config, home);
     const runId = "01a0esc471-0000-7000-8000-000000000001";
     const ruling = "owner ruling: accept the plan";
     const escalateDetails = {
@@ -69,6 +79,7 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
         options: ["ship", "hold"],
       },
     };
+    const unreadableDetails = { status: { value: "unknown" }, report: { unvalidated: true } };
     const convergedDetails = {
       status: "converged" as const,
       note: "owner ruling applied on same session",
@@ -84,33 +95,10 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
         createRunId: () => runId,
         io: firstIo.io,
         credentials: CREDENTIALS,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        roleTurnHost: roleTurnHostFromStructuredOutputRounds({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-            const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-            await mkdir(sessionDir, { recursive: true });
-            await writeFile(
-              join(sessionDir, "session.jsonl"),
-              `${JSON.stringify({
-                type: "message",
-                message: {
-                  role: "toolResult",
-                  toolName: JUDGE_OUTPUT_TOOL_NAME,
-                  isError: false,
-                  details: escalateDetails,
-                },
-              })}\n`,
-              "utf8",
-            );
-            return {
-              code: 0,
-              stderr: "",
-              timedOut: false,
-              args: [...args],
-              sealedAcceptance: { role: "judge" as const, details: escalateDetails },
-            };
-          },
+          submissions: [unreadableDetails, escalateDetails],
         }),
       },
     );
@@ -119,11 +107,27 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
     assert.equal(first.terminal.runId, runId);
     assert.equal(first.terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(first.terminal.roleOutcome), ["escalate"]);
+    const recorded = await readRecordedSubmissionRows(project, runId, home);
+    assert.deepEqual(recorded.map(({ kind, accepted }) => ({ kind, accepted })), [
+      { kind: "accepted", accepted: unreadableDetails },
+      { kind: "accepted", accepted: escalateDetails },
+    ]);
 
     let resumeKind: string | undefined;
     let resumePrompt: string | undefined;
     let resumePrincipal: string | undefined;
     const resumeIo = captureIo();
+    const officerHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot, principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = args[args.indexOf("--ak-role") + 1];
+        if (role !== "notary" && role !== "auditor") throw new Error("unexpected reviewer role");
+        return scriptedTerminatingToolSession({
+          role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
+          details: { status: "converged" },
+        })(args, options);
+      },
+    });
     const resumed = await runAkRole(
       ["resume", "--model", "test/caller-seat:high", runId, ruling],
       {
@@ -133,6 +137,9 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
         io: resumeIo.io,
         credentials: CREDENTIALS,
         roleTurnHost: createMinimalHost(async (request) => {
+          if (request.activation.role === "notary" || request.activation.role === "auditor") {
+            return officerHost.executeTurn(request);
+          }
           resumeKind = request.continuation.kind;
           resumePrompt = request.continuation.prompt;
           resumePrincipal = JSON.stringify(request.principal);

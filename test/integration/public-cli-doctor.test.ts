@@ -1,6 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureDoctorAdmitted } from "../helpers/admitted-principal-fixture.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { createMinimalHost } from "../helpers/role-turn-host-fixture.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
@@ -25,6 +25,7 @@ import test from "node:test";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { loadDoctorCase } from "../../src/doctor-evidence.ts";
 import {
   DOCTOR_OUTPUT_TOOL_NAME,
@@ -48,6 +49,9 @@ import {
 } from "../helpers/doctor-fixtures.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 import { assertPublicFailureSettlement } from "../helpers/failure-settlement-kit.ts";
+import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { runIdFromRunDirectory } from "../../src/run-terminal-artifacts.ts";
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-public-cli-doctor-", scenario);
@@ -330,6 +334,9 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
     seedGitProject(project);
     const bookKey = resolveBookKeyFromGit(project);
     await seedDoctorIssueRuns(home, bookKey, 40);
+    await runAkRole(["config", "set", "auditor", "test/caller-seat:high"], {
+      packageRoot, home, io: captureIo().io,
+    });
     const findingObservation = "UNIQUE-DOCTOR-FINDING-OBSERVATION-S2";
 
     // #836: captured from the same real `loadDoctorCase`/role payload the
@@ -351,6 +358,11 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args, options) => {
+          if (args[args.indexOf("--ak-role") + 1] === "auditor") {
+            return scriptedTerminatingToolSession({
+              role: "auditor", toolName: AUDITOR_OUTPUT_TOOL_NAME, details: { status: "converged" },
+            })(args, options);
+          }
           const casePath = args[args.indexOf("--ak-doctor-case") + 1]!;
           const patient = await loadDoctorCase(casePath);
           candidateCost = patient.cost;
@@ -438,7 +450,12 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
+            piRunner: async (args, options) => {
+          if (args[args.indexOf("--ak-role") + 1] === "auditor") {
+            return scriptedTerminatingToolSession({
+              role: "auditor", toolName: AUDITOR_OUTPUT_TOOL_NAME, details: { status: "converged" },
+            })(args, options);
+          }
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
           const details = {
@@ -458,7 +475,8 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
                 isError: false,
                 details,
               },
-            })}\n`,
+            })}\n${JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE,
+              data: { version: 1, testimony: details } })}\n`,
             "utf8",
           );
           return {
@@ -584,6 +602,189 @@ test("runAkRole doctor settles completed and refused outcomes on common Terminal
         piDurablePrincipalAuthority,
       ),
       undefined,
+    );
+  });
+});
+
+test("Doctor finishes each submission before Auditor review, then resumes only on rejection", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const bookKey = resolveBookKeyFromGit(project);
+    await seedDoctorIssueRuns(home, bookKey, 42);
+    await runAkRole(["config", "set", "auditor", "test/caller-seat:high"], {
+      packageRoot, home, io: captureIo().io,
+    });
+    const runId = "run-doctor-review-loop";
+    const replies = ["continue", "converged"] as const;
+    let reviewCalls = 0;
+    let doctorCalls = 0;
+    const auditorHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot, principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => scriptedTerminatingToolSession({
+        role: "auditor", toolName: AUDITOR_OUTPUT_TOOL_NAME,
+        details: { status: replies[reviewCalls++] },
+      })(args, options),
+    });
+    const result = await runAkRole(
+      ["doctor", "--model", "test/caller-seat:high", "--issue", "42", "--project", project, "review"],
+      {
+        packageRoot, home, cwd: project, createRunId: () => runId, io: captureIo().io,
+        roleTurnHost: createMinimalHost(async (request) => {
+          if (request.activation.role === "auditor") {
+            const rows = await readRecordedSubmissionRows(project, runId, home);
+            assert.equal(rows.filter((row) => row.kind === "accepted").length, reviewCalls + 1);
+            return auditorHost.executeTurn(request);
+          }
+          assert.equal(request.activation.role, "doctor");
+          if (doctorCalls > 0) assert.equal(request.continuation.kind, "resume");
+          const index = ++doctorCalls;
+          const details = {
+            status: "refused", reason: `doctor report ${index}`,
+            missingEvidence: [{ need: "session", targetKeys: ["case"] }],
+          };
+          const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+          await mkdir(sessionDirectory, { recursive: true });
+          await writeFile(sessionFile, `${JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE,
+            data: { version: 1, testimony: details } })}\n`, "utf8");
+          await sealAcceptedSubmission({
+            cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
+            role: "doctor", details, toolCallId: `doctor-${index}`,
+            ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+          });
+          return { code: 0, stderr: "", timedOut: false };
+        }),
+      },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(doctorCalls, 2);
+    assert.equal(reviewCalls, 2);
+    assert.equal(objectPayloads(result.terminal!.roleOutcome).at(-1)?.reason, "doctor report 2");
+  });
+});
+
+test("Doctor Auditor escalation resumes the officer and settles without Doctor resubmission", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await seedDoctorIssueRuns(home, resolveBookKeyFromGit(project), 43);
+    await runAkRole(["config", "set", "auditor", "test/caller-seat:high"], {
+      packageRoot, home, io: captureIo().io,
+    });
+    const runId = "run-doctor-auditor-escalation";
+    let doctorCalls = 0;
+    let auditorCalls = 0;
+    let auditorRunId: string | undefined;
+    const auditorHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot, principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => scriptedTerminatingToolSession({
+        role: "auditor", toolName: AUDITOR_OUTPUT_TOOL_NAME,
+        details: { status: auditorCalls++ === 0 ? "escalate" : "converged" },
+      })(args, options),
+    });
+    const host = createMinimalHost(async (request) => {
+      if (request.activation.role === "auditor") {
+        auditorRunId = runIdFromRunDirectory(request.runDirectory);
+        assert.equal((await readRecordedSubmissionRows(project, runId, home)).at(-1)?.kind, "accepted");
+        return auditorHost.executeTurn(request);
+      }
+      doctorCalls++;
+      const details = { status: "refused", reason: "recorded once", missingEvidence: [{ need: "session", targetKeys: ["case"] }] };
+      const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+      await mkdir(sessionDirectory, { recursive: true });
+      await writeFile(sessionFile, `${JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE,
+        data: { version: 1, testimony: details } })}\n`, "utf8");
+      await sealAcceptedSubmission({
+        cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
+        role: "doctor", details, toolCallId: "doctor-only",
+        ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+      });
+      return { code: 0, stderr: "", timedOut: false };
+    });
+    const first = await runAkRole(
+      ["doctor", "--model", "test/caller-seat:high", "--issue", "43", "--project", project, "review"],
+      { packageRoot, home, cwd: project, createRunId: () => runId, io: captureIo().io, roleTurnHost: host },
+    );
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.terminal?.roleOutcome.role, "auditor");
+    assert.ok(auditorRunId);
+    const resumed = await runAkRole(
+      ["resume", "--model", "test/caller-seat:high", auditorRunId!, "Owner answer"],
+      { packageRoot, home, cwd: project, io: captureIo().io, roleTurnHost: host },
+    );
+    assert.equal(resumed.exitCode, 0);
+    assert.equal(resumed.terminal?.roleOutcome.role, "doctor");
+    assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(doctorCalls, 1);
+    assert.equal(auditorCalls, 2);
+  });
+});
+
+test("#1057 Doctor open status escalate still enters mandatory Auditor review", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await seedDoctorIssueRuns(home, resolveBookKeyFromGit(project), 44);
+    await runAkRole(["config", "set", "auditor", "test/caller-seat:high"], {
+      packageRoot, home, io: captureIo().io,
+    });
+    const runId = "run-doctor-open-escalate";
+    let auditorCalls = 0;
+    let doctorCalls = 0;
+    const auditorHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot, principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => scriptedTerminatingToolSession({
+        role: "auditor", toolName: AUDITOR_OUTPUT_TOOL_NAME,
+        details: { status: "converged" },
+      })(args, options),
+    });
+    const host = createMinimalHost(async (request) => {
+      if (request.activation.role === "auditor") {
+        auditorCalls += 1;
+        return auditorHost.executeTurn(request);
+      }
+      doctorCalls += 1;
+      // Open-domain escalate is accepted at the tool, then routed back to Doctor
+      // before audit; corrected completed|refused continues mandatory auditor.
+      const details = doctorCalls === 1
+        ? {
+          status: "escalate",
+          reason: "hallucinated open status",
+          missingEvidence: [{ need: "session", targetKeys: ["case"] }],
+        }
+        : {
+          status: "refused",
+          reason: "corrected after unreadable status reask",
+          missingEvidence: [{ need: "session", targetKeys: ["case"] }],
+        };
+      if (doctorCalls > 1) assert.equal(request.continuation.kind, "resume");
+      const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+      await mkdir(sessionDirectory, { recursive: true });
+      await writeFile(sessionFile, `${JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE,
+        data: { version: 1, testimony: details } })}\n`, "utf8");
+      await sealAcceptedSubmission({
+        cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
+        role: "doctor", details, toolCallId: `doctor-open-escalate-${doctorCalls}`,
+        ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+      });
+      return { code: 0, stderr: "", timedOut: false };
+    });
+    const result = await runAkRole(
+      ["doctor", "--model", "test/caller-seat:high", "--issue", "44", "--project", project, "review"],
+      { packageRoot, home, cwd: project, createRunId: () => runId, io: captureIo().io, roleTurnHost: host },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(doctorCalls, 2, "unreadable escalate must re-ask Doctor before audit");
+    assert.equal(auditorCalls, 1, "corrected Doctor submission still enters mandatory auditor");
+    assert.equal(result.terminal?.roleOutcome.role, "doctor");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(
+      (result.terminal?.roleOutcome.payloads?.at(-1) as { status?: string } | undefined)?.status,
+      "refused",
     );
   });
 });

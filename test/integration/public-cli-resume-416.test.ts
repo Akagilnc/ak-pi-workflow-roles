@@ -25,7 +25,7 @@ import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { summonPublicRole } from "../../src/public-role-summons.ts";
 import {
   createMinimalHost,
-  roleTurnHostFromLegacyPiRunner,
+  roleTurnHostFromLegacyPiRunner as rawLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
@@ -44,6 +44,10 @@ import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
+
+const roleTurnHostFromLegacyPiRunner = (options: Parameters<typeof rawLegacyPiRunner>[0]) =>
+  withPassingReviewHost(rawLegacyPiRunner(options));
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
   return withTempRoot("ak-416-", async (home) => {
@@ -54,13 +58,14 @@ async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
       ["config", "set", "diarist", "test/caller-seat:high", "countersign", "test/caller-seat:high", "judge", "test/caller-seat:high"],
       { packageRoot, home, io: { stdout() {}, stderr() {} } },
     );
+    await configurePassingReviewSeats(home);
     return fn(home);
   });
 }
 function captureIo(){const stdout:string[]=[];const stderr:string[]=[];return{stdout,stderr,io:{stdout:(t:string)=>stdout.push(t),stderr:(t:string)=>stderr.push(t)}};}
 function seedGitProject(root:string){execFileSync("git",["init","-b","main"],{cwd:root});execFileSync("git",["config","user.email","416@test.local"],{cwd:root});execFileSync("git",["config","user.name","416"],{cwd:root});execFileSync("git",["commit","--allow-empty","-m","seed"],{cwd:root});}
 /** Accepted judge details + sealedAcceptance for faux runners (S4 ledger-only settlement). */
-function acceptedJudge(details: Record<string, unknown> = { judgeStatus: "converged" }) {
+function acceptedJudge(details: Record<string, unknown> = { status: "converged" }) {
   return {
     write: (sessionFile: string) => writeFile(sessionFile, JSON.stringify({ type: "message", message: { role: "toolResult", toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details } }) + "\n", "utf8"),
     sealedAcceptance: { role: "judge" as const, details },
@@ -109,7 +114,7 @@ test("S5: terminal with accepted receipt stays loadable; bare sealed resume reac
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async(args)=>{const sd=args[args.indexOf("--session-dir")+1]!;await mkdir(sd,{recursive:true});
-        const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge({judgeStatus:"converged",note:"FIRST-ok"});await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
+        const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge({status:"converged",note:"FIRST-ok"});await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
     assert.equal(first.exitCode,0);
     assert.equal(first.terminal?.roleOutcome.kind,"accepted");

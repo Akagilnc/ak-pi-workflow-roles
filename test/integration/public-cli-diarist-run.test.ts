@@ -803,7 +803,7 @@ async function writeDialogueSessionFixture(path: string): Promise<{
   };
 }
 
-test("public diarist reasks an unreadable routing status but escalates without reading bounds", async () => {
+test("public diarist accepts unreadable status before routing it back, and escalation skips bounds", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -844,7 +844,7 @@ test("public diarist reasks an unreadable routing status but escalates without r
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["escalate"]);
     const submissions = await readRecordedSubmissionRows(project, runId, home);
     assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
-      { kind: "correctable-rejection", accepted: unreadable },
+      { kind: "accepted", accepted: unreadable },
       { kind: "accepted", accepted: corrected },
     ]);
   });

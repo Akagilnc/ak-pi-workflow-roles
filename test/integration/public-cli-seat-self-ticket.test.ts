@@ -15,7 +15,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { projectAuditEscalation } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
@@ -45,6 +44,7 @@ import {
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { withPrimaryAwareCleanup, withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 async function withTempHome(
@@ -111,6 +111,7 @@ async function withSeatProject(
     });
     // Volume may exist; seats must not mechanically bind from it + summons text.
     ensureTicketProvenanceVolume(582, project, home);
+    await configurePassingReviewSeats(home);
     await run({ home, project });
   });
 }
@@ -142,7 +143,7 @@ function baseEnv(input: {
         : { outputDetails: input.outputDetails }),
     }),
   });
-  const roleTurnHost = {
+  const roleTurnHost = withPassingReviewHost({
     async executeTurn(request: RoleTurnRequest) {
       const result = await host.executeTurn(request);
       if (input.additionalDetails !== undefined) {
@@ -160,7 +161,7 @@ function baseEnv(input: {
       }
       return result;
     },
-  };
+  });
   return {
     home: input.home,
     agentDir: join(input.home, ".pi"),
@@ -303,21 +304,18 @@ test("#1071 mid-ticket seats bind leading #N ticketNumber declarations and keep 
         expectedOutcome: "accepted" as const,
       },
       {
-        // Terminal audit-escalation still carries the original declaration (#1071).
+        // Judge self-escalation stays the original declaration (#1071).
+        // The removed audit-escalation projection is not restored.
         role: "judge" as const,
         toolName: JUDGE_OUTPUT_TOOL_NAME,
         argv: ["Escalate adjudication of #1843."],
-        details: judgeDetails,
-        outputDetails: projectAuditEscalation(
-          {
-            status: "escalate",
-            officer: "auditor",
-            conflicts: { status: "escalate", decisionGate: { question: "owner?" } },
-          },
-          judgeDetails,
-        ).details,
+        details: {
+          status: "escalate",
+          note: "#1843 / PR #1876",
+          ticketNumber: "#1843 / PR #1876",
+        },
         runId: "01a010710-0000-7000-8000-0000000jesc",
-        expectedOutcome: "audit_escalation" as const,
+        expectedOutcome: "accepted" as const,
       },
     ]) {
       const result = await runPublicInstructionSeat(
@@ -401,7 +399,7 @@ test("public judge without --ticket: no mechanical bind from summons text", asyn
         runId: "01a063500-0000-7000-8000-00000000judge",
         role: "judge",
         toolName: JUDGE_OUTPUT_TOOL_NAME,
-        details: { judgeStatus: "converged" },
+        details: { status: "converged" },
       }),
       captureIo().io,
       "judge",
@@ -423,7 +421,7 @@ test("public countersign without --ticket: binds only via 起居郎 typed handof
         runId: "01a063500-0000-7000-8000-00000000csign",
         role: "countersign",
         toolName: COUNTERSIGN_OUTPUT_TOOL_NAME,
-        details: { countersignStatus: "converged", note: "署" },
+        details: { status: "converged", note: "署" },
         // Court station face: 起居郎 asserted #582 (typed handoff, not prose match).
         runCourtDiaristStation: async (admitted) => {
           await bindAdmittedTicketNumber(

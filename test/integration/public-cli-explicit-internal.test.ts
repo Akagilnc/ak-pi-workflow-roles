@@ -78,7 +78,7 @@ const sessionLine = `${JSON.stringify({
     role: "toolResult",
     toolName: JUDGE_OUTPUT_TOOL_NAME,
     isError: false,
-    details: { judgeStatus: "converged", note: "pre-timeout lawful verdict" },
+    details: { status: "converged", note: "pre-timeout lawful verdict" },
   },
 })}\n`;
 

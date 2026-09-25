@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
@@ -16,6 +16,8 @@ import { PUBLIC_ROLE_RECORDS } from "../../src/packaged-role-registry.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
+import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
+import { configurePassingReviewSeats } from "../helpers/passing-review-host.ts";
 import { seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
@@ -59,6 +61,8 @@ test("#505 every active seat routes, submits, and settles from the public entry"
       cwd: project,
       io: quiet,
     });
+    await configurePassingReviewSeats(home);
+    await runAkRole(["config", "set", "countersign", "test/caller-seat:high"], { home, packageRoot, cwd: project, io: quiet });
     let n = 0;
     const failures: string[] = [];
     const firstRunDirectory = new Map<string, string>();
@@ -76,8 +80,15 @@ test("#505 every active seat routes, submits, and settles from the public entry"
           const written = await scriptedTerminatingToolSession({
             role: seat.role as TerminalRoleName,
             toolName: seat.outputTool,
-            details: { status: "completed" },
+            details: seat.role === "secretariat" ? { secretariatStatus: "converged" }
+              : seat.role === "judge" || seat.role === "countersign" || seat.role === "inspector" || seat.role === "notary" || seat.role === "auditor"
+                ? { status: "converged" } : { status: "completed" },
           })(args, options);
+          if (seat.role === "doctor") {
+            const sessionFile = argvFlagValue(args, "--session");
+            assert.ok(sessionFile);
+            await appendFile(sessionFile, `${JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE })}\n`, "utf8");
+          }
           if (seat.role === "navigator") {
             const sessionFile = argvFlagValue(args, "--session");
             assert.ok(sessionFile);
@@ -171,7 +182,8 @@ test("#505 every active seat routes, submits, and settles from the public entry"
           return scriptedTerminatingToolSession({
             role: seat.role as TerminalRoleName,
             toolName: seat.outputTool,
-            details: { status: "completed" },
+            details: seat.role === "countersign" || seat.role === "notary"
+              ? { status: "converged" } : { status: "completed" },
           })(args, options);
         },
       });

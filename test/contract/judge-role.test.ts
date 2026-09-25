@@ -17,18 +17,9 @@ import {
 } from "@earendil-works/pi-coding-agent";
 
 import { transcriptFromContext as productionTranscriptFromContext } from "../../extensions/role-runtime.ts";
-import { isAuditEscalationResult } from "../../src/audit-escalation.ts";
-import { createJudgeRoleRuntime, type JudgeRoleHostActions } from "../../src/judge-role.ts";
+import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
 import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
-import type { HostContext } from "../../src/host-contracts.ts";
-import {
-  NOTARY_OUTPUT_TOOL,
-  INSPECTOR_OUTPUT_TOOL,
-  GatekeeperDecisionError,
-  runGatekeeper,
-  type GateOfficerSummon,
-} from "../../src/gatekeeper-role.ts";
-import { ParentQueueReaskError } from "../../src/submission-errors.ts";
+import type { HostContext, HostGatekeeperActions } from "../../src/host-contracts.ts";
 
 import type { AuditorSummon } from "../../src/compliance-transport.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
@@ -160,7 +151,6 @@ afterEach(async () => {
   while (institutionalProviderCleanups.length > 0) {
     providerCleanups.push(institutionalProviderCleanups.pop()!);
   }
-  defaultGateSummon = undefined;
   await withPrimaryAwareCleanup(
     async () => {
       // Drop any leftover env binding between tests (owned dirs already popped above).
@@ -287,6 +277,9 @@ function extensionHarness(
     getAllTools() {
       return [...allToolNames].map((name) => ({ name }));
     },
+    getActiveTools() {
+      return activeToolSets.at(-1) ?? [];
+    },
     setActiveTools(names: string[]) {
       activeToolSets.push([...names]);
     },
@@ -298,49 +291,11 @@ function extensionHarness(
   return { pi, handlers, tools, flags, activeToolSets, appendedEntries };
 }
 
-/** Test host: infrastructure throws through; non-pass bind is a no-op unless a case wires tool_result. */
-/** Offline gate summon for this file — threaded via hostActions, not globalThis. */
-let defaultGateSummon: GateOfficerSummon | undefined;
-
-/** Lazy gate summon for createPiRoleRuntimeExtension (resolves defaultGateSummon at call time). */
-const extensionGateSummon: GateOfficerSummon = async (officer, sourceRunDirectory) => {
-  if (defaultGateSummon === undefined) {
-    throw new Error("test gate summon not armed");
-  }
-  return defaultGateSummon(officer, sourceRunDirectory);
-};
-
-function testHostActions(
-  fail: (error: unknown) => never = (error): never => {
-    throw error instanceof Error ? error : new Error(String(error));
-  },
-): JudgeRoleHostActions {
+function testHostActions(): HostGatekeeperActions {
   return {
-    failInfrastructure(error) { fail(error); },
+    failInfrastructure(error): never { throw error instanceof Error ? error : new Error(String(error)); },
     bindSubmissionNonPass() {},
-    bindPriorGatePass() {},
   };
-}
-
-/** Lowest seam: requireSubmissionGate options.summonOfficer (no RoleRuntimeDependencies bridge). */
-function testRequireGatekeeperPass(): NonNullable<import("../../src/host-contracts.ts").RoleHost["requireSubmissionGate"]> {
-  return async (options) => {
-    const { requireSubmissionGate } = await import("../../src/submission-gate.ts");
-    return await requireSubmissionGate({
-      context: options.context,
-      subject: options.subject as import("../../src/gatekeeper-role.ts").GatekeeperSubject,
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-      hostActions: options.hostActions,
-      toolCallId: options.toolCallId,
-      ...(options.submission === undefined ? {} : { submission: options.submission }),
-      ...(defaultGateSummon === undefined ? {} : { summonOfficer: extensionGateSummon }),
-    });
-  };
-}
-
-/** Patch RoleHost.requireSubmissionGate to the lowest summonOfficer seam (test-only). */
-function armGateSummonOnHost(host: import("../../src/host-contracts.ts").RoleHost): void {
-  host.requireSubmissionGate = testRequireGatekeeperPass();
 }
 
 /** Test install: adapter + gate summon arm + shared envelope (no production duck-type). */
@@ -350,7 +305,6 @@ function installRoleRuntime(
   options: { transcriptFromContext?: (ctx: ExtensionContext) => string } = {},
 ): PiRoleHostAdapter {
   const adapter = createPiRoleHostAdapter(harnessPi as ExtensionAPI, options);
-  armGateSummonOnHost(adapter.host);
   createRoleRuntimeExtension(deps)(adapter);
   return adapter;
 }
@@ -383,33 +337,6 @@ function toolCallContext(
   return { sessionManager, abort } as unknown as ExtensionContext;
 }
 
-function passingOfficerSummon(
-  officer: "inspector" | "notary" | "auditor" | "countersign",
-): PublicSummonResult {
-  // #969: countersign officer pass face is status=converged; others keep status=pass.
-  const payloads =
-    officer === "countersign"
-      ? [{ status: "converged", findings: [] }]
-      : [{ status: "converged", findings: [] }];
-  return {
-    exitCode: 0,
-    terminal: {
-      roleOutcome: {
-        kind: "accepted",
-        role: officer,
-        status: officer === "countersign" ? "converged" : "converged",
-        // #836: officer receipt content rides recorded payloads, not decisiveFacts —
-        // decisiveFacts stays a distinct, smaller machine-fact projection here.
-        payloads,
-        decisiveFacts: { status: officer === "countersign" ? "converged" : "converged" },
-      },
-      navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-      artifacts: [],
-      runId: "test-gate-pass",
-    },
-  };
-}
-
 async function withPassingGatekeeper(context: ExtensionContext): Promise<ExtensionContext> {
   const faux = fauxProvider({ provider: "passing-gatekeeper", api: "passing-gatekeeper" });
   const model = faux.getModel();
@@ -429,306 +356,11 @@ async function withPassingGatekeeper(context: ExtensionContext): Promise<Extensi
   if (context.sessionManager !== undefined) {
     (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
   }
-  // #675: offline gate path injects public-summon results (hostActions + deep-activation mirror).
-  defaultGateSummon = async (officer) => passingOfficerSummon(officer);
   return Object.assign(context, {
     cwd: process.cwd(), model,
     modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider),
     thinkingLevel: "off",
   });
-}
-
-async function workerCompletionGatekeeperHarness(options: {
-  execute: (id: string, output: unknown, context: ExtensionContext) => Promise<unknown>;
-  toolName: string;
-  output: unknown;
-  officer?: "inspector" | "notary" | "auditor";
-  officerUnusableSubmission?: Record<string, unknown>;
-  passingRuns?: number;
-}) {
-  const {
-    execute,
-    toolName,
-    output,
-    officer = "inspector",
-    officerUnusableSubmission = { status: "not-an-audit-verdict" } as Record<string, unknown>,
-    passingRuns = 1,
-  } = options;
-  const faux = fauxProvider({ provider: "worker-gatekeeper", api: "worker-gatekeeper" });
-  const model = faux.getModel();
-  // #753: script public-summon terminals in order (needs_reask → no_receipt → bounce → pass*).
-  // transport_failure is a real failure channel (failInfrastructure), not this bounce sequence.
-  const queue: PublicSummonResult[] = [
-    // #753: accepted reply without three-state conclusion → needs_reask (resume speaker),
-    // not unreadable/parent-stand. Queue entry is consumed by the reask loop then followed
-    // by a pass so the submit path can complete after one reask.
-    {
-      exitCode: 0,
-      terminal: {
-        roleOutcome: {
-          kind: "accepted",
-          role: officer,
-          status: "not-a-conclusion",
-          // #836: officer receipt content rides recorded payloads, not decisiveFacts —
-          // decisiveFacts stays a distinct, smaller machine-fact projection here.
-          payloads: [officerUnusableSubmission as Record<string, unknown>],
-          decisiveFacts: {},
-        },
-        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-        artifacts: [],
-        runId: "test-gate-needs-reask",
-      },
-    },
-    {
-      exitCode: 0,
-      terminal: {
-        roleOutcome: {
-          kind: "no_receipt",
-          role: officer,
-          status: "no-accepted-receipt",
-          terminalToolCalled: false,
-          rejectedReceipts: [],
-          deliveryTurns: 2,
-          sessionCompletion: "settled-without-accepted-receipt",
-          runPointer: "test",
-          attemptPointer: "test",
-          acceptedReceipt: false,
-          decisiveFacts: {
-            terminalToolCalled: false,
-            rejectedReceipts: [],
-            deliveryTurns: 2,
-            sessionCompletion: "settled-without-accepted-receipt",
-            runPointer: "test",
-            attemptPointer: "test",
-            acceptedReceipt: false,
-          },
-        },
-        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-        artifacts: [],
-        runId: "test-gate-no-receipt",
-      },
-    },
-    {
-      exitCode: 0,
-      terminal: {
-        roleOutcome: {
-          kind: "accepted",
-          role: officer,
-          status: "continue",
-          // #775: structured officer findings must relay field content into parent-visible text.
-          // #836/#847 finding3: payloads carries a payload-only marker absent
-          // from decisiveFacts below, so the receipt assertion (line ~669)
-          // fails if the production projection ever reads decisiveFacts
-          // instead of payloads for the officer's receipt.
-          payloads: [{
-            status: "continue",
-            findings: [{
-              article: "focused-regression",
-              reason: "add a focused regression",
-              evidence: "diff lacks a failing case",
-            }],
-            payloadOnly: "gate-bounce-payload-marker",
-          }],
-          // Distinct, smaller machine-fact projection — not a receipt duplicate.
-          decisiveFacts: { status: "continue" },
-        },
-        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-        artifacts: [],
-        runId: "test-gate-bounce",
-      },
-    },
-    ...Array.from({ length: passingRuns }, (_, i) => passingOfficerSummon(officer)),
-  ];
-  let callCount = 0;
-  defaultGateSummon = async () => {
-    const next = queue[callCount++];
-    if (next === undefined) throw new Error("gate summon queue exhausted");
-    return next;
-  };
-  return {
-    context(id: string, toolName: string) {
-      installInstitutionalRunDir(parentInheritedSeats(model));
-      return Object.assign(toolCallContext([{ id, name: toolName }]), {
-        cwd: process.cwd(), model,
-        modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider),
-        thinkingLevel: "off",
-      });
-    },
-    async assertRejectSequence() {
-      const reject = async (id: string, check: (error: Error) => void) => {
-        await assert.rejects(execute(id, output, this.context(id, toolName)), (error: unknown) => {
-          assert.ok(error instanceof Error);
-          check(error);
-          return true;
-        });
-      };
-      // #753: accepted non-three-state → needs_reask (resume speaker). Direct projection.
-      {
-        const projectNeedsReask = async (id: string, decisiveFacts: Record<string, unknown>) =>
-          await runGatekeeper({
-            context: this.context(id, toolName),
-            subject: officer === "inspector"
-              ? { kind: "worker_completion" }
-              : officer === "auditor"
-                ? { kind: "judge_compliance" }
-                : { kind: "judge_draft" },
-            async summonOfficer() {
-              return {
-                exitCode: 0,
-                terminal: {
-                  roleOutcome: {
-                    kind: "accepted",
-                    role: officer,
-                    status: typeof decisiveFacts.status === "string"
-                      ? decisiveFacts.status
-                      : "not-a-conclusion",
-                    // #836: officer receipt content rides recorded payloads, not
-                    // roleOutcome.decisiveFacts — kept a distinct, smaller machine-fact
-                    // projection here, never the `decisiveFacts` param (that's the payload).
-                    payloads: [decisiveFacts],
-                    decisiveFacts: {},
-                  },
-                  navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-                  artifacts: [],
-                  runId: id,
-                },
-              } as PublicSummonResult;
-            },
-          });
-        const projected = await projectNeedsReask(
-          `${officer}-reask-proj`,
-          officerUnusableSubmission as Record<string, unknown>,
-        );
-        assert.equal(projected.status, "needs_reask");
-        if (projected.status === "needs_reask") {
-          assert.equal(projected.officer, officer);
-          assert.deepEqual(projected.receipt, officerUnusableSubmission);
-        }
-        // Empty officer args stay original bytes and still needs_reask (#836).
-        const omitted = await projectNeedsReask(
-          `${officer}-reask-omitted`,
-          {},
-        );
-        assert.equal(omitted.status, "needs_reask");
-        if (omitted.status === "needs_reask") {
-          assert.equal(omitted.officer, officer);
-          assert.deepEqual(omitted.receipt, {});
-        }
-      }
-      // Queue: needs_reask then pass — envelope resumes speaker and parent completes (#753).
-      // The harness queue already sequences needs_reask → no_receipt → bounce → pass…
-      // so the first submit after transport consumes needs_reask and loops onto no_receipt.
-      await reject(`${officer}-no-receipt`, (error) => {
-        assert.ok(error instanceof GatekeeperDecisionError);
-        assert.equal(error.result.status, "no_receipt");
-        if (error.result.status === "no_receipt") {
-          assert.equal(error.result.stage, officer);
-          assert.equal(error.result.facts.acceptedReceipt, false);
-          assert.equal(error.result.facts.sessionCompletion, "settled-without-accepted-receipt");
-        }
-      });
-      const continued = await execute("continue", output, this.context("continue", toolName)) as {
-        terminate?: boolean;
-        details?: unknown;
-      };
-      assert.equal(continued.terminate, false);
-      assert.deepEqual(continued.details, output);
-    },
-    get providerRequests() { return callCount; },
-    get remainingResponses() { return Math.max(0, queue.length - callCount); },
-  };
-}
-
-function gateCatalogModel(provider: string, id: string) {
-  return {
-    api: "openai-responses" as const,
-    provider,
-    id,
-    name: id,
-    baseUrl: "",
-    reasoning: false,
-    input: ["text" as const],
-    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: 1,
-    maxTokens: 1,
-  };
-}
-
-/**
- * Real submit-tool → requireSubmissionGate → shared executor child model observation (#453).
- * Pass-only script; full non-pass matrix stays on workerCompletionGatekeeperHarness.
- */
-async function realEntryGateModelHarness(options: {
-  officer?: "inspector" | "notary";
-  catalog?: ReadonlyArray<{ provider: string; id: string }>;
-  authFailIds?: ReadonlySet<string>;
-  /** Already-produced resolution page seats the consumer reads (B-lane). */
-  seats?: Record<string, SeatSelection | undefined>;
-}) {
-  const officer = options.officer ?? "inspector";
-  const officerTool = officer === "inspector" ? INSPECTOR_OUTPUT_TOOL : NOTARY_OUTPUT_TOOL;
-  const faux = fauxProvider({ provider: "worker-gatekeeper", api: "worker-gatekeeper" });
-  const parentModel = faux.getModel();
-  const catalog = new Map(
-    (options.catalog ?? []).map((entry) => [
-      `${entry.provider}/${entry.id}`,
-      gateCatalogModel(entry.provider, entry.id),
-    ]),
-  );
-  const authFailIds = options.authFailIds ?? new Set<string>();
-  // The child reaches this faux over the real OpenAI-completions HTTP server (models.json),
-  // so the completion model is observed from the actual child stream request (model.id
-  // round-trips in the OpenAI-completions body) mapped to its provider via the catalog,
-  // plus the faux/parent model for unconfigured seats.
-  const modelIdToProvider = new Map<string, string>();
-  modelIdToProvider.set(parentModel.id, parentModel.provider);
-  for (const [key, entry] of catalog) {
-    const [provider, id] = key.split("/");
-    if (id !== undefined) modelIdToProvider.set(id, provider ?? entry.provider);
-  }
-  const seen: Array<{ provider: string; id: string }> = [];
-  const responses = [
-    fauxAssistantMessage(fauxToolCall(officerTool, { status: "converged", findings: [] })),
-  ];
-  faux.provider.stream = (() => {
-    const next = responses.shift();
-    if (next === undefined) throw new Error("unexpected Gatekeeper provider request");
-    const stream = createAssistantMessageEventStream();
-    queueMicrotask(() => stream.end(next));
-    return stream;
-  }) as any;
-  faux.provider.streamSimple = faux.provider.stream as any;
-  // Register the faux provider plus any catalog overrides (except auth-fail models, whose
-  // seat must fail loudly as provider-is-not-configured). All point at the one faux server.
-  const extraProviders = (options.catalog ?? [])
-    .filter((entry) => !authFailIds.has(entry.id))
-    .map((entry) => entry);
-  await registerInstitutionalProviderFixture(faux, extraProviders, {
-    onModel(modelId) {
-      seen.push({ provider: modelIdToProvider.get(modelId) ?? parentModel.provider, id: modelId });
-    },
-  });
-  return {
-    parentModel,
-    seen,
-    context(id: string, toolName: string) {
-      const runDirectory = installInstitutionalRunDir(options.seats ?? parentInheritedSeats(parentModel));
-      return Object.assign(toolCallContext([{ id, name: toolName }]), {
-        cwd: process.cwd(),
-        model: parentModel,
-        modelRegistry: {
-          // Override providers share the scripted stream so completion model is observable.
-          getProvider() { return faux.provider; },
-          find(providerName: string, modelId: string) {
-            return catalog.get(`${providerName}/${modelId}`);
-          },
-          async getProviderAuth() { return { auth: { apiKey: "test-key" } }; },
-          async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "test-key" }; },
-        },
-        thinkingLevel: "off",
-      });
-    },
-  };
 }
 
 function activationCtx(home: string, extras: Record<string, unknown> = {}): ExtensionContext {
@@ -1034,11 +666,10 @@ test("focused Judge controller registers output without narrowing host tools", a
     "arbitrary_sibling",
   ]);
   const runtime = createJudgeRoleRuntime(
-    ((h) => { armGateSummonOnHost(h); return h; })(createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI).host),
+    createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI).host,
     {
       loadSoul: async () => "  JUDGE LAW  ",
     },
-    testHostActions(),
   );
 
   await runtime.activate();
@@ -1072,7 +703,7 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     },
   });
   const fixerRuntime = createFixerRoleRuntime(
-    ((h) => { armGateSummonOnHost(h); return h; })(fixerHost),
+    fixerHost,
     {
       loadSoul: async () => "\n FIXER LAW \n",
       loadPacket: async (path) =>
@@ -1115,7 +746,7 @@ test("focused Fixer and Coder controllers own their flags, lifecycle hooks, and 
     "ak-coder-phase": "plan",
   });
   const coderRuntime = createCoderRoleRuntime(
-    ((h) => { armGateSummonOnHost(h); return h; })(createPiRoleHostAdapter(coder.pi as unknown as ExtensionAPI).host),
+    createPiRoleHostAdapter(coder.pi as unknown as ExtensionAPI).host,
     {
       loadSoul: async () => "\n CODER LAW \n",
       loadTask: async () => "\n TASK BODY \n",
@@ -1144,13 +775,11 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
       activate: async () => {
         const harness = extensionHarness(undefined);
         const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-    armGateSummonOnHost(piHostAdapter.host);
         const runtime = createJudgeRoleRuntime(
           piHostAdapter.host,
           {
             loadSoul: async () => "judge",
           },
-          testHostActions(),
         );
         await runtime.activate();
         return harness;
@@ -1166,7 +795,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           "ak-fixer-phase": "apply",
         });
         const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-    armGateSummonOnHost(piHostAdapter.host);
         const runtime = createFixerRoleRuntime(
           piHostAdapter.host,
           {
@@ -1189,7 +817,6 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
           "ak-coder-phase": "plan",
         });
         const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-    armGateSummonOnHost(piHostAdapter.host);
         const runtime = createCoderRoleRuntime(
           piHostAdapter.host,
           {
@@ -1225,15 +852,20 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     );
     assert.deepEqual(result.details, fixture.output);
     assert.equal(result.terminate, true);
-    const receiptText = result.content[0];
-    if (fixture.role === "coder") {
-      assert.deepEqual(result.content, []);
-    } else {
-      assert.equal(receiptText?.type, "text");
-    }
+    assert.deepEqual(result.content, [], "the submission tool finishes before reviewer receipts exist");
     // #756: judge no longer projects auditor usage onto the parent receipt —
     // nested officer meters live on the officer session; parent accepts as-is.
     assert.equal(result.usage, undefined);
+    const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
+    const raw = await tool.execute(
+      "unreadable-status",
+      unreadable,
+      undefined,
+      undefined,
+      await withPassingGatekeeper(toolCallContext([{ id: "unreadable-status", name: fixture.name }])),
+    );
+    assert.equal(raw.terminate, true, `${fixture.role} finishes an unreadable-status submission`);
+    assert.deepEqual(raw.details, unreadable, `${fixture.role} preserves the raw submission`);
   }
 });
 
@@ -1282,16 +914,9 @@ test("judge escalate skips Notary and Auditor gates and accepts as-is (#756)", a
   // Direct role runtime (no submission-ledger wrap) so terminate stays on the face.
   const harness = extensionHarness("judge");
   const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-  armGateSummonOnHost(piHostAdapter.host);
-  let summonCount = 0;
-  defaultGateSummon = async (officer) => {
-    summonCount += 1;
-    return passingOfficerSummon(officer);
-  };
   await createJudgeRoleRuntime(
     piHostAdapter.host,
     { loadSoul: async () => "JUDGE LAW" },
-    testHostActions(),
   ).activate();
   const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME)!;
   const escalate = {
@@ -1306,113 +931,29 @@ test("judge escalate skips Notary and Auditor gates and accepts as-is (#756)", a
     undefined,
     toolCallContext([{ id: "call-esc", arguments: escalate }]),
   );
-  assert.equal(summonCount, 0, "escalate must not summon notary or auditor");
   assert.equal(result.terminate, true);
   assert.deepEqual(result.details, escalate);
 });
 
-test("judge status unreadable returns to judge without officers (#756)", async () => {
-  const { tool } = await startJudge();
-  let summonCount = 0;
-  defaultGateSummon = async (officer) => {
-    summonCount += 1;
-    return passingOfficerSummon(officer);
-  };
-  await assert.rejects(
-    tool.execute(
-      "call-bad",
-      { status: "not-a-status", note: "typo" },
-      undefined,
-      undefined,
-      await withPassingGatekeeper(toolCallContext([{ id: "call-bad", arguments: { status: "not-a-status" } }])),
-    ),
-    (error: unknown) => {
-      assert.ok(error instanceof ParentQueueReaskError);
-      return true;
-    },
+test("judge output tool returns an unreadable status for public routing (#756/#1057)", async () => {
+  // Direct role runtime (no submission-ledger wrap) so terminate stays on the face.
+  const harness = extensionHarness("judge");
+  const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
+  await createJudgeRoleRuntime(
+    piHostAdapter.host,
+    { loadSoul: async () => "JUDGE LAW" },
+  ).activate();
+  const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME)!;
+  const unreadable = { status: "not-a-status", note: "typo" };
+  const result = await tool.execute(
+    "call-bad",
+    unreadable,
+    undefined,
+    undefined,
+    await withPassingGatekeeper(toolCallContext([{ id: "call-bad", arguments: unreadable }])),
   );
-  assert.equal(summonCount, 0, "bad status must not summon officers");
-});
-
-test("judge role returns auditor continue as raw receipt without aborting (#756)", async () => {
-  const { tool } = await startJudge();
-  const verdict = { status: "converged" };
-  let abortCalls = 0;
-  // #775: structured violations must reach the parent seat with field content intact
-  // (not `[object Object]` from Array#join coercion).
-  const structured = {
-    article: "evidence-required",
-    reason: "No authority clause was applied",
-    evidence: "session tool_result lacks ADR cite",
-  };
-  const continueReceipt = {
-    status: "continue",
-    violations: [structured, "Tests were not adjudicated"],
-  };
-  const ctx = await withPassingGatekeeper(toolCallContext([{ id: "call-2", arguments: verdict }], () => {
-    abortCalls += 1;
-  }));
-  // Notary converges; auditor continues with raw receipt — no violations rewrite (#756).
-  // Set after withPassingGatekeeper so it is not overwritten by the pass-all default.
-  defaultGateSummon = async (officer) => {
-    if (officer === "auditor") {
-      return {
-        exitCode: 0,
-        terminal: {
-          roleOutcome: {
-            kind: "accepted",
-            role: "auditor",
-            status: "continue",
-            // #836: officer receipt content rides recorded payloads, not decisiveFacts.
-            payloads: [continueReceipt],
-            decisiveFacts: continueReceipt,
-          },
-          navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-          artifacts: [],
-          runId: "test-auditor-bounce",
-        },
-      };
-    }
-    return passingOfficerSummon(officer);
-  };
-
-  const result = await tool.execute("call-2", verdict, undefined, undefined, ctx);
-  assert.equal(result.terminate, false, "continue stays in the same conversation");
-  assert.deepEqual(result.details, verdict);
-  assert.deepEqual(result.content.map((item: { text: string }) => JSON.parse(item.text)), [
-    { status: "converged", findings: [] },
-    continueReceipt,
-  ], "both officers' structured receipts remain separately visible");
-  assert.equal(abortCalls, 0);
-});
-
-test("judge returns auditor transport failures on the failure channel with abort (#836 A.3)", async () => {
-  const { tool } = await startJudge();
-  const verdict = { status: "converged" };
-  let abortCalls = 0;
-  const ctx = await withPassingGatekeeper(toolCallContext(
-    [{ id: "audit-failure", arguments: verdict }],
-    () => {
-      abortCalls += 1;
-    },
-  ));
-  defaultGateSummon = async (officer) => {
-    if (officer === "auditor") {
-      throw new Error("provider unavailable");
-    }
-    return passingOfficerSummon(officer);
-  };
-
-  await assert.rejects(
-    tool.execute("audit-failure", verdict, undefined, undefined, ctx),
-    (error: unknown) => {
-      assert.ok(error instanceof Error);
-      assert.equal((error as Error).name, "GatekeeperTransportFailure");
-      assert.match((error as Error).message, /provider unavailable/);
-      return true;
-    },
-  );
-  assert.equal(abortCalls, 1);
+  assert.equal(result.terminate, true);
+  assert.deepEqual(result.details, unreadable);
 });
 
 test("judge role fails before adjudication when its soul is empty", async () => {
@@ -1566,369 +1107,6 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
     assert.deepEqual(sealed.accepted, bare);
   });
 });
-
-test("Gatekeeper continue returns a normal nonterminal tool result", async () => {
-  const harness = extensionHarness("judge");
-  installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
-    loadRoleSoul: async () => "JUDGE LAW",
-  });
-  await withActivationHome({ prefix: "ak-gatekeeper-tool-result-" }, async ({ home }) => {
-    const ctx = activationCtx(home);
-    await harness.handlers.get("session_start")?.({}, ctx);
-    const findings = ["add a focused regression"];
-    const toolCallId = "judge-gk-bounce";
-    const bounceSubmission = { status: "continue", findings };
-    // #753: raw officer receipt only — no findings rewrite / disposition mapping.
-    // #969: officer projection also carries nested runId when known.
-    const faux = fauxProvider({ provider: "gk-tool-result", api: "gk-tool-result" });
-    const model = faux.getModel();
-    // #675: offline gate summons inject public terminal results via hostActions.
-    defaultGateSummon = async (officer) => ({
-      exitCode: 0,
-      terminal: {
-        roleOutcome: {
-          kind: "accepted",
-          role: officer,
-          status: "continue",
-          // #836: officer receipt content rides recorded payloads, not decisiveFacts.
-          payloads: [bounceSubmission],
-          decisiveFacts: bounceSubmission,
-        },
-        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-        artifacts: [],
-        runId: "test-gk-bounce",
-      },
-    });
-      // Singleton check needs the tool-call leaf on sessionManager; do not clobber it with activationCtx.
-    installInstitutionalRunDir(parentInheritedSeats(model));
-    const gateContext = Object.assign(toolCallContext([{ id: toolCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
-      cwd: process.cwd(),
-      model,
-      modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider),
-      thinkingLevel: "off",
-    });
-    const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
-    assert.ok(tool);
-    const result = await tool.execute(toolCallId, { status: "converged" }, undefined, undefined, gateContext);
-    assert.equal(result.terminate, false);
-    assert.deepEqual(result.details, { status: "converged" });
-
-    const notaryPass = { status: "converged", reason: "draft accepted" };
-    const auditorBounce = { status: "continue", violations: ["revise evidence"] };
-    defaultGateSummon = async (officer) => ({
-      exitCode: 0,
-      terminal: {
-        roleOutcome: {
-          kind: "accepted", role: officer,
-          status: officer === "notary" ? "converged" : "continue",
-          payloads: [officer === "notary" ? notaryPass : auditorBounce],
-          decisiveFacts: officer === "notary" ? notaryPass : auditorBounce,
-        },
-        navigator: { disposition: "no-advice" }, artifacts: [], runId: `test-${officer}`,
-      },
-    });
-    const twoGateCallId = "judge-two-gates";
-    const twoGateContext = Object.assign(toolCallContext([{ id: twoGateCallId, name: JUDGE_OUTPUT_TOOL_NAME }]), {
-      cwd: process.cwd(), model, modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider), thinkingLevel: "off",
-    });
-    const continued = await tool.execute(twoGateCallId, { status: "converged" }, undefined, undefined, twoGateContext);
-    assert.equal(continued.terminate, false);
-    assert.deepEqual(continued.details, { status: "converged" });
-  });
-});
-
-test("coder completed submissions traverse the direct Inspector gate until pass", async () => {
-  const request = "Apply the approved plan.";
-  const harness = extensionHarness(undefined, {
-    "ak-coder-task": "/materials/approved.md",
-    "ak-coder-phase": "apply",
-  });
-  const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-    armGateSummonOnHost(piHostAdapter.host);
-  const runtime = createCoderRoleRuntime(
-    piHostAdapter.host,
-    {
-      loadSoul: async () => "CODER LAW",
-      loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
-      },
-    testHostActions(),
-  );
-  await runtime.activate();
-  await harness.handlers.get("input")?.({ text: request }, {});
-  await harness.handlers.get("before_agent_start")?.(
-    { systemPrompt: "BASE", prompt: request },
-    { abort() {}, mode: "tui" },
-  );
-  const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
-  assert.ok(tool);
-  const completed = { status: "completed", report: "TDD and verification evidence" };
-  const tracer = await workerCompletionGatekeeperHarness({
-    execute: (id, output, context) => tool.execute(id, output as typeof completed, undefined, undefined, context),
-    toolName: CODER_OUTPUT_TOOL_NAME,
-    output: completed,
-  });
-  await tracer.assertRejectSequence();
-  const accepted = await tool.execute("accepted", completed, undefined, undefined, tracer.context("accepted", CODER_OUTPUT_TOOL_NAME));
-
-  assert.equal(accepted.terminate, true);
-  // #753: needs_reask→no_receipt (2) + bounce + pass = 4.
-  assert.equal(tracer.providerRequests, 4);
-  assert.equal(tracer.remainingResponses, 0);
-});
-
-test("fixer completed and partially_completed traverse the direct Inspector gate; skip statuses settle without it", async () => {
-  const start = async (phase: "plan" | "apply") => {
-    const harness = extensionHarness(undefined, {
-      "ak-fix-packet": "/materials/fix.md",
-      "ak-fixer-phase": phase,
-    });
-    const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-    armGateSummonOnHost(piHostAdapter.host);
-    const runtime = createFixerRoleRuntime(
-      piHostAdapter.host,
-      { loadSoul: async () => "FIXER LAW", loadPacket: async () => emptyFixPacket },
-      testHostActions(),
-    );
-    await runtime.activate();
-    return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
-  };
-  const completed = {
-    status: "completed" as const,
-    report: "repair complete",
-    classResults: [{ name: "Gate", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }],
-  };
-  const completedTool = await start("apply");
-  const tracer = await workerCompletionGatekeeperHarness({
-    execute: (id, output, context) => completedTool.execute(id, output as typeof completed, undefined, undefined, context),
-    toolName: FIXER_OUTPUT_TOOL_NAME,
-    output: completed,
-    // completed + partially_completed consume the direct Inspector pass;
-    // planned / refused / unfinished settle without summoning.
-    passingRuns: 2,
-  });
-  const submissionContext = (id: string) => tracer.context(id, FIXER_OUTPUT_TOOL_NAME);
-  await assert.rejects(
-    completedTool.execute(
-      "unreadable-status",
-      { status: { value: "unknown" }, report: { callerOwnsThisNarrativeField: true } },
-      undefined,
-      undefined,
-      submissionContext("unreadable-status"),
-    ),
-    (error: unknown) => error instanceof ParentQueueReaskError,
-  );
-  await tracer.assertRejectSequence();
-  assert.equal((await completedTool.execute("converged", completed, undefined, undefined, submissionContext("converged"))).terminate, true);
-
-  const partial = {
-    status: "partially_completed" as const,
-    report: "mixed lawful settlement",
-    classResults: [
-      completed.classResults[0],
-      { name: "Blocked", disposition: "refused" as const, remainingScope: "owner choice", blocker: { kind: "missing_prerequisite" as const, prerequisiteId: "owner.choice", reason: "owner choice missing" } },
-    ],
-  };
-  const partialHarness = extensionHarness(undefined, { "ak-fix-packet": "/materials/fix.md", "ak-fixer-prerequisites": "/materials/prereqs.json", "ak-fixer-phase": "apply" });
-  const partialPiHostAdapter = createPiRoleHostAdapter(partialHarness.pi as unknown as ExtensionAPI);
-  armGateSummonOnHost(partialPiHostAdapter.host);
-  const partialRuntime = createFixerRoleRuntime(partialPiHostAdapter.host, {
-    loadSoul: async () => "FIXER LAW",
-    loadPacket: async (path) => path.endsWith("prereqs.json") ? declaredFixPrerequisites : emptyFixPacket,
-  }, testHostActions());
-  await partialRuntime.activate();
-  assert.equal((await partialHarness.tools.get(FIXER_OUTPUT_TOOL_NAME)!.execute("partial", partial, undefined, undefined, submissionContext("partial"))).terminate, true);
-
-  const unfinished = {
-    status: "unfinished" as const,
-    report: "handover",
-    remainingScope: "owner answer",
-    reason: "prerequisite_missing: owner answer",
-  };
-  const unfinishedTool = await start("apply");
-  assert.equal(
-    (await unfinishedTool.execute("unfinished", unfinished, undefined, undefined, submissionContext("unfinished"))).terminate,
-    true,
-  );
-
-  const beforeAllStatuses = tracer.providerRequests;
-  const planTool = await start("plan");
-  assert.equal(
-    (await planTool.execute("planned", { status: "planned", report: "plan" }, undefined, undefined, submissionContext("planned"))).terminate,
-    true,
-  );
-  assert.equal(
-    (await planTool.execute("plan-refused", { status: "refused", report: "blocked", remainingScope: "owner answer", blocker: { kind: "missing_prerequisite", prerequisiteId: "owner.choice", reason: "missing" } }, undefined, undefined, submissionContext("plan-refused"))).terminate,
-    true,
-  );
-  const applyTool = await start("apply");
-  assert.equal(
-    (await applyTool.execute("apply-refused", { status: "refused", report: "blocked", classResults: [{ name: "Blocked", disposition: "refused", remainingScope: "owner answer", blocker: { kind: "unconstitutional", authority: "ADR", conflict: "conflict" } }] }, undefined, undefined, submissionContext("apply-refused"))).terminate,
-    true,
-  );
-  // skip statuses must not consume further officer passes.
-  assert.equal(tracer.providerRequests, beforeAllStatuses);
-  // #753: reject matrix (reask→no_receipt + bounce = 3) + two DONE passes = 5.
-  assert.equal(tracer.providerRequests, 5);
-  assert.equal(tracer.remainingResponses, 0);
-});
-
-test("judge submissions traverse Notary then Auditor gates (#756)", async () => {
-  const auditorCalls: string[] = [];
-  const { harness, tool } = await startJudge();
-  // Full direct-Notary reject+pass matrix once; production does not branch on status.
-  // After Notary pass, Auditor gate also runs (second pass in queue).
-  const continueVerdict = {
-    status: "continue" as const,
-    fix: { summary: "tighten the gate" },
-    note: "ticket-review",
-  };
-  const tracer = await workerCompletionGatekeeperHarness({
-    execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
-    toolName: JUDGE_OUTPUT_TOOL_NAME,
-    output: continueVerdict,
-    officer: "notary",
-    // notary pass + auditor pass
-    passingRuns: 2,
-  });
-  // Wrap summon to observe auditor stays dark through notary non-pass matrix.
-  const baseSummon = defaultGateSummon!;
-  defaultGateSummon = async (officer, source, signal, reask) => {
-    if (officer === "auditor") auditorCalls.push("auditor");
-    return baseSummon(officer, source, signal, reask);
-  };
-  await tracer.assertRejectSequence();
-  // #753/#756: non-three-state resumes officer — parent never stands through the reject matrix;
-  // auditor stays dark until Notary pass.
-  assert.equal(auditorCalls.length, 0, "auditor stays dark through notary non-pass matrix");
-  const context = tracer.context("continue-pass", JUDGE_OUTPUT_TOOL_NAME);
-  const { sealed, pending } = await acceptThroughTypedRoundClosure({
-    handlers: harness.handlers,
-    tool,
-    toolCallId: "continue-pass",
-    toolName: JUDGE_OUTPUT_TOOL_NAME,
-    output: continueVerdict,
-    context,
-  });
-  assert.equal(pending.terminate, true); // #836: original terminate flag preserved
-  assert.deepEqual(sealed.accepted, continueVerdict);
-  assert.equal(auditorCalls.length, 1, "auditor runs after Notary pass");
-  // #756: reask→no_receipt + bounce + notary pass + auditor pass = 5.
-  assert.equal(tracer.providerRequests, 5);
-  assert.equal(tracer.remainingResponses, 0);
-
-  // Other status: cheap same-gate assert — enters Gatekeeper; non-pass keeps auditor dark.
-  const convergedVerdict = { status: "converged" as const, note: "judgment" };
-  const secondGate = await workerCompletionGatekeeperHarness({
-    execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
-    toolName: JUDGE_OUTPUT_TOOL_NAME,
-    output: convergedVerdict,
-    officer: "notary",
-    passingRuns: 0,
-  });
-  await assert.rejects(
-    tool.execute(
-      "converged-gate",
-      convergedVerdict,
-      undefined,
-      undefined,
-      secondGate.context("converged-gate", JUDGE_OUTPUT_TOOL_NAME),
-    ),
-    (error: unknown) => {
-      assert.ok(error instanceof GatekeeperDecisionError);
-      assert.equal(error.result.status, "no_receipt");
-      return true;
-    },
-  );
-  assert.equal(auditorCalls.length, 1, "auditor must not start again on Gatekeeper non-pass for other status");
-  assert.equal(secondGate.providerRequests, 2);
-});
-
-test("direct Inspector submit summons inspector; transport failure stays loud", async () => {
-  const request = "Apply the approved plan.";
-  const completed = { status: "completed", report: "TDD and verification evidence" };
-  const startCoder = async () => {
-    const harness = extensionHarness(undefined, {
-      "ak-coder-task": "/materials/approved.md",
-      "ak-coder-phase": "apply",
-    });
-    const runtime = createCoderRoleRuntime(
-      ((h) => { armGateSummonOnHost(h); return h; })(createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI).host),
-      {
-        loadSoul: async () => "CODER LAW",
-        loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
-          },
-      testHostActions(),
-    );
-    await runtime.activate();
-    await harness.handlers.get("input")?.({ text: request }, {});
-    await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: request },
-      { abort() {}, mode: "tui" },
-    );
-    return harness.tools.get(CODER_OUTPUT_TOOL_NAME)!;
-  };
-
-  {
-    const tool = await startCoder();
-    const officers: string[] = [];
-    defaultGateSummon = async (officer) => {
-      officers.push(officer);
-      return passingOfficerSummon(officer);
-    };
-      const faux = fauxProvider({ provider: "own-inspector", api: "own-inspector" });
-    const model = faux.getModel();
-    const runDirectory = installInstitutionalRunDir(parentInheritedSeats(model));
-    const context = Object.assign(toolCallContext([{ id: "own-inspector", name: CODER_OUTPUT_TOOL_NAME }]), {
-      cwd: process.cwd(),
-      model,
-      thinkingLevel: "off",
-    });
-    if (context.sessionManager !== undefined) {
-      (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
-    }
-    const accepted = await tool.execute("own-inspector", completed, undefined, undefined, context);
-    assert.equal(accepted.terminate, true);
-    assert.deepEqual(officers, ["inspector"]);
-  }
-  {
-    const tool = await startCoder();
-    defaultGateSummon = async () => ({
-      exitCode: 1,
-      terminal: {
-        roleOutcome: {
-          kind: "failure",
-          role: "inspector",
-          cause: "provider",
-          diagnostic: "provider is not configured: openai-codex",
-          decisiveFacts: {},
-        },
-        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-        artifacts: [],
-        runId: "test-auth-fail",
-      },
-    });
-      const faux = fauxProvider({ provider: "auth-fail", api: "auth-fail" });
-    const model = faux.getModel();
-    const runDirectory = installInstitutionalRunDir(parentInheritedSeats(model));
-    const context = Object.assign(toolCallContext([{ id: "auth-fail", name: CODER_OUTPUT_TOOL_NAME }]), {
-      cwd: process.cwd(),
-      model,
-      thinkingLevel: "off",
-    });
-    if (context.sessionManager !== undefined) {
-      (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
-    }
-    await assert.rejects(
-      tool.execute("auth-fail", completed, undefined, undefined, context),
-      (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.equal((error as Error).name, "GatekeeperTransportFailure");
-        return /provider is not configured/.test((error as Error).message);
-      },
-    );
-  }
-});
-
 
 test("Fixer activation rejects malformed prerequisites and blank instructions before installing its tool", async () => {
   const rows = [
@@ -2138,318 +1316,3 @@ test("fixer activation leaves its tool surface unchanged", async () => {
 // 纯进程内模块逻辑（Source-tree imports，无任何装包边界），性质属快档。
 // Judge/doctor：bounce→errored / pass→terminate / escalate 全矩阵。
 // Fixer (#242) / Reviewer (#495 S6)：无审刑院闸，typed validate 即受理。
-test("role outputs run nested audits through converged, continue, and escalation", async () => {
-  // Source-tree imports: cold-install boundary is owned by neighbouring install tests;
-  // this carrier owns bounce→errored / pass→terminate / escalate per audited role output tool.
-  const root = packageRoot;
-  const importSrc = (rel: string) => import(resolve(root, rel));
-  const nestedLedger = createTempPackageHomeLedger({ prefix: "ak-nested-audit-home-", runName: "nested@judge" });
-  const nestedRunDir = nestedLedger.runDirectory;
-  const previousRunDir = process.env.AK_ROLE_RUN_DIR;
-  process.env.AK_ROLE_RUN_DIR = nestedRunDir;
-  try {
-  {
-      const [doctor, judgeRole, workerRole, reviewerRole, doctorRole, terminating] = await Promise.all([
-        importSrc("src/doctor-auditor.ts"),
-        importSrc("src/judge-role.ts"),
-        importSrc("src/worker-role.ts"),
-        importSrc("src/reviewer-role.ts"),
-        importSrc("src/doctor-role.ts"),
-        importSrc("src/package-contracts/terminating-tools.ts"),
-      ]);
-
-      const patient = {
-        version: 1,
-        identity: { issueNumber: 58, runsPath: ".ak/work/issues/58/runs" },
-        evidence: [],
-        cost: { invocations: { total: 0, sources: [] }, bytes: 0 },
-      };
-      const escalation = {
-        status: "escalate" as const,
-        violations: [],
-        conflicts: ["Soul conflicts with controlling authority"],
-        decisionGate: {
-          question: "Which authority governs this submission?",
-          options: ["Soul", "Controlling authority"],
-        },
-      };
-      const bounce = {
-        status: "continue" as const,
-        violations: ["one concrete procedural violation"],
-        conflicts: [],
-        decisionGate: null,
-      };
-      const doctorBounce = bounce;
-      const pass = {
-        status: "converged" as const,
-        violations: [],
-        conflicts: [],
-        decisionGate: null,
-      };
-      const doctorPass = pass;
-      const outputs = {
-        judge: { status: "converged" },
-        fixer: { status: "completed", report: "done", classResults: [
-          { name: "Contract", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) },
-          { name: "Audit", disposition: "completed", searchScope: "all", exceptions: [], commitSha: "a".repeat(40) },
-        ] },
-        reviewer: { status: "refused", diagnostic: "no accepted dispatch" },
-        doctor: { status: "refused", reason: "missing", missingEvidence: [{ need: "case evidence", targetKeys: ["case"] }] },
-      } as const;
-      const acceptedNames = {
-        judge: "ak_judge_output",
-        fixer: "ak_fixer_output",
-        reviewer: "ak_reviewer_output",
-        doctor: "ak_doctor_output",
-      } as const;
-
-      const makeHarness = (flags: Record<string, string> = {}) => {
-        const tools = new Map<string, any>();
-        const handlers = new Map<string, any>();
-        const hostTools = ["read", "write", "grep", "find", "bash"];
-        let activeTools: string[] = [...hostTools];
-        const pi = {
-          registerFlag() {},
-          getFlag(name: string) { return flags[name]; },
-          registerTool(tool: any) { tools.set(tool.name, tool); },
-          getAllTools() { return [...hostTools, ...tools.keys()].map((name) => ({ name })); },
-          setActiveTools(names: string[]) { activeTools = [...names]; },
-          getActiveTools() { return activeTools; },
-          on(name: string, handler: any) { handlers.set(name, handler); },
-        };
-        return { pi, tools, handlers, activeTools: () => [...activeTools] };
-      };
-      const outputContext = (name: string, id: string, arguments_: JsonObject = {}) => {
-        const sessionManager = SessionManager.inMemory();
-        (sessionManager as any).getSessionFile = () => join(nestedRunDir, "session", "session.jsonl");
-        sessionManager.appendMessage({ role: "user", content: "assignment", timestamp: Date.now() });
-        sessionManager.appendMessage({
-          role: "assistant",
-          content: [{ type: "toolCall", id, name, arguments: arguments_ }],
-          api: "openai-responses",
-          provider: "installed-role",
-          model: "installed-role",
-          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-          stopReason: "toolUse",
-          timestamp: Date.now(),
-        });
-        return {
-          sessionManager,
-          model: { api: "openai-responses", provider: "installed-auditor", id: "installed-auditor" },
-          modelRegistry: {
-            async getProviderAuth() { return { auth: { apiKey: "offline" } }; },
-            async getApiKeyAndHeaders() { return { ok: true as const, apiKey: "offline" }; },
-          },
-        } as any;
-      };
-
-      const createRole = (role: keyof typeof outputs, decision: typeof pass | typeof bounce | typeof doctorBounce | typeof doctorPass | typeof escalation) => {
-        const harness = role === "fixer"
-          ? makeHarness({ "ak-fix-packet": "/packet", "ak-fixer-phase": "apply" })
-          : role === "reviewer"
-            ? makeHarness({
-                "ak-review-base": "review-base",
-                "ak-review-lens": "completeness",
-                "ak-review-authority-refs": JSON.stringify(["CLAUDE.md"]),
-              })
-            : role === "doctor"
-              ? makeHarness({ "ak-doctor-case": "/case" })
-              : makeHarness();
-        const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-        armGateSummonOnHost(piHostAdapter.host);
-        let auditCalls = 0;
-        let selectedDecision = decision;
-        // Doctor keeps disposeCompliance path; judge auditor is gate queue (#756).
-        const auditCompliance = async (options: { context: HostContext; signal?: AbortSignal; submission: unknown }) => {
-          auditCalls += 1;
-          const summonAuditor: AuditorSummon = async (_subject) => ({
-            exitCode: 0,
-            terminal: {
-              roleOutcome: {
-                kind: "accepted",
-                role: "auditor",
-                status: selectedDecision.status,
-                // #836: compliance decision content rides recorded payloads, not decisiveFacts.
-                payloads: [selectedDecision as Record<string, unknown>],
-                decisiveFacts: selectedDecision as Record<string, unknown>,
-              },
-              navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-              artifacts: [],
-              runId: "test-compliance",
-            },
-          });
-          const piOptions = {
-            ...options,
-            context: toPiContext(options.context),
-            summonAuditor,
-          };
-          return doctor.createPiDoctorAuditor()(piOptions);
-        };
-        /** Judge #756: notary pass + auditor returns selectedDecision as raw terminal. */
-        const armJudgeGateDecision = () => {
-          defaultGateSummon = async (officer) => {
-            if (officer === "auditor") {
-              auditCalls += 1;
-              return {
-                exitCode: 0,
-                terminal: {
-                  roleOutcome: {
-                    kind: "accepted",
-                    role: "auditor",
-                    status: selectedDecision.status,
-                    // #836: officer receipt content rides recorded payloads, not decisiveFacts.
-                    payloads: [selectedDecision as Record<string, unknown>],
-                    decisiveFacts: selectedDecision as Record<string, unknown>,
-                  },
-                  navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-                  artifacts: [],
-                  runId: "test-judge-compliance",
-                },
-              };
-            }
-            return passingOfficerSummon(officer);
-          };
-        };
-        let runtime: any;
-        if (role === "judge") {
-          runtime = judgeRole.createJudgeRoleRuntime(piHostAdapter.host, {
-            loadSoul: async () => "judge law",
-          }, testHostActions());
-        } else if (role === "fixer") {
-          runtime = workerRole.createFixerRoleRuntime(piHostAdapter.host, {
-            loadSoul: async () => "fixer law",
-            loadPacket: async () => "repair packet",
-          }, testHostActions());
-        } else if (role === "doctor") {
-          runtime = doctorRole.createDoctorRoleRuntime(piHostAdapter.host, {
-            loadSoul: async () => "doctor law",
-            loadCase: async () => patient,
-            auditCompliance,
-          }, testHostActions());
-        } else {
-          runtime = reviewerRole.createReviewerRoleRuntime(piHostAdapter.host, {
-            loadSoul: async () => "reviewer law",
-          }, testHostActions());
-        }
-        return {
-          harness,
-          runtime,
-          armJudgeGateDecision,
-          setDecision(next: typeof pass | typeof bounce | typeof doctorBounce | typeof doctorPass | typeof escalation) { selectedDecision = next; },
-          get auditCalls() { return auditCalls; },
-        };
-      };
-
-      for (const role of ["judge", "fixer", "reviewer", "doctor"] as const) {
-        const toolName = role === "judge" ? judgeRole.JUDGE_OUTPUT_TOOL_NAME : role === "fixer" ? workerRole.FIXER_OUTPUT_TOOL_NAME : role === "reviewer" ? reviewerRole.REVIEWER_OUTPUT_TOOL_NAME : doctorRole.DOCTOR_OUTPUT_TOOL_NAME;
-        if (role === "fixer" || role === "reviewer") {
-          // #242 fixer / #495 S6 reviewer: no soul auditor. Fixer still traverses Gatekeeper; reviewer accepts on typed validate.
-          const plain = createRole(role, pass);
-          if (role === "reviewer") {
-            await plain.runtime.activate(undefined, {
-              baseRevision: "review-base",
-              lens: "completeness",
-              authorityRefs: ["CLAUDE.md"],
-            });
-            assert.deepEqual(
-              plain.harness.activeTools(),
-              ["read", "write", "grep", "find", "bash"],
-              "Reviewer activation must preserve Pi's evidence tool surface",
-            );
-          } else {
-            await plain.runtime.activate();
-          }
-          const tool = plain.harness.tools.get(toolName);
-          assert.ok(tool);
-          const ctx = role === "fixer"
-            ? await withPassingGatekeeper(outputContext(tool.name, `${role}-pass`))
-            : outputContext(tool.name, `${role}-pass`, outputs[role] as unknown as JsonObject);
-          const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, ctx);
-          assert.equal(accepted.terminate, true);
-          if (role === "fixer") {
-            assert.deepEqual(accepted.details, outputs[role]);
-          } else {
-            // Reviewer receipt is assembled from ledger + intent; status rides the face.
-            assert.equal(accepted.details.status, outputs[role].status);
-          }
-          assert.equal(plain.auditCalls, 0);
-          continue;
-        }
-        const retriable = createRole(role, role === "doctor" ? doctorBounce : bounce);
-        await retriable.runtime.activate();
-        const tool = retriable.harness.tools.get(toolName);
-        assert.ok(tool);
-        const submissionContext = async (id: string) => {
-          const bare = outputContext(tool.name, id, outputs[role] as unknown as JsonObject);
-          if (role !== "judge") return bare;
-          const ctx = await withPassingGatekeeper(bare);
-          retriable.armJudgeGateDecision();
-          return ctx;
-        };
-        if (role === "judge") {
-          // #1028: auditor continue is a normal nonterminal tool result.
-          const continued = await tool.execute(`${role}-continue`, outputs[role], undefined, undefined, await submissionContext(`${role}-continue`));
-          assert.equal(continued.terminate, false);
-          assert.deepEqual(continued.details, outputs[role]);
-          assert.equal(continued.content.length, 2, "both review gate receipts remain separately visible");
-        } else {
-          const continued = await tool.execute(`${role}-continue`, outputs[role], undefined, undefined, await submissionContext(`${role}-continue`));
-          assert.equal(continued.terminate, false);
-          assert.deepEqual(continued.details, outputs[role]);
-        }
-        retriable.setDecision(role === "doctor" ? doctorPass : pass);
-        const accepted = await tool.execute(`${role}-pass`, outputs[role], undefined, undefined, await submissionContext(`${role}-pass`));
-        assert.equal(accepted.terminate, true);
-        if (role === "judge") assert.equal(accepted.details.status, outputs[role].status);
-        else assert.equal(accepted.details.status, outputs[role].status);
-        assert.deepEqual(accepted.details, outputs[role]);
-        assert.equal(retriable.auditCalls, 2, `${role} must audit the rejected submission and its resubmission`);
-
-        const escalated = createRole(role, escalation);
-        await escalated.runtime.activate();
-        const escalationTool = escalated.harness.tools.get(tool.name);
-        if (role === "judge") {
-          // Escalation terminates into the existing audit-escalation face; no
-          // officer verdict is delivered back to the judge's conversation.
-          const escBare = outputContext(tool.name, `${role}-escalate`, outputs[role] as unknown as JsonObject);
-          const escCtx = await withPassingGatekeeper(escBare);
-          escalated.armJudgeGateDecision();
-          const paused = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, escCtx);
-          assert.deepEqual(paused.content, []);
-          assert.equal(paused.details.kind, "audit_escalation");
-          assert.deepEqual(paused.details.audit.conflicts, escalation);
-          assert.equal(paused.details.audit.officer, "auditor");
-          assert.deepEqual(paused.details.audit.auditDecisionGate, escalation.decisionGate);
-          assert.equal(escalated.auditCalls, 1);
-          continue;
-        }
-        const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, await submissionContext(`${role}-escalate`));
-        assert.equal(result.terminate, true);
-        // Doctor escalate face carries audit kind/conflicts/gate AND seat fields (ADR 0055).
-        assert.equal(result.details.kind, "audit_escalation");
-        const auditOwned = (result.details as { audit?: { conflicts?: unknown; auditDecisionGate?: unknown } }).audit;
-        assert.deepEqual(auditOwned?.conflicts, escalation.conflicts);
-        assert.deepEqual(auditOwned?.auditDecisionGate, escalation.decisionGate);
-        const delivered = (result.details as { receipt?: Record<string, unknown> }).receipt ?? result.details;
-        for (const [key, value] of Object.entries(outputs[role])) {
-          assert.deepEqual(
-            (delivered as Record<string, unknown>)[key],
-            value,
-            `${role} delivered field ${key} must ride the escalate face`,
-          );
-        }
-        assert.equal(isAuditEscalationResult(result.details), true);
-        // #836: validateAcceptedDetails no longer rejects — original payload passes through.
-        assert.deepEqual(
-          terminating.validateAcceptedDetails(acceptedNames[role], result.details),
-          result.details,
-        );
-        assert.equal(escalated.auditCalls, 1);
-      }
-  }
-  } finally {
-    if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
-    else process.env.AK_ROLE_RUN_DIR = previousRunDir;
-    nestedLedger.dispose();
-  }
-});
