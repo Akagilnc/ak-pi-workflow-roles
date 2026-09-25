@@ -324,6 +324,26 @@ test("run show: codex run — all five fact kinds reach the public result", asyn
     const runDirectory = await writeCodexRunFixture(machineHome);
     const initial = await runPublicRunShow(runDirectory, machineHome);
 
+    const decoyRolloutPath = join(
+      machineHome,
+      ".codex",
+      "sessions",
+      "2026",
+      "09",
+      "25",
+      `rollout-2026-09-25T00-00-00-${DECOY_THREAD_ID}.jsonl`,
+    );
+    await writeFile(
+      decoyRolloutPath,
+      [
+        JSON.stringify({ type: "compacted", payload: { message: "" } }),
+        JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { total_tokens: 1 } } }),
+      ].join("\n") + "\n",
+      "utf8",
+    );
+    const changedDecoy = await runPublicRunShow(runDirectory, machineHome);
+    assert.equal(changedDecoy, initial);
+
     // Verify each source fact reaches the public result without pinning its
     // terminal representation. Each invocation changes only one carrier.
     const reportPath = join(runDirectory, "artifacts", "report.json");
