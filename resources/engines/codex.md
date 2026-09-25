@@ -33,7 +33,7 @@ codex exec --skip-git-repo-check --ephemeral -C "$PROJECT_ROOT" "YOUR_LABOR_PROM
 Default (non-`--json`) mode prints the session banner and progress on stderr
 (measured on this host). Collect the labor body from stdout so that stderr log
 noise is not mixed into the returned body. Never use `--json` for labor: its
-JSONL event rows go back into the seat's context as noise (see `opus.md` for the
+JSONL event rows go back into the seat's context as noise (see `claude-code.md` for the
 measured ratio).
 
 Prefer `codex exec --help` on the host over any remembered flag set. Do not wrap
