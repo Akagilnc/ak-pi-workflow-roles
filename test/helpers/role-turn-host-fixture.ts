@@ -193,6 +193,11 @@ export function scriptedTerminatingToolSession(input: {
   readonly role: TerminalRoleName;
   readonly toolName: string;
   readonly details: unknown;
+  /**
+   * When set, ledger records an audit-escalation (or other non-accepted) face
+   * while keeping `details` as the original role params (#836 / #1071).
+   */
+  readonly outputDetails?: unknown;
   readonly isError?: boolean;
   /** Default true when !isError. Pass false for accepted-once non-usable residual paths. */
   readonly seal?: boolean;
@@ -209,6 +214,7 @@ export function scriptedTerminatingToolSession(input: {
   const toolCallId = input.toolCallId ?? `call_${input.role}_1`;
   const acceptedText = input.acceptedText ?? `${input.role} output accepted`;
   const sessionWriteMode = input.sessionWriteMode ?? "replace";
+  const sessionDetails = input.outputDetails ?? input.details;
   const rows = [
     sessionUserMessageRow("user-1", "kickoff", 1),
     ...sessionToolExchangeRows({
@@ -216,7 +222,7 @@ export function scriptedTerminatingToolSession(input: {
       parentId: "user-1",
       callId: toolCallId,
       toolName: input.toolName,
-      details: input.details,
+      details: sessionDetails,
       body: acceptedText,
       isError,
       n: 2,
@@ -224,7 +230,7 @@ export function scriptedTerminatingToolSession(input: {
     ...(seal ? [{
       type: "custom",
       customType: "ak-role-submission-closure",
-      data: { toolName: input.toolName, isError: false, details: input.details },
+      data: { toolName: input.toolName, isError: false, details: sessionDetails },
       id: "closure-1",
       parentId: "result-1",
       timestamp: sessionRowTime(3).iso,
@@ -244,6 +250,9 @@ export function scriptedTerminatingToolSession(input: {
             sealedAcceptance: {
               role: input.role,
               details: input.details,
+              ...(input.outputDetails === undefined
+                ? {}
+                : { outputDetails: input.outputDetails }),
               toolCallId,
             },
           }

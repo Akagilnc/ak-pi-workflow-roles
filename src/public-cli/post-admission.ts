@@ -735,6 +735,8 @@ export async function dispatchPostAdmissionTurn<
     try {
       // #858 / #1071: the first identifiable ticketNumber field declaration
       // files an unbound run (integer, digit string, or leading #N token).
+      // Terminal rows match settlement (#881): accepted and audit-escalation —
+      // an escalated submission still carries the original role params.
       // Later receipts remain untouched; prose note/report is never consulted;
       // this seam does not adjudicate a ticket change.
       if (admitted.ticketNumber === undefined) {
@@ -745,7 +747,12 @@ export async function dispatchPostAdmissionTurn<
         );
         let ticketNumber: number | undefined;
         for (const row of rows) {
-          if (row.kind !== "accepted" || row.role !== admitted.role) continue;
+          if (
+            row.role !== admitted.role
+            || (row.kind !== "accepted" && row.kind !== "audit-escalation")
+          ) {
+            continue;
+          }
           const payload = row.accepted;
           if (payload === null || typeof payload !== "object" || Array.isArray(payload)) continue;
           ticketNumber = readDeclaredTicketNumber(

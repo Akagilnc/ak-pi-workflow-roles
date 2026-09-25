@@ -15,6 +15,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
+import { projectAuditEscalation } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
@@ -121,6 +122,8 @@ function baseEnv(input: {
   role: "coder" | "fixer" | "judge" | "countersign" | "notary";
   toolName: string;
   details: unknown;
+  /** Gate/auditor escalation face; original `details` stay the ledger params. */
+  outputDetails?: unknown;
   additionalDetails?: readonly unknown[];
   /** Countersign court station: may bind a typed ticket (起居郎 handoff face). */
   runCourtDiaristStation?: (
@@ -134,6 +137,9 @@ function baseEnv(input: {
       role: input.role,
       toolName: input.toolName,
       details: input.details,
+      ...(input.outputDetails === undefined
+        ? {}
+        : { outputDetails: input.outputDetails }),
     }),
   });
   const roleTurnHost = {
@@ -269,17 +275,19 @@ test("public fixer ignores a malformed ticket assertion without rejecting its re
 test("#1071 mid-ticket seats bind leading #N ticketNumber declarations and keep prose", async () => {
   await withSeatProject(async ({ home, project }) => {
     ensureTicketProvenanceVolume(1843, project, home);
+    const judgeDetails = {
+      status: "converged",
+      note: "#1843 / PR #1876",
+      ticketNumber: "#1843 / PR #1876",
+    };
     for (const seat of [
       {
         role: "judge" as const,
         toolName: JUDGE_OUTPUT_TOOL_NAME,
         argv: ["Adjudicate #1843 on PR #1876."],
-        details: {
-          status: "converged",
-          note: "#1843 / PR #1876",
-          ticketNumber: "#1843 / PR #1876",
-        },
+        details: judgeDetails,
         runId: "01a010710-0000-7000-8000-00000000judge",
+        expectedOutcome: "accepted" as const,
       },
       {
         role: "fixer" as const,
@@ -292,6 +300,24 @@ test("#1071 mid-ticket seats bind leading #N ticketNumber declarations and keep 
           classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }],
         },
         runId: "01a010710-0000-7000-8000-00000000fixer",
+        expectedOutcome: "accepted" as const,
+      },
+      {
+        // Terminal audit-escalation still carries the original declaration (#1071).
+        role: "judge" as const,
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        argv: ["Escalate adjudication of #1843."],
+        details: judgeDetails,
+        outputDetails: projectAuditEscalation(
+          {
+            status: "escalate",
+            officer: "auditor",
+            conflicts: { status: "escalate", decisionGate: { question: "owner?" } },
+          },
+          judgeDetails,
+        ).details,
+        runId: "01a010710-0000-7000-8000-0000000jesc",
+        expectedOutcome: "audit_escalation" as const,
       },
     ]) {
       const result = await runPublicInstructionSeat(
@@ -303,16 +329,18 @@ test("#1071 mid-ticket seats bind leading #N ticketNumber declarations and keep 
           role: seat.role,
           toolName: seat.toolName,
           details: seat.details,
+          ...("outputDetails" in seat && seat.outputDetails !== undefined
+            ? { outputDetails: seat.outputDetails }
+            : {}),
         }),
         captureIo().io,
         seat.role,
         (args) => parsePublicSeatArgv(seat.role, args),
       );
-      assert.equal(result.exitCode, 0, `${seat.role} exit`);
-      assert.equal(result.admitted?.ticketNumber, 1843, `${seat.role} bound ticket`);
-      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
-      if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted");
-      assert.deepEqual(result.terminal.roleOutcome.payloads, [seat.details]);
+      assert.equal(result.exitCode, 0, `${seat.runId} exit`);
+      assert.equal(result.admitted?.ticketNumber, 1843, `${seat.runId} bound ticket`);
+      assert.equal(result.terminal?.roleOutcome.kind, seat.expectedOutcome, `${seat.runId} outcome`);
+      assert.deepEqual(result.terminal?.roleOutcome.payloads, [seat.details]);
       await assertDurableTicket(result.admitted!.runDirectory, 1843);
       assert.match(result.admitted!.runDirectory, /[/\\]1843[/\\]runs[/\\]/);
       assert.equal(result.admitted!.runDirectory.includes(`${join("unbound", "runs")}`), false);
