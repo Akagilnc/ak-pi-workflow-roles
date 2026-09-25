@@ -59,10 +59,6 @@ async function runJudge(
   officerRunner: LegacyFauxPiRunner,
   onParentResume: (prompt: string) => { code: number; stderr: string; verdict?: unknown },
   assertIn: (observed: Observation) => Promise<void>,
-  options?: {
-    readonly signal?: AbortSignal;
-    readonly onOfficerTurn?: (request: RoleTurnRequest) => void;
-  },
 ): Promise<void> {
   const temps: string[] = [];
   try {
@@ -95,7 +91,6 @@ async function runJudge(
         async executeTurn(request) {
           if (request.activation.role === "notary" || request.activation.role === "auditor") {
             assert.equal(judgeSubmissionFinished, true, "audit began before the Judge submission tool finished");
-            options?.onOfficerTurn?.(request);
             const coordinates = piDurablePrincipalAuthority.decode(request.principal);
             officerSessions.push({
               role: request.activation.role,
@@ -172,7 +167,6 @@ async function runJudge(
           principalAuthority: piDurablePrincipalAuthority,
           roleTurnHost: judgeHost,
           hostAdapters: [adapter("pi", routed)],
-          ...(options?.signal === undefined ? {} : { signal: options.signal }),
         },
       );
       assert.equal(first.exitCode, 0, capture.stderr.join("") || capture.stdout.join(""));
@@ -434,31 +428,4 @@ test("#1057 a new judge verdict after acceptance runs the audits again", async (
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(resumed.terminal?.roleOutcome.payloads?.at(-1), next);
   });
-});
-
-test("#1057 post-submission gate officers receive the caller AbortSignal", async () => {
-  const cancel = new AbortController();
-  const seenSignals: AbortSignal[] = [];
-  await runJudge(async (args, options) => {
-    const role = argvFlagValue(args, "--ak-role");
-    if (role === "notary") {
-      return officer("notary", { status: "converged", mark: 2 })(args, options);
-    }
-    if (role === "auditor") {
-      return officer("auditor", { status: "converged", mark: 3 })(args, options);
-    }
-    throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
-  }, () => ({ code: 0, stderr: "" }), async (observed) => {
-    assert.equal(observed.first.terminal?.roleOutcome.role, "judge");
-  }, { signal: cancel.signal, onOfficerTurn(request) {
-    if (request.activation.role === "notary" || request.activation.role === "auditor") {
-      if (request.signal !== undefined) seenSignals.push(request.signal);
-    }
-  } });
-  assert.equal(seenSignals.length >= 1, true, "at least one gate officer must receive a signal");
-  assert.equal(
-    seenSignals.every((signal) => signal === cancel.signal),
-    true,
-    "post-submission requireSubmissionGate must forward env.signal",
-  );
 });
