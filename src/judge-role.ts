@@ -5,17 +5,12 @@ import {
 } from "./host-contracts.ts";
 import type { Static } from "typebox";
 import { reviewSubmissionSchema } from "./review-submission.ts";
-import { ParentQueueReaskError } from "./submission-errors.ts";
 import { type GatekeeperSubject } from "./gatekeeper-role.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
   type JudgeVerdict,
 } from "./package-contracts/judge-output.ts";
-
-const JUDGE_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]);
-const JUDGE_STATUS_REASK =
-  "status 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
 
 export { JUDGE_OUTPUT_TOOL_NAME };
 export type { JudgeVerdict };
@@ -110,27 +105,9 @@ export function createJudgeRoleRuntime(
           parameters: judgeVerdictSchema,
           async execute(toolCallId: string, parameters: Static<typeof judgeVerdictSchema>, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext): Promise<HostToolResult<unknown>> {
             if (soul === undefined) throw new Error("大理寺职分未装载");
-            // #756 queue: read shared status only — escalate skips gates;
-            // unreadable status returns to judge; else 符宝郎内闸 then 审刑院合规.
-            const rawStatus =
-              parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
-              && typeof (parameters as Record<string, unknown>).status === "string"
-                ? (parameters as Record<string, unknown>).status as string
-                : undefined;
-            if (rawStatus === undefined || !JUDGE_QUEUE_STATUSES.has(rawStatus)) {
-              throw new ParentQueueReaskError(JUDGE_STATUS_REASK);
-            }
-            if (rawStatus === "escalate") {
-              // Parent escalate → throw to caller as-is; officers do not attend (#753 / #756).
-              const verdict = validateVerdict(parameters);
-              return {
-                content: [],
-                details: verdict,
-                terminate: true as const,
-              };
-            }
-            const verdict = validateVerdict(parameters);
-            return { content: [], details: verdict, terminate: true };
+            // ADR 0003: record the original receipt and end the tool call first.
+            // The public seam reads status and chooses the next route.
+            return { content: [], details: parameters, terminate: true };
           },
         });
         pi.on("before_agent_start", (event) => {

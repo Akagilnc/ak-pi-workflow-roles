@@ -77,7 +77,7 @@ function seedGitProject(root: string): void {
   execFileSync("git", ["commit", "--allow-empty", "-m", "seed"], { cwd: root });
 }
 
-test("public coder reasks only an unreadable status and accepts an open-shaped other field", async () => {
+test("public coder accepts an unreadable status before routing it back for re-submission", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -108,7 +108,7 @@ test("public coder reasks only an unreadable status and accepts an open-shaped o
     assert.deepEqual(payloadStatusSequence(result.terminal!.roleOutcome), ["planned"]);
     const submissions = await readRecordedSubmissionRows(project, "run-cli-coder-status-reask", home);
     assert.deepEqual(submissions.map(({ kind, accepted }) => ({ kind, accepted })), [
-      { kind: "correctable-rejection", accepted: unreadable },
+      { kind: "accepted", accepted: unreadable },
       { kind: "accepted", accepted: corrected },
     ]);
   });

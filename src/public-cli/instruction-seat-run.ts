@@ -117,6 +117,63 @@ type SeatRunResult = {
 const AUDITED_ROLES = new Set<PackagedRole>(["judge", "fixer", "coder", "secretariat", "countersign", "doctor"]);
 const SECRETARIAT_STATUS_REASK = "secretariatStatus 不是 converged、escalate 之一。请重新交卷，status 写明其一。";
 const COUNTERSIGN_STATUS_REASK = "status 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。";
+const WORKER_ROUTING_STATUSES: ReadonlySet<string> = new Set([
+  "planned", "completed", "refused", "partially_completed", "unfinished",
+]);
+const WORKER_STATUS_REASK =
+  "status 不是 planned、completed、refused、partially_completed、unfinished 之一。请重新交卷，status 写明其一。";
+const POST_SUBMISSION_ROUTING: Partial<Record<PackagedRole, {
+  readonly statuses: ReadonlySet<string>;
+  readonly reask: string;
+}>> = {
+  judge: {
+    statuses: new Set(["converged", "continue", "escalate"]),
+    reask: "status 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。",
+  },
+  coder: {
+    statuses: WORKER_ROUTING_STATUSES,
+    reask: WORKER_STATUS_REASK,
+  },
+  fixer: {
+    statuses: WORKER_ROUTING_STATUSES,
+    reask: WORKER_STATUS_REASK,
+  },
+  diarist: {
+    statuses: new Set(["completed", "escalate"]),
+    reask: "status 不是 completed、escalate 之一。请重新交卷，status 写明其一。",
+  },
+} as const;
+
+function unreadablePostSubmissionStatus(
+  admitted: AdmittedRoleInvocation,
+  terminal: TerminalResult | undefined,
+): string | undefined {
+  if (terminal?.roleOutcome.kind !== "accepted") return undefined;
+  const route = POST_SUBMISSION_ROUTING[admitted.role];
+  if (route === undefined) return undefined;
+  const payload = terminal.roleOutcome.payloads?.at(-1);
+  const status = payload !== null && typeof payload === "object" && !Array.isArray(payload)
+    ? (payload as Record<string, unknown>).status
+    : undefined;
+  return typeof status === "string" && route.statuses.has(status)
+    ? undefined
+    : route.reask;
+}
+
+async function reaskUnreadablePostSubmissionStatus(
+  admitted: AdmittedRoleInvocation,
+  terminal: TerminalResult | undefined,
+  env: InstructionSeatRunEnv,
+  io: CliIo,
+): Promise<SeatRunResult | undefined> {
+  const message = unreadablePostSubmissionStatus(admitted, terminal);
+  if (message === undefined) return undefined;
+  return runPublicInstructionSeatResume(
+    { runId: admitted.runId, message },
+    { ...env, autoResumeLimit: 0 },
+    io,
+  );
+}
 
 function roleRecord(role: PackagedRole) {
   const record = packagedRoleMetadata(role);
@@ -275,6 +332,7 @@ async function dispatchAdmitted(
   const adapters = seatAdapters(admitted, env, material);
   const held: string[] = [];
   const turnIo: CliIo = AUDITED_ROLES.has(admitted.role)
+    || POST_SUBMISSION_ROUTING[admitted.role] !== undefined
     ? { stdout: (value) => held.push(value), stderr: io.stderr }
     : io;
   const execute = async (activeEnv: InstructionSeatRunEnv): Promise<SeatRunResult> => {
@@ -318,6 +376,13 @@ async function dispatchAdmitted(
     });
   };
   const result = await execute(env);
+  const unreadableReask = await reaskUnreadablePostSubmissionStatus(
+    admitted,
+    result.terminal,
+    env,
+    io,
+  );
+  if (unreadableReask !== undefined) return unreadableReask;
   if (AUDITED_ROLES.has(admitted.role) && result.terminal?.roleOutcome.kind === "accepted") {
     return auditSubmittedRole(result, env, io);
   }
@@ -884,6 +949,15 @@ export async function runPublicInstructionSeatResume(
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
     });
+    const unreadableReask = result.admitted === undefined
+      ? undefined
+      : await reaskUnreadablePostSubmissionStatus(
+        result.admitted,
+        result.terminal,
+        env,
+        io,
+      );
+    if (unreadableReask !== undefined) return unreadableReask;
     if (result.admitted !== undefined && AUDITED_ROLES.has(result.admitted.role)
       && result.terminal?.roleOutcome.kind === "accepted") {
       return auditSubmittedRole(result, env, io);

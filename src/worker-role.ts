@@ -8,7 +8,6 @@ import type {
   AnyCanonicalSkillBinding,
   CanonicalSkillBinding,
 } from "./canonical-skill-binding.ts";
-import { ParentQueueReaskError } from "./submission-errors.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -151,30 +150,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Routing words shared by Coder and Fixer; provider schemas remain open. */
-const WORKER_ROUTING_STATUSES = new Set([
-  "planned",
-  "completed",
-  "refused",
-  "partially_completed",
-  "unfinished",
-]);
-const WORKER_STATUS_REASK =
-  "status 不是 planned、completed、refused、partially_completed、unfinished 之一。请重新交卷，status 写明其一。" as const;
-
 /** Read only the field that selects the worker's next package-owned path. */
 function workerStatusOf(output: WorkerOutput): string | undefined {
   return isRecord(output) && typeof output.status === "string"
     ? output.status
     : undefined;
-}
-
-function requireReadableWorkerStatus(output: WorkerOutput): string {
-  const status = workerStatusOf(output);
-  if (status === undefined || !WORKER_ROUTING_STATUSES.has(status)) {
-    throw new ParentQueueReaskError(WORKER_STATUS_REASK);
-  }
-  return status;
 }
 
 function deepFreeze<T>(value: T): T {
@@ -288,15 +268,17 @@ export function createFixerRoleRuntime(
               throw new Error("修内司修理包与阶段未装载");
             }
             const output = deepFreeze(validateFixerOutput(parameters, phase));
-            const status = requireReadableWorkerStatus(output);
-            assertAcceptableThroughHost(
-              submissionGate,
-              status,
-              output,
-              hostActions,
-              ctx,
-              toolCallId,
-            );
+            const status = workerStatusOf(output);
+            if (status !== undefined) {
+              assertAcceptableThroughHost(
+                submissionGate,
+                status,
+                output,
+                hostActions,
+                ctx,
+                toolCallId,
+              );
+            }
             return { content: [], details: output, terminate: true as const };
           },
         });
@@ -411,17 +393,19 @@ export function createCoderRoleRuntime(
               throw new Error("将作监任务与阶段未装载");
             }
             const output = validateWorkerOutput(parameters, phase, "Coder");
-            const status = requireReadableWorkerStatus(output);
+            const status = workerStatusOf(output);
             // #836: skill-expansion evidence rejection deleted (陛下「2.4/5 删」).
             // Skill still ships with the package (ADR 0052); code no longer refuses on it.
-            assertAcceptableThroughHost(
-              submissionGate,
-              status,
-              output,
-              hostActions,
-              ctx,
-              toolCallId,
-            );
+            if (status !== undefined) {
+              assertAcceptableThroughHost(
+                submissionGate,
+                status,
+                output,
+                hostActions,
+                ctx,
+                toolCallId,
+              );
+            }
             return { content: [], details: output, terminate: true as const };
           },
         });

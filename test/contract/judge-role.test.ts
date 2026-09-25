@@ -21,7 +21,6 @@ import type { CanonicalSkillBinding } from "../../src/canonical-skill-binding.ts
 import { createJudgeRoleRuntime } from "../../src/judge-role.ts";
 import { createPiRoleHostAdapter, toPiContext, type PiRoleHostAdapter } from "../../src/pi/adapter.ts";
 import type { HostContext, HostGatekeeperActions } from "../../src/host-contracts.ts";
-import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 
 import type { AuditorSummon } from "../../src/compliance-transport.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
@@ -311,6 +310,9 @@ function extensionHarness(
     },
     getAllTools() {
       return [...allToolNames].map((name) => ({ name }));
+    },
+    getActiveTools() {
+      return activeToolSets.at(-1) ?? [];
     },
     setActiveTools(names: string[]) {
       activeToolSets.push([...names]);
@@ -888,6 +890,16 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     // #756: judge no longer projects auditor usage onto the parent receipt —
     // nested officer meters live on the officer session; parent accepts as-is.
     assert.equal(result.usage, undefined);
+    const unreadable = { status: { value: "unknown" }, report: { unvalidated: true } };
+    const raw = await tool.execute(
+      "unreadable-status",
+      unreadable,
+      undefined,
+      undefined,
+      await withPassingGatekeeper(toolCallContext([{ id: "unreadable-status", name: fixture.name }])),
+    );
+    assert.equal(raw.terminate, true, `${fixture.role} finishes an unreadable-status submission`);
+    assert.deepEqual(raw.details, unreadable, `${fixture.role} preserves the raw submission`);
   }
 });
 
@@ -957,22 +969,25 @@ test("judge escalate skips Notary and Auditor gates and accepts as-is (#756)", a
   assert.deepEqual(result.details, escalate);
 });
 
-test("judge status unreadable returns to judge without officers (#756)", async () => {
-  const { tool } = await startJudge();
-  await assert.rejects(
-    tool.execute(
-      "call-bad",
-      { status: "not-a-status", note: "typo" },
-      undefined,
-      undefined,
-      await withPassingGatekeeper(toolCallContext([{ id: "call-bad", arguments: { status: "not-a-status" } }])),
-    ),
-    (error: unknown) => {
-      assert.ok(error instanceof ParentQueueReaskError);
-      assert.match(error.message, /status/);
-      return true;
-    },
+test("judge output tool returns an unreadable status for public routing (#756/#1057)", async () => {
+  // Direct role runtime (no submission-ledger wrap) so terminate stays on the face.
+  const harness = extensionHarness("judge");
+  const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
+  await createJudgeRoleRuntime(
+    piHostAdapter.host,
+    { loadSoul: async () => "JUDGE LAW" },
+  ).activate();
+  const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME)!;
+  const unreadable = { status: "not-a-status", note: "typo" };
+  const result = await tool.execute(
+    "call-bad",
+    unreadable,
+    undefined,
+    undefined,
+    await withPassingGatekeeper(toolCallContext([{ id: "call-bad", arguments: unreadable }])),
   );
+  assert.equal(result.terminate, true);
+  assert.deepEqual(result.details, unreadable);
 });
 
 test("judge role fails before adjudication when its soul is empty", async () => {
@@ -1334,7 +1349,9 @@ test("fixer activation leaves its tool surface unchanged", async () => {
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
   });
-  assert.deepEqual(harness.activeToolSets, []);
+  // Shared engine detour is registered on activation and folded into the active
+  // surface when the secretariat seat claims it (role-runtime session_start).
+  assert.deepEqual(harness.activeToolSets, [["ak_engine_detour"]]);
   assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), true);
 });
 
