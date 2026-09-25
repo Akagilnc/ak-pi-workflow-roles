@@ -12,18 +12,30 @@ The machine entrypoint is `grok`. Run from the role project root.
 Non-interactive labor reads the prompt from a file and prints plain output:
 
 ```bash
-grok --trust --prompt-file /path/to/labor-prompt.md --reasoning-effort <EFFORT> --always-approve --output-format plain
+grok --trust --prompt-file /path/to/labor-prompt.md --always-approve --output-format plain
 ```
 
 When the dispatch order specifies a model, pass it with `-m`:
 
 ```bash
-grok --trust --prompt-file /path/to/labor-prompt.md -m <MODEL_ID> --reasoning-effort <EFFORT> --always-approve --output-format plain
+grok --trust --prompt-file /path/to/labor-prompt.md -m <MODEL_ID> --always-approve --output-format plain
+```
+
+When the dispatch order (or seat ordered thinking tier) supplies an effort
+tier, pass it with `--reasoning-effort` (alias `--effort`):
+
+```bash
+grok --trust --prompt-file /path/to/labor-prompt.md --reasoning-effort <EFFORT> --always-approve --output-format plain
 ```
 
 - `-m <MODEL_ID>` selects the model; `grok models` lists valid ids. Without a
   model in the dispatch order, omit `-m` and let the CLI use its configured
   default.
+- `--reasoning-effort <low|medium|high>` is optional (`grok --help`). Pass it
+  only when the dispatch order or seat ordered thinking tier supplies a tier;
+  omit the flag otherwise. Do not invent a default effort or require seat
+  config to fill one (verified live 2026-08-21: flag exists; a low-tier run
+  completed correctly when a tier was ordered).
 - `--always-approve` (equivalently `--yolo` or `--permission-mode
   bypassPermissions`) keeps the run non-interactive (documented). Headless
   permissions otherwise default to interactive approval, where an `ask`
@@ -37,11 +49,6 @@ grok --trust --prompt-file /path/to/labor-prompt.md -m <MODEL_ID> --reasoning-ef
   back into the seat's context as noise (see `claude-code.md` for the measured
   ratio); progress observability belongs to the runner's process watch, not to
   the returned body.
-- **Always pass `--reasoning-effort <low|medium|high>`** matching the effort
-  tier ordered in the labor mandate (verified live 2026-08-21: flag exists,
-  alias `--effort`; a low-tier run completed correctly). If the mandate names
-  no tier, use the seat's ordered thinking tier; never omit the flag — the
-  CLI default is not guaranteed to match the ordered tier.
 - Feeding raw JSON directly through `--prompt-file` is rejected by the CLI as
   non-ACP JSON (`JSON object must have a type field`; live-verified
   2026-08-21).
