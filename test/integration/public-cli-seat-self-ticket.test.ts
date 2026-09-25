@@ -15,6 +15,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
+import { projectAuditEscalation } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
@@ -123,6 +124,8 @@ function baseEnv(input: {
   role: "coder" | "fixer" | "judge" | "countersign" | "notary";
   toolName: string;
   details: unknown;
+  /** Gate/auditor escalation face; original `details` stay the ledger params. */
+  outputDetails?: unknown;
   additionalDetails?: readonly unknown[];
   /** Countersign court station: may bind a typed ticket (起居郎 handoff face). */
   runCourtDiaristStation?: (
@@ -136,6 +139,9 @@ function baseEnv(input: {
       role: input.role,
       toolName: input.toolName,
       details: input.details,
+      ...(input.outputDetails === undefined
+        ? {}
+        : { outputDetails: input.outputDetails }),
     }),
   });
   const roleTurnHost = withPassingReviewHost({
@@ -211,12 +217,13 @@ test("public coder binds its typed receipt assertion without parsing summons tex
         runId: "01a063500-0000-7000-8000-00000000coder",
         role: "coder",
         toolName: CODER_OUTPUT_TOOL_NAME,
-        // #863: malformed first, then first legal wins; all original receipts retained.
-        // Topology unbound→bind→relocate belongs to the #859 public-entry tracer.
+        // #863 / #1071: unidentifiable first, then first legal field wins; all
+        // original receipts retained. Topology unbound→bind→relocate belongs
+        // to the #859 public-entry tracer.
         details: {
           status: "completed",
           report: "malformed ticket shape",
-          ticketNumber: "582",
+          ticketNumber: "not-a-ticket",
         },
         additionalDetails: [
           { status: "completed", report: "first legal", ticketNumber: 582 },
@@ -232,7 +239,7 @@ test("public coder binds its typed receipt assertion without parsing summons tex
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted outcome");
     assert.deepEqual(result.terminal.roleOutcome.payloads, [
-      { status: "completed", report: "malformed ticket shape", ticketNumber: "582" },
+      { status: "completed", report: "malformed ticket shape", ticketNumber: "not-a-ticket" },
       { status: "completed", report: "first legal", ticketNumber: 582 },
       { status: "completed", report: "later receipt", ticketNumber: 999 },
     ]);
@@ -250,7 +257,12 @@ test("public fixer ignores a malformed ticket assertion without rejecting its re
         runId: "01a063500-0000-7000-8000-00000000fixer",
         role: "fixer",
         toolName: FIXER_OUTPUT_TOOL_NAME,
-        details: { status: "completed", report: "repaired", ticketNumber: "582", classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }] },
+        details: {
+          status: "completed",
+          report: "repaired",
+          ticketNumber: "not-a-ticket",
+          classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }],
+        },
       }),
       captureIo().io,
       "fixer",
@@ -259,6 +271,125 @@ test("public fixer ignores a malformed ticket assertion without rejecting its re
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
     await assertDurableUnbound(result.admitted!.runDirectory);
+  });
+});
+
+test("#1071 mid-ticket seats bind leading #N ticketNumber declarations and keep prose", async () => {
+  await withSeatProject(async ({ home, project }) => {
+    ensureTicketProvenanceVolume(1843, project, home);
+    const judgeDetails = {
+      status: "converged",
+      note: "#1843 / PR #1876",
+      ticketNumber: "#1843 / PR #1876",
+    };
+    for (const seat of [
+      {
+        role: "judge" as const,
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        argv: ["Adjudicate #1843 on PR #1876."],
+        details: judgeDetails,
+        runId: "01a010710-0000-7000-8000-00000000judge",
+        expectedOutcome: "accepted" as const,
+      },
+      {
+        role: "fixer" as const,
+        toolName: FIXER_OUTPUT_TOOL_NAME,
+        argv: ["apply", "Repair #1843."],
+        details: {
+          status: "completed",
+          report: "fixed #1843",
+          ticketNumber: "#1843",
+          classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }],
+        },
+        runId: "01a010710-0000-7000-8000-00000000fixer",
+        expectedOutcome: "accepted" as const,
+      },
+      {
+        // Terminal audit-escalation still carries the original declaration (#1071).
+        role: "judge" as const,
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        argv: ["Escalate adjudication of #1843."],
+        details: judgeDetails,
+        outputDetails: projectAuditEscalation(
+          {
+            status: "escalate",
+            officer: "auditor",
+            conflicts: { status: "escalate", decisionGate: { question: "owner?" } },
+          },
+          judgeDetails,
+        ).details,
+        runId: "01a010710-0000-7000-8000-0000000jesc",
+        expectedOutcome: "audit_escalation" as const,
+      },
+    ]) {
+      const result = await runPublicInstructionSeat(
+        seat.argv,
+        baseEnv({
+          home,
+          project,
+          runId: seat.runId,
+          role: seat.role,
+          toolName: seat.toolName,
+          details: seat.details,
+          ...("outputDetails" in seat && seat.outputDetails !== undefined
+            ? { outputDetails: seat.outputDetails }
+            : {}),
+        }),
+        captureIo().io,
+        seat.role,
+        (args) => parsePublicSeatArgv(seat.role, args),
+      );
+      assert.equal(result.exitCode, 0, `${seat.runId} exit`);
+      assert.equal(result.admitted?.ticketNumber, 1843, `${seat.runId} bound ticket`);
+      assert.equal(result.terminal?.roleOutcome.kind, seat.expectedOutcome, `${seat.runId} outcome`);
+      assert.deepEqual(result.terminal?.roleOutcome.payloads, [seat.details]);
+      await assertDurableTicket(result.admitted!.runDirectory, 1843);
+      assert.match(result.admitted!.runDirectory, /[/\\]1843[/\\]runs[/\\]/);
+      assert.equal(result.admitted!.runDirectory.includes(`${join("unbound", "runs")}`), false);
+    }
+
+    // Prose alone is never a ticket bind source (#1071 / 不从回执散文猜票).
+    const proseOnly = await runPublicInstructionSeat(
+      ["Adjudicate ticket mentioned only in note."],
+      baseEnv({
+        home,
+        project,
+        runId: "01a010710-0000-7000-8000-0000000prose",
+        role: "judge",
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        details: { status: "converged", note: "#1843 / PR #1876" },
+      }),
+      captureIo().io,
+      "judge",
+      (args) => parsePublicSeatArgv("judge", args),
+    );
+    assert.equal(proseOnly.exitCode, 0);
+    assert.equal(proseOnly.admitted?.ticketNumber, undefined);
+    await assertDurableUnbound(proseOnly.admitted!.runDirectory);
+
+    // Decimal-looking field values are unidentifiable → stay unbound (#1071).
+    for (const [label, ticketNumber] of [
+      ["hash-decimal", "#1843.5"],
+      ["bare-decimal", "1843.5"],
+    ] as const) {
+      const decimal = await runPublicInstructionSeat(
+        ["Adjudicate a decimal-looking ticketNumber declaration."],
+        baseEnv({
+          home,
+          project,
+          runId: `01a010710-0000-7000-8000-0000000${label.slice(0, 5)}`,
+          role: "judge",
+          toolName: JUDGE_OUTPUT_TOOL_NAME,
+          details: { status: "converged", note: "field only", ticketNumber },
+        }),
+        captureIo().io,
+        "judge",
+        (args) => parsePublicSeatArgv("judge", args),
+      );
+      assert.equal(decimal.exitCode, 0, `${label} exit`);
+      assert.equal(decimal.admitted?.ticketNumber, undefined, `${label} unbound`);
+      await assertDurableUnbound(decimal.admitted!.runDirectory);
+    }
   });
 });
 
