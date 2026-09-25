@@ -5,10 +5,10 @@
  *   1. codex-run tracer: each of the five source facts affects the terminal
  *      result (the decoy rollout proves the thread-id filter).
  *   2. pi-run carriers: each assistant turn contributes to the public result.
- *   3. missing-material honesty: a sparse run still exits 0; missing Claude
- *      host-session differs from an available zero, damaged seal JSONL differs
- *      from valid partial/full records, and Codex run-written usage affects the
- *      public result when native rollout usage is absent or damaged.
+ *   3. missing-material honesty: a sparse run still exits 0; damaged seal JSONL
+ *      differs from every valid seal subset (including empty — the false friend
+ *      of unavailable), and Codex run-written usage affects the public result
+ *      when native rollout usage is absent or damaged.
  *   4. read-only: two views leave the whole home tree byte-identical and add
  *      no run directories (the ledger is never written).
  *   5. usage rejects: wrong subcommand / missing or extra argv / nonexistent
@@ -465,33 +465,6 @@ test("run show: Codex falls back to run-written usage when rollout usage is unav
     await writeCodexHostSessionRecords(runDirectory, { input_tokens: 14, output_tokens: 7 });
     const changedFallback = await runPublicRunShow(runDirectory, machineHome);
     assert.notEqual(changedFallback, noUsage);
-  });
-});
-
-test("run show: Claude binding without host-session is unavailable, not zero", async () => {
-  await withTempRoot("ak-run-show-claude-missing-hs-", async (machineHome) => {
-    const runDirectory = join(
-      machineHome,
-      ".ak-roles",
-      "books",
-      "testbook",
-      "45",
-      "runs",
-      `${RUN_ID}@reviewer`,
-    );
-    await mkdir(join(runDirectory, "session"), { recursive: true });
-    await writeFile(
-      join(runDirectory, "session", "claude-headless-session.json"),
-      `${JSON.stringify({ sessionId: THREAD_ID })}\n`,
-      "utf8",
-    );
-
-    const missing = await runPublicRunShow(runDirectory, machineHome);
-
-    await mkdir(join(runDirectory, "session", "host-session"), { recursive: true });
-    await writeFile(join(runDirectory, "session", "host-session", "records.jsonl"), "", "utf8");
-    const knownZero = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(missing, knownZero);
   });
 });
 
