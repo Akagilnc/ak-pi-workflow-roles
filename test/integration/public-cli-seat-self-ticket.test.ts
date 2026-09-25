@@ -336,6 +336,30 @@ test("#1071 mid-ticket seats bind leading #N ticketNumber declarations and keep 
     assert.equal(proseOnly.exitCode, 0);
     assert.equal(proseOnly.admitted?.ticketNumber, undefined);
     await assertDurableUnbound(proseOnly.admitted!.runDirectory);
+
+    // Decimal-looking field values are unidentifiable → stay unbound (#1071).
+    for (const [label, ticketNumber] of [
+      ["hash-decimal", "#1843.5"],
+      ["bare-decimal", "1843.5"],
+    ] as const) {
+      const decimal = await runPublicInstructionSeat(
+        ["Adjudicate a decimal-looking ticketNumber declaration."],
+        baseEnv({
+          home,
+          project,
+          runId: `01a010710-0000-7000-8000-0000000${label.slice(0, 5)}`,
+          role: "judge",
+          toolName: JUDGE_OUTPUT_TOOL_NAME,
+          details: { status: "converged", note: "field only", ticketNumber },
+        }),
+        captureIo().io,
+        "judge",
+        (args) => parsePublicSeatArgv("judge", args),
+      );
+      assert.equal(decimal.exitCode, 0, `${label} exit`);
+      assert.equal(decimal.admitted?.ticketNumber, undefined, `${label} unbound`);
+      await assertDurableUnbound(decimal.admitted!.runDirectory);
+    }
   });
 });
 

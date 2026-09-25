@@ -29,14 +29,17 @@ export function isSafePositiveTicketNumber(value: unknown): value is number {
  * #1071 — read a role-declared ticketNumber field value for post-admission bind.
  * Accepts a safe positive integer, a digit string, or a leading `#N` token
  * (optional trailing material on the same field, e.g. `#1843 / PR #1876`).
- * Unidentifiable shapes return undefined (leave unbound); never reads prose
- * note/report fields — callers must pass the typed ticketNumber value only.
+ * Decimal-looking prefixes (`1843.5`, `#1843.5`) are unidentifiable → undefined
+ * (leave unbound). Never reads prose note/report fields — callers must pass the
+ * typed ticketNumber value only.
  */
 export function readDeclaredTicketNumber(value: unknown): number | undefined {
   if (isSafePositiveTicketNumber(value)) return value;
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
-  const match = /^#?([1-9]\d*)(?:\b|$)/.exec(trimmed);
+  // `(?!\.\d)` keeps `#1843 / PR #1876` while rejecting `#1843.5` / `1843.5`
+  // (word-boundary alone would truncate at the decimal point).
+  const match = /^#?([1-9]\d*)(?!\.\d)(?:\b|$)/.exec(trimmed);
   if (match === null) return undefined;
   const ticketNumber = Number(match[1]);
   return isSafePositiveTicketNumber(ticketNumber) ? ticketNumber : undefined;
