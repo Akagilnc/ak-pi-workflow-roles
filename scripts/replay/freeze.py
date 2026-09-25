@@ -4,7 +4,9 @@
 Kit layout (default ~/.ak-roles/replays/<runId>/):
   meta.json      role/host/model/ticket/cut/head/original paths
   issue.json     ticket body as of the cut (served by bin/gh for `issue view N`)
-  records.jsonl  diarist records with timestamp <= cut
+  records.jsonl  diarist records with timestamp <= cut, session pointers re-aimed at sources/
+  sources/       the driver transcripts those records point at, truncated at the cut
+  run/<run>/     the replayed run itself truncated at the cut (ledger rows, payloads, attachments)
   pointer.md     the run's case-dossier pointer, re-pointed at records.jsonl
   sys.txt        frozen system prompt (codex: full headless prompt; pi: appended tail)
   schema.json    headless output schema when the run had one
@@ -134,9 +136,64 @@ def main():
 
     records_src = f"{book_root(run, inv['bookKey'])}/{num}/records.jsonl"
     kept = [r for r in jsonl(records_src) if r.get("timestamp") and iso(r["timestamp"]) <= cut]
+    # Source transcripts the diary points at are live files; freeze each one to the cut
+    # and re-point the diary rows, so a leg following the pointer cannot read later turns.
+    frozen_sources = {}
+    def freeze_source(path):
+        if path in frozen_sources:
+            return frozen_sources[path]
+        os.makedirs(f"{kit}/sources", exist_ok=True)
+        target = f"{kit}/sources/{os.path.basename(path)}"
+        n = 0
+        with open(target, "w") as out:
+            for row in jsonl(path):
+                ts = row.get("timestamp")
+                if ts and iso(ts) > cut:
+                    break  # transcripts are chronological; untimestamped trailer rows go with them
+                out.write(json.dumps(row, ensure_ascii=False) + "\n"); n += 1
+        frozen_sources[path] = target
+        return target
+    kept_text = []
+    for r in kept:
+        for s in (r.get("payload") or {}).get("sessions") or []:
+            path = s.get("path") if isinstance(s, dict) else None
+            if isinstance(path, str) and path.endswith(".jsonl") and os.path.exists(path):
+                s["path"] = freeze_source(path)
+        kept_text.append(json.dumps(r, ensure_ascii=False))
     with open(f"{kit}/records.jsonl", "w") as f:
-        for r in kept:
+        for line in kept_text:
+            f.write(line + "\n")
+
+    # The run's own directory keeps growing after the cut (later verdicts, ledger rows). Freeze a
+    # copy truncated at the cut and point every prompt reference at it.
+    frozen_run = f"{kit}/run/{os.path.basename(run)}"
+    os.makedirs(f"{frozen_run}/session/submission-ledger", exist_ok=True)
+    for name in ("invocation.json", "admitted-request.json", "run-state.json", "headless-output-schema.json"):
+        if os.path.exists(f"{run}/{name}"):
+            shutil.copy(f"{run}/{name}", f"{frozen_run}/{name}")
+    if os.path.isdir(f"{run}/attachments"):
+        shutil.copytree(f"{run}/attachments", f"{frozen_run}/attachments")
+    ledger_rows = jsonl(f"{run}/session/submission-ledger/records.jsonl")
+    kept_ledger = [r for r in ledger_rows if not r.get("timestamp") or iso(r["timestamp"]) <= cut]
+    with open(f"{frozen_run}/session/submission-ledger/records.jsonl", "w") as f:
+        for r in kept_ledger:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    sealed_before = sum(1 for r in kept_ledger if r.get("kind") == "sealed")
+    if os.path.exists(f"{run}/artifacts/report.json"):
+        os.makedirs(f"{frozen_run}/artifacts", exist_ok=True)
+        report = load_json(f"{run}/artifacts/report.json")
+        payloads = (report.get("outcome") or {}).get("payloads")
+        if isinstance(payloads, list):
+            report["outcome"]["payloads"] = payloads[:sealed_before]
+        with open(f"{frozen_run}/artifacts/report.json", "w") as f:
+            json.dump(report, f, ensure_ascii=False, indent=1)
+    for rel in ("session/session.jsonl", "session/host-session/records.jsonl"):
+        if os.path.exists(f"{run}/{rel}"):
+            os.makedirs(os.path.dirname(f"{frozen_run}/{rel}"), exist_ok=True)
+            with open(f"{frozen_run}/{rel}", "w") as f:
+                for r in jsonl(f"{run}/{rel}"):
+                    if not r.get("timestamp") or iso(r["timestamp"]) <= cut:
+                        f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
     pointer_src = f"{run}/attachments/case-dossier/00-case-dossier-pointer.md"
     pointer = open(pointer_src).read() if os.path.exists(pointer_src) else ""
@@ -151,7 +208,7 @@ def main():
     notice = NOTICE.format(repo=os.path.basename(repo), head=head[:8], cut=cut_raw, num=num)
     hp = f"{run}/headless-system-prompt.txt"
     sys_kind = "headless-system-prompt" if os.path.exists(hp) else "pi-tail"
-    sysprompt = open(hp).read().replace(records_src, f"{kit}/records.jsonl") if sys_kind == "headless-system-prompt" else None
+    sysprompt = open(hp).read().replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run) if sys_kind == "headless-system-prompt" else None
 
     sh("git", "-C", repo, "worktree", "prune")
     sh("git", "-C", repo, "worktree", "add", "--detach", f"{kit}/wt", head)
@@ -165,19 +222,19 @@ def main():
                            cwd=f"{kit}/wt", env=env, text=True, capture_output=True)
         if p.returncode != 0:
             sys.exit(f"pi tail assembly failed at {head[:8]} (hand-build a --sys for run.py):\n{p.stderr}")
-        sysprompt = p.stdout
+        sysprompt = p.stdout.replace(run, frozen_run)
     with open(f"{kit}/sys.txt", "w") as f:
         f.write(notice + sysprompt)
 
     if os.path.exists(f"{run}/headless-output-schema.json"):
         shutil.copy(f"{run}/headless-output-schema.json", f"{kit}/schema.json")
     with open(f"{kit}/instr.txt", "w") as f:
-        f.write(adm.get("instruction") or "")
+        f.write((adm.get("instruction") or "").replace(run, frozen_run))
 
     meta = {"runId": inv["runId"], "runDir": run, "role": role, "host": host, "provider": inv.get("provider"),
             "model": inv.get("model"), "thinking": inv.get("thinking"), "ticket": num, "repoSlug": slug, "repo": repo,
             "project": project, "cut": cut_raw, "cutSource": cut_src, "head": head, "sysKind": sys_kind,
-            "issueBodyAt": issue["updatedAt"], "recordsKept": len(kept), "recordsSource": records_src,
+            "issueBodyAt": issue["updatedAt"], "recordsKept": len(kept), "recordsSource": records_src, "frozenSources": sorted(frozen_sources), "frozenRun": frozen_run, "payloadsKept": sealed_before,
             "frozenAt": datetime.now(timezone.utc).isoformat()}
     with open(f"{kit}/meta.json", "w") as f:
         json.dump(meta, f, ensure_ascii=False, indent=1)
