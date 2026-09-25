@@ -12,7 +12,7 @@ The machine entrypoint is `grok`. Run from the role project root.
 Non-interactive labor reads the prompt from a file and prints plain output:
 
 ```bash
-grok --prompt-file /path/to/labor-prompt.md -m <MODEL_ID> --always-approve --output-format plain
+grok --prompt-file /path/to/labor-prompt.md -m <MODEL_ID> --reasoning-effort <EFFORT> --always-approve --output-format plain
 ```
 
 - `-m <MODEL_ID>` selects the model; `grok models` lists valid ids.
