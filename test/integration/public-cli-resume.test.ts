@@ -2641,17 +2641,33 @@ test("public resume failures point to their recorded diagnostics", async () => {
         projectRoot: project,
         correlationId: "1058-parent-preload-failure",
       });
+      const dispatchedParent = await seed({
+        runId: "1058-parent-dispatch-failure", role: "secretariat", session: true, projectRoot: project,
+      });
+      const dispatchedChild = await seed({
+        runId: "1058-child-before-parent-dispatch", role: "judge", session: true,
+        projectRoot: project, correlationId: "1058-parent-dispatch-failure",
+      });
       await rm(join(parent.runDirectory, "admitted-request.json"));
       const priorParentReport = join(parent.runDirectory, "artifacts", "report.json");
       await mkdir(join(parent.runDirectory, "artifacts"), { recursive: true });
       await writeFile(priorParentReport, '{"status":"prior-parent"}\n', "utf8");
       let childDispatches = 0;
+      let parentDispatches = 0;
       const acceptedChildHost = roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
         piRunner: async (args) => {
+          const sessionDirectory = args[args.indexOf("--session-dir") + 1];
+          if (sessionDirectory === dispatchedParent.sessionDirectory) {
+            parentDispatches += 1;
+            return { code: 1, stderr: "parent-host-failure", timedOut: false, args: [...args] };
+          }
           childDispatches += 1;
-          assert.equal(args[args.indexOf("--session-dir") + 1], child.sessionDirectory);
+          assert.equal(
+            sessionDirectory === child.sessionDirectory || sessionDirectory === dispatchedChild.sessionDirectory,
+            true,
+          );
           const details = { judgeStatus: "converged" };
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await writeFile(sessionFile, `${JSON.stringify({
@@ -2667,6 +2683,10 @@ test("public resume failures point to their recorded diagnostics", async () => {
           };
         },
       });
+      const parentChainHostAdapters = [
+        { name: "pi", create: () => ({ ok: true as const, host: acceptedChildHost }) },
+        { name: "claude", create: () => ({ ok: true as const, host: acceptedChildHost }) },
+      ];
       const parentResume = captureIo();
       const parentResult = await runAkRole(
         ["resume", "--model", "test/caller-seat:high", "1058-child-success"],
@@ -2676,10 +2696,7 @@ test("public resume failures point to their recorded diagnostics", async () => {
           cwd: project,
           credentials: { "openai-codex": true, xai: true },
           io: parentResume.io,
-          hostAdapters: [
-            { name: "pi", create: () => ({ ok: true as const, host: acceptedChildHost }) },
-            { name: "claude", create: () => ({ ok: true as const, host: acceptedChildHost }) },
-          ],
+          hostAdapters: parentChainHostAdapters,
         },
       );
       assert.equal(childDispatches, 1);
@@ -2714,6 +2731,22 @@ test("public resume failures point to their recorded diagnostics", async () => {
           && !Array.isArray(parentDiagnostic.details),
         true,
       );
+
+      const dispatchedParentIo = captureIo();
+      const dispatchedParentResult = await runAkRole(
+        ["resume", "--model", "test/caller-seat:high", "1058-child-before-parent-dispatch"],
+        {
+          packageRoot, home, cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          io: dispatchedParentIo.io,
+          hostAdapters: parentChainHostAdapters,
+        },
+      );
+      assert.notEqual(dispatchedParentResult.exitCode, 0);
+      assert.ok(parentDispatches > 0);
+      assert.equal(childDispatches, 2);
+      assert.equal(dispatchedParentIo.stderr.join("").includes(errorRecord(dispatchedParent.runDirectory)), true);
+      await readError(dispatchedParent.runDirectory, "1058-parent-dispatch-failure");
 
       await assertRecordedFailurePointer(deletedWorkspace.runDirectory, "1058-no-workspace");
 

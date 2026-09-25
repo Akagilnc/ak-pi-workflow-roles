@@ -41,6 +41,7 @@ import {
   runPostAdmissionOneShot,
   runPostAdmissionResumable,
   runPostAdmissionSeatResume,
+  showResumeErrorPointer,
   resumeTurnRequestProjectionOptions,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
@@ -824,5 +825,7 @@ export async function continueParentAfterChild(
       return { exitCode: 0, admitted, terminal: refresh.terminal };
     }
   }
-  return dispatchAdmitted(admitted, env, io);
+  const result = await dispatchAdmitted(admitted, env, { ...io, omitFailureStderrDiagnostic: true });
+  showResumeErrorPointer(io, result.exitCode, result.terminal);
+  return result;
 }

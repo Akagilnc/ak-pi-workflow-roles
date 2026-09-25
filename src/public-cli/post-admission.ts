@@ -1808,7 +1808,7 @@ function writeResumeFailurePointer(io: CliIo, errorPath: string): void {
   io.stderr(formatCliDiagnostic(`续跑失败，当次错误记录：${errorPath}`));
 }
 
-function showResumeErrorPointer(
+export function showResumeErrorPointer(
   io: CliIo,
   exitCode: number,
   terminal: TerminalResult | undefined,
