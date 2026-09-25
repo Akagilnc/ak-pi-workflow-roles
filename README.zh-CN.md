@@ -40,8 +40,8 @@ ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
 ak-role config unset gatekeeper
 # 持久劳务引擎（可调用角色）；一次性覆盖仍用 --engine
-# 多模型引擎（cursor/opencode/agy）可附型号；名字即模型的引擎可省略
-ak-role config set-engine judge opus
+# 可选型号是独立坐标，与 CLI 引擎名分开指定
+ak-role config set-engine judge claude-code
 ak-role config set-engine coder cursor cursor-grok-4.6-high
 ak-role config set-engine-model coder cursor-grok-4.6-high
 ak-role config unset-engine-model coder
