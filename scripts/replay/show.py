@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Print each leg's verdict side by side: show.py <kit> [<arm>]."""
-import glob, json, os, re, sys
+import glob, json, os, sys
 
 def codex_leg(path):
     last, cmds, usage = None, [], None
@@ -25,14 +25,14 @@ def main():
             views = sum(f"issue view {num}" in c for c in cmds)
             print(f"##### {name}  commands={len(cmds)} frozen-issue-views={views} tokens={usage and usage.get('input_tokens')}")
         else:
-            last = open(f).read().strip(); last = last[-4000:]
-            print(f"##### {name}  (pi, last {len(last)} chars)")
+            last = open(f).read().strip()
+            print(f"##### {name}  (pi, {len(last)} chars)")
         try:
             p = json.loads(last)
             keys = [k for k in ("status", "countersignStatus", "secretariatStatus", "findings", "reason", "fix", "note") if k in p]
             print(json.dumps({k: p[k] for k in keys}, ensure_ascii=False, indent=1)[:2500])
         except (TypeError, ValueError):
-            print(last)
+            print((last or "")[-4000:])
         print()
 
 if __name__ == "__main__":

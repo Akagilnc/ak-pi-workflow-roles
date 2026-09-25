@@ -1,26 +1,33 @@
 #!/bin/zsh
-# Frozen-replay gh shim. `issue view <AK_ISSUE_NUM>` is served from AK_FROZEN_ISSUE;
-# `issue create` / `issue edit <AK_ISSUE_NUM>` write into AK_ISSUE_STORE when set,
-# otherwise fail. Read-only subcommands pass through to the real gh; every other
-# mutation is blocked. Requires AK_ISSUE_NUM, AK_FROZEN_ISSUE, AK_SHIM_BIN.
+# Frozen-replay gh shim. Any `issue view` naming the frozen issue (number, URL, with or
+# without -R/--repo in any position) is served from AK_FROZEN_ISSUE; `issue create` /
+# `issue edit <N>` write into AK_ISSUE_STORE when set, otherwise fail. Read-only
+# subcommands pass through to the real gh; every other mutation is blocked.
+# Requires AK_ISSUE_NUM, AK_FROZEN_ISSUE, AK_SHIM_BIN. Only intercepts `gh` resolved via
+# PATH; codex legs are additionally network-blocked by --sandbox read-only.
 [[ -n $AK_ISSUE_NUM && -n $AK_FROZEN_ISSUE ]] || { echo "shim: AK_ISSUE_NUM / AK_FROZEN_ISSUE unset" >&2; exit 1; }
 STORE=${AK_ISSUE_STORE:-$AK_FROZEN_ISSUE}
 NUM=$AK_ISSUE_NUM
 real_gh() { local p; for p in ${(s.:.)PATH}; do [[ $p == $AK_SHIM_BIN ]] && continue; [[ -x $p/gh ]] && { echo $p/gh; return; }; done; echo /opt/homebrew/bin/gh; }
+# does the operand list name the frozen issue? (bare number or a URL ending in /issues/<N>)
+names_frozen() { local a; for a in "$@"; do [[ $a == $NUM || $a == */issues/$NUM ]] && return 0; done; return 1; }
 if [[ "$1" == "issue" ]]; then
-  sub=$2
-  if [[ "$sub" == "view" && "$3" == "$NUM" ]]; then
-    json=0; fields=""; jq_expr=""; args=("$@")
-    for ((i=4;i<=${#args};i++)); do a=${args[$i]}; case $a in --json) json=1; fields=${args[$((i+1))]};; --jq|-q) jq_expr=${args[$((i+1))]};; esac; done
+  sub=$2; shift 2
+  if [[ "$sub" == "view" ]] && names_frozen "$@"; then
+    json=0; fields=""; jq_expr=""; comments=0; args=("$@")
+    for ((i=1;i<=${#args};i++)); do a=${args[$i]}; case $a in --json) json=1; fields=${args[$((i+1))]};; --json=*) json=1; fields=${a#--json=};; --jq|-q) jq_expr=${args[$((i+1))]};; --jq=*) jq_expr=${a#--jq=};; -c|--comments) comments=1;; esac; done
     if (( json )); then
       if [[ -n $jq_expr ]]; then jq -r "$jq_expr" "$STORE"; else jq -c "{$fields}" "$STORE"; fi
-    else jq -r '.title, "", .body' "$STORE"; fi
+    else
+      jq -r '.title, "", .body' "$STORE"
+      (( comments )) && jq -r '.comments[]? | "\n--- comment by \(.author.login // "?") at \(.createdAt)\n\(.body)"' "$STORE"
+    fi
     exit 0
   fi
-  if [[ "$sub" == "create" || ( "$sub" == "edit" && "$3" == "$NUM" ) ]]; then
+  if [[ "$sub" == "create" ]] || { [[ "$sub" == "edit" ]] && names_frozen "$@"; }; then
     [[ -n $AK_ISSUE_STORE ]] || { echo "shim: issue create/edit not allowed in this replay" >&2; exit 1; }
     title=""; body=""; bodyfile=""; args=("$@")
-    for ((i=2;i<=${#args};i++)); do a=${args[$i]}; case $a in --title|-t) title=${args[$((i+1))]};; --body|-b) body=${args[$((i+1))]};; --body-file|-F) bodyfile=${args[$((i+1))]};; esac; done
+    for ((i=1;i<=${#args};i++)); do a=${args[$i]}; case $a in --title|-t) title=${args[$((i+1))]};; --title=*) title=${a#--title=};; --body|-b) body=${args[$((i+1))]};; --body=*) body=${a#--body=};; --body-file|-F) bodyfile=${args[$((i+1))]};; --body-file=*) bodyfile=${a#--body-file=};; esac; done
     [[ -n $bodyfile ]] && body="$(cat "$bodyfile")"
     now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     if [[ -f $STORE ]]; then cur=$(cat "$STORE"); else cur='{}'; fi
@@ -29,10 +36,13 @@ if [[ "$1" == "issue" ]]; then
       + (if $t != "" then {title:$t} else {} end) + (if $b != "" then {body:$b} else {} end)' > "$STORE.tmp" && mv "$STORE.tmp" "$STORE"
     jq -r .url "$STORE"; exit 0
   fi
+  set -- issue "$sub" "$@"
 fi
 case "$1 $2" in
   "issue view"|"issue list"|"issue status"|"pr view"|"pr list"|"pr diff"|"pr checks"|"repo view"|"search "*|"auth status"|"api "*)
-    if [[ "$1" == "api" ]]; then for a in "$@"; do case $a in -X|--method|-f|-F|--input|--raw-field|--field) echo "shim: mutating gh api blocked in replay" >&2; exit 1;; esac; done; fi
+    if [[ "$1" == "api" ]]; then
+      for a in "$@"; do case $a in -X*|--method|--method=*|-f*|-F*|--field|--field=*|--raw-field|--raw-field=*|--input|--input=*) echo "shim: mutating gh api blocked in replay ($a)" >&2; exit 1;; esac; done
+    fi
     exec "$(real_gh)" "$@";;
   *) echo "shim: gh $1 $2 blocked in replay (read-only)" >&2; exit 1;;
 esac
