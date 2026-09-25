@@ -48,6 +48,7 @@ type Observation = {
     readonly role: string;
     readonly sessionFile: string;
     readonly continuation: string;
+    readonly prompt: string;
     readonly activation: RoleTurnRequest["activation"];
   }[];
   resume(message?: string): Promise<CliResult>;
@@ -76,6 +77,7 @@ async function runJudge(
         role: string;
         sessionFile: string;
         continuation: string;
+        prompt: string;
         activation: RoleTurnRequest["activation"];
       }[] = [];
       const parentMessages: string[] = [];
@@ -92,6 +94,7 @@ async function runJudge(
               role: request.activation.role,
               sessionFile: coordinates.sessionFile,
               continuation: request.continuation.kind,
+              prompt: request.continuation.prompt,
               activation: request.activation,
             });
           }
@@ -263,6 +266,7 @@ test("#1057 a notary escalation pauses that officer and a pass resumes the judge
     assert.equal(notarySessions.length, 2);
     assert.equal(notarySessions[0]?.sessionFile, notarySessions[1]?.sessionFile);
     assert.equal(notarySessions[1]?.continuation, "resume");
+    assert.equal(notarySessions[1]?.prompt, RULING);
     assert.deepEqual(notarySessions[1]?.activation, notarySessions[0]?.activation);
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
@@ -298,6 +302,7 @@ test("#1057 an auditor escalation is the auditor run and a pass resumes the judg
     assert.equal(auditorSessions.length, 2);
     assert.equal(auditorSessions[0]?.sessionFile, auditorSessions[1]?.sessionFile);
     assert.equal(auditorSessions[1]?.continuation, "resume");
+    assert.equal(auditorSessions[1]?.prompt, RULING);
     assert.deepEqual(auditorSessions[1]?.activation, auditorSessions[0]?.activation);
     assert.equal(continued.terminal?.roleOutcome.role, "judge");
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
