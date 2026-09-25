@@ -10,16 +10,17 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  */
 import assert from "node:assert/strict";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { execFileSync, spawn } from "node:child_process";
 
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
+import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { createMinimalHost, roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
@@ -37,6 +38,7 @@ import {
 import { settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { TerminalResult } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
+import { readRunTerminalArtifact } from "../../src/run-terminal-artifacts.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { hasRecordedSubmission, readRecordedSubmissions } from "../../src/submission-ledger.ts";
@@ -927,7 +929,7 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       // #833: poisoned ledger no longer short-circuits manual resume — host is reached.
       // Settlement after the turn still fails closed on the ledger authority error.
       let resumeDispatches = 0;
-      const { io: resumeIo } = captureIo();
+      const { io: resumeIo, stderr: resumeStderr } = captureIo();
       const resumeResult = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
         packageRoot,
         home,
@@ -950,6 +952,14 @@ test("lawful+publication-fail under 429: resume hint uniform-out; recorded paylo
       });
       assert.equal(resumeDispatches, 1, "ledger-authority-fail resume must reach the host");
       assert.equal(resumeResult.exitCode, 1);
+      const runDirectory = join(home, ".ak-roles", "books", resolveBookKeyFromGit(project), "unbound", "runs", `${runId}@judge`);
+      const pointedPath = (await readdir(join(runDirectory, "artifacts")))
+        .map((name) => join(runDirectory, "artifacts", name))
+        .find((path) => resumeStderr.join("").includes(path));
+      assert.ok(pointedPath);
+      const pointedRecord = JSON.parse(await readFile(pointedPath, "utf8")) as { runId?: unknown; diagnostic?: unknown };
+      assert.equal(pointedRecord.runId, runId);
+      assert.equal(typeof pointedRecord.diagnostic, "string");
       // Settlement may fail closed on poisoned ledger; host reach is the #833 contract.
       if (resumeResult.terminal !== undefined) {
         const resumeOutcome = resumeResult.terminal.roleOutcome;
@@ -972,6 +982,33 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
     seedGitProject(project);
     const runId = "run-diagnostic-disclosure-001";
     const { io, stdout, stderr } = captureIo();
+    const recurringFailureHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args) => {
+        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+        await mkdir(sessionDir, { recursive: true });
+        await observeTyped429ViaProductionHandler({
+          runDirectory: join(sessionDir, ".."),
+          provider: "openai-codex",
+        });
+        await writeSessionProviderStop(sessionDir, {
+          provider: "openai-codex",
+          errorMessage: `upstream quota for run ${runId}: HTTP 429`,
+        });
+        return {
+          code: 1,
+          stderr: `provider refused run ${runId} with HTTP 429\n`,
+          timedOut: false,
+          args: [...args],
+          knownFailure: {
+            cause: "provider" as const,
+            identity: { name: "ProviderError", code: 429 },
+            diagnostic: `upstream quota for run ${runId}: HTTP 429`,
+          },
+        };
+      },
+    });
 
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "provider names the run"],
       {
@@ -981,33 +1018,7 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          await observeTyped429ViaProductionHandler({
-            runDirectory: join(sessionDir, ".."),
-            provider: "openai-codex",
-          });
-          await writeSessionProviderStop(sessionDir, {
-            provider: "openai-codex",
-            errorMessage: `upstream quota for run ${runId}: HTTP 429`,
-          });
-          return {
-            code: 1,
-            stderr: `provider refused run ${runId} with HTTP 429\n`,
-            timedOut: false,
-            args: [...args],
-            knownFailure: {
-              cause: "provider",
-              identity: { name: "ProviderError", code: 429 },
-              diagnostic: `upstream quota for run ${runId}: HTTP 429`,
-            },
-          };
-        },
-        }),
+        roleTurnHost: recurringFailureHost,
       },
     );
 
@@ -1036,6 +1047,29 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
     assert.equal(errorBody.runId, runId);
     assert.equal(typeof errorBody.diagnostic, "string");
     assert.equal(errorBody.diagnostic!.includes(runId), true);
+
+    const resumedIo = captureIo();
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: resumedIo.io,
+      roleTurnHost: recurringFailureHost,
+    });
+    assert.equal(resumed.exitCode, 1);
+    assert.equal(resumed.terminal?.roleOutcome.kind, "failure");
+    assert.equal(resumed.terminal?.artifacts.length, 0);
+    const pointedPath = (await readdir(join(runDirectory, "artifacts")))
+      .map((name) => join(runDirectory, "artifacts", name))
+      .find((path) => resumedIo.stderr.join("").includes(path));
+    assert.ok(pointedPath);
+    const pointedRecord = JSON.parse(await readFile(pointedPath, "utf8")) as {
+      runId?: unknown;
+      diagnostic?: unknown;
+    };
+    assert.equal(pointedRecord.runId, runId);
+    assert.equal(typeof pointedRecord.diagnostic, "string");
   });
 });
 
@@ -2146,11 +2180,12 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
 
     await assert.rejects(
       () => loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),
-      (error: unknown) =>
-        error instanceof Error &&
-        error.message.includes("Pi session principal is unavailable"),
     );
 
+    const reportPath = join(runDirectory, "artifacts", "report.json");
+    await mkdir(join(runDirectory, "artifacts"), { recursive: true });
+    const reportBody = `${JSON.stringify({ role: "judge", runId })}\n`;
+    await writeFile(reportPath, reportBody, "utf8");
     const { io, stdout, stderr } = captureIo();
     let dispatches = 0;
     const blocked = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
@@ -2176,10 +2211,16 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
     assert.equal(dispatches, 0);
     assert.equal(stdout.length, 0);
     assert.notEqual(blocked.exitCode, 0);
-    assert.equal(
-      stderr.join("").includes("Pi session principal is unavailable"),
-      true,
-    );
+    assert.equal(await readFile(reportPath, "utf8"), reportBody);
+    const face = await readRunTerminalArtifact(runDirectory);
+    assert.equal(face.status, "present");
+    assert.equal(face.status === "present" ? face.file : undefined, "report.json");
+    const notedNames = (await readdir(join(runDirectory, "artifacts"))).filter((name) => name !== "report.json");
+    assert.equal(notedNames.length, 1);
+    const pointer = join(runDirectory, "artifacts", notedNames[0]!);
+    assert.equal(stderr.join("").includes(pointer), true);
+    const noted = JSON.parse(await readFile(pointer, "utf8")) as { diagnostic?: unknown };
+    assert.equal(typeof noted.diagnostic, "string");
   });
 });
 
@@ -2412,4 +2453,326 @@ test("#471 resume opaque message rides typed stdin; bare -- dispatches; extras r
       }
     }
   });
+});
+
+test("public resume failures point to their recorded diagnostics", async () => {
+  const priorSubject = process.env.AK_ROLE_AUDITOR_SUBJECT;
+  delete process.env.AK_ROLE_AUDITOR_SUBJECT;
+  try {
+    await withTempHome(async (home) => {
+      const project = join(home, "proj");
+      await mkdir(project, { recursive: true });
+      seedGitProject(project);
+      const bookKey = resolveBookKeyFromGit(project);
+      const gone = join(home, "gone-workspace");
+      await mkdir(gone, { recursive: true });
+      seedGitProject(gone);
+      const sourceRun = join(home, "audited-source");
+      await mkdir(sourceRun, { recursive: true });
+      async function seed(input: {
+        readonly runId: string;
+        readonly role: "secretariat" | "auditor" | "judge";
+        readonly session: boolean;
+        readonly projectRoot: string;
+        readonly ticketNumber?: number;
+        readonly sourceRunPath?: string;
+        readonly correlationId?: string;
+      }) {
+        const runDirectory = join(home, ".ak-roles", "books", bookKey, "unbound", "runs", `${input.runId}@${input.role}`);
+        const sessionDirectory = join(runDirectory, "session");
+        const sessionFile = join(sessionDirectory, "session.jsonl");
+        const admittedRequestPath = join(runDirectory, "admitted-request.json");
+        await mkdir(sessionDirectory, { recursive: true });
+        if (input.session) await writeFile(sessionFile, "\n", "utf8");
+        await writeFile(join(runDirectory, "invocation.json"), "{}\n", "utf8");
+        await writeFile(admittedRequestPath, `${JSON.stringify({
+          role: input.role,
+          instruction: "x",
+          instructionEmpty: false,
+          attachments: [],
+          ...(input.ticketNumber === undefined ? {} : { ticketNumber: input.ticketNumber }),
+          ...(input.sourceRunPath === undefined ? {} : { sourceRunPath: input.sourceRunPath }),
+          ...(input.correlationId === undefined ? {} : { correlationId: input.correlationId }),
+        })}\n`, "utf8");
+        await markRunAdmitted({
+          role: input.role,
+          runId: input.runId,
+          bookKey,
+          projectRoot: input.projectRoot,
+          instruction: "x",
+          instructionEmpty: false,
+          attachments: [],
+          runDirectory,
+          principal: fixturePrincipal(sessionDirectory, sessionFile),
+          admittedRequestPath,
+        }, piDurablePrincipalAuthority);
+        return { runDirectory, sessionFile, sessionDirectory };
+      }
+
+      const deletedWorkspace = await seed({
+        runId: "1058-no-workspace",
+        role: "secretariat",
+        session: true,
+        projectRoot: gone,
+        ticketNumber: 1058,
+      });
+      const auditor = await seed({
+        runId: "1058-auditor",
+        role: "auditor",
+        session: true,
+        projectRoot: project,
+        sourceRunPath: sourceRun,
+      });
+      const unknownHost = await seed({
+        runId: "1058-unknown-host", role: "secretariat", session: true, projectRoot: project,
+      });
+      await rm(gone, { recursive: true, force: true });
+
+      const seen: RoleTurnRequest[] = [];
+      const host = createMinimalHost(async (request) => {
+        seen.push(request);
+        return { code: 1, stderr: "zeta-unique-host-diagnostic", timedOut: false };
+      });
+      const resume = async (argv: readonly string[]) => {
+        const captured = captureIo();
+        const result = await runAkRole([...argv], {
+          packageRoot,
+          home,
+          cwd: home,
+          credentials: { "openai-codex": true, xai: true },
+          io: captured.io,
+          hostAdapters: [
+            { name: "pi", create: () => ({ ok: true as const, host }) },
+            { name: "claude", create: () => ({ ok: true as const, host }) },
+          ],
+        });
+        return { ...result, stderr: captured.stderr.join("") };
+      };
+      const errorRecord = (runDirectory: string) => join(runDirectory, "artifacts", "error.json");
+      const readError = async (runDirectory: string, expectedRunId: string) => {
+        const parsed: unknown = JSON.parse(await readFile(errorRecord(runDirectory), "utf8"));
+        assert.equal(parsed !== null && typeof parsed === "object" && !Array.isArray(parsed), true);
+        const record = parsed as { kind?: unknown; runId?: unknown; diagnostic?: unknown };
+        assert.equal(record.kind, "error");
+        assert.equal(record.runId, expectedRunId);
+        assert.equal(typeof record.diagnostic, "string");
+        return record;
+      };
+      const assertRecordedFailurePointer = async (
+        runDirectory: string,
+        runId: string,
+        argv: readonly string[] = ["resume", "--model", "test/caller-seat:high", runId],
+      ) => {
+        const callsBefore = seen.length;
+        const result = await resume(argv);
+        assert.notEqual(result.exitCode, 0);
+        assert.equal(seen.length, callsBefore);
+        const directory = join(runDirectory, "artifacts");
+        assert.equal(existsSync(directory), true, result.stderr);
+        const diagnosticPath = (await readdir(directory))
+          .map((name) => join(directory, name))
+          .find((path) => result.stderr.includes(path));
+        assert.ok(diagnosticPath);
+        const record = JSON.parse(await readFile(diagnosticPath, "utf8")) as {
+          runId?: unknown;
+          diagnostic?: unknown;
+          details?: unknown;
+        };
+        assert.equal(record.runId, runId);
+        assert.equal(typeof record.diagnostic, "string");
+        assert.equal(
+          record.details !== null && typeof record.details === "object" && !Array.isArray(record.details),
+          true,
+        );
+        const errorDetails = (record.details as { error?: unknown }).error;
+        assert.equal(typeof errorDetails, "string");
+        assert.notEqual((errorDetails as string).length, 0);
+        return result;
+      };
+
+      const corruptRunState = await seed({
+        runId: "1058-corrupt-run-state",
+        role: "secretariat",
+        session: true,
+        projectRoot: project,
+      });
+      const priorReportPath = join(corruptRunState.runDirectory, "artifacts", "report.json");
+      await mkdir(join(corruptRunState.runDirectory, "artifacts"), { recursive: true });
+      await writeFile(priorReportPath, '{"status":"prior"}\n', "utf8");
+      await writeFile(join(corruptRunState.runDirectory, "run-state.json"), "{}\n", "utf8");
+      await assertRecordedFailurePointer(corruptRunState.runDirectory, "1058-corrupt-run-state");
+      assert.equal(await readFile(join(corruptRunState.runDirectory, "run-state.json"), "utf8"), "{}\n");
+      assert.equal(
+        (JSON.parse(await readFile(priorReportPath, "utf8")) as { status?: unknown }).status,
+        "prior",
+      );
+
+      const seatSelectionFailure = await seed({
+        runId: "1058-seat-selection-failure",
+        role: "secretariat",
+        session: true,
+        projectRoot: project,
+      });
+      const sessionBeforeSelectionFailure = await readFile(
+        seatSelectionFailure.sessionFile,
+        "utf8",
+      );
+      const selectionFailureResult = await assertRecordedFailurePointer(
+        seatSelectionFailure.runDirectory,
+        "1058-seat-selection-failure",
+        ["resume", "--host", "unregistered", "--model", "test/caller-seat:high", "1058-seat-selection-failure"],
+      );
+      assert.equal(selectionFailureResult.hostFailure?.kind, "host-unregistered");
+      assert.equal(
+        await readFile(seatSelectionFailure.sessionFile, "utf8"),
+        sessionBeforeSelectionFailure,
+      );
+
+      const parent = await seed({
+        runId: "1058-parent-preload-failure",
+        role: "secretariat",
+        session: true,
+        projectRoot: project,
+      });
+      const child = await seed({
+        runId: "1058-child-success",
+        role: "judge",
+        session: true,
+        projectRoot: project,
+        correlationId: "1058-parent-preload-failure",
+      });
+      const dispatchedParent = await seed({
+        runId: "1058-parent-dispatch-failure", role: "secretariat", session: true, projectRoot: project,
+      });
+      const dispatchedChild = await seed({
+        runId: "1058-child-before-parent-dispatch", role: "judge", session: true,
+        projectRoot: project, correlationId: "1058-parent-dispatch-failure",
+      });
+      await rm(join(parent.runDirectory, "admitted-request.json"));
+      const priorParentReport = join(parent.runDirectory, "artifacts", "report.json");
+      await mkdir(join(parent.runDirectory, "artifacts"), { recursive: true });
+      await writeFile(priorParentReport, '{"status":"prior-parent"}\n', "utf8");
+      let childDispatches = 0;
+      let parentDispatches = 0;
+      const acceptedChildHost = roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          const sessionDirectory = args[args.indexOf("--session-dir") + 1];
+          if (sessionDirectory === dispatchedParent.sessionDirectory) {
+            parentDispatches += 1;
+            return { code: 1, stderr: "parent-host-failure", timedOut: false, args: [...args] };
+          }
+          childDispatches += 1;
+          assert.equal(
+            sessionDirectory === child.sessionDirectory || sessionDirectory === dispatchedChild.sessionDirectory,
+            true,
+          );
+          const details = { judgeStatus: "converged" };
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          await writeFile(sessionFile, `${JSON.stringify({
+            type: "message",
+            message: { role: "toolResult", toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details },
+          })}\n`, "utf8");
+          return {
+            code: 0,
+            stderr: "",
+            timedOut: false,
+            args: [...args],
+            sealedAcceptance: { role: "judge", details },
+          };
+        },
+      });
+      const parentChainHostAdapters = [
+        { name: "pi", create: () => ({ ok: true as const, host: acceptedChildHost }) },
+        { name: "claude", create: () => ({ ok: true as const, host: acceptedChildHost }) },
+      ];
+      const parentResume = captureIo();
+      const parentResult = await runAkRole(
+        ["resume", "--model", "test/caller-seat:high", "1058-child-success"],
+        {
+          packageRoot,
+          home,
+          cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          io: parentResume.io,
+          hostAdapters: parentChainHostAdapters,
+        },
+      );
+      assert.equal(childDispatches, 1);
+      assert.notEqual(
+        parentResult.exitCode,
+        0,
+        `${parentResume.stderr.join("")} ${JSON.stringify(parentResult)}`,
+      );
+      assert.equal(existsSync(join(parent.runDirectory, "admitted-request.json")), false);
+      assert.equal(
+        (JSON.parse(await readFile(priorParentReport, "utf8")) as { status?: unknown }).status,
+        "prior-parent",
+      );
+      const parentArtifacts = await readdir(join(parent.runDirectory, "artifacts"));
+      const parentDiagnosticPath = parentArtifacts
+        .map((name) => join(parent.runDirectory, "artifacts", name))
+        .find((path) => parentResume.stderr.join("").includes(path));
+      assert.ok(
+        parentDiagnosticPath,
+        `${parentResume.stderr.join("")} ${parentArtifacts.join(",")}`,
+      );
+      const parentDiagnostic = JSON.parse(await readFile(parentDiagnosticPath, "utf8")) as {
+        runId?: unknown;
+        diagnostic?: unknown;
+        details?: unknown;
+      };
+      assert.equal(parentDiagnostic.runId, "1058-parent-preload-failure");
+      assert.equal(typeof parentDiagnostic.diagnostic, "string");
+      assert.equal(
+        parentDiagnostic.details !== null
+          && typeof parentDiagnostic.details === "object"
+          && !Array.isArray(parentDiagnostic.details),
+        true,
+      );
+
+      const dispatchedParentIo = captureIo();
+      const dispatchedParentResult = await runAkRole(
+        ["resume", "--model", "test/caller-seat:high", "1058-child-before-parent-dispatch"],
+        {
+          packageRoot, home, cwd: project,
+          credentials: { "openai-codex": true, xai: true },
+          io: dispatchedParentIo.io,
+          hostAdapters: parentChainHostAdapters,
+        },
+      );
+      assert.notEqual(dispatchedParentResult.exitCode, 0);
+      assert.ok(parentDispatches > 0);
+      assert.equal(childDispatches, 2);
+      assert.equal(dispatchedParentIo.stderr.join("").includes(errorRecord(dispatchedParent.runDirectory)), true);
+      await readError(dispatchedParent.runDirectory, "1058-parent-dispatch-failure");
+
+      await assertRecordedFailurePointer(deletedWorkspace.runDirectory, "1058-no-workspace");
+
+      const callsBeforeSubject = seen.length;
+      await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
+      assert.equal(seen.at(-1)?.runDirectory, auditor.runDirectory);
+      assert.equal(seen.length, callsBeforeSubject + 1);
+
+      process.env.AK_ROLE_AUDITOR_SUBJECT = "judge";
+      await resume(["resume", "--model", "test/caller-seat:high", "1058-auditor"]);
+      delete process.env.AK_ROLE_AUDITOR_SUBJECT;
+      assert.equal(seen.at(-1)?.runDirectory, auditor.runDirectory);
+
+      const unknown = await resume(["resume", "--model", "test/caller-seat:high", "1058-unknown-host"]);
+      assert.notEqual(unknown.exitCode, 0);
+      assert.equal(unknown.stderr.includes(errorRecord(unknownHost.runDirectory)), true);
+      assert.equal(unknown.terminal?.roleOutcome.kind, "failure");
+      const unknownRecord = await readError(unknownHost.runDirectory, "1058-unknown-host");
+      assert.equal(
+        unknown.terminal?.roleOutcome.kind === "failure"
+          && unknown.terminal.roleOutcome.diagnostic === unknownRecord.diagnostic,
+        true,
+      );
+    });
+  } finally {
+    if (priorSubject === undefined) delete process.env.AK_ROLE_AUDITOR_SUBJECT;
+    else process.env.AK_ROLE_AUDITOR_SUBJECT = priorSubject;
+  }
 });

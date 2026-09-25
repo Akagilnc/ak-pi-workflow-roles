@@ -11,6 +11,8 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildAutoResumeContinuationPrompt,
+  findRunDirectoryById,
+  readRoleRunState,
   RESUME_TRANSPORT_ENVELOPE,
   type PublicResumeRequest,
   type SameTicketSummonsMaterials,
@@ -26,12 +28,14 @@ import {
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
-import { readStoredHostSessionId, resolveHostAwareSessionAvailability } from "../session-identity.ts";
+import {
+  readStoredHostSessionId,
+  resolveHostAwareSessionAvailability,
+} from "../session-identity.ts";
 import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
 import type {
   ControlledFailureCause,
-  DurablePrincipal,
   DurablePrincipalAuthority,
   RoleTurnHost,
   RoleTurnKnownFailure,
@@ -94,19 +98,23 @@ import {
   exitCodeForTerminalOutcome,
   explicitInternalKnownFailureClassificationInput,
   formatCliDiagnostic,
+  formatErrorCauseDetail,
   formatTerminalResult,
   inspectJudgeSession,
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
+  publishedFailureErrorPath,
   presentStructuralRejection,
   resolveAuditedRunnerFailureResolution,
   resolveControlledFailureResumeObservation,
   settleFailureTerminalResult,
   settleHostEndedNoReceipt,
   attachRecordedSubmissions,
+  rewritePublishedFailureErrorPath,
+  type ControlledFailure,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
-import type { AdmittedRoleInvocation } from "./invocation.ts";
+import type { AdmittedRoleInvocation, RunDirectoryRelocation } from "./invocation.ts";
 import type { NamedRoleTurnHostAdapter } from "./role-turn-host-resolution.ts";
 import {
   type TerminalResult,
@@ -140,6 +148,11 @@ function projectRelocatedTurnIdentity(
     }
   }
   if (result.terminal !== undefined) {
+    rewritePublishedFailureErrorPath(
+      result.terminal,
+      relocation.oldRunDirectory,
+      relocation.newRunDirectory,
+    );
     for (const artifact of result.terminal.artifacts) {
       artifact.path = rewrite(artifact.path) as string;
     }
@@ -361,7 +374,12 @@ export type PostAdmissionAdapters<
    * held lease (when present) follows the run directory and failures stay
    * controlled. Public manual resume (#987) may omit the lease.
    */
-  afterDispatch?: (admitted: A, lease?: RunWriterLease) => Promise<void> | void;
+  afterDispatch?: (
+    admitted: A,
+    lease?: RunWriterLease,
+  ) => Promise<RunDirectoryRelocation | undefined>
+    | RunDirectoryRelocation
+    | void;
 };
 
 export type ControlledFailureInput = {
@@ -442,7 +460,7 @@ export async function resolveResumeMethodMaterialAdapters<
       },
       input.emptyAdapters,
       input.authority,
-      input.io,
+      { ...input.io, omitFailureStderrDiagnostic: true },
     );
     return { kind: "terminal", ...terminal };
   }
@@ -522,23 +540,26 @@ export async function presentControlledFailure<
     await persistReturnedRunState(admitted, authority);
   }
 
-  const terminal = await attachRecordedSubmissions(
-    admitted,
-    await settleFailureTerminalResult(
-      admitted,
-      failure,
-      authority,
-      {
-        ...(resumable
-          ? { resume: { command: renderResumeCommand(admitted.runId) } }
-          : {}),
-        ...(failureInput.invocationScopeId === undefined ||
-          failureInput.invocationScopeId.length === 0
-          ? {}
-          : { invocationScopeId: failureInput.invocationScopeId }),
-      },
-    ),
-  );
+  let publishedErrorPath: string | undefined;
+  let terminal: TerminalResult;
+  try {
+    const settled = await settleFailureTerminalResult(admitted, failure, authority, {
+      ...(resumable
+        ? { resume: { command: renderResumeCommand(admitted.runId) } }
+        : {}),
+      ...(failureInput.invocationScopeId === undefined ||
+        failureInput.invocationScopeId.length === 0
+        ? {}
+        : { invocationScopeId: failureInput.invocationScopeId }),
+      onErrorPublished: (path) => { publishedErrorPath = path; },
+    });
+    terminal = await attachRecordedSubmissions(admitted, settled);
+  } catch (error) {
+    if (io.omitFailureStderrDiagnostic && publishedErrorPath !== undefined) {
+      writeResumeFailurePointer(io, publishedErrorPath);
+    }
+    throw error;
+  }
   presentFailureTerminal(terminal, io);
   return {
     exitCode: exitCodeForTerminalOutcome(terminal.roleOutcome),
@@ -738,7 +759,12 @@ export async function dispatchPostAdmissionTurn<
       if (relocation !== undefined) {
         projectRelocatedTurnIdentity(request, result, admitted, relocation);
       }
-      if (adapters.afterDispatch !== undefined) await adapters.afterDispatch(admitted, lease);
+      const afterDispatchRelocation = adapters.afterDispatch === undefined
+        ? undefined
+        : await adapters.afterDispatch(admitted, lease);
+      if (afterDispatchRelocation !== undefined) {
+        projectRelocatedTurnIdentity(request, result, admitted, afterDispatchRelocation);
+      }
       return result;
     } catch (error) {
       if (result.terminal !== undefined) {
@@ -1524,17 +1550,31 @@ export async function runPostAdmissionSeatResume<
   try {
     loaded = await input.load(request);
   } catch (error) {
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, input.io);
-      return { exitCode: 2 };
+    const usageError = error instanceof CliUsageError;
+    // Unknown usage failures retain the structural fallback. Other load
+    // failures keep the CLI's outer handling unless an existing run is found.
+    const recorded = await pointExistingRunFailure(
+      input.env.home,
+      request.runId,
+      input.env.principalAuthority,
+      input.io,
+      error,
+    );
+    if (!recorded) {
+      if (usageError) {
+        presentStructuralRejection(error, input.io);
+        return { exitCode: 2 };
+      }
+      throw error;
     }
-    throw error;
+    return { exitCode: usageError ? 2 : 1 };
   }
 
   let adapters = input.adapters;
   if (input.afterAdmittedLoad !== undefined) {
     const prepared = await input.afterAdmittedLoad(loaded.admitted);
     if (prepared.kind === "terminal") {
+      showResumeErrorPointer(input.io, prepared.exitCode, prepared.terminal);
       return {
         exitCode: prepared.exitCode,
         admitted: prepared.admitted,
@@ -1710,24 +1750,139 @@ export async function runPostAdmissionSeatResume<
           }),
       });
     }
-    return await runPostAdmissionManualResume({
+    const resumed = await runPostAdmissionManualResume({
       admitted: loaded.admitted,
       env,
-      io: input.io,
+      io: { ...input.io, omitFailureStderrDiagnostic: true },
       adapters,
       ...(input.effectiveEngine === undefined
         ? {}
         : { effectiveEngine: input.effectiveEngine }),
       buildRequestAfterLease,
     });
+    showResumeErrorPointer(input.io, resumed.exitCode, resumed.terminal);
+    return resumed;
   } catch (error) {
-    // Turn construction may still surface structural rejection.
-    if (error instanceof CliUsageError) {
-      presentStructuralRejection(error, input.io);
-      return { exitCode: 2 };
-    }
-    throw error;
+    if (error instanceof TurnDispatchedFailure) throw error;
+    await presentResumeFailurePointer(
+      input.io,
+      error,
+      (failure) => writeResumeDiagnosticFile(
+        loaded.admitted.runDirectory,
+        loaded.admitted.runId,
+        failure,
+        loaded.admitted.role,
+      ),
+    );
+    return { exitCode: error instanceof CliUsageError ? 2 : 1 };
   }
+}
+
+async function pointExistingRunFailure(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+  io: CliIo,
+  thrown: unknown,
+): Promise<boolean> {
+  let foundRunDirectory: string | undefined;
+  try {
+    foundRunDirectory = await findRunDirectoryById(home, runId);
+  } catch {
+    return false;
+  }
+  if (foundRunDirectory === undefined) return false;
+  const runDirectory = foundRunDirectory;
+
+  let record: Awaited<ReturnType<typeof readRoleRunState>>;
+  try {
+    record = await readRoleRunState(runDirectory, authority);
+  } catch {
+    await presentResumeFailurePointer(io, thrown, (failure) =>
+      writeResumeDiagnosticFile(runDirectory, runId, failure),
+    );
+    return true;
+  }
+  if (record === undefined) return false;
+  await presentResumeFailurePointer(io, thrown, (failure) =>
+    writeResumeDiagnosticFile(runDirectory, runId, failure, record.role),
+  );
+  return true;
+}
+
+export async function presentLocatedResumeFailure(
+  home: string,
+  runId: string,
+  authority: DurablePrincipalAuthority,
+  io: CliIo,
+  thrown: unknown,
+): Promise<boolean> {
+  return await pointExistingRunFailure(home, runId, authority, io, thrown);
+}
+
+function writeResumeFailurePointer(io: CliIo, errorPath: string): void {
+  io.stderr(formatCliDiagnostic(`续跑失败，当次错误记录：${errorPath}`));
+}
+
+export function showResumeErrorPointer(
+  io: CliIo,
+  exitCode: number,
+  terminal: TerminalResult | undefined,
+): void {
+  if (exitCode === 0 || terminal === undefined) return;
+  const publishedError = terminal.artifacts.find((artifact) => artifact.kind === "error")?.path
+    ?? publishedFailureErrorPath(terminal);
+  if (publishedError !== undefined) writeResumeFailurePointer(io, publishedError);
+}
+
+async function presentResumeFailurePointer(
+  io: CliIo,
+  thrown: unknown,
+  publish: (failure: ControlledFailure) => Promise<string>,
+): Promise<void> {
+  const failure = classifyPostAdmissionFailure({
+    timedOut: false,
+    code: null,
+    stderr: "",
+    thrown,
+  });
+  try {
+    writeResumeFailurePointer(io, await publish(failure));
+  } catch (publishError) {
+    const cause: { thrownCause?: string; publishError: string } = {
+      publishError: formatErrorCauseDetail(publishError),
+    };
+    if (thrown instanceof Error && thrown.cause !== undefined) {
+      cause.thrownCause = formatErrorCauseDetail(thrown.cause);
+    }
+    presentStructuralRejection({
+      message: thrown instanceof Error ? thrown.message : String(thrown),
+      cause,
+    }, io);
+  }
+}
+
+async function writeResumeDiagnosticFile(
+  runDirectory: string,
+  runId: string,
+  failure: ControlledFailure,
+  role?: AdmittedRoleInvocation["role"],
+): Promise<string> {
+  const dir = await ensureRealArtifactsDirectory(runDirectory);
+  const path = join(dir, `resume-diagnostic-${randomUUID()}.json`);
+  await writeFile(
+    path,
+    `${JSON.stringify({
+      runId,
+      ...(role === undefined ? {} : { role }),
+      diagnostic: failure.diagnostic,
+      ...(failure.cause === undefined ? {} : { cause: failure.cause }),
+      ...(failure.identity === undefined ? {} : { identity: failure.identity }),
+      ...(failure.details === undefined ? {} : { details: failure.details }),
+    }, null, 2)}\n`,
+    { encoding: "utf8", flag: "wx" },
+  );
+  return path;
 }
 
 /**

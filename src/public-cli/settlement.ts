@@ -116,6 +116,7 @@ import type {
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
+import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 import {
   listSeamOwnedUniqueErrorFacePaths,
   RUN_TERMINAL_ARTIFACT_FILES,
@@ -286,10 +287,13 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   // pass courtAttemptId here — roleOutcome already carries this-court payloads
   // from sealedLedgerOutcome when scoped; withSubmissions keeps them.
   void scope;
-  return withSubmissions(
+  const result = withSubmissions(
     terminal,
     await recordedSubmissionPayloads(admitted, undefined),
   );
+  const errorPath = privateFailureErrorPaths.get(terminal);
+  if (errorPath !== undefined) privateFailureErrorPaths.set(result, errorPath);
+  return result;
 }
 
 /**
@@ -372,6 +376,28 @@ export type ControlledFailure = {
   };
   readonly details?: Readonly<Record<string, unknown>>;
 };
+
+// A resumable public Terminal omits artifact paths (#108); its actual error
+// publication remains available only to the CLI's resume presentation seam.
+const privateFailureErrorPaths = new WeakMap<TerminalResult, string>();
+
+export function publishedFailureErrorPath(terminal: TerminalResult): string | undefined {
+  return privateFailureErrorPaths.get(terminal);
+}
+
+export function rewritePublishedFailureErrorPath(
+  terminal: TerminalResult,
+  oldRunDirectory: string,
+  newRunDirectory: string,
+): void {
+  const errorPath = privateFailureErrorPaths.get(terminal);
+  if (errorPath !== undefined) {
+    privateFailureErrorPaths.set(
+      terminal,
+      rewriteRunDirectoryPathValue(errorPath, oldRunDirectory, newRunDirectory) as string,
+    );
+  }
+}
 
 /**
  * Host stderr as recorded — full bytes, no flood filter, no char clip (#836).
@@ -3185,6 +3211,7 @@ export async function publishFailureArtifacts(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
   authority: DurablePrincipalAuthority,
+  onErrorPublished?: (path: string) => void,
 ): Promise<TerminalArtifactRef[]> {
   const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
   const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
@@ -3267,6 +3294,7 @@ export async function publishFailureArtifacts(
     errorPayloadBase,
     priorIssues,
   );
+  onErrorPublished?.(errorWrite.path);
 
   const evidencePayload: Record<string, unknown> = {
     runId: admitted.runId,
@@ -3306,6 +3334,7 @@ export async function settleFailureTerminalResult(
   authority: DurablePrincipalAuthority,
   options: SettlementCourtScope & {
     readonly resume?: TerminalResume;
+    readonly onErrorPublished?: (path: string) => void;
   } = {},
 ): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
@@ -3376,7 +3405,8 @@ export async function settleFailureTerminalResult(
   // Exact-session attendance only — never infer no-advice from caller omission.
   const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
-  const artifacts = await publishFailureArtifacts(admitted, failure, authority);
+  const artifacts = await publishFailureArtifacts(admitted, failure, authority, options.onErrorPublished);
+  const errorPath = artifacts.find((artifact) => artifact.kind === "error")?.path;
   const decisiveFacts: Record<string, unknown> = {
     ...(failure.cause === undefined ? {} : { cause: failure.cause }),
     diagnostic: failure.diagnostic,
@@ -3402,7 +3432,7 @@ export async function settleFailureTerminalResult(
       diagnostic: failure.diagnostic,
       decisiveFacts,
     };
-    return withOptionalGateProjection(
+    const terminal = await withOptionalGateProjection(
       {
         roleOutcome,
         navigator,
@@ -3412,6 +3442,8 @@ export async function settleFailureTerminalResult(
       sessionDirectory,
       detourGateContext(admitted, options),
     );
+    if (errorPath !== undefined) privateFailureErrorPaths.set(terminal, errorPath);
+    return terminal;
   }
   const roleOutcome: TerminalRoleOutcome = {
     kind: "failure",
@@ -3451,13 +3483,14 @@ export async function settleJudgeFailureTerminalResult(
  */
 export function presentFailureTerminal(
   terminal: TerminalResult,
-  io: { stdout: (text: string) => void; stderr: (text: string) => void },
+  io: { stdout: (text: string) => void; stderr: (text: string) => void; omitFailureStderrDiagnostic?: boolean },
 ): void {
   if (terminal.roleOutcome.kind !== "failure" && terminal.roleOutcome.kind !== "no_receipt") {
     throw new TypeError("presentFailureTerminal requires a failure or no-receipt role outcome");
   }
   io.stdout(formatTerminalResult(terminal));
   if (terminal.roleOutcome.kind === "failure") {
+    if (io.omitFailureStderrDiagnostic) return;
     io.stderr(formatFailureStderrDiagnostic({
       ...(terminal.roleOutcome.cause === undefined ? {} : { cause: terminal.roleOutcome.cause }),
       diagnostic: terminal.roleOutcome.diagnostic,

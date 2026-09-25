@@ -7,7 +7,7 @@ import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import assert from "node:assert/strict";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import test from "node:test";
 import { execFileSync } from "node:child_process";
@@ -197,14 +197,29 @@ test("block1: session principal unavailable still fails honestly", async()=>{
     const bookKey=resolveBookKeyFromGit(project);
     const runDir=join(home,".ak-roles","books",bookKey,"unbound","runs",`${runId}@judge`);
     await rm(join(runDir,"session","session.jsonl"),{force:true});
-    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),/Pi session principal is unavailable/);
+    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority));
     const {io:io2,stderr}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,io:io2,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                       packageRoot,
                                                                                       principalAuthority: piDurablePrincipalAuthority,
                                                                                       piRunner: async(a)=>{dispatched=true;return{code:0,stderr:"",timedOut:false,args:[...a]};},
                                                                                     })});
-    assert.equal(dispatched,false);assert.ok(stderr.join("").includes("Pi session principal is unavailable"));assert.notEqual(res.exitCode,0);
+    const sessionFile=join(runDir,"session","session.jsonl");
+    const artifactsDirectory=join(runDir,"artifacts");
+    const diagnosticPath=(await readdir(artifactsDirectory))
+      .map((name)=>join(artifactsDirectory,name))
+      .find((path)=>stderr.join("").includes(path));
+    assert.ok(diagnosticPath);
+    const recorded=JSON.parse(await readFile(diagnosticPath,"utf8")) as {
+      runId?:unknown;diagnostic?:unknown;details?:{error?:unknown};
+    };
+    assert.equal(dispatched,false);
+    assert.notEqual(res.exitCode,0);
+    assert.equal(recorded.runId,runId);
+    assert.equal(typeof recorded.diagnostic,"string");
+    assert.equal(typeof recorded.details?.error,"string");
+    assert.notEqual((recorded.details?.error as string).length,0);
+    await assert.rejects(readFile(sessionFile),{code:"ENOENT"});
   });
 });
 

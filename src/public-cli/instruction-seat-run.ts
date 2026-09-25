@@ -33,6 +33,7 @@ import {
   type AdmittedCountersignInvocation,
   type AdmittedRoleInvocation,
   type PublicSeatParse,
+  type RunDirectoryRelocation,
 } from "./invocation.ts";
 import {
   presentControlledFailure,
@@ -41,6 +42,7 @@ import {
   runPostAdmissionOneShot,
   runPostAdmissionResumable,
   runPostAdmissionSeatResume,
+  showResumeErrorPointer,
   resumeTurnRequestProjectionOptions,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
@@ -143,13 +145,13 @@ async function bindAndRelocateDiarist(
   admitted: AdmittedRoleInvocation & { role: "diarist" },
   authority: DurablePrincipalAuthority,
   lease?: RunWriterLease,
-): Promise<void> {
+): Promise<RunDirectoryRelocation | undefined> {
   const boardTicket = await readBoardTicketNumber(admitted.runDirectory);
-  if (boardTicket === undefined) return;
+  if (boardTicket === undefined) return undefined;
   if (admitted.ticketNumber === undefined) {
     await bindAdmittedTicketNumber(admitted, boardTicket);
   }
-  await relocateAdmittedRunToTicket(admitted, authority, lease);
+  return await relocateAdmittedRunToTicket(admitted, authority, lease);
 }
 
 function seatAdapters(
@@ -176,8 +178,8 @@ function seatAdapters(
           await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
         },
         afterDispatch: async (seat: AdmittedRoleInvocation, lease?: RunWriterLease) => {
-          if (!isBoardTicketSeat(seat)) return;
-          await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
+          if (!isBoardTicketSeat(seat)) return undefined;
+          return await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
         },
       }
       : {}),
@@ -824,5 +826,7 @@ export async function continueParentAfterChild(
       return { exitCode: 0, admitted, terminal: refresh.terminal };
     }
   }
-  return dispatchAdmitted(admitted, env, io);
+  const result = await dispatchAdmitted(admitted, env, { ...io, omitFailureStderrDiagnostic: true });
+  showResumeErrorPointer(io, result.exitCode, result.terminal);
+  return result;
 }
