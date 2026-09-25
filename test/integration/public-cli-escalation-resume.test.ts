@@ -15,6 +15,7 @@ import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { runAkRole, type CliResult, type NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { readRoleRunIdentity } from "../../src/public-cli/run-lifecycle.ts";
+import { formatTerminalResult } from "../../src/public-cli/terminal.ts";
 import { listBookRunDirectories } from "../../src/role-run-placement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
@@ -37,6 +38,7 @@ function adapter(name: string, host: RoleTurnHost): NamedRoleTurnHostAdapter {
 
 type Observation = {
   readonly first: CliResult;
+  readonly firstStdout: readonly string[];
   readonly project: string;
   readonly home: string;
   readonly parentRunId: string;
@@ -177,6 +179,7 @@ async function runJudge(
       assert.ok(parent);
       await assertIn({
         first,
+        firstStdout: capture.stdout,
         project,
         home,
         parentRunId: parent.runId,
@@ -213,6 +216,21 @@ function officer(role: "notary" | "auditor", details: unknown): LegacyFauxPiRunn
     toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
     details,
   });
+}
+
+function assertEscalationPresented(
+  observed: Observation,
+  role: "notary" | "auditor",
+  receipt: unknown,
+): void {
+  const terminal = observed.first.terminal;
+  assert.ok(terminal);
+  assert.equal(terminal.roleOutcome.role, role);
+  assert.equal(terminal.roleOutcome.kind, "accepted");
+  if (terminal.roleOutcome.kind !== "accepted") throw new Error("expected accepted officer terminal");
+  assert.deepEqual(terminal.roleOutcome.payloads?.at(-1), receipt);
+  assert.ok(typeof terminal.runId === "string" && terminal.runId.length > 0);
+  assert.deepEqual(observed.firstStdout, [formatTerminalResult(terminal)]);
 }
 
 test("#1057 a public judge verdict passes both audit gates and is accepted", async () => {
@@ -256,7 +274,7 @@ test("#1057 a notary escalation resumes into the remaining audit without Judge r
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "", verdict: VERDICT }), async (observed) => {
-    assert.equal(observed.first.terminal?.roleOutcome.role, "notary");
+    assertEscalationPresented(observed, "notary", { status: "escalate", mark: 7 });
     assert.equal((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
     const continued = await observed.resume(RULING);
     assert.equal(continued.exitCode, 0);
@@ -291,8 +309,7 @@ test("#1057 an auditor escalation resumes and settles the finished Judge submiss
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "", verdict: VERDICT }), async (observed) => {
-    assert.equal(observed.first.terminal?.roleOutcome.role, "auditor");
-    assert.notEqual(observed.first.terminal?.runId, undefined);
+    assertEscalationPresented(observed, "auditor", { status: "escalate", mark: 4 });
     assert.equal((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
     const continued = await observed.resume(RULING);
     assert.equal(continued.exitCode, 0);

@@ -1155,6 +1155,7 @@ async function auditSubmittedRole(
     const officer = await loadResumablePublicRole(env.home, escalatedRunId, env.principalAuthority, true);
     const terminal = await trySettlePublicSeat(officer.admitted, env.principalAuthority, undefined, undefined, env.packageRoot);
     if (terminal === undefined) throw new Error("escalated audit has no terminal result");
+    io.stdout(formatTerminalResult(terminal));
     return { exitCode: 0, admitted: officer.admitted, terminal };
   }
   if (chain.status === "continue") {
