@@ -43,10 +43,10 @@ wrap this engine behind `ak-role` flags.
 ## Smoke test (run before first labor leg of a session)
 
 ```bash
-cursor-agent -p -f --output-format text --model <MODEL_ID> "Reply with exactly one word: OK"
+cursor-agent -p -f --output-format text "Reply with exactly one word: OK"
 ```
 
-Expected: stdout ends with exactly `OK`, exit code 0. Mechanics verified
-2026-08-28 on this host (Cursor subscription login) with a dispatch-order
-model id substituted for `<MODEL_ID>`. If it asks about directory trust, the
-`-f` flag (or `--trust`) is missing.
+Expected: stdout ends with exactly `OK`, exit code 0. This smoke test omits
+`--model` so it works when the dispatch order does not specify one; Cursor
+Agent uses its configured default. If it asks about directory trust, the `-f`
+flag (or `--trust`) is missing.
