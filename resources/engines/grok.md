@@ -12,10 +12,18 @@ The machine entrypoint is `grok`. Run from the role project root.
 Non-interactive labor reads the prompt from a file and prints plain output:
 
 ```bash
+grok --prompt-file /path/to/labor-prompt.md --reasoning-effort <EFFORT> --always-approve --output-format plain
+```
+
+When the dispatch order specifies a model, pass it with `-m`:
+
+```bash
 grok --prompt-file /path/to/labor-prompt.md -m <MODEL_ID> --reasoning-effort <EFFORT> --always-approve --output-format plain
 ```
 
-- `-m <MODEL_ID>` selects the model; `grok models` lists valid ids.
+- `-m <MODEL_ID>` selects the model; `grok models` lists valid ids. Without a
+  model in the dispatch order, omit `-m` and let the CLI use its configured
+  default.
 - `--always-approve` (equivalently `--yolo` or `--permission-mode
   bypassPermissions`) keeps the run non-interactive (documented). Headless
   permissions otherwise default to interactive approval, where an `ask`
