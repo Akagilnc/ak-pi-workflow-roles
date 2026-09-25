@@ -1784,21 +1784,6 @@ async function pointExistingRunFailure(
     return true;
   }
   if (record === undefined) return false;
-  const admitted = {
-    role: record.role,
-    runId: record.runId,
-    bookKey: record.bookKey,
-    projectRoot: record.projectRoot,
-    instruction: "",
-    instructionEmpty: true,
-    attachments: [],
-    runDirectory: record.runDirectory,
-    principal: authority.seal({
-      sessionDirectory: record.sessionDirectory,
-      sessionFile: record.sessionFile,
-    }),
-    admittedRequestPath: record.admittedRequestPath,
-  } as AdmittedRoleInvocation;
   await presentResumeFailurePointer(io, thrown, (failure) =>
     writeResumeDiagnosticFile(runDirectory, runId, failure, record.role),
   );
