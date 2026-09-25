@@ -974,6 +974,33 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
     seedGitProject(project);
     const runId = "run-diagnostic-disclosure-001";
     const { io, stdout, stderr } = captureIo();
+    const recurringFailureHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args) => {
+        const sessionDir = args[args.indexOf("--session-dir") + 1]!;
+        await mkdir(sessionDir, { recursive: true });
+        await observeTyped429ViaProductionHandler({
+          runDirectory: join(sessionDir, ".."),
+          provider: "openai-codex",
+        });
+        await writeSessionProviderStop(sessionDir, {
+          provider: "openai-codex",
+          errorMessage: `upstream quota for run ${runId}: HTTP 429`,
+        });
+        return {
+          code: 1,
+          stderr: `provider refused run ${runId} with HTTP 429\n`,
+          timedOut: false,
+          args: [...args],
+          knownFailure: {
+            cause: "provider" as const,
+            identity: { name: "ProviderError", code: 429 },
+            diagnostic: `upstream quota for run ${runId}: HTTP 429`,
+          },
+        };
+      },
+    });
 
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "provider names the run"],
       {
@@ -983,33 +1010,7 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
         credentials: { "openai-codex": true, xai: true },
         createRunId: () => runId,
         io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
-          const sessionDir = args[args.indexOf("--session-dir") + 1]!;
-          await mkdir(sessionDir, { recursive: true });
-          await observeTyped429ViaProductionHandler({
-            runDirectory: join(sessionDir, ".."),
-            provider: "openai-codex",
-          });
-          await writeSessionProviderStop(sessionDir, {
-            provider: "openai-codex",
-            errorMessage: `upstream quota for run ${runId}: HTTP 429`,
-          });
-          return {
-            code: 1,
-            stderr: `provider refused run ${runId} with HTTP 429\n`,
-            timedOut: false,
-            args: [...args],
-            knownFailure: {
-              cause: "provider",
-              identity: { name: "ProviderError", code: 429 },
-              diagnostic: `upstream quota for run ${runId}: HTTP 429`,
-            },
-          };
-        },
-        }),
+        roleTurnHost: recurringFailureHost,
       },
     );
 
@@ -1038,6 +1039,29 @@ test("resumable Terminal redacts exact run id from diagnostic free text; durable
     assert.equal(errorBody.runId, runId);
     assert.equal(typeof errorBody.diagnostic, "string");
     assert.equal(errorBody.diagnostic!.includes(runId), true);
+
+    const resumedIo = captureIo();
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+      packageRoot,
+      home,
+      cwd: project,
+      credentials: { "openai-codex": true, xai: true },
+      io: resumedIo.io,
+      roleTurnHost: recurringFailureHost,
+    });
+    assert.equal(resumed.exitCode, 1);
+    assert.equal(resumed.terminal?.roleOutcome.kind, "failure");
+    assert.equal(resumed.terminal?.artifacts.length, 0);
+    const pointedPath = (await readdir(join(runDirectory, "artifacts")))
+      .map((name) => join(runDirectory, "artifacts", name))
+      .find((path) => resumedIo.stderr.join("").includes(path));
+    assert.ok(pointedPath);
+    const pointedRecord = JSON.parse(await readFile(pointedPath, "utf8")) as {
+      runId?: unknown;
+      diagnostic?: unknown;
+    };
+    assert.equal(pointedRecord.runId, runId);
+    assert.equal(typeof pointedRecord.diagnostic, "string");
   });
 });
 

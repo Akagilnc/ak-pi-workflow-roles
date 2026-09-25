@@ -103,6 +103,7 @@ import {
   inspectJudgeSession,
   isLawfulTypedTerminalOutcome,
   presentFailureTerminal,
+  publishedFailureErrorPath,
   presentStructuralRejection,
   resolveAuditedRunnerFailureResolution,
   resolveControlledFailureResumeObservation,
@@ -448,7 +449,7 @@ export async function resolveResumeMethodMaterialAdapters<
       },
       input.emptyAdapters,
       input.authority,
-      input.io,
+      { ...input.io, omitFailureStderrDiagnostic: true },
     );
     return { kind: "terminal", ...terminal };
   }
@@ -1554,7 +1555,7 @@ export async function runPostAdmissionSeatResume<
   if (input.afterAdmittedLoad !== undefined) {
     const prepared = await input.afterAdmittedLoad(loaded.admitted);
     if (prepared.kind === "terminal") {
-      await showResumeErrorPointer(input.io, prepared.exitCode, prepared.terminal);
+      showResumeErrorPointer(input.io, prepared.exitCode, prepared.terminal);
       return {
         exitCode: prepared.exitCode,
         admitted: prepared.admitted,
@@ -1733,14 +1734,14 @@ export async function runPostAdmissionSeatResume<
     const resumed = await runPostAdmissionManualResume({
       admitted: loaded.admitted,
       env,
-      io: input.io,
+      io: { ...input.io, omitFailureStderrDiagnostic: true },
       adapters,
       ...(input.effectiveEngine === undefined
         ? {}
         : { effectiveEngine: input.effectiveEngine }),
       buildRequestAfterLease,
     });
-    await showResumeErrorPointer(input.io, resumed.exitCode, resumed.terminal);
+    showResumeErrorPointer(input.io, resumed.exitCode, resumed.terminal);
     return resumed;
   } catch (error) {
     if (error instanceof TurnDispatchedFailure) throw error;
@@ -1807,12 +1808,12 @@ function writeResumeFailurePointer(io: CliIo, errorPath: string): void {
 function showResumeErrorPointer(
   io: CliIo,
   exitCode: number,
-  terminal: { readonly artifacts: readonly { readonly kind: string; readonly path: string }[] } | undefined,
+  terminal: TerminalResult | undefined,
 ): void {
   if (exitCode === 0 || terminal === undefined) return;
-  const publishedError = terminal.artifacts.find((artifact) => artifact.kind === "error")?.path;
-  if (publishedError === undefined) return;
-  writeResumeFailurePointer(io, publishedError);
+  const publishedError = terminal.artifacts.find((artifact) => artifact.kind === "error")?.path
+    ?? publishedFailureErrorPath(terminal);
+  if (publishedError !== undefined) writeResumeFailurePointer(io, publishedError);
 }
 
 async function presentResumeFailurePointer(
