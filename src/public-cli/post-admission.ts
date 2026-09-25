@@ -26,6 +26,7 @@ import {
   relocateAdmittedRunToTicket,
 } from "./invocation.ts";
 import { readRecordedSubmissionRows } from "../submission-ledger.ts";
+import { readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
 import {
@@ -732,25 +733,26 @@ export async function dispatchPostAdmissionTurn<
       };
     }
     try {
-      // #858: the first typed assertion files an unbound run. Later receipts
-      // remain untouched; this seam does not adjudicate a ticket change.
+      // #858 / #1071: the first identifiable ticketNumber field declaration
+      // files an unbound run (integer, digit string, or leading #N token).
+      // Later receipts remain untouched; prose note/report is never consulted;
+      // this seam does not adjudicate a ticket change.
       if (admitted.ticketNumber === undefined) {
         const rows = await readRecordedSubmissionRows(
           admitted.projectRoot,
           admitted.runId,
           { home: homeFromRunDirectory(admitted.runDirectory), sessionParent: join(admitted.runDirectory, "session", "session.jsonl") },
         );
-        const asserted = rows
-          .filter((row) => row.kind === "accepted" && row.role === admitted.role)
-          .map((row) => row.accepted)
-          .find((payload) => {
-            if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return false;
-            const value = (payload as { ticketNumber?: unknown }).ticketNumber;
-            return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-          });
-        const ticketNumber = asserted === undefined
-          ? undefined
-          : (asserted as { ticketNumber: number }).ticketNumber;
+        let ticketNumber: number | undefined;
+        for (const row of rows) {
+          if (row.kind !== "accepted" || row.role !== admitted.role) continue;
+          const payload = row.accepted;
+          if (payload === null || typeof payload !== "object" || Array.isArray(payload)) continue;
+          ticketNumber = readDeclaredTicketNumber(
+            (payload as { ticketNumber?: unknown }).ticketNumber,
+          );
+          if (ticketNumber !== undefined) break;
+        }
         if (ticketNumber !== undefined) await bindAdmittedTicketNumber(admitted, ticketNumber);
       }
       // #863: shared post-admission bind must relocate unbound→ticket in-home

@@ -209,12 +209,13 @@ test("public coder binds its typed receipt assertion without parsing summons tex
         runId: "01a063500-0000-7000-8000-00000000coder",
         role: "coder",
         toolName: CODER_OUTPUT_TOOL_NAME,
-        // #863: malformed first, then first legal wins; all original receipts retained.
-        // Topology unbound→bind→relocate belongs to the #859 public-entry tracer.
+        // #863 / #1071: unidentifiable first, then first legal field wins; all
+        // original receipts retained. Topology unbound→bind→relocate belongs
+        // to the #859 public-entry tracer.
         details: {
           status: "completed",
           report: "malformed ticket shape",
-          ticketNumber: "582",
+          ticketNumber: "not-a-ticket",
         },
         additionalDetails: [
           { status: "completed", report: "first legal", ticketNumber: 582 },
@@ -230,7 +231,7 @@ test("public coder binds its typed receipt assertion without parsing summons tex
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted outcome");
     assert.deepEqual(result.terminal.roleOutcome.payloads, [
-      { status: "completed", report: "malformed ticket shape", ticketNumber: "582" },
+      { status: "completed", report: "malformed ticket shape", ticketNumber: "not-a-ticket" },
       { status: "completed", report: "first legal", ticketNumber: 582 },
       { status: "completed", report: "later receipt", ticketNumber: 999 },
     ]);
@@ -248,7 +249,12 @@ test("public fixer ignores a malformed ticket assertion without rejecting its re
         runId: "01a063500-0000-7000-8000-00000000fixer",
         role: "fixer",
         toolName: FIXER_OUTPUT_TOOL_NAME,
-        details: { status: "completed", report: "repaired", ticketNumber: "582", classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }] },
+        details: {
+          status: "completed",
+          report: "repaired",
+          ticketNumber: "not-a-ticket",
+          classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }],
+        },
       }),
       captureIo().io,
       "fixer",
@@ -257,6 +263,79 @@ test("public fixer ignores a malformed ticket assertion without rejecting its re
     assert.equal(result.exitCode, 0);
     assert.equal(result.admitted?.ticketNumber, undefined);
     await assertDurableUnbound(result.admitted!.runDirectory);
+  });
+});
+
+test("#1071 mid-ticket seats bind leading #N ticketNumber declarations and keep prose", async () => {
+  await withSeatProject(async ({ home, project }) => {
+    ensureTicketProvenanceVolume(1843, project, home);
+    for (const seat of [
+      {
+        role: "judge" as const,
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        argv: ["Adjudicate #1843 on PR #1876."],
+        details: {
+          status: "converged",
+          note: "#1843 / PR #1876",
+          ticketNumber: "#1843 / PR #1876",
+        },
+        runId: "01a010710-0000-7000-8000-00000000judge",
+      },
+      {
+        role: "fixer" as const,
+        toolName: FIXER_OUTPUT_TOOL_NAME,
+        argv: ["apply", "Repair #1843."],
+        details: {
+          status: "completed",
+          report: "fixed #1843",
+          ticketNumber: "#1843",
+          classResults: [{ name: "main", disposition: "completed", searchScope: "src", exceptions: [], commitSha: "abc1234" }],
+        },
+        runId: "01a010710-0000-7000-8000-00000000fixer",
+      },
+    ]) {
+      const result = await runPublicInstructionSeat(
+        seat.argv,
+        baseEnv({
+          home,
+          project,
+          runId: seat.runId,
+          role: seat.role,
+          toolName: seat.toolName,
+          details: seat.details,
+        }),
+        captureIo().io,
+        seat.role,
+        (args) => parsePublicSeatArgv(seat.role, args),
+      );
+      assert.equal(result.exitCode, 0, `${seat.role} exit`);
+      assert.equal(result.admitted?.ticketNumber, 1843, `${seat.role} bound ticket`);
+      assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+      if (result.terminal?.roleOutcome.kind !== "accepted") assert.fail("expected accepted");
+      assert.deepEqual(result.terminal.roleOutcome.payloads, [seat.details]);
+      await assertDurableTicket(result.admitted!.runDirectory, 1843);
+      assert.match(result.admitted!.runDirectory, /[/\\]1843[/\\]runs[/\\]/);
+      assert.equal(result.admitted!.runDirectory.includes(`${join("unbound", "runs")}`), false);
+    }
+
+    // Prose alone is never a ticket bind source (#1071 / 不从回执散文猜票).
+    const proseOnly = await runPublicInstructionSeat(
+      ["Adjudicate ticket mentioned only in note."],
+      baseEnv({
+        home,
+        project,
+        runId: "01a010710-0000-7000-8000-0000000prose",
+        role: "judge",
+        toolName: JUDGE_OUTPUT_TOOL_NAME,
+        details: { status: "converged", note: "#1843 / PR #1876" },
+      }),
+      captureIo().io,
+      "judge",
+      (args) => parsePublicSeatArgv("judge", args),
+    );
+    assert.equal(proseOnly.exitCode, 0);
+    assert.equal(proseOnly.admitted?.ticketNumber, undefined);
+    await assertDurableUnbound(proseOnly.admitted!.runDirectory);
   });
 });
 

@@ -65,7 +65,8 @@ export function withTerminatingOutputDeclarations<
       baseProperties?.ticketNumber === undefined
         ? {
             ticketNumber: Type.Unknown({
-              description: "可选本票号。尚未绑定时由角色在既有回执中申报。",
+              description:
+                "可选本票号。尚未绑定时由角色在既有回执中申报（正整数、数字串或前导 #N；归位只读本字段）。",
             }),
           }
         : {}

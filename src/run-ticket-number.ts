@@ -25,6 +25,23 @@ export function isSafePositiveTicketNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1;
 }
 
+/**
+ * #1071 — read a role-declared ticketNumber field value for post-admission bind.
+ * Accepts a safe positive integer, a digit string, or a leading `#N` token
+ * (optional trailing material on the same field, e.g. `#1843 / PR #1876`).
+ * Unidentifiable shapes return undefined (leave unbound); never reads prose
+ * note/report fields — callers must pass the typed ticketNumber value only.
+ */
+export function readDeclaredTicketNumber(value: unknown): number | undefined {
+  if (isSafePositiveTicketNumber(value)) return value;
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  const match = /^#?([1-9]\d*)(?:\b|$)/.exec(trimmed);
+  if (match === null) return undefined;
+  const ticketNumber = Number(match[1]);
+  return isSafePositiveTicketNumber(ticketNumber) ? ticketNumber : undefined;
+}
+
 /** Loud reject for non-safe-positive ticket numbers before placement or bind. */
 export function requireSafePositiveTicketNumber(
   ticketNumber: number,
