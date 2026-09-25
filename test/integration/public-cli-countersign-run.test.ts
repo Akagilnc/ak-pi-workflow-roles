@@ -2203,6 +2203,92 @@ test("bound Countersign refresh pauses on the diarist's own escalation", async (
   });
 });
 
+test("#1057 bound Countersign notary resume does not refresh remaining diarists", async () => {
+  await withCountersignProject(async ({ home, project }) => {
+    const parent = 200;
+    const childA = 201;
+    const childB = 202;
+    for (const n of [parent, childA, childB]) {
+      ensureTicketProvenanceVolume(n, project, home);
+    }
+    await installGhFixture(join(home, "bin"), {
+      issues: {
+        [parent]: { body: "parent body", comments: [] },
+        [childA]: { body: "child A body", comments: [] },
+        [childB]: { body: "child B body", comments: [] },
+      },
+    });
+    let diaristTurns = 0;
+    let notaryCalls = 0;
+    let countersignBodyTurns = 0;
+    const host = roleTurnHostFromLegacyPiRunner({
+      packageRoot,
+      principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = argvFlagValue(args, "--ak-role");
+        if (role === "diarist") {
+          diaristTurns += 1;
+          const runDir = options.env.AK_ROLE_RUN_DIR ?? "";
+          const ticketDirMatch = /[\\/](\d+)[\\/]runs[\\/][^\\/]+@diarist$/.exec(runDir);
+          const boundTicket =
+            ticketDirMatch !== null ? Number(ticketDirMatch[1]) : undefined;
+          if (boundTicket !== undefined) {
+            return courtPipelinePiRunner(boundTicket)(args, options);
+          }
+          return courtPipelinePiRunner(parent, undefined, [parent, childA, childB])(
+            args,
+            options,
+          );
+        }
+        if (role === "notary") {
+          notaryCalls += 1;
+          return scriptedTerminatingToolSession({
+            role: "notary", toolName: NOTARY_OUTPUT_TOOL_NAME,
+            details: { status: notaryCalls === 1 ? "escalate" : "converged" },
+          })(args, options);
+        }
+        countersignBodyTurns += 1;
+        return courtPipelinePiRunner(parent)(args, options);
+      },
+    });
+    const first = await runPublicInstructionSeat(
+      ["裁：合审父子票。"],
+      {
+        home,
+        agentDir: join(home, ".pi"),
+        packageRoot,
+        cwd: project,
+        principalAuthority: piDurablePrincipalAuthority,
+        sessionAppender: appendPiSessionCustomEntry,
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+        createRunId: () => "01a0sign00-0000-7000-8000-000000001057",
+      },
+      captureIo().io,
+      "countersign", (args) => parsePublicSeatArgv("countersign", args),
+    );
+    assert.equal(first.exitCode, 0);
+    assert.equal(first.terminal?.roleOutcome.role, "notary");
+    assert.equal(notaryCalls, 1);
+    assert.equal(countersignBodyTurns, 1);
+    const diaristTurnsAtEscalation = diaristTurns;
+    assert.ok(diaristTurnsAtEscalation >= 3, "identity + co-review refresh must complete first");
+    const resumed = await runAkRole(["resume", first.terminal!.runId!, "owner ruling"], {
+      home, packageRoot, cwd: project, io: captureIo().io,
+      roleTurnHost: host, hostAdapters: [adapter("pi", host)],
+    });
+    assert.equal(resumed.exitCode, 0);
+    assert.equal(notaryCalls, 2);
+    assert.equal(
+      diaristTurns,
+      diaristTurnsAtEscalation,
+      "resuming a notary child must not refresh remaining court diarists",
+    );
+    assert.equal(countersignBodyTurns, 1, "notary resume must not re-run Countersign body");
+    assert.equal(resumed.terminal?.roleOutcome.role, "countersign");
+  });
+});
+
 /**
  * #871 sole tracer: typed co-review set on the real countersign entry.
  * Parent {100,101,102} → explicit resume keeps set → public re-summons mints

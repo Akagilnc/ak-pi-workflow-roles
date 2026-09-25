@@ -112,7 +112,7 @@ type SeatRunResult = {
 };
 
 const AUDITED_ROLES = new Set<PackagedRole>(["judge", "fixer", "coder", "secretariat", "countersign", "doctor"]);
-const SECRETARIAT_STATUS_REASK = "secretariatStatus 不是 converged、escalate 之一。请重新交卷，status 写明其一。";
+const SECRETARIAT_STATUS_REASK = "secretariatStatus 不是 converged、escalate 之一。请重新交卷，secretariatStatus 写明其一。";
 const COUNTERSIGN_STATUS_REASK = "status 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。";
 const WORKER_ROUTING_STATUSES: ReadonlySet<string> = new Set([
   "planned", "completed", "refused", "partially_completed", "unfinished",
@@ -1009,7 +1009,10 @@ export async function continueParentAfterChild(
     return runPublicInstructionSeatResume({ runId: parentRunId }, env, io);
   }
   const admitted = loaded.admitted;
-  if (admitted.role === "countersign" && admitted.ticketNumber !== undefined) {
+  // Court diarist refresh advances only after a diarist child; gate officers
+  // (notary/auditor/…) resume straight into queueConclusionFromChild (#1057).
+  if (admitted.role === "countersign" && admitted.ticketNumber !== undefined
+    && child.role === "diarist") {
     const refresh = await runCountersignCourtDiaristStation(admitted, env, io, child.ticketNumber);
     if (refresh !== undefined) {
       io.stdout(formatTerminalResult(refresh.terminal));
@@ -1062,7 +1065,13 @@ async function auditSubmittedRole(
     return runPublicInstructionSeatResume({ runId: admitted.runId, message: COUNTERSIGN_STATUS_REASK },
       { ...env, autoResumeLimit: 0 }, io);
   }
-  const skipAudit = status === "escalate"
+  // Self-escalation is a valid open routing state for these seats only.
+  // Doctor's declared domain is completed|refused — an open "escalate" must
+  // not skip its mandatory auditor (#1057 / PR #1075).
+  const selfEscalationSkipsAudit = status === "escalate"
+    && (admitted.role === "judge" || admitted.role === "secretariat"
+      || admitted.role === "countersign");
+  const skipAudit = selfEscalationSkipsAudit
     || ((admitted.role === "fixer" || admitted.role === "coder")
       && (typeof status !== "string" || !WORKER_DONE_STATUSES.has(status)));
   if (skipAudit) {
@@ -1094,6 +1103,7 @@ async function auditSubmittedRole(
       let lastSummon: PublicSummonResult | undefined;
       const decision = await createPiDoctorAuditor()({
         context, submission: accepted,
+        ...(env.signal === undefined ? {} : { signal: env.signal }),
         summonAuditor: async (subject, sourceRunDirectory, signal, reask, submission) => {
           const summoned = await summonPublicRole({
             role: "auditor",
@@ -1153,6 +1163,7 @@ async function auditSubmittedRole(
       toolCallId,
       submission: accepted,
       summonOfficer,
+      ...(env.signal === undefined ? {} : { signal: env.signal }),
       hostActions: {
         failInfrastructure(error): never { throw error; },
         bindSubmissionNonPass() {},

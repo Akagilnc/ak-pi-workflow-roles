@@ -1146,6 +1146,72 @@ process.stdout.write(JSON.stringify({
   });
 }
 
+test("#1057 unreadable secretariatStatus reasks for secretariatStatus", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    const runId = "01a0sec1057-reask-7000-8000-000000000001";
+    const prompts: string[] = [];
+    const gateCalls: Array<{ kind: string }> = [];
+    const inner = secretariatHostDrivingRealTools({
+      packageRoot,
+      home,
+      gateCalls,
+      submissionGateHost: "pi",
+      countersignSequence: [],
+      steps: [
+        { kind: "output", details: { secretariatStatus: "not-a-status" } },
+        {
+          kind: "output",
+          details: {
+            secretariatStatus: "escalate",
+            decisionGate: { question: "need owner", options: ["yes", "no"] },
+          },
+        },
+      ],
+    });
+    const host: RoleTurnHost = {
+      async executeTurn(request) {
+        if (request.activation.role === "secretariat") {
+          prompts.push(request.continuation.prompt);
+        }
+        return inner.executeTurn(request);
+      },
+    };
+    const result = await runAkRole(
+      [
+        "secretariat",
+        "--model",
+        "test/caller-seat:high",
+        "--project",
+        project,
+        "整理票面。",
+      ],
+      {
+        home,
+        packageRoot,
+        cwd: project,
+        io: captureIo().io,
+        createRunId: () => runId,
+        roleTurnHost: host,
+        hostAdapters: [adapter("pi", host)],
+      },
+    );
+    assert.equal(result.exitCode, 0, "reask then escalate must settle");
+    assert.ok(prompts.length >= 2, `expected reask resume, got ${prompts.length} secretariat turns`);
+    const reask = prompts.find((prompt) => prompt.includes("secretariatStatus 不是"));
+    assert.ok(reask, "router must reask for an unreadable secretariatStatus");
+    assert.match(reask, /secretariatStatus 写明其一/);
+    assert.equal(
+      /请重新交卷，status 写明其一/.test(reask),
+      false,
+      "reask must name secretariatStatus, not status",
+    );
+    assert.equal(result.terminal?.roleOutcome.role, "secretariat");
+  });
+});
+
 for (const hostName of ["codex", "claude", "grok-build"] as const) {
   test(`#1057 adapter boundary ${hostName}: converged tool finishes before gate`, async () => {
     const { gateEntered, submitted } = await adapterBoundaryCase({

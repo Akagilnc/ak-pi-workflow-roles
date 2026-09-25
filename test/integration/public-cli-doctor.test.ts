@@ -723,6 +723,112 @@ test("Doctor Auditor escalation resumes the officer and settles without Doctor r
   });
 });
 
+test("#1057 Doctor open status escalate still enters mandatory Auditor review", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await seedDoctorIssueRuns(home, resolveBookKeyFromGit(project), 44);
+    await runAkRole(["config", "set", "auditor", "test/caller-seat:high"], {
+      packageRoot, home, io: captureIo().io,
+    });
+    const runId = "run-doctor-open-escalate";
+    let auditorCalls = 0;
+    let doctorCalls = 0;
+    const auditorHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot, principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => scriptedTerminatingToolSession({
+        role: "auditor", toolName: AUDITOR_OUTPUT_TOOL_NAME,
+        details: { status: "converged" },
+      })(args, options),
+    });
+    const host = createMinimalHost(async (request) => {
+      if (request.activation.role === "auditor") {
+        auditorCalls += 1;
+        return auditorHost.executeTurn(request);
+      }
+      doctorCalls += 1;
+      // Open domain admits escalate at the provider seam; post-submission audit
+      // must still summon the Doctor auditor (PR #1075 finding).
+      const details = {
+        status: "escalate",
+        reason: "hallucinated open status",
+        missingEvidence: [{ need: "session", targetKeys: ["case"] }],
+      };
+      const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+      await mkdir(sessionDirectory, { recursive: true });
+      await writeFile(sessionFile, `${JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE,
+        data: { version: 1, testimony: details } })}\n`, "utf8");
+      await sealAcceptedSubmission({
+        cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
+        role: "doctor", details, toolCallId: "doctor-open-escalate",
+        ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+      });
+      return { code: 0, stderr: "", timedOut: false };
+    });
+    const result = await runAkRole(
+      ["doctor", "--model", "test/caller-seat:high", "--issue", "44", "--project", project, "review"],
+      { packageRoot, home, cwd: project, createRunId: () => runId, io: captureIo().io, roleTurnHost: host },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(doctorCalls, 1);
+    assert.equal(auditorCalls, 1, "open escalate must not skip Doctor's mandatory auditor");
+    assert.equal(result.terminal?.roleOutcome.role, "doctor");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+  });
+});
+
+test("#1057 Doctor audit summons receive the caller AbortSignal", async () => {
+  await withTempHome(async (home) => {
+    const project = join(home, "project");
+    await mkdir(project, { recursive: true });
+    seedGitProject(project);
+    await seedDoctorIssueRuns(home, resolveBookKeyFromGit(project), 45);
+    await runAkRole(["config", "set", "auditor", "test/caller-seat:high"], {
+      packageRoot, home, io: captureIo().io,
+    });
+    const runId = "run-doctor-cancel-signal";
+    const cancel = new AbortController();
+    let auditorSignal: AbortSignal | undefined;
+    const auditorHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot, principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => scriptedTerminatingToolSession({
+        role: "auditor", toolName: AUDITOR_OUTPUT_TOOL_NAME,
+        details: { status: "converged" },
+      })(args, options),
+    });
+    const host = createMinimalHost(async (request) => {
+      if (request.activation.role === "auditor") {
+        auditorSignal = request.signal;
+        return auditorHost.executeTurn(request);
+      }
+      const details = {
+        status: "refused", reason: "recorded",
+        missingEvidence: [{ need: "session", targetKeys: ["case"] }],
+      };
+      const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
+      await mkdir(sessionDirectory, { recursive: true });
+      await writeFile(sessionFile, `${JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE,
+        data: { version: 1, testimony: details } })}\n`, "utf8");
+      await sealAcceptedSubmission({
+        cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
+        role: "doctor", details, toolCallId: "doctor-signal",
+        ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
+      });
+      return { code: 0, stderr: "", timedOut: false };
+    });
+    const result = await runAkRole(
+      ["doctor", "--model", "test/caller-seat:high", "--issue", "45", "--project", project, "review"],
+      {
+        packageRoot, home, cwd: project, createRunId: () => runId,
+        io: captureIo().io, roleTurnHost: host, signal: cancel.signal,
+      },
+    );
+    assert.equal(result.exitCode, 0);
+    assert.equal(auditorSignal, cancel.signal, "post-submission Doctor auditor must see caller cancel");
+  });
+});
+
 test("terminal persistence failure through public entry propagates loudly with no fake terminal", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "project");
