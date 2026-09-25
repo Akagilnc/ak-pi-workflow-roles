@@ -6,13 +6,13 @@
  */
 import { dirname, resolve, sep } from "node:path";
 import { AUDITOR_DOSSIER_PROMPT } from "../compliance-transport.ts";
+import { bookDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
-import { bookDirectOfficerRunPointer } from "../archivist-record-entry.ts";
 
 import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "../host-contracts.ts";
 import { OFFICER_CONCLUSION_REASK, gateOfficerForSubject } from "../gatekeeper-role.ts";
 import { runJudgeGates } from "../judge-role.ts";
-import { WORKER_DONE_STATUSES } from "../worker-submission-gates.ts";
+import { WORKER_DONE_STATUSES } from "../worker-submission-contracts.ts";
 import { SECRETARIAT_GATE_OFFICER_ENTRY_TYPE } from "../secretariat-contracts.ts";
 import { readableGateItem } from "../readable-gate-item.ts";
 import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";

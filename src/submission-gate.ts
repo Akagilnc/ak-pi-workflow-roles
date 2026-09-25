@@ -14,7 +14,7 @@
  * Code does not judge content, map next-step for parent, or label unreadable/unusable.
  */
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { bookDirectOfficerRunPointer } from "./archivist-record-entry.ts";
+import { bookDirectOfficerRunPointer } from "./archivist-record-pointer.ts";
 import type { HostContext, RoleTurnHost } from "./host-contracts.ts";
 import {
   GatekeeperDecisionError,

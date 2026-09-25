@@ -15,16 +15,16 @@ import {
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
 } from "./submission-errors.ts";
+import { WORKER_DONE_STATUSES } from "./worker-submission-contracts.ts";
 
 export { WorkerCommitReminderError, WorkerPrefixReminderError, WorkerUnfinishedReasonReminderError } from "./submission-errors.ts";
+export { WORKER_DONE_STATUSES } from "./worker-submission-contracts.ts";
 
 export const WORKER_SUBMISSION_GATE_RECORD_KIND = WORKER_SUBMISSION_GATE_KIND;
 export const WORKER_COMMIT_BASELINE_ENTRY_TYPE = "commit-baseline";
 export const WORKER_COMMIT_REMINDER_BOUNCE_ENTRY_TYPE = "commit-reminder-bounce";
 export const WORKER_PREFIX_REMINDER_BOUNCE_ENTRY_TYPE = "prefix-reminder-bounce";
 
-/** Statuses that enter the officer submission gate (ADR 0066: completed/partially_completed 进闸①；planned/refused/unfinished 零 commit 合法). */
-export const WORKER_DONE_STATUSES: ReadonlySet<string> = new Set(["completed", "partially_completed"]);
 /** Historical package hook ownership marker — uninstall criterion only. */
 const HOOK_MARKER = "ak-roles: worker-submission-gates reference-transaction";
 const HOOKS_DIR = "ak-roles-hooks";
