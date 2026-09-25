@@ -8,7 +8,6 @@ import { reviewSubmissionSchema } from "./review-submission.ts";
 import { type GatekeeperSubject } from "./gatekeeper-role.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
-  validateAcceptedJudgeDetails,
   type JudgeVerdict,
 } from "./package-contracts/judge-output.ts";
 
@@ -74,15 +73,9 @@ export async function runJudgeGates(input: {
 // The shared open schema preserves role-specific prose without adding another contract.
 export const judgeVerdictSchema = reviewSubmissionSchema;
 
-type JudgeVerdictParameters = Static<typeof judgeVerdictSchema>;
-
 export type JudgeRoleDependencies = {
   loadSoul(): Promise<string>;
 };
-
-export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
-  return validateAcceptedJudgeDetails(verdict);
-}
 
 export function createJudgeRoleRuntime(
   pi: RoleHost,

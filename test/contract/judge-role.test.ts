@@ -1349,9 +1349,7 @@ test("fixer activation leaves its tool surface unchanged", async () => {
   await withActivationHome({ prefix: "ak-judge-role-" }, async ({ home }) => {
     await harness.handlers.get("session_start")?.({}, activationCtx(home));
   });
-  // Shared engine detour is registered on activation and folded into the active
-  // surface when the secretariat seat claims it (role-runtime session_start).
-  assert.deepEqual(harness.activeToolSets, [["ak_engine_detour"]]);
+  assert.deepEqual(harness.activeToolSets, []);
   assert.equal(harness.tools.has(FIXER_OUTPUT_TOOL_NAME), true);
 });
 
