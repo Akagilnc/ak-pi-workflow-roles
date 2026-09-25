@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 /** Typed parent-side pointer to an independent officer run 正本 (ADR 0079 / #675). */
@@ -12,13 +12,6 @@ export type DirectOfficerRunPointer = {
   readonly sessionFile: string;
   /** Officer run directory when known. */
   readonly runDirectory?: string;
-  /**
-   * Parent submission round this summons reviewed (#1057).
-   * toolCallId + ledger attemptId already identify the round; a later
-   * convergence of this officer must not pass a different round.
-   */
-  readonly toolCallId?: string;
-  readonly attemptId?: string;
 };
 
 /**
@@ -35,8 +28,6 @@ export function bookDirectOfficerRunPointer(options: {
   readonly officer: "inspector" | "notary" | "auditor" | "countersign";
   readonly sessionFile: string;
   readonly runDirectory?: string;
-  readonly toolCallId?: string;
-  readonly attemptId?: string;
 }): DirectOfficerRunPointer {
   const nest = join(dirname(options.parentSessionFile), "auditor-roles");
   mkdirSync(nest, { recursive: true });
@@ -48,12 +39,6 @@ export function bookDirectOfficerRunPointer(options: {
     ...(options.runDirectory !== undefined && options.runDirectory.trim() !== ""
       ? { runDirectory: options.runDirectory }
       : {}),
-    ...(options.toolCallId !== undefined && options.toolCallId.length > 0
-      ? { toolCallId: options.toolCallId }
-      : {}),
-    ...(options.attemptId !== undefined && options.attemptId.length > 0
-      ? { attemptId: options.attemptId }
-      : {}),
   };
   writeFileSync(
     join(nest, `${options.officer}.pointer.json`),
@@ -61,30 +46,4 @@ export function bookDirectOfficerRunPointer(options: {
     "utf8",
   );
   return pointer;
-}
-
-function isPointerRecord(value: unknown): value is DirectOfficerRunPointer {
-  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
-  const record = value as Record<string, unknown>;
-  return record.kind === DIRECT_OFFICER_RUN_POINTER_KIND && record.version === 1
-    && typeof record.sessionFile === "string"
-    && (record.officer === "inspector" || record.officer === "notary"
-      || record.officer === "auditor" || record.officer === "countersign");
-}
-
-/** Read the stable officer pointer. Missing file is absence; damaged JSON propagates. */
-export function readDirectOfficerRunPointer(
-  parentSessionFile: string,
-  officer: DirectOfficerRunPointer["officer"],
-): DirectOfficerRunPointer | undefined {
-  const path = join(dirname(parentSessionFile), "auditor-roles", `${officer}.pointer.json`);
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (!isPointerRecord(parsed) || parsed.officer !== officer) return undefined;
-    return parsed;
-  } catch (error) {
-    const code = error instanceof Error && "code" in error ? error.code : undefined;
-    if (code === "ENOENT") return undefined;
-    throw error;
-  }
 }

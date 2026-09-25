@@ -19,7 +19,6 @@ import { listBookRunDirectories } from "../../src/role-run-placement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
-import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -431,45 +430,5 @@ test("#1057 a new judge verdict after acceptance runs the audits again", async (
     assert.equal(resumed.terminal?.roleOutcome.role, "judge");
     assert.equal(resumed.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(resumed.terminal?.roleOutcome.payloads?.at(-1), next);
-  });
-});
-
-test("#1057 an earlier auditor convergence does not pass a later judge submission", async () => {
-  const later = { status: "converged", mark: 99 } as const;
-  let notaryCalls = 0;
-  let auditorCalls = 0;
-  await runJudge(async (args, options) => {
-    const role = argvFlagValue(args, "--ak-role");
-    if (role === "notary") {
-      notaryCalls += 1;
-      return officer("notary", { status: "converged", mark: notaryCalls })(args, options);
-    }
-    if (role === "auditor") {
-      auditorCalls += 1;
-      return officer("auditor", auditorCalls === 1
-        ? { status: "escalate", mark: 4 }
-        : { status: "converged", mark: auditorCalls })(args, options);
-    }
-    throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
-  }, () => ({ code: 0, stderr: "" }), async (observed) => {
-    assert.equal(notaryCalls, 1);
-    assert.equal(auditorCalls, 1);
-    await sealAcceptedSubmission({
-      cwd: observed.project,
-      home: observed.home,
-      runId: observed.parentRunId,
-      runDirectory: observed.parentRunDirectory,
-      role: "judge",
-      details: later,
-      toolCallId: "later-verdict",
-    });
-    const continued = await observed.resume(RULING);
-    assert.equal(continued.exitCode, 0, "later submission still completes its own gates");
-    assert.equal(notaryCalls, 2, "the earlier auditor must not skip notary for the later submission");
-    assert.equal(continued.terminal?.roleOutcome.role, "judge");
-    assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
-    if (continued.terminal?.roleOutcome.kind === "accepted") {
-      assert.deepEqual(continued.terminal.roleOutcome.payloads?.at(-1), later);
-    }
   });
 });

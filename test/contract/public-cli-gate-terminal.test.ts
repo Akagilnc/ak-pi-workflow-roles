@@ -306,17 +306,19 @@ test("public CLI projects normal gate dispatch + officer findings", async () => 
     assert.equal(exitCode, 0);
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.ok(terminal.gate !== undefined);
-    assertGateNotaryRound(terminal.gate!, reason);
-    // Typed reason field projects fixture bytes as written (not re-trimmed).
-    {
-      const dispatch = terminal.gate!.rounds[0]!.dispatch;
-      assert.equal(dispatch.kind, "historical_dispatch");
-      if (dispatch.kind === "historical_dispatch") {
-        assert.equal(dispatch.reason, reason);
-      }
+    // Seeded historical pair stays byte-exact. The public converged judge also
+    // runs its notary, so that direct round sits beside the seed.
+    const historical = terminal.gate!.rounds.filter((round) => round.dispatch.kind === "historical_dispatch");
+    assert.equal(historical.length, 1);
+    const seeded = historical[0]!;
+    assert.equal(seeded.dispatch.officer, "notary");
+    if (seeded.dispatch.kind === "historical_dispatch") {
+      assert.equal(seeded.dispatch.reason, reason);
     }
-    assert.equal(terminal.gate!.rounds[0]!.officer.findings.length, findings.length);
-    assert.deepEqual(terminal.gate!.rounds[0]!.officer.findings, [...findings]);
+    assert.deepEqual(seeded.officer.findings, [...findings]);
+    const live = terminal.gate!.rounds.filter((round) => round.dispatch.kind === "direct");
+    assert.equal(live.length, 1);
+    assert.equal(live[0]!.dispatch.officer, "notary");
   }, { prefix: "ak-gate-normal-" });
 });
 
@@ -336,8 +338,10 @@ test("public CLI shows seat reduction without reason as reason-absent", async ()
       },
     });
     assert.ok(terminal.gate !== undefined);
-    assert.deepEqual(terminal.gate!.actualSeats, ["inspector"]);
-    const round = terminal.gate!.rounds[0]!;
+    assert.ok(terminal.gate!.actualSeats.includes("inspector"));
+    const round = terminal.gate!.rounds.find((item) =>
+      item.dispatch.kind === "direct" && item.dispatch.officer === "inspector")!;
+    assert.ok(round);
     assert.equal(round.dispatch.kind, "direct");
     assert.equal(round.dispatch.officer, "inspector");
     assert.equal(
@@ -349,7 +353,7 @@ test("public CLI shows seat reduction without reason as reason-absent", async ()
   }, { prefix: "ak-gate-no-reason-" });
 });
 
-test("public CLI omits gate when no auditor-roles gate ran", async () => {
+test("public CLI converged judge with an empty nest still shows the audit it ran", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -364,12 +368,12 @@ test("public CLI omits gate when no auditor-roles gate ran", async () => {
       },
     });
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(
-      Object.prototype.hasOwnProperty.call(terminal, "gate"),
-      false,
-      "no-gate run must keep gate omitted (zero change)",
-    );
-    assert.equal(terminal.gate, undefined);
+    assert.ok(terminal.gate);
+    assert.deepEqual(terminal.gate.actualSeats, ["notary"]);
+    assert.equal(terminal.gate.rounds.length, 1);
+    assert.equal(terminal.gate.rounds[0]!.dispatch.kind, "direct");
+    assert.equal(terminal.gate.rounds[0]!.dispatch.officer, "notary");
+    assert.equal(terminal.gate.rounds[0]!.officer.status, "converged");
   }, { prefix: "ak-gate-no-gate-" });
 });
 
@@ -404,7 +408,11 @@ test("public CLI keeps accepted Terminal when auditor-roles holds lawful provinc
     });
     assert.equal(exitCode, 0);
     assert.equal(terminal.roleOutcome.kind, "accepted");
-    assert.equal(terminal.gate, undefined);
+    const historical = terminal.gate?.rounds.filter((round) => round.dispatch.kind === "historical_dispatch") ?? [];
+    assert.equal(historical.length, 0, "province pass opens no paired round");
+    assert.equal(terminal.gate?.rounds.length, 1);
+    assert.equal(terminal.gate?.rounds[0]?.dispatch.kind, "direct");
+    assert.equal(terminal.gate?.rounds[0]?.dispatch.officer, "notary");
   }, { prefix: "ak-gate-province-pass-" });
 });
 

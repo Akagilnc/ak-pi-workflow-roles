@@ -3093,6 +3093,26 @@ async function applySecretariatCountersignTerminal(
   return settled;
 }
 
+/**
+ * After the audit gate returns, attach gate rounds and the secretariat officer
+ * fact onto the terminal this turn already settled. Does not publish again —
+ * a second publish would append another attempt-history row for the same attempt.
+ */
+export async function attachPostAuditProjection(
+  admitted: AdmittedRoleInvocation,
+  authority: DurablePrincipalAuthority,
+  terminal: TerminalResult,
+): Promise<TerminalResult> {
+  const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
+  const gate = await extractGateFactFromSessionDirectory(sessionDirectory, {
+    runDirectory: admitted.runDirectory,
+    parentSessionFile: sessionFile,
+  });
+  const withGate = gate === undefined ? terminal : { ...terminal, gate };
+  if (admitted.role !== "secretariat") return withGate;
+  return applySecretariatCountersignTerminal(admitted, authority, withGate);
+}
+
 /** One failed attempt to place a durable failure artifact (path is private layout). */
 type PublicationAttempt = {
   readonly path: string;

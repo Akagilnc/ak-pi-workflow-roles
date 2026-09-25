@@ -109,8 +109,6 @@ export type RecordedSubmissionRow = {
   readonly auditOfficer?: unknown;
   /** Present when the ledger row names the tool call — used to dedupe candidate+outcome. */
   readonly toolCallId?: string;
-  /** Court/attempt tag already stored on the ledger record (#637 / #881). */
-  readonly attemptId?: string;
 };
 
 /** Closed-submission callback: original payload, no status/facts projection (#836). */
@@ -292,8 +290,7 @@ function rowFromPayload(
     auditOfficer?: unknown;
   },
   accepted: unknown,
-  roleFallback: TerminalRoleName | undefined,
-  attemptId: string | undefined,
+  roleFallback?: TerminalRoleName,
 ): RecordedSubmissionRow {
   const role = recordedRole(payload) ?? roleFallback;
   return {
@@ -305,7 +302,6 @@ function rowFromPayload(
     ...(typeof payload.toolCallId === "string" && payload.toolCallId.length > 0
       ? { toolCallId: payload.toolCallId }
       : {}),
-    ...(attemptId === undefined ? {} : { attemptId }),
   };
 }
 
@@ -373,7 +369,7 @@ function mapOwnedToSubmissionRows(
           ? submissionCallKey(attemptId, payload.toolCallId)
           : undefined;
       const fallback = callKey !== undefined ? roleByCall.get(callKey) : undefined;
-      take(rowFromPayload("candidate", payload, payload.params, fallback, attemptId), callKey);
+      take(rowFromPayload("candidate", payload, payload.params, fallback), callKey);
       continue;
     }
     if (record.kind === "sealed") {
@@ -386,7 +382,7 @@ function mapOwnedToSubmissionRows(
           ? submissionCallKey(attemptId, payload.toolCallId)
           : undefined;
       const fallback = callKey !== undefined ? roleByCall.get(callKey) : undefined;
-      take(rowFromPayload("accepted", payload, payload.accepted, fallback, attemptId), callKey);
+      take(rowFromPayload("accepted", payload, payload.accepted, fallback), callKey);
       continue;
     }
     if (record.kind !== "outcome") continue;
@@ -410,7 +406,7 @@ function mapOwnedToSubmissionRows(
         ? submissionCallKey(attemptId, payload.toolCallId)
         : undefined;
     const fallback = callKey !== undefined ? roleByCall.get(callKey) : undefined;
-    take(rowFromPayload(kind, payload, payload.accepted, fallback, attemptId), callKey);
+    take(rowFromPayload(kind, payload, payload.accepted, fallback), callKey);
   }
   return out;
 }

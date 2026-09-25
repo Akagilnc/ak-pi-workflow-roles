@@ -501,12 +501,9 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
     assert.equal(result.exitCode, 0, capture.stderr.join(""));
     assert.ok(result.terminal);
     assert.equal(result.terminal.roleOutcome.kind, "accepted");
-    // #836: bounce attempt + pass both recorded (调几次记几次); production envelope
-    // ledger presents every original payload — not harness-only final seal.
-    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), [
-      "converged",
-      "converged",
-    ]);
+    // This resume is a new court: roleOutcome is that court only.
+    // Both original receipts stay on terminal.submissions (#836 / #879).
+    assert.deepEqual(payloadStatusSequence(result.terminal.roleOutcome), ["converged"]);
     const payloads = objectPayloads(result.terminal.roleOutcome);
     const facts = payloads[payloads.length - 1] as {
       secretariatStatus: string;
@@ -514,8 +511,13 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
     };
     assert.equal(facts.secretariatStatus, "converged");
     assert.equal(facts.ticketNumber, 924);
-    assert.equal((payloads[0] as { ticketNumber?: number }).ticketNumber, firstTicket,
-      "the initial receipt must remain in the ledger before officer re-submission");
+    assert.deepEqual(result.terminal.submissions, [
+      {
+        secretariatStatus: "converged",
+        ...(firstTicket === undefined ? {} : { ticketNumber: firstTicket }),
+      },
+      { secretariatStatus: "converged", ticketNumber: 924, note: "已按封驳改" },
+    ]);
     assert.equal(await findRunDirectoryById(home, runId, undefined, "secretariat"),
       join(home, ".ak-roles", "books", "project", String(firstTicket ?? 924), "runs", `${runId}@secretariat`),
       "the first typed ticket remains the run identity after reviewer resubmission");
