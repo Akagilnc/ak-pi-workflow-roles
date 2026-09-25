@@ -6,7 +6,7 @@
  */
 import { dirname, resolve, sep } from "node:path";
 import { AUDITOR_DOSSIER_PROMPT } from "../compliance-transport.ts";
-import { bookDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
+import { bookDirectOfficerRunPointer, readDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 
 import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "../host-contracts.ts";
@@ -1049,6 +1049,19 @@ export async function continueParentAfterChild(
   return result;
 }
 
+/** Officer pointer names this submission round — an older convergence does not. */
+function officerPointerCoversSubmission(
+  parentSessionFile: string,
+  officer: "inspector" | "notary" | "auditor" | "countersign",
+  toolCallId: string,
+  attemptId: string | undefined,
+): boolean {
+  const pointer = readDirectOfficerRunPointer(parentSessionFile, officer);
+  if (pointer?.toolCallId !== toolCallId) return false;
+  if (attemptId !== undefined && pointer.attemptId !== attemptId) return false;
+  return true;
+}
+
 /** Finished submissions enter the existing audit gate after their tool call has returned. */
 async function auditSubmittedRole(
   turn: SeatRunResult,
@@ -1088,7 +1101,9 @@ async function auditSubmittedRole(
     return turn;
   }
   const rows = await readRecordedSubmissionRows(admitted.projectRoot, admitted.runId, env.home);
-  const toolCallId = [...rows].reverse().find((row) => row.role === admitted.role && row.kind === "accepted")?.toolCallId;
+  const acceptedRow = [...rows].reverse().find((row) => row.role === admitted.role && row.kind === "accepted");
+  const toolCallId = acceptedRow?.toolCallId;
+  const roundAttemptId = acceptedRow?.attemptId;
   if (toolCallId === undefined) throw new Error("accepted submission has no tool call identity");
   const sessionFile = env.principalAuthority.decode(admitted.principal).sessionFile;
   const entries = admitted.role === "doctor" ? await readBoundSessionEntries(sessionFile) : [];
@@ -1108,7 +1123,9 @@ async function auditSubmittedRole(
     abort() {},
   };
   if (admitted.role === "doctor") {
-    if (passedOfficer !== "auditor") {
+    const auditorCoversRound = passedOfficer === "auditor"
+      && officerPointerCoversSubmission(sessionFile, "auditor", toolCallId, roundAttemptId);
+    if (!auditorCoversRound) {
       let lastSummon: PublicSummonResult | undefined;
       const decision = await createPiDoctorAuditor()({
         context, submission: accepted,
@@ -1131,6 +1148,8 @@ async function auditSubmittedRole(
           if (officerSession !== undefined) {
             bookDirectOfficerRunPointer({
               parentSessionFile: sessionFile, officer: "auditor", sessionFile: officerSession,
+              toolCallId,
+              ...(roundAttemptId === undefined ? {} : { attemptId: roundAttemptId }),
               ...(summoned.runDirectory === undefined ? {} : { runDirectory: summoned.runDirectory }),
             });
           }
@@ -1169,6 +1188,7 @@ async function auditSubmittedRole(
         subject,
         toolCallId,
         submission: accepted,
+        ...(roundAttemptId === undefined ? {} : { roundAttemptId }),
         summonOfficer,
         ...(env.signal === undefined ? {} : { signal: env.signal }),
         hostActions: {
@@ -1178,8 +1198,13 @@ async function auditSubmittedRole(
       });
     if (admitted.role === "judge") {
       chain = await runJudgeGates({
-        gateAlreadyConverged: async (subject) => passedOfficer === "auditor"
-          || (passedOfficer === "notary" && subject.kind === "judge_draft"),
+        gateAlreadyConverged: async (subject) => {
+          const officer = gateOfficerForSubject(subject);
+          if (!officerPointerCoversSubmission(sessionFile, officer, toolCallId, roundAttemptId)) {
+            return false;
+          }
+          return passedOfficer === officer || passedOfficer === "auditor";
+        },
         runGate,
       });
     } else {
@@ -1189,7 +1214,8 @@ async function auditSubmittedRole(
           ? { kind: "secretariat_verdict" as const }
           : { kind: "countersign_verdict" as const };
       const officer = gateOfficerForSubject(subject);
-      if (passedOfficer === officer) {
+      if (passedOfficer === officer
+        && officerPointerCoversSubmission(sessionFile, officer, toolCallId, roundAttemptId)) {
         chain = { status: "converged", passes: [] };
       } else {
         const pass = await runGate(subject);
@@ -1236,14 +1262,22 @@ async function auditSubmittedRole(
       }
     }
   }
-  // After audit converges, re-settle so the public terminal includes durable gate
-  // rounds already booked under auditor-roles (Secretariat already used this
-  // seam; Judge/worker/Countersign/Doctor share it rather than keep a pre-audit snapshot).
-  const settled = await trySettlePublicSeat(admitted, env.principalAuthority, undefined);
+  // Re-settle on the same court attempt the turn already recorded so gate rounds
+  // attach without replacing this-court payloads. autoResumeCount is call-local
+  // and is not on the ledger — keep the value the turn already observed.
+  const priorAutoResume = turn.terminal?.autoResumeCount;
+  const settled = await trySettlePublicSeat(
+    admitted,
+    env.principalAuthority,
+    roundAttemptId === undefined ? undefined : { courtAttemptId: roundAttemptId },
+  );
   if (settled === undefined || settled.roleOutcome.kind !== "accepted") {
     throw new Error(`audited ${admitted.role} submission did not settle`);
   }
-  turn = { ...turn, terminal: settled };
-  io.stdout(formatTerminalResult(settled));
+  const terminal = priorAutoResume === undefined
+    ? settled
+    : { ...settled, autoResumeCount: priorAutoResume };
+  turn = { ...turn, terminal };
+  io.stdout(formatTerminalResult(terminal));
   return turn;
 }

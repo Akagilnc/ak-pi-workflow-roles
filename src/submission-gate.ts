@@ -96,6 +96,7 @@ function bookDirectOfficerPointer(
   officer: GateOfficer,
   result: GatekeeperResult,
   summoned: PublicSummonResult,
+  round: { readonly toolCallId: string; readonly attemptId?: string },
 ): void {
   if (
     result.status !== "converged"
@@ -120,6 +121,8 @@ function bookDirectOfficerPointer(
     ...(typeof summoned.runDirectory === "string" && summoned.runDirectory.trim() !== ""
       ? { runDirectory: summoned.runDirectory }
       : {}),
+    toolCallId: round.toolCallId,
+    ...(round.attemptId === undefined ? {} : { attemptId: round.attemptId }),
   });
 }
 
@@ -147,6 +150,8 @@ export async function requireSubmissionGate(options: {
   readonly signal?: AbortSignal;
   readonly hostActions: SubmissionGateHostActions;
   readonly toolCallId: string;
+  /** Ledger attempt of the parent submission this gate reviews (#1057). */
+  readonly roundAttemptId?: string;
   /**
    * In-flight parent typed payload for this gate turn (#879). Relayed verbatim
    * as officer dialogue content; binding pointer stays the parent run directory.
@@ -180,6 +185,10 @@ export async function requireSubmissionGate(options: {
           projected.officer,
           gatekeeper,
           projected.summoned,
+          {
+            toolCallId: options.toolCallId,
+            ...(options.roundAttemptId === undefined ? {} : { attemptId: options.roundAttemptId }),
+          },
         );
       } catch (error) {
         options.hostActions.failInfrastructure(error, options.context, options.toolCallId);

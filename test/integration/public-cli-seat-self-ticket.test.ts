@@ -15,7 +15,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
-import { projectAuditEscalation } from "../../src/audit-escalation.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
@@ -305,21 +304,18 @@ test("#1071 mid-ticket seats bind leading #N ticketNumber declarations and keep 
         expectedOutcome: "accepted" as const,
       },
       {
-        // Terminal audit-escalation still carries the original declaration (#1071).
+        // Judge self-escalation stays the original declaration (#1071).
+        // The removed audit-escalation projection is not restored.
         role: "judge" as const,
         toolName: JUDGE_OUTPUT_TOOL_NAME,
         argv: ["Escalate adjudication of #1843."],
-        details: judgeDetails,
-        outputDetails: projectAuditEscalation(
-          {
-            status: "escalate",
-            officer: "auditor",
-            conflicts: { status: "escalate", decisionGate: { question: "owner?" } },
-          },
-          judgeDetails,
-        ).details,
+        details: {
+          status: "escalate",
+          note: "#1843 / PR #1876",
+          ticketNumber: "#1843 / PR #1876",
+        },
         runId: "01a010710-0000-7000-8000-0000000jesc",
-        expectedOutcome: "audit_escalation" as const,
+        expectedOutcome: "accepted" as const,
       },
     ]) {
       const result = await runPublicInstructionSeat(

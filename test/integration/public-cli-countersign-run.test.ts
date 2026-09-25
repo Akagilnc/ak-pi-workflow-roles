@@ -1093,14 +1093,14 @@ test("#843 same-attempt correctable-rejection residual does not outrank later se
       "BOUNCED-AFTER-ACCEPT-VISIBLE",
     );
     assert.ok(reversed.terminal!.gate);
-    assert.equal(reversed.terminal!.gate!.rounds.length, 2);
-    assert.equal(reversed.terminal!.gate!.rounds[0]!.officer.status, "converged");
-    assert.deepEqual(reversed.terminal!.gate!.rounds[0]!.officer.findings, []);
-    assert.equal(reversed.terminal!.gate!.rounds[1]!.officer.status, "continue");
-    assert.deepEqual(
-      reversed.terminal!.gate!.rounds[1]!.officer.findings,
-      [...reverseGateFindings],
-    );
+    // Two seeded volumes plus the live notary pass required before settlement.
+    const reverseRounds = reversed.terminal!.gate!.rounds;
+    assert.equal(reverseRounds.length, 3);
+    assert.ok(reverseRounds.some((round) =>
+      round.officer.status === "converged" && round.officer.findings.length === 0));
+    const bounced = reverseRounds.filter((round) => round.officer.status === "continue");
+    assert.equal(bounced.length, 1);
+    assert.deepEqual(bounced[0]!.officer.findings, [...reverseGateFindings]);
   });
 });
 
