@@ -253,6 +253,9 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
     assert.equal(observed.first.terminal?.roleOutcome.role, "judge");
     assert.equal(observed.first.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(observed.first.terminal?.roleOutcome.payloads?.at(-1), VERDICT);
+    // Post-audit settlement must surface durable gate rounds (#1057 Judge finding).
+    assert.ok(observed.first.terminal?.gate);
+    assert.ok((observed.first.terminal?.gate?.rounds.length ?? 0) > 0);
     assert.equal((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
   });
 });

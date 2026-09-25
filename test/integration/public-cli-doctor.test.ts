@@ -661,7 +661,7 @@ test("Doctor finishes each submission before Auditor review, then resumes only o
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
     assert.equal(doctorCalls, 2);
     assert.equal(reviewCalls, 2);
-    assert.equal(objectPayloads(result.terminal!.roleOutcome)[0]?.reason, "doctor report 2");
+    assert.equal(objectPayloads(result.terminal!.roleOutcome).at(-1)?.reason, "doctor report 2");
   });
 });
 
@@ -748,20 +748,27 @@ test("#1057 Doctor open status escalate still enters mandatory Auditor review", 
         return auditorHost.executeTurn(request);
       }
       doctorCalls += 1;
-      // Open domain admits escalate at the provider seam; post-submission audit
-      // must still summon the Doctor auditor (PR #1075 finding).
-      const details = {
-        status: "escalate",
-        reason: "hallucinated open status",
-        missingEvidence: [{ need: "session", targetKeys: ["case"] }],
-      };
+      // Open-domain escalate is accepted at the tool, then routed back to Doctor
+      // before audit; corrected completed|refused continues mandatory auditor.
+      const details = doctorCalls === 1
+        ? {
+          status: "escalate",
+          reason: "hallucinated open status",
+          missingEvidence: [{ need: "session", targetKeys: ["case"] }],
+        }
+        : {
+          status: "refused",
+          reason: "corrected after unreadable status reask",
+          missingEvidence: [{ need: "session", targetKeys: ["case"] }],
+        };
+      if (doctorCalls > 1) assert.equal(request.continuation.kind, "resume");
       const { sessionDirectory, sessionFile } = piDurablePrincipalAuthority.decode(request.principal);
       await mkdir(sessionDirectory, { recursive: true });
       await writeFile(sessionFile, `${JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE,
         data: { version: 1, testimony: details } })}\n`, "utf8");
       await sealAcceptedSubmission({
         cwd: request.cwd, home, runId, runDirectory: request.runDirectory,
-        role: "doctor", details, toolCallId: "doctor-open-escalate",
+        role: "doctor", details, toolCallId: `doctor-open-escalate-${doctorCalls}`,
         ...(request.courtAttemptId === undefined ? {} : { courtAttemptId: request.courtAttemptId }),
       });
       return { code: 0, stderr: "", timedOut: false };
@@ -771,10 +778,14 @@ test("#1057 Doctor open status escalate still enters mandatory Auditor review", 
       { packageRoot, home, cwd: project, createRunId: () => runId, io: captureIo().io, roleTurnHost: host },
     );
     assert.equal(result.exitCode, 0);
-    assert.equal(doctorCalls, 1);
-    assert.equal(auditorCalls, 1, "open escalate must not skip Doctor's mandatory auditor");
+    assert.equal(doctorCalls, 2, "unreadable escalate must re-ask Doctor before audit");
+    assert.equal(auditorCalls, 1, "corrected Doctor submission still enters mandatory auditor");
     assert.equal(result.terminal?.roleOutcome.role, "doctor");
     assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.equal(
+      (result.terminal?.roleOutcome.payloads?.at(-1) as { status?: string } | undefined)?.status,
+      "refused",
+    );
   });
 });
 
