@@ -328,58 +328,48 @@ export async function projectRunShowFacts(
   if (codexThreadIds.size > 0) {
     const threadIdList = [...codexThreadIds];
     const rollout = await findCodexRollout(machineHome, threadIdList);
+    let rolloutUsage: { readonly usage: unknown; readonly source: string } | undefined;
+    let rolloutUsageUnavailable: string;
     if (rollout === undefined) {
       const reason =
         `no codex rollout found for thread ${threadIdList.join(", ")} under ${codexSessionsRoot(machineHome)}`;
       compactionCount = { unavailable: reason };
-      // Prefer the run's own direct-write turn.completed.usage (ADR 0077) when
-      // the native rollout is absent — do not report readable usage as missing.
-      if (hostSessionDamaged) {
-        tokenUsage = {
-          unavailable: `${HOST_SESSION_RECORDS_PATH} has damaged JSONL line(s)`,
-        };
-      } else if (codexTurnCompletedUsage !== undefined) {
-        tokenUsage = {
-          usage: codexTurnCompletedUsage,
-          source: HOST_SESSION_RECORDS_PATH,
-        };
-      } else if (hostSessionText === null) {
-        tokenUsage = { unavailable: `${HOST_SESSION_RECORDS_PATH} is missing` };
-      } else {
-        tokenUsage = {
-          unavailable: `no turn.completed.usage in ${HOST_SESSION_RECORDS_PATH} and ${reason}`,
-        };
-      }
+      rolloutUsageUnavailable = hostSessionDamaged
+        ? `${HOST_SESSION_RECORDS_PATH} has damaged JSONL line(s)`
+        : hostSessionText === null
+          ? `${HOST_SESSION_RECORDS_PATH} is missing`
+          : `no turn.completed.usage in ${HOST_SESSION_RECORDS_PATH} and ${reason}`;
     } else {
       const { rows, damagedLineCount } = parseJsonlRows(rollout.text);
       if (damagedLineCount > 0) {
-        const reason = `${rollout.path} has ${damagedLineCount} damaged JSONL line(s)`;
-        compactionCount = { unavailable: reason };
-        // The damaged rollout cannot provide a complete usage projection, but
-        // it must not hide valid usage already written to this run (ADR 0077).
-        tokenUsage = !hostSessionDamaged && codexTurnCompletedUsage !== undefined
-          ? {
-              usage: codexTurnCompletedUsage,
-              source: HOST_SESSION_RECORDS_PATH,
-            }
-          : { unavailable: reason };
+        rolloutUsageUnavailable = `${rollout.path} has ${damagedLineCount} damaged JSONL line(s)`;
+        compactionCount = { unavailable: rolloutUsageUnavailable };
       } else {
         compactionCount = {
           count: rows.filter((row) => isPlainObject(row) && row.type === "compacted").length,
           source: rollout.path,
         };
-        let info: unknown;
+        rolloutUsageUnavailable = `no token_count event in ${rollout.path}`;
         for (const row of rows) {
           if (!isPlainObject(row) || row.type !== "event_msg") continue;
           const payload = isPlainObject(row.payload) ? row.payload : undefined;
           if (payload === undefined || payload.type !== "token_count") continue;
-          if (isPlainObject(payload.info)) info = payload.info;
+          if (isPlainObject(payload.info)) {
+            rolloutUsage = { usage: payload.info, source: rollout.path };
+          }
         }
-        tokenUsage = info === undefined
-          ? { unavailable: `no token_count event in ${rollout.path}` }
-          : { usage: info, source: rollout.path };
       }
     }
+    // A readable native value takes precedence; otherwise use the run's own
+    // complete direct-write record (ADR 0077), independent of rollout state.
+    tokenUsage = rolloutUsage !== undefined
+      ? rolloutUsage
+      : !hostSessionDamaged && codexTurnCompletedUsage !== undefined
+        ? {
+            usage: codexTurnCompletedUsage,
+            source: HOST_SESSION_RECORDS_PATH,
+          }
+        : { unavailable: rolloutUsageUnavailable };
   } else if (claudeHostPointer !== undefined) {
     if (hostSessionText === null) {
       compactionCount = { unavailable: `${HOST_SESSION_RECORDS_PATH} is missing` };

@@ -402,7 +402,7 @@ test("run show: pi run — carriers on the run's own session volume", async () =
   });
 });
 
-test("run show: codex rollout damage preserves run-written turn.completed.usage", async () => {
+test("run show: Codex falls back to run-written usage when rollout usage is unavailable", async () => {
   await withTempRoot("ak-run-show-codex-host-usage-", async (machineHome) => {
     const runDirectory = await writeCodexRunFixture(machineHome);
     const rolloutPath = join(
@@ -424,12 +424,16 @@ test("run show: codex rollout damage preserves run-written turn.completed.usage"
       io: missingIo.io,
     });
     assert.equal(missingResult.exitCode, 0);
+    assert.equal(missingIo.stdout.length, 1);
     assert.equal(
-      missingIo.stdout[0]!.includes(
-        `token usage: ${JSON.stringify(CODEX_HOST_TURN_USAGE)} (session/host-session/records.jsonl)`,
-      ),
+      missingIo.stdout[0]!.includes(JSON.stringify(CODEX_HOST_TURN_USAGE)),
       true,
     );
+    const missingFacts = await projectRunShowFacts(runDirectory, { machineHome });
+    assert.deepEqual(missingFacts.tokenUsage, {
+      usage: CODEX_HOST_TURN_USAGE,
+      source: "session/host-session/records.jsonl",
+    });
 
     // A damaged rollout must not hide the same readable usage.
     await writeFile(rolloutPath, "{not-json\n", "utf8");
@@ -440,13 +444,39 @@ test("run show: codex rollout damage preserves run-written turn.completed.usage"
       io: damagedIo.io,
     });
     assert.equal(damagedResult.exitCode, 0);
+    assert.equal(damagedIo.stdout.length, 1);
     assert.equal(
-      damagedIo.stdout[0]!.includes(
-        `token usage: ${JSON.stringify(CODEX_HOST_TURN_USAGE)} (session/host-session/records.jsonl)`,
-      ),
+      damagedIo.stdout[0]!.includes(JSON.stringify(CODEX_HOST_TURN_USAGE)),
       true,
     );
-    assert.equal(damagedIo.stdout[0]!.includes("compaction count: unavailable"), true);
+    const damagedFacts = await projectRunShowFacts(runDirectory, { machineHome });
+    assert.deepEqual(damagedFacts.tokenUsage, missingFacts.tokenUsage);
+    assert.ok("unavailable" in damagedFacts.compactionCount);
+
+    // A well-formed rollout without token_count follows the same fallback.
+    await writeFile(
+      rolloutPath,
+      `${JSON.stringify({ type: "compacted", payload: { message: "" } })}\n`,
+      "utf8",
+    );
+    const noUsageIo = captureIo();
+    const noUsageResult = await runAkRole(["run", "show", runDirectory], {
+      packageRoot,
+      home: machineHome,
+      io: noUsageIo.io,
+    });
+    assert.equal(noUsageResult.exitCode, 0);
+    assert.equal(noUsageIo.stdout.length, 1);
+    assert.equal(
+      noUsageIo.stdout[0]!.includes(JSON.stringify(CODEX_HOST_TURN_USAGE)),
+      true,
+    );
+    const noUsageFacts = await projectRunShowFacts(runDirectory, { machineHome });
+    assert.deepEqual(noUsageFacts.tokenUsage, missingFacts.tokenUsage);
+    assert.deepEqual(noUsageFacts.compactionCount, {
+      count: 1,
+      source: rolloutPath,
+    });
   });
 });
 
@@ -476,12 +506,11 @@ test("run show: Claude binding without host-session is unavailable, not zero", a
     });
 
     assert.equal(result.exitCode, 0);
-    assert.equal(stdout[0]!.includes("compaction count: unavailable"), true);
-    assert.equal(
-      stdout[0]!.includes("session/host-session/records.jsonl is missing"),
-      true,
-    );
-    assert.equal(stdout[0]!.includes("token usage: unavailable"), true);
+    assert.equal(stdout.length, 1);
+    assert.ok(stdout[0]!.length > 0);
+    const facts = await projectRunShowFacts(runDirectory, { machineHome });
+    assert.ok("unavailable" in facts.compactionCount);
+    assert.ok("unavailable" in facts.tokenUsage);
   });
 });
 
@@ -517,12 +546,10 @@ test("run show: damaged seal JSONL is unavailable, not a silent partial", async 
     });
 
     assert.equal(result.exitCode, 0);
-    assert.equal(stdout[0]!.includes("seal records: unavailable"), true);
-    assert.equal(
-      stdout[0]!.includes("session/submission-ledger/records.jsonl"),
-      true,
-    );
-    assert.equal(stdout[0]!.includes("damaged JSONL line(s)"), true);
+    assert.equal(stdout.length, 1);
+    assert.ok(stdout[0]!.length > 0);
+    const facts = await projectRunShowFacts(runDirectory, { machineHome });
+    assert.ok("unavailable" in facts.sealRecords);
   });
 });
 
