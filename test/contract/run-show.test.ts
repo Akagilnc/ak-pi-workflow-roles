@@ -6,10 +6,14 @@
  *      every sealed row, the host thread id, the rollout compaction count,
  *      and the rollout token usage — each equal to a direct raw read of the
  *      same fixture material (the decoy rollout proves the thread-id filter).
- *   2. pi-run carriers: compaction rows + last message usage on the run's own
- *      session volume; pi session header id as the host session id.
+ *   2. pi-run carriers: compaction rows + summed assistant message usage on the
+ *      run's own session volume (session-assistant-usage); pi session header id
+ *      as the host session id.
  *   3. missing-material honesty: a sparse run prints every fact as
- *      unavailable and still exits 0 — no crash, no index error.
+ *      unavailable and still exits 0 — no crash, no index error. Missing Claude
+ *      host-session is unavailable (not a known zero); damaged seal JSONL is
+ *      unavailable (not a silent partial); Codex turn.completed.usage is read
+ *      when the native rollout is absent.
  *   4. read-only: two views leave the whole home tree byte-identical and add
  *      no run directories (the ledger is never written).
  *   5. usage rejects: wrong subcommand / missing or extra argv / nonexistent
@@ -22,7 +26,7 @@
  */
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -74,13 +78,32 @@ const TOKEN_COUNT_INFO = {
   model_context_window: 258400,
 } as const;
 
-const PI_LAST_USAGE = {
+/** Per-turn assistant usages written into the pi fixture (sum = whole-run usage). */
+const PI_FIRST_USAGE = {
+  input: 5599,
+  output: 158,
+  totalTokens: 6013,
+} as const;
+const PI_SECOND_USAGE = {
   input: 93527,
   output: 1795,
   cacheRead: 128,
   cacheWrite: 0,
   reasoning: 1754,
   totalTokens: 95450,
+} as const;
+/** Whole-run sum via session-assistant-usage (reasoning is not accumulated there). */
+const PI_RUN_USAGE = {
+  input: 99126,
+  output: 1953,
+  cacheRead: 128,
+  cacheWrite: 0,
+  totalTokens: 101463,
+} as const;
+
+const CODEX_HOST_TURN_USAGE = {
+  input_tokens: 11,
+  output_tokens: 7,
 } as const;
 
 function submissionLedgerRow(
@@ -163,7 +186,7 @@ async function writeCodexRunFixture(machineHome: string): Promise<string> {
         host: "codex",
         source: "headless-host",
         timestamp: "2026-09-25T00:00:01.000Z",
-        payload: { type: "turn.completed", usage: { input_tokens: 1 } },
+        payload: { type: "turn.completed", usage: CODEX_HOST_TURN_USAGE },
       }),
     ].join("\n") + "\n",
     "utf8",
@@ -250,7 +273,7 @@ async function writePiRunFixture(machineHome: string): Promise<string> {
       JSON.stringify({
         type: "message",
         id: "m1",
-        message: { role: "assistant", usage: { input: 5599, output: 158, totalTokens: 6013 } },
+        message: { role: "assistant", usage: PI_FIRST_USAGE },
       }),
       JSON.stringify({ type: "compaction", id: "c1", summary: "one" }),
       JSON.stringify({ type: "compaction", id: "c2", summary: "two" }),
@@ -258,7 +281,7 @@ async function writePiRunFixture(machineHome: string): Promise<string> {
       JSON.stringify({
         type: "message",
         id: "m2",
-        message: { role: "assistant", usage: PI_LAST_USAGE },
+        message: { role: "assistant", usage: PI_SECOND_USAGE },
       }),
     ].join("\n") + "\n",
     "utf8",
@@ -359,7 +382,8 @@ test("run show: pi run — carriers on the run's own session volume", async () =
     });
 
     assert.equal(result.exitCode, 0);
-    assert.equal(stdout[0]!.includes(JSON.stringify(PI_LAST_USAGE)), true);
+    assert.equal(stdout[0]!.includes(JSON.stringify(PI_RUN_USAGE)), true);
+    assert.equal(stdout[0]!.includes(JSON.stringify(PI_SECOND_USAGE)), false);
 
     const facts = await projectRunShowFacts(runDirectory, { machineHome });
     assert.deepEqual(facts.compactionCount, {
@@ -367,13 +391,97 @@ test("run show: pi run — carriers on the run's own session volume", async () =
       source: "session/session.jsonl",
     });
     assert.deepEqual(facts.tokenUsage, {
-      usage: PI_LAST_USAGE,
+      usage: PI_RUN_USAGE,
       source: "session/session.jsonl",
     });
     assert.ok(!("unavailable" in facts.hostThreadIds));
     assert.deepEqual(facts.hostThreadIds.ids, [
       { id: `${RUN_ID}@diarist`, source: "session/session.jsonl" },
     ]);
+  });
+});
+
+test("run show: codex without rollout still projects turn.completed.usage", async () => {
+  await withTempRoot("ak-run-show-codex-host-usage-", async (machineHome) => {
+    const runDirectory = await writeCodexRunFixture(machineHome);
+    // Drop the matching rollout so the only readable usage is the direct-write
+    // host-session turn.completed.usage (ADR 0077).
+    await unlink(
+      join(
+        machineHome,
+        ".codex",
+        "sessions",
+        "2026",
+        "09",
+        "25",
+        `rollout-2026-09-25T00-00-00-${THREAD_ID}.jsonl`,
+      ),
+    );
+
+    const facts = await projectRunShowFacts(runDirectory, { machineHome });
+    assert.deepEqual(facts.tokenUsage, {
+      usage: CODEX_HOST_TURN_USAGE,
+      source: "session/host-session/records.jsonl",
+    });
+    assert.ok("unavailable" in facts.compactionCount);
+  });
+});
+
+test("run show: Claude binding without host-session is unavailable, not zero", async () => {
+  await withTempRoot("ak-run-show-claude-missing-hs-", async (machineHome) => {
+    const runDirectory = join(
+      machineHome,
+      ".ak-roles",
+      "books",
+      "testbook",
+      "45",
+      "runs",
+      `${RUN_ID}@reviewer`,
+    );
+    await mkdir(join(runDirectory, "session"), { recursive: true });
+    await writeFile(
+      join(runDirectory, "session", "claude-headless-session.json"),
+      `${JSON.stringify({ sessionId: THREAD_ID })}\n`,
+      "utf8",
+    );
+
+    const facts = await projectRunShowFacts(runDirectory, { machineHome });
+    assert.ok("unavailable" in facts.compactionCount);
+    assert.equal(
+      facts.compactionCount.unavailable.includes("host-session/records.jsonl"),
+      true,
+    );
+    assert.ok("unavailable" in facts.tokenUsage);
+  });
+});
+
+test("run show: damaged seal JSONL is unavailable, not a silent partial", async () => {
+  await withTempRoot("ak-run-show-damaged-seal-", async (machineHome) => {
+    const runDirectory = join(
+      machineHome,
+      ".ak-roles",
+      "books",
+      "testbook",
+      "46",
+      "runs",
+      `${RUN_ID}@notary`,
+    );
+    await mkdir(join(runDirectory, "session", "submission-ledger"), {
+      recursive: true,
+    });
+    await writeFile(
+      join(runDirectory, "session", "submission-ledger", "records.jsonl"),
+      [
+        submissionLedgerRow("sealed", SEALED_PAYLOAD_FIRST),
+        "{not-json\n",
+        submissionLedgerRow("sealed", SEALED_PAYLOAD_LAST),
+      ].join(""),
+      "utf8",
+    );
+
+    const facts = await projectRunShowFacts(runDirectory, { machineHome });
+    assert.ok("unavailable" in facts.sealRecords);
+    assert.equal(facts.sealRecords.unavailable.includes("damaged"), true);
   });
 });
 

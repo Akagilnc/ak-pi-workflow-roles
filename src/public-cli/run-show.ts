@@ -17,8 +17,12 @@
  * - compaction count: codex rollout `compacted` rows (via thread id under the
  *   operator codex sessions root) | claude `compact_boundary` host-session rows
  *   | pi session volume `compaction` rows
- * - token usage: codex rollout last `token_count` info | claude host-session
- *   last `result` usage | pi session volume last message usage
+ * - token usage: codex rollout last `token_count` info, else last host-session
+ *   `turn.completed.usage` | claude host-session last `result` usage | pi
+ *   session volume summed assistant usage (`session-assistant-usage`)
+ *
+ * Missing carriers and damaged JSONL lines print as unavailable — never a
+ * known-zero count or a silent partial list (#1064 / failure-honesty).
  */
 import { readFile, readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, resolve } from "node:path";
@@ -28,6 +32,7 @@ import {
   HEADLESS_HOST_DESCRIPTIONS,
   HOST_DESCRIPTIONS,
 } from "../host-descriptions.ts";
+import { readAssistantUsageFromSessionFile } from "../session-assistant-usage.ts";
 import { codexSessionsRoot } from "../ticket-provenance.ts";
 import { CliUsageError } from "./cli-errors.ts";
 import type { CliIo } from "./cli-io.ts";
@@ -90,18 +95,25 @@ async function readUtf8OrNull(path: string): Promise<string | null> {
   }
 }
 
-/** Parse NDJSON rows; damaged rows stay unprojected — a view must not crash. */
-function parseJsonlRows(text: string): readonly unknown[] {
+/**
+ * Parse NDJSON rows. Damaged lines are counted, not silently dropped — a view
+ * must not crash, but must also not present a partial parse as complete.
+ */
+function parseJsonlRows(text: string): {
+  readonly rows: readonly unknown[];
+  readonly damagedLineCount: number;
+} {
   const rows: unknown[] = [];
+  let damagedLineCount = 0;
   for (const line of text.split("\n")) {
     if (line.trim() === "") continue;
     try {
       rows.push(JSON.parse(line));
     } catch {
-      continue;
+      damagedLineCount += 1;
     }
   }
-  return rows;
+  return { rows, damagedLineCount };
 }
 
 /** Session binding files from the sole host description tables (no parallel list). */
@@ -145,11 +157,17 @@ async function readSealRecords(
   if (text === null) {
     return { unavailable: `${SUBMISSION_LEDGER_PATH} is missing` };
   }
+  const { rows, damagedLineCount } = parseJsonlRows(text);
+  if (damagedLineCount > 0) {
+    return {
+      unavailable: `${SUBMISSION_LEDGER_PATH} has ${damagedLineCount} damaged JSONL line(s)`,
+    };
+  }
   const records: {
     readonly timestamp?: string;
     readonly payload: unknown;
   }[] = [];
-  for (const row of parseJsonlRows(text)) {
+  for (const row of rows) {
     if (!isPlainObject(row) || row.kind !== "sealed") continue;
     const timestamp = nonEmptyString(row.timestamp);
     records.push({
@@ -241,27 +259,39 @@ export async function projectRunShowFacts(
   const hostSessionText = await readUtf8OrNull(
     join(runDirectory, HOST_SESSION_RECORDS_PATH),
   );
+  let hostSessionDamaged = false;
   let claudeCompactBoundaries = 0;
   let claudeResultUsage: unknown;
+  let codexTurnCompletedUsage: unknown;
   if (hostSessionText !== null) {
     externalHostPointer ??= HOST_SESSION_RECORDS_PATH;
-    for (const row of parseJsonlRows(hostSessionText)) {
-      if (!isPlainObject(row)) continue;
-      const payload = isPlainObject(row.payload) ? row.payload : undefined;
-      if (payload === undefined) continue;
-      if (payload.type === "thread.started") {
-        const threadId = nonEmptyString(payload.thread_id);
-        if (threadId !== undefined) {
-          addThreadId(threadId, HOST_SESSION_RECORDS_PATH);
-          if (row.host === "codex") codexThreadIds.add(threadId);
+    const parsed = parseJsonlRows(hostSessionText);
+    hostSessionDamaged = parsed.damagedLineCount > 0;
+    if (!hostSessionDamaged) {
+      for (const row of parsed.rows) {
+        if (!isPlainObject(row)) continue;
+        const payload = isPlainObject(row.payload) ? row.payload : undefined;
+        if (payload === undefined) continue;
+        if (payload.type === "thread.started") {
+          const threadId = nonEmptyString(payload.thread_id);
+          if (threadId !== undefined) {
+            addThreadId(threadId, HOST_SESSION_RECORDS_PATH);
+            if (row.host === "codex") codexThreadIds.add(threadId);
+          }
+          continue;
         }
-        continue;
-      }
-      if (row.host !== "claude") continue;
-      if (payload.type === "system" && payload.subtype === "compact_boundary") {
-        claudeCompactBoundaries += 1;
-      } else if (payload.type === "result" && isPlainObject(payload.usage)) {
-        claudeResultUsage = payload.usage;
+        if (row.host === "codex" && payload.type === "turn.completed" && isPlainObject(payload.usage)) {
+          // Cumulative session total on each turn.completed (matches rollout
+          // total_token_usage); keep the last readable value.
+          codexTurnCompletedUsage = payload.usage;
+          continue;
+        }
+        if (row.host !== "claude") continue;
+        if (payload.type === "system" && payload.subtype === "compact_boundary") {
+          claudeCompactBoundaries += 1;
+        } else if (payload.type === "result" && isPlainObject(payload.usage)) {
+          claudeResultUsage = payload.usage;
+        }
       }
     }
   }
@@ -269,10 +299,14 @@ export async function projectRunShowFacts(
   const sessionVolumeText = await readUtf8OrNull(
     join(runDirectory, SESSION_VOLUME_PATH),
   );
-  const sessionRows = sessionVolumeText === null ? [] : parseJsonlRows(sessionVolumeText);
+  const sessionParsed = sessionVolumeText === null
+    ? { rows: [] as readonly unknown[], damagedLineCount: 0 }
+    : parseJsonlRows(sessionVolumeText);
+  const sessionRows = sessionParsed.rows;
+  const sessionVolumeDamaged = sessionParsed.damagedLineCount > 0;
   // The pi session header id is a host session id only when no external host
   // pointer exists (external-host runs keep a header-only session volume).
-  if (externalHostPointer === undefined) {
+  if (externalHostPointer === undefined && !sessionVolumeDamaged) {
     for (const row of sessionRows) {
       if (!isPlainObject(row) || row.type !== "session") continue;
       const headerId = nonEmptyString(row.id);
@@ -298,38 +332,74 @@ export async function projectRunShowFacts(
       const reason =
         `no codex rollout found for thread ${threadIdList.join(", ")} under ${codexSessionsRoot(machineHome)}`;
       compactionCount = { unavailable: reason };
-      tokenUsage = { unavailable: reason };
-    } else {
-      const rows = parseJsonlRows(rollout.text);
-      compactionCount = {
-        count: rows.filter((row) => isPlainObject(row) && row.type === "compacted").length,
-        source: rollout.path,
-      };
-      let info: unknown;
-      for (const row of rows) {
-        if (!isPlainObject(row) || row.type !== "event_msg") continue;
-        const payload = isPlainObject(row.payload) ? row.payload : undefined;
-        if (payload === undefined || payload.type !== "token_count") continue;
-        if (isPlainObject(payload.info)) info = payload.info;
+      // Prefer the run's own direct-write turn.completed.usage (ADR 0077) when
+      // the native rollout is absent — do not report readable usage as missing.
+      if (hostSessionDamaged) {
+        tokenUsage = {
+          unavailable: `${HOST_SESSION_RECORDS_PATH} has damaged JSONL line(s)`,
+        };
+      } else if (codexTurnCompletedUsage !== undefined) {
+        tokenUsage = {
+          usage: codexTurnCompletedUsage,
+          source: HOST_SESSION_RECORDS_PATH,
+        };
+      } else if (hostSessionText === null) {
+        tokenUsage = { unavailable: `${HOST_SESSION_RECORDS_PATH} is missing` };
+      } else {
+        tokenUsage = {
+          unavailable: `no turn.completed.usage in ${HOST_SESSION_RECORDS_PATH} and ${reason}`,
+        };
       }
-      tokenUsage = info === undefined
-        ? { unavailable: `no token_count event in ${rollout.path}` }
-        : { usage: info, source: rollout.path };
+    } else {
+      const { rows, damagedLineCount } = parseJsonlRows(rollout.text);
+      if (damagedLineCount > 0) {
+        const reason = `${rollout.path} has ${damagedLineCount} damaged JSONL line(s)`;
+        compactionCount = { unavailable: reason };
+        tokenUsage = { unavailable: reason };
+      } else {
+        compactionCount = {
+          count: rows.filter((row) => isPlainObject(row) && row.type === "compacted").length,
+          source: rollout.path,
+        };
+        let info: unknown;
+        for (const row of rows) {
+          if (!isPlainObject(row) || row.type !== "event_msg") continue;
+          const payload = isPlainObject(row.payload) ? row.payload : undefined;
+          if (payload === undefined || payload.type !== "token_count") continue;
+          if (isPlainObject(payload.info)) info = payload.info;
+        }
+        tokenUsage = info === undefined
+          ? { unavailable: `no token_count event in ${rollout.path}` }
+          : { usage: info, source: rollout.path };
+      }
     }
   } else if (claudeHostPointer !== undefined) {
-    compactionCount = {
-      count: claudeCompactBoundaries,
-      source: HOST_SESSION_RECORDS_PATH,
-    };
-    tokenUsage = claudeResultUsage === undefined
-      ? { unavailable: `no result usage record in ${HOST_SESSION_RECORDS_PATH}` }
-      : { usage: claudeResultUsage, source: HOST_SESSION_RECORDS_PATH };
+    if (hostSessionText === null) {
+      compactionCount = { unavailable: `${HOST_SESSION_RECORDS_PATH} is missing` };
+      tokenUsage = { unavailable: `${HOST_SESSION_RECORDS_PATH} is missing` };
+    } else if (hostSessionDamaged) {
+      const reason = `${HOST_SESSION_RECORDS_PATH} has damaged JSONL line(s)`;
+      compactionCount = { unavailable: reason };
+      tokenUsage = { unavailable: reason };
+    } else {
+      compactionCount = {
+        count: claudeCompactBoundaries,
+        source: HOST_SESSION_RECORDS_PATH,
+      };
+      tokenUsage = claudeResultUsage === undefined
+        ? { unavailable: `no result usage record in ${HOST_SESSION_RECORDS_PATH}` }
+        : { usage: claudeResultUsage, source: HOST_SESSION_RECORDS_PATH };
+    }
   } else if (externalHostPointer !== undefined) {
     compactionCount = { unavailable: "no compaction record on this run" };
     tokenUsage = { unavailable: "no token usage record on this run" };
   } else if (sessionVolumeText === null) {
     compactionCount = { unavailable: `${SESSION_VOLUME_PATH} is missing` };
     tokenUsage = { unavailable: `${SESSION_VOLUME_PATH} is missing` };
+  } else if (sessionVolumeDamaged) {
+    const reason = `${SESSION_VOLUME_PATH} has ${sessionParsed.damagedLineCount} damaged JSONL line(s)`;
+    compactionCount = { unavailable: reason };
+    tokenUsage = { unavailable: reason };
   } else {
     compactionCount = {
       count: sessionRows.filter(
@@ -337,13 +407,11 @@ export async function projectRunShowFacts(
       ).length,
       source: SESSION_VOLUME_PATH,
     };
-    let usage: unknown;
-    for (const row of sessionRows) {
-      if (!isPlainObject(row) || row.type !== "message") continue;
-      const message = isPlainObject(row.message) ? row.message : undefined;
-      if (message === undefined || !isPlainObject(message.usage)) continue;
-      usage = message.usage;
-    }
+    // Whole-run assistant usage — reuse the shared summer; never invent a
+    // parallel last-message projection (#1064).
+    const usage = await readAssistantUsageFromSessionFile(
+      join(runDirectory, SESSION_VOLUME_PATH),
+    );
     tokenUsage = usage === undefined
       ? { unavailable: `no usage record in ${SESSION_VOLUME_PATH}` }
       : { usage, source: SESSION_VOLUME_PATH };
