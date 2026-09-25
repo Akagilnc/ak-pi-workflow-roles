@@ -6,7 +6,7 @@ Status: accepted
 
 **具名例外：Reviewer 默认双轴公开命令。** 公开 Reviewer 命令省略 `--lens` 时，由外层共享执行接缝机械并行发起 completeness 与 correctness 两条普通单轴 Reviewer run，并把两份原始终局一起呈给调用方；该命令本身不建立父 run。显式 `--lens` 只起一条普通 run。本例外不改变 Reviewer 的寺监级身份，也不建立通用编排器。
 
-**例外：内审衙门。** 立本 ADR 时尚无此概念。内审衙门与被审席之间是包内既定关联，不由调用者组合——现行实例三条：①交卷闸按受审物直接传召台院／符宝郎（[ADR 0072](0072-menxia-pre-pr-submission-hooks.md) 当时所载挂钩映射「将作监/修内司 completed/partially_completed → 给事中（后改察院）；planned/refused/unfinished 不调；大理寺拟判入卷后 → 符宝郎；审刑院只挂大理寺、零改动」——其中「审刑院只挂大理寺」记的是其当时所载关系，非现行穷举；[ADR 0079](0079-direct-officer-summons-ticket-memory-pointer-input.md) 后改为直接传召并载同父 run 内 resume）；②大理寺判牒经审刑院合规审计；③太医署交卷经审刑院合规审计——审刑院活跃审计对象为 `judge` 与 `doctor`（`src/auditor-soul.ts`），太医署输出必经 `auditCompliance`（`src/doctor-role.ts`）。本条据实记载现行实例，不改 ADR 0072、不重定其射程（[ADR 0062](0062-auditor-is-an-independent-substantive-role.md) 载审刑院为独立实质审计角色，不规定拓扑）。本条按「内审衙门」整类立，不以上列实例为穷举。
+**例外：内审衙门。** 立本 ADR 时尚无此概念。内审衙门与被审席之间是包内既定关联，不由调用者组合——现行实例三条：①交卷闸按受审物直接传召台院／符宝郎（[ADR 0072](0072-menxia-pre-pr-submission-hooks.md) 当时所载挂钩映射「将作监/修内司 completed/partially_completed → 给事中（后改察院）；planned/refused/unfinished 不调；大理寺拟判入卷后 → 符宝郎；审刑院只挂大理寺、零改动」——其中「审刑院只挂大理寺」记的是其当时所载关系，非现行穷举；[ADR 0079](0079-direct-officer-summons-ticket-memory-pointer-input.md) 后改为直接传召并载同父 run 内 resume）；②大理寺判牒经审刑院合规审计；③太医署交卷经审刑院合规审计——审刑院活跃审计对象为 `judge` 与 `doctor`（`src/auditor-soul.ts`），太医署交卷后由公开调用接缝发起审刑院合规审计（`src/public-cli/instruction-seat-run.ts`）。本条据实记载现行实例，不改 ADR 0072、不重定其射程（[ADR 0062](0062-auditor-is-an-independent-substantive-role.md) 载审刑院为独立实质审计角色，不规定拓扑）。本条按「内审衙门」整类立，不以上列实例为穷举。
 
 ## 更正背景
 
