@@ -7,7 +7,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 
 import {
   buildAutoResumeContinuationPrompt,
@@ -68,17 +68,11 @@ import {
   withEngineDetourInvocationScope,
 } from "../engine-detour-usage.ts";
 import { projectHostTransitionPriorNative } from "../host-transition-prior-native.ts";
-import { listDirectOfficerRunPointers } from "../archivist-record-entry.ts";
-import { runIdFromRunDirectory } from "../run-terminal-artifacts.ts";
-import { latestQueueStatus } from "../submission-gate.ts";
-import { trySettlePublicSeat } from "./settlement.ts";
 import type { CredentialProviders, SeatModelConfig } from "./config.ts";
 import {
   clearCurrentCourt,
   clearTypedProviderHttpObservation,
   describeErrorIdentity,
-  loadResumablePublicRole,
-  markRunAdmitted,
   markRunRunning,
   readCurrentCourt,
   recordCurrentCourt,
@@ -161,36 +155,6 @@ function withProcessCancelSkipAutoResume<T extends object>(
     return result as T & { skipAutoResume?: true };
   }
   return { ...result, skipAutoResume: true as const };
-}
-
-/** Newest booked officer whose latest queue word is escalate. */
-async function waitingEscalatedOfficer(
-  sessionFile: string,
-  env: {
-    readonly home: string;
-    readonly principalAuthority: DurablePrincipalAuthority;
-    readonly packageRoot: string;
-  },
-): Promise<TerminalResult | undefined> {
-  let chosen: { readonly terminal: TerminalResult; readonly mtimeMs: number } | undefined;
-  for (const item of listDirectOfficerRunPointers(sessionFile)) {
-    const runDirectory = item.pointer.runDirectory ?? dirname(dirname(item.pointer.sessionFile));
-    const runId = runIdFromRunDirectory(runDirectory);
-    if (runId === undefined) continue;
-    const officer = await loadResumablePublicRole(env.home, runId, env.principalAuthority, true);
-    const officerTerminal = await trySettlePublicSeat(
-      officer.admitted,
-      env.principalAuthority,
-      undefined,
-      undefined,
-      env.packageRoot,
-    );
-    if (officerTerminal === undefined || latestQueueStatus(officerTerminal) !== "escalate") continue;
-    if (chosen === undefined || item.mtimeMs >= chosen.mtimeMs) {
-      chosen = { terminal: officerTerminal, mtimeMs: item.mtimeMs };
-    }
-  }
-  return chosen?.terminal;
 }
 
 /**
@@ -1085,28 +1049,6 @@ export async function dispatchPostAdmissionTurn<
         directHostFailureSignal
         || (result.code !== null && result.code !== 0)
         || resolution.knownFailure !== undefined;
-      // Waiting on an officer is not a successful host turn. The link is the
-      // booked officer pointer. Project that officer only after this turn's
-      // own failure signals are absent.
-      if (
-        !hostSignalFailed
-        && stderrLogWriteFailure === undefined
-        && processCancelName === undefined
-        && sessionFile !== ""
-      ) {
-        const waiting = await waitingEscalatedOfficer(sessionFile, env);
-        if (waiting !== undefined) {
-          await markRunAdmitted(admitted, env.principalAuthority);
-          return await finishAfterTurn({
-            exitCode: 0,
-            admitted,
-            terminal: waiting as T,
-            skipAutoResume: true,
-            turnDispatched: true,
-          });
-        }
-      }
-
       settled = await adapters.trySettle(admitted, env.principalAuthority, courtScope);
       if (settled !== undefined) {
         settled = await attachRecordedSubmissions(admitted, settled, courtScope) as T;

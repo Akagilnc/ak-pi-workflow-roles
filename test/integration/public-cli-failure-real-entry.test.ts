@@ -15,10 +15,6 @@ import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
-import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
-import type { RoleTurnHost, RoleTurnRequest } from "../../src/host-contracts.ts";
-import type { NamedRoleTurnHostAdapter } from "../../src/public-cli/cli.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -291,95 +287,6 @@ test("production knownFailure channel reaches settlement as provider with typed 
         "PROVIDER_UNAVAILABLE",
       );
     }
-  });
-});
-
-test("recorded officer escalation does not wash a current host failure", async () => {
-  await withTempHome(async (home) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitProject(project);
-    const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
-    let config = { seats: {} };
-    for (const role of ["gatekeeper", "notary", "auditor", "diarist"] as const) {
-      config = setPersistentSeatConfig(config, role, seat);
-    }
-    await savePublicCliConfig(config, home);
-    const officerHost = roleTurnHostFromLegacyPiRunner({
-      packageRoot,
-      principalAuthority: piDurablePrincipalAuthority,
-      piRunner: async (args, options) => {
-        const role = argvFlagValue(args, "--ak-role");
-        if (role === "notary") {
-          return scriptedTerminatingToolSession({
-            role: "notary",
-            toolName: NOTARY_OUTPUT_TOOL_NAME,
-            details: { status: "converged" },
-          })(args, options);
-        }
-        if (role === "auditor") {
-          return scriptedTerminatingToolSession({
-            role: "auditor",
-            toolName: AUDITOR_OUTPUT_TOOL_NAME,
-            details: { status: "escalate", explanation: "完整审刑院原话" },
-          })(args, options);
-        }
-        throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
-      },
-    });
-    const officerAdapters: NamedRoleTurnHostAdapter[] = [{ name: "pi", create: () => ({ ok: true, host: officerHost }) }];
-    const judgeHost: RoleTurnHost = {
-      async executeTurn(request: RoleTurnRequest) {
-        const coords = piDurablePrincipalAuthority.decode(request.principal);
-        const socketDir = await mkdtemp(join(tmpdir(), "ak-1057-fail-"));
-        const prepared = await prepareRoleEnvelope({
-          request: { ...request, host: "pi" },
-          dependencies: {
-            ...createRoleRuntimeDependencies(packageRoot),
-            hostAdapters: officerAdapters,
-          },
-          socketPath: join(socketDir, "mcp.sock"),
-          listTerminatingToolOnMcp: false,
-          sessionFile: coords.sessionFile,
-        });
-        try {
-          await prepared.ingestStructuredOutput({ status: "converged", note: "原判词" });
-          await prepared.closeRound();
-        } finally {
-          await prepared.dispose?.();
-          await rm(socketDir, { recursive: true, force: true });
-        }
-        return {
-          code: 1,
-          stderr: "activation wrapper exited nonzero\n",
-          timedOut: false,
-          knownFailure: {
-            cause: "provider" as const,
-            identity: { name: "ProviderUnavailableError", code: "PROVIDER_UNAVAILABLE" },
-          },
-        };
-      },
-    };
-    const { io, stdout, stderr } = captureIo();
-    const result = await runAkRole(
-      ["judge", "--model", "test/caller-seat:high", "--project", project, "provider down after escalation"],
-      {
-        packageRoot,
-        home,
-        cwd: project,
-        io,
-        principalAuthority: piDurablePrincipalAuthority,
-        roleTurnHost: judgeHost,
-      },
-    );
-    await assertPublicFailureSettlement({
-      result,
-      stdout,
-      stderr,
-      expectedCause: "provider",
-      identityName: "ProviderUnavailableError",
-      identityCode: "PROVIDER_UNAVAILABLE",
-    });
   });
 });
 
