@@ -57,12 +57,15 @@ function redirectHomeEnv(env, home) {
 export function isolatedTestProcessEnv(options = {}) {
   const env = {
     ...(options.env ?? process.env),
-    // Role-envelope parent injections (run dir + court attempt). A factory
-    // leg that spawns test:all must not leak its own attempt identity into
-    // ledger tests (#840 / #637).
+    // Role-envelope parent injections (run dir + court attempt + engine). A
+    // factory leg that spawns test:all must not leak its own attempt identity
+    // or ambient engine into ledger/activation tests (#840 / #637 / #1057).
+    // Callers that need AK_ROLE_ENGINE set it on the returned env or on
+    // process.env after applyIsolatedTestProcessEnv — inheritance is scrubbed.
     AK_ROLE_RUN_DIR: undefined,
     AK_ROLE_COURT_ATTEMPT: undefined,
     PI_CODING_AGENT_DIR: undefined,
+    AK_ROLE_ENGINE: undefined,
   };
   const home = options.home !== undefined ? options.home : defaultIsolatedTestHome();
   redirectHomeEnv(env, home);
@@ -84,4 +87,6 @@ export function applyIsolatedTestProcessEnv(options = {}) {
   else process.env.AK_ROLE_COURT_ATTEMPT = next.AK_ROLE_COURT_ATTEMPT;
   if (next.PI_CODING_AGENT_DIR === undefined) delete process.env.PI_CODING_AGENT_DIR;
   else process.env.PI_CODING_AGENT_DIR = next.PI_CODING_AGENT_DIR;
+  if (next.AK_ROLE_ENGINE === undefined) delete process.env.AK_ROLE_ENGINE;
+  else process.env.AK_ROLE_ENGINE = next.AK_ROLE_ENGINE;
 }
