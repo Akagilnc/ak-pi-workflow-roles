@@ -129,7 +129,6 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
           cost: emptyDoctorCost,
           evidence: [],
         }),
-        auditDoctorCompliance: async () => ({ status: "converged" as const }),
       };
     case "merger": {
       const mergerInput = {

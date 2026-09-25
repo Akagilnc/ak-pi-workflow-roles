@@ -9,8 +9,8 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  * not take a package writer-lease gate before host CLI resume.
  */
 import assert from "node:assert/strict";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, readFile, rename, rm, stat, symlink, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { execFileSync, spawn } from "node:child_process";
@@ -19,7 +19,8 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner as rawRoleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { POST_ADMISSION_CLEANUP_DIAGNOSTIC_ENTRY_TYPE } from "../../src/public-cli/post-admission.ts";
 import {
@@ -61,8 +62,14 @@ function assertRunIdOnlyInResumeCommand(
 }
 
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
-  return withTempRoot("ak-public-cli-resume-", scenario);
+  return withTempRoot("ak-public-cli-resume-", async (home) => {
+    await configurePassingReviewSeats(home);
+    return scenario(home);
+  });
 }
+
+const roleTurnHostFromLegacyPiRunner: typeof rawRoleTurnHostFromLegacyPiRunner =
+  (options) => withPassingReviewHost(rawRoleTurnHostFromLegacyPiRunner(options));
 
 function captureIo() {
   const stdout: string[] = [];
@@ -1115,10 +1122,11 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     ) as Record<string, unknown>;
     delete legacyState.sessionFile;
     await writeFile(legacyStatePath, `${JSON.stringify(legacyState, null, 2)}\n`, "utf8");
-    // The persisted principal survives project relocation and loss of Git topology.
+    // The persisted principal survives project relocation. Keep the original
+    // project coordinate reachable for the required post-submission audit.
     const movedProject = join(home, "moved-non-git-project");
     await rename(project, movedProject);
-    await rm(join(movedProject, ".git"), { recursive: true, force: true });
+    await symlink(movedProject, project);
     const admittedBefore = JSON.parse(
       await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
     ) as {
@@ -1185,7 +1193,7 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     );
 
     assert.ok(resumeArgs, stderr.join(""));
-    assert.equal(resumed.exitCode, 0);
+    assert.equal(resumed.exitCode, 0, stderr.join(""));
     assert.ok(resumed.terminal);
     assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
     assert.equal(resumed.terminal!.runId, runId);
@@ -1609,12 +1617,17 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
     );
     const lease = await acquireRunWriterLease(runDirectory);
     let dispatches = 0;
+    let savedRunState = "";
     await withPrimaryAwareCleanup(
       async () => {
         const { io: capturedIo } = captureIo();
         const io2 = {
           ...capturedIo,
           stderr: () => {
+            // The failed parent write has already been observed. Restore the
+            // source run before the mandatory Notary/Auditor summons reads it.
+            rmSync(join(runDirectory, "run-state.json"), { recursive: true });
+            writeFileSync(join(runDirectory, "run-state.json"), savedRunState);
             throw new Error("stderr sink failed");
           },
         };
@@ -1626,7 +1639,7 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
           io: io2,
           roleTurnHost: {
             executeTurn: async (request) => {
-              const result = await roleTurnHostFromLegacyPiRunner({
+              const result = await withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
                 packageRoot,
                 principalAuthority: piDurablePrincipalAuthority,
                 piRunner: async (args) => {
@@ -1656,10 +1669,13 @@ test("#987 public manual resume reaches host CLI despite live writer lease", asy
                     },
                   };
                 },
-              }).executeTurn(request);
-              const statePath = join(request.runDirectory, "run-state.json");
-              await rm(statePath, { force: true });
-              await mkdir(statePath);
+              })).executeTurn(request);
+              if (request.activation.role === "judge") {
+                const statePath = join(runDirectory, "run-state.json");
+                savedRunState = await readFile(statePath, "utf8");
+                await rm(statePath, { force: true });
+                await mkdir(statePath);
+              }
               return result;
             },
           },

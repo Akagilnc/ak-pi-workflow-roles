@@ -7,7 +7,6 @@ import test from "node:test";
 
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { createCountersignRoleRuntime } from "../../src/role-runtime.ts";
-import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 
 type GateCall = { readonly kind: string; readonly subject: unknown };
 
@@ -64,22 +63,18 @@ const ctx = {
   abort() {},
 };
 
-test("countersign gate summons Notary with kind only — no verdict/ticket body", async () => {
+test("countersign output finishes before Notary is summoned", async () => {
   const { tools, gateCalls } = await activateCountersign();
-  await tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME)!.execute(
+  const result = await tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME)!.execute(
     "call-1",
     { status: "converged" },
     undefined,
     undefined,
     ctx,
   );
-  assert.equal(gateCalls.length, 1);
-  assert.equal(gateCalls[0]!.kind, "countersign_verdict");
-  assert.deepEqual(gateCalls[0]!.subject, { kind: "countersign_verdict" });
-  assert.equal(
-    Object.prototype.hasOwnProperty.call(gateCalls[0]!.subject as object, "material"),
-    false,
-  );
+  assert.equal(gateCalls.length, 0);
+  assert.equal(result.terminate, true);
+  assert.deepEqual(result.details, { status: "converged" });
 });
 
 test("countersign escalate skips Notary gate and accepts as-is (#753)", async () => {
@@ -96,23 +91,17 @@ test("countersign escalate skips Notary gate and accepts as-is (#753)", async ()
   assert.deepEqual(result.details, { status: "escalate", note: "need owner" });
 });
 
-test("countersign status unreadable returns to countersign without Notary (#753)", async () => {
+test("countersign unreadable status files before public queue reask (#1057)", async () => {
   const { tools, gateCalls, nonPass } = await activateCountersign();
-  await assert.rejects(
-    tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME)!.execute(
+  const result = await tools.get(COUNTERSIGN_OUTPUT_TOOL_NAME)!.execute(
       "call-bad",
       { status: "not-a-status", note: "typo" },
       undefined,
       undefined,
       ctx,
-    ),
-    (error: unknown) => {
-      // Parent re-ask — not a forged officer bounce face (#753).
-      assert.ok(error instanceof ParentQueueReaskError);
-      assert.match(error.message, /status/);
-      return true;
-    },
-  );
+    );
+  assert.equal(result.terminate, true);
+  assert.deepEqual(result.details, { status: "not-a-status", note: "typo" });
   assert.equal(gateCalls.length, 0, "bad status must not summon notary");
   assert.equal(nonPass.length, 0, "parent re-ask must not bind officer non-pass");
 });

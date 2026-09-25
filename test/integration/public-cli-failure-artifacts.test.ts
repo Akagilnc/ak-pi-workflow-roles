@@ -1,5 +1,6 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 // #107/#373 public-CLI acceptance tracer — 公开入口因果身份家族。
 // #420 整改自 public-cli-failure-settlement.test.ts 按主题拆出；共享夹具入 kit。
@@ -525,6 +526,7 @@ test("public Judge settles failed typed output evidence before nonzero stderr fa
 });
 test("real Coder/Fixer runs settle on the recorded status, or honestly no_receipt when unsealed", async () => {
   await withTempHome(async (home) => {
+    await configurePassingReviewSeats(home);
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
@@ -546,7 +548,7 @@ test("real Coder/Fixer runs settle on the recorded status, or honestly no_receip
             cwd: project,
             createRunId: () => `run-${row.role}-discriminator-${status}`,
             io,
-            roleTurnHost: roleTurnHostFromLegacyPiRunner({
+            roleTurnHost: withPassingReviewHost(roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args) => {
@@ -610,7 +612,7 @@ test("real Coder/Fixer runs settle on the recorded status, or honestly no_receip
                     }),
               };
             },
-          }),
+          })),
           },
         );
 

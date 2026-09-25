@@ -21,6 +21,8 @@ import {
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { COUNTERSIGN_OUTPUT_TOOL_NAME } from "../../src/countersign-contracts.ts";
 import { SECRETARIAT_OUTPUT_TOOL_NAME } from "../../src/secretariat-contracts.ts";
+import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import type {
   HostContext,
   RoleHost,
@@ -224,6 +226,14 @@ function nestedCountersignHost(input: {
       input.diaristRunDirectories?.push(options.env.AK_ROLE_RUN_DIR ?? "");
       return diarist(args, options);
     }
+    if (role === "notary") {
+      input.gateCalls.push({ kind: "countersign_verdict" });
+      const step = input.sequence[Math.max(0, call - 1)] ?? input.sequence.at(-1)!;
+      return scriptedTerminatingToolSession({
+        role: "notary", toolName: NOTARY_OUTPUT_TOOL_NAME,
+        details: step.notaryEscalation ?? { status: "converged" },
+      })(args, options);
+    }
     if (role === "countersign") {
       const step = input.sequence[call] ?? input.sequence.at(-1)!;
       call += 1;
@@ -327,6 +337,7 @@ function nestedCountersignHost(input: {
     executeTurn(request) {
       if (request.activation.role === "countersign") {
         input.countersignRequests?.push(request);
+        input.gateCalls.push({ kind: "secretariat_verdict" });
       }
       return host.executeTurn(request);
     },
@@ -370,6 +381,7 @@ function secretariatHostDrivingRealTools(input: {
       throw new Error(`parent diarist host unexpected role: ${role}`);
     },
   });
+  let nextStep = 0;
 
   // Production envelope wiring (home/packageRoot/hostAdapters).
   // Gate entry observed via nested countersignRequests — no harness
@@ -397,7 +409,9 @@ function secretariatHostDrivingRealTools(input: {
       async executeTurn(request: RoleTurnRequest) {
         // Parent 起居郎 binds the secretariat board; nested 给事中 uses nestAdapters.
         if (request.activation.role === "diarist") {
-          return parentDiaristHost.executeTurn(request);
+          return nextStep === 0
+            ? parentDiaristHost.executeTurn(request)
+            : nestedTracked.executeTurn(request);
         }
         if (request.activation.role !== "secretariat") {
           return nestedTracked.executeTurn(request);
@@ -418,31 +432,16 @@ function secretariatHostDrivingRealTools(input: {
           sessionFile: coords.sessionFile,
         });
         try {
-          let nestBaseline = nestRequests.length;
-          const noteGateEntry = () => {
-            const nestNow = nestRequests.length;
-            if (nestNow <= nestBaseline) return;
-            // Each nested 给事中 summon proves one secretariat_verdict entry.
-            for (let i = nestBaseline; i < nestNow; i += 1) {
-              input.gateCalls.push({ kind: "secretariat_verdict" });
-            }
-            nestBaseline = nestNow;
-          };
-          for (const step of input.steps) {
-            // Production ingest → beforeAccept → envelope.requireSubmissionGate.
-            // Park throws after the summon; the entry is still observable.
-            try {
-              await prepared.ingestStructuredOutput(step.details);
-            } finally {
-              noteGateEntry();
-            }
+          while (nextStep < input.steps.length) {
+            const step = input.steps[nextStep++]!;
+            // One accepted tool call finishes the turn; a reviewer rejection
+            // resumes this same host for the next submitted output.
+            await prepared.ingestStructuredOutput(step.details);
             const closed = await prepared.closeRound();
             if (!closed.accepted && "retry" in closed && closed.retry !== undefined) {
-              // bounce: next output step re-submits. Do not seal this round.
               continue;
             }
-            // Ledger seal + durable custom entries ride the production envelope;
-            // no parallel sitian/session write from this harness.
+            break;
           }
           return { code: 0, stderr: "", timedOut: false };
         } finally {
@@ -536,8 +535,8 @@ test(`${hostName} public entry: converged enters the shared gate`, async () => {
     assert.equal((payloads[0] as { ticketNumber?: number }).ticketNumber, firstTicket,
       "the initial receipt must remain in the ledger before officer re-submission");
     assert.equal(await findRunDirectoryById(home, runId, undefined, "secretariat"),
-      join(home, ".ak-roles", "books", "project", "924", "runs", `${runId}@secretariat`),
-      "only the final reviewed ticket owns the run");
+      join(home, ".ak-roles", "books", "project", String(firstTicket ?? 924), "runs", `${runId}@secretariat`),
+      "the first typed ticket remains the run identity after reviewer resubmission");
     // #969: 公开终局呈现给事中判词与 runId（settlement 唯一权威）.
     const countersignTerminal = result.terminal.roleOutcome.decisiveFacts
       ?.countersignTerminal as
@@ -642,7 +641,7 @@ test("#969 non-pi 给事中上呈 ends parent with officer receipt (no rewrite)"
     assert.equal(facts.decisionGate?.question, "票面争议上呈？");
     const parentDirectory = await findRunDirectoryById(home, runId, undefined, "secretariat");
     assert.ok(parentDirectory);
-    assert.notEqual((await readRoleRunIdentity(parentDirectory))?.state, "terminal");
+    assert.equal((await readRoleRunIdentity(parentDirectory))?.state, "terminal");
     assert.ok(
       gateCalls.some((c) => c.kind === "secretariat_verdict"),
       "must enter secretariat_verdict before 给事中 escalate",
@@ -674,12 +673,12 @@ test("nested Notary escalation reaches the Secretariat public terminal with its 
       },
     );
     assert.equal(result.exitCode, 0);
-    assert.equal(result.terminal?.roleOutcome.role, "countersign");
-    assert.equal(result.terminal?.roleOutcome.kind, "audit_escalation");
-    assert.deepEqual(result.terminal?.roleOutcome.decisiveFacts?.auditEscalationReceipt, receipt);
+    assert.equal(result.terminal?.roleOutcome.role, "notary");
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    assert.deepEqual(objectPayloads(result.terminal.roleOutcome).at(-1), receipt);
     const parentDirectory = await findRunDirectoryById(home, "01a0sec1021-nst-7000-8000-000000000001", undefined, "secretariat");
     assert.ok(parentDirectory);
-    assert.notEqual((await readRoleRunIdentity(parentDirectory))?.state, "terminal");
+    assert.equal((await readRoleRunIdentity(parentDirectory))?.state, "terminal");
   });
 });
 
@@ -728,9 +727,10 @@ test("#969 non-pi secretariat escalate skips 给事中 gate", async () => {
       home,
       gateCalls,
       submissionGateHost: "claude",
-      // Prior pass books a durable officer entry; parent escalate must not inherit it.
+      // A rejection resumes Secretariat; its next output escalates and must
+      // not inherit the earlier officer review.
       countersignSequence: [
-        { details: { status: "converged", note: "先署" } },
+        { details: { status: "continue", note: "先补正" } },
       ],
       steps: [
         {
@@ -805,6 +805,7 @@ for (const preliminaryTicket of [null, 923] as const) {
     const countersignRequests: RoleTurnRequest[] = [];
     const diaristRunDirectories: string[] = [];
     let parentDiaristFirstTurn = true;
+    let nestedDiaristFirstTurn = true;
     const host = secretariatHostDrivingRealTools({
       packageRoot,
       home,
@@ -820,7 +821,13 @@ for (const preliminaryTicket of [null, 923] as const) {
             sessions: [{ path: sessionPath, ranges: [{ from: { line: 1 }, to: { line: 1 } }] }] }
           : { status: "completed", ticketNumber: 923 })(args, options);
       },
-      nestedDiaristRunner: courtDiaristWithDetails({ status: "escalate", reason: "uncertain evidence" }),
+      nestedDiaristRunner: (args, options) => {
+        const first = nestedDiaristFirstTurn;
+        nestedDiaristFirstTurn = false;
+        return courtDiaristWithDetails(first
+          ? { status: "escalate", reason: "uncertain evidence" }
+          : { status: "completed", ticketNumber: 924, sessions: [] })(args, options);
+      },
       countersignSequence: [{ details: { status: "converged", note: "署" } }],
       steps: [{ kind: "output", details: { secretariatStatus: "converged", ticketNumber: 924 } }],
     });
@@ -970,7 +977,7 @@ async function distinctCourtAttemptIds(input: {
 async function adapterBoundaryCase(input: {
   hostName: "codex" | "claude" | "grok-build";
   receipt: Record<string, unknown>;
-}): Promise<{ gateEntered: boolean }> {
+}): Promise<{ gateEntered: boolean; submitted: boolean }> {
   return withTempHome(async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
@@ -1025,6 +1032,9 @@ async function adapterBoundaryCase(input: {
       runDirectory,
       host: input.hostName,
     };
+    const submitted = async () => (await readRecordedSubmissionRows(
+      project, "01a0adp969-0000-7000-8000-000000000001", home,
+    )).some((row) => row.role === "secretariat" && row.kind === "accepted");
 
     const prepare = () =>
       prepareRoleEnvelope({
@@ -1106,7 +1116,7 @@ async function adapterBoundaryCase(input: {
       });
       const result = await host.executeTurn(request);
       assert.equal(result.knownFailure, undefined, JSON.stringify(result));
-      return { gateEntered: countersignRequests.length > 0 };
+      return { gateEntered: countersignRequests.length > 0, submitted: await submitted() };
     }
 
     const description = lookupHeadlessHostDescription(input.hostName);
@@ -1151,21 +1161,22 @@ process.stdout.write(JSON.stringify({
     });
     const result = await host.executeTurn(request);
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
-    return { gateEntered: countersignRequests.length > 0 };
+    return { gateEntered: countersignRequests.length > 0, submitted: await submitted() };
   });
 }
 
 for (const hostName of ["codex", "claude", "grok-build"] as const) {
-  test(`#969 adapter boundary ${hostName}: converged enters gate`, async () => {
-    const { gateEntered } = await adapterBoundaryCase({
+  test(`#1057 adapter boundary ${hostName}: converged tool finishes before gate`, async () => {
+    const { gateEntered, submitted } = await adapterBoundaryCase({
       hostName,
       receipt: { secretariatStatus: "converged", ticketNumber: 924 },
     });
     assert.equal(
       gateEntered,
-      true,
-      `${hostName} converged must summon 给事中 via production envelope`,
+      false,
+      `${hostName} tool execution must not summon 给事中 before returning`,
     );
+    assert.equal(submitted, true, `${hostName} must seal the submitted receipt`);
   });
 
   test(`#969 adapter boundary ${hostName}: escalate skips gate`, async () => {

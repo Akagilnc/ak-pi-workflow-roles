@@ -8,9 +8,7 @@ import type {
   AnyCanonicalSkillBinding,
   CanonicalSkillBinding,
 } from "./canonical-skill-binding.ts";
-import { readableGateItem } from "./readable-gate-item.ts";
-import { projectGatekeeperEscalation } from "./audit-escalation.ts";
-import { GatekeeperDecisionError, ParentQueueReaskError } from "./submission-errors.ts";
+import { ParentQueueReaskError } from "./submission-errors.ts";
 import {
   CODER_OUTPUT_TOOL_NAME,
   FIXER_OUTPUT_TOOL_NAME,
@@ -28,7 +26,6 @@ import {
 } from "./package-contracts/fixer-packet.ts";
 import {
   createWorkerSubmissionGate,
-  WORKER_DONE_STATUSES,
   WorkerCommitReminderError,
   WorkerPrefixReminderError,
   WorkerUnfinishedReasonReminderError,
@@ -300,38 +297,7 @@ export function createFixerRoleRuntime(
               ctx,
               toolCallId,
             );
-            let pass;
-            try {
-              pass = WORKER_DONE_STATUSES.has(status)
-                ? await pi.requireSubmissionGate!({
-                    context: ctx,
-                    subject: { kind: "worker_completion" },
-                    ...(_signal === undefined ? {} : { signal: _signal }),
-                    hostActions,
-                    toolCallId,
-                    // #879: this-turn typed payload — identity-bound at submit site.
-                    submission: output,
-                  })
-                : undefined;
-            } catch (error) {
-              if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
-                return projectGatekeeperEscalation(error.result, output);
-              }
-              throw error;
-            }
-            if (pass?.status === "continue") {
-              return {
-                content: [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
-                details: output,
-                terminate: false,
-              };
-            }
-            const acceptedDetails = output;
-            return {
-              content: pass === undefined ? [] : [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
-              details: acceptedDetails,
-              terminate: true as const,
-            };
+            return { content: [], details: output, terminate: true as const };
           },
         });
         pi.on("tool_call", (event) => {
@@ -456,38 +422,7 @@ export function createCoderRoleRuntime(
               ctx,
               toolCallId,
             );
-            let pass;
-            try {
-              pass = WORKER_DONE_STATUSES.has(status)
-                ? await pi.requireSubmissionGate!({
-                    context: ctx,
-                    subject: { kind: "worker_completion" },
-                    ...(_signal === undefined ? {} : { signal: _signal }),
-                    hostActions,
-                    toolCallId,
-                    // #879: this-turn typed payload — identity-bound at submit site.
-                    submission: output,
-                  })
-                : undefined;
-            } catch (error) {
-              if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
-                return projectGatekeeperEscalation(error.result, output);
-              }
-              throw error;
-            }
-            if (pass?.status === "continue") {
-              return {
-                content: [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
-                details: output,
-                terminate: false,
-              };
-            }
-            const acceptedDetails = output;
-            return {
-              content: pass === undefined ? [] : [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
-              details: acceptedDetails,
-              terminate: true as const,
-            };
+            return { content: [], details: output, terminate: true as const };
           },
         });
         pi.on("input", (event) => {

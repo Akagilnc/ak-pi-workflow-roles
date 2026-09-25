@@ -1,7 +1,7 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { readUserDialogueStdin } from "../../src/user-dialogue-stdin.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #106 public Judge path — admission, freeze, terminal settlement, grace.
@@ -31,6 +31,9 @@ import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { disposeComplianceDecision, isAuditEscalationResult, projectAuditEscalation } from "../../src/audit-escalation.ts";
 import { readComplianceCandidate } from "../../src/compliance-transport.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
+import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { CliUsageError } from "../../src/public-cli/cli-errors.ts";
@@ -1009,6 +1012,10 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
+    let config = { seats: {} };
+    for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
+    await savePublicCliConfig(config, home);
     // ADR 0049 host correlation channel remains optional env; no lease mint.
     const attachment = join(home, "note.txt");
     await writeFile(attachment, "freeze-me", "utf8");
@@ -1037,6 +1044,13 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args, options) => {
+          const role = args[args.indexOf("--ak-role") + 1];
+          if (role === "notary" || role === "auditor") {
+            return scriptedTerminatingToolSession({
+              role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
+              details: { status: "converged" },
+            })(args, options);
+          }
           capturedArgs = [...args];
           capturedEnv = options.env;
           capturedStdin = options.stdin;
@@ -1228,6 +1242,10 @@ test("runAkRole judge empty request does not invent semantic task content on the
     const project = join(home, "empty-proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
+    let config = { seats: {} };
+    for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
+    await savePublicCliConfig(config, home);
     const { io, stdout } = captureIo();
     let prompt: string | undefined;
 
@@ -1241,6 +1259,13 @@ test("runAkRole judge empty request does not invent semantic task content on the
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args, options) => {
+        const role = args[args.indexOf("--ak-role") + 1];
+        if (role === "notary" || role === "auditor") {
+          return scriptedTerminatingToolSession({
+            role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
+            details: { status: "converged" },
+          })(args, options);
+        }
         prompt = readUserDialogueStdin(String(options.stdin ?? ""));
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         await mkdir(sessionDir, { recursive: true });

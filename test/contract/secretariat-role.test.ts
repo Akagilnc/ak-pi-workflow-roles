@@ -12,7 +12,6 @@ import {
   readRecordedSubmissionRows,
 } from "../../src/submission-ledger.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
-import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 
 type HostHarness = {
   readonly tools: Map<string, { name: string; execute: Function }>;
@@ -126,7 +125,7 @@ test("secretariat output records any status without shape reject (第 0 条)", a
   );
 });
 
-test("secretariat converged receipt enters the submission gate on every host",
+test("secretariat tool finishes before audit on every host",
   async () => {
     async function arm(host: string | undefined, statusOnly = false) {
       const gateCalls: string[] = [];
@@ -169,20 +168,17 @@ test("secretariat converged receipt enters the submission gate on every host",
         undefined,
         hostCtx,
       );
-      assert.equal(result.content.length, statusOnly ? 0 : 1);
-      if (!statusOnly) {
-        assert.equal(result.content[0]?.type, "text");
-        assert.deepEqual(JSON.parse(result.content[0].text), { status: "converged", note: "署原话" });
-      }
+      assert.equal(result.content.length, 0);
+      assert.equal(result.terminate, true);
       assert.deepEqual(result.details, { secretariatStatus: "converged", ticketNumber: 969 });
       return gateCalls;
     }
 
     for (const host of ["codex", "claude", "grok-build", "pi"] as const) {
-      assert.deepEqual(await arm(host), ["secretariat_verdict"], host);
+      assert.deepEqual(await arm(host), [], host);
     }
-    assert.deepEqual(await arm(undefined), ["secretariat_verdict"]);
-    assert.deepEqual(await arm(undefined, true), ["secretariat_verdict"]);
+    assert.deepEqual(await arm(undefined), []);
+    assert.deepEqual(await arm(undefined, true), []);
 
     await withTempRoot("ak-sec-gate-", async (root) => {
       const ungated = new Map<string, { execute: Function }>();
@@ -231,20 +227,19 @@ test("secretariat converged receipt enters the submission gate on every host",
         },
         abort() {},
       };
-      await assert.rejects(
-        () => ungated.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute("c", params, undefined, undefined, context),
-      );
+      const filed = await ungated.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute("c", params, undefined, undefined, context);
+      assert.equal(filed.terminate, true);
       assert.deepEqual(await readRecordedSubmissionRows(root, "run-ledger", root), [
         {
           role: "secretariat",
-          kind: "infrastructure",
+          kind: "accepted",
           accepted: params,
           toolCallId: "c",
         },
       ]);
     });
 
-    // Unknown status reasks parent (ADR 0055).
+    // Unknown status still files; the public queue reasks after this tool returns.
     const tools = new Map<string, { execute: Function }>();
     const roleHost = {
       registerTool(tool: { name: string; execute: Function }) {
@@ -267,9 +262,7 @@ test("secretariat converged receipt enters the submission gate on every host",
         bindSubmissionNonPass() {},
       },
     ).activate();
-    await assert.rejects(
-      () =>
-        tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
+    const unknown = await tools.get(SECRETARIAT_OUTPUT_TOOL_NAME)!.execute(
           "bad",
           { secretariatStatus: "unexpected" },
           undefined,
@@ -282,8 +275,8 @@ test("secretariat converged receipt enters the submission gate on every host",
             host: "codex",
             abort() {},
           },
-        ),
-      (error: unknown) => error instanceof ParentQueueReaskError,
-    );
+        );
+    assert.equal(unknown.terminate, true);
+    assert.deepEqual(unknown.details, { secretariatStatus: "unexpected" });
   },
 );

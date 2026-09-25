@@ -1,7 +1,7 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence } from "../helpers/terminal-payload.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { recordNonSealedSubmissionForSpawn } from "../helpers/submission-ledger-fixture.ts";
 import { GatekeeperDecisionError } from "../../src/submission-errors.ts";
 // #107 failure + human-decision settlement seam — typed API / classifier core.
@@ -17,6 +17,9 @@ import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
+import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 
 import { DOCTOR_OUTPUT_TOOL_NAME } from "../../src/doctor-contracts.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
@@ -89,6 +92,10 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
+    let config = { seats: {} };
+    for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
+    await savePublicCliConfig(config, home);
     const { io, stdout } = captureIo();
     let dispatchedPrompt: string | undefined;
     const domainProse =
@@ -105,6 +112,13 @@ test("well-formed nonexistent domain facts are not semantically pre-rejected", a
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
             piRunner: async (args, options) => {
+          const role = args[args.indexOf("--ak-role") + 1];
+          if (role === "notary" || role === "auditor") {
+            return scriptedTerminatingToolSession({
+              role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
+              details: { status: "converged" },
+            })(args, options);
+          }
           dispatchedPrompt = readUserDialogueStdin(String(options.stdin ?? ""));
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
@@ -659,6 +673,10 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
+    let config = { seats: {} };
+    for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
+    await savePublicCliConfig(config, home);
     const { io } = captureIo();
     let calls = 0;
     let sessionFile = "";
@@ -672,7 +690,14 @@ test("#419 failed attempt joins history and a later accepted attempt overwrites 
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
+            piRunner: async (args, options) => {
+          const role = args[args.indexOf("--ak-role") + 1];
+          if (role === "notary" || role === "auditor") {
+            return scriptedTerminatingToolSession({
+              role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
+              details: { status: "converged" },
+            })(args, options);
+          }
           calls += 1;
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           sessionFile = join(sessionDir, "session.jsonl");

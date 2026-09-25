@@ -1,6 +1,4 @@
-import { dirname } from "node:path";
 import {
-  runDirectoryFromHostContext,
   type RoleHost,
   type HostContext,
   type HostToolResult,
@@ -8,15 +6,8 @@ import {
 } from "./host-contracts.ts";
 import type { Static } from "typebox";
 import { reviewSubmissionSchema } from "./review-submission.ts";
-import { GatekeeperDecisionError, ParentQueueReaskError } from "./submission-errors.ts";
-import { projectGatekeeperEscalation } from "./audit-escalation.ts";
-import { gateOfficerForSubject, type GatekeeperSubject } from "./gatekeeper-role.ts";
-import { readableGateItem } from "./readable-gate-item.ts";
-import { listDirectOfficerRunPointers } from "./archivist-record-entry.ts";
-import { tryHomeFromAkRolesPath } from "./activation-ledger-topology.ts";
-import { runIdFromRunDirectory } from "./run-terminal-artifacts.ts";
-import { readRecordedSubmissionRows } from "./submission-ledger.ts";
-import { deepEqual } from "./package-contracts/terminating-tools.ts";
+import { ParentQueueReaskError } from "./submission-errors.ts";
+import { type GatekeeperSubject } from "./gatekeeper-role.ts";
 import {
   JUDGE_OUTPUT_TOOL_NAME,
   validateAcceptedJudgeDetails,
@@ -89,69 +80,6 @@ export function validateVerdict(verdict: JudgeVerdictParameters): JudgeVerdict {
   return validateAcceptedJudgeDetails(verdict);
 }
 
-function hasConvergedStatus(value: unknown): boolean {
-  return value !== null
-    && typeof value === "object"
-    && !Array.isArray(value)
-    && (value as { status?: unknown }).status === "converged";
-}
-
-/**
- * A Judge whose pending output is resumed after an officer pass continues at
- * the first unfinished gate. The parent session's existing direct pointers
- * are the binding; only a sealed converged officer submission counts as done.
- */
-async function priorGateConverged(
-  context: HostContext,
-  subject: GatekeeperSubject,
-): Promise<boolean> {
-  const parentSessionFile = context.sessionManager.getSessionFile?.();
-  if (typeof parentSessionFile !== "string" || parentSessionFile.trim() === "") return false;
-  const pointer = listDirectOfficerRunPointers(parentSessionFile)
-    .find((entry) => entry.pointer.officer === gateOfficerForSubject(subject))
-    ?.pointer;
-  if (pointer === undefined) return false;
-  const runDirectory = pointer.runDirectory ?? dirname(dirname(pointer.sessionFile));
-  const runId = runIdFromRunDirectory(runDirectory);
-  if (runId === undefined) {
-    throw new Error(`officer pointer does not identify a run: ${pointer.sessionFile}`);
-  }
-  const home = tryHomeFromAkRolesPath(pointer.sessionFile);
-  const rows = await readRecordedSubmissionRows(context.cwd, runId, {
-    ...(home === undefined ? {} : { home }),
-    sessionParent: pointer.sessionFile,
-  });
-  const latest = rows.at(-1);
-  return latest?.kind === "accepted" && hasConvergedStatus(latest.accepted);
-}
-
-async function isSamePriorJudgeCandidate(context: HostContext): Promise<boolean> {
-  const parentSessionFile = context.sessionManager.getSessionFile?.();
-  const runDirectory = runDirectoryFromHostContext(context);
-  const runId = (runDirectory === undefined ? undefined : runIdFromRunDirectory(runDirectory))
-    ?? context.sessionManager.getHeader?.()?.id;
-  if (typeof runId !== "string" || runId.trim() === "") return false;
-  const home = typeof parentSessionFile === "string"
-    ? tryHomeFromAkRolesPath(parentSessionFile)
-    : undefined;
-  const rows = await readRecordedSubmissionRows(context.cwd, runId, {
-    ...(typeof parentSessionFile === "string" && parentSessionFile.trim() !== ""
-      ? {
-          ...(home === undefined ? {} : { home }),
-          sessionParent: parentSessionFile,
-        }
-      : {}),
-  });
-  const current = rows.at(-1);
-  const prior = rows.at(-2);
-  return current?.role === "judge"
-    && current.kind === "candidate"
-    && prior?.role === "judge"
-    && prior.kind === "candidate"
-    && deepEqual(current.accepted, prior.accepted);
-}
-
-
 export function createJudgeRoleRuntime(
   pi: RoleHost,
   dependencies: JudgeRoleDependencies,
@@ -159,7 +87,6 @@ export function createJudgeRoleRuntime(
 ): { activate(): Promise<void> } {
   let soul: string | undefined;
   let lifecycleRegistered = false;
-  let resumed = false;
 
   return {
     async activate() {
@@ -167,9 +94,6 @@ export function createJudgeRoleRuntime(
       if (soul.length === 0) throw new Error("Judge soul is empty");
       if (!lifecycleRegistered) {
         lifecycleRegistered = true;
-        pi.on("session_start", (event) => {
-          resumed = event.reason === "resume";
-        });
         pi.registerTool({
           name: JUDGE_OUTPUT_TOOL_NAME,
           label: "大理寺输出",
@@ -198,40 +122,7 @@ export function createJudgeRoleRuntime(
               };
             }
             const verdict = validateVerdict(parameters);
-            // Candidate verdict is already on the parent session books as this
-            // tool-call leaf (first-record-then-audit; run 019fea05 L61/L62).
-            // One order: 符宝郎 then 审刑院. continue returns the raw receipts.
-            const resumeContinuation = resumed;
-            resumed = false;
-            try {
-              const continuingPendingCandidate = resumeContinuation
-                && await isSamePriorJudgeCandidate(ctx);
-              const chain = await runJudgeGates({
-                gateAlreadyConverged: async (subject) => continuingPendingCandidate
-                  ? priorGateConverged(ctx, subject)
-                  : false,
-                runGate: (subject) => pi.requireSubmissionGate!({
-                  context: ctx,
-                  subject,
-                  ...(signal === undefined ? {} : { signal }),
-                  hostActions,
-                  toolCallId,
-                  submission: parameters,
-                }),
-              });
-              const draftPass = chain.passes.find((pass) => pass.subject.kind === "judge_draft");
-              if (draftPass?.status === "converged") hostActions.bindPriorGatePass(toolCallId, draftPass.receipt);
-              return {
-                content: chain.passes.map((pass) => ({ type: "text" as const, text: readableGateItem(pass.receipt) })),
-                details: verdict,
-                terminate: chain.status === "converged",
-              };
-            } catch (error) {
-              if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
-                return projectGatekeeperEscalation(error.result, verdict);
-              }
-              throw error;
-            }
+            return { content: [], details: verdict, terminate: true };
           },
         });
         pi.on("before_agent_start", (event) => {

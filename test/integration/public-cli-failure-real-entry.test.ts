@@ -766,6 +766,10 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
+    let config = { seats: {} };
+    for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
+    await savePublicCliConfig(config, home);
     const { io, stdout, stderr } = captureIo();
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "already settled"],
       {
@@ -777,7 +781,14 @@ test("lawful terminal preferred over child nonzero exit (no wash into failure)",
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
           packageRoot,
           principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => {
+          piRunner: async (args, options) => {
+          const role = argvFlagValue(args, "--ak-role");
+          if (role === "notary" || role === "auditor") {
+            return scriptedTerminatingToolSession({
+              role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
+              details: { status: "converged" },
+            })(args, options);
+          }
           const sessionDir = args[args.indexOf("--session-dir") + 1]!;
           await mkdir(sessionDir, { recursive: true });
           await writeFile(

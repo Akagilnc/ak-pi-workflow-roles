@@ -1,5 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 /**
  * #478 Terminal gate projection — real public CLI entry (runAkRole).
  *
@@ -27,6 +27,9 @@ import test from "node:test";
 
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "../../src/receipt-delivery-policy.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { renderResumeCommand } from "../../src/public-cli/run-lifecycle.ts";
@@ -223,6 +226,10 @@ async function runJudgePublic(input: {
   /** When set, seals via production submission ledger (accepted path). */
   sealedAcceptance?: { readonly details: unknown };
 }): Promise<{ terminal: TerminalResult; exitCode: number; stdout: string[]; stderr: string[] }> {
+  const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
+  let config = { seats: {} };
+  for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
+  await savePublicCliConfig(config, input.home);
   const { io, stdout, stderr } = captureIo();
   const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", input.project, "gate projection"],
     {
@@ -234,7 +241,14 @@ async function runJudgePublic(input: {
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
+            piRunner: async (args, options) => {
+        const role = args[args.indexOf("--ak-role") + 1];
+        if (role === "notary" || role === "auditor") {
+          return scriptedTerminatingToolSession({
+            role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
+            details: { status: "converged" },
+          })(args, options);
+        }
         const sessionDir = args[args.indexOf("--session-dir") + 1]!;
         const runDir = join(sessionDir, "..");
         await mkdir(sessionDir, { recursive: true });

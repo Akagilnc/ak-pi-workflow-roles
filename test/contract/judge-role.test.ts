@@ -25,11 +25,9 @@ import type { HostContext } from "../../src/host-contracts.ts";
 import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
-  GatekeeperDecisionError,
-  runGatekeeper,
   type GateOfficerSummon,
 } from "../../src/gatekeeper-role.ts";
-import { OfficerEscalationParkError, ParentQueueReaskError } from "../../src/submission-errors.ts";
+import { ParentQueueReaskError } from "../../src/submission-errors.ts";
 
 import type { AuditorSummon } from "../../src/compliance-transport.ts";
 import type { PublicSummonResult } from "../../src/public-role-summons.ts";
@@ -472,207 +470,6 @@ async function withPassingGatekeeper(context: ExtensionContext): Promise<Extensi
   });
 }
 
-async function workerCompletionGatekeeperHarness(options: {
-  execute: (id: string, output: unknown, context: ExtensionContext) => Promise<unknown>;
-  toolName: string;
-  output: unknown;
-  officer?: "inspector" | "notary" | "auditor";
-  officerUnusableSubmission?: Record<string, unknown>;
-  passingRuns?: number;
-}) {
-  const {
-    execute,
-    toolName,
-    output,
-    officer = "inspector",
-    officerUnusableSubmission = { status: "not-an-audit-verdict" } as Record<string, unknown>,
-    passingRuns = 1,
-  } = options;
-  const faux = fauxProvider({ provider: "worker-gatekeeper", api: "worker-gatekeeper" });
-  const model = faux.getModel();
-  // #753: script public-summon terminals in order (needs_reask → no_receipt → bounce → pass*).
-  // transport_failure is a real failure channel (failInfrastructure), not this bounce sequence.
-  const queue: PublicSummonResult[] = [
-    // #753: accepted reply without three-state conclusion → needs_reask (resume speaker),
-    // not unreadable/parent-stand. Queue entry is consumed by the reask loop then followed
-    // by a pass so the submit path can complete after one reask.
-    {
-      exitCode: 0,
-      terminal: {
-        roleOutcome: {
-          kind: "accepted",
-          role: officer,
-          status: "not-a-conclusion",
-          // #836: officer receipt content rides recorded payloads, not decisiveFacts —
-          // decisiveFacts stays a distinct, smaller machine-fact projection here.
-          payloads: [officerUnusableSubmission as Record<string, unknown>],
-          decisiveFacts: {},
-        },
-        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-        artifacts: [],
-        runId: "test-gate-needs-reask",
-      },
-    },
-    {
-      exitCode: 0,
-      terminal: {
-        roleOutcome: {
-          kind: "no_receipt",
-          role: officer,
-          status: "no-accepted-receipt",
-          terminalToolCalled: false,
-          rejectedReceipts: [],
-          deliveryTurns: 2,
-          sessionCompletion: "settled-without-accepted-receipt",
-          runPointer: "test",
-          attemptPointer: "test",
-          acceptedReceipt: false,
-          decisiveFacts: {
-            terminalToolCalled: false,
-            rejectedReceipts: [],
-            deliveryTurns: 2,
-            sessionCompletion: "settled-without-accepted-receipt",
-            runPointer: "test",
-            attemptPointer: "test",
-            acceptedReceipt: false,
-          },
-        },
-        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-        artifacts: [],
-        runId: "test-gate-no-receipt",
-      },
-    },
-    {
-      exitCode: 0,
-      terminal: {
-        roleOutcome: {
-          kind: "accepted",
-          role: officer,
-          status: "continue",
-          // #775: structured officer findings must relay field content into parent-visible text.
-          // #836/#847 finding3: payloads carries a payload-only marker absent
-          // from decisiveFacts below, so the receipt assertion (line ~669)
-          // fails if the production projection ever reads decisiveFacts
-          // instead of payloads for the officer's receipt.
-          payloads: [{
-            status: "continue",
-            findings: [{
-              article: "focused-regression",
-              reason: "add a focused regression",
-              evidence: "diff lacks a failing case",
-            }],
-            payloadOnly: "gate-bounce-payload-marker",
-          }],
-          // Distinct, smaller machine-fact projection — not a receipt duplicate.
-          decisiveFacts: { status: "continue" },
-        },
-        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-        artifacts: [],
-        runId: "test-gate-bounce",
-      },
-    },
-    ...Array.from({ length: passingRuns }, (_, i) => passingOfficerSummon(officer)),
-  ];
-  let callCount = 0;
-  defaultGateSummon = async () => {
-    const next = queue[callCount++];
-    if (next === undefined) throw new Error("gate summon queue exhausted");
-    return next;
-  };
-  return {
-    context(id: string, toolName: string) {
-      installInstitutionalRunDir(parentInheritedSeats(model));
-      return Object.assign(toolCallContext([{ id, name: toolName }]), {
-        cwd: process.cwd(), model,
-        modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider),
-        thinkingLevel: "off",
-      });
-    },
-    async assertRejectSequence() {
-      const reject = async (id: string, check: (error: Error) => void) => {
-        await assert.rejects(execute(id, output, this.context(id, toolName)), (error: unknown) => {
-          assert.ok(error instanceof Error);
-          check(error);
-          return true;
-        });
-      };
-      // #753: accepted non-three-state → needs_reask (resume speaker). Direct projection.
-      {
-        const projectNeedsReask = async (id: string, decisiveFacts: Record<string, unknown>) =>
-          await runGatekeeper({
-            context: this.context(id, toolName),
-            subject: officer === "inspector"
-              ? { kind: "worker_completion" }
-              : officer === "auditor"
-                ? { kind: "judge_compliance" }
-                : { kind: "judge_draft" },
-            async summonOfficer() {
-              return {
-                exitCode: 0,
-                terminal: {
-                  roleOutcome: {
-                    kind: "accepted",
-                    role: officer,
-                    status: typeof decisiveFacts.status === "string"
-                      ? decisiveFacts.status
-                      : "not-a-conclusion",
-                    // #836: officer receipt content rides recorded payloads, not
-                    // roleOutcome.decisiveFacts — kept a distinct, smaller machine-fact
-                    // projection here, never the `decisiveFacts` param (that's the payload).
-                    payloads: [decisiveFacts],
-                    decisiveFacts: {},
-                  },
-                  navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-                  artifacts: [],
-                  runId: id,
-                },
-              } as PublicSummonResult;
-            },
-          });
-        const projected = await projectNeedsReask(
-          `${officer}-reask-proj`,
-          officerUnusableSubmission as Record<string, unknown>,
-        );
-        assert.equal(projected.status, "needs_reask");
-        if (projected.status === "needs_reask") {
-          assert.equal(projected.officer, officer);
-          assert.deepEqual(projected.receipt, officerUnusableSubmission);
-        }
-        // Empty officer args stay original bytes and still needs_reask (#836).
-        const omitted = await projectNeedsReask(
-          `${officer}-reask-omitted`,
-          {},
-        );
-        assert.equal(omitted.status, "needs_reask");
-        if (omitted.status === "needs_reask") {
-          assert.equal(omitted.officer, officer);
-          assert.deepEqual(omitted.receipt, {});
-        }
-      }
-      // Queue: needs_reask then pass — envelope resumes speaker and parent completes (#753).
-      // The harness queue already sequences needs_reask → no_receipt → bounce → pass…
-      // so the first submit after transport consumes needs_reask and loops onto no_receipt.
-      await reject(`${officer}-no-receipt`, (error) => {
-        assert.ok(error instanceof GatekeeperDecisionError);
-        assert.equal(error.result.status, "no_receipt");
-        if (error.result.status === "no_receipt") {
-          assert.equal(error.result.stage, officer);
-          assert.equal(error.result.facts.acceptedReceipt, false);
-          assert.equal(error.result.facts.sessionCompletion, "settled-without-accepted-receipt");
-        }
-      });
-      const continued = await execute("continue", output, this.context("continue", toolName)) as {
-        terminate?: boolean;
-        details?: unknown;
-      };
-      assert.equal(continued.terminate, false);
-      assert.deepEqual(continued.details, output);
-    },
-    get providerRequests() { return callCount; },
-    get remainingResponses() { return Math.max(0, queue.length - callCount); },
-  };
-}
-
 function gateCatalogModel(provider: string, id: string) {
   return {
     api: "openai-responses" as const,
@@ -690,7 +487,7 @@ function gateCatalogModel(provider: string, id: string) {
 
 /**
  * Real submit-tool → requireSubmissionGate → shared executor child model observation (#453).
- * Pass-only script; full non-pass matrix stays on workerCompletionGatekeeperHarness.
+ * Pass-only script for the direct gate contract.
  */
 async function realEntryGateModelHarness(options: {
   officer?: "inspector" | "notary";
@@ -1259,12 +1056,7 @@ test("named Judge and worker tools preserve schema leaves and receipts", async (
     );
     assert.deepEqual(result.details, fixture.output);
     assert.equal(result.terminate, true);
-    const receiptText = result.content[0];
-    if (fixture.role === "coder") {
-      assert.deepEqual(result.content, []);
-    } else {
-      assert.equal(receiptText?.type, "text");
-    }
+    assert.deepEqual(result.content, [], "the submission tool finishes before reviewer receipts exist");
     // #756: judge no longer projects auditor usage onto the parent receipt —
     // nested officer meters live on the officer session; parent accepts as-is.
     assert.equal(result.usage, undefined);
@@ -1412,12 +1204,9 @@ test("judge role returns auditor continue as raw receipt without aborting (#756)
   };
 
   const result = await tool.execute("call-2", verdict, undefined, undefined, ctx);
-  assert.equal(result.terminate, false, "continue stays in the same conversation");
+  assert.equal(result.terminate, true, "the Judge submission finishes before the Auditor is summoned");
   assert.deepEqual(result.details, verdict);
-  assert.deepEqual(result.content.map((item: { text: string }) => JSON.parse(item.text)), [
-    { status: "converged", findings: [] },
-    continueReceipt,
-  ], "both officers' structured receipts remain separately visible");
+  assert.deepEqual(result.content, []);
   assert.equal(abortCalls, 0);
 });
 
@@ -1438,16 +1227,10 @@ test("judge returns auditor transport failures on the failure channel with abort
     return passingOfficerSummon(officer);
   };
 
-  await assert.rejects(
-    tool.execute("audit-failure", verdict, undefined, undefined, ctx),
-    (error: unknown) => {
-      assert.ok(error instanceof Error);
-      assert.equal((error as Error).name, "GatekeeperTransportFailure");
-      assert.match((error as Error).message, /provider unavailable/);
-      return true;
-    },
-  );
-  assert.equal(abortCalls, 1);
+  const result = await tool.execute("audit-failure", verdict, undefined, undefined, ctx);
+  assert.equal(result.terminate, true);
+  assert.deepEqual(result.details, verdict);
+  assert.equal(abortCalls, 0, "reviewer transport cannot abort the completed submission tool");
 });
 
 test("judge role fails before adjudication when its soul is empty", async () => {
@@ -1611,7 +1394,7 @@ test("coder apply unfinished without reason bounces then accepts reasoned resubm
   });
 });
 
-test("Gatekeeper continue returns a normal nonterminal tool result", async () => {
+test("Judge tool completes before Gatekeeper decisions", async () => {
   const harness = extensionHarness("judge");
   installRoleRuntime(harness.pi as unknown as ExtensionAPI, {
     loadRoleSoul: async () => "JUDGE LAW",
@@ -1654,8 +1437,9 @@ test("Gatekeeper continue returns a normal nonterminal tool result", async () =>
     const tool = harness.tools.get(JUDGE_OUTPUT_TOOL_NAME);
     assert.ok(tool);
     const result = await tool.execute(toolCallId, { status: "converged" }, undefined, undefined, gateContext);
-    assert.equal(result.terminate, false);
+    assert.equal(result.terminate, true);
     assert.deepEqual(result.details, { status: "converged" });
+    assert.deepEqual(result.content, []);
 
     const notaryPass = { status: "converged", reason: "draft accepted" };
     const auditorBounce = { status: "continue", violations: ["revise evidence"] };
@@ -1676,95 +1460,71 @@ test("Gatekeeper continue returns a normal nonterminal tool result", async () =>
       cwd: process.cwd(), model, modelRegistry: scriptedGatekeeperModelRegistry(model, faux.provider), thinkingLevel: "off",
     });
     const continued = await tool.execute(twoGateCallId, { status: "converged" }, undefined, undefined, twoGateContext);
-    assert.equal(continued.terminate, false);
+    assert.equal(continued.terminate, true);
     assert.deepEqual(continued.details, { status: "converged" });
+    assert.deepEqual(continued.content, []);
   });
 });
 
-test("coder completed submissions traverse the direct Inspector gate until pass", async () => {
-  const request = "Apply the approved plan.";
+test("Coder output tool finishes before Inspector starts", async () => {
   const harness = extensionHarness(undefined, {
     "ak-coder-task": "/materials/approved.md",
     "ak-coder-phase": "apply",
   });
-  const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-    armGateSummonOnHost(piHostAdapter.host);
-  const runtime = createCoderRoleRuntime(
-    piHostAdapter.host,
-    {
-      loadSoul: async () => "CODER LAW",
-      loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
-      loadCanonicalSkillBinding: async () => tddBinding(),
-    },
-    testHostActions(),
-  );
+  const host = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI).host;
+  armGateSummonOnHost(host);
+  const runtime = createCoderRoleRuntime(host, {
+    loadSoul: async () => "CODER LAW",
+    loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
+    loadCanonicalSkillBinding: async () => tddBinding(),
+  }, testHostActions());
   await runtime.activate();
+  const request = "Apply the approved plan.";
   await harness.handlers.get("input")?.({ text: request }, {});
   await harness.handlers.get("before_agent_start")?.(
     { systemPrompt: "BASE", prompt: expandedTdd(request) },
     { abort() {}, mode: "tui" },
   );
-  const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME);
-  assert.ok(tool);
+  const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME)!;
+  let summoned = 0;
+  defaultGateSummon = async (officer) => { summoned++; return passingOfficerSummon(officer); };
   const completed = { status: "completed", report: "TDD and verification evidence" };
-  const tracer = await workerCompletionGatekeeperHarness({
-    execute: (id, output, context) => tool.execute(id, output as typeof completed, undefined, undefined, context),
-    toolName: CODER_OUTPUT_TOOL_NAME,
-    output: completed,
-  });
-  await tracer.assertRejectSequence();
-  const accepted = await tool.execute("accepted", completed, undefined, undefined, tracer.context("accepted", CODER_OUTPUT_TOOL_NAME));
-
-  assert.equal(accepted.terminate, true);
-  // #753: needs_reask→no_receipt (2) + bounce + pass = 4.
-  assert.equal(tracer.providerRequests, 4);
-  assert.equal(tracer.remainingResponses, 0);
+  const result = await tool.execute("completed", completed, undefined, undefined,
+    toolCallContext([{ id: "completed", name: CODER_OUTPUT_TOOL_NAME }]));
+  assert.equal(result.terminate, true);
+  assert.deepEqual(result.details, completed);
+  assert.equal(summoned, 0, "Inspector is a post-submission step");
 });
 
-test("fixer completed and partially_completed traverse the direct Inspector gate; skip statuses settle without it", async () => {
-  const start = async (phase: "plan" | "apply") => {
+test("Fixer output statuses finish before Inspector starts", async () => {
+  const start = async (phase: "plan" | "apply", prerequisites = false) => {
     const harness = extensionHarness(undefined, {
       "ak-fix-packet": "/materials/fix.md",
       "ak-fixer-phase": phase,
+      ...(prerequisites ? { "ak-fixer-prerequisites": "/materials/prereqs.json" } : {}),
     });
-    const piHostAdapter = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI);
-    armGateSummonOnHost(piHostAdapter.host);
-    const runtime = createFixerRoleRuntime(
-      piHostAdapter.host,
-      { loadSoul: async () => "FIXER LAW", loadPacket: async () => emptyFixPacket },
-      testHostActions(),
-    );
+    const host = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI).host;
+    armGateSummonOnHost(host);
+    const runtime = createFixerRoleRuntime(host, {
+      loadSoul: async () => "FIXER LAW",
+      loadPacket: async (path) => path.endsWith("prereqs.json") ? declaredFixPrerequisites : emptyFixPacket,
+    }, testHostActions());
     await runtime.activate();
     return harness.tools.get(FIXER_OUTPUT_TOOL_NAME)!;
   };
+  let summoned = 0;
+  defaultGateSummon = async (officer) => { summoned++; return passingOfficerSummon(officer); };
   const completed = {
     status: "completed" as const,
     report: "repair complete",
     classResults: [{ name: "Gate", disposition: "completed" as const, searchScope: "all", exceptions: [], commitSha: "a".repeat(40) }],
   };
-  const completedTool = await start("apply");
-  const tracer = await workerCompletionGatekeeperHarness({
-    execute: (id, output, context) => completedTool.execute(id, output as typeof completed, undefined, undefined, context),
-    toolName: FIXER_OUTPUT_TOOL_NAME,
-    output: completed,
-    // completed + partially_completed consume the direct Inspector pass;
-    // planned / refused / unfinished settle without summoning.
-    passingRuns: 2,
-  });
-  const submissionContext = (id: string) => tracer.context(id, FIXER_OUTPUT_TOOL_NAME);
+  const applyTool = await start("apply", true);
+  const context = (id: string) => toolCallContext([{ id, name: FIXER_OUTPUT_TOOL_NAME }]);
   await assert.rejects(
-    completedTool.execute(
-      "unreadable-status",
-      { status: { value: "unknown" }, report: { callerOwnsThisNarrativeField: true } },
-      undefined,
-      undefined,
-      submissionContext("unreadable-status"),
-    ),
+    applyTool.execute("unreadable-status", { status: { value: "unknown" } }, undefined, undefined, context("unreadable-status")),
     (error: unknown) => error instanceof ParentQueueReaskError,
   );
-  await tracer.assertRejectSequence();
-  assert.equal((await completedTool.execute("converged", completed, undefined, undefined, submissionContext("converged"))).terminate, true);
-
   const partial = {
     status: "partially_completed" as const,
     report: "mixed lawful settlement",
@@ -1773,208 +1533,69 @@ test("fixer completed and partially_completed traverse the direct Inspector gate
       { name: "Blocked", disposition: "refused" as const, remainingScope: "owner choice", blocker: { kind: "missing_prerequisite" as const, prerequisiteId: "owner.choice", reason: "owner choice missing" } },
     ],
   };
-  const partialHarness = extensionHarness(undefined, { "ak-fix-packet": "/materials/fix.md", "ak-fixer-prerequisites": "/materials/prereqs.json", "ak-fixer-phase": "apply" });
-  const partialPiHostAdapter = createPiRoleHostAdapter(partialHarness.pi as unknown as ExtensionAPI);
-  armGateSummonOnHost(partialPiHostAdapter.host);
-  const partialRuntime = createFixerRoleRuntime(partialPiHostAdapter.host, {
-    loadSoul: async () => "FIXER LAW",
-    loadPacket: async (path) => path.endsWith("prereqs.json") ? declaredFixPrerequisites : emptyFixPacket,
-  }, testHostActions());
-  await partialRuntime.activate();
-  assert.equal((await partialHarness.tools.get(FIXER_OUTPUT_TOOL_NAME)!.execute("partial", partial, undefined, undefined, submissionContext("partial"))).terminate, true);
-
-  const unfinished = {
-    status: "unfinished" as const,
-    report: "handover",
-    remainingScope: "owner answer",
-    reason: "prerequisite_missing: owner answer",
-  };
-  const unfinishedTool = await start("apply");
-  assert.equal(
-    (await unfinishedTool.execute("unfinished", unfinished, undefined, undefined, submissionContext("unfinished"))).terminate,
-    true,
-  );
-
-  const beforeAllStatuses = tracer.providerRequests;
+  const unfinished = { status: "unfinished" as const, report: "handover", remainingScope: "owner answer", reason: "prerequisite_missing: owner answer" };
+  for (const [id, output] of [["completed", completed], ["partial", partial], ["unfinished", unfinished]] as const) {
+    const result = await applyTool.execute(id, output, undefined, undefined, context(id));
+    assert.equal(result.terminate, true);
+    assert.deepEqual(result.details, output);
+  }
   const planTool = await start("plan");
-  assert.equal(
-    (await planTool.execute("planned", { status: "planned", report: "plan" }, undefined, undefined, submissionContext("planned"))).terminate,
-    true,
-  );
-  assert.equal(
-    (await planTool.execute("plan-refused", { status: "refused", report: "blocked", remainingScope: "owner answer", blocker: { kind: "missing_prerequisite", prerequisiteId: "owner.choice", reason: "missing" } }, undefined, undefined, submissionContext("plan-refused"))).terminate,
-    true,
-  );
-  const applyTool = await start("apply");
-  assert.equal(
-    (await applyTool.execute("apply-refused", { status: "refused", report: "blocked", classResults: [{ name: "Blocked", disposition: "refused", remainingScope: "owner answer", blocker: { kind: "unconstitutional", authority: "ADR", conflict: "conflict" } }] }, undefined, undefined, submissionContext("apply-refused"))).terminate,
-    true,
-  );
-  // skip statuses must not consume further officer passes.
-  assert.equal(tracer.providerRequests, beforeAllStatuses);
-  // #753: reject matrix (reask→no_receipt + bounce = 3) + two DONE passes = 5.
-  assert.equal(tracer.providerRequests, 5);
-  assert.equal(tracer.remainingResponses, 0);
+  for (const [id, output] of [
+    ["planned", { status: "planned", report: "plan" }],
+    ["refused", { status: "refused", report: "blocked", remainingScope: "owner answer", blocker: { kind: "missing_prerequisite", prerequisiteId: "owner.choice", reason: "missing" } }],
+  ] as const) {
+    const result = await planTool.execute(id, output, undefined, undefined, context(id));
+    assert.equal(result.terminate, true);
+    assert.deepEqual(result.details, output);
+  }
+  assert.equal(summoned, 0, "all statuses finish the tool before any reviewer step");
 });
 
-test("judge submissions traverse Notary then Auditor gates (#756)", async () => {
-  const auditorCalls: string[] = [];
+test("Judge submissions finish before Notary and Auditor gates", async () => {
   const { harness, tool } = await startJudge();
-  // Full direct-Notary reject+pass matrix once; production does not branch on status.
-  // After Notary pass, Auditor gate also runs (second pass in queue).
-  const continueVerdict = {
-    status: "continue" as const,
-    fix: { summary: "tighten the gate" },
-    note: "ticket-review",
-  };
-  const tracer = await workerCompletionGatekeeperHarness({
-    execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
-    toolName: JUDGE_OUTPUT_TOOL_NAME,
-    output: continueVerdict,
-    officer: "notary",
-    // notary pass + auditor pass
-    passingRuns: 2,
-  });
-  // Wrap summon to observe auditor stays dark through notary non-pass matrix.
-  const baseSummon = defaultGateSummon!;
-  defaultGateSummon = async (officer, source, signal, reask) => {
-    if (officer === "auditor") auditorCalls.push("auditor");
-    return baseSummon(officer, source, signal, reask);
-  };
-  await tracer.assertRejectSequence();
-  // #753/#756: non-three-state resumes officer — parent never stands through the reject matrix;
-  // auditor stays dark until Notary pass.
-  assert.equal(auditorCalls.length, 0, "auditor stays dark through notary non-pass matrix");
-  const context = tracer.context("continue-pass", JUDGE_OUTPUT_TOOL_NAME);
-  const { sealed, pending } = await acceptThroughTypedRoundClosure({
-    handlers: harness.handlers,
-    tool,
-    toolCallId: "continue-pass",
-    toolName: JUDGE_OUTPUT_TOOL_NAME,
-    output: continueVerdict,
-    context,
-  });
-  assert.equal(pending.terminate, true); // #836: original terminate flag preserved
-  assert.deepEqual(sealed.accepted, continueVerdict);
-  assert.equal(auditorCalls.length, 1, "auditor runs after Notary pass");
-  // #756: reask→no_receipt + bounce + notary pass + auditor pass = 5.
-  assert.equal(tracer.providerRequests, 5);
-  assert.equal(tracer.remainingResponses, 0);
-
-  // Other status: cheap same-gate assert — enters Gatekeeper; non-pass keeps auditor dark.
-  const convergedVerdict = { status: "converged" as const, note: "judgment" };
-  const secondGate = await workerCompletionGatekeeperHarness({
-    execute: (id, output, context) => tool.execute(id, output, undefined, undefined, context),
-    toolName: JUDGE_OUTPUT_TOOL_NAME,
-    output: convergedVerdict,
-    officer: "notary",
-    passingRuns: 0,
-  });
-  await assert.rejects(
-    tool.execute(
-      "converged-gate",
-      convergedVerdict,
-      undefined,
-      undefined,
-      secondGate.context("converged-gate", JUDGE_OUTPUT_TOOL_NAME),
-    ),
-    (error: unknown) => {
-      assert.ok(error instanceof GatekeeperDecisionError);
-      assert.equal(error.result.status, "no_receipt");
-      return true;
-    },
-  );
-  assert.equal(auditorCalls.length, 1, "auditor must not start again on Gatekeeper non-pass for other status");
-  assert.equal(secondGate.providerRequests, 2);
+  let summoned = 0;
+  defaultGateSummon = async (officer) => { summoned++; return passingOfficerSummon(officer); };
+  for (const [id, output] of [
+    ["continue", { status: "continue", fix: { summary: "tighten the gate" } }],
+    ["converged", { status: "converged", note: "judgment" }],
+  ] as const) {
+    const context = await withPassingGatekeeper(toolCallContext([{ id, name: JUDGE_OUTPUT_TOOL_NAME }]));
+    const { sealed, pending } = await acceptThroughTypedRoundClosure({
+      handlers: harness.handlers, tool, toolCallId: id, toolName: JUDGE_OUTPUT_TOOL_NAME,
+      output, context,
+    });
+    assert.deepEqual(sealed.accepted, output);
+    assert.equal(pending.terminate, true);
+    assert.deepEqual(pending.content, []);
+  }
+  assert.equal(summoned, 0, "both gates run only after the Judge tool has returned");
 });
 
-test("direct Inspector submit summons inspector; transport failure stays loud", async () => {
+test("reviewer transport cannot retroactively fail a completed Coder tool", async () => {
+  const harness = extensionHarness(undefined, {
+    "ak-coder-task": "/materials/approved.md", "ak-coder-phase": "apply",
+  });
+  const host = createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI).host;
+  armGateSummonOnHost(host);
+  const runtime = createCoderRoleRuntime(host, {
+    loadSoul: async () => "CODER LAW", loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
+    loadCanonicalSkillBinding: async () => tddBinding(),
+  }, testHostActions());
+  await runtime.activate();
   const request = "Apply the approved plan.";
+  await harness.handlers.get("input")?.({ text: request }, {});
+  await harness.handlers.get("before_agent_start")?.(
+    { systemPrompt: "BASE", prompt: expandedTdd(request) },
+    { abort() {}, mode: "tui" },
+  );
+  defaultGateSummon = async () => { throw new Error("provider unavailable"); };
+  const tool = harness.tools.get(CODER_OUTPUT_TOOL_NAME)!;
   const completed = { status: "completed", report: "TDD and verification evidence" };
-  const startCoder = async () => {
-    const harness = extensionHarness(undefined, {
-      "ak-coder-task": "/materials/approved.md",
-      "ak-coder-phase": "apply",
-    });
-    const runtime = createCoderRoleRuntime(
-      ((h) => { armGateSummonOnHost(h); return h; })(createPiRoleHostAdapter(harness.pi as unknown as ExtensionAPI).host),
-      {
-        loadSoul: async () => "CODER LAW",
-        loadTask: async () => "APPROVED IMPLEMENTATION PLAN",
-        loadCanonicalSkillBinding: async () => tddBinding(),
-      },
-      testHostActions(),
-    );
-    await runtime.activate();
-    await harness.handlers.get("input")?.({ text: request }, {});
-    await harness.handlers.get("before_agent_start")?.(
-      { systemPrompt: "BASE", prompt: expandedTdd(request) },
-      { abort() {}, mode: "tui" },
-    );
-    return harness.tools.get(CODER_OUTPUT_TOOL_NAME)!;
-  };
-
-  {
-    const tool = await startCoder();
-    const officers: string[] = [];
-    defaultGateSummon = async (officer) => {
-      officers.push(officer);
-      return passingOfficerSummon(officer);
-    };
-      const faux = fauxProvider({ provider: "own-inspector", api: "own-inspector" });
-    const model = faux.getModel();
-    const runDirectory = installInstitutionalRunDir(parentInheritedSeats(model));
-    const context = Object.assign(toolCallContext([{ id: "own-inspector", name: CODER_OUTPUT_TOOL_NAME }]), {
-      cwd: process.cwd(),
-      model,
-      thinkingLevel: "off",
-    });
-    if (context.sessionManager !== undefined) {
-      (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
-    }
-    const accepted = await tool.execute("own-inspector", completed, undefined, undefined, context);
-    assert.equal(accepted.terminate, true);
-    assert.deepEqual(officers, ["inspector"]);
-  }
-  {
-    const tool = await startCoder();
-    defaultGateSummon = async () => ({
-      exitCode: 1,
-      terminal: {
-        roleOutcome: {
-          kind: "failure",
-          role: "inspector",
-          cause: "provider",
-          diagnostic: "provider is not configured: openai-codex",
-          decisiveFacts: {},
-        },
-        navigator: { disposition: "unavailable", source: "unknown", reason: "test" },
-        artifacts: [],
-        runId: "test-auth-fail",
-      },
-    });
-      const faux = fauxProvider({ provider: "auth-fail", api: "auth-fail" });
-    const model = faux.getModel();
-    const runDirectory = installInstitutionalRunDir(parentInheritedSeats(model));
-    const context = Object.assign(toolCallContext([{ id: "auth-fail", name: CODER_OUTPUT_TOOL_NAME }]), {
-      cwd: process.cwd(),
-      model,
-      thinkingLevel: "off",
-    });
-    if (context.sessionManager !== undefined) {
-      (context.sessionManager as any).getSessionFile = () => join(runDirectory, "session", "session.jsonl");
-    }
-    await assert.rejects(
-      tool.execute("auth-fail", completed, undefined, undefined, context),
-      (error: unknown) => {
-        assert.ok(error instanceof Error);
-        assert.equal((error as Error).name, "GatekeeperTransportFailure");
-        return /provider is not configured/.test((error as Error).message);
-      },
-    );
-  }
+  const result = await tool.execute("auth-fail", completed, undefined, undefined,
+    toolCallContext([{ id: "auth-fail", name: CODER_OUTPUT_TOOL_NAME }]));
+  assert.equal(result.terminate, true);
+  assert.deepEqual(result.details, completed);
 });
-
 
 test("Fixer activation rejects malformed prerequisites and blank instructions before installing its tool", async () => {
   const rows = [
@@ -2438,12 +2059,12 @@ test("role outputs run nested audits through converged, continue, and escalation
           retriable.armJudgeGateDecision();
           return ctx;
         };
-        if (role === "judge") {
-          // #1028: auditor continue is a normal nonterminal tool result.
+        if (role === "judge" || role === "doctor") {
+          // Both submissions settle before the reviewer decision exists.
           const continued = await tool.execute(`${role}-continue`, outputs[role], undefined, undefined, await submissionContext(`${role}-continue`));
-          assert.equal(continued.terminate, false);
+          assert.equal(continued.terminate, true);
           assert.deepEqual(continued.details, outputs[role]);
-          assert.equal(continued.content.length, 2, "both review gate receipts remain separately visible");
+          assert.deepEqual(continued.content, []);
         } else {
           const continued = await tool.execute(`${role}-continue`, outputs[role], undefined, undefined, await submissionContext(`${role}-continue`));
           assert.equal(continued.terminate, false);
@@ -2455,51 +2076,26 @@ test("role outputs run nested audits through converged, continue, and escalation
         if (role === "judge") assert.equal(accepted.details.status, outputs[role].status);
         else assert.equal(accepted.details.status, outputs[role].status);
         assert.deepEqual(accepted.details, outputs[role]);
-        assert.equal(retriable.auditCalls, 2, `${role} must audit the rejected submission and its resubmission`);
+        assert.equal(retriable.auditCalls, 0,
+          `${role} follows its own audit boundary`);
 
         const escalated = createRole(role, escalation);
         await escalated.runtime.activate();
         const escalationTool = escalated.harness.tools.get(tool.name);
-        if (role === "judge") {
-          // Officer escalation stays on the officer. The judge tool does not
-          // return it as the judge's own audit_escalation face.
+        if (role === "judge" || role === "doctor") {
+          // An officer escalation occurs after this submission tool, not in it.
           const escBare = outputContext(tool.name, `${role}-escalate`, outputs[role] as unknown as JsonObject);
-          const escCtx = await withPassingGatekeeper(escBare);
-          escalated.armJudgeGateDecision();
-          await assert.rejects(
-            () => escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, escCtx),
-            (error: unknown) => {
-              assert.ok(error instanceof OfficerEscalationParkError);
-              assert.equal(error.result.status, "escalate");
-              assert.equal(error.result.officer, "auditor");
-              return true;
-            },
-          );
-          assert.equal(escalated.auditCalls, 1);
+          const escCtx = role === "judge" ? await withPassingGatekeeper(escBare) : escBare;
+          if (role === "judge") escalated.armJudgeGateDecision();
+          const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, escCtx);
+          assert.equal(result.terminate, true);
+          assert.deepEqual(result.details, outputs[role]);
+          assert.equal(escalated.auditCalls, 0);
           continue;
         }
         const result = await escalationTool.execute(`${role}-escalate`, outputs[role], undefined, undefined, await submissionContext(`${role}-escalate`));
         assert.equal(result.terminate, true);
-        // Doctor escalate face carries audit kind/conflicts/gate AND seat fields (ADR 0055).
-        assert.equal(result.details.kind, "audit_escalation");
-        const auditOwned = (result.details as { audit?: { conflicts?: unknown; auditDecisionGate?: unknown } }).audit;
-        assert.deepEqual(auditOwned?.conflicts, escalation.conflicts);
-        assert.deepEqual(auditOwned?.auditDecisionGate, escalation.decisionGate);
-        const delivered = (result.details as { receipt?: Record<string, unknown> }).receipt ?? result.details;
-        for (const [key, value] of Object.entries(outputs[role])) {
-          assert.deepEqual(
-            (delivered as Record<string, unknown>)[key],
-            value,
-            `${role} delivered field ${key} must ride the escalate face`,
-          );
-        }
-        assert.equal(isAuditEscalationResult(result.details), true);
-        // #836: validateAcceptedDetails no longer rejects — original payload passes through.
-        assert.deepEqual(
-          terminating.validateAcceptedDetails(acceptedNames[role], result.details),
-          result.details,
-        );
-        assert.equal(escalated.auditCalls, 1);
+        assert.deepEqual(result.details, outputs[role]);
       }
   }
   } finally {

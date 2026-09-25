@@ -10,6 +10,9 @@ import test from "node:test";
 
 import type { RoleTurnHost } from "../../src/host-contracts.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
+import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
+import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
+import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
@@ -21,6 +24,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import {
   createMinimalHost,
   roleTurnHostFromLegacyPiRunner,
+  scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
 import { payloadStatusSequence } from "../helpers/terminal-payload.ts";
@@ -60,6 +64,10 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    const seat = { provider: "test", model: "caller-seat", thinking: "high" } as const;
+    let config = { seats: {} };
+    for (const role of ["notary", "auditor"] as const) config = setPersistentSeatConfig(config, role, seat);
+    await savePublicCliConfig(config, home);
     const runId = "01a0esc471-0000-7000-8000-000000000001";
     const ruling = "owner ruling: accept the plan";
     const escalateDetails = {
@@ -124,6 +132,17 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
     let resumePrompt: string | undefined;
     let resumePrincipal: string | undefined;
     const resumeIo = captureIo();
+    const officerHost = roleTurnHostFromLegacyPiRunner({
+      packageRoot, principalAuthority: piDurablePrincipalAuthority,
+      piRunner: async (args, options) => {
+        const role = args[args.indexOf("--ak-role") + 1];
+        if (role !== "notary" && role !== "auditor") throw new Error("unexpected reviewer role");
+        return scriptedTerminatingToolSession({
+          role, toolName: role === "notary" ? NOTARY_OUTPUT_TOOL_NAME : AUDITOR_OUTPUT_TOOL_NAME,
+          details: { status: "converged" },
+        })(args, options);
+      },
+    });
     const resumed = await runAkRole(
       ["resume", "--model", "test/caller-seat:high", runId, ruling],
       {
@@ -133,6 +152,9 @@ test("judgeEscalateThenResumeOwnerRulingSettlesConverged", async () => {
         io: resumeIo.io,
         credentials: CREDENTIALS,
         roleTurnHost: createMinimalHost(async (request) => {
+          if (request.activation.role === "notary" || request.activation.role === "auditor") {
+            return officerHost.executeTurn(request);
+          }
           resumeKind = request.continuation.kind;
           resumePrompt = request.continuation.prompt;
           resumePrincipal = JSON.stringify(request.principal);

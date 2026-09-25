@@ -506,7 +506,6 @@ export type RoleRuntimeDependencies = {
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerInput?(path: string): Promise<unknown>;
-  auditDoctorCompliance?(options: { context: HostContext; signal?: AbortSignal; submission: unknown }): Promise<ComplianceDecision>;
   createCollectorClock?(): CollectorClock;
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
@@ -630,7 +629,7 @@ type FiledOfficerBeforeAccept = (input: {
  * Shared registration envelope for filed officers (ADR 0018 / #572):
  * activate, tool register, before_agent_start prompt, inventory check.
  * Role module keeps label/soul/spec shape only; sole-final barrier is ledger-owned.
- * Optional beforeAccept is the sole extension seam (e.g. countersign Notary gate).
+ * Optional beforeAccept projects local submission facts before the tool returns.
  */
 function createFiledOfficerRuntime(
   roleHost: RoleHost,
@@ -639,7 +638,6 @@ function createFiledOfficerRuntime(
     tool: { name: string; label: string; description: string; promptSnippet: string; parameters: unknown };
     soulTag: string;
     beforeAccept?: FiledOfficerBeforeAccept;
-    relayGatePass?: true;
   },
   dependencies: { loadSoul(): Promise<string> },
 ) {
@@ -664,25 +662,11 @@ function createFiledOfficerRuntime(
               spec.beforeAccept === undefined
                 ? undefined
                 : await spec.beforeAccept({ toolCallId, parameters, signal, ctx });
-            if (isAuditEscalationProjection(projected)) {
-              return { content: [], details: projected, terminate: true as const };
-            }
-            if (projected !== null && typeof projected === "object" && "status" in projected
-              && projected.status === "continue" && "receipt" in projected) {
-              return {
-                content: [{ type: "text" as const, text: readableGateItem(projected.receipt) }],
-                details: projected,
-                terminate: false,
-              };
-            }
-            const pass = spec.relayGatePass === true && projected !== null && typeof projected === "object" && "officer" in projected && "receipt" in projected
-              ? projected
-              : undefined;
             // Accept-as-is + terminate only. Shape is not an admission gate
             // (第 0 条 / ADR 0055); sole-final barrier is ledger-owned (#575).
             return {
-              content: pass === undefined || pass.receipt === undefined ? [] : [{ type: "text" as const, text: readableGateItem(pass.receipt) }],
-              details: pass === undefined ? (projected === undefined ? parameters : projected) : parameters,
+              content: [],
+              details: projected === undefined ? parameters : projected,
               terminate: true as const,
             };
           },
@@ -955,141 +939,18 @@ export function createDiaristRoleRuntime(
   );
 }
 
-/** Shared review-submission status words the queue reads (#1028). */
-const COUNTERSIGN_QUEUE_STATUSES = new Set(["converged", "continue", "escalate"]);
-
-/**
- * Plain-language re-ask when status is not a known queue word.
- * Back to countersign itself — notary is not summoned (#753).
- */
-const COUNTERSIGN_STATUS_REASK =
-  "status 不是 converged、continue、escalate 三态之一。请重新交卷，status 写明其一。" as const;
-
-/** Secretariat status words the submission gate reads. */
-const SECRETARIAT_QUEUE_STATUSES = new Set(["converged", "escalate"]);
-
-/**
- * Plain-language re-ask when secretariatStatus is not a known queue word.
- * Back to secretariat itself — 给事中 is not summoned for escalation.
- */
-const SECRETARIAT_STATUS_REASK =
-  "secretariatStatus 不是 converged、escalate 之一。请重新交卷，status 写明其一。" as const;
-
-/**
- * Secretariat output is terminal; converged submissions enter the shared
- * submission gate on every host that mounts gatekeeper actions.
- */
+/** Secretariat files before the public post-submission audit starts. */
 export function createSecretariatRoleRuntime(
   roleHost: RoleHost,
   dependencies: SecretariatRuntimeDependencies,
-  hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
+  _hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
 ) {
-  const beforeAccept: FiledOfficerBeforeAccept | undefined =
-    hostActions !== undefined
-      ? async ({ toolCallId, parameters, signal, ctx }) => {
-          if (roleHost.requireSubmissionGate === undefined) {
-            const error = new Error("host cannot mount the secretariat submission gate");
-            error.name = "InfrastructureFailure";
-            return hostActions.failInfrastructure(error, ctx, toolCallId);
-          }
-          const record =
-            parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
-              ? (parameters as Record<string, unknown>)
-              : undefined;
-          const status =
-            record !== undefined && typeof record.secretariatStatus === "string"
-              ? record.secretariatStatus
-              : undefined;
-          if (status === undefined || !SECRETARIAT_QUEUE_STATUSES.has(status)) {
-            throw new ParentQueueReaskError(SECRETARIAT_STATUS_REASK);
-          }
-          if (status === "escalate") {
-            // Parent escalate → throw to caller as-is; countersign does not attend.
-            return undefined;
-          }
-          try {
-            const pass = await roleHost.requireSubmissionGate!({
-              context: ctx,
-              subject: { kind: "secretariat_verdict" },
-              ...(signal === undefined ? {} : { signal }),
-              hostActions,
-              toolCallId,
-              // #879: this-turn typed payload — identity-bound at submit site.
-              submission: parameters,
-            });
-            // Book 给事中 署 snapshot for seat settlement projection (receipt + runId).
-            // Ledger accepted stays LLM params (#836); public terminal reads this entry.
-            if (
-              pass !== undefined
-              && pass !== null
-              && typeof pass === "object"
-              && pass.status === "converged"
-              && "receipt" in pass
-            ) {
-              const {
-                SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
-              } = await import("./secretariat-contracts.ts");
-              const runId =
-                typeof pass.runId === "string" && pass.runId.trim() !== ""
-                  ? pass.runId
-                  : undefined;
-              ctx.sessionManager.appendCustomEntry?.(SECRETARIAT_GATE_OFFICER_ENTRY_TYPE, {
-                officer: "countersign",
-                receipt: pass.receipt,
-                ...(runId === undefined ? {} : { runId }),
-              });
-            }
-            return pass;
-          } catch (error) {
-            // 给事中上呈 ends parent with officer receipt (no retry / 不擅改).
-            if (
-              error instanceof GatekeeperDecisionError
-              && error.result.status === "escalate"
-            ) {
-              const receipt = error.result.receipt;
-              const receiptRecord =
-                receipt !== null && typeof receipt === "object" && !Array.isArray(receipt)
-                  ? (receipt as Record<string, unknown>)
-                  : undefined;
-              const runId =
-                typeof error.result.runId === "string" && error.result.runId.trim() !== ""
-                  ? error.result.runId
-                  : undefined;
-              // Envelope persists custom entries only
-              // (toolResult rows are memory-only on headless/ACP — #617/#959).
-              const {
-                SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
-              } = await import("./secretariat-contracts.ts");
-              ctx.sessionManager.appendCustomEntry?.(SECRETARIAT_GATE_OFFICER_ENTRY_TYPE, {
-                officer: "countersign",
-                receipt,
-                ...(runId === undefined ? {} : { runId }),
-              });
-              const { buildAuditEscalationResult } = await import("./audit-escalation.ts");
-              return buildAuditEscalationResult(
-                {
-                  status: "escalate",
-                  officer: "countersign",
-                  ...(receiptRecord !== undefined
-                    && Object.prototype.hasOwnProperty.call(receiptRecord, "decisionGate")
-                    ? { decisionGate: receiptRecord.decisionGate }
-                    : {}),
-                },
-                receipt,
-              );
-            }
-            throw error;
-          }
-        }
-      : undefined;
   const base = createFiledOfficerRuntime(
     roleHost,
     {
       role: "secretariat",
-      relayGatePass: true,
       tool: SECRETARIAT_OUTPUT_TOOL_SPEC,
       soulTag: "secretariat",
-      ...(beforeAccept === undefined ? {} : { beforeAccept }),
     },
     dependencies,
   );
@@ -1127,64 +988,14 @@ export function createSecretariatRoleRuntime(
 export function createCountersignRoleRuntime(
   roleHost: RoleHost,
   dependencies: CountersignRuntimeDependencies,
-  hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
+  _hostActions?: import("./host-contracts.ts").HostGatekeeperActions,
 ) {
-  // Notary inner gate difference only — lifecycle stays on the shared envelope.
-  // Pointer-only summons: officer self-fetches from run dossier (#632 / ADR 0079).
-  // #1028 queue: read shared status — escalate skips gate (thrown to caller);
-  // unreadable status returns to countersign; else notary inner gate.
-  const beforeAccept: FiledOfficerBeforeAccept | undefined =
-    hostActions !== undefined
-      ? async ({ toolCallId, parameters, signal, ctx }) => {
-          const record =
-            parameters !== null && typeof parameters === "object" && !Array.isArray(parameters)
-              ? (parameters as Record<string, unknown>)
-              : undefined;
-          const status =
-            record !== undefined && typeof record.status === "string"
-              ? record.status
-              : undefined;
-          if (status === undefined || !COUNTERSIGN_QUEUE_STATUSES.has(status)) {
-            // Parent status unreadable → back to countersign itself; do not summon notary,
-            // do not forge an officer bounce face (#753).
-            throw new ParentQueueReaskError(COUNTERSIGN_STATUS_REASK);
-          }
-          if (status === "escalate") {
-            // Parent escalate → throw to caller as-is; notary does not attend (#753).
-            return undefined;
-          }
-          if (roleHost.requireSubmissionGate === undefined) {
-            const error = new Error("host cannot mount the countersign gate");
-            error.name = "InfrastructureFailure";
-            return hostActions.failInfrastructure(error, ctx, toolCallId);
-          }
-          try {
-            return await roleHost.requireSubmissionGate({
-              context: ctx,
-              subject: { kind: "countersign_verdict" },
-              ...(signal === undefined ? {} : { signal }),
-              hostActions,
-              toolCallId,
-              // #879: this-turn typed payload — identity-bound at submit site.
-              submission: parameters,
-            });
-          } catch (error) {
-            if (error instanceof GatekeeperDecisionError && error.result.status === "escalate") {
-              const { buildAuditEscalationResult } = await import("./audit-escalation.ts");
-              return buildAuditEscalationResult({ status: "escalate", officer: "notary", conflicts: error.result.receipt }, parameters);
-            }
-            throw error;
-          }
-        }
-      : undefined;
   return createFiledOfficerRuntime(
     roleHost,
     {
       role: "countersign",
-      relayGatePass: true,
       tool: COUNTERSIGN_TOOL_SPEC,
       soulTag: "countersign",
-      ...(beforeAccept === undefined ? {} : { beforeAccept }),
     },
     dependencies,
   );
@@ -1810,7 +1621,6 @@ export function createRoleRuntimeExtension(
     const doctor = createDoctorRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("doctor"),
       async loadCase(path) { if (!dependencies.loadDoctorCase) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.loadDoctorCase(path); },
-      async auditCompliance(options) { if (!dependencies.auditDoctorCompliance) throw new Error("Doctor runtime dependencies are not configured"); return dependencies.auditDoctorCompliance(options); },
     }, hostActions);
     const notary = createNotaryRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("notary"),

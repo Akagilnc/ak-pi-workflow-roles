@@ -25,7 +25,7 @@ import { createSessionIdentityAuthority } from "../../src/session-identity.ts";
 import { summonPublicRole } from "../../src/public-role-summons.ts";
 import {
   createMinimalHost,
-  roleTurnHostFromLegacyPiRunner,
+  roleTurnHostFromLegacyPiRunner as rawLegacyPiRunner,
   scriptedTerminatingToolSession,
 } from "../helpers/role-turn-host-fixture.ts";
 import { appendPiSessionCustomEntry } from "../../src/pi/role-turn-host.ts";
@@ -44,6 +44,10 @@ import { isLawfulTypedTerminalOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observation.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
+
+const roleTurnHostFromLegacyPiRunner = (options: Parameters<typeof rawLegacyPiRunner>[0]) =>
+  withPassingReviewHost(rawLegacyPiRunner(options));
 
 async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
   return withTempRoot("ak-416-", async (home) => {
@@ -54,6 +58,7 @@ async function withTempHome<T>(fn:(home:string)=>Promise<T>):Promise<T>{
       ["config", "set", "diarist", "test/caller-seat:high", "countersign", "test/caller-seat:high", "judge", "test/caller-seat:high"],
       { packageRoot, home, io: { stdout() {}, stderr() {} } },
     );
+    await configurePassingReviewSeats(home);
     return fn(home);
   });
 }

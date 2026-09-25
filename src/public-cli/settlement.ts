@@ -897,7 +897,7 @@ function sessionReadFailure(
  * Read the exact bound Pi session file principal.
  * Does not scan the session directory for "latest" — resume identity is the file.
  */
-async function readBoundSessionEntries(
+export async function readBoundSessionEntries(
   sessionFile: string,
 ): Promise<SessionEntry[]> {
   const text = await readFile(sessionFile, "utf8");

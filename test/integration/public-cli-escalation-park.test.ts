@@ -1,6 +1,6 @@
 /**
  * #1057: officer escalation pauses that officer.
- * A later pass resumes the parent with that officer's receipt.
+ * A finished Judge submission enters review only after its tool call returns.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
@@ -19,7 +19,6 @@ import { listBookRunDirectories } from "../../src/role-run-placement.ts";
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
 import { readRecordedSubmissionRows } from "../../src/submission-ledger.ts";
-import { readableGateItem } from "../../src/readable-gate-item.ts";
 import {
   argvFlagValue,
   roleTurnHostFromLegacyPiRunner,
@@ -81,6 +80,7 @@ async function runJudge(
         activation: RoleTurnRequest["activation"];
       }[] = [];
       const parentMessages: string[] = [];
+      let judgeSubmissionFinished = false;
       const officerHost = roleTurnHostFromLegacyPiRunner({
         packageRoot,
         principalAuthority: piDurablePrincipalAuthority,
@@ -89,6 +89,7 @@ async function runJudge(
       const recordingOfficer: RoleTurnHost = {
         async executeTurn(request) {
           if (request.activation.role === "notary" || request.activation.role === "auditor") {
+            assert.equal(judgeSubmissionFinished, true, "audit began before the Judge submission tool finished");
             const coordinates = piDurablePrincipalAuthority.decode(request.principal);
             officerSessions.push({
               role: request.activation.role,
@@ -119,6 +120,7 @@ async function runJudge(
         try {
           await prepared.ingestStructuredOutput(verdict);
           const closed = await prepared.closeRound();
+          judgeSubmissionFinished = true;
           if (!closed.accepted) {
             if ("retry" in closed) return { code: 0, stderr: "", timedOut: false as const };
             const failure = "failure" in closed ? closed.failure : undefined;
@@ -238,7 +240,7 @@ test("#1057 a public judge verdict passes both audit gates and is accepted", asy
   });
 });
 
-test("#1057 a notary escalation pauses that officer and a pass resumes the judge", async () => {
+test("#1057 a notary escalation resumes into the remaining audit without Judge resubmission", async () => {
   const passed = { status: "converged", mark: 6 };
   let notaryCalls = 0;
   let auditorCalls = 0;
@@ -255,13 +257,13 @@ test("#1057 a notary escalation pauses that officer and a pass resumes the judge
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "", verdict: VERDICT }), async (observed) => {
     assert.equal(observed.first.terminal?.roleOutcome.role, "notary");
-    assert.notEqual((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
+    assert.equal((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
     const continued = await observed.resume(RULING);
     assert.equal(continued.exitCode, 0);
     assert.equal(notaryCalls, 2);
     assert.equal(auditorCalls, 1);
-    assert.equal(observed.parentMessages.length, 1);
-    assert.equal(observed.parentMessages[0], readableGateItem(passed));
+    assert.equal(observed.parentMessages.length, 0);
+    assert.equal(observed.judgeSubmissions.length, 1);
     const notarySessions = observed.officerSessions.filter((item) => item.role === "notary");
     assert.equal(notarySessions.length, 2);
     assert.equal(notarySessions[0]?.sessionFile, notarySessions[1]?.sessionFile);
@@ -277,7 +279,7 @@ test("#1057 a notary escalation pauses that officer and a pass resumes the judge
   });
 });
 
-test("#1057 an auditor escalation is the auditor run and a pass resumes the judge", async () => {
+test("#1057 an auditor escalation resumes and settles the finished Judge submission", async () => {
   const passed = { status: "converged", mark: 5 };
   let auditorCalls = 0;
   await runJudge(async (args, options) => {
@@ -291,12 +293,12 @@ test("#1057 an auditor escalation is the auditor run and a pass resumes the judg
   }, () => ({ code: 0, stderr: "", verdict: VERDICT }), async (observed) => {
     assert.equal(observed.first.terminal?.roleOutcome.role, "auditor");
     assert.notEqual(observed.first.terminal?.runId, undefined);
-    assert.notEqual((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
+    assert.equal((await readRoleRunIdentity(observed.parentRunDirectory))?.state, "terminal");
     const continued = await observed.resume(RULING);
     assert.equal(continued.exitCode, 0);
     assert.equal(auditorCalls, 2);
-    assert.equal(observed.parentMessages.length, 1);
-    assert.equal(observed.parentMessages[0], readableGateItem(passed));
+    assert.equal(observed.parentMessages.length, 0);
+    assert.equal(observed.judgeSubmissions.length, 1);
     assert.equal(observed.officerSessions.filter((item) => item.role === "notary").length, 1);
     const auditorSessions = observed.officerSessions.filter((item) => item.role === "auditor");
     assert.equal(auditorSessions.length, 2);
@@ -313,7 +315,7 @@ test("#1057 an auditor escalation is the auditor run and a pass resumes the judg
   });
 });
 
-test("#1057 a revised verdict after escalation reruns completed earlier gates", async () => {
+test("#1057 an auditor continue after escalation resumes the Judge for a revised verdict", async () => {
   const revised = { status: "converged", mark: 10 } as const;
   let notaryCalls = 0;
   let auditorCalls = 0;
@@ -325,9 +327,8 @@ test("#1057 a revised verdict after escalation reruns completed earlier gates", 
     }
     if (role === "auditor") {
       auditorCalls += 1;
-      return officer("auditor", auditorCalls === 1
-        ? { status: "escalate", mark: 4 }
-        : { status: "converged", mark: 5 })(args, options);
+      return officer("auditor", { status: auditorCalls === 1
+        ? "escalate" : auditorCalls === 2 ? "continue" : "converged", mark: auditorCalls })(args, options);
     }
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
   }, () => ({ code: 0, stderr: "", verdict: revised }), async (observed) => {
@@ -339,7 +340,7 @@ test("#1057 a revised verdict after escalation reruns completed earlier gates", 
     assert.equal(continued.terminal?.roleOutcome.kind, "accepted");
     assert.deepEqual(continued.terminal?.roleOutcome.payloads?.at(-1), revised);
     const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
-    assert.equal(rows.filter((row) => row.role === "judge" && row.kind === "accepted").length, 1);
+    assert.equal(rows.filter((row) => row.role === "judge" && row.kind === "accepted").length, 2);
     assert.deepEqual(rows.at(-1)?.accepted, revised);
   });
 });
@@ -369,25 +370,21 @@ test("#1057 a non-three-state auditor conclusion resumes that officer", async ()
   });
 });
 
-test("#1057 a parent Judge host failure does not settle the pending verdict", async () => {
-  let auditorCalls = 0;
+test("#1057 a remaining gate host failure does not publish a pass", async () => {
+  let notaryCalls = 0;
   await runJudge(async (args, options) => {
     const role = argvFlagValue(args, "--ak-role");
-    if (role === "notary") return officer("notary", { status: "converged", mark: 2 })(args, options);
-    if (role === "auditor") {
-      auditorCalls += 1;
-      return officer("auditor", auditorCalls === 1
-        ? { status: "escalate", mark: 4 }
-        : { status: "converged", mark: 5 })(args, options);
-    }
+    if (role === "notary") return officer("notary", ++notaryCalls === 1
+      ? { status: "escalate", mark: 4 } : { status: "converged", mark: 5 })(args, options);
+    if (role === "auditor") return { code: 1, stderr: "auditor host failed", timedOut: false };
     throw new Error(`unexpected nested role: ${role ?? "(missing)"}`);
-  }, () => ({ code: 1, stderr: "judge host failed" }), async (observed) => {
+  }, () => ({ code: 0, stderr: "" }), async (observed) => {
     const continued = await observed.resume(RULING);
     assert.notEqual(continued.exitCode, 0);
     assert.notEqual(continued.terminal?.roleOutcome.kind, "accepted");
     assert.equal(observed.judgeSubmissions.length, 1);
     const rows = await readRecordedSubmissionRows(observed.project, observed.parentRunId, observed.home);
-    assert.equal(rows.some((row) => row.role === "judge" && row.kind === "accepted"), false);
+    assert.equal(rows.some((row) => row.role === "judge" && row.kind === "accepted"), true);
   });
 });
 

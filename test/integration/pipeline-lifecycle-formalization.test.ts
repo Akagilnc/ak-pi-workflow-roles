@@ -16,6 +16,7 @@ import type {
 } from "../../src/host-contracts.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 
 /**
  * #517 §5(c) acceptance: the post-admission lifecycle is host-neutral. A faux
@@ -25,6 +26,7 @@ import { sealAcceptedSubmission } from "../helpers/submission-ledger-fixture.ts"
  */
 test("acceptance c: host replacement with faux RoleTurnHost through composition root (no Pi dependency)", async () => {
   return await withTempRoot("ak-faux-host-test-", async (home) => {
+    await configurePassingReviewSeats(home);
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     execFileSync("git", ["init", "-b", "main"], { cwd: project });
@@ -81,7 +83,7 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
         home,
         cwd: project,
         credentials: { "openai-codex": true, xai: true },
-        roleTurnHost: fauxHost,
+        roleTurnHost: withPassingReviewHost(fauxHost),
         io,
       },
     );

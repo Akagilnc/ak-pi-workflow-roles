@@ -1,5 +1,5 @@
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
-import { roleTurnHostFromLegacyPiRunner } from "../helpers/role-turn-host-fixture.ts";
+import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
  * #110/#177 public Fixer path — common Invocation, structural prerequisites,
@@ -21,6 +21,7 @@ import { execFileSync } from "node:child_process";
 import { resolveBookKeyFromGit } from "../../src/activation-ledger-git.ts";
 import { tryHomeFromAkRolesPath } from "../../src/activation-ledger-topology.ts";
 import { FIXER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/worker-output.ts";
+import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import {
   loadPackagedMethodSkillMaterial,
   observePackagedMethodSkillInvocation,
@@ -819,6 +820,9 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
+    await runAkRole(["config", "set", "inspector", "test/caller-seat:high"], {
+      packageRoot, home, io: captureIo().io,
+    });
 
     const unfinishedReceipt = {
       status: "unfinished" as const,
@@ -924,7 +928,13 @@ test("public Fixer unfinished/refused/partially_completed hand off via shared Te
         roleTurnHost: roleTurnHostFromLegacyPiRunner({
             packageRoot: packageRoot,
             principalAuthority: piDurablePrincipalAuthority,
-            piRunner: async (args) => {
+            piRunner: async (args, options) => {
+          if (args[args.indexOf("--ak-role") + 1] === "inspector") {
+            return scriptedTerminatingToolSession({
+              role: "inspector", toolName: INSPECTOR_OUTPUT_TOOL_NAME,
+              details: { status: "converged" },
+            })(args, options);
+          }
           const sessionFile = args[args.indexOf("--session") + 1]!;
           await mkdir(join(sessionFile, ".."), { recursive: true });
           await writeFile(sessionFile, fixerSessionLine(row.details), "utf8");

@@ -17,6 +17,7 @@ import test from "node:test";
 test.after(() => { process.exitCode = undefined; });
 
 import { emptyCollectorManifest } from "../../src/collector-config.ts";
+import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
 import { INSPECTOR_OUTPUT_TOOL } from "../../src/gatekeeper-role.ts";
 import { loadPackagedMethodSkillMaterial } from "../../src/package-resources/method-skill.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
@@ -42,6 +43,7 @@ import {
   roleTurnHostFromLegacyPiRunner,
   withNestedTrueUnboundDiarist,
 } from "../helpers/role-turn-host-fixture.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 import { Type } from "typebox";
 
 const git = (cwd: string, args: string[], input?: string) =>
@@ -105,6 +107,7 @@ async function conflictedRepository(root: string) {
 
 async function withSharedHome<T>(run: (home: string, project: string) => Promise<T>): Promise<T> {
   return await withTempRoot("ak-public-role-table-", async (home) => {
+    await configurePassingReviewSeats(home);
     // Nested court diarist (countersign) resolves from the live table (#178).
     await runAkRole(
       ["config", "set", "diarist", "test/caller-seat:high"],
@@ -356,14 +359,17 @@ async function runAcceptedRow(row: AcceptedRow, home: string, project: string) {
     createRunId: () => runId,
     credentials: { "openai-codex": true, xai: false },
     io,
-    roleTurnHost: withNestedTrueUnboundDiarist(
+    roleTurnHost: row.role === "notary" ? withNestedTrueUnboundDiarist(hostNeutralTypedTurn({
+      role: row.role, runId, details,
+      ...(sessionLines === undefined ? {} : { sessionLines }),
+    })) : withPassingReviewHost(withNestedTrueUnboundDiarist(
       hostNeutralTypedTurn({
         role: row.role,
         runId,
         details,
         ...(sessionLines === undefined ? {} : { sessionLines }),
       }),
-    ),
+    )),
   });
   return { result, runId, stderr: stderr.join("") };
 }
@@ -410,6 +416,7 @@ const ACCEPTED_ROWS: readonly AcceptedRow[] = [
       reason: "missing evidence",
       missingEvidence: [{ need: "leg", targetKeys: ["review-001"] }],
     }),
+    sessionLines: async () => [JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE })],
   },
   {
     role: "merger",
@@ -565,7 +572,7 @@ test("host-neutral typed turns record every terminating submission without sole 
         createRunId: () => runId,
         credentials: { "openai-codex": true, xai: false },
         io,
-        roleTurnHost: host,
+        roleTurnHost: withPassingReviewHost(host),
       },
     );
     assert.equal(result.exitCode, 0, JSON.stringify(result.terminal?.roleOutcome));
@@ -647,12 +654,12 @@ test("public-cli shared entry covers post-seal, no-receipt, and infrastructure",
         createRunId: () => runId,
         credentials: { "openai-codex": true, xai: false },
         io,
-        roleTurnHost: hostNeutralTypedTurn({
+        roleTurnHost: withPassingReviewHost(hostNeutralTypedTurn({
           role: "judge",
           runId,
           details: { status: "converged" },
           postSealAction: true,
-        }),
+        })),
       });
       assert.equal(result.terminal?.roleOutcome.kind, "accepted");
       assert.equal((await readRecordedSubmissionRows(project, runId, home)).at(-1)?.role, "judge");
