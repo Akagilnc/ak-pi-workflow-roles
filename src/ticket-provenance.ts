@@ -58,6 +58,14 @@ export class TicketProvenanceInputError extends Error {
 }
 
 /**
+ * Codex native session (rollout) store root under the operator machine home.
+ * Sole authority for the `~/.codex/sessions` path shape (#1064 run show reuses it).
+ */
+export function codexSessionsRoot(machineHome: string): string {
+  return join(machineHome, ".codex", "sessions");
+}
+
+/**
  * Host-owned session source roots (ADR 0038 / ADR 0081 cross-host).
  * Narrow directory identities — not whole `.pi` / whole `.ak-roles`.
  */
@@ -68,7 +76,7 @@ export function dialogueSessionSourceRoots(home?: string): readonly string[] {
       : packageMachineHome();
   return [
     join(machineHome, ".claude", "projects"),
-    join(machineHome, ".codex", "sessions"),
+    codexSessionsRoot(machineHome),
     join(machineHome, ".pi", "agent", "sessions"),
   ];
 }

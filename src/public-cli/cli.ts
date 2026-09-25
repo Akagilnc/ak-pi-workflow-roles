@@ -81,6 +81,7 @@ import {
 import { continueParentAfterChild, runPublicInstructionSeat, runPublicInstructionSeatResume } from "./instruction-seat-run.ts";
 import { courtDiaristEscalated } from "./countersign-run.ts";
 import { runPublicAnalyst } from "./analyst-run.ts";
+import { runPublicRunShow } from "./run-show.ts";
 import {
   AUTO_RESUME_LIMIT,
   peekRoleRunRole,
@@ -1177,6 +1178,13 @@ export async function runAkRole(
     if (parsed.command === "config") {
       return {
         exitCode: await runConfigCommand(parsed.args, home, env.packageRoot, io),
+      };
+    }
+
+    // #1064: read-only single-run view — never writes, never starts/resumes a role.
+    if (parsed.command === "run") {
+      return {
+        exitCode: await runPublicRunShow(parsed.args, { machineHome: home }, io),
       };
     }
 

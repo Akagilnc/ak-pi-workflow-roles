@@ -28,6 +28,7 @@ export const PUBLIC_CLI_SUPPORT_COMMANDS = [
   "help",
   "resume",
   "new",
+  "run",
   "setup",
 ] as const;
 

@@ -1335,6 +1335,15 @@ const SUPPORT_COMMAND_HELP = {
       "ak-role --host grok-build new inspector --attach ./change.patch",
     ],
   },
+  run: {
+    command: "run",
+    summary:
+      "Read-only single-run view (#1064): `run show <run-dir>` prints the last verdict payload, seal records, host thread id, compaction count, and token usage readable from that run. Missing materials print as unavailable; the ledger is never written and no role is started or resumed.",
+    usage: ["ak-role run show <run-dir>"],
+    examples: [
+      "ak-role run show ~/.ak-roles/books/<book>/<ticket>/runs/<runId>@<role>",
+    ],
+  },
 } as const satisfies Record<string, PublicCommandHelpFacts>;
 
 /**
