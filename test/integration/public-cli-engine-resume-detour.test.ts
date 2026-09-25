@@ -56,7 +56,7 @@ const SEAT_TERMINAL: Record<
   Seat,
   { readonly toolName: string; readonly details: Record<string, unknown> }
 > = {
-  judge: { toolName: JUDGE_OUTPUT_TOOL_NAME, details: { judgeStatus: "converged" } },
+  judge: { toolName: JUDGE_OUTPUT_TOOL_NAME, details: { status: "converged" } },
   coder: { toolName: CODER_OUTPUT_TOOL_NAME, details: { status: "completed", report: "engine proof" } },
   fixer: {
     toolName: FIXER_OUTPUT_TOOL_NAME,
@@ -121,16 +121,6 @@ async function seedTerminalSession(input: {
   const details =
     seat === "merger" ? { ...baseDetails, attemptId: runId } : baseDetails;
   const entries = [];
-  if (seat === "merger") {
-    const skillPath = join(packageRoot, "resources/methods/resolving-merge-conflicts/SKILL.md");
-    entries.push({
-      type: "message",
-      message: {
-        role: "user",
-        content: `<skill name="resolving-merge-conflicts" location="${skillPath}">\nmerge instructions\n</skill>\n\nComplete the merge.`,
-      },
-    });
-  }
   entries.push({
     type: "message",
     message: {

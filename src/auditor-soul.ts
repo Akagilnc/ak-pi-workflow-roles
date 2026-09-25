@@ -49,8 +49,9 @@ export const AUDITOR_SESSION_MATERIALS = {
     "souls/judge-auditor.md",
     "souls/audit-law.md",
     "souls/quality-law.md",
+    "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
   ],
-  doctor: ["CLAUDE.md", "souls/doctor-auditor.md"],
+  doctor: ["CLAUDE.md", "souls/doctor-auditor.md", "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md"],
 } as const satisfies Record<
   AuditorSoulRole,
   readonly [string, string, ...(readonly string[])]

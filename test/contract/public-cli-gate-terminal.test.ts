@@ -121,7 +121,7 @@ function acceptedJudgeSessionLine(): string {
       role: "toolResult",
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       isError: false,
-      details: { judgeStatus: "converged" },
+      details: { status: "converged" },
     },
   })}\n`;
 }
@@ -137,7 +137,7 @@ function auditIncompleteSessionRows(callId: string, candidate: unknown): string 
             type: "toolCall",
             id: callId,
             name: JUDGE_OUTPUT_TOOL_NAME,
-            arguments: { judgeStatus: "converged" },
+            arguments: { status: "converged" },
           },
         ],
       },
@@ -293,7 +293,7 @@ test("public CLI projects normal gate dispatch + officer findings", async () => 
       home,
       project,
       runId: "run-gate-normal",
-      sealedAcceptance: { details: { judgeStatus: "converged" } },
+      sealedAcceptance: { details: { status: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         await seedGatePair(sessionDir, {
@@ -329,7 +329,7 @@ test("public CLI shows seat reduction without reason as reason-absent", async ()
       home,
       project,
       runId: "run-gate-no-reason",
-      sealedAcceptance: { details: { judgeStatus: "converged" } },
+      sealedAcceptance: { details: { status: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         await seedDirectOfficer(sessionDir, "inspector");
@@ -358,7 +358,7 @@ test("public CLI omits gate when no auditor-roles gate ran", async () => {
       home,
       project,
       runId: "run-gate-no-gate",
-      sealedAcceptance: { details: { judgeStatus: "converged" } },
+      sealedAcceptance: { details: { status: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
       },
@@ -384,7 +384,7 @@ test("public CLI keeps accepted Terminal when auditor-roles holds lawful provinc
       home,
       project,
       runId: "run-gate-province-pass",
-      sealedAcceptance: { details: { judgeStatus: "converged" } },
+      sealedAcceptance: { details: { status: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         const auditorDir = join(sessionDir, "auditor-roles");
@@ -417,7 +417,7 @@ test("public CLI does not wash damaged auditor-roles into no-gate", async () => 
       home,
       project,
       runId: "run-gate-damaged",
-      sealedAcceptance: { details: { judgeStatus: "converged" } },
+      sealedAcceptance: { details: { status: "converged" } },
       seedSession: async (sessionDir) => {
         await writeFile(join(sessionDir, "session.jsonl"), acceptedJudgeSessionLine(), "utf8");
         const auditorDir = join(sessionDir, "auditor-roles");

@@ -658,11 +658,10 @@ test("bare resume follows live seat table host when it drifts from birth host", 
 /**
  * #822 — method Skill stays host-neutral on non-pi production path (graduated from
  * deleted unit helper probe). Real entry: config set-host coder + fake host binary.
- * Assert only external structured results: host prompt free of Pi `/skill:`, and
- * typed method provenance on the public Terminal evidence artifact after a lawful
- * planned receipt (same shape as lawful reviewer methodProvenance tracer).
+ * Assert external structured results: host prompt free of Pi `/skill:` and a
+ * lawful planned receipt.
  */
-test("#822 coder apply non-pi hosts: prompt free of /skill:; method provenance on receipt", async () => {
+test("#822 coder apply non-pi hosts: prompt free of /skill:; planned receipt", async () => {
   await homeTest(async (home) => {
     const project = join(home, "work");
     await mkdir(project, { recursive: true });
@@ -671,7 +670,7 @@ test("#822 coder apply non-pi hosts: prompt free of /skill:; method provenance o
     // One initial turn only — auto-resume would overwrite host dumps with the resume envelope.
     await runAkRole(["config", "set-auto-resume-limit", "0"], productionBase(home));
 
-    async function assertMethodProvenanceReceipt(result: {
+    async function assertPlannedReceipt(result: {
       hostFailure?: unknown;
       terminal?: {
         roleOutcome?: TerminalRoleOutcome;
@@ -687,13 +686,7 @@ test("#822 coder apply non-pi hosts: prompt free of /skill:; method provenance o
         ["planned"],
         label,
       );
-      const evidenceRef = result.terminal?.artifacts?.find((a) => a.kind === "evidence");
-      assert.ok(evidenceRef, `${label}: evidence artifact`);
-      const evidence = JSON.parse(await readFile(evidenceRef.path, "utf8")) as {
-        methodProvenance?: { name?: string; kind?: string };
-      };
-      assert.equal(evidence.methodProvenance?.name, "tdd", label);
-      assert.equal(evidence.methodProvenance?.kind, "role-method-skill", label);
+      assert.ok(result.terminal?.artifacts?.some((a) => a.kind === "evidence"), `${label}: evidence artifact`);
     }
 
     // --- ACP family: grok-build fake agent seals planned via MCP, answers session/close ---
@@ -793,9 +786,12 @@ rl.on("line", (line) => {
 
       await runAkRole(["config", "set", "coder", "xai/grok-4.5:high"], productionBase(home));
       await runAkRole(["config", "set-host", "coder", "grok-build"], productionBase(home));
+      const grokIo = captureIo();
       const result = await runAkRole(["coder", "--project", project, assignment],
-        { ...productionBase(home), cwd: project, createRunId: () => "run-822-coder-grok" },
+        { ...productionBase(home), io: grokIo.io, cwd: project, createRunId: () => "run-822-coder-grok" },
       );
+      assert.equal(result.hostFailure, undefined, grokIo.stderr.join(""));
+      assert.equal(result.exitCode, 0, `${grokIo.stdout.join("")}\n${grokIo.stderr.join("")}`);
 
       const frames = (await readFile(framesPath, "utf8"))
         .split("\n")
@@ -811,7 +807,7 @@ rl.on("line", (line) => {
         .join("");
       assert.equal(hostPrompt.startsWith("/skill:"), false, hostPrompt.slice(0, 80));
       assert.equal(hostPrompt.includes(assignment), true);
-      await assertMethodProvenanceReceipt(result, "grok-build");
+      await assertPlannedReceipt(result, "grok-build");
     }
 
     // --- headless family: claude fake returns planned structured_output ---
@@ -853,7 +849,7 @@ process.exit(0);
       assert.equal(hostPrompt.includes(assignment), true);
       // Provider-visible systemPrompt channel is a path flag (structure), not free text.
       assert.equal(argv.includes("--system-prompt-file"), true);
-      await assertMethodProvenanceReceipt(result, "claude");
+      await assertPlannedReceipt(result, "claude");
     }
   });
 });

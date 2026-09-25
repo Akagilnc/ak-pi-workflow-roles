@@ -1331,7 +1331,7 @@ test("public countersign path: summons text alone never mints a ticket without �
  * ticketAssertion: positive N = 本庭对象; null = true-unbound; "escalate" = 认不出;
  * or escalate object (may carry ticketNumber / other receipt facts — #953).
  * courtTicketNumbers: #871 optional typed co-review set on identity turns only.
- * Bound refresh (`整理 #N 的本案依据。`) asserts ticket N so each member volume is real.
+ * Bound refresh passes the caller's instruction; placement asserts ticket N.
  */
 type CourtDiaristTicketAssertion =
   | number
@@ -1497,9 +1497,11 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       principalAuthority: piDurablePrincipalAuthority,
       piRunner: courtPipelinePiRunner(),
     });
+    const diaristPrompts: string[] = [];
     const childHost = {
       async executeTurn(request: RoleTurnRequest) {
         childRoles.push(request.activation.role);
+        if (request.activation.role === "diarist") diaristPrompts.push(request.continuation.prompt);
         observedDiaristRunId = basename(request.runDirectory).split("@")[0]!;
         return childBase.executeTurn(request);
       },
@@ -1525,6 +1527,10 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
     assert.equal(result.exitCode, 0, stderr.join("") || stdout.join(""));
     assert.deepEqual(parentRoles, ["countersign", "notary"], "parent adapter runs the submitted body and its reviewer, not the court diarist child");
     assert.deepEqual(childRoles, ["diarist", "diarist"], "child seat adapter must execute court diarist station");
+    assert.deepEqual(diaristPrompts, [
+      "裁：继续审票 #582 是否足以开工。",
+      "裁：继续审票 #582 是否足以开工。",
+    ], "identity and refresh both carry the caller's instruction, not a code-written dispatch");
     const bookKey = resolveBookKeyFromGit(project);
 
     assert.ok(observedDiaristRunId);

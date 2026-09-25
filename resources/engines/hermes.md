@@ -67,17 +67,3 @@ hermes -z "YOUR_LABOR_PROMPT" --in /path/to/project --no-restore-cwd \
   01a046ec-*/01a046f4-*, 14:55-15:04 window).
   No concurrency ceiling has been measured beyond this observation; policy on
   concurrency and retries is the dispatcher's call, not this note's.
-
-## Smoke test (run before first labor leg of a session)
-
-```bash
-hermes -z "Reply with exactly one word: OK" --no-restore-cwd
-# long-prompt form used by labor legs:
-printf 'Reply with exactly one word: OK' > /tmp/smoke.txt
-hermes -z "$(cat /tmp/smoke.txt)" --no-restore-cwd
-```
-
-Expected: stdout is exactly `OK`, exit code 0. Verified 2026-08-28 on this
-host (model `poolside/laguna-s-2.1:free`, Nous Portal). If it fails, check
-`hermes status` (model/provider block) and `~/.hermes/provider_models_cache.json`
-for the current catalog; the interactive picker is `hermes model`.

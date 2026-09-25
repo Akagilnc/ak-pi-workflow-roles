@@ -9,6 +9,7 @@ import { execFileSync } from "node:child_process";
 import {
   mkdir,
   mkdtemp,
+  appendFile,
   readFile,
   rm,
   writeFile,
@@ -46,6 +47,8 @@ import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
 import { sampleCompletedDoctorOutput, seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
+import { configurePassingReviewSeats, withPassingReviewHost } from "../helpers/passing-review-host.ts";
 async function withTempHome<T>(scenario: (home: string) => Promise<T>): Promise<T> {
   return withTempRoot("ak-resume-four-seats-", scenario);
 }
@@ -227,6 +230,7 @@ for (const spec of SEAT_SPECS) {
       seedGitProject(project);
       const runId = `run-resume-${spec.role}-001`;
 
+      if (spec.role === "doctor") await configurePassingReviewSeats(home);
       const admitted = await spec.admit({ home, project, runId });
       const coordinates = piDurablePrincipalAuthority.decode(admitted.principal);
       const sessionFile = coordinates.sessionFile;
@@ -264,6 +268,23 @@ for (const spec of SEAT_SPECS) {
       let resumeSessionFile: string | undefined;
       let resumePrompt: string | undefined;
 
+      const host = roleTurnHostFromLegacyPiRunner({
+        packageRoot,
+        principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args, options) => {
+          resumeSessionFile = args[args.indexOf("--session") + 1]!;
+          resumePrompt = readUserDialogueStdin(String(options.stdin ?? ""));
+          openedPrincipals.add(resumeSessionFile);
+          if (spec.originalInstruction !== undefined) {
+            assert.equal(args.includes(spec.originalInstruction), false);
+          }
+          const result = await baseRunner(args, options);
+          if (spec.role === "doctor") {
+            await appendFile(resumeSessionFile, `${JSON.stringify({ type: "custom", customType: DOCTOR_CANDIDATE_ENTRY_TYPE })}\n`, "utf8");
+          }
+          return result;
+        },
+      });
       const { io, stderr } = captureIo();
       const resumed = await runAkRole([
         "resume",
@@ -279,19 +300,7 @@ for (const spec of SEAT_SPECS) {
         cwd: project,
         credentials: { "openai-codex": true, xai: false },
         io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args, options) => {
-            resumeSessionFile = args[args.indexOf("--session") + 1]!;
-            resumePrompt = readUserDialogueStdin(String(options.stdin ?? ""));
-            openedPrincipals.add(resumeSessionFile);
-            if (spec.originalInstruction !== undefined) {
-              assert.equal(args.includes(spec.originalInstruction), false);
-            }
-            return await baseRunner(args, options);
-          },
-        }),
+        roleTurnHost: spec.role === "doctor" ? withPassingReviewHost(host) : host,
       });
 
       assert.ok(resumeSessionFile, stderr.join(""));
@@ -300,7 +309,7 @@ for (const spec of SEAT_SPECS) {
       assert.deepEqual([...openedPrincipals], [sessionFile]);
       assert.equal(resumePrompt, "调用者原话");
 
-      assert.equal(resumed.exitCode, 0);
+      assert.equal(resumed.exitCode, 0, stderr.join(""));
       assert.ok(resumed.terminal);
       assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
       assert.equal(resumed.terminal!.roleOutcome.role, spec.role);

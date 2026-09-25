@@ -28,14 +28,12 @@ export const INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY = "diagnostic" as const;
 const infrastructureFailureNested = Type.Object(
   {
     [INFRASTRUCTURE_FAILURE_DIAGNOSTIC_KEY]: Type.Unknown({
-      description:
-        "非空基础设施失败诊断字符串。无失败时必须省略整个 infrastructureFailure。形状指引，非 schema 闸。",
+      description: "基础设施失败诊断字符串。",
     }),
   },
   {
     additionalProperties: true,
-    description:
-      "基础设施真实失败声明（如需）。规范形：{ diagnostic: 非空诊断字符串 }；无失败时必须省略。形状指引，非 schema 闸。",
+    description: "仅基础设施真实失败时出现。",
   },
 );
 // Open nested required so host cannot pure-shape-reject the declaration fragment.
@@ -50,8 +48,9 @@ const infrastructureFailureDeclarationSchema = Type.Object(
 
 /**
  * Compose declarations shared by terminating output tools: infrastructure failure
- * and the optional role-asserted ticket identity. Returns an open object (additionalProperties: true,
- * required: []) with the base schema's properties plus the shared declaration.
+ * and the optional role-asserted ticket identity. Returns an open object (additionalProperties: true)
+ * with the base schema's properties plus the shared declaration. Incoming required
+ * keys that still exist are kept; every other key stays optional.
  * Static typing is preserved on the base (`as S`), so existing
  * `Static<typeof ...>` derived parameter types are unchanged.
  */
@@ -66,8 +65,7 @@ export function withTerminatingOutputDeclarations<
       baseProperties?.ticketNumber === undefined
         ? {
             ticketNumber: Type.Unknown({
-              description:
-                "可选本票号：尚未绑定时由角色在既有回执中申报；机械层只记录合法正整数，不从散文推导、不验真。缺失或错形不拒收。",
+              description: "可选本票号。尚未绑定时由角色在既有回执中申报。",
             }),
           }
         : {}
@@ -78,7 +76,11 @@ export function withTerminatingOutputDeclarations<
       ],
   };
   const object = Type.Object(properties, { additionalProperties: true });
-  (object as unknown as { required: string[] }).required = [];
+  const incoming = (schema as { required?: unknown }).required;
+  const preserved = Array.isArray(incoming)
+    ? incoming.filter((key): key is string => typeof key === "string" && Object.hasOwn(properties, key))
+    : [];
+  (object as unknown as { required: string[] }).required = preserved;
   return object as unknown as S;
 }
 
@@ -115,7 +117,7 @@ function isInfrastructureFailureDeclaration(
 }
 
 /** Non-empty trimmed diagnostic from the declaration, else undefined. */
-function infrastructureFailureDiagnostic(
+export function infrastructureFailureDiagnostic(
   parameters: unknown,
 ): string | undefined {
   if (!isInfrastructureFailureDeclaration(parameters)) return undefined;

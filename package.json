@@ -26,6 +26,8 @@
   },
   "files": [
     "dist",
+    "!dist/package-resources/method-skill.js",
+    "!dist/package-resources/method-skill-binding.js",
     "extensions",
     "scripts/generate-tool-execution-observation-schema.ts",
     "scripts/build-package.mjs",
@@ -34,6 +36,7 @@
     "schemas",
     "packets",
     "resources",
+    "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
     "README.md",
     "LICENSE",
     "THIRD_PARTY_NOTICES.md",

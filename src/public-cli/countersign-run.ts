@@ -380,7 +380,7 @@ export async function runCountersignCourtDiaristStation(
   for (const ticketNumber of refreshTickets.slice(completedIndex + 1)) {
     const outcome = await invokeCourtDiarist(
       {
-        instruction: `整理 #${ticketNumber} 的本案依据。`,
+        instruction: admitted.instruction,
         projectRoot: admitted.projectRoot,
         failureLabel: `ticket #${ticketNumber}`,
         correlationId: admitted.runId,

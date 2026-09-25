@@ -343,7 +343,7 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const { io, stdout } = captureIo();
-    const acceptedDetails = { judgeStatus: "converged", note: "ok" };
+    const acceptedDetails = { status: "converged", note: "ok" };
     const result = await runAkRole(["judge", "--model", "test/caller-seat:high", "--project", project, "accepted then stderr.log blocked"],
       {
         packageRoot,
@@ -394,7 +394,7 @@ test("post-admission stderr.log EISDIR keeps child primary and still settles Ter
         result.terminal.submissions?.some(
           (row) =>
             typeof row === "object" && row !== null &&
-            (row as { judgeStatus?: unknown }).judgeStatus === "converged",
+            (row as { status?: unknown }).status === "converged",
         ),
         JSON.stringify(result.terminal.submissions),
       );

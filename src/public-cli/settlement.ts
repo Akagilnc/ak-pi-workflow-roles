@@ -93,20 +93,13 @@ import {
   SECRETARIAT_GATE_OFFICER_ENTRY_TYPE,
 } from "../secretariat-contracts.ts";
 import {
-  observePackagedMethodSkillInvocation,
-  resolvePackagedMethodSkillPath,
-  type ObservedPackagedMethodSkillInvocation,
-  type PackagedMethodSkillMaterial,
-  type PackagedMethodSkillName,
-  type PackagedMethodSkillProvenance,
-} from "../package-resources/method-skill.ts";
-import {
   classifyPackagedRoleTerminalResult,
   findLatestDurablePackagedRoleTerminal,
   hasNavigatorInfrastructureFailureBase,
   isAcceptedPackagedRoleTerminalResult,
   isReceiptSettlementBindingClear,
   NAVIGATOR_INVOCATION_ENTRY,
+  NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
   parseInvocationMarkerIdentity,
   type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
@@ -123,6 +116,7 @@ import type {
   DurablePrincipalCoordinates,
 } from "../host-contracts.ts";
 import { roleRunArtifactsDirectory } from "../role-run-placement.ts";
+import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 import {
   listSeamOwnedUniqueErrorFacePaths,
   RUN_TERMINAL_ARTIFACT_FILES,
@@ -295,10 +289,13 @@ export async function attachRecordedSubmissions<T extends TerminalResult>(
   // pass courtAttemptId here — roleOutcome already carries this-court payloads
   // from sealedLedgerOutcome when scoped; withSubmissions keeps them.
   void scope;
-  return withSubmissions(
+  const result = withSubmissions(
     terminal,
     await recordedSubmissionPayloads(admitted, undefined),
   );
+  const errorPath = privateFailureErrorPaths.get(terminal);
+  if (errorPath !== undefined) privateFailureErrorPaths.set(result, errorPath);
+  return result;
 }
 
 /**
@@ -381,6 +378,28 @@ export type ControlledFailure = {
   };
   readonly details?: Readonly<Record<string, unknown>>;
 };
+
+// A resumable public Terminal omits artifact paths (#108); its actual error
+// publication remains available only to the CLI's resume presentation seam.
+const privateFailureErrorPaths = new WeakMap<TerminalResult, string>();
+
+export function publishedFailureErrorPath(terminal: TerminalResult): string | undefined {
+  return privateFailureErrorPaths.get(terminal);
+}
+
+export function rewritePublishedFailureErrorPath(
+  terminal: TerminalResult,
+  oldRunDirectory: string,
+  newRunDirectory: string,
+): void {
+  const errorPath = privateFailureErrorPaths.get(terminal);
+  if (errorPath !== undefined) {
+    privateFailureErrorPaths.set(
+      terminal,
+      rewriteRunDirectoryPathValue(errorPath, oldRunDirectory, newRunDirectory) as string,
+    );
+  }
+}
 
 /**
  * Host stderr as recorded — full bytes, no flood filter, no char clip (#836).
@@ -2261,7 +2280,27 @@ async function withOptionalGateProjection<
   return attachEngineDetourToolUsage(next, sessionDirectory, gateContext);
 }
 
+function routePlaybookFailureMessage(entries: readonly SessionEntry[]): string | undefined {
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
+    const entry = entries[i];
+    if (entry?.type !== "custom" || entry.customType !== NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY) continue;
+    const data = entry.data;
+    if (!isRecord(data) || typeof data.message !== "string" || data.message.trim() === "") return undefined;
+    return data.message;
+  }
+  return undefined;
+}
+
 export function extractNavigatorFact(
+  entries: readonly SessionEntry[],
+): TerminalNavigatorFact {
+  const fact = extractNavigatorAttendanceFact(entries);
+  if (fact.advisoryDiagnostic !== undefined) return fact;
+  const message = routePlaybookFailureMessage(entries);
+  return message === undefined ? fact : { ...fact, advisoryDiagnostic: message };
+}
+
+function extractNavigatorAttendanceFact(
   entries: readonly SessionEntry[],
 ): TerminalNavigatorFact {
   // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.
@@ -2486,21 +2525,14 @@ async function publishAcceptedTerminalArtifacts(
   ];
 }
 
-type MethodPublicationOptions = {
-  readonly methodProvenance?: PackagedMethodSkillProvenance;
-  readonly methodSkillPath?: string;
-  readonly methodSkillConfiguredPath?: string;
-};
-
 /** Publish one accepted seat's report/evidence face from the shared leaf table. */
 export async function publishSeatAcceptedArtifacts(
   admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
   entries: readonly SessionEntry[] = [],
-  options: MethodPublicationOptions = {},
 ): Promise<TerminalArtifactRef[]> {
-  return publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries, options);
+  return publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries);
 }
 
 /**
@@ -2627,13 +2659,12 @@ async function settleSealedAcceptedOrToolResidual(
 /**
  * One settlement for every registered seat. The registry `settlement` leaf
  * picks sealed ledger, sealed-or-residual, or the accepted-tool scan.
- * Seat evidence and the observed-method tail stay on the artifact face.
+ * Seat evidence stays on the artifact face.
  */
 async function settleSeat(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope: SettlementCourtScope | undefined,
-  options: MethodPublicationOptions,
 ): Promise<TerminalResult | undefined> {
   const record = packagedRoleMetadata(admitted.role);
   if (record === undefined) {
@@ -2646,7 +2677,7 @@ async function settleSeat(
     roleOutcome: Extract<TerminalRoleOutcome, { kind: "accepted" | "audit_escalation" }>,
     coordinates: DurablePrincipalCoordinates,
     entries: readonly SessionEntry[],
-  ) => publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries, options);
+  ) => publishDeclaredSeatArtifacts(admitted, roleOutcome, coordinates, entries);
   if (record.settlement === "residual") {
     return settleSealedAcceptedOrToolResidual(
       admitted,
@@ -2673,10 +2704,9 @@ async function settleSeat(
 export async function trySettleSeatTerminalResult(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  options: MethodPublicationOptions = {},
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult | undefined> {
-  return settleSeat(admitted, authority, scope, options);
+  return settleSeat(admitted, authority, scope);
 }
 
 /**
@@ -2686,10 +2716,9 @@ export async function trySettleSeatTerminalResult(
 export async function settleSeatTerminalResult(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
-  options: MethodPublicationOptions = {},
   scope?: SettlementCourtScope,
 ): Promise<TerminalResult> {
-  const settled = await settleSeat(admitted, authority, scope, options);
+  const settled = await settleSeat(admitted, authority, scope);
   if (settled === undefined) {
     const label = admitted.role.charAt(0).toUpperCase() + admitted.role.slice(1);
     throw new Error(
@@ -2697,71 +2726,6 @@ export async function settleSeatTerminalResult(
     );
   }
   return settled;
-}
-
-function sessionMessageText(message: SessionMessage | undefined): string {
-  if (message === undefined) return "";
-  if (typeof message.content === "string") return message.content;
-  if (!Array.isArray(message.content)) return "";
-  const parts: string[] = [];
-  for (const part of message.content) {
-    if (
-      typeof part === "object" &&
-      part !== null &&
-      !Array.isArray(part) &&
-      (part as { type?: unknown }).type === "text" &&
-      typeof (part as { text?: unknown }).text === "string"
-    ) {
-      parts.push((part as { text: string }).text);
-    }
-  }
-  return parts.join("\n");
-}
-
-/**
- * Locations a loaded packaged method may be observed at.
- * The name is the loaded material; the configured path is the package copy.
- */
-export function observedMethodSkillOptions(
-  packageRoot: string,
-  material: PackagedMethodSkillMaterial,
-): {
-  readonly methodProvenance: PackagedMethodSkillProvenance;
-  readonly methodSkillPath: string;
-  readonly methodSkillConfiguredPath: string;
-} {
-  return {
-    methodProvenance: material.provenance,
-    methodSkillPath: material.skillPath,
-    methodSkillConfiguredPath: resolvePackagedMethodSkillPath(packageRoot, material.name),
-  };
-}
-
-/**
- * Observe packaged method Skill expansions from the session.
- * The skill name is the caller's packaged method; home locations never count.
- */
-function extractObservedMethodInvocations(
-  entries: readonly SessionEntry[],
-  options: {
-    readonly name: PackagedMethodSkillName;
-    readonly allowedLocations: readonly string[];
-  },
-): readonly ObservedPackagedMethodSkillInvocation[] {
-  const observed: ObservedPackagedMethodSkillInvocation[] = [];
-  for (const entry of entries) {
-    if (entry?.type !== "message") continue;
-    const message = entry.message;
-    if (message?.role !== "user") continue;
-    const text = sessionMessageText(message);
-    if (text.length === 0) continue;
-    const hit = observePackagedMethodSkillInvocation(text, {
-      name: options.name,
-      allowedLocations: options.allowedLocations,
-    });
-    if (hit !== undefined) observed.push(hit);
-  }
-  return Object.freeze(observed);
 }
 
 /**
@@ -2838,49 +2802,11 @@ function doctorReportFacts(
   };
 }
 
-function observedMethodTail(
-  face: PackagedArtifactFace,
-  entries: readonly SessionEntry[],
-  options: {
-    readonly methodProvenance?: PackagedMethodSkillProvenance;
-    readonly methodSkillPath?: string;
-    readonly methodSkillConfiguredPath?: string;
-  },
-): Record<string, unknown> {
-  if (face.method === undefined) return {};
-  if (face.method === "optional") {
-    return options.methodProvenance === undefined
-      ? {}
-      : { methodProvenance: options.methodProvenance };
-  }
-  if (
-    options.methodProvenance === undefined
-    || options.methodSkillPath === undefined
-    || options.methodSkillConfiguredPath === undefined
-  ) {
-    throw new Error("observed method publication is missing packaged method coordinates");
-  }
-  const methodInvocations = extractObservedMethodInvocations(entries, {
-    name: options.methodProvenance.name,
-    allowedLocations: [options.methodSkillPath, options.methodSkillConfiguredPath],
-  });
-  return {
-    methodProvenance: options.methodProvenance,
-    methodInvocationObserved: methodInvocations.length > 0,
-    methodInvocations,
-  };
-}
-
 async function publishDeclaredSeatArtifacts(
   admitted: AdmittedRoleInvocation,
   roleOutcome: TerminalRoleOutcome,
   coordinates: DurablePrincipalCoordinates,
   entries: readonly SessionEntry[],
-  options: {
-    readonly methodProvenance?: PackagedMethodSkillProvenance;
-    readonly methodSkillPath?: string;
-    readonly methodSkillConfiguredPath?: string;
-  } = {},
 ): Promise<TerminalArtifactRef[]> {
   const face = seatArtifactFace(admitted.role);
   const phase = face.reportPhase === true
@@ -2902,7 +2828,6 @@ async function publishDeclaredSeatArtifacts(
       sessionFile: coordinates.sessionFile,
       admittedRequestPath: admitted.admittedRequestPath,
       attachments: acceptedArtifactAttachmentRefs(admitted.attachments),
-      ...observedMethodTail(face, entries, options),
     },
   });
 }
@@ -3044,18 +2969,8 @@ export async function trySettlePublicSeat(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   scope: { readonly courtAttemptId?: string } | undefined,
-  material: PackagedMethodSkillMaterial | undefined,
-  packageRoot: string,
 ): Promise<TerminalResult | undefined> {
-  const face = seatArtifactFace(admitted.role);
-  if (face.method === "observed" && material === undefined) return undefined;
-  const options: MethodPublicationOptions =
-    face.method === "observed" && material !== undefined
-      ? observedMethodSkillOptions(packageRoot, material)
-      : face.method === "optional" && material !== undefined
-        ? { methodProvenance: material.provenance }
-        : {};
-  return settleSeat(admitted, authority, scope, options);
+  return settleSeat(admitted, authority, scope);
 }
 
 /**
@@ -3300,6 +3215,7 @@ export async function publishFailureArtifacts(
   admitted: AdmittedRoleInvocation,
   failure: ControlledFailure,
   authority: DurablePrincipalAuthority,
+  onErrorPublished?: (path: string) => void,
 ): Promise<TerminalArtifactRef[]> {
   const { sessionDirectory, sessionFile } = coordinatesFromAdmitted(authority, admitted);
   const { baseDir, attempt: baseAttempt } = await resolveFailureArtifactsBase(
@@ -3382,6 +3298,7 @@ export async function publishFailureArtifacts(
     errorPayloadBase,
     priorIssues,
   );
+  onErrorPublished?.(errorWrite.path);
 
   const evidencePayload: Record<string, unknown> = {
     runId: admitted.runId,
@@ -3421,6 +3338,7 @@ export async function settleFailureTerminalResult(
   authority: DurablePrincipalAuthority,
   options: SettlementCourtScope & {
     readonly resume?: TerminalResume;
+    readonly onErrorPublished?: (path: string) => void;
   } = {},
 ): Promise<TerminalResult> {
   const coordinates = coordinatesFromAdmitted(authority, admitted);
@@ -3491,7 +3409,8 @@ export async function settleFailureTerminalResult(
   // Exact-session attendance only — never infer no-advice from caller omission.
   const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
-  const artifacts = await publishFailureArtifacts(admitted, failure, authority);
+  const artifacts = await publishFailureArtifacts(admitted, failure, authority, options.onErrorPublished);
+  const errorPath = artifacts.find((artifact) => artifact.kind === "error")?.path;
   const decisiveFacts: Record<string, unknown> = {
     ...(failure.cause === undefined ? {} : { cause: failure.cause }),
     diagnostic: failure.diagnostic,
@@ -3517,7 +3436,7 @@ export async function settleFailureTerminalResult(
       diagnostic: failure.diagnostic,
       decisiveFacts,
     };
-    return withOptionalGateProjection(
+    const terminal = await withOptionalGateProjection(
       {
         roleOutcome,
         navigator,
@@ -3527,6 +3446,8 @@ export async function settleFailureTerminalResult(
       sessionDirectory,
       detourGateContext(admitted, options),
     );
+    if (errorPath !== undefined) privateFailureErrorPaths.set(terminal, errorPath);
+    return terminal;
   }
   const roleOutcome: TerminalRoleOutcome = {
     kind: "failure",
@@ -3566,13 +3487,14 @@ export async function settleJudgeFailureTerminalResult(
  */
 export function presentFailureTerminal(
   terminal: TerminalResult,
-  io: { stdout: (text: string) => void; stderr: (text: string) => void },
+  io: { stdout: (text: string) => void; stderr: (text: string) => void; omitFailureStderrDiagnostic?: boolean },
 ): void {
   if (terminal.roleOutcome.kind !== "failure" && terminal.roleOutcome.kind !== "no_receipt") {
     throw new TypeError("presentFailureTerminal requires a failure or no-receipt role outcome");
   }
   io.stdout(formatTerminalResult(terminal));
   if (terminal.roleOutcome.kind === "failure") {
+    if (io.omitFailureStderrDiagnostic) return;
     io.stderr(formatFailureStderrDiagnostic({
       ...(terminal.roleOutcome.cause === undefined ? {} : { cause: terminal.roleOutcome.cause }),
       diagnostic: terminal.roleOutcome.diagnostic,

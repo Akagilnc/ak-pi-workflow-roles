@@ -45,7 +45,7 @@ import { observeTyped429ViaProductionHandler } from "../helpers/typed-429-observ
 
 const ENGINE = "kimi";
 const reviewReadyHost: typeof createMinimalHost = (run) => withPassingReviewHost(createMinimalHost(run));
-const JUDGE_ACCEPTED = { judgeStatus: "converged" as const };
+const JUDGE_ACCEPTED = { status: "converged" as const };
 /** Non-ASCII stdout — UTF-8 byte length is the ticket metric (你好 = 6). */
 const ECHO_STDOUT = "你好";
 const ECHO_STDOUT_BYTES = Buffer.byteLength(ECHO_STDOUT, "utf8");

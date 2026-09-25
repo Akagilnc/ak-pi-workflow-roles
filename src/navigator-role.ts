@@ -14,4 +14,8 @@ export const NAVIGATOR_TOOL_SPEC = {
 
 export type NavigatorRuntimeDependencies = {
   loadSoul(): Promise<string>;
+  /** Standing route playbook. Production omits this and reads the package file once. */
+  loadRoutePlaybook?(): Promise<string>;
+  /** Same read's native failure, for the existing routePlaybookReadFailure outlet. */
+  recordRoutePlaybookReadFailure?(message: string | undefined): void;
 };

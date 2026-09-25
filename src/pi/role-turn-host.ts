@@ -6,7 +6,7 @@
 import { execFile, spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, appendFile, readFile, realpath } from "node:fs/promises";
-import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
+import { delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import { platform } from "node:process";
 import { promisify } from "node:util";
 import { randomUUID } from "node:crypto";
@@ -86,36 +86,10 @@ function buildMethodArgs(methods: readonly MethodBinding[]): string[] {
   const skillArgs: string[] = [];
   for (const method of methods) {
     if (method.kind === "skill") {
-      skillArgs.push("--skill", method.path);
+      skillArgs.push("--skill", dirname(method.path));
     }
   }
   return skillArgs;
-}
-
-/**
- * Pi-native `/skill:<name>` for a single forced method (ADR 0082: pi is one adapter
- * with no privilege; Pi-only seams stay inside the pi adapter).
- * Driven by typed RoleTurnRequest.methods — middle-layer decision, Pi-only syntax.
- * Zero/many methods leave the prompt alone (Fixer optional pair stays `--skill` only).
- */
-export function applyPiNativeSkillInvocation(
-  methods: readonly MethodBinding[],
-  prompt: string,
-): string {
-  const skills = methods.filter((method) => method.kind === "skill");
-  if (skills.length !== 1) return prompt;
-  const name = basename(dirname(skills[0]!.path));
-  if (name.length === 0) return prompt;
-  const token = `/skill:${name}`;
-  const trimmed = prompt.trimStart();
-  if (
-    trimmed === token
-    || trimmed.startsWith(`${token} `)
-    || trimmed.startsWith(`${token}\n`)
-  ) {
-    return prompt;
-  }
-  return prompt.length === 0 ? token : `${token} ${prompt}`;
 }
 
 /**
@@ -165,9 +139,7 @@ function piUserDialogueBody(request: RoleTurnRequest): string {
           const _exhaustive: never = request.continuation;
           return _exhaustive;
         })();
-  return request.continuation.kind === "resume"
-    ? rawPrompt
-    : applyPiNativeSkillInvocation(request.methods, rawPrompt);
+  return rawPrompt;
 }
 
 export type PiSpawnRunner = (

@@ -73,7 +73,7 @@ const caseIdentity = Type.Object({ issueNumber: Type.Optional(Type.Integer()), r
 // (src/countersign-role.ts) — one shared description across both variants
 // so openToolObjectFromUnion's identical-declaration collapse drops none of it.
 const DOCTOR_STATUS_DESCRIPTION =
-  "completed | refused — 形状指引，非 schema 闸；completed 允许空 findings；refused 仅当证据不足以支撑如实案证词" as const;
+  "completed | refused。completed 允许空 findings；refused 仅当证据不足以支撑如实案证词" as const;
 const doctorSubmissionVariants = Type.Union([
   Type.Object({
     status: Type.Unknown({ description: DOCTOR_STATUS_DESCRIPTION }),

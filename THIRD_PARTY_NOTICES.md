@@ -8,24 +8,13 @@ license authority. Do not treat them as dual-licensing the package.
 
 Upstream provenance: [mattpocock/skills](https://github.com/mattpocock/skills).
 
-This package ships or will ship pinned snapshots of the following skills from
-that upstream repository. Each shipped method records immutable upstream
-commit/tag identity, per-file digests and git blob OIDs, and attribution under
-`resources/methods/<name>/provenance.json`.
+`ak-role setup` installs the following skills from that upstream repository
+into the user's machine Skill directory. Neither the repository nor the npm
+package carries copies of them.
 
-- `tdd` — shipped unchanged under `resources/methods/tdd/` from upstream
-  `skills/engineering/tdd` at commit `8b36d4fb2635b3c21998dcd8144439c9e5ba7302`
-  (tag `v1.2.2`) (#109)
-- `diagnosing-bugs` — shipped under `resources/methods/diagnosing-bugs/` from
-  upstream `skills/engineering/diagnosing-bugs` at the same commit/tag, with
-  package adaptation `fixer-boundary-no-external-skill-chain` so the Fixer
-  method cannot automatically launch architecture Grill or other role-external
-  Skill chains (#110)
-- `resolving-merge-conflicts` — shipped under `resources/methods/resolving-merge-conflicts/` from
-  upstream `skills/engineering/resolving-merge-conflicts` at the same commit/tag, with
-  package adaptation `merger-merge-only-escalate-new-intent` so Merger stays merge-only,
-  escalates new intent/authority instead of guessing, and does not inherit upstream
-  unconditional-resolution or rebase workflow (#114)
+- `tdd`
+- `diagnosing-bugs`
+- `resolving-merge-conflicts`
 
 The complete upstream MIT license text follows.
 
@@ -55,8 +44,7 @@ SOFTWARE.
 
 ## First-party method (not third-party)
 
-- `ak-cross-m-review` — shipped verbatim under `resources/methods/ak-cross-m-review/`
-  from [Akagilnc/ak-cross-m-review](https://github.com/Akagilnc/ak-cross-m-review)
-  commit `57b10e2cea9ff008e2b36b98b55610e58cdfd512` (VERSION `0.5.2.0`, MIT,
-  Copyright (c) 2026 Akagi). `packageAdaptation` = `verbatim-upstream`. This is
-  first-party material owned by the same author line, not a third-party skill.
+- `ak-cross-m-review` — `ak-role setup` installs it from
+  [Akagilnc/ak-cross-m-review](https://github.com/Akagilnc/ak-cross-m-review)
+  (MIT, Copyright (c) 2026 Akagi). This is first-party material owned by the
+  same author line, not a third-party skill.

@@ -121,7 +121,7 @@ export async function materializePackageTree(
 
   for (const rel of paths) {
     const src = resolve(packageRoot, rel);
-    if (!existsSync(src) || rel === ".agents/skills") continue;
+    if (!existsSync(src)) continue;
     const dst = resolve(dest, rel);
     await mkdir(dirname(dst), { recursive: true });
     await copyFile(src, dst);

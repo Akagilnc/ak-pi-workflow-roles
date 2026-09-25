@@ -1,4 +1,4 @@
-import { chmod, copyFile, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -15,6 +15,10 @@ const entries = [
   // (#590: published non-bundle graph must stay closed under its own relative edges).
   "navigator-public-session",
   "navigator-session-contracts",
+  // Static import of navigator-attendance and navigator-public-session.
+  "navigator-work-base",
+  // Static import of navigator-work-base.
+  "atomic-write",
   "public-role-summons",
   "pi/in-process-session",
   "activation-ledger-git",
@@ -203,11 +207,6 @@ export async function buildPackageArtifacts() {
   await buildAcpProductionHost();
   await buildHeadlessProductionHost();
   await buildMigrateBookTopology();
-  const pluginDir = join("dist", "method-host-plugin");
-  await rm(pluginDir, { recursive: true, force: true });
-  await mkdir(pluginDir, { recursive: true });
-  await cp("resources/method-host-plugin/.claude-plugin", join(pluginDir, ".claude-plugin"), { recursive: true });
-  await cp("resources/methods", join(pluginDir, "skills"), { recursive: true });
   // Packaged handbook/playbook paths resolve via injected packageRoot (#962) —
   // do not mirror resources/ into dist/resources (one authority, no parallel copy).
 }

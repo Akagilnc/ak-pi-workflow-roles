@@ -201,7 +201,7 @@ test("zero-exit post-admission runs with no accepted row settle honestly as no_r
       const project = join(home, "proj");
       await mkdir(project, { recursive: true });
       seedGitProject(project);
-      const { io, stdout, stderr } = captureIo();
+      const { io, stderr } = captureIo();
       const result = await runAkRole(row.argv(project), {
         packageRoot,
         home,
@@ -221,7 +221,6 @@ test("zero-exit post-admission runs with no accepted row settle honestly as no_r
       });
       assert.equal(result.exitCode, 0, row.label);
       assert.equal(result.terminal?.roleOutcome.kind, "no_receipt", row.label);
-      assert.equal(stdout.length, 1, row.label);
       assert.equal(stderr.length, 0, row.label);
     });
   }

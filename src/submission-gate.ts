@@ -206,7 +206,7 @@ export async function requireSubmissionGate(options: {
       };
     }
     if (gatekeeper.status === "needs_reask") {
-      reask = officerConclusionReask(projected.officer);
+      reask = officerConclusionReask(gatekeeper.receivedStatus);
       continue;
     }
     if (gatekeeper.status === "transport_failure") {

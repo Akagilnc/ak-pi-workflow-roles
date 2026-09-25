@@ -10,7 +10,7 @@ import { bookDirectOfficerRunPointer } from "../archivist-record-pointer.ts";
 import { createPiDoctorAuditor } from "../doctor-auditor.ts";
 
 import type { DurablePrincipalAuthority, HostContext, RoleTurnRequest } from "../host-contracts.ts";
-import { OFFICER_CONCLUSION_REASK, gateOfficerForSubject } from "../gatekeeper-role.ts";
+import { officerConclusionReask, gateOfficerForSubject } from "../gatekeeper-role.ts";
 import { runJudgeGates } from "../judge-role.ts";
 import { WORKER_DONE_STATUSES } from "../worker-submission-contracts.ts";
 import { SECRETARIAT_GATE_OFFICER_ENTRY_TYPE } from "../secretariat-contracts.ts";
@@ -27,15 +27,10 @@ import {
 import { isSafePositiveTicketNumber, readBoardTicketNumber } from "../run-ticket-number.ts";
 import { NotarySourceRunError, resolveNotarySourceRunLocator } from "../notary-source-run.ts";
 import { engineSessionMaterialFromOptions, pickEngineAxis } from "../package-resources/engine-material.ts";
-import {
-  loadPackagedMethodSkillMaterial,
-  type PackagedMethodSkillMaterial,
-} from "../package-resources/method-skill.ts";
 import type { PackagedRole } from "../packaged-role-registry.ts";
 import {
   packagedAdmitsCountersign,
   packagedBindsBoardTicket,
-  packagedMethodLoadFailureCause,
   packagedRebindSourceOnResume,
   packagedRoleMetadata,
 } from "../packaged-role-registry.ts";
@@ -55,15 +50,16 @@ import {
   type AdmittedCountersignInvocation,
   type AdmittedRoleInvocation,
   type PublicSeatParse,
+  type RunDirectoryRelocation,
 } from "./invocation.ts";
 import {
   presentControlledFailure,
   prepareSummonsResumeMaterials,
-  resolveResumeMethodMaterialAdapters,
   roleTurnOptions,
   runPostAdmissionOneShot,
   runPostAdmissionResumable,
   runPostAdmissionSeatResume,
+  showResumeErrorPointer,
   resumeTurnRequestProjectionOptions,
   type PostAdmissionAdapters,
   type PostAdmissionEnv,
@@ -85,6 +81,7 @@ import {
   trySettlePublicSeat,
 } from "./settlement.ts";
 import type { CliIo } from "./cli-io.ts";
+import { warnMissingMethodSkills } from "./machine-method-skills.ts";
 import {
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
@@ -93,8 +90,8 @@ import {
 } from "./terminal.ts";
 import {
   admittedSeatTurnDetails,
-  packagedSettleSkill,
   projectRoleTurnRequest,
+  requiredMethodSkills,
   type RoleTurnRequestProjectionOptions,
 } from "./turn-request.ts";
 import {
@@ -190,7 +187,7 @@ export function buildInstructionSeatTurnRequest(
 ): RoleTurnRequest {
   return projectRoleTurnRequest(
     admitted,
-    admittedSeatTurnDetails(admitted, options.packageRoot),
+    admittedSeatTurnDetails(admitted, options.home, options.host),
     options,
   );
 }
@@ -228,25 +225,24 @@ async function bindAndRelocateDiarist(
   admitted: AdmittedRoleInvocation & { role: "diarist" },
   authority: DurablePrincipalAuthority,
   lease?: RunWriterLease,
-): Promise<void> {
+): Promise<RunDirectoryRelocation | undefined> {
   const boardTicket = await readBoardTicketNumber(admitted.runDirectory);
-  if (boardTicket === undefined) return;
+  if (boardTicket === undefined) return undefined;
   if (admitted.ticketNumber === undefined) {
     await bindAdmittedTicketNumber(admitted, boardTicket);
   }
-  await relocateAdmittedRunToTicket(admitted, authority, lease);
+  return await relocateAdmittedRunToTicket(admitted, authority, lease);
 }
 
 function seatAdapters(
   admitted: AdmittedRoleInvocation,
   env: InstructionSeatRunEnv,
-  material?: PackagedMethodSkillMaterial,
 ): PostAdmissionAdapters<AdmittedRoleInvocation> {
   const record = roleRecord(admitted.role);
   const present = "presentSettled" in record ? record.presentSettled : "default";
   return {
     trySettle: (seat, authority, scope) =>
-      trySettlePublicSeat(seat, authority, scope, material, env.packageRoot),
+      trySettlePublicSeat(seat, authority, scope),
     ...(present === "always" ? { shouldPresentSettled: () => true } : {}),
     ...(present === "typed"
       ? { shouldPresentSettled: (terminal: TerminalResult) => isLawfulTypedTerminalOutcome(terminal.roleOutcome) }
@@ -262,8 +258,8 @@ function seatAdapters(
           await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
         },
         afterDispatch: async (seat: AdmittedRoleInvocation, lease?: RunWriterLease) => {
-          if (!isBoardTicketSeat(seat)) return;
-          await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
+          if (!isBoardTicketSeat(seat)) return undefined;
+          return await bindAndRelocateDiarist(seat, env.principalAuthority, lease);
         },
       }
       : {}),
@@ -313,23 +309,8 @@ async function dispatchAdmitted(
   io: CliIo,
 ): Promise<SeatRunResult> {
   const record = roleRecord(admitted.role);
-  let material: PackagedMethodSkillMaterial | undefined;
-  const skill = packagedSettleSkill(admitted);
-  if (skill !== undefined) {
-    try {
-      material = await loadPackagedMethodSkillMaterial(env.packageRoot, skill);
-    } catch (error) {
-      const knownCause = packagedMethodLoadFailureCause(admitted.role);
-      return await presentControlledFailure(admitted, {
-        timedOut: false,
-        code: null,
-        stderr: "",
-        thrown: error,
-        ...(knownCause === undefined ? {} : { knownCause }),
-      }, seatAdapters(admitted, env), env.principalAuthority, io) as SeatRunResult;
-    }
-  }
-  const adapters = seatAdapters(admitted, env, material);
+  await warnMissingMethodSkills(env.home, env.host, admitted.role, requiredMethodSkills(admitted), io.stdout);
+  const adapters = seatAdapters(admitted, env);
   const held: string[] = [];
   const turnIo: CliIo = AUDITED_ROLES.has(admitted.role)
     || POST_SUBMISSION_ROUTING[admitted.role] !== undefined
@@ -931,21 +912,9 @@ export async function runPublicInstructionSeatResume(
     adapters: {
       trySettle: async () => undefined,
     },
-    afterAdmittedLoad: (admitted) => {
-      const skill = packagedSettleSkill(admitted);
-      if (skill === undefined) {
-        return Promise.resolve({ kind: "continue" as const, adapters: seatAdapters(admitted, env) });
-      }
-      const knownCause = packagedMethodLoadFailureCause(admitted.role);
-      return resolveResumeMethodMaterialAdapters({
-        admitted,
-        authority: env.principalAuthority,
-        io,
-        loadMaterial: () => loadPackagedMethodSkillMaterial(env.packageRoot, skill),
-        adaptersWith: (material) => seatAdapters(admitted, env, material),
-        emptyAdapters: seatAdapters(admitted, env),
-        ...(knownCause === undefined ? {} : { knownCause }),
-      });
+    afterAdmittedLoad: async (admitted) => {
+      await warnMissingMethodSkills(env.home, env.host, admitted.role, requiredMethodSkills(admitted), io.stdout);
+      return { kind: "continue" as const, adapters: seatAdapters(admitted, env) };
     },
     ...(env.engine === undefined ? {} : { effectiveEngine: env.engine }),
     });
@@ -1007,8 +976,6 @@ async function queueConclusionFromChild(
       current,
       env.principalAuthority,
       undefined,
-      undefined,
-      env.packageRoot,
     );
     const status = latestQueueStatus(terminal);
     if (terminal !== undefined && status !== undefined && QUEUE_CONCLUSIONS.has(status)) {
@@ -1016,7 +983,7 @@ async function queueConclusionFromChild(
     }
     const reasked = await runPublicInstructionSeatResume({
       runId: current.runId,
-      message: OFFICER_CONCLUSION_REASK,
+      message: officerConclusionReask(status),
     }, env, io);
     if (reasked.exitCode !== 0 || reasked.admitted === undefined || reasked.terminal === undefined) {
       return { stop: reasked };
@@ -1056,7 +1023,7 @@ export async function continueParentAfterChild(
   }
   if (resolved !== undefined && (resolved.status === "continue" || resolved.status === "converged")) {
     if (AUDITED_ROLES.has(admitted.role) && resolved.status === "converged") {
-      const terminal = await trySettlePublicSeat(admitted, env.principalAuthority, undefined, undefined, env.packageRoot);
+      const terminal = await trySettlePublicSeat(admitted, env.principalAuthority, undefined);
       if (terminal?.roleOutcome.kind !== "accepted") throw new Error("pending submission is not recorded");
       return auditSubmittedRole({ exitCode: 0, admitted, terminal }, env, io, resolved.admitted.role, latestQueuePayload(resolved.terminal), resolved.admitted.runId);
     }
@@ -1065,7 +1032,9 @@ export async function continueParentAfterChild(
       message: readableGateItem(latestQueuePayload(resolved.terminal)),
     }, { ...env, autoResumeLimit: 0 }, io);
   }
-  return dispatchAdmitted(admitted, env, io);
+  const result = await dispatchAdmitted(admitted, env, { ...io, omitFailureStderrDiagnostic: true });
+  showResumeErrorPointer(io, result.exitCode, result.terminal);
+  return result;
 }
 
 /** Finished submissions enter the existing audit gate after their tool call has returned. */
@@ -1227,7 +1196,7 @@ async function auditSubmittedRole(
         ? undefined : runIdFromRunDirectory(escalation.runDirectory));
     if (escalatedRunId === undefined) throw new Error("escalated audit has no resumable run identity");
     const officer = await loadResumablePublicRole(env.home, escalatedRunId, env.principalAuthority, true);
-    const terminal = await trySettlePublicSeat(officer.admitted, env.principalAuthority, undefined, undefined, env.packageRoot);
+    const terminal = await trySettlePublicSeat(officer.admitted, env.principalAuthority, undefined);
     if (terminal === undefined) throw new Error("escalated audit has no terminal result");
     io.stdout(formatTerminalResult(terminal));
     return { exitCode: 0, admitted: officer.admitted, terminal };
@@ -1247,7 +1216,7 @@ async function auditSubmittedRole(
         ...(officerRunId === undefined ? {} : { runId: officerRunId }),
       });
     }
-    const settled = await trySettlePublicSeat(admitted, env.principalAuthority, undefined, undefined, env.packageRoot);
+    const settled = await trySettlePublicSeat(admitted, env.principalAuthority, undefined);
     if (settled?.roleOutcome.kind !== "accepted") throw new Error("audited Secretariat submission did not settle");
     turn = { ...turn, terminal: settled };
   }

@@ -229,6 +229,54 @@ test("mixed tools in one turn still record every terminating submission (#836 no
   });
 });
 
+test("review escalate keeps a failure declaration; other roles still host-fail", async () => {
+  await withLedgerFixture(async (f) => {
+    let ran = 0;
+    const params = { status: "escalate", infrastructureFailure: { diagnostic: "disk full" } };
+    const host = registerTool(f.root, async (submitted) => {
+      ran += 1;
+      return { content: [], details: submitted, terminate: true };
+    });
+    const result = await host.tool().execute("review-escalate", params, undefined, undefined, host.context);
+    assert.equal(ran, 1);
+    assert.equal(result.terminate, true);
+    assert.deepEqual(result.details, params);
+    const rows = await readRecordedSubmissionRows(f.root, "run-ledger", f.root);
+    assert.deepEqual(rows.at(-1), {
+      role: "judge",
+      kind: "accepted",
+      accepted: params,
+      toolCallId: "review-escalate",
+    });
+    assert.deepEqual(publicNavigatorSettlement("judge", null, {
+      toolName: JUDGE_OUTPUT_TOOL_NAME,
+      isError: false,
+      details: params,
+    }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
+  });
+
+  await withLedgerFixture(async (f) => {
+    let ran = 0;
+    const params = { infrastructureFailure: { diagnostic: "disk full" } };
+    const coderTool = packagedRoleOutputTool("coder");
+    assert.equal(typeof coderTool, "string");
+    const host = registerTool(f.root, async () => {
+      ran += 1;
+      return { content: [], details: params, terminate: true };
+    }, coderTool, "coder");
+    await assert.rejects(
+      host.tool().execute("coder-infra", params, undefined, undefined, host.context),
+      (error: unknown) => error instanceof Error && error.message === "disk full",
+    );
+    assert.equal(ran, 0);
+    const outcomes = (await ledgerRecords(f.root)).filter((record) => record.kind === "outcome");
+    assert.equal(outcomes.length, 1);
+    assert.equal((outcomes[0]?.payload as { outcome?: string }).outcome, "infrastructure");
+    assert.equal((outcomes[0]?.payload as { role?: string }).role, "coder");
+    assert.deepEqual((outcomes[0]?.payload as { accepted?: unknown }).accepted, params);
+  });
+});
+
 test("pipeline ledger records an unknown output failure as infrastructure", async () => {
   await withLedgerFixture(async (f) => {
     const params = { status: "converged", report: "infra-params" };

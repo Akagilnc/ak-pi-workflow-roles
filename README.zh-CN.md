@@ -25,7 +25,7 @@ ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review thi
 
 退出码报的是生命周期诚实，不是业务成败：一切合法 typed 终态（含 `audit_escalation`）退出零；无合法终态的失败退出非零，其 Terminal 携带 Error Artifact 引用与原始原因，不伪造回执。
 
-`ak-role resume <runId> [message]` 按**现行席位表**的 model / host / engine 续跑该次运行——与新起角色腿同一解析（model：`--model` → 席位持久 → 官席继承；仍无则报错。host：`--host` → 席位持久 host → 包默认 `pi`）。先 `ak-role config set <seat> <provider/model[:thinking]>` 配席，或逐次带 `--model`。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 run，角色继续走到终局。所有可调用席位（包括 Notary/符宝郎）都会将 `runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略时包不会添加续跑文本。Notary 另行的显式 `new` 命令仍只接受 source-run locator，不接受 caller prompt。全局 `--model` / `--thinking` / `--host` / `--engine` 仅覆盖本次 resume——须置于 `<runId>` 之前（放 `resume` 之前或 `resume` 与 `<runId>` 之间均可，例如 `ak-role --model xai/grok-4.5 resume 01abc…` 或 `ak-role resume --model xai/grok-4.5 01abc…`）；`<runId>` 之后的那一个 argv 恒为原样透传的 message，绝非旗位（#471）。真实换宿主时（现行席位 host 与上一次 invocation host 不同），将前序宿主原生卷宗一次性作为 context 交付目标宿主；同宿主续跑不重复注入。各宿主仅直写自身原生卷宗（Pi：`session/session.jsonl`；Grok CLI 原始会话留在操作员 grok 家，工厂卷宗为该 run 的司天台记录），统一账目归入司天台。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID、session 主体不在则拒绝。所有可调用角色均可手动 resume：给事中、左拾遗始于 #599，通进司、太医署、符宝郎、台院始于 #633。
+`ak-role resume <runId> [message]` 按**现行席位表**的 model / host / engine 续跑该次运行——与新起角色腿同一解析（model：`--model` → 席位持久 → 官席继承；仍无则报错。host：`--host` → 席位持久 host → 包默认 `pi`）。先 `ak-role config set <seat> <provider/model[:thinking]>` 配席，或逐次带 `--model`。角色 `escalate`（直通御前）后拿到 owner 裁定，标准续跑是 `ak-role resume <runId> "<裁定>"`——把裁定喂回同一 run，角色继续走到终局。所有可调用席位（包括 Notary/符宝郎）都会将 `runId` 后可选的 `message` 原样作为续跑 prompt（opaque：不进全局旗标语法）；省略时包不会添加续跑文本。Notary 另行的显式 `new` 命令仍只接受 source-run locator，不接受 caller prompt。全局 `--model` / `--thinking` / `--host` / `--engine` 仅覆盖本次 resume——须置于 `<runId>` 之前（放 `resume` 之前或 `resume` 与 `<runId>` 之间均可，例如 `ak-role --model xai/grok-4.5 resume 01abc…` 或 `ak-role resume --model xai/grok-4.5 01abc…`）；`<runId>` 之后的那一个 argv 恒为原样透传的 message，绝非旗位（#471）。真实换宿主时（现行席位 host 与上一次 invocation host 不同），将前序宿主原生卷宗一次性作为 context 交付目标宿主；同宿主续跑不重复注入。各宿主仅直写自身原生卷宗（Pi：`session/session.jsonl`；Grok CLI 原始会话留在操作员 grok 家，工厂卷宗为该 run 的司天台记录），统一账目归入司天台。要不要续跑由调用者决定：不再要求 typed HTTP 429，也不要求 `resumable` 状态。未知 run ID 则拒绝；其余续跑失败只输出一行指向当次错误记录的指针（`续跑失败，当次错误记录：<path>`），原因看该文件。所有可调用角色均可手动 resume：给事中、左拾遗始于 #599，通进司、太医署、符宝郎、台院始于 #633。
 
 全部可调用角色在单次调用内对非 lawful LLM 终态原地续跑（同一 `runId` 与 session），次数上限为 `autoResumeLimit`。缺键默认 2；`ak-role config set-auto-resume-limit <N>` 写入（`0` 关闭自动续）。lawful typed 终态（`accepted` / `audit_escalation` / `no_receipt`）立即停止。手动 `ak-role resume` 仍可用。
 
@@ -40,8 +40,8 @@ ak-role config set inspector <provider/model[:thinking]>
 ak-role config set notary <provider/model[:thinking]>
 ak-role config unset gatekeeper
 # 持久劳务引擎（可调用角色）；一次性覆盖仍用 --engine
-# 多模型引擎（cursor/opencode/agy）可附型号；名字即模型的引擎可省略
-ak-role config set-engine judge opus
+# 可选型号是独立坐标，与 CLI 引擎名分开指定
+ak-role config set-engine judge claude-code
 ak-role config set-engine coder cursor cursor-grok-4.6-high
 ak-role config set-engine-model coder cursor-grok-4.6-high
 ak-role config unset-engine-model coder
@@ -52,7 +52,7 @@ ak-role config unset-host judge
 ak-role config set-auto-resume-limit 3
 ```
 
-**宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动；裸 `resume` 同序取表。可调用角色及其机构子腿（审刑审计、太医审计）共享进程内机构子会话接缝；御史台方法 Skill 现行仅 Pi 原生 `/skill:ak-cross-m-review` 交付——非 Pi 宿主原生装载仍 OPEN（[#922](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/922)）。
+**宿主轴（配置默认 host 后调用无感）：** `--host` 为全局公开旗，全部可调用角色与 `resume` 受理。解析序为调用 `--host` → 席位持久 host（`config set-host`）→ 包默认（`pi`）。`config set-host <seat> <name>` 之后，与 Pi 完全相同的命令面即可在该席跑命名宿主——零额外旗、零调用侧改动；裸 `resume` 同序取表。可调用角色及其机构子腿（审刑审计、太医审计）共享进程内机构子会话接缝。
 
 **推荐宿主（省 token，[#971](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/971)）：** 长腿的上下文靠宿主自带的自动压缩封顶，阈值写在各宿主自己的配置里，本包不代写、不另造压缩机制。
 
@@ -66,7 +66,7 @@ ak-role config set-auto-resume-limit 3
 
 **宿主 provider 表（#788）：** 席位行只写一份 provider 名。owner 手改 `~/.ak-roles/host-providers.json`（形如 `{ "hermes": { "xai": "xai-oauth" } }`）；代码只读。表里没有的问宿主目录（本票 hermes）：唯一即用，零个或多个响亮失败。优先级：表 > 唯一 > 失败，代码无裁量。`config show` 原样打印该表。
 
-**强制方法 Skill（#922）：** Pi 使用 `--skill`。角色只绑定一个 Skill 时，Claude 使用 `--plugin-dir` 与原生 slash command；当前 print harness 无法在一轮发出多个 slash command，所以 Fixer 等多 Skill 角色在 Claude 上没有强制方法调用。Codex 通过官方项目 `.agents/skills` 目录发现随包方法：目录缺失时创建常设软链，既有项不覆盖；调用时显式传入每个官方 `$skill-name`。Hermes ACP 与 Grok ACP 当前 harness 无法强制 Skill 调用。这些缺口只在文档说明：本包不为其另造适配、能力探测、typed failure、catalog 或操作员前置，也不改宿主 trust／配置。
+**机器方法 Skill：** 运行 `ak-role setup`，在 `~/.agents/skills` 安装缺失的所需 Skill，并经 Skills CLI（`skills update -g`）升级这些名字。路径已被占用则警告并原样保留。setup 为已安装的 Claude Code、Hermes 建必要软链。该目录是唯一机器安装源。角色发现所需 Skill 缺失时向 stdout 警告并继续。Pi 仅从该目录向原生 `--skill` 传路径；Claude Code 与 Codex 遵从原生 Skill 发现；Hermes ACP 与 Grok ACP 当前 harness 无法强制 Skill。本包不拼剥角色任务文本中的 Skill 命令，也不修改宿主 trust 或配置。
 
 门下省官席解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。配置用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。持久配置是全机共享单文件、多 CLI 版本同读：本构建不认识的席位键读时跳过（不报错）；已知席位上的未知字段沿用现行容忍。
 

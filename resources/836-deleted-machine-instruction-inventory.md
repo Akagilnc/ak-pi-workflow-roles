@@ -9,12 +9,12 @@
 | `compliance-transport.ts` `AUDITOR_DOSSIER_PROMPT` | `本 run 卷宗已就绪。` | 改为台院同形路径指针。 |
 | `doctor-role.ts` case catalog | `provenance: "由留存 session 字节推导，封入受理回执。"` | 删。catalog 只留 cost 与证据指针。 |
 | `collector-role.ts` bounceInfrastructure | `请省略该字段后重新提交。` | 代码打回推翻自报已删。 |
-| `reviewer-role.ts` output description | `Standards/Spec 评审腿由 runtime 以取证子会话代跑…` | #836 改为「本席自调 code-review skill」。#917 后随包方法为 `ak-cross-m-review`；`resources/methods/code-review/` 已删，现役指针见 `resources/methods/ak-cross-m-review/SKILL.md`。 |
+| `reviewer-role.ts` output description | `Standards/Spec 评审腿由 runtime 以取证子会话代跑…` | #836 改为「本席自调 code-review skill」。#917 后方法为 `ak-cross-m-review`；#1043 起不再随包，由 `ak-role setup` 从 Akagilnc/ak-cross-m-review 装入机器 `~/.agents/skills`。 |
 | `run-lifecycle.ts` A4.1 | `[ak-role:resume-continue]` | 生产码不再含此字面量。结算只跳过空轮与引擎指针续跑。 |
 | `run-lifecycle.ts` A4.2 | `重新读 <path>` | 前轮已删改写。 |
 | `submission-correctable-error.ts` A4.5 | `终局交卷并非本轮唯一工具调用。` | 删。Pi/ACP `deliverSubmissionRejection` 不再注入该句。 |
-| `role-runtime.ts` 催交 | `本会话尚无已接受的 typed 回执。` | **留**（轮次/预算，Q2）。 |
-| `navigator-attendance.ts` early prepare 开场 | `父衙门进行中。请在本宿主会话熟悉下列材料并待命；结算结果送达后，再给出下一步建议。本轮不要提交最终路线建议。` | #959 迁入 `resources/navigator-route-playbook.md`「到场阶段」；代码只留中立指针句「本轮为待命轮。」 |
-| `navigator-attendance.ts` settlement feed 开场 | `父衙门结算已送达。请根据下列材料给出下一步建议。` | #959 迁入同手册；代码只留中立指针句「本轮为结算投喂轮。」 |
+| `role-runtime.ts` 催交 | `本会话尚无已接受的 typed 回执。` | #1021 改为递当前 typed delivery 事实，不写催交句。 |
+| `navigator-attendance.ts` early prepare 开场 | `父衙门进行中。请在本宿主会话熟悉下列材料并待命；结算结果送达后，再给出下一步建议。本轮不要提交最终路线建议。` | #959 迁入 `resources/navigator-route-playbook.md`「到场阶段」。#1021 删掉代码指针句「本轮为待命轮。」：待命不调模型，只记到场。 |
+| `navigator-attendance.ts` settlement feed 开场 | `父衙门结算已送达。请根据下列材料给出下一步建议。` | #959 迁入同手册。#1021 删掉代码指针句「本轮为结算投喂轮。」：结算轮只递当前 typed 三态及指针。 |
 
 催交句与 2.1–2.3 打回文、重问三句不在删除列。

@@ -351,8 +351,7 @@ export function createCollectorRoleRuntime(
       pi.registerTool({
         name: COLLECTOR_BIND_TARGET_TOOL,
         label: "通进司认票绑定",
-        description:
-          "角色判定任务材料后绑定本仓唯一 PR 目标。可提交 prNumber 或 issueNumber（线上关联唯一 PR）；显式 --pr 已绑定时无需再调。多义或无法确定时会正确驳回，要求调用方明确 --pr。",
+        description: "绑定本仓唯一 PR 目标。",
         promptSnippet: "绑定角色判定的 issue/PR 目标",
         parameters: bindSchema,
         async execute(toolCallId: string, params: BindParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
@@ -433,7 +432,7 @@ export function createCollectorRoleRuntime(
       pi.registerTool({
         name: COLLECTOR_OBSERVE_TOOL,
         label: "通进司观察",
-        description: "抓取配置目标的完整 GitHub PR 证据，存不可变快照入卷。正文在上下文中只给头部摘录加指针；需要头部之外的正文时，用 ak_collector_read 按 evidenceId 开卷；findings 的拆分与归类由你在交件时完成。目标未绑定前须先 ak_collector_bind_target。",
+        description: "抓取配置目标的 GitHub PR 证据。",
         promptSnippet: "抓取配置目标 PR 证据",
         parameters: observeSchema,
         async execute(toolCallId: string, _params: unknown, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
@@ -464,7 +463,7 @@ export function createCollectorRoleRuntime(
       pi.registerTool({
         name: COLLECTOR_READ_TOOL,
         label: "通进司开卷",
-        description: "按 evidenceId 开卷读取一条已观测材料的全量正文与指针；只在观察头部摘录不足以判读时调用。",
+        description: "按 evidenceId 开卷读取一条已观测材料的全量正文与指针。",
         promptSnippet: "按指针开卷读材料",
         parameters: readSchema,
         async execute(toolCallId: string, params: ReadParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
@@ -499,7 +498,7 @@ export function createCollectorRoleRuntime(
       pi.registerTool({
         name: COLLECTOR_REQUEST_TOOL,
         label: "通进司请求",
-        description: "在所引最新快照 HEAD 发一次请求。requestId 可取配置清单，或角色依手册/现场判定的稳定 id；后者须同时提供 body。",
+        description: "发一次请求。",
         promptSnippet: "发一次评审请求",
         parameters: requestSchema,
         async execute(toolCallId: string, params: RequestParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
@@ -625,7 +624,7 @@ export function createCollectorRoleRuntime(
       pi.registerTool({
         name: COLLECTOR_WAIT_TOOL,
         label: "通进司等待",
-        description: "再观察前等待；实际睡眠不超过剩余等待窗。",
+        description: "等待。实际睡眠不超过剩余等待窗。",
         promptSnippet: "等待窗内等待",
         parameters: waitSchema,
         async execute(toolCallId: string, params: WaitParams, signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {
@@ -656,7 +655,7 @@ export function createCollectorRoleRuntime(
       pi.registerTool({
         name: COLLECTOR_OUTPUT_TOOL,
         label: "通进司输出",
-        description: "观察完成后提交原交卷。正常完工提交空对象 {}（如需报 finding，填 findings 指针数组）；仅在基础设施真实失败时才可填 infrastructureFailure，无失败时必须省略该字段。",
+        description: "提交通进司回执。",
         promptSnippet: "提交通进司回执",
         parameters: outputSchema,
         async execute(toolCallId: string, params: OutputParams, _signal: AbortSignal | undefined, _onUpdate: unknown, ctx: HostContext) {

@@ -3,8 +3,6 @@ import { Type } from "typebox";
 import { openToolObjectFromUnion } from "./open-tool-schema.ts";
 import { withTerminatingOutputDeclarations } from "./package-contracts/terminating-infrastructure.ts";
 
-import type { AnyCanonicalSkillBinding, CanonicalSkillBinding } from "./canonical-skill-binding.ts";
-export type { CanonicalSkillBinding };
 import { REVIEWER_OUTPUT_TOOL_NAME, type ReviewerIntent } from "./package-contracts/reviewer-output.ts";
 
 export { REVIEWER_OUTPUT_TOOL_NAME };
@@ -31,7 +29,7 @@ const reviewerAmendmentsSchema = Type.Object({
 }, {
   additionalProperties: true,
   description:
-    "已运行 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；显式单轴时另一轴可省略。hard-stop／usage error 为 refused 时，已产出报告仍照录对应 lens 字段。形状指引，非 schema 闸。",
+    "已运行 lens 的 amendments 承载 candidates、逐条处置与 verdict 的完整报告（非仅 verdict 行）；显式单轴时另一轴可省略。hard-stop／usage error 为 refused 时，已产出报告仍照录对应 lens 字段。",
 });
 // #836 r16 class 1: diagnostic is LLM/human-read narrative content — no code
 // branches on its length (src/reviewer-role.ts consumer: reviewer content is
@@ -42,7 +40,7 @@ const reviewerAmendmentsSchema = Type.Object({
 // #917 §6: both normal lens verdicts → completed; hard-stop/usage error → refused
 // (report already produced still lands in selected-lens amendments).
 const REVIEWER_STATUS_DESCRIPTION =
-  "completed | refused — 形状指引，非 schema 闸。两种正常 lens verdict（completeness / correctness）均 completed；hard-stop 与 usage error 为 refused（已产出报告仍照录进所选 lens amendments）。" as const;
+  "completed | refused。两种正常 lens verdict（completeness / correctness）均 completed；hard-stop 与 usage error 为 refused（已产出报告仍照录进所选 lens amendments）。" as const;
 const reviewerOutputVariants = Type.Union([
   Type.Object({
     status: Type.Unknown({ description: REVIEWER_STATUS_DESCRIPTION }),
@@ -59,7 +57,6 @@ export const reviewerOutputSchema = withTerminatingOutputDeclarations(
 );
 export type ReviewerRoleDependencies = {
   loadSoul(): Promise<string>;
-  loadCanonicalSkillBinding(name: "ak-cross-m-review"): Promise<AnyCanonicalSkillBinding>;
 };
 export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never };
 
@@ -67,8 +64,6 @@ export type ReviewerRoleHostActions = { failInfrastructure(error: unknown, ctx: 
 export type ReviewerActivation = Readonly<{
   fixedBaseRevision: string;
   soul: string;
-  /** Frozen ak-cross-m-review binding — envelope owns expansion capture against this data. */
-  skillBinding: CanonicalSkillBinding<"ak-cross-m-review">;
 }>;
 
 /**
@@ -84,7 +79,6 @@ export function createReviewerRoleRuntime(
   activate(ctx: HostContext | undefined, admitted: ReviewerAdmittedInputs): Promise<ReviewerActivation>;
 } {
   let soul: string | undefined;
-  let binding: CanonicalSkillBinding<"ak-cross-m-review"> | undefined;
   let registered = false;
   let fixedBaseRevision: string | undefined;
 
@@ -93,15 +87,12 @@ export function createReviewerRoleRuntime(
       soul = (await dependencies.loadSoul()).trim();
       if (!soul) throw new Error("Reviewer soul is empty");
       fixedBaseRevision = admitted.baseRevision;
-      const loaded = await dependencies.loadCanonicalSkillBinding("ak-cross-m-review");
-      if (loaded.name !== "ak-cross-m-review") throw new Error("Canonical Skill binding loader returned tdd for ak-cross-m-review");
-      binding = loaded;
 
       if (!registered) {
         registered = true;
-        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台终局回执。本席自调 ak-cross-m-review skill。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
+        pi.registerTool({ name: REVIEWER_OUTPUT_TOOL_NAME, label: "御史台输出", description: "提交御史台终局回执。", promptSnippet: "提交御史台终局回执", parameters: reviewerOutputSchema,
           async execute(_id: string, parameters: unknown): Promise<HostToolResult<unknown>> {
-            if (!soul || !binding) throw new Error("御史台输入未装载");
+            if (!soul) throw new Error("御史台输入未装载");
             return {
               content: [],
               details: parameters,
@@ -111,11 +102,9 @@ export function createReviewerRoleRuntime(
       }
       const activatedSoul = soul;
       const activatedBase = fixedBaseRevision;
-      const activatedBinding = binding;
       return Object.freeze({
         fixedBaseRevision: activatedBase,
         soul: activatedSoul,
-        skillBinding: activatedBinding,
       });
     },
   };

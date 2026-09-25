@@ -92,23 +92,7 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
     case "coder":
       return { ...base, loadCoderTask: async () => "Build it.\n" };
     case "reviewer":
-      return {
-        ...base,
-        loadCanonicalSkillBinding: async (name) => {
-          const raw = "# skill\n";
-          return {
-            name,
-            snapshot: {
-              raw,
-              path: "/skill",
-              baseDir: "/",
-              body: raw,
-              snapshotIdentity: Object.freeze({ text: raw }),
-            },
-            captureExpansion: () => undefined,
-          };
-        },
-      };
+      return base;
     case "collector":
       return {
         ...base,

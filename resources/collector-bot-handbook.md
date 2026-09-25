@@ -27,6 +27,10 @@
 - 官方：https://prod.cursor.com/help/ai-features/bugbot 与 automations 文档
 - 内置 Bugbot 与同账号自定义任务须区分；某任务额度耗尽不推断其他任务失效
 
+## 工序
+
+判定任务材料后绑定本仓唯一 PR（prNumber，或由 issueNumber 解析到唯一 PR）。已有显式 PR 绑定时不必再绑。多义或无法确定时不猜，交给调用方明确目标。未绑定前不观察。观察把证据存成不可变快照；上下文里的正文只到头部，其余按 evidenceId 开卷。请求发在所引最新快照 HEAD 上；清单外的 requestId 要带上正文。交卷交 findings 指针，不把模板通知当成 finding；没有 finding 就不要编一条。未完成写现场原因，不写成没问题。
+
 ## 修正规则
 
 - 优先引用官方文档；现场差异记入仓库差异条并附 PR/证据指针

@@ -21,30 +21,21 @@ Run from the role project root. Non-interactive print mode; `-f/--force`
 allows command execution headlessly; `-p` prints responses for scripts:
 
 ```bash
+cursor-agent -p -f --output-format text "YOUR_LABOR_PROMPT"
+```
+
+When the dispatch order specifies a model, pass it verbatim via `--model`:
+
+```bash
 cursor-agent -p -f --output-format text --model <MODEL_ID> "YOUR_LABOR_PROMPT"
 ```
 
-- Model ids come from `cursor-agent models`. Effort tiers are encoded in the
-  id itself (e.g. `cursor-grok-4.6-low`, `cursor-grok-4.6-medium`,
-  `cursor-grok-4.6-high`, plus `-fast` variants); some models also accept a
-  bracket override form (`'claude-opus-4-8[context=1m,effort=high]'` — see
-  `cursor-agent --help`).
-- This note does not pin a model id. The dispatch order (owner pool
-  directive) names the model to pass verbatim via `--model`. If `--model
-  <MODEL_ID>` is not provided, please uses `cursor-grok-4.6-high`.
+- Model ids come from `cursor-agent models`. Effort tiers may be encoded in
+  the id; see `cursor-agent --help` for supported model-specific forms.
+- This note does not pin a model id. Without one in the dispatch order, omit
+  `--model` and let the CLI use its configured default.
 - Always `--output-format text`; never `stream-json` (the event stream goes back
-  into the seat's context as noise — see `opus.md`).
+  into the seat's context as noise — see `claude-code.md`).
 
 Prefer `cursor-agent --help` on the host over any remembered flag set. Do not
 wrap this engine behind `ak-role` flags.
-
-## Smoke test (run before first labor leg of a session)
-
-```bash
-cursor-agent -p -f --output-format text --model <MODEL_ID> "Reply with exactly one word: OK"
-```
-
-Expected: stdout ends with exactly `OK`, exit code 0. Mechanics verified
-2026-08-28 on this host (Cursor subscription login) with a dispatch-order
-model id substituted for `<MODEL_ID>`. If it asks about directory trust, the
-`-f` flag (or `--trust`) is missing.

@@ -60,7 +60,7 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
           runDirectory: request.runDirectory,
           home: request.home,
           role: "judge",
-          details: { judgeStatus: "converged", note: "faux host settled" },
+          details: { status: "converged", note: "faux host settled" },
         });
         return {
           code: 0,
@@ -122,7 +122,7 @@ test("acceptance c: host replacement with faux RoleTurnHost through composition 
     // #836: the published artifact carries the role's own original payload —
     // not a runtime-invented status.
     assert.equal(
-      (artifactBody.outcome?.payloads?.at(-1) as { judgeStatus?: string } | undefined)?.judgeStatus,
+      (artifactBody.outcome?.payloads?.at(-1) as { status?: string } | undefined)?.status,
       "converged",
     );
     });

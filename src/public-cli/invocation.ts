@@ -87,7 +87,6 @@ import { sha256Hex } from "../sha256.ts";
 import { rehomeUnboundTicketProvenance } from "../ticket-provenance.ts";
 import { uuidv7 } from "../uuidv7.ts";
 import {
-  NOTARY_FIXED_KICKOFF,
   type NotarySourceRunLocator,
 } from "../notary-contracts.ts";
 import {
@@ -308,6 +307,11 @@ export type AdmittedRoleInvocation =
   | AdmittedNotaryInvocation
   | AdmittedReviewerInvocation
   | AdmittedMergerInvocation;
+
+export type RunDirectoryRelocation = {
+  readonly oldRunDirectory: string;
+  readonly newRunDirectory: string;
+};
 
 /** Persistence projection only — not carried on Admitted (opaque principal owns identity). */
 type RoleInvocationLedgerSource = Pick<
@@ -648,7 +652,7 @@ export async function relocateAdmittedRunToTicket(
   admitted: AdmittedRoleInvocation,
   authority: DurablePrincipalAuthority,
   heldLease?: { relocate(runDirectory: string): void },
-): Promise<{ oldRunDirectory: string; newRunDirectory: string } | undefined> {
+): Promise<RunDirectoryRelocation | undefined> {
   if (admitted.ticketNumber === undefined || !admitted.runDirectory.includes(`${sep}unbound${sep}runs${sep}`)) return undefined;
   const oldRunDirectory = admitted.runDirectory;
   const ledgerHome = resolveActivationLedgerHome(homeFromRunDirectory(oldRunDirectory));
@@ -2156,6 +2160,7 @@ type InstructionTransportSource = {
   readonly baseRevision?: string;
   readonly lens?: ReviewerLens;
   readonly authorityRefs?: readonly string[];
+  readonly sourceRunPath?: string;
 };
 
 function admittedTransportPromptKind(
@@ -2178,13 +2183,16 @@ export function buildInstructionTransportPrompt(
 ): string {
   const kind = admittedTransportPromptKind(admitted);
   if (kind === "fixed-kickoff") {
-    return appendEngineSessionMaterial([NOTARY_FIXED_KICKOFF], engineMaterial).join("\n");
+    if (admitted.sourceRunPath === undefined || admitted.sourceRunPath.trim() === "") {
+      throw new Error("fixed-kickoff transport prompt is missing the source run pointer");
+    }
+    return appendEngineSessionMaterial([admitted.sourceRunPath], engineMaterial).join("\n");
   }
   if (kind === "baseline") {
     if (admitted.baseRevision === undefined) {
       throw new Error("baseline transport prompt is missing the bound revision");
     }
-    const lines = [`左拾遗案已受理。比较基线：${admitted.baseRevision}`];
+    const lines = [admitted.baseRevision];
     if (!admitted.instructionEmpty) {
       lines.push("", admitted.instruction);
     }

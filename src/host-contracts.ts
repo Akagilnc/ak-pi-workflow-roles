@@ -74,7 +74,7 @@ export class ExplicitInternalActivationError extends Error {
   }
 }
 
-/** Packaged method skill binding (zero/one/many). */
+/** Required machine-installed method Skill (zero/one/many). */
 export type MethodBinding = {
   readonly kind: "skill";
   readonly path: string;
@@ -342,32 +342,12 @@ export type HostEventRegistration = { [K in keyof HostEventMap]: [event: K, hand
 
 /** Gatekeeper non-pass faces returned to parent (#836 includes transport_failure; never kill leg). */
 type HostGatekeeperNonPass = { readonly status: "continue" | "escalate" | "no_receipt" | "transport_failure" } & Record<string, unknown>;
-export type HostSubmissionNonPass =
-  | HostGatekeeperNonPass
-  | { readonly code: "coder_skill_expansion_evidence_missing" };
+export type HostSubmissionNonPass = HostGatekeeperNonPass;
 export type HostGatekeeperActions = {
   failInfrastructure(error: unknown, context: HostContext, toolCallId?: string): never;
   /** Envelope-owned execute→tool_result bridge for any structured submission non-pass. */
   bindSubmissionNonPass(toolCallId: string, result: HostSubmissionNonPass): void;
 };
-
-export type HostSkillExpansionEvidence = Readonly<{
-  name: string;
-  location: string;
-  content: string;
-  userMessage: string;
-}>;
-
-/** Host capability declaration (contract verb ④). */
-export type HostCapabilityDeclaration = Readonly<{
-  skillExpansion(prompt: string): HostSkillExpansionEvidence | undefined;
-  /**
-   * Pi-only: recover the plain original request from a native skill turn text
-   * (argv may already carry `/skill:<name>` from the Pi adapter). Absent on
-   * non-pi hosts so role body never parses Pi slash syntax (ADR 0082).
-   */
-  skillOriginalRequest?(name: string, text: string): string;
-}>;
 
 /** Host-owned effects used by the shared activation envelope. */
 export interface RoleEnvelopeHost {
@@ -380,7 +360,6 @@ export interface RoleEnvelopeHost {
 
 /** The activation surface consumed by package role factories. */
 export interface RoleHost {
-  readonly capabilities?: HostCapabilityDeclaration;
   /** Deliver a typed correctable rejection into the current durable session's model context. */
   deliverSubmissionRejection?(rejection: { readonly kind: "correctable-rejection"; readonly code: string; readonly toolCallIds: readonly string[] }): void | Promise<void>;
   registerFlag(name: string, definition:

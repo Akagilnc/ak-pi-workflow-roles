@@ -1,0 +1,74 @@
+# grok engine method material
+
+This file is packaged technical material for labor using the Grok CLI on the
+host.
+
+Before invoking the engine, read `../engine-dispatch.md`, resolving that path
+relative to this note. This note only covers this CLI's technical parameters.
+
+## Invocation examples (local Grok CLI)
+
+The machine entrypoint is `grok`. Run from the role project root.
+Non-interactive labor reads the prompt from a file and prints plain output:
+
+```bash
+grok --trust --prompt-file /path/to/labor-prompt.md --always-approve --output-format plain
+```
+
+When the dispatch order specifies a model, pass it with `-m`:
+
+```bash
+grok --trust --prompt-file /path/to/labor-prompt.md -m <MODEL_ID> --always-approve --output-format plain
+```
+
+When the dispatch order (or seat ordered thinking tier) supplies an effort
+tier, pass it with `--reasoning-effort` (alias `--effort`):
+
+```bash
+grok --trust --prompt-file /path/to/labor-prompt.md --reasoning-effort <EFFORT> --always-approve --output-format plain
+```
+
+- `-m <MODEL_ID>` selects the model; `grok models` lists valid ids. Without a
+  model in the dispatch order, omit `-m` and let the CLI use its configured
+  default.
+- `--reasoning-effort <low|medium|high>` is optional (`grok --help`). Pass it
+  only when the dispatch order or seat ordered thinking tier supplies a tier;
+  omit the flag otherwise. Do not invent a default effort or require seat
+  config to fill one (verified live 2026-08-21: flag exists; a low-tier run
+  completed correctly when a tier was ordered).
+- `--always-approve` (equivalently `--yolo` or `--permission-mode
+  bypassPermissions`) keeps the run non-interactive (documented). Headless
+  permissions otherwise default to interactive approval, where an `ask`
+  decision has no UI to answer; alternatively, use an explicit permission
+  setup that auto-approves the required call.
+- Official docs list `-p/--single` as the canonical headless prompt input;
+  `--prompt-file` exists in the installed CLI (`--help`) and is smoke-verified
+  on this host — prefer it for long prompts, fall back to `-p` if absent.
+- `--output-format plain` keeps stdout clean for capture and is the only
+  format to use for labor. Do not use `streaming-json`: its NDJSON deltas go
+  back into the seat's context as noise (see `claude-code.md` for the measured
+  ratio); progress observability belongs to the runner's process watch, not to
+  the returned body.
+- Feeding raw JSON directly through `--prompt-file` is rejected by the CLI as
+  non-ACP JSON (`JSON object must have a type field`; live-verified
+  2026-08-21).
+
+## MCP host behavior
+
+- Repository MCP entries live under `[mcp_servers.<name>]` in `.grok/config.toml`.
+  They take effect only after the folder is trusted; pass `--trust` on
+  unattended/headless invocations. Without it, the project server may be absent
+  even though the file is present (`live-1787838141494`), and `grok mcp doctor`
+  reports `folder untrusted…re-run with --trust` (`live-1787838491136`).
+- Diagnose server startup with `grok mcp doctor [<server>]`, then inspect
+  `~/.grok/logs/mcp/<server>.stderr.log`; Grok truncates that stderr log on
+  each stdio server launch.
+- MCP tools are exposed to the model as `<server>__<tool>` (for example,
+  `ak_489_coder__ak_coder_output`). Use the fully qualified name in prompts;
+  a bare tool name relies on the host's loose discovery/matching behavior.
+- The headless permission setting described above also covers MCP calls.
+- Grok launches a stdio server from the task cwd. Make `command` and `args`
+  cwd-independent: use absolute entrypoint paths and do not rely on resolving
+  a task-local `node_modules` binary. A cwd-dependent `tsx` launcher failed in
+  `live-1787838491136`; the absolute-path form completed the MCP route in
+  `live-1787838776163`.
