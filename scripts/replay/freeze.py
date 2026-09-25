@@ -174,8 +174,13 @@ def main():
     frozen_run = f"{kit}/run/{os.path.basename(run)}"
     os.makedirs(f"{frozen_run}/session/submission-ledger", exist_ok=True)
     cut_epoch = cut.timestamp()
+    home = os.path.expanduser("~")
     def repoint(text):
-        return text.replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run)
+        for live, frozen in ((records_src, f"{kit}/records.jsonl"), (run, frozen_run)):
+            text = text.replace(live, frozen)
+            if live.startswith(home):  # historical command text often spells the home as ~
+                text = text.replace("~" + live[len(home):], frozen)
+        return text
     for name in sorted(os.listdir(run)):  # role inputs too: task.md, fix-packet.md, manifests…
         src_path = f"{run}/{name}"
         if not os.path.isfile(src_path):
