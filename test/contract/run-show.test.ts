@@ -286,14 +286,17 @@ async function writePiRunFixture(machineHome: string): Promise<string> {
 async function runPublicRunShow(
   runDirectory: string,
   machineHome: string,
-): Promise<{ exitCode: number; output: string }> {
+): Promise<string> {
   const { io, stdout } = captureIo();
   const result = await runAkRole(["run", "show", runDirectory], {
     packageRoot,
     home: machineHome,
     io,
   });
-  return { exitCode: result.exitCode, output: stdout.join("") };
+  assert.equal(result.exitCode, 0);
+  const output = stdout.join("");
+  assert.notEqual(output, "");
+  return output;
 }
 
 /** Recursive snapshot: every file path → sha256 of its bytes. */
@@ -319,8 +322,6 @@ test("run show: codex run — all five fact kinds reach the public result", asyn
   await withTempRoot("ak-run-show-codex-", async (machineHome) => {
     const runDirectory = await writeCodexRunFixture(machineHome);
     const initial = await runPublicRunShow(runDirectory, machineHome);
-    assert.equal(initial.exitCode, 0);
-    assert.notEqual(initial.output, "");
 
     // Verify each source fact reaches the public result without pinning its
     // terminal representation. Each invocation changes only one carrier.
@@ -339,7 +340,7 @@ test("run show: codex run — all five fact kinds reach the public result", asyn
       "utf8",
     );
     const changedVerdict = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(changedVerdict.output, initial.output);
+    assert.notEqual(changedVerdict, initial);
 
     await writeFile(
       join(runDirectory, "session", "submission-ledger", "records.jsonl"),
@@ -352,7 +353,7 @@ test("run show: codex run — all five fact kinds reach the public result", asyn
       "utf8",
     );
     const changedSeals = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(changedSeals.output, changedVerdict.output);
+    assert.notEqual(changedSeals, changedVerdict);
 
     await writeFile(
       join(runDirectory, "session", "codex-headless-session.json"),
@@ -360,7 +361,7 @@ test("run show: codex run — all five fact kinds reach the public result", asyn
       "utf8",
     );
     const changedThread = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(changedThread.output, changedSeals.output);
+    assert.notEqual(changedThread, changedSeals);
 
     const rolloutPath = join(
       machineHome,
@@ -378,20 +379,19 @@ test("run show: codex run — all five fact kinds reach the public result", asyn
       "utf8",
     );
     const changedCompaction = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(changedCompaction.output, changedThread.output);
+    assert.notEqual(changedCompaction, changedThread);
 
+    const changedTokenRollout = originalRollout.replace(
+      JSON.stringify(TOKEN_COUNT_INFO),
+      JSON.stringify({ ...TOKEN_COUNT_INFO, model_context_window: 1 }),
+    );
     await writeFile(
       rolloutPath,
-      [
-        JSON.stringify({ type: "session_meta", payload: { originator: "ak-role" } }),
-        JSON.stringify({ type: "event_msg", payload: { type: "token_count", info: { ...TOKEN_COUNT_INFO, model_context_window: 1 } } }),
-        JSON.stringify({ type: "compacted", payload: { message: "" } }),
-        JSON.stringify({ type: "compacted", payload: { message: "" } }),
-      ].join("\n") + "\n",
+      `${changedTokenRollout}${JSON.stringify({ type: "compacted", payload: { message: "" } })}\n`,
       "utf8",
     );
     const changedUsage = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(changedUsage.output, changedCompaction.output);
+    assert.notEqual(changedUsage, changedCompaction);
   });
 });
 
@@ -399,11 +399,10 @@ test("run show: pi run — carriers on the run's own session volume", async () =
   await withTempRoot("ak-run-show-pi-", async (machineHome) => {
     const runDirectory = await writePiRunFixture(machineHome);
     const initial = await runPublicRunShow(runDirectory, machineHome);
-    assert.equal(initial.exitCode, 0);
-    assert.notEqual(initial.output, "");
 
     const sessionPath = join(runDirectory, "session", "session.jsonl");
-    const oneTurnSession = (await readFile(sessionPath, "utf8")).replace(
+    const originalSession = await readFile(sessionPath, "utf8");
+    const oneTurnSession = originalSession.replace(
       `${JSON.stringify({
         type: "message",
         id: "m1",
@@ -412,8 +411,16 @@ test("run show: pi run — carriers on the run's own session volume", async () =
       "",
     );
     await writeFile(sessionPath, oneTurnSession, "utf8");
-    const changed = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(changed.output, initial.output);
+    const withoutFirstTurn = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(withoutFirstTurn, initial);
+
+    const changedSecondTurn = originalSession.replace(
+      JSON.stringify(PI_SECOND_USAGE),
+      JSON.stringify({ ...PI_SECOND_USAGE, totalTokens: PI_SECOND_USAGE.totalTokens + 1 }),
+    );
+    await writeFile(sessionPath, changedSecondTurn, "utf8");
+    const changedLastTurn = await runPublicRunShow(runDirectory, machineHome);
+    assert.notEqual(changedLastTurn, initial);
   });
 });
 
@@ -433,22 +440,19 @@ test("run show: Codex falls back to run-written usage when rollout usage is unav
     // A missing rollout already falls back to the run's direct-write usage.
     await unlink(rolloutPath);
     const missing = await runPublicRunShow(runDirectory, machineHome);
-    assert.equal(missing.exitCode, 0);
-    assert.notEqual(missing.output, "");
 
     await writeCodexHostSessionRecords(runDirectory, { input_tokens: 12, output_tokens: 7 });
     const missingWithChangedUsage = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(missingWithChangedUsage.output, missing.output);
+    assert.notEqual(missingWithChangedUsage, missing);
 
     // A damaged rollout must not hide the same readable usage.
     await writeFile(rolloutPath, "{not-json\n", "utf8");
     const damaged = await runPublicRunShow(runDirectory, machineHome);
-    assert.equal(damaged.exitCode, 0);
-    assert.notEqual(damaged.output, missingWithChangedUsage.output);
+    assert.notEqual(damaged, missingWithChangedUsage);
 
     await writeCodexHostSessionRecords(runDirectory, { input_tokens: 13, output_tokens: 7 });
     const damagedWithChangedUsage = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(damagedWithChangedUsage.output, damaged.output);
+    assert.notEqual(damagedWithChangedUsage, damaged);
 
     // A well-formed rollout without token_count follows the same fallback.
     await writeFile(
@@ -457,12 +461,11 @@ test("run show: Codex falls back to run-written usage when rollout usage is unav
       "utf8",
     );
     const noUsage = await runPublicRunShow(runDirectory, machineHome);
-    assert.equal(noUsage.exitCode, 0);
-    assert.notEqual(noUsage.output, damaged.output);
+    assert.notEqual(noUsage, damagedWithChangedUsage);
 
     await writeCodexHostSessionRecords(runDirectory, { input_tokens: 14, output_tokens: 7 });
     const changedFallback = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(changedFallback.output, noUsage.output);
+    assert.notEqual(changedFallback, noUsage);
   });
 });
 
@@ -485,13 +488,11 @@ test("run show: Claude binding without host-session is unavailable, not zero", a
     );
 
     const missing = await runPublicRunShow(runDirectory, machineHome);
-    assert.equal(missing.exitCode, 0);
-    assert.notEqual(missing.output, "");
 
     await mkdir(join(runDirectory, "session", "host-session"), { recursive: true });
     await writeFile(join(runDirectory, "session", "host-session", "records.jsonl"), "", "utf8");
     const knownZero = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(missing.output, knownZero.output);
+    assert.notEqual(missing, knownZero);
   });
 });
 
@@ -520,7 +521,6 @@ test("run show: damaged seal JSONL is unavailable, not a silent partial", async 
     );
 
     const damaged = await runPublicRunShow(runDirectory, machineHome);
-    assert.equal(damaged.exitCode, 0);
 
     const ledgerPath = join(runDirectory, "session", "submission-ledger", "records.jsonl");
     await writeFile(ledgerPath, submissionLedgerRow("sealed", SEALED_PAYLOAD_LAST), "utf8");
@@ -534,8 +534,8 @@ test("run show: damaged seal JSONL is unavailable, not a silent partial", async 
       "utf8",
     );
     const validComplete = await runPublicRunShow(runDirectory, machineHome);
-    assert.notEqual(damaged.output, validPartial.output);
-    assert.notEqual(damaged.output, validComplete.output);
+    assert.notEqual(damaged, validPartial);
+    assert.notEqual(damaged, validComplete);
   });
 });
 
@@ -556,9 +556,7 @@ test("run show: sparse run — missing materials do not prevent a view", async (
       `${JSON.stringify({ runId: RUN_ID, role: "notary", state: "admitted" })}\n`,
       "utf8",
     );
-    const result = await runPublicRunShow(runDirectory, machineHome);
-    assert.equal(result.exitCode, 0);
-    assert.notEqual(result.output, "");
+    await runPublicRunShow(runDirectory, machineHome);
   });
 });
 
@@ -569,8 +567,6 @@ test("run show: two views leave the ledger byte-identical and add no runs", asyn
 
     const first = await runPublicRunShow(runDirectory, machineHome);
     const second = await runPublicRunShow(runDirectory, machineHome);
-    assert.equal(first.exitCode, 0);
-    assert.equal(second.exitCode, 0);
     const after = await snapshotTree(machineHome);
     assert.deepEqual(after, before);
   });
