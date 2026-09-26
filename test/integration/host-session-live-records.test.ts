@@ -33,13 +33,18 @@ const description: HeadlessHostDescription = Object.freeze({
   resumeFlag: "--resume",
 });
 
-function request(runDirectory: string, home: string, model?: { provider?: string; model: string; thinking?: string }): RoleTurnRequest {
+function request(
+  runDirectory: string,
+  home: string,
+  model?: { provider?: string; model: string; thinking?: string },
+  cwd?: string,
+): RoleTurnRequest {
   return {
     principal: fixturePrincipal(join(runDirectory, "session")),
     activation: { role: "judge" },
     methods: [],
     continuation: { kind: "initial", prompt: "probe" },
-    cwd: home,
+    cwd: cwd ?? home,
     home,
     agentDir: join(runDirectory, "agent"),
     runDirectory,
@@ -74,6 +79,9 @@ test("headless host records pointer and copies native dossier post-exit (ADR 008
     runName: "run@judge",
   });
   try {
+    const workspaceDir = join(ledger.home, "workspace_with_underscore");
+    await mkdir(workspaceDir, { recursive: true });
+
     await mkdir(join(ledger.home, "bin"), { recursive: true });
     const fakeBin = join(ledger.home, "bin", "fake-claude");
     await writeFile(
@@ -86,7 +94,7 @@ const sidIdx = process.argv.indexOf("--session-id");
 const sid = sidIdx !== -1 ? process.argv[sidIdx + 1] : "default-sid";
 const home = process.env.HOME;
 const cwd = process.cwd();
-const sanitizedCwd = cwd.replace(/[/\\\\]+/g, "-");
+const sanitizedCwd = cwd.replace(/[^a-zA-Z0-9]/g, "-");
 const projectsDir = join(home, ".claude", "projects", sanitizedCwd);
 mkdirSync(projectsDir, { recursive: true });
 writeFileSync(join(projectsDir, \`\${sid}.jsonl\`), JSON.stringify({ native: "claude-session-data" }) + "\\n");
@@ -126,7 +134,7 @@ process.stdout.write(JSON.stringify({
     });
 
     const result = await host.executeTurn(
-      request(ledger.runDirectory, ledger.home, { model: "anthropic/claude-3-opus" }),
+      request(ledger.runDirectory, ledger.home, { model: "anthropic/claude-3-opus" }, workspaceDir),
     );
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
     assert.equal(result.code, 0);
@@ -146,8 +154,11 @@ process.stdout.write(JSON.stringify({
     assert.equal(pointerRec.level, "event");
     assert.equal(pointerRec.kind, HOST_SESSION_RECORD_KIND);
     assert.equal((pointerRec.payload as { type: string }).type, "native-session-pointer");
+    const pointerNativePath = (pointerRec.payload as { nativePath: string }).nativePath;
+    assert.ok(typeof pointerNativePath === "string");
     assert.ok(
-      typeof (pointerRec.payload as { nativePath: string }).nativePath === "string",
+      pointerNativePath.includes("-workspace-with-underscore"),
+      `nativePath should sanitize underscore cwd to hyphens, got: ${pointerNativePath}`,
     );
 
     const copyRec = read.records[1]!;

@@ -11,7 +11,6 @@ import {
   existsSync,
   mkdirSync,
   readdirSync,
-  readFileSync,
   statSync,
   type Dirent,
 } from "node:fs";
@@ -68,6 +67,14 @@ function findCodexRollout(sessionsDir: string, sessionId: string): string | unde
 }
 
 /**
+ * Sanitize working directory to match Claude Code's project directory name layout.
+ * Claude Code replaces all non-alphanumeric characters (slashes, dots, underscores, spaces, etc.) with '-'.
+ */
+export function sanitizeClaudeCwd(cwd: string): string {
+  return cwd.replace(/[^a-zA-Z0-9]/g, "-");
+}
+
+/**
  * Resolve the CLI native session original path.
  * Codex: single file rollout from ~/.codex/sessions/** /rollout-*-${sessionId}.jsonl
  * Claude: single file transcript from ~/.claude/projects/<sanitized-cwd>/${sessionId}.jsonl
@@ -83,7 +90,7 @@ export function resolveNativeSessionPath(options: {
   const home = options.home || homedir();
   if (options.host === "claude") {
     const configDir = process.env.CLAUDE_CONFIG_DIR || join(home, ".claude");
-    const sanitizedCwd = options.cwd.replace(/[\/\\]+/g, "-");
+    const sanitizedCwd = sanitizeClaudeCwd(options.cwd);
     return join(configDir, "projects", sanitizedCwd, `${options.sessionId}.jsonl`);
   }
   if (options.host === "codex") {
@@ -128,30 +135,6 @@ export function resolveHostDossierLandingPath(options: {
       }
     } catch {
       // Ignore directory read errors
-    }
-  }
-
-  const recordFile = join(options.sessionDirectory, HOST_SESSION_RECORD_KIND, "records.jsonl");
-  if (existsSync(recordFile)) {
-    try {
-      const content = readFileSync(recordFile, "utf8");
-      for (const line of content.split("\n")) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        try {
-          const parsed = JSON.parse(trimmed) as { payload?: { ordinal?: unknown } };
-          if (parsed && typeof parsed === "object" && parsed.payload && typeof parsed.payload === "object") {
-            const ord = parsed.payload.ordinal;
-            if (typeof ord === "number" && ord > maxOrdinal) {
-              maxOrdinal = ord;
-            }
-          }
-        } catch {
-          // ignore malformed lines
-        }
-      }
-    } catch {
-      // Ignore file read errors
     }
   }
 

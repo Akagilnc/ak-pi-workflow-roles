@@ -27,6 +27,7 @@ import {
   HOST_SESSION_RECORD_KIND,
   resolveHostDossierLandingPath,
   resolveNativeSessionPath,
+  sanitizeClaudeCwd,
 } from "../../src/host-session-record.ts";
 import {
   appendSitianRecord,
@@ -43,7 +44,7 @@ import {
 
 test("ADR 0086: resolveNativeSessionPath correctly resolves each host native layout and excludes Pi / Hermes", async () => {
   await withHermeticHome({ prefix: "ak-adr86-path-" }, async ({ home }) => {
-    const cwd = join(home, "my-project");
+    const cwd = join(home, "my_project");
     await mkdir(cwd, { recursive: true });
 
     // Pi: untouched direct landing
@@ -62,10 +63,14 @@ test("ADR 0086: resolveNativeSessionPath correctly resolves each host native lay
 
     // Claude: single file under ~/.claude/projects/<sanitizedCwd>/<sessionId>.jsonl
     const claudePath = resolveNativeSessionPath({ host: "claude", sessionId: "sess-claude", cwd, home });
-    const expectedClaudeSanitized = cwd.replace(/[\/\\]+/g, "-");
+    const expectedClaudeSanitized = sanitizeClaudeCwd(cwd);
     assert.equal(
       claudePath,
       join(home, ".claude", "projects", expectedClaudeSanitized, "sess-claude.jsonl"),
+    );
+    assert.ok(
+      !expectedClaudeSanitized.includes("_"),
+      "Claude project directory name must sanitize underscores to hyphens",
     );
 
     // Grok: directory under ~/.grok/sessions/<encodedCwd>/<sessionId>
@@ -84,6 +89,15 @@ test("ADR 0086: resolveNativeSessionPath correctly resolves each host native lay
     const codexPath = resolveNativeSessionPath({ host: "codex", sessionId: "sess-codex", cwd, home });
     assert.equal(codexPath, codexRolloutFile);
   });
+});
+
+test("ADR 0086: sanitizeClaudeCwd converts underscores, dots, and spaces to hyphens according to CLI layout", () => {
+  const sanitized = sanitizeClaudeCwd("/Users/akagilnc/WorkSpace/Ming_LLM");
+  assert.equal(sanitized, "-Users-akagilnc-WorkSpace-Ming-LLM");
+
+  const sanitizedWithDotsAndSpaces = sanitizeClaudeCwd("/Users/akagilnc/Library/Application Support/Codex.Bar/my_project");
+  assert.equal(sanitizedWithDotsAndSpaces, "-Users-akagilnc-Library-Application-Support-Codex-Bar-my-project");
+  assert.ok(!/[_. ]/.test(sanitizedWithDotsAndSpaces));
 });
 
 test("ADR 0086: resolveHostDossierLandingPath sanitizes model and computes monotonic ordinal n", async () => {
@@ -114,6 +128,23 @@ test("ADR 0086: resolveHostDossierLandingPath sanitizes model and computes monot
     });
     assert.equal(resume1.ordinal, 2);
     assert.equal(resume1.landingPath, join(sessionDir, "codex-openai-gpt-4o-2.jsonl"));
+
+    // Verify records.jsonl is not read back to determine ordinal (Log4j-style, purely directory scan)
+    const recordsDir = join(sessionDir, HOST_SESSION_RECORD_KIND);
+    await mkdir(recordsDir, { recursive: true });
+    await writeFile(
+      join(recordsDir, "records.jsonl"),
+      JSON.stringify({ payload: { ordinal: 99 } }) + "\n",
+      "utf8",
+    );
+    const resumeIgnoringRecords = resolveHostDossierLandingPath({
+      host: "codex",
+      model: { model: "openai/gpt-4o" },
+      sessionDirectory: sessionDir,
+      continuation: { kind: "resume", prompt: "continue" },
+    });
+    // Ordinal must be 2 based only on files on disk (codex-openai-gpt-4o-1.jsonl), ignoring records.jsonl ordinal 99
+    assert.equal(resumeIgnoringRecords.ordinal, 2);
 
     // For grok-build in a fresh run directory (directory landing without .jsonl extension)
     const grokSessionDir = join(home, ".ak-roles", "books", "proj", "runs", "run-grok", "session");
