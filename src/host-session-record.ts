@@ -13,6 +13,7 @@ import {
   openSync,
   mkdirSync,
   readdirSync,
+  rmSync,
   statSync,
   type Dirent,
 } from "node:fs";
@@ -126,7 +127,7 @@ export function resolveHostDossierLandingPath(options: {
     try {
       const entries = readdirSync(options.sessionDirectory);
       for (const entry of entries) {
-        const match = entry.match(/-(\d+)(?:\.jsonl)?$/);
+        const match = entry.match(/-(\d+)(?:\.jsonl|\.failed)?$/);
         const first = match?.[1];
         if (first !== undefined) {
           const val = parseInt(first, 10);
@@ -240,7 +241,7 @@ export function copyAndRecordHostDossier(options: {
   });
   if (nativePath === undefined) return;
 
-  const { landingPath, ordinal } = resolveHostDossierLandingPath(options);
+  const { landingPath, ordinal, sanitizedModel } = resolveHostDossierLandingPath(options);
 
   let lastError: unknown;
   let copySuccess = false;
@@ -279,14 +280,13 @@ export function copyAndRecordHostDossier(options: {
       },
     });
   } else {
-    // Reserve the failed attempt's ordinal for a later resume without reading the log.
+    // A partial first attempt must not masquerade as a complete native original.
+    try { rmSync(landingPath, { recursive: options.host === "grok-build", force: true }); }
+    catch { /* warning below reports the original copy failure */ }
+    // Reserve the failed ordinal outside the native dossier landing namespace.
     try {
-      if (options.host === "grok-build") {
-        mkdirSync(landingPath, { recursive: true });
-      } else {
-        mkdirSync(dirname(landingPath), { recursive: true });
-        closeSync(openSync(landingPath, "a"));
-      }
+      mkdirSync(options.sessionDirectory, { recursive: true });
+      closeSync(openSync(join(options.sessionDirectory, `${options.host}-${sanitizedModel}-${ordinal}.failed`), "a"));
     } catch { /* the warning below retains the original copy failure */ }
     sitianReportSafe({
       level: "event",
