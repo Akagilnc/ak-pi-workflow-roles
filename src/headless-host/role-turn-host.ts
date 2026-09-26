@@ -542,14 +542,13 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           const codexObserver = codex ? createCodexExecTurnObserver() : undefined;
           let pointerRecorded = false;
           if (sessionId !== undefined && sessionId !== "") {
-            pointerRecorded = true;
-            recordNativeSessionPointer({
+            pointerRecorded = recordNativeSessionPointer({
               host: config.hostName,
               sessionId,
               cwd: request.cwd,
               sessionParent,
               home: request.home,
-            });
+            }) !== undefined;
           }
 
           let spawned: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
@@ -574,22 +573,29 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 }
                 // One bounded live seam owns both recording and host-specific reduction.
                 codexObserver?.observe(event);
+                if (!codex && typeof event === "object" && event !== null && "session_id" in event
+                  && typeof event.session_id === "string" && event.session_id !== "" && event.session_id !== sessionId) {
+                  sessionId = event.session_id;
+                  recordNativeSessionPointer({ host: config.hostName, sessionId, cwd: request.cwd, sessionParent, home: request.home });
+                }
                 if (codex && !pointerRecorded) {
                   const tid = codexObserver?.result().threadId;
                   if (tid !== undefined && tid !== "") {
-                    pointerRecorded = true;
-                    recordNativeSessionPointer({
+                    pointerRecorded = recordNativeSessionPointer({
                       host: config.hostName,
                       sessionId: tid,
                       cwd: request.cwd,
                       sessionParent,
                       home: request.home,
-                    });
+                    }) !== undefined;
                   }
                 }
               },
             });
             const roundSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
+            if (codex && roundSessionId !== undefined && roundSessionId !== "" && !pointerRecorded) {
+              recordNativeSessionPointer({ host: config.hostName, sessionId: roundSessionId, cwd: request.cwd, sessionParent, home: request.home });
+            }
             if (roundSessionId !== undefined && roundSessionId !== "") {
               copyAndRecordHostDossier({
                 host: config.hostName,

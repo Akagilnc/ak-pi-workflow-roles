@@ -100,7 +100,7 @@ export function resolveNativeSessionPath(options: {
     const codexHome = process.env.CODEX_HOME || join(home, ".codex");
     const sessionsDir = join(codexHome, "sessions");
     const existing = findCodexRollout(sessionsDir, options.sessionId);
-    return existing ?? join(sessionsDir, `rollout-${options.sessionId}.jsonl`);
+    return existing;
   }
   if (options.host === "grok-build") {
     const grokHome = process.env.GROK_HOME || join(home, ".grok");

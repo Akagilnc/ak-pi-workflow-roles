@@ -315,9 +315,13 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             sessionId: bindSessionId,
             ...sessionBindParams,
           });
-          return typeof loaded.sessionId === "string" && loaded.sessionId !== ""
+          const loadedId = typeof loaded.sessionId === "string" && loaded.sessionId !== ""
             ? loaded.sessionId
             : bindSessionId;
+          if (config.hostName !== "hermes") recordNativeSessionPointer({
+            host: config.hostName, sessionId: loadedId, cwd: request.cwd, sessionParent, home: request.home,
+          });
+          return loadedId;
         };
         if (request.continuation.kind === "resume" && config.boundResume === "session/load") {
           const explicitHostSessionId = request.continuation.hostSessionId;
@@ -325,6 +329,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             ? explicitHostSessionId
             : await config.sessionIdentity.load(request.principal);
           if (boundSessionId !== undefined && boundSessionId !== "") {
+            sessionId = boundSessionId;
             sessionId = await loadSession(boundSessionId);
           }
         }
@@ -336,6 +341,9 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             outcome = failure("session", "AcpSessionFailure", "session-id-missing");
             sessionReady = false;
           } else {
+            if (config.hostName !== "hermes") recordNativeSessionPointer({
+              host: config.hostName, sessionId, cwd: request.cwd, sessionParent, home: request.home,
+            });
             await config.sessionIdentity.bind(request.principal, sessionId);
           }
         }
@@ -348,16 +356,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             modelId: acpModelId(config.modelPassing, request.model),
           });
           sessionId = await loadSession(sessionId);
-        }
-
-        if (config.hostName !== "hermes" && sessionId !== undefined) {
-          recordNativeSessionPointer({
-            host: config.hostName,
-            sessionId,
-            cwd: request.cwd,
-            sessionParent,
-            home: request.home,
-          });
         }
 
         const activeConnection = connection;
