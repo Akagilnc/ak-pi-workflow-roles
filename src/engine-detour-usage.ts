@@ -222,7 +222,7 @@ export async function readEngineDetourToolUsage(input: {
   });
 
   const { records } = await readSitianRecords(recordFile);
-  const calls: EngineDetourCallFact[] = [];
+  const callsByToolCallId = new Map<string, EngineDetourCallFact>();
   for (const record of records) {
     if (record.kind !== ENGINE_DETOUR_CALL_KIND) continue;
     const boundScope = invocationScopeIdOfRecord(record);
@@ -240,9 +240,11 @@ export async function readEngineDetourToolUsage(input: {
     };
     const fact = callFactFromSitianPayload(record.payload, pointer);
     if (fact === undefined) continue;
-    calls.push(fact);
+    // ADR 0086: Reader deduplicates by toolCallId within the invocation scope
+    callsByToolCallId.set(fact.toolCallId, fact);
   }
 
+  const calls = Array.from(callsByToolCallId.values());
   return { callCount: calls.length, calls };
 }
 

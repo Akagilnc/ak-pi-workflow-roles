@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 
@@ -8,7 +9,10 @@ import {
   raceAgainstHostAbort,
 } from "../external-host-turn-loop.ts";
 
-import { reportHostSessionEvent } from "../host-session-record.ts";
+import {
+  copyAndRecordHostDossier,
+  recordNativeSessionPointer,
+} from "../host-session-record.ts";
 import {
   NAVIGATOR_OUTPUT_TOOL_NAME,
   navigatorProseFromUnknown,
@@ -19,30 +23,6 @@ import {
   type SessionIdentityAuthority,
 } from "../prepared-role-turn.ts";
 import { acpModelId, type AcpHostDescription } from "./description.ts";
-
-/** #971: authorized host for usage + auto_compact ledgering only. */
-const GROK_BUILD_HOST = "grok-build";
-
-/** #971: grok-build prompt result carries host usage under `_meta.usage`. */
-function acpPromptResultHasUsage(result: Readonly<Record<string, unknown>>): boolean {
-  const meta = result._meta;
-  if (typeof meta !== "object" || meta === null || Array.isArray(meta)) return false;
-  return Object.prototype.hasOwnProperty.call(meta, "usage");
-}
-
-/**
- * #971: ledger only the authorized vendor compaction notice on grok-build.
- * Other `_x.ai/*` notifications stay out of host-session records.
- */
-function isAcpAutoCompactCompletedNotification(
-  method: string,
-  params: Readonly<Record<string, unknown>>,
-): boolean {
-  if (method !== "_x.ai/session_notification") return false;
-  const update = params.update;
-  if (typeof update !== "object" || update === null || Array.isArray(update)) return false;
-  return (update as { sessionUpdate?: unknown }).sessionUpdate === "auto_compact_completed";
-}
 
 /**
  * #959: collect free-form agent text from ACP session/update stream.
@@ -278,7 +258,9 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
     const systemPromptOverride = renderSystemPromptOverride(prepared.systemPrompt);
     let connection: AcpConnection | undefined;
     let sessionId: string | undefined;
+    let sessionOpened = false;
     let accepted = false;
+    const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
     // Mutable so dispose failure can outrank a clean turn (headless withCleanupFailure face).
     let outcome: RoleTurnResult = failure("session", "AcpNoOutcome", "no-outcome");
     try {
@@ -286,66 +268,26 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         outcome = failure("activation", "UncontrolledAcpSession", "ak-config-missing");
       } else {
       connection = await config.connect(request);
-      // Live host-session records: ACP session/update → sitian sole entry (#811).
-      // One abort + one race helper + one outer projection — write failure ends
-      // any in-flight RPC as typed session infrastructure failure.
-      const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
-      const recordAbort = new AbortController();
-      let hostSessionRecordFailure: RoleTurnKnownFailure | undefined;
-      const hostSessionRecordResult = (): RoleTurnResult => ({
-        code: null,
-        stderr: "",
-        timedOut: false,
-        knownFailure: hostSessionRecordFailure!,
-      });
-      const noteHostSessionRecordFailure = (error: unknown): void => {
-        if (hostSessionRecordFailure !== undefined) return;
-        hostSessionRecordFailure = {
-          cause: "session",
-          identity: { name: "HostSessionRecordFailure", code: "host-session-record-failed" },
-          diagnostic: error instanceof Error ? error.message : String(error),
-        };
-        try { recordAbort.abort(); } catch { /* already aborted */ }
-      };
       const rpc = (
         method: string,
         params: Readonly<Record<string, unknown>>,
-      ): Promise<Readonly<Record<string, unknown>>> =>
-        raceAgainstHostAbort(connection!.request(method, params), recordAbort.signal, "host-session-record-failed");
+      ): Promise<Readonly<Record<string, unknown>>> => connection!.request(method, params);
 
       // #959: navigator free-form agent text — only while session/prompt is in flight.
       // session/load replays history via session/update; those must not enter the bucket
       // (resume / set_model load would otherwise prepend prior turns as "this turn" prose).
       const agentProseChunks: string[] = [];
       let collectAgentProse = false;
-      // #971: usage + auto_compact are grok-build-only; same ACP adapter serves Hermes too.
-      const ledgerGrokBuildObservability = config.hostName === GROK_BUILD_HOST;
       connection.onNotification?.((method, params) => {
-        if (hostSessionRecordFailure !== undefined) return;
         const isSessionUpdate = method === "session/update";
-        const isAutoCompact = ledgerGrokBuildObservability
-          && isAcpAutoCompactCompletedNotification(method, params);
-        // #971: session/update stays; auto_compact_completed is the only vendor notice.
-        if (!isSessionUpdate && !isAutoCompact) return;
-        if (isSessionUpdate && collectAgentProse) {
+        if (!isSessionUpdate) return;
+        if (collectAgentProse) {
           const chunk = acpAgentTextChunk(params);
           if (chunk !== undefined) agentProseChunks.push(chunk);
         }
-        try {
-          reportHostSessionEvent({
-            host: config.hostName,
-            cwd: request.cwd,
-            sessionParent,
-            source: "acp-host",
-            event: { method, params },
-          });
-        } catch (error) {
-          noteHostSessionRecordFailure(error);
-        }
       });
 
-      try {
-        const initialized = await rpc("initialize", {
+      const initialized = await rpc("initialize", {
           protocolVersion: 1,
           clientCapabilities: {},
         });
@@ -374,9 +316,13 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             sessionId: bindSessionId,
             ...sessionBindParams,
           });
-          return typeof loaded.sessionId === "string" && loaded.sessionId !== ""
+          const loadedId = typeof loaded.sessionId === "string" && loaded.sessionId !== ""
             ? loaded.sessionId
             : bindSessionId;
+          if (config.hostName !== "hermes") recordNativeSessionPointer({
+            host: config.hostName, sessionId: loadedId, cwd: request.cwd, sessionParent, home: request.home,
+          });
+          return loadedId;
         };
         if (request.continuation.kind === "resume" && config.boundResume === "session/load") {
           const explicitHostSessionId = request.continuation.hostSessionId;
@@ -384,7 +330,9 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             ? explicitHostSessionId
             : await config.sessionIdentity.load(request.principal);
           if (boundSessionId !== undefined && boundSessionId !== "") {
+            sessionId = boundSessionId;
             sessionId = await loadSession(boundSessionId);
+            sessionOpened = true;
           }
         }
         let sessionReady = true;
@@ -395,6 +343,10 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             outcome = failure("session", "AcpSessionFailure", "session-id-missing");
             sessionReady = false;
           } else {
+            if (config.hostName !== "hermes") recordNativeSessionPointer({
+              host: config.hostName, sessionId, cwd: request.cwd, sessionParent, home: request.home,
+            });
+            sessionOpened = true;
             await config.sessionIdentity.bind(request.principal, sessionId);
           }
         }
@@ -415,12 +367,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           roundLimitName: "AcpRoundLimit",
           currentSessionId: () => sessionId,
           async runRound({ prompt, abortSignal }) {
-            if (hostSessionRecordFailure !== undefined) return { status: "terminal", result: hostSessionRecordResult() };
-            // Envelope infra abort, parent cancellation (#675), and host-session
-            // record abort (#811) share one race face for in-flight prompt.
-            const abortParts: AbortSignal[] = [recordAbort.signal];
-            if (abortSignal !== undefined) abortParts.push(abortSignal);
-            const combinedAbort = AbortSignal.any(abortParts);
             let result: Readonly<Record<string, unknown>>;
             // Open the prose gate only for this prompt round; clear any stale chunks first.
             agentProseChunks.length = 0;
@@ -431,36 +377,15 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
                   sessionId: activeSessionId,
                   prompt: [{ type: "text", text: prompt }],
                 }),
-                combinedAbort,
+                abortSignal,
                 "ACP host aborted",
               );
             } catch (error) {
               collectAgentProse = false;
               agentProseChunks.length = 0;
-              if (hostSessionRecordFailure !== undefined) {
-                return { status: "terminal", result: hostSessionRecordResult() };
-              }
               throw error;
             }
             collectAgentProse = false;
-            // #971: per-round grok-build usage is on the prompt JSON-RPC result, not a notice.
-            if (ledgerGrokBuildObservability && acpPromptResultHasUsage(result)) {
-              try {
-                reportHostSessionEvent({
-                  host: config.hostName,
-                  cwd: request.cwd,
-                  sessionParent,
-                  source: "acp-host",
-                  event: { method: "session/prompt", result },
-                });
-              } catch (error) {
-                noteHostSessionRecordFailure(error);
-                return { status: "terminal", result: hostSessionRecordResult() };
-              }
-            }
-            if (hostSessionRecordFailure !== undefined) {
-              return { status: "terminal", result: hostSessionRecordResult() };
-            }
             if (result.stopReason === "refusal") {
               agentProseChunks.length = 0;
               return {
@@ -487,18 +412,9 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             accepted = true;
           },
         });
-        outcome = hostSessionRecordFailure !== undefined ? hostSessionRecordResult() : turnResult;
+        outcome = turnResult;
         } // sessionReady
         } // model match else
-      } catch (error) {
-        // recordAbort races setup RPCs via raceAgainstHostAbort (host-aborted code);
-        // noteHostSessionRecordFailure always sets the typed failure before aborting.
-        if (hostSessionRecordFailure !== undefined) {
-          outcome = hostSessionRecordResult();
-        } else {
-          throw error;
-        }
-      }
       } // mcpServers else
     } finally {
       if (connection !== undefined) {
@@ -508,6 +424,18 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         }
         try { await connection.close(); }
         catch { /* keep turn result */ }
+      }
+      if (config.hostName !== "hermes" && sessionOpened && sessionId !== undefined) {
+        copyAndRecordHostDossier({
+          host: config.hostName,
+          sessionId,
+          cwd: request.cwd,
+          sessionDirectory: join(request.runDirectory, "session"),
+          sessionParent,
+          continuation: request.continuation,
+          ...(request.model !== undefined ? { model: request.model } : {}),
+          ...(request.home !== undefined ? { home: request.home } : {}),
+        });
       }
       try {
         await prepared.dispose?.();

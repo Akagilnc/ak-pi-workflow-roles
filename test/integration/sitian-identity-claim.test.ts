@@ -1,8 +1,7 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
- * #648 — same-identity concurrent writers must not duplicate canonical rows.
- * One platform-neutral two-process mainline: real appendSitianRecord entry →
- * unique canonical volume row.
+ * ADR 0086 — Sitian log4j-style append-only:
+ * Concurrent writers both append their row unconditionally; no sidecar claim files created.
  */
 import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
@@ -159,7 +158,7 @@ async function readChildResult(child: ChildProcess): Promise<ChildAppendResult> 
   return parseRecognizedChildResult(line);
 }
 
-test("two concurrent single-call attempts preserve uniqueness: one row, no sidecars", async () => {
+test("two concurrent single-call attempts append unconditionally under log4j model: two rows, no sidecars", async () => {
   await withHermeticLedgerRoot(async ({ home, cwd }) => {
     const identity = "concurrent-same-identity-uniqueness";
     const kind = "identity-claim-concurrent-uniqueness";
@@ -186,20 +185,16 @@ test("two concurrent single-call attempts preserve uniqueness: one row, no sidec
       async () => {
         const results = await Promise.all(children.map((child) => readChildResult(child)));
         assert.ok(
-          results.some((result) => result.ok),
-          "at least one concurrent attempt must succeed",
+          results.every((result) => result.ok),
+          "both concurrent attempts succeed under log4j append-only model",
         );
         for (const result of results) {
           if (result.ok) {
             assert.equal(result.identity, identity);
-          } else {
-            assert.equal(result.name, "SitianInfrastructureError");
-            assert.equal(result.knownCause, "session");
-            assert.equal(result.code, "EEXIST");
           }
         }
         const read = await readSitianRecords(recordFile);
-        assert.equal(read.records.filter((row) => row.identity === identity).length, 1);
+        assert.equal(read.records.filter((row) => row.identity === identity).length, 2);
         assert.deepEqual(volumeSurfaceNames(sessionDir, recordFile), [
           basename(recordFile),
         ]);

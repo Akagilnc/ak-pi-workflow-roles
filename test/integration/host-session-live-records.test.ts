@@ -1,9 +1,12 @@
 /**
- * #811 medium: headless cross-process live host-session records.
- * Child process + books mid-flight read; not unit.
+ * ADR 0086: Headless host native session pointer and post-exit dossier copy.
+ * Verifies:
+ * - Native session pointer recorded on session ID acquisition.
+ * - Native CLI session copied to <run>/session/claude-<model>-<n>.jsonl after child exit.
+ * - Sitian log line write failure declared to stderr without aborting the turn.
  */
 import assert from "node:assert/strict";
-import { access, chmod, mkdir, writeFile } from "node:fs/promises";
+import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -30,16 +33,30 @@ const description: HeadlessHostDescription = Object.freeze({
   resumeFlag: "--resume",
 });
 
-function request(runDirectory: string, home: string): RoleTurnRequest {
+function request(
+  runDirectory: string,
+  home: string,
+  model?: { provider?: string; model: string; thinking?: string },
+  cwd?: string,
+): RoleTurnRequest {
   return {
     principal: fixturePrincipal(join(runDirectory, "session")),
     activation: { role: "judge" },
     methods: [],
     continuation: { kind: "initial", prompt: "probe" },
-    cwd: home,
+    cwd: cwd ?? home,
     home,
     agentDir: join(runDirectory, "agent"),
     runDirectory,
+    ...(model !== undefined
+      ? {
+          model: {
+            provider: model.provider ?? "anthropic",
+            model: model.model,
+            ...(model.thinking !== undefined ? { thinking: model.thinking } : {}),
+          },
+        }
+      : {}),
   };
 }
 
@@ -56,32 +73,35 @@ async function waitFor(path: string, timeoutMs = 5000): Promise<void> {
   }
 }
 
-test("headless host-session event is readable in books before the child exits", async () => {
+test("headless host records pointer and copies native dossier post-exit (ADR 0086)", async () => {
   const ledger = createTempPackageHomeLedger({
-    prefix: "ak-811-live-",
+    prefix: "ak-0086-headless-copy-",
     runName: "run@judge",
   });
   try {
+    const workspaceDir = join(ledger.home, "workspace_with_underscore");
+    await mkdir(workspaceDir, { recursive: true });
+
     await mkdir(join(ledger.home, "bin"), { recursive: true });
-    const gate = join(ledger.runDirectory, "release-gate");
-    const marker = join(ledger.runDirectory, "emitted-marker");
     const fakeBin = join(ledger.home, "bin", "fake-claude");
     await writeFile(
       fakeBin,
       `#!/usr/bin/env node
-import { writeFileSync, existsSync } from "node:fs";
-const gate = process.env.AK_811_GATE;
-const marker = process.env.AK_811_MARKER;
-process.stdout.write(JSON.stringify({ type: "system", subtype: "init", uuid: "live-1" }) + "\\n");
-writeFileSync(marker, "1");
-const start = Date.now();
-while (!existsSync(gate)) {
-  if (Date.now() - start > 8000) process.exit(2);
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
-}
+import { writeFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
+
+const sidIdx = process.argv.indexOf("--session-id");
+const sid = sidIdx !== -1 ? process.argv[sidIdx + 1] : "default-sid";
+const home = process.env.HOME;
+const cwd = process.cwd();
+const sanitizedCwd = cwd.replace(/[^a-zA-Z0-9]/g, "-");
+const projectsDir = join(home, ".claude", "projects", sanitizedCwd);
+mkdirSync(projectsDir, { recursive: true });
+writeFileSync(join(projectsDir, \`\${sid}.jsonl\`), JSON.stringify({ native: "claude-session-data" }) + "\\n");
+
 process.stdout.write(JSON.stringify({
   type: "result", subtype: "success", uuid: "live-result",
-  session_id: "sid", is_error: false,
+  session_id: sid, is_error: false,
   structured_output: { status: "completed", report: "ok" },
 }) + "\\n");
 `,
@@ -96,7 +116,7 @@ process.stdout.write(JSON.stringify({
       description,
       hostName: "claude",
       binary: fakeBin,
-      env: { AK_811_GATE: gate, AK_811_MARKER: marker },
+      env: { HOME: ledger.home },
       sessionIdentity: {
         async load() { return undefined; },
         async bind() {},
@@ -113,28 +133,48 @@ process.stdout.write(JSON.stringify({
       }),
     });
 
-    const turn = host.executeTurn(request(ledger.runDirectory, ledger.home));
-    await waitFor(marker);
-    const recordFile = join(ledger.runDirectory, "session", HOST_SESSION_RECORD_KIND, "records.jsonl");
-    await waitFor(recordFile);
-    const midFlight = await readSitianRecords(recordFile);
-    assert.ok(
-      midFlight.records.some((r) => r.identity === "live-1" && r.host === "claude"),
-      `mid-flight records missing live-1: ${JSON.stringify(midFlight.records)}`,
+    const result = await host.executeTurn(
+      request(ledger.runDirectory, ledger.home, { model: "anthropic/claude-3-opus" }, workspaceDir),
     );
-
-    await writeFile(gate, "go", "utf8");
-    const result = await turn;
     assert.equal(result.knownFailure, undefined, JSON.stringify(result));
     assert.equal(result.code, 0);
+
+    // 1. Verify copied dossier landing file: model slashes replaced with '-', ordinal 1
+    const landingFile = join(ledger.runDirectory, "session", "claude-anthropic-claude-3-opus-1.jsonl");
+    await access(landingFile);
+    const content = await readFile(landingFile, "utf8");
+    assert.equal(content, JSON.stringify({ native: "claude-session-data" }) + "\n");
+
+    // 2. Verify Sitian records
+    const recordFile = join(ledger.runDirectory, "session", HOST_SESSION_RECORD_KIND, "records.jsonl");
+    const read = await readSitianRecords(recordFile);
+    assert.equal(read.records.length, 2);
+
+    const pointerRec = read.records[0]!;
+    assert.equal(pointerRec.level, "event");
+    assert.equal(pointerRec.kind, HOST_SESSION_RECORD_KIND);
+    assert.equal((pointerRec.payload as { type: string }).type, "native-session-pointer");
+    const pointerNativePath = (pointerRec.payload as { nativePath: string }).nativePath;
+    assert.ok(typeof pointerNativePath === "string");
+    assert.ok(
+      pointerNativePath.includes("-workspace-with-underscore"),
+      `nativePath should sanitize underscore cwd to hyphens, got: ${pointerNativePath}`,
+    );
+
+    const copyRec = read.records[1]!;
+    assert.equal(copyRec.level, "event");
+    assert.equal(copyRec.kind, HOST_SESSION_RECORD_KIND);
+    assert.equal((copyRec.payload as { type: string }).type, "native-session-copy");
+    assert.equal((copyRec.payload as { landingPath: string }).landingPath, landingFile);
+    assert.equal((copyRec.payload as { ordinal: number }).ordinal, 1);
   } finally {
     ledger.dispose();
   }
 });
 
-test("headless sitian write failure ends the turn as session infrastructure failure", async () => {
+test("headless sitian write failure writes to stderr without aborting the turn (ADR 0086)", async () => {
   const ledger = createTempPackageHomeLedger({
-    prefix: "ak-811-fail-",
+    prefix: "ak-0086-sitian-write-fail-",
     runName: "run@judge",
   });
   try {
@@ -143,7 +183,6 @@ test("headless sitian write failure ends the turn as session infrastructure fail
     await writeFile(
       fakeBin,
       `#!/usr/bin/env node
-process.stdout.write(JSON.stringify({ type: "system", uuid: "fail-1" }) + "\\n");
 process.stdout.write(JSON.stringify({
   type: "result", subtype: "success", uuid: "fail-result",
   session_id: "sid", is_error: false,
@@ -157,36 +196,47 @@ process.stdout.write(JSON.stringify({
     const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionFile, "{}\n", "utf8");
+    // Make session directory read-only so sitian cannot create host-session directory
     await chmod(sessionDir, 0o555);
 
-    const host = createHeadlessRoleTurnHost({
-      description,
-      hostName: "claude",
-      binary: fakeBin,
-      sessionIdentity: {
-        async load() { return undefined; },
-        async bind() {},
-        resolveSessionFile: () => sessionFile,
-      },
-      prepare: async () => ({
-        mcpServers: [{ name: "ak-probe", command: process.execPath, args: ["-e", ""] }],
-        systemPrompt: { body: "p", materials: [] },
-        prompt: "probe",
-        jsonSchema: { type: "object" },
-        terminatingToolName: "ak_judge_output",
-        async ingestStructuredOutput() {},
-        async closeRound() { return { accepted: true as const }; },
-      }),
-    });
+    const stderrChunks: string[] = [];
+    const origStderrWrite = process.stderr.write;
+    process.stderr.write = ((chunk: string | Uint8Array, ...args: unknown[]) => {
+      stderrChunks.push(typeof chunk === "string" ? chunk : chunk.toString());
+      return true;
+    }) as typeof process.stderr.write;
 
-    const result = await host.executeTurn(request(ledger.runDirectory, ledger.home));
-    assert.equal(result.knownFailure?.cause, "session", JSON.stringify(result));
-    assert.equal(result.knownFailure?.identity?.code, "host-session-record-failed");
-    assert.ok(
-      typeof result.knownFailure?.diagnostic === "string"
-        && result.knownFailure.diagnostic.length > 0,
-      "diagnostic must carry the real write failure",
-    );
+    try {
+      const host = createHeadlessRoleTurnHost({
+        description,
+        hostName: "claude",
+        binary: fakeBin,
+        sessionIdentity: {
+          async load() { return undefined; },
+          async bind() {},
+          resolveSessionFile: () => sessionFile,
+        },
+        prepare: async () => ({
+          mcpServers: [{ name: "ak-probe", command: process.execPath, args: ["-e", ""] }],
+          systemPrompt: { body: "p", materials: [] },
+          prompt: "probe",
+          jsonSchema: { type: "object" },
+          terminatingToolName: "ak_judge_output",
+          async ingestStructuredOutput() {},
+          async closeRound() { return { accepted: true as const }; },
+        }),
+      });
+
+      const result = await host.executeTurn(request(ledger.runDirectory, ledger.home));
+      // Under ADR 0086, sitian write failure does NOT abort the turn!
+      assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+      assert.equal(result.code, 0);
+
+      // The failure is declared without constraining host-facing prose.
+      assert.ok(stderrChunks.some((chunk) => chunk.length > 0));
+    } finally {
+      process.stderr.write = origStderrWrite;
+    }
   } finally {
     try { await chmod(join(ledger.runDirectory, "session"), 0o755); } catch { /* dispose */ }
     ledger.dispose();
