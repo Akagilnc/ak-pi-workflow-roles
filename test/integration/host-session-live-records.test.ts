@@ -232,7 +232,8 @@ process.stdout.write(JSON.stringify({
       assert.equal(result.knownFailure, undefined, JSON.stringify(result));
       assert.equal(result.code, 0);
 
-      // The failed write remains non-terminal; stderr is presentation, not a test contract.
+      // The failure is declared without constraining host-facing prose.
+      assert.ok(stderrChunks.some((chunk) => chunk.length > 0));
     } finally {
       process.stderr.write = origStderrWrite;
     }

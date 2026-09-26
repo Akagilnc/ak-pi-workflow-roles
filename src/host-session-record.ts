@@ -239,7 +239,7 @@ export function copyAndRecordHostDossier(options: {
     cwd: options.cwd,
     ...(options.home !== undefined ? { home: options.home } : {}),
   });
-  if (nativePath === undefined) return;
+  if (nativePath === undefined && options.host !== "codex") return;
 
   const { landingPath, ordinal, sanitizedModel } = resolveHostDossierLandingPath(options);
 
@@ -248,10 +248,10 @@ export function copyAndRecordHostDossier(options: {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       if (options.host === "grok-build") {
-        copyGrokDossier(nativePath, landingPath);
+        copyGrokDossier(nativePath!, landingPath);
       } else {
-        if (!existsSync(nativePath)) {
-          throw new Error(`Native session file missing at ${nativePath}`);
+        if (nativePath === undefined || !existsSync(nativePath)) {
+          throw new Error(`Native session file missing for ${options.host} session ${options.sessionId}`);
         }
         mkdirSync(dirname(landingPath), { recursive: true });
         copyFileCloneOrFallback(nativePath, landingPath);

@@ -88,7 +88,8 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
       assert.equal(result.knownFailure, undefined, JSON.stringify(result));
       assert.equal(result.code, 0);
 
-      // Failure stays non-terminal; stderr wording is not a contract.
+      // Failure is declared; stderr wording is not a contract.
+      assert.ok(stderrChunks.some((chunk) => chunk.length > 0));
     } finally {
       process.stderr.write = origStderrWrite;
     }

@@ -95,7 +95,7 @@ test("ADR 0086: Submission ledger write failures still throw SitianInfrastructur
         },
         (error: unknown) => {
           assert.ok(error instanceof SitianInfrastructureError);
-          assert.ok(error.message.includes("Sitian appender persistence failure:"));
+          assert.ok(error.cause instanceof Error);
           return true;
         },
         "Submission ledger failures must throw SitianInfrastructureError",
