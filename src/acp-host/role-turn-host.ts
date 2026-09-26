@@ -258,6 +258,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
     const systemPromptOverride = renderSystemPromptOverride(prepared.systemPrompt);
     let connection: AcpConnection | undefined;
     let sessionId: string | undefined;
+    let sessionOpened = false;
     let accepted = false;
     const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
     // Mutable so dispose failure can outrank a clean turn (headless withCleanupFailure face).
@@ -331,6 +332,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           if (boundSessionId !== undefined && boundSessionId !== "") {
             sessionId = boundSessionId;
             sessionId = await loadSession(boundSessionId);
+            sessionOpened = true;
           }
         }
         let sessionReady = true;
@@ -344,6 +346,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             if (config.hostName !== "hermes") recordNativeSessionPointer({
               host: config.hostName, sessionId, cwd: request.cwd, sessionParent, home: request.home,
             });
+            sessionOpened = true;
             await config.sessionIdentity.bind(request.principal, sessionId);
           }
         }
@@ -422,7 +425,7 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
         try { await connection.close(); }
         catch { /* keep turn result */ }
       }
-      if (config.hostName !== "hermes" && sessionId !== undefined) {
+      if (config.hostName !== "hermes" && sessionOpened && sessionId !== undefined) {
         copyAndRecordHostDossier({
           host: config.hostName,
           sessionId,

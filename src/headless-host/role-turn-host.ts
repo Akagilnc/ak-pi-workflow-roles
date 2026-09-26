@@ -506,6 +506,8 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       }
 
       const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
+      let exitedSessionId: string | undefined;
+      try {
       outcome = await driveExternalRoleTurnRounds(prepared, request, {
         roundLimitName: "HeadlessRoundLimit",
         currentSessionId: () => sessionId,
@@ -541,6 +543,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
 
           const codexObserver = codex ? createCodexExecTurnObserver() : undefined;
           let pointerRecorded = false;
+          let codexIdObserved = false;
           if (sessionId !== undefined && sessionId !== "") {
             pointerRecorded = recordNativeSessionPointer({
               host: config.hostName,
@@ -578,9 +581,10 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                   sessionId = event.session_id;
                   recordNativeSessionPointer({ host: config.hostName, sessionId, cwd: request.cwd, sessionParent, home: request.home });
                 }
-                if (codex && !pointerRecorded) {
+                if (codex && !codexIdObserved) {
                   const tid = codexObserver?.result().threadId;
                   if (tid !== undefined && tid !== "") {
+                    codexIdObserved = true;
                     pointerRecorded = recordNativeSessionPointer({
                       host: config.hostName,
                       sessionId: tid,
@@ -593,36 +597,15 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               },
             });
             const roundSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
+            exitedSessionId = roundSessionId;
             if (codex && roundSessionId !== undefined && roundSessionId !== "" && !pointerRecorded) {
               recordNativeSessionPointer({ host: config.hostName, sessionId: roundSessionId, cwd: request.cwd, sessionParent, home: request.home });
             }
-            if (roundSessionId !== undefined && roundSessionId !== "") {
-              copyAndRecordHostDossier({
-                host: config.hostName,
-                sessionId: roundSessionId,
-                cwd: request.cwd,
-                sessionDirectory: join(request.runDirectory, "session"),
-                sessionParent,
-                continuation: request.continuation,
-                ...(request.model !== undefined ? { model: request.model } : {}),
-                ...(request.home !== undefined ? { home: request.home } : {}),
-              });
-            }
           } catch (error) {
-            const roundSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
-            if (roundSessionId !== undefined && roundSessionId !== "") {
-              copyAndRecordHostDossier({
-                host: config.hostName,
-                sessionId: roundSessionId,
-                cwd: request.cwd,
-                sessionDirectory: join(request.runDirectory, "session"),
-                sessionParent,
-                continuation: request.continuation,
-                ...(request.model !== undefined ? { model: request.model } : {}),
-                ...(request.home !== undefined ? { home: request.home } : {}),
-              });
+            if (isHostAbortedError(error)) {
+              exitedSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
+              throw error;
             }
-            if (isHostAbortedError(error)) throw error;
             const message = error instanceof Error ? error.message : String(error);
             const observedHostFailure = codexObserver?.result().failureDiagnostic;
             if (observedHostFailure !== undefined) {
@@ -813,6 +796,15 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           return { status: "delivered", stderr: spawned.stderr };
         },
       });
+      } finally {
+        if (exitedSessionId !== undefined && exitedSessionId !== "") copyAndRecordHostDossier({
+          host: config.hostName, sessionId: exitedSessionId, cwd: request.cwd,
+          sessionDirectory: join(request.runDirectory, "session"), sessionParent,
+          continuation: request.continuation,
+          ...(request.model !== undefined ? { model: request.model } : {}),
+          ...(request.home !== undefined ? { home: request.home } : {}),
+        });
+      }
     } finally {
       try {
         await prepared.dispose?.();

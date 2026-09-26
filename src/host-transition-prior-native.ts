@@ -1,7 +1,6 @@
 /**
  * Single authority for #617 DK-4 cross-host prior-native projection.
- * Classifies the prior volume into the two record families that exist
- * (Pi native session file / sitian run records), never by host name.
+ * Projects native files alongside Sitian records for cross-host handoff.
  */
 import { access, readdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -24,11 +23,11 @@ async function listPiNativeRecordPaths(sessionFile: string): Promise<string[]> {
 }
 
 /**
- * Present sitian records.jsonl paths under sessionParent topology (#717).
+ * Present copied native dossiers and sitian records under sessionParent topology (#717).
  * resolveSitianRecordPathInLedger writes dirname(sessionParent)/<category>/records.jsonl
  * when sessionParent is inside ledger home — never session.jsonl itself.
  */
-async function listSitianRecordPaths(sessionParent: string): Promise<string[]> {
+async function listSitianRecordPaths(sessionParent: string, previousHost: string): Promise<string[]> {
   const sessionRoot = dirname(sessionParent);
   let entries;
   try {
@@ -39,6 +38,16 @@ async function listSitianRecordPaths(sessionParent: string): Promise<string[]> {
   }
   const recordPaths: string[] = [];
   for (const entry of entries) {
+    if (entry.name.startsWith(`${previousHost}-`) && /-\d+(?:\.jsonl)?$/.test(entry.name)) {
+      if (entry.isFile()) recordPaths.push(join(sessionRoot, entry.name));
+      if (entry.isDirectory()) {
+        for (const leaf of ["chat_history.jsonl", "usage.json"]) {
+          const path = join(sessionRoot, entry.name, leaf);
+          try { await access(path); recordPaths.push(path); }
+          catch (error) { if (!isEnoent(error)) throw error; }
+        }
+      }
+    }
     if (!entry.isDirectory()) continue;
     const recordFile = join(sessionRoot, entry.name, "records.jsonl");
     try {
@@ -56,9 +65,7 @@ async function listSitianRecordPaths(sessionParent: string): Promise<string[]> {
  * Project one hostTransition only for a real host switch. Empty native volume
  * still yields a typed switch (empty path list).
  *
- * Pi wrote its own session.jsonl; every other host's run volume is the sitian
- * record set on the live run (ADR 0077 全宿主 session 卷宗统一直写, #717) — the CLI's
- * own journals stay in the operator home and are never copied here.
+ * Pi wrote session.jsonl; external hosts supply copied native files and Sitian records.
  */
 export async function projectHostTransitionPriorNative(input: {
   readonly previousHost: string;
@@ -72,9 +79,9 @@ export async function projectHostTransitionPriorNative(input: {
       priorNativePaths: await listPiNativeRecordPaths(input.piSessionFile),
     };
   }
-  // Sitian path handoff only — do not read bytes.
+  // Hand off existing record paths without reading their bytes.
   return {
     priorNativeKind: "sitian",
-    priorNativePaths: await listSitianRecordPaths(input.piSessionFile),
+    priorNativePaths: await listSitianRecordPaths(input.piSessionFile, input.previousHost),
   };
 }
