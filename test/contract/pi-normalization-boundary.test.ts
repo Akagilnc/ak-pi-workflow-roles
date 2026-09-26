@@ -1,18 +1,11 @@
 /**
- * #520 S5 Boundary Tracers (B4 acceptance, §4):
+ * ADR 0086 Boundary Tracers:
  * 1. Duplicate processing tracer:
  *    Same raw session processed twice via Pi adapter/facade ->
- *    - Second run returns same RecordPointers
- *    - Reader reads each canonical record exactly once (zero deduplication in Reader)
+ *    - Second run returns deterministic RecordPointers
+ *    - Reader reads records across passes (Log4j append-only appends unconditionally)
  *    - Raw session file is untouched
- * 2. Fault injection tracer (covering both torn-tail substates):
- *    - Substate a (missing trailing \n): reopen + retry -> direct byte assertion:
- *      repaired line is the sole canonical row for this identity, returns existing pointer, 0 duplicate append.
- *    - Substate b (mid-fragment corruption): reopen + retry -> direct byte assertion:
- *      corrupted fragment preserved as independent bad line without loss, zero splicing,
- *      exactly one new canonical row, valid pointer;
- *      AND asserted through real Reader entrypoint: subsequent canonical row is reachable + malformed diagnostic exposed.
- * 3. Normalization failure negative case:
+ * 2. Normalization failure negative case:
  *    - Unparseable frame -> raw preserved, typed normalization-failure recorded, does not abort.
  */
 import assert from "node:assert/strict";
@@ -29,7 +22,7 @@ import {
   withHermeticHome,
 } from "../helpers/pi-test-harness.ts";
 
-test("Boundary Tracer 1: Duplicate processing of raw session returns same pointer and single reader record", async () => {
+test("Boundary Tracer 1: Duplicate processing of raw session under log4j append-only appends both passes while raw session untouched", async () => {
   await withHermeticHome({ prefix: "ak-tracer-dup-" }, async ({ home }) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -96,147 +89,15 @@ test("Boundary Tracer 1: Duplicate processing of raw session returns same pointe
     const rawAfterSecond = await readFile(sessionFile, "utf8");
     assert.equal(rawAfterSecond, rawContent, "Raw session still untouched");
 
-    // Read canonical volume for tool-call via Reader: exactly 1 entry (zero deduplication by Reader)
+    // Read canonical volume for tool-call via Reader: append-only appends each pass under ADR 0086
     const readTool = await readSitianRecords(pointers1[0]!.recordFile);
-    assert.equal(readTool.records.length, 1, "Zero duplicate tool-call records");
+    assert.equal(readTool.records.length, 2, "Append-only tool-call records across two passes");
     assert.equal(readTool.records[0]!.identity, "sess-dup-001:call-1");
 
-    // Read canonical volume for summary via Reader: exactly 1 entry
+    // Read canonical volume for summary via Reader: append-only appends each pass
     const readSummary = await readSitianRecords(pointers1[1]!.recordFile);
-    assert.equal(readSummary.records.length, 1, "Zero duplicate summary records");
+    assert.equal(readSummary.records.length, 2, "Append-only summary records across two passes");
     assert.equal(readSummary.records[0]!.identity, "sess-dup-001:summary");
-  });
-});
-
-test("Boundary Tracer 2: Fault injection covering both torn-tail substates and Reader reachability", async () => {
-  await withHermeticHome({ prefix: "ak-tracer-fault-" }, async ({ home }) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitRepository(project);
-
-    // --- Substate a: genuine short write (complete JSON without trailing newline) ---
-    const sessionFileA = join(home, ".ak-roles/books/proj/runs/run-a/session/session.jsonl");
-    await mkdir(dirname(sessionFileA), { recursive: true });
-    const rawContentA = [
-      JSON.stringify({ type: "session", id: "sess-fault-a", timestamp: "2026-08-28T01:00:00.000Z", cwd: project }),
-      JSON.stringify({
-        type: "message",
-        id: "msg-a-1",
-        timestamp: "2026-08-28T01:00:02.000Z",
-        message: {
-          role: "assistant",
-          content: [{ type: "toolCall", id: "call-a-1", name: "bash", arguments: { command: "echo test" } }],
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        id: "msg-a-2",
-        timestamp: "2026-08-28T01:00:03.000Z",
-        message: { role: "toolResult", toolCallId: "call-a-1", toolName: "bash", content: [] },
-      }),
-    ].join("\n") + "\n";
-    await writeFile(sessionFileA, rawContentA, "utf8");
-
-    const pointersA1 = await normalizePiSessionAttempt({
-      sessionFile: sessionFileA,
-      cwd: project,
-      home,
-      subject: { runId: "run-fault-a" },
-    });
-    const toolRecordFileA = pointersA1[0]!.recordFile;
-
-    // Simulate incomplete short-write crash
-    const shortWriteCanonical = JSON.stringify({
-      level: "event",
-      kind: "tool-call",
-      identity: "sess-fault-a:call-short",
-      timestamp: "2026-08-28T01:00:05.000Z",
-      host: "pi",
-      payload: { toolName: "bash", toolCallId: "call-short" },
-    });
-    // Write without newline to tool-call volume
-    await appendFile(toolRecordFileA, shortWriteCanonical, "utf8");
-
-    // Reopen & process again with that identity
-    const ptrRecovered = sitianReport({
-      level: "event",
-      kind: "tool-call",
-      cwd: project,
-      home,
-      sessionParent: sessionFileA,
-      subject: { runId: "run-fault-a" },
-      identity: "sess-fault-a:call-short",
-      payload: { toolName: "bash", toolCallId: "call-short" },
-    });
-
-    assert.equal(ptrRecovered.identity, "sess-fault-a:call-short");
-    const rawBytesA = await readFile(toolRecordFileA, "utf8");
-    assert.ok(rawBytesA.endsWith("\n"), "Direct byte assertion: repaired line ends with newline");
-
-    const readA = await readSitianRecords(toolRecordFileA);
-    const shortRows = readA.records.filter((r) => r.identity === "sess-fault-a:call-short");
-    assert.equal(shortRows.length, 1, "Direct byte assertion: repaired line is the sole canonical row for this identity");
-    assert.equal(readA.diagnostics.length, 0);
-
-    // --- Substate b: mid-fragment corruption (unparseable fragment without newline) ---
-    const sessionFileB = join(home, ".ak-roles/books/proj/runs/run-b/session/session.jsonl");
-    await mkdir(dirname(sessionFileB), { recursive: true });
-    const rawContentB = [
-      JSON.stringify({ type: "session", id: "sess-fault-b", timestamp: "2026-08-28T01:00:00.000Z", cwd: project }),
-      JSON.stringify({
-        type: "message",
-        id: "msg-b-1",
-        timestamp: "2026-08-28T01:00:02.000Z",
-        message: {
-          role: "assistant",
-          content: [{ type: "toolCall", id: "call-b-1", name: "bash", arguments: { command: "echo test" } }],
-        },
-      }),
-      JSON.stringify({
-        type: "message",
-        id: "msg-b-2",
-        timestamp: "2026-08-28T01:00:03.000Z",
-        message: { role: "toolResult", toolCallId: "call-b-1", toolName: "bash", content: [] },
-      }),
-    ].join("\n") + "\n";
-    await writeFile(sessionFileB, rawContentB, "utf8");
-
-    const pointersB1 = await normalizePiSessionAttempt({
-      sessionFile: sessionFileB,
-      cwd: project,
-      home,
-      subject: { runId: "run-fault-b" },
-    });
-    const toolRecordFileB = pointersB1[0]!.recordFile;
-
-    const corruptedFragment = '{"level":"event","kind":"tool-call","identity":"sess-fault-b:call-bad';
-    await appendFile(toolRecordFileB, corruptedFragment, "utf8");
-
-    // Reopen & append new canonical row
-    const ptrNext = sitianReport({
-      level: "event",
-      kind: "tool-call",
-      cwd: project,
-      home,
-      sessionParent: sessionFileB,
-      subject: { runId: "run-fault-b" },
-      identity: "sess-fault-b:call-after-bad",
-      payload: { toolName: "read_file" },
-    });
-
-    assert.equal(ptrNext.identity, "sess-fault-b:call-after-bad");
-
-    // Direct byte assertion: corrupted fragment preserved as independent bad line without splicing
-    const rawBytesB = await readFile(toolRecordFileB, "utf8");
-    const linesB = rawBytesB.split("\n").filter((l) => l.length > 0);
-    assert.ok(linesB.includes(corruptedFragment), "Corrupted fragment preserved verbatim as independent bad line");
-
-    // Real Reader entrypoint assertions: malformed diagnostic exposed AND subsequent row reachable
-    const readB = await readSitianRecords(toolRecordFileB);
-    assert.equal(readB.diagnostics.length, 1);
-    assert.equal(readB.diagnostics[0]!.raw, corruptedFragment);
-    const subsequentRow = readB.records.find((r) => r.identity === "sess-fault-b:call-after-bad");
-    assert.ok(subsequentRow, "Subsequent canonical row is reachable through canonical Reader");
   });
 });
 

@@ -3,9 +3,7 @@
  * Demonstrates:
  * - Three contracts (Facade, Layout, Appender/Reader)
  * - Three levels (run-summary, event, protocol-snapshot) with usage and raw references
- * - Entry-level idempotency (Appender self-check -> returns existing pointer, 0 re-append)
- * - Torn-tail crash recovery substate a (missing trailing newline -> committed on recovery, 0 re-append)
- * - Torn-tail crash recovery substate b (corrupted fragment preserved, new row appended)
+ * - Log4j append-only sink (ADR 0086: appends unconditionally, O(1), no idempotency check, no torn-tail repair)
  * - Reader traversal contract (terminated malformed line exposes typed diagnostic and continues traversal; subsequent rows reachable; 0 deduplication)
  * - S4 submission ledger channel (five kinds, subject={runId, attemptId}, priorEventId chain, cross-attempt appending)
  * - Infrastructure failure honesty (original cause propagated)
@@ -92,8 +90,8 @@ test("Sitian facade: Layout supports three levels, usage, raw pointer, and no de
   });
 });
 
-test("Sitian facade: Entry-level idempotency returns existing pointer with zero re-append", async () => {
-  await withHermeticHome({ prefix: "ak-sitian-idempotent-" }, async ({ home }) => {
+test("Sitian facade: Log4j append-only appends unconditionally without deduplication (ADR 0086)", async () => {
+  await withHermeticHome({ prefix: "ak-sitian-append-only-" }, async ({ home }) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitRepository(project);
@@ -113,79 +111,23 @@ test("Sitian facade: Entry-level idempotency returns existing pointer with zero 
     const ptr1 = sitianReport(input);
     const textAfterFirst = await readFile(ptr1.recordFile, "utf8");
 
-    // Second write with identical canonical identity
+    // Second write with identical canonical identity -> appends second row unconditionally
     const ptr2 = sitianReport(input);
     const textAfterSecond = await readFile(ptr1.recordFile, "utf8");
 
     assert.equal(ptr2.identity, ptr1.identity);
     assert.equal(ptr2.recordFile, ptr1.recordFile);
-    assert.equal(textAfterSecond, textAfterFirst, "Zero re-append on idempotent write");
+    assert.notEqual(textAfterSecond, textAfterFirst, "Unconditional append under Log4j model");
 
     const read = await readSitianRecords(ptr1.recordFile);
-    assert.equal(read.records.length, 1);
+    assert.equal(read.records.length, 2, "Both records exist in canonical volume");
+    assert.equal(read.records[0]!.identity, "canonical-idem-id-123");
+    assert.equal(read.records[1]!.identity, "canonical-idem-id-123");
   });
 });
 
-test("Sitian facade: Torn-tail recovery substate a (missing trailing newline treated as committed)", async () => {
-  await withHermeticHome({ prefix: "ak-sitian-torn-a-" }, async ({ home }) => {
-    const project = join(home, "proj");
-    await mkdir(project, { recursive: true });
-    seedGitRepository(project);
-
-    const input: SitianRecordInput = {
-      level: "event",
-      kind: "attendance",
-      cwd: project,
-      home,
-      sessionParent: join(home, ".ak-roles", "books", "proj", "runs", "parent", "session.jsonl"),
-      subject: "substate-a-test",
-      identity: "ident-short-write-a",
-      payload: { step: "arrival" },
-    };
-
-    // First write normally to establish volume
-    const ptr1 = sitianReport(input);
-
-    // Simulate crash where a line was written without trailing newline
-    const shortWriteRecord: SitianRecord = {
-      level: "event",
-      kind: "attendance",
-      identity: "ident-short-write-a-2",
-      subject: "substate-a-test",
-      timestamp: "2026-08-28T00:00:00.000Z",
-      host: "pi",
-      payload: { step: "recommendation" },
-    };
-    // Append without trailing \n
-    await appendFile(ptr1.recordFile, JSON.stringify(shortWriteRecord), "utf8");
-
-    // Reopen & write with that same identity -> substate a: recovery seals line with \n, detects valid JSON & identity, returns existing pointer
-    const ptr2 = sitianReport({
-      level: "event",
-      kind: "attendance",
-      cwd: project,
-      home,
-      sessionParent: join(home, ".ak-roles", "books", "proj", "runs", "parent", "session.jsonl"),
-      subject: "substate-a-test",
-      identity: "ident-short-write-a-2",
-      payload: { step: "recommendation" },
-    });
-
-    assert.equal(ptr2.identity, "ident-short-write-a-2");
-    assert.equal(ptr2.recordFile, ptr1.recordFile);
-
-    const fileContent = await readFile(ptr1.recordFile, "utf8");
-    assert.ok(fileContent.endsWith("\n"), "Torn-tail must be newline-terminated");
-
-    const read = await readSitianRecords(ptr1.recordFile);
-    assert.equal(read.records.length, 2);
-    assert.equal(read.records[1]!.identity, "ident-short-write-a-2");
-    assert.equal(read.diagnostics.length, 0, "Repaired valid line has no diagnostics");
-  });
-});
-
-test("Sitian facade: Torn-tail recovery substate b (corrupted fragment preserved, new row appended, Reader reaches subsequent rows)", async () => {
-  await withHermeticHome({ prefix: "ak-sitian-torn-b-" }, async ({ home }) => {
+test("Sitian reader: Malformed line exposes typed diagnostic and traversal continues to subsequent rows", async () => {
+  await withHermeticHome({ prefix: "ak-sitian-reader-diag-" }, async ({ home }) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitRepository(project);
@@ -196,35 +138,27 @@ test("Sitian facade: Torn-tail recovery substate b (corrupted fragment preserved
       cwd: project,
       home,
       sessionParent: join(home, ".ak-roles", "books", "proj", "runs", "parent", "session.jsonl"),
-      subject: "substate-b-test",
+      subject: "reader-diag-test",
       identity: "row-1",
       payload: { audit: "pass" },
     };
     const ptr1 = sitianReport(input1);
 
-    // Simulate corrupted mid-write crash (incomplete JSON fragment without newline)
     const corruptFragment = '{"level":"event","kind":"auditor","identity":"corrupted-frag';
-    await appendFile(ptr1.recordFile, corruptFragment, "utf8");
+    await appendFile(ptr1.recordFile, corruptFragment + "\n", "utf8");
 
-    // Reopen & write new record -> substate b: seals corrupt fragment with \n, check misses, appends new row
-    const ptr2 = sitianReport({
+    const input2: SitianRecordInput = {
       level: "event",
       kind: "auditor",
       cwd: project,
       home,
       sessionParent: join(home, ".ak-roles", "books", "proj", "runs", "parent", "session.jsonl"),
-      subject: "substate-b-test",
+      subject: "reader-diag-test",
       identity: "row-2-canonical",
       payload: { audit: "escalate" },
-    });
+    };
+    sitianReport(input2);
 
-    assert.equal(ptr2.identity, "row-2-canonical");
-    const rawBytes = await readFile(ptr1.recordFile, "utf8");
-    const lines = rawBytes.split("\n").filter((l) => l.length > 0);
-    assert.equal(lines.length, 3, "Corrupt fragment preserved as independent bad line + 2 canonical lines");
-    assert.equal(lines[1], corruptFragment);
-
-    // Assert through real Reader entrypoint: malformed diagnostic exposed AND row 2 reachable
     const read = await readSitianRecords(ptr1.recordFile);
     assert.equal(read.records.length, 2);
     assert.equal(read.records[0]!.identity, "row-1");

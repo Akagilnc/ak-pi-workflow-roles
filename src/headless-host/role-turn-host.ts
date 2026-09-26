@@ -22,7 +22,10 @@ import {
   type SessionIdentityAuthority,
 } from "../prepared-role-turn.ts";
 
-import { reportHostSessionEvent } from "../host-session-record.ts";
+import {
+  copyAndRecordHostDossier,
+  recordNativeSessionPointer,
+} from "../host-session-record.ts";
 import {
   closeJsonSchemaForCodex,
   codexTurnArgs,
@@ -532,6 +535,18 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           }
 
           const codexObserver = codex ? createCodexExecTurnObserver() : undefined;
+          let pointerRecorded = false;
+          if (sessionId !== undefined && sessionId !== "") {
+            pointerRecorded = true;
+            recordNativeSessionPointer({
+              host: config.hostName,
+              sessionId,
+              cwd: request.cwd,
+              sessionParent,
+              home: request.home,
+            });
+          }
+
           let spawned: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
           try {
             spawned = await spawnHeadlessTurn({
@@ -554,17 +569,49 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 }
                 // One bounded live seam owns both recording and host-specific reduction.
                 codexObserver?.observe(event);
-                reportHostSessionEvent({
-                  host: config.hostName,
-                  cwd: request.cwd,
-                  sessionParent,
-                  source: "headless-host",
-                  event,
-                });
+                if (codex && !pointerRecorded) {
+                  const tid = codexObserver?.result().threadId;
+                  if (tid !== undefined && tid !== "") {
+                    pointerRecorded = true;
+                    recordNativeSessionPointer({
+                      host: config.hostName,
+                      sessionId: tid,
+                      cwd: request.cwd,
+                      sessionParent,
+                      home: request.home,
+                    });
+                  }
+                }
               },
             });
+            const roundSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
+            if (roundSessionId !== undefined && roundSessionId !== "") {
+              copyAndRecordHostDossier({
+                host: config.hostName,
+                sessionId: roundSessionId,
+                cwd: request.cwd,
+                sessionDirectory: join(request.runDirectory, "session"),
+                sessionParent,
+                continuation: request.continuation,
+                ...(request.model !== undefined ? { model: request.model } : {}),
+                ...(request.home !== undefined ? { home: request.home } : {}),
+              });
+            }
           } catch (error) {
             if (isHostAbortedError(error)) throw error;
+            const roundSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
+            if (roundSessionId !== undefined && roundSessionId !== "") {
+              copyAndRecordHostDossier({
+                host: config.hostName,
+                sessionId: roundSessionId,
+                cwd: request.cwd,
+                sessionDirectory: join(request.runDirectory, "session"),
+                sessionParent,
+                continuation: request.continuation,
+                ...(request.model !== undefined ? { model: request.model } : {}),
+                ...(request.home !== undefined ? { home: request.home } : {}),
+              });
+            }
             const message = error instanceof Error ? error.message : String(error);
             const observedHostFailure = codexObserver?.result().failureDiagnostic;
             if (observedHostFailure !== undefined) {
@@ -575,24 +622,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                   sessionRecordDiagnostic: message,
                   sessionId,
                 }, observedHostFailure),
-              };
-            }
-            // SitianInfrastructureError.knownCause is session; spawn errno stays activation.
-            const isRecordFailure =
-              typeof error === "object"
-              && error !== null
-              && ((error as { knownCause?: unknown }).knownCause === "session"
-                || (error as { name?: unknown }).name === "SitianInfrastructureError");
-            if (isRecordFailure) {
-              return {
-                status: "terminal",
-                result: failure(
-                  "session",
-                  "HostSessionRecordFailure",
-                  "host-session-record-failed",
-                  { diagnostic: message, sessionId },
-                  message,
-                ),
               };
             }
             return {
