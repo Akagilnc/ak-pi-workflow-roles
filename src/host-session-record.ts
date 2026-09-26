@@ -195,7 +195,7 @@ function copyFileCloneOrFallback(src: string, dest: string): void {
   copyFileSync(src, dest);
 }
 
-/** Copy grok-build directory: chat_history.jsonl and usage.json (if present) into destDir. */
+/** Copy both grok-build originals: chat_history.jsonl and usage.json into destDir. */
 function copyGrokDossier(srcDir: string, destDir: string): void {
   const chatHistorySrc = join(srcDir, "chat_history.jsonl");
   if (!existsSync(chatHistorySrc)) {
