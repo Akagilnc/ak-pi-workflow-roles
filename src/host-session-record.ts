@@ -8,7 +8,9 @@
 import { spawnSync } from "node:child_process";
 import {
   copyFileSync,
+  closeSync,
   existsSync,
+  openSync,
   mkdirSync,
   readdirSync,
   statSync,
@@ -204,10 +206,10 @@ function copyGrokDossier(srcDir: string, destDir: string): void {
   copyFileCloneOrFallback(chatHistorySrc, chatHistoryDest);
 
   const usageSrc = join(srcDir, "usage.json");
-  if (existsSync(usageSrc)) {
-    const usageDest = join(destDir, "usage.json");
-    copyFileCloneOrFallback(usageSrc, usageDest);
+  if (!existsSync(usageSrc)) {
+    throw new Error(`Grok native usage.json missing at ${usageSrc}`);
   }
+  copyFileCloneOrFallback(usageSrc, join(destDir, "usage.json"));
 }
 
 /**
@@ -277,6 +279,15 @@ export function copyAndRecordHostDossier(options: {
       },
     });
   } else {
+    // Reserve the failed attempt's ordinal for a later resume without reading the log.
+    try {
+      if (options.host === "grok-build") {
+        mkdirSync(landingPath, { recursive: true });
+      } else {
+        mkdirSync(dirname(landingPath), { recursive: true });
+        closeSync(openSync(landingPath, "a"));
+      }
+    } catch { /* the warning below retains the original copy failure */ }
     sitianReportSafe({
       level: "event",
       kind: HOST_SESSION_RECORD_KIND,

@@ -328,8 +328,15 @@ function spawnHeadlessTurn(options: {
         lineBuffer = "";
       }
     };
+    let aborted = false;
     const settle = (code: number | null): void => {
       if (settled) return;
+      if (aborted) {
+        settled = true;
+        if (timer !== undefined) clearTimeout(timer);
+        reject(hostAbortedError("headless host aborted"));
+        return;
+      }
       // Final flush first: onStdoutLine may failLine (reject + settled=true).
       flushStdoutLines("", true);
       if (settled) return;
@@ -343,11 +350,9 @@ function spawnHeadlessTurn(options: {
       resolve({ code, stdout: resultStdout, stderr, timedOut });
     };
     const onAbort = (): void => {
-      child.kill("SIGTERM");
       if (settled) return;
-      settled = true;
-      if (timer !== undefined) clearTimeout(timer);
-      reject(hostAbortedError("headless host aborted"));
+      aborted = true;
+      child.kill("SIGTERM");
     };
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => { flushStdoutLines(chunk, false); });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
@@ -598,7 +603,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               });
             }
           } catch (error) {
-            if (isHostAbortedError(error)) throw error;
             const roundSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
             if (roundSessionId !== undefined && roundSessionId !== "") {
               copyAndRecordHostDossier({
@@ -612,6 +616,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 ...(request.home !== undefined ? { home: request.home } : {}),
               });
             }
+            if (isHostAbortedError(error)) throw error;
             const message = error instanceof Error ? error.message : String(error);
             const observedHostFailure = codexObserver?.result().failureDiagnostic;
             if (observedHostFailure !== undefined) {

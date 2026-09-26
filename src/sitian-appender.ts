@@ -4,10 +4,7 @@
  * Log4j-style append-only record sink: appends one row, no deduplication, no read-back, no torn-tail repair.
  */
 import { randomUUID } from "node:crypto";
-import {
-  appendFileSync,
-  readFileSync,
-} from "node:fs";
+import { appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { resolveBookKeyFromGit } from "./activation-ledger-git.ts";
@@ -26,32 +23,13 @@ import {
   type SitianRecordInput,
 } from "./sitian-contracts.ts";
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
 /** Assign already-recorded lines, preserving their original text and malformed lines. */
 export function appendSitianRecordBlock(input: SitianRecordInput, block: string): void {
   if (block === "") return;
   try {
     const { sessionDir, recordFile, ledgerHome } = resolveSitianRecordPath(input);
     ensureRealDirectoryTree(ledgerHome, sessionDir);
-    appendFileSync(recordFile, "", "utf8");
-    const identityOf = (line: string): string | undefined => {
-      try {
-        const row: unknown = JSON.parse(line);
-        return isRecord(row) && typeof row.identity === "string" ? row.identity : undefined;
-      } catch {
-        return undefined;
-      }
-    };
-    const identities = new Set(readFileSync(recordFile, "utf8").split("\n").map(identityOf).filter((id): id is string => id !== undefined));
-    for (const line of block.match(/[^\n]*\n|[^\n]+$/g) ?? []) {
-      const identity = identityOf(line);
-      if (identity !== undefined && identities.has(identity)) continue;
-      appendFileSync(recordFile, line, "utf8");
-      if (identity !== undefined) identities.add(identity);
-    }
+    appendFileSync(recordFile, block, "utf8");
   } catch (error) {
     if (error instanceof SitianInfrastructureError) throw error;
     throw new SitianInfrastructureError(
