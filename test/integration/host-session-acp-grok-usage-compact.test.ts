@@ -6,7 +6,7 @@
  * - Copy failure retries once and records native-session-warning without altering turn outcome.
  */
 import assert from "node:assert/strict";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -166,14 +166,78 @@ test("hermes ACP host is untouched (no pointer, no copy) (ADR 0086)", async () =
   }
 });
 
-test("grok-build dossier copy failure retries once and appends native-session-warning without altering turn (ADR 0086)", async () => {
+test("grok-build dossier copy failure appends warning without altering turn (ADR 0086)", async () => {
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-0086-grok-warning-", runName: "run@coder" });
+  try {
+    const result = await createHost({ ledger, connection: mockConnection("missing-sess") }).executeTurn(
+      request(ledger.runDirectory, ledger.home, { model: "grok-4.7" }),
+    );
+    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+    assert.equal(result.code, 0);
+    const { records } = await readSitianRecords(hostSessionRecordFile(ledger.runDirectory));
+    assert.equal((records[0]?.payload as { type?: string })?.type, "native-session-pointer");
+    assert.equal((records[1]?.payload as { type?: string })?.type, "native-session-warning");
+    assert.equal((records[1]?.payload as { ordinal?: number })?.ordinal, 1);
+    assert.ok((records[1]?.payload as { error?: string })?.error);
+  } finally {
+    ledger.dispose();
+  }
+});
+
+test("unreadable run-start ledger warns instead of copying with a guessed ordinal", async () => {
+  const ledger = createTempPackageHomeLedger({ prefix: "ak-0086-starts-unreadable-", runName: "run@coder" });
+  try {
+    const sessionId = "unreadable-starts";
+    const nativeDir = join(ledger.home, ".grok", "sessions", encodeURIComponent(ledger.home), sessionId);
+    await mkdir(nativeDir, { recursive: true });
+    await writeFile(join(nativeDir, "chat_history.jsonl"), "native chat\n");
+    await writeFile(join(nativeDir, "usage.json"), "native usage\n");
+    await mkdir(join(ledger.runDirectory, ".run-starts"));
+    const result = await createHost({ ledger, connection: mockConnection(sessionId) }).executeTurn(
+      request(ledger.runDirectory, ledger.home, { model: "grok-4.7" }),
+    );
+    assert.equal(result.knownFailure, undefined, JSON.stringify(result));
+    assert.equal(result.code, 0);
+    const { records } = await readSitianRecords(hostSessionRecordFile(ledger.runDirectory));
+    assert.equal((records[0]?.payload as { type?: string })?.type, "native-session-pointer");
+    assert.equal((records[1]?.payload as { type?: string })?.type, "native-session-warning");
+    assert.ok((records[1]?.payload as { error?: string })?.error);
+    await assert.rejects(readFile(join(ledger.runDirectory, "session", "grok-build-grok-4.7-1", "usage.json")));
+  } finally {
+    ledger.dispose();
+  }
+});
+
+test("grok-build dossier copy retries once after missing usage and completes before turn returns (ADR 0086)", async () => {
   const ledger = createTempPackageHomeLedger({
     prefix: "ak-0086-grok-warning-",
     runName: "run@coder",
   });
   try {
-    // Native directory not created -> copy will fail and retry once, then append warning
-    const host = createHost({ ledger, connection: mockConnection("missing-sess") });
+    const sessionId = "retry-sess";
+    const nativeDir = join(ledger.home, ".grok", "sessions", encodeURIComponent(ledger.home), sessionId);
+    await mkdir(nativeDir, { recursive: true });
+    await writeFile(join(nativeDir, "chat_history.jsonl"), "native chat\n");
+    // The host's cp command makes usage available only on its second chat copy.
+    // First pass fails after chat; the second must actually reach usage.
+    const bin = join(ledger.home, "bin");
+    await mkdir(bin);
+    const attempts = join(ledger.home, "copy-attempts");
+    const cp = join(bin, "cp");
+    await writeFile(cp, `#!/bin/sh
+if [ "$2" = "${join(nativeDir, "chat_history.jsonl")}" ]; then
+  printf 'attempt\\n' >> '${attempts}'
+  if [ "$(wc -l < '${attempts}')" -eq 2 ]; then
+    printf 'native usage\\n' > '${join(nativeDir, "usage.json")}'
+  fi
+fi
+/bin/cp "$2" "$3"
+`);
+    await chmod(cp, 0o755);
+    const previousPath = process.env.PATH;
+    process.env.PATH = `${bin}:${previousPath ?? ""}`;
+    try {
+    const host = createHost({ ledger, connection: mockConnection(sessionId) });
     const result = await host.executeTurn(
       request(ledger.runDirectory, ledger.home, { model: "grok-4.7" }),
     );
@@ -186,13 +250,14 @@ test("grok-build dossier copy failure retries once and appends native-session-wa
     const pointerRec = records[0]!;
     assert.equal((pointerRec.payload as { type: string }).type, "native-session-pointer");
 
-    const warningRec = records[1]!;
-    assert.equal((warningRec.payload as { type: string }).type, "native-session-warning");
-    assert.equal((warningRec.payload as { ordinal: number }).ordinal, 1);
-    assert.ok(
-      typeof (warningRec.payload as { error: string }).error === "string"
-        && (warningRec.payload as { error: string }).error.length > 0,
-    );
+    const copyRec = records[1]!;
+    assert.equal((copyRec.payload as { type: string }).type, "native-session-copy");
+    assert.equal((await readFile(attempts, "utf8")).split("\n").filter(Boolean).length, 2);
+    assert.equal(await readFile(join(ledger.runDirectory, "session", "grok-build-grok-4.7-1", "usage.json"), "utf8"), "native usage\n");
+    } finally {
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
+    }
   } finally {
     ledger.dispose();
   }
