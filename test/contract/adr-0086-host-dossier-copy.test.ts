@@ -1,6 +1,6 @@
 /** Submission ledger failure remains durable under ADR 0086. */
 import assert from "node:assert/strict";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
@@ -25,32 +25,28 @@ test("ADR 0086: Submission ledger write failures still throw SitianInfrastructur
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionParent, "{}\n", "utf8");
 
-    // Make directory read-only so append fails
-    await chmod(sessionDir, 0o555);
+    // A regular file blocks the submission-ledger directory regardless of uid.
+    await writeFile(join(sessionDir, "submission-ledger"), "blocked");
 
-    try {
-      assert.throws(
-        () => {
-          appendSitianRecord({
-            level: "event",
-            kind: "sealed",
-            cwd: project,
-            home,
-            sessionParent,
-            subject: { runId: "run-ledger", attemptId: "att-1" },
-            identity: "seal-evt-1",
-            payload: { sealed: true },
-          });
-        },
-        (error: unknown) => {
-          assert.ok(error instanceof SitianInfrastructureError);
-          assert.ok(error.cause instanceof Error);
-          return true;
-        },
-        "Submission ledger failures must throw SitianInfrastructureError",
-      );
-    } finally {
-      await chmod(sessionDir, 0o755);
-    }
+    assert.throws(
+      () => {
+        appendSitianRecord({
+          level: "event",
+          kind: "sealed",
+          cwd: project,
+          home,
+          sessionParent,
+          subject: { runId: "run-ledger", attemptId: "att-1" },
+          identity: "seal-evt-1",
+          payload: { sealed: true },
+        });
+      },
+      (error: unknown) => {
+        assert.ok(error instanceof SitianInfrastructureError);
+        assert.ok(error.cause instanceof Error);
+        return true;
+      },
+      "Submission ledger failures must throw SitianInfrastructureError",
+    );
   });
 });

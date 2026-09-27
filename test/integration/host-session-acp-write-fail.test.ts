@@ -1,10 +1,10 @@
 /**
  * ADR 0086: ACP host-session write failure writes to stderr without aborting the turn.
- * Real FS chmod freeze proves that pointer or dossier sitian write failures
+ * A file blocking the record directory proves pointer or dossier sitian write failures
  * declare to stderr once and do not alter the turn outcome.
  */
 import assert from "node:assert/strict";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
@@ -36,8 +36,8 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
     const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionFile, "{}\n", "utf8");
-    // Freeze session dir so sitian cannot create host-session/ directory
-    await chmod(sessionDir, 0o555);
+    // A regular file prevents Sitian from creating host-session/ for every user.
+    await writeFile(join(sessionDir, "host-session"), "blocked");
 
     const stderrChunks: string[] = [];
     const origStderrWrite = process.stderr.write;
@@ -94,7 +94,6 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
       process.stderr.write = origStderrWrite;
     }
   } finally {
-    try { await chmod(join(ledger.runDirectory, "session"), 0o755); } catch { /* dispose */ }
     ledger.dispose();
   }
 });
