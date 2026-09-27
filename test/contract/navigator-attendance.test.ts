@@ -457,12 +457,13 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
           toolName: FIXER_OUTPUT_TOOL_NAME,
           isError: false,
           details: { status: "completed" },
+          navigator: events[0],
         },
       },
       {
         type: "custom_message",
         customType: "ak-navigator-attendance",
-        message: { details: events[0] },
+        message: { details: { disposition: "no-advice" } },
       },
     ] as never);
     assert.equal(terminalNavigator.disposition, "unavailable");

@@ -2283,10 +2283,8 @@ function extractNavigatorAttendanceFact(
   entries: readonly SessionEntry[],
 ): TerminalNavigatorFact {
   // Affirmative attendance only. Missing / unparseable is never no-advice.
-  // #1087: take the latest attendance strictly after the latest durable packaged
-  // role terminal. No historical invocation-marker / invocationId correlation
-  // (ADR 0042). Lifecycle dispose/grace keeps late prior-call writes out of the
-  // settled window (ADR 0052 / 0084).
+  // The shared lifecycle places the settled event on this submission's closure;
+  // an unrelated attendance message cannot supply another call's result.
   const terminal = findLatestDurablePackagedRoleTerminal(entries);
   if (terminal === undefined) {
     return {
@@ -2296,19 +2294,12 @@ function extractNavigatorAttendanceFact(
     };
   }
 
-  for (let i = entries.length - 1; i > terminal.index; i -= 1) {
+  for (let i = terminal.index; i < entries.length; i += 1) {
     const entry = entries[i];
-    if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
-      const details = entry.message?.details ?? (entry as { details?: unknown }).details;
-      if (!isRecord(details)) {
-        return {
-          disposition: "unavailable",
-          source: "unknown",
-          reason: "Navigator attendance is unparseable",
-        };
-      }
-      return parseNavigatorAttendanceDetails(details);
-    }
+    if (entry?.type !== "custom" || entry.customType !== "ak-role-submission-closure") continue;
+    const details = isRecord(entry.data) ? entry.data.navigator : undefined;
+    if (!isRecord(details)) break;
+    return parseNavigatorAttendanceDetails(details);
   }
   // Absence is not successful no-advice — require affirmative typed attendance.
   return {

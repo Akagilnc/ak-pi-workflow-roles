@@ -342,7 +342,7 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
         JSON.stringify({
           type: "custom",
           customType: "ak-role-submission-closure",
-          data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" } },
+          data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" }, navigator: attendanceDetails },
         }),
         JSON.stringify({
           type: "custom_message",

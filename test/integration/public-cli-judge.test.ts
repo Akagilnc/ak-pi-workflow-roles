@@ -419,6 +419,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       isError: false,
       details: { status: "converged" },
+      navigator: { disposition: "no-advice" },
     },
   };
 
@@ -432,7 +433,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   ]);
   assert.equal(noAdvice.disposition, "no-advice");
 
-  const missing = extractNavigatorFact([judgeTerminal]);
+  const missing = extractNavigatorFact([{ ...judgeTerminal, data: { ...judgeTerminal.data, navigator: undefined } }]);
   assert.equal(missing.disposition, "unavailable");
   if (missing.disposition === "unavailable") {
     assert.equal(missing.source, "unknown");
@@ -440,7 +441,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   }
 
   const unparseable = extractNavigatorFact([
-    judgeTerminal,
+    { ...judgeTerminal, data: { ...judgeTerminal.data, navigator: "not-an-object" } },
     {
       type: "custom_message",
       customType: "ak-navigator-attendance",
@@ -453,7 +454,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   }
 
   const badDisposition = extractNavigatorFact([
-    judgeTerminal,
+    { ...judgeTerminal, data: { ...judgeTerminal.data, navigator: { disposition: "mystery" } } },
     {
       type: "custom_message",
       customType: "ak-navigator-attendance",
@@ -464,7 +465,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
 
   // #959: historical recommendation with only next must stay advice, not no-advice.
   const legacyNextOnly = extractNavigatorFact([
-    judgeTerminal,
+    { ...judgeTerminal, data: { ...judgeTerminal.data, navigator: { disposition: "recommendation", next: { role: "reviewer", phase: null } } } },
     {
       type: "custom_message",
       customType: "ak-navigator-attendance",
@@ -482,7 +483,7 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   }
 });
 
-test("extractNavigatorFact uses post-terminal delivery window without invocation identity correlation (#1087)", async () => {
+test("extractNavigatorFact uses bound closure rather than late session attendance (#1087)", async () => {
   const subjectKey = "/repo/.ak/work";
   const currentInvocationId = "019f8c2a-7b3e-7d11-8a4f-1c2d3e4f5a6b";
   const oldInvocationId = "019f8c2a-0000-7000-8000-000000000001";
@@ -503,6 +504,7 @@ test("extractNavigatorFact uses post-terminal delivery window without invocation
       toolName: JUDGE_OUTPUT_TOOL_NAME,
       isError: false,
       details: { status: "converged" },
+      navigator: { disposition: "no-advice" },
     },
   };
   const attendance = (details: Record<string, unknown>) => ({
@@ -518,7 +520,7 @@ test("extractNavigatorFact uses post-terminal delivery window without invocation
     attendance({ invocationId: currentInvocationId }),
     currentTerminal,
   ]);
-  assert.equal(beforeTerminal.disposition, "unavailable");
+  assert.equal(beforeTerminal.disposition, "no-advice");
 
   // No historical marker / invocationId equality check (ADR 0042 / #1087).
   const withoutMarkerOrToken = extractNavigatorFact([
@@ -549,7 +551,7 @@ test("extractNavigatorFact uses post-terminal delivery window without invocation
     invocation(currentInvocationId),
     currentTerminal,
   ]);
-  assert.equal(oldAttendanceEvent.disposition, "unavailable");
+  assert.equal(oldAttendanceEvent.disposition, "no-advice");
 
   // Same-session successor: latest post-terminal attendance is this call's delivery.
   const priorTerminal = {
@@ -605,10 +607,7 @@ test("extractNavigatorFact uses post-terminal delivery window without invocation
       },
     },
   ]);
-  assert.equal(divergentAdvice.disposition, "advice");
-  if (divergentAdvice.disposition === "advice") {
-    assert.equal(divergentAdvice.prose, "游奕使建议直接合并（与判词无关，原样交调用者）");
-  }
+  assert.equal(divergentAdvice.disposition, "no-advice");
 });
 
 test("withPhysicalAliasFixture cleans alias and root when body rejects", async () => {
@@ -893,7 +892,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
             {
               type: "custom",
               customType: "ak-role-submission-closure",
-              data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" } },
+              data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" }, navigator: { disposition: "advice", prose: "review next → reviewer" } },
             },
             {
               type: "custom_message",
@@ -905,9 +904,10 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
                   invocationId: "019f8c2a-5555-7555-8555-555555555555",
                   role: "judge",
                   phase: null,
-                  // Matches admitted projectRoot work identity.
-                  subjectKey,
-                  prose: "review next → reviewer",
+                  // Deliberately contradict the bound closure: this late delivery
+                  // must not replace the result of the admitted invocation.
+                  subjectKey: "/other/work",
+                  prose: "late advice from another call",
                 },
               },
             },
@@ -1003,7 +1003,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
     );
     assert.equal(terminal.navigator.disposition, "advice");
     if (terminal.navigator.disposition === "advice") {
-      assert.ok(terminal.navigator.prose.includes("review"));
+      assert.equal(terminal.navigator.prose, "review next → reviewer");
     }
     assert.equal(terminal.runId, "run-cli-judge-001");
     assert.equal(terminal.artifacts.some((a) => a.kind === "report"), true);
