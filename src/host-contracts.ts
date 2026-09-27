@@ -210,7 +210,7 @@ export type RoleTurnRequest = {
    * public-entry seat resolution — never re-read from invocation.json by tools.
    */
   readonly host?: string;
-  /** Station child role run (#840): omit automatic navigator attendance. */
+  /** Station child role run (#840): omit nested attendance side-effects. */
   readonly stationChild?: boolean;
 };
 

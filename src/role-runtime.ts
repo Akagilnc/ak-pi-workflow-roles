@@ -157,7 +157,7 @@ const GLEANER_LEFT_TRANSPORT_FLAGS = Object.freeze([
 export const STATION_CHILD_FLAG = Object.freeze({
   name: "ak-station-child",
   definition: Object.freeze({
-    description: "Station-child role run (omit automatic navigator attendance; #840)",
+    description: "Station-child role run (omit nested attendance side-effects; #840)",
     type: "boolean" as const,
   }),
 } as const);
@@ -891,7 +891,7 @@ export function createRoleRuntimeExtension(
     for (const flag of COLLECTOR_TRANSPORT_FLAGS) {
       roleHost.registerFlag(flag.name, flag.definition);
     }
-    // Station-child identity (#840): omit navigator attendance. One flag.
+    // Station-child identity (#840): omit nested attendance side-effects. One flag.
     roleHost.registerFlag(STATION_CHILD_FLAG.name, STATION_CHILD_FLAG.definition);
     // Register model only. Pi never sets ak-engine — resolveEngineName must
     // fall through to child-process env. An empty default would block that.

@@ -2285,7 +2285,7 @@ export async function materializeCountersignInvocation(
   );
 }
 
-/** Load admitted-request.json written at admission (Navigator work-context seam). */
+/** Load admitted-request.json written at role-run admission. */
 export async function loadAdmittedJudgeRequest(
   runDirectory: string,
 ): Promise<{

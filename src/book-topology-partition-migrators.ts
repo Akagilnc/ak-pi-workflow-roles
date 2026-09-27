@@ -12,7 +12,8 @@ import { bookTopologyRunsMigrator } from "./book-topology-runs-migrator.ts";
  * record classes when both are assembled.
  *
  * T11 (#867) registration order: auditor-roles, issues, deprecated-kinds,
- * deprecated-run-pages, navigator, collector-handbook, manual-archives.
+ * deprecated-run-pages, navigator (legacy orphan #1087), collector-handbook,
+ * manual-archives.
  * auditor-roles prefers a run already placed by T9 when that nest exists.
  * deprecated-run-pages must run after the runs migrator (T9): it deletes
  * matching pages from already-placed destination runs.

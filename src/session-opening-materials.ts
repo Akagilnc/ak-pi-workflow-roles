@@ -1,7 +1,7 @@
 /**
  * Session opening materials (#443 / #524). Missing files fail as native readFile
  * errors. Main-role materials derive from PUBLIC_ROLE_RECORDS (including
- * gatekeeper and navigator). Province map reuses that public gatekeeper record
+ * gatekeeper). Province map reuses that public gatekeeper record
  * plus officer material constants (notary shared). Auditor composition stays in
  * loadAuditorSoul(subject); loaders share joinPackageMaterials.
  */
@@ -80,7 +80,7 @@ type PublicRoleMaterials = {
   >["sessionMaterials"];
 };
 
-/** Derived projection: public records (#639 includes navigator/gatekeeper). */
+/** Derived projection: public role session material records (including gatekeeper). */
 export const MAIN_ROLE_SESSION_MATERIALS = {
   ...(Object.fromEntries(
     PUBLIC_ROLE_RECORDS.map((record) => [record.role, record.sessionMaterials]),

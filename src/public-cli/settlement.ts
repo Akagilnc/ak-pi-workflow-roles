@@ -818,7 +818,7 @@ type SessionEntry = {
   type?: string;
   customType?: string;
   message?: SessionMessage;
-  /** Custom entry payload (e.g. ak-navigator-invocation principal). */
+  /** Custom entry payload on durable session principals. */
   data?: unknown;
   timestamp?: string;
   /** Session principal id from the durable header entry. */
@@ -1549,7 +1549,7 @@ type InfrastructureFailureSpec = Readonly<{
   identityName: string;
   /**
    * Errored results only count as infrastructure when the durable details carry
-   * the typed navigator fact. ak_collector_read also rejects known correctable
+   * the typed infrastructure fact. ak_collector_read also rejects known correctable
    * misuses (CollectorUnknownEvidenceError pointer bounces) as errored tool
    * results — those must not surface as CollectorInfrastructureError.
    */
@@ -3139,7 +3139,7 @@ export async function settleFailureTerminalResult(
         entry.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE || entry.message?.customType === NO_RECEIPT_LIFECYCLE_ENTRY_TYPE);
       const raw = lifecycleEntry?.data ?? lifecycleEntry?.message?.details;
       if (raw !== undefined) {
-        // Catch only covers lifecycle-byte parse. Clear / navigator / gate I/O
+        // Catch only covers lifecycle-byte parse. Clear / gate I/O
         // after a valid parse must keep their real failure identity (#953).
         let facts: NoReceiptLifecycleFacts | undefined;
         try {

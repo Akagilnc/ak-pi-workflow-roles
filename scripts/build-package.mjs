@@ -14,10 +14,6 @@ const entries = [
   "activation-ledger-topology",
   "archivist-record-entry",
   "pi/record-session-host",
-  // Pure subject nest topology — static import of archivist-record-entry;
-  // cold discovery without SessionManager (#636). Keep listed while that
-  // relative edge remains (#857 removal left the import graph open).
-  "archivist-record-topology",
   // Session material loaders used by published non-bundle roots.
   "session-opening-materials",
   // Value-import closure of published non-bundle roots (build-package-only loadable).

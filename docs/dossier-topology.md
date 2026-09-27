@@ -23,18 +23,18 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
     ├── unbound/
     │   └── runs/<runId>@<role>/
     │       └── <same run shape>
-    ├── navigator/<work-subject>/
     └── collector-handbook/
 ```
 
-簿根只有四类项：
+簿根只有三类项：
 
 1. `<ticket>/`：以票号命名的票目录；该票起居录及全部腿均在其中。
 2. `unbound/`：确实无票或尚未取得 typed 票身份的腿；腿形状与票下相同。
-3. `navigator/`：游奕使跨票工作主体记录。
-4. `collector-handbook/`：仓库级通进司手册。
+3. `collector-handbook/`：仓库级通进司手册。
 
-归属判据是：删除一张票后仍有意义的记录才留在票外。除游奕使工作主体与通进司手册外，属于某票的材料均落在该票目录；属于某条腿的记录均落在该腿的 run 目录，不在簿根另设 kind 分区。首次入票的识别腿先落 `unbound/runs/`，取得 typed 票身份（起居郎认票断言，或未绑定工作席 typed 回执自报）后整体归位至 `<ticket>/runs/`，不设第五类顶层项。
+#1087 起不再写入 `navigator/`；升级前已存在的 `navigator/` 目录可能仍留在磁盘上作孤儿，不属于现行分区。
+
+归属判据是：删除一张票后仍有意义的记录才留在票外。除通进司手册外，属于某票的材料均落在该票目录；属于某条腿的记录均落在该腿的 run 目录，不在簿根另设 kind 分区。首次入票的识别腿先落 `unbound/runs/`，取得 typed 票身份（起居郎认票断言，或未绑定工作席 typed 回执自报）后整体归位至 `<ticket>/runs/`，不设第四类顶层项。
 
 `records.jsonl` 是该票起居录的唯一文件（#900：每票只留一份，派生人读面 `起居录.md` 已取消）。`session/` 的内部文件由对应宿主决定；Pi 的原生会话文件位于 `session/session.jsonl`。run-owned records 包括 attempt history、submission ledger、gate、attendance、dispatch error 与过闸官员卷等归属于该 run 的记录；这些名称描述所有权，不另立簿根路径。
 

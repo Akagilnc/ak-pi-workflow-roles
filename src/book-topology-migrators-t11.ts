@@ -1,11 +1,11 @@
 /**
  * #867 T11: migrate auditor-roles and issues/, discard retired kinds and run
- * pages, keep navigator / collector-handbook at book top-level, and move
- * manual archives out of the books home.
+ * pages, copy legacy orphan navigator / collector-handbook at book top-level,
+ * and move manual archives out of the books home.
  *
  * Partition order below is the registration order: auditor-roles, issues,
- * deprecated-kinds, deprecated-run-pages, navigator, collector-handbook,
- * manual-archives.
+ * deprecated-kinds, deprecated-run-pages, navigator (legacy orphan #1087),
+ * collector-handbook, manual-archives.
  */
 import { cp, lstat, mkdir, readFile, stat, unlink, utimes, writeFile } from "node:fs/promises";
 import type { Stats } from "node:fs";
@@ -803,6 +803,7 @@ async function copyBookTopLevelPartition(
   }
 }
 
+/** Copies pre-#1087 book-top `navigator/` trees only — not a living partition. */
 export const bookTopologyNavigatorMigrator: BookTopologyPartitionMigrator = {
   partition: NAVIGATOR_PARTITION,
   async migrate(context: BookTopologyMigrationContext) {

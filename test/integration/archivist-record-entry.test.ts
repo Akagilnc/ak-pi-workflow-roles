@@ -1,19 +1,14 @@
 /**
- * #216/#221 archivist record entry — divergent-parent nesting + #852 navigator work-subject.
- * Navigator: one independent factory tracer (external topology + entries only).
+ * #216/#221 archivist record entry — divergent-parent nesting + worker gate continuation.
  */
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, symlink, utimes, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
-import {
-  ActivationLedgerError,
-  physicalPathIdentity,
-} from "../../src/activation-ledger-topology.ts";
+import { physicalPathIdentity } from "../../src/activation-ledger-topology.ts";
 import {
   createRecordSession,
   createRecordSessionOpen,
@@ -67,13 +62,23 @@ test("createRecordSession nests by the durable parent file", async () => {
   });
 });
 
+function sessionJsonl(id: string, cwd: string): string {
+  return `${JSON.stringify({
+    type: "session",
+    version: 3,
+    id,
+    timestamp: "2026-09-01T00:00:00.000Z",
+    cwd,
+  })}\n`;
+}
+
 test("worker gate native continuation reports and materializes an empty-nest fallback as fresh", async () => {
   await withHermeticHome({ prefix: "ak-archivist-gate-fresh-" }, async ({ home }) => {
     const project = join(home, "proj");
     const parentDir = join(machineLedgerHome(home), "books", "proj", "1003", "runs", "r@coder", "session");
     await mkdir(parentDir, { recursive: true });
     const parentFile = join(parentDir, "session.jsonl");
-    await writeFile(parentFile, sessionJsonl("parent", project, "parent"));
+    await writeFile(parentFile, sessionJsonl("parent", project));
     const parent = SessionManager.open(parentFile, parentDir, project);
     const gateDir = join(parentDir, WORKER_SUBMISSION_GATE_KIND);
     await mkdir(gateDir, { recursive: true });
@@ -100,12 +105,12 @@ test("worker gate delegates native continuation without package path checks", as
     const parentDir = join(machineLedgerHome(home), "books", "proj", "1003", "runs", "r@coder", "session");
     await mkdir(parentDir, { recursive: true });
     const parentFile = join(parentDir, "session.jsonl");
-    await writeFile(parentFile, sessionJsonl("parent", project, "parent"));
+    await writeFile(parentFile, sessionJsonl("parent", project));
     const parent = SessionManager.open(parentFile, parentDir, project);
     const gateDir = join(parentDir, WORKER_SUBMISSION_GATE_KIND);
     await mkdir(gateDir, { recursive: true });
     const outside = join(home, "outside.jsonl");
-    await writeFile(outside, sessionJsonl("outside", project, "outside"));
+    await writeFile(outside, sessionJsonl("outside", project));
     const continued = SessionManager.open(outside, gateDir, project);
     const host = {
       openRecordSession: ({ sessionFile, sessionDir, cwd }: {
@@ -131,41 +136,6 @@ test("worker gate delegates native continuation without package path checks", as
     assert.equal(opened.session.getSessionFile(), outside);
   });
 });
-
-/** Independent book-top nest contract — join/hash only, never the placement helper under test. */
-function expectedNavigatorNest(home: string, bookKey: string, subject: string): string {
-  const digest = createHash("sha256").update(subject).digest("hex").slice(0, 32);
-  return join(machineLedgerHome(home), "books", bookKey, "navigator", digest);
-}
-
-function routeRuns(entries: readonly unknown[]): string[] {
-  return entries
-    .filter((entry) => (entry as { customType?: string }).customType === "ak-navigator-route")
-    .map((entry) => (entry as { data?: { run?: unknown } }).data?.run)
-    .filter((run): run is string => typeof run === "string");
-}
-
-function sessionJsonl(id: string, cwd: string, route: string): string {
-  return `${JSON.stringify({
-    type: "session",
-    version: 3,
-    id,
-    timestamp: "2026-09-01T00:00:00.000Z",
-    cwd,
-  })}\n${JSON.stringify({
-    type: "custom",
-    customType: "ak-navigator-route",
-    data: { run: route },
-    id: `${id}-route`,
-    parentId: null,
-    timestamp: "2026-09-01T00:00:01.000Z",
-  })}\n`;
-}
-
-/**
- * Sole navigator factory tracer: table-driven parent states, independent nest path,
- * Unicode cwd adopt, wrong-cwd recency, no-match mint, one I/O failure.
- */
 
 test("Sitian facade: three levels, with/without usage, and raw pointer can open canonical volume", async () => {
   await withHermeticHome({ prefix: "ak-sitian-three-levels-" }, async ({ home }) => {
