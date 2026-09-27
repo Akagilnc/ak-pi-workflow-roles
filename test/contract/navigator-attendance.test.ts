@@ -428,6 +428,13 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
         : undefined,
       missingBin,
     );
+    assert.equal(summoned?.terminal?.autoResumeCount, 2);
+    assert.equal(
+      outcome && "decisiveFacts" in outcome
+        ? (outcome.decisiveFacts.laterResumeFailure as { errorCode?: string } | undefined)?.errorCode
+        : undefined,
+      "session-id-missing",
+    );
     const diagnostic =
       outcome && "diagnostic" in outcome && typeof outcome.diagnostic === "string"
         ? outcome.diagnostic

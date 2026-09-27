@@ -427,6 +427,7 @@ export async function runWithAutoResumeLoop<
   let lastThrownError: unknown;
   let everyAttemptThrew = true;
   const retainedErrorFiles: string[] = [];
+  let firstHostFailure: TerminalResult | undefined;
 
   while (true) {
     let result: T | undefined;
@@ -492,6 +493,9 @@ export async function runWithAutoResumeLoop<
       const terminal = (result as { terminal?: TerminalResult }).terminal;
       if (terminal !== undefined) {
         (terminal as { autoResumeCount?: number }).autoResumeCount = autoResumeAttempts;
+        if (autoResumeAttempts === 0 && terminal.roleOutcome.kind === "failure") {
+          firstHostFailure = terminal;
+        }
       }
 
       const lawful = terminal !== undefined && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
@@ -516,6 +520,25 @@ export async function runWithAutoResumeLoop<
     if (result !== undefined) {
       const terminal = (result as { terminal?: TerminalResult }).terminal;
       if (autoResumeAttempts >= limit) {
+        // A missing resume identity is a later failure to dispatch, not a
+        // replacement for the host's first-turn failure. Keep both facts.
+        if (terminal?.roleOutcome.kind === "failure"
+          && terminal.roleOutcome.decisiveFacts.errorCode === "session-id-missing"
+          && firstHostFailure?.roleOutcome.kind === "failure") {
+          const original = firstHostFailure.roleOutcome;
+          const restored: TerminalResult = {
+            ...terminal,
+            roleOutcome: {
+              ...original,
+              decisiveFacts: {
+                ...original.decisiveFacts,
+                laterResumeFailure: terminal.roleOutcome.decisiveFacts,
+              },
+            },
+          };
+          presentTerminal(restored, options.io);
+          return { ...result, terminal: restored } as T;
+        }
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }

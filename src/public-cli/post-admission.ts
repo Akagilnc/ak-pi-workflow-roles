@@ -1241,14 +1241,7 @@ export async function dispatchPostAdmissionTurn<
       );
       return await finishAfterTurn(
         withProcessCancelSkipAutoResume(
-          {
-            ...failed,
-            turnDispatched: true as const,
-            // The host has already answered that activation failed; no session
-            // exists to resume. Preserve this host-owned failure as the terminal.
-            ...(result.knownFailure?.cause === "activation" ? { skipAutoResume: true as const } : {}),
-            ...deferredPersist,
-          },
+          { ...failed, turnDispatched: true as const, ...deferredPersist },
           env.signal,
         ),
       );
