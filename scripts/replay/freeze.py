@@ -18,8 +18,8 @@ import argparse, hashlib, json, os, shutil, subprocess, sys
 from datetime import datetime, timezone
 
 SUPPORTED_HOSTS = ("codex", "pi")
-NOTICE = ("<frozen_replay_notice>\n本局为冻结重放：仓库是 {repo} 在 {head} 的分离工作树；本票起居录已冻结在 {cut} 时的状态"
-          "（路径见随案指针）；`gh issue view {num}` 返回的是当时的票面。照常审、照常交卷。\n</frozen_replay_notice>\n\n")
+NOTICE = ("<frozen_replay_notice>\n本局为冻结重放：仓库是 {repo} 在 {head} 的分离工作树；本票起居录已冻结在 {cut} 时的状态，"
+          "仅从 {records} 读取，不读现场票目录；`gh issue view {num}` 返回的是当时的票面。照常审、照常交卷。\n</frozen_replay_notice>\n\n")
 
 def sh(*cmd, cwd=None, check=True):
     p = subprocess.run(cmd, cwd=cwd, text=True, capture_output=True)
@@ -245,7 +245,7 @@ def main():
     with open(f"{kit}/pointer.md", "w") as f:
         f.write(pointer)
 
-    notice = NOTICE.format(repo=os.path.basename(repo), head=head[:8], cut=cut_raw, num=num)
+    notice = NOTICE.format(repo=os.path.basename(repo), head=head[:8], cut=cut_raw, num=num, records=f"{kit}/records.jsonl")
     hp = f"{run}/headless-system-prompt.txt"
     sys_kind = "headless-system-prompt" if os.path.exists(hp) else "pi-tail"
     sysprompt = open(hp).read().replace(records_src, f"{kit}/records.jsonl").replace(run, frozen_run) if sys_kind == "headless-system-prompt" else None
