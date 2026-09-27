@@ -250,7 +250,8 @@ export function copyAndRecordHostDossier(options: {
 
   let lastError: unknown;
   let copySuccess = false;
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  let attempt = 0;
+  for (; attempt < 2; attempt++) {
     try {
       if (options.host === "grok-build") {
         copyGrokDossier(nativePath!, landingPath);
@@ -306,6 +307,7 @@ export function copyAndRecordHostDossier(options: {
         landingPath,
         ordinal,
         sessionId: options.sessionId,
+        attempts: attempt,
         error: lastError instanceof Error ? lastError.message : String(lastError),
       },
     });

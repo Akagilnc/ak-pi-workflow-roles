@@ -90,6 +90,7 @@ import {
   type CatchableProcessSignal,
 } from "./process-cancel.ts";
 import { homeFromRunDirectory } from "../activation-ledger-topology.ts";
+import { recordRunStart } from "../host-session-record.ts";
 import {
   attemptProducedFreshSubmission,
   classifyPostAdmissionFailure,
@@ -892,6 +893,7 @@ export async function dispatchPostAdmissionTurn<
 
     let result: RoleTurnResult;
     try {
+      recordRunStart(admitted.runDirectory);
       result = await env.roleTurnHost.executeTurn(turnRequest);
     } catch (error) {
       const processCancelName = processCancelSignalName(env.signal);

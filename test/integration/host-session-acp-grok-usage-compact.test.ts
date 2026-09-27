@@ -189,6 +189,7 @@ test("grok-build dossier copy failure retries once and appends native-session-wa
     const warningRec = records[1]!;
     assert.equal((warningRec.payload as { type: string }).type, "native-session-warning");
     assert.equal((warningRec.payload as { ordinal: number }).ordinal, 1);
+    assert.equal((warningRec.payload as { attempts: number }).attempts, 2);
     assert.ok(
       typeof (warningRec.payload as { error: string }).error === "string"
         && (warningRec.payload as { error: string }).error.length > 0,

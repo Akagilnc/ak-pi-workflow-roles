@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
@@ -232,8 +232,16 @@ process.stdout.write(JSON.stringify({
       assert.equal(result.knownFailure, undefined, JSON.stringify(result));
       assert.equal(result.code, 0);
 
-      // The failure is declared without constraining host-facing prose.
-      assert.ok(stderrChunks.some((chunk) => chunk.length > 0));
+      // Allocated and host-reported IDs each produce a pointer; warning declares once.
+      assert.equal(stderrChunks.length, 3);
+
+      const native = join(ledger.home, ".claude", "projects", ledger.runDirectory.replace(/[^a-zA-Z0-9]/g, "-"), "sid.jsonl");
+      await mkdir(dirname(native), { recursive: true });
+      await writeFile(native, "native session", "utf8");
+      const copied = await host.executeTurn(request(ledger.runDirectory, ledger.home));
+      assert.equal(copied.knownFailure, undefined, JSON.stringify(copied));
+      // The second turn likewise declares its two pointers and one copy failure.
+      assert.equal(stderrChunks.length, 6);
     } finally {
       process.stderr.write = origStderrWrite;
     }

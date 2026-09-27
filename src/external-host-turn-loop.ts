@@ -9,7 +9,6 @@ import type {
   RoleTurnRequest,
   RoleTurnResult,
 } from "./host-contracts.ts";
-import { recordRunStart } from "./host-session-record.ts";
 
 export const EXTERNAL_ROLE_TURN_ROUND_LIMIT = 8 as const;
 
@@ -164,10 +163,7 @@ export function createSerializedRoleTurnHost(
   let serial = Promise.resolve();
   return {
     executeTurn(request) {
-      const execution = serial.then(() => {
-        recordRunStart(request.runDirectory);
-        return execute(request);
-      });
+      const execution = serial.then(() => execute(request));
       serial = execution.then(() => undefined, () => undefined);
       return execution;
     },
