@@ -22,7 +22,10 @@ import {
   type SessionIdentityAuthority,
 } from "../prepared-role-turn.ts";
 
-import { reportHostSessionEvent } from "../host-session-record.ts";
+import {
+  copyAndRecordHostDossier,
+  recordNativeSessionPointer,
+} from "../host-session-record.ts";
 import {
   closeJsonSchemaForCodex,
   codexTurnArgs,
@@ -261,6 +264,7 @@ function spawnHeadlessTurn(options: {
   readonly stdin?: string;
   /** Called for each complete stdout line as it arrives (live stream-json). */
   readonly onStdoutLine?: (line: string) => void;
+  readonly onClose?: () => void;
 }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
@@ -325,8 +329,15 @@ function spawnHeadlessTurn(options: {
         lineBuffer = "";
       }
     };
+    let aborted = false;
     const settle = (code: number | null): void => {
       if (settled) return;
+      if (aborted) {
+        settled = true;
+        if (timer !== undefined) clearTimeout(timer);
+        reject(hostAbortedError("headless host aborted"));
+        return;
+      }
       // Final flush first: onStdoutLine may failLine (reject + settled=true).
       flushStdoutLines("", true);
       if (settled) return;
@@ -340,11 +351,9 @@ function spawnHeadlessTurn(options: {
       resolve({ code, stdout: resultStdout, stderr, timedOut });
     };
     const onAbort = (): void => {
-      child.kill("SIGTERM");
       if (settled) return;
-      settled = true;
-      if (timer !== undefined) clearTimeout(timer);
-      reject(hostAbortedError("headless host aborted"));
+      aborted = true;
+      child.kill("SIGTERM");
     };
     child.stdout.setEncoding("utf8").on("data", (chunk: string) => { flushStdoutLines(chunk, false); });
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
@@ -357,7 +366,10 @@ function spawnHeadlessTurn(options: {
       options.signal?.removeEventListener("abort", onAbort);
       reject(error);
     });
-    child.on("close", (code) => settle(code));
+    child.on("close", (code) => {
+      options.onClose?.();
+      settle(code);
+    });
     options.signal?.addEventListener("abort", onAbort, { once: true });
     if (options.timeoutMs !== undefined && options.timeoutMs > 0) {
       timer = setTimeout(() => {
@@ -498,6 +510,8 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       }
 
       const sessionParent = config.sessionIdentity.resolveSessionFile(request.principal);
+      let exitedSessionId: string | undefined;
+      try {
       outcome = await driveExternalRoleTurnRounds(prepared, request, {
         roundLimitName: "HeadlessRoundLimit",
         currentSessionId: () => sessionId,
@@ -532,9 +546,23 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           }
 
           const codexObserver = codex ? createCodexExecTurnObserver() : undefined;
+          let pointerRecorded = false;
+          let codexIdObserved = false;
+          if (sessionId !== undefined && sessionId !== "") {
+            pointerRecorded = recordNativeSessionPointer({
+              host: config.hostName,
+              sessionId,
+              cwd: request.cwd,
+              sessionParent,
+              home: request.home,
+            }) !== undefined;
+          }
+
           let spawned: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
+          let childExited = false;
           try {
             spawned = await spawnHeadlessTurn({
+              onClose() { childExited = true; },
               binary: config.binary,
               args,
               cwd: request.cwd,
@@ -554,16 +582,33 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                 }
                 // One bounded live seam owns both recording and host-specific reduction.
                 codexObserver?.observe(event);
-                reportHostSessionEvent({
-                  host: config.hostName,
-                  cwd: request.cwd,
-                  sessionParent,
-                  source: "headless-host",
-                  event,
-                });
+                if (!codex && typeof event === "object" && event !== null && "session_id" in event
+                  && typeof event.session_id === "string" && event.session_id !== "" && event.session_id !== sessionId) {
+                  sessionId = event.session_id;
+                  recordNativeSessionPointer({ host: config.hostName, sessionId, cwd: request.cwd, sessionParent, home: request.home });
+                }
+                if (codex && !codexIdObserved) {
+                  const tid = codexObserver?.result().threadId;
+                  if (tid !== undefined && tid !== "") {
+                    codexIdObserved = true;
+                    pointerRecorded = recordNativeSessionPointer({
+                      host: config.hostName,
+                      sessionId: tid,
+                      cwd: request.cwd,
+                      sessionParent,
+                      home: request.home,
+                    }) !== undefined;
+                  }
+                }
               },
             });
+            const roundSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
+            exitedSessionId = roundSessionId;
+            if (codex && roundSessionId !== undefined && roundSessionId !== "" && !pointerRecorded) {
+              recordNativeSessionPointer({ host: config.hostName, sessionId: roundSessionId, cwd: request.cwd, sessionParent, home: request.home });
+            }
           } catch (error) {
+            if (childExited) exitedSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
             if (isHostAbortedError(error)) throw error;
             const message = error instanceof Error ? error.message : String(error);
             const observedHostFailure = codexObserver?.result().failureDiagnostic;
@@ -575,24 +620,6 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
                   sessionRecordDiagnostic: message,
                   sessionId,
                 }, observedHostFailure),
-              };
-            }
-            // SitianInfrastructureError.knownCause is session; spawn errno stays activation.
-            const isRecordFailure =
-              typeof error === "object"
-              && error !== null
-              && ((error as { knownCause?: unknown }).knownCause === "session"
-                || (error as { name?: unknown }).name === "SitianInfrastructureError");
-            if (isRecordFailure) {
-              return {
-                status: "terminal",
-                result: failure(
-                  "session",
-                  "HostSessionRecordFailure",
-                  "host-session-record-failed",
-                  { diagnostic: message, sessionId },
-                  message,
-                ),
               };
             }
             return {
@@ -773,6 +800,15 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           return { status: "delivered", stderr: spawned.stderr };
         },
       });
+      } finally {
+        if (exitedSessionId !== undefined && exitedSessionId !== "") copyAndRecordHostDossier({
+          host: config.hostName, sessionId: exitedSessionId, cwd: request.cwd,
+          sessionDirectory: join(request.runDirectory, "session"), sessionParent,
+          continuation: request.continuation,
+          ...(request.model !== undefined ? { model: request.model } : {}),
+          ...(request.home !== undefined ? { home: request.home } : {}),
+        });
+      }
     } finally {
       try {
         await prepared.dispose?.();

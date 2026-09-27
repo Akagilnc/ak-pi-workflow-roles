@@ -6,6 +6,8 @@ import test from "node:test";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
+import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
+import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 
@@ -23,14 +25,16 @@ function nonNullBranch(schema: unknown): unknown {
 }
 
 /** Medium tracer: real process boundary, native new/resume protocol, and typed receipt. */
-test("codex headless host binds and resumes a structured turn", async () => {
+test("codex headless host binds and resumes a structured turn", { timeout: 10000 }, async () => {
   const ledger = createTempPackageHomeLedger({ prefix: "ak-codex-host-", runName: "run@codex" });
   const root = ledger.runDirectory;
   const argvLog = join(root, "argv.log");
   const promptLog = join(root, "prompt.log");
   const fakeBin = join(root, "fake-codex");
+  const nativeRollout = join(root, ".codex", "sessions", "rollout-thread-fake-1.jsonl");
   await writeFile(fakeBin, `#!/usr/bin/env node
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
 const resumeAt = args.indexOf("resume");
@@ -38,12 +42,31 @@ const resumed = resumeAt >= 0;
 const thread = resumed ? args[resumeAt + 1] : "thread-fake-1";
 const prompt = readFileSync(0, "utf8");
 appendFileSync(${JSON.stringify(promptLog)}, JSON.stringify(prompt) + "\\n");
+mkdirSync(dirname(${JSON.stringify(nativeRollout)}), { recursive: true });
 const events = [
   { type: "thread.started", thread_id: thread },
   { type: "item.completed", item: { type: "agent_message", text: JSON.stringify({ status: "completed", report: resumed ? "resumed" : "initial" }) } },
   ...(prompt.endsWith("missing-terminal") ? [] : [{ type: "turn.completed" }]),
 ];
-process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
+process.stdout.write(JSON.stringify(events[0]) + "\\n");
+const pointerFile = ${JSON.stringify(join(root, "session", HOST_SESSION_RECORD_KIND, "records.jsonl"))};
+const hasPointer = () => existsSync(pointerFile) && readFileSync(pointerFile, "utf8")
+  .split("\\n").filter(Boolean).some(line => {
+    try { return JSON.parse(line).payload?.type === "native-session-pointer"; }
+    catch { return false; }
+  });
+let checks = 0;
+const waitForPointer = setInterval(() => {
+  if (hasPointer()) {
+    clearInterval(waitForPointer);
+    writeFileSync(${JSON.stringify(nativeRollout)}, 'native codex transcript\\n');
+    process.stdout.write(events.slice(1).map(JSON.stringify).join("\\n") + "\\n");
+  } else if (++checks >= 500) {
+    clearInterval(waitForPointer);
+    process.stderr.write("Codex pointer was not recorded before rollout\\n");
+    process.exitCode = 1;
+  }
+}, 10);
 `, "utf8");
   await chmod(fakeBin, 0o755);
 
@@ -57,6 +80,7 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
       description,
       hostName: "codex",
       binary: fakeBin,
+      env: { CODEX_HOME: join(root, ".codex") },
       sessionIdentity: {
         async load() {
           if (rejectLoad) throw new Error("explicit resume must use the stored host session id");
@@ -118,6 +142,14 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     assert.equal(first.knownFailure, undefined, JSON.stringify(first));
     assert.equal(bound, "thread-fake-1");
     assert.deepEqual(receipt, { status: "completed", report: "initial" });
+    assert.equal(await readFile(join(root, "session", "codex-gpt-test-1.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
+    const sitianFile = join(root, "session", HOST_SESSION_RECORD_KIND, "records.jsonl");
+    const firstRecords = (await readSitianRecords(sitianFile)).records;
+    assert.equal((firstRecords[0]?.payload as { type?: string })?.type, "native-session-pointer");
+    assert.equal((firstRecords[0]?.payload as { nativePath?: string })?.nativePath, join(root, ".codex", "sessions"));
+    assert.equal((firstRecords[0]?.payload as { sessionId?: string })?.sessionId, "thread-fake-1");
+    assert.equal((firstRecords[1]?.payload as { type?: string })?.type, "native-session-copy");
+    assert.equal((firstRecords[1]?.payload as { nativePath?: string })?.nativePath, nativeRollout);
     const schema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8")) as {
       additionalProperties: unknown;
       required: string[];
@@ -174,6 +206,7 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     });
     assert.equal(resumed.knownFailure, undefined, JSON.stringify(resumed));
     assert.deepEqual(receipt, { status: "completed", report: "resumed" });
+    assert.equal(await readFile(join(root, "session", "codex-gpt-test-2.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
     const prompts = (await readFile(promptLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string);
     assert.deepEqual(prompts.slice(0, 2), ["work", "continue"]);
     const argv = (await readFile(argvLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
@@ -381,11 +414,16 @@ process.exit(1);
 test("headless stdin delivery error cannot settle valid output as success", async () => {
   const ledger = createTempPackageHomeLedger({ prefix: "ak-headless-epipe-", runName: "run@codex" });
   const fakeBin = join(ledger.runDirectory, "fake-codex-epipe");
+  const rollout = join(ledger.runDirectory, ".codex", "sessions", "rollout-thread-epipe.jsonl");
   await writeFile(fakeBin, `#!/usr/bin/env node
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 process.stdin.destroy();
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-epipe" }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify({ status: "completed" }) } }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
+mkdirSync(dirname(${JSON.stringify(rollout)}), { recursive: true });
+writeFileSync(${JSON.stringify(rollout)}, 'native after close\\n');
 process.exit(0);
 `, "utf8");
   await chmod(fakeBin, 0o755);
@@ -396,6 +434,7 @@ process.exit(0);
       description,
       hostName: "codex",
       binary: fakeBin,
+      env: { CODEX_HOME: join(ledger.runDirectory, ".codex") },
       sessionIdentity: { async load() { return undefined; }, async bind() {}, resolveSessionFile: () => join(ledger.runDirectory, "session", "session.jsonl") },
       prepare: async () => ({
         mcpServers: [],
@@ -420,6 +459,7 @@ process.exit(0);
     });
     assert.notEqual(result.code, 0);
     assert.notEqual(result.knownFailure, undefined);
+    assert.equal(await readFile(join(ledger.runDirectory, "session", "codex-gpt-test-1.jsonl"), "utf8"), "native after close\n");
   } finally {
     ledger.dispose();
   }

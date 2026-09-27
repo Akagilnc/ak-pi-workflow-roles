@@ -158,19 +158,6 @@ export type RoleTurnModelConfig = {
   readonly thinking?: string;
 };
 
-/**
- * Typed cross-host resume handoff (#617 DK-4).
- * Present only when post-admission projects a real host switch.
- * priorNativeKind names the record family the paths belong to — Pi's own
- * session file, or sitian run records (ADR 0077) — so a consuming adapter
- * reads the handoff without knowing which host wrote it.
- * Target host reads those files itself; projector never copies bytes.
- */
-export type RoleTurnHostTransition = {
-  readonly priorNativeKind: "pi-native" | "sitian";
-  readonly priorNativePaths: readonly string[];
-};
-
 /** One main-session turn request over the host-neutral execution seam. */
 export type RoleTurnRequest = {
   readonly principal: DurablePrincipal;
@@ -193,8 +180,6 @@ export type RoleTurnRequest = {
    * has no parent to observe and leaves it absent.
    */
   readonly signal?: AbortSignal;
-  /** Set by post-admission only on a real host switch; never on same-host resume. */
-  readonly hostTransition?: RoleTurnHostTransition;
   /**
    * Court-turn attempt (#637 / #833): sole-final per attempt. Open court, summons,
    * and resume-with-message set this; bare resume without an open court omits it.

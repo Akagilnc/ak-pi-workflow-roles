@@ -22,7 +22,6 @@ import type {
   RoleTurnResult,
 } from "../host-contracts.ts";
 import { ExplicitInternalActivationError } from "../host-contracts.ts";
-import { isOfficerReviewSeat } from "../packaged-role-registry.ts";
 import { applyEngineChildEnv, ENGINE_MODEL_FLAG_NAME, normalizeEngineName } from "../engine-detour.ts";
 import { projectActivationFlags } from "../role-activation-flags.ts";
 import { encodeUserDialogueStdin } from "../user-dialogue-stdin.ts";
@@ -377,30 +376,7 @@ export function createPiRoleTurnHost(config: PiRoleTurnHostConfig): RoleTurnHost
 
   return {
     async executeTurn(request: RoleTurnRequest): Promise<RoleTurnResult> {
-      // #617 DK-7: Pi argv gets projected native paths once; never record bytes.
-      // Pi already owns its own session file, so only sitian prior volume rides in.
-      // #879: station-child officer dialogue keeps peer words — do not splice
-      // host-transition priorNativePaths into the review prompt body.
-      let turnRequest = request;
-      const officerStationChild =
-        request.stationChild === true && isOfficerReviewSeat(request.activation.role);
-      const paths =
-        !officerStationChild && request.hostTransition?.priorNativeKind === "sitian"
-          ? request.hostTransition.priorNativePaths
-          : undefined;
-      if (
-        request.continuation.kind === "resume"
-        && paths !== undefined
-        && paths.length > 0
-      ) {
-        turnRequest = {
-          ...request,
-          continuation: {
-            ...request.continuation,
-            prompt: `${request.continuation.prompt}\n${paths.join("\n")}`,
-          },
-        };
-      }
+      const turnRequest = request;
       const roleEntry = await realpath(resolveInternalRoleEntrypoint(config.packageRoot));
       const extraArgs = buildPiTurnExtraArgs(
         turnRequest,

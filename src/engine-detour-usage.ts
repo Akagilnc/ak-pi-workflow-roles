@@ -222,7 +222,7 @@ export async function readEngineDetourToolUsage(input: {
   });
 
   const { records } = await readSitianRecords(recordFile);
-  const calls: EngineDetourCallFact[] = [];
+  const callsByToolCallId = new Map<string, EngineDetourCallFact>();
   for (const record of records) {
     if (record.kind !== ENGINE_DETOUR_CALL_KIND) continue;
     const boundScope = invocationScopeIdOfRecord(record);
@@ -240,9 +240,11 @@ export async function readEngineDetourToolUsage(input: {
     };
     const fact = callFactFromSitianPayload(record.payload, pointer);
     if (fact === undefined) continue;
-    calls.push(fact);
+    // ADR 0086: Reader deduplicates by toolCallId within the invocation scope
+    callsByToolCallId.set(fact.toolCallId, fact);
   }
 
+  const calls = Array.from(callsByToolCallId.values());
   return { callCount: calls.length, calls };
 }
 
@@ -298,20 +300,6 @@ export async function readInvocationEngineMounted(
   const raw = readInvocationRecord(runDirectory);
   if (raw === undefined) return false;
   return typeof raw.engine === "string" && raw.engine.trim() !== "";
-}
-
-/**
- * Selected host from the admission invocation page — for post-admission
- * host-transition classification only. In-turn tools take host from the shared
- * Host envelope (RoleTurnRequest / HostContext), never this reader.
- * Undefined when absent — callers must not invent "pi".
- */
-export function readInvocationSelectedHost(runDirectory: string): string | undefined {
-  const raw = readInvocationRecord(runDirectory);
-  if (raw === undefined) return undefined;
-  return typeof raw.host === "string" && raw.host.trim() !== ""
-    ? raw.host.trim()
-    : undefined;
 }
 
 /** Merge usage into decisiveFacts without touching role payloads. */

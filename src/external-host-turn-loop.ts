@@ -1,6 +1,6 @@
 /**
  * Middle external-host role-turn loop (#820 / ADR 0082).
- * One copy: serial, prior-native, abort merge/race, 8-round closeRound retry,
+ * One copy: serial, abort merge/race, 8-round closeRound retry,
  * host-aborted, round-limit. Last hop = ExternalHostTurnDriver (four verbs).
  */
 import type {
@@ -9,7 +9,6 @@ import type {
   RoleTurnRequest,
   RoleTurnResult,
 } from "./host-contracts.ts";
-import { isOfficerReviewSeat } from "./packaged-role-registry.ts";
 
 export const EXTERNAL_ROLE_TURN_ROUND_LIMIT = 8 as const;
 
@@ -53,21 +52,6 @@ export function mergeRoleTurnAbortSignals(
   if (request === undefined) return prepared;
   if (prepared === undefined) return request;
   return AbortSignal.any([prepared, request]);
-}
-
-/**
- * Host-transition prior-native paths are machine handoff material (#617 DK-4).
- * #879: station-child officer dialogue must not receive those paths spliced into
- * the review prompt — officers already hold --source-run / binding pointers.
- */
-export function promptWithPriorNativePaths(basePrompt: string, request: RoleTurnRequest): string {
-  if (request.continuation.kind !== "resume") return basePrompt;
-  if (request.stationChild === true && isOfficerReviewSeat(request.activation.role)) {
-    return basePrompt;
-  }
-  const paths = request.hostTransition?.priorNativePaths;
-  if (paths === undefined || paths.length === 0) return basePrompt;
-  return `${basePrompt}\n${paths.join("\n")}`;
 }
 
 export function isHostAbortedError(error: unknown): boolean {
@@ -135,7 +119,7 @@ export async function driveExternalRoleTurnRounds(
   request: RoleTurnRequest,
   driver: ExternalHostTurnDriver,
 ): Promise<RoleTurnResult> {
-  let prompt = promptWithPriorNativePaths(prepared.prompt, request);
+  let prompt = prepared.prompt;
   const abortSignal = mergeRoleTurnAbortSignals(prepared.abortSignal, request.signal);
   let stderr = "";
 
