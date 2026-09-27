@@ -422,16 +422,20 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
       outcome && "decisiveFacts" in outcome ? outcome.decisiveFacts.errorCode : undefined,
       "session-id-missing",
     );
-    const firstTurnFailure = outcome && "decisiveFacts" in outcome
-      ? outcome.decisiveFacts.firstTurnFailure as {
-          diagnostic?: string;
-          decisiveFacts?: { errorCode?: string; secondaryEvidence?: { binary?: string } };
-        } | undefined
+    const failedAttempts = outcome && "decisiveFacts" in outcome
+      ? outcome.decisiveFacts.failedAttempts as Array<{
+          attempt: number;
+          diagnostic: string;
+          decisiveFacts: { errorCode?: string; secondaryEvidence?: { binary?: string } };
+        }> | undefined
       : undefined;
-    assert.equal(firstTurnFailure?.decisiveFacts?.errorCode, "spawn-failed");
-    assert.equal(firstTurnFailure?.decisiveFacts?.secondaryEvidence?.binary, missingBin);
+    assert.deepEqual(failedAttempts?.map((entry) => entry.attempt), [0, 1, 2]);
+    assert.equal(failedAttempts?.[0]?.decisiveFacts.errorCode, "spawn-failed");
+    assert.equal(failedAttempts?.[0]?.decisiveFacts.secondaryEvidence?.binary, missingBin);
+    assert.equal(failedAttempts?.[1]?.decisiveFacts.errorCode, "session-id-missing");
+    assert.equal(failedAttempts?.[2]?.decisiveFacts.errorCode, "session-id-missing");
     assert.equal(summoned?.terminal?.autoResumeCount, 2);
-    assert.ok(firstTurnFailure?.diagnostic);
+    assert.ok(failedAttempts?.[0]?.diagnostic);
     const diagnostic =
       outcome && "diagnostic" in outcome && typeof outcome.diagnostic === "string"
         ? outcome.diagnostic
@@ -440,7 +444,7 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
 
     assert.equal(events.length, 1);
     assert.equal(events[0].disposition, "unavailable");
-    assert.equal(events[0].unavailableReason, firstTurnFailure?.diagnostic);
+    assert.equal(events[0].unavailableReason, failedAttempts?.[0]?.diagnostic);
 
     const invocationId = events[0].invocationId as string;
     const terminalNavigator = extractNavigatorFact([
@@ -472,7 +476,7 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
     ] as never);
     assert.equal(terminalNavigator.disposition, "unavailable");
     if (terminalNavigator.disposition === "unavailable") {
-      assert.equal(terminalNavigator.reason, firstTurnFailure?.diagnostic);
+      assert.equal(terminalNavigator.reason, failedAttempts?.[0]?.diagnostic);
     }
   });
 });

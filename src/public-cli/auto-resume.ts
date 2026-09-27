@@ -427,7 +427,12 @@ export async function runWithAutoResumeLoop<
   let lastThrownError: unknown;
   let everyAttemptThrew = true;
   const retainedErrorFiles: string[] = [];
-  let firstHostFailure: Extract<TerminalResult["roleOutcome"], { kind: "failure" }> | undefined;
+  const failedAttempts: Array<{
+    attempt: number;
+    diagnostic: string;
+    decisiveFacts?: Readonly<Record<string, unknown>>;
+    errorFile?: string;
+  }> = [];
 
   while (true) {
     let result: T | undefined;
@@ -450,6 +455,11 @@ export async function runWithAutoResumeLoop<
       // diagnostic-sink-isolation precedent). When a lease is held inside
       // dispatch, that path owns release in its own finally.
       lastThrownError = error;
+      const failedAttempt: (typeof failedAttempts)[number] = {
+        attempt: dispatchOrdinal,
+        diagnostic: describeErrorIdentity(error),
+      };
+      failedAttempts.push(failedAttempt);
       turnStartedBeforeThrow = error instanceof TurnDispatchedFailure;
       const attempt = dispatchOrdinal;
       try {
@@ -464,6 +474,7 @@ export async function runWithAutoResumeLoop<
           error,
         );
         retainedErrorFiles.push(file);
+        failedAttempt.errorFile = file;
         options.io.stderr(
           `dispatch attempt ${attempt} threw (${describeErrorIdentity(error)}); full error retained at ${file}\n`,
         );
@@ -493,8 +504,12 @@ export async function runWithAutoResumeLoop<
       const terminal = (result as { terminal?: TerminalResult }).terminal;
       if (terminal !== undefined) {
         (terminal as { autoResumeCount?: number }).autoResumeCount = autoResumeAttempts;
-        if (autoResumeAttempts === 0 && terminal.roleOutcome.kind === "failure") {
-          firstHostFailure = terminal.roleOutcome;
+        if (terminal.roleOutcome.kind === "failure") {
+          failedAttempts.push({
+            attempt: dispatchOrdinal - 1,
+            diagnostic: terminal.roleOutcome.diagnostic,
+            decisiveFacts: terminal.roleOutcome.decisiveFacts,
+          });
         }
       }
 
@@ -520,28 +535,16 @@ export async function runWithAutoResumeLoop<
     if (result !== undefined) {
       const terminal = (result as { terminal?: TerminalResult }).terminal;
       if (autoResumeAttempts >= limit) {
-        // A missing resume identity is a later failure to dispatch. Retain
-        // the first turn's facts under their own attempt, without replacing
-        // the final outcome or attaching the wrong attempt's artifacts.
-        if (terminal?.roleOutcome.kind === "failure"
-          && terminal.roleOutcome.decisiveFacts.errorCode === "session-id-missing"
-          && firstHostFailure !== undefined) {
-          const original = firstHostFailure;
-          const restored: TerminalResult = {
+        if (terminal?.roleOutcome.kind === "failure" && failedAttempts.length > 1) {
+          const complete: TerminalResult = {
             ...terminal,
             roleOutcome: {
               ...terminal.roleOutcome,
-              decisiveFacts: {
-                ...terminal.roleOutcome.decisiveFacts,
-                firstTurnFailure: {
-                  diagnostic: original.diagnostic,
-                  decisiveFacts: original.decisiveFacts,
-                },
-              },
+              decisiveFacts: { ...terminal.roleOutcome.decisiveFacts, failedAttempts },
             },
           };
-          presentTerminal(restored, options.io);
-          return { ...result, terminal: restored } as T;
+          presentTerminal(complete, options.io);
+          return { ...result, terminal: complete } as T;
         }
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
@@ -563,10 +566,16 @@ export async function runWithAutoResumeLoop<
           options.io,
         );
         await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        presentTerminal(terminal, options.io);
+        const complete: TerminalResult = terminal.roleOutcome.kind === "failure"
+          ? { ...terminal, roleOutcome: {
+            ...terminal.roleOutcome,
+            decisiveFacts: { ...terminal.roleOutcome.decisiveFacts, failedAttempts },
+          } }
+          : terminal;
+        presentTerminal(complete, options.io);
         return {
           exitCode: 1,
-          terminal,
+          terminal: complete,
         } as T;
       }
       // #855: process cancel on the throw path — do not re-dispatch; name the signal.

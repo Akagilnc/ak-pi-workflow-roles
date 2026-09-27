@@ -214,13 +214,13 @@ export function createNativeNavigatorSessionFactory(deps?: {
           }
           if (outcome.kind === "failure") {
             providerFailure = navigatorProviderFailureFromPublicTerminal(outcome);
-            const firstTurnFailure = outcome.decisiveFacts.firstTurnFailure as
-              | { diagnostic?: unknown }
-              | undefined;
+            const failedAttempts = outcome.decisiveFacts.failedAttempts;
+            const firstAttempt = Array.isArray(failedAttempts) ? failedAttempts[0] : undefined;
             throw navigatorUnavailableError(
               providerFailure.source,
-              new Error(typeof firstTurnFailure?.diagnostic === "string"
-                ? firstTurnFailure.diagnostic
+              new Error(firstAttempt !== null && typeof firstAttempt === "object"
+                && typeof firstAttempt.diagnostic === "string"
+                ? firstAttempt.diagnostic
                 : outcome.diagnostic),
               providerFailure.cause,
             );
