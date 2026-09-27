@@ -45,8 +45,6 @@ import type {
   SessionCustomEntryAppender,
 } from "../host-contracts.ts";
 import { isOfficerReviewSeat } from "../packaged-role-registry.ts";
-import { deliverCaseDossierAsAttachment } from "./case-dossier-delivery.ts";
-
 /** Original error bytes, never relabeled — a secondary fact riding beside a classified cause. */
 function describeCaughtError(error: unknown): { name?: string; message: string; code?: string | number } {
   if (error instanceof Error) {
@@ -58,8 +56,8 @@ function describeCaughtError(error: unknown): { name?: string; message: string; 
 
 /**
  * Nested gate summons (station child) on an officer seat: dialogue content is
- * peer words only (#879). ADR 0081 case dossier still hangs via the existing
- * attachments freeze seam — never into the peer body, never RoleTurnRequest.materials.
+ * peer words only (#879). Never RoleTurnRequest.materials; #1092 drops code-side
+ * 起居录 path pointer freeze — roles locate records by ticket number.
  */
 function isStationChildOfficerDialogue(
   role: string,
@@ -888,10 +886,8 @@ export async function dispatchPostAdmissionTurn<
 
     // Turn request is assembled after beforeDispatch so this turn sees whatever it
     // settled — the seat's ticket bind re-projection and any court diarist station
-    // writes (#742). Case dossier delivery (ADR 0081 / #709 / #858) rides here once
-    // for every public entry on the existing attachments → readingMaterial face
-    // (station-child and ordinary share one seam). Dialogue continuation stays
-    // caller/peer opaque — never splice system path sections into user dialogue.
+    // writes (#742). Dialogue continuation stays caller/peer opaque. #1092: no
+    // code-side 起居录 path freeze or readingMaterial inject — roles read by ticket.
     // No package-resume parallel face or typed resume identity.
     // #990: one-shot / auto-resume may freeze principal+runDirectory before
     // relocate; always take durable identity from the live admitted object.
@@ -911,16 +907,6 @@ export async function dispatchPostAdmissionTurn<
     if (typeof liveHost === "string" && liveHost.trim() !== "") {
       turnRequest = { ...turnRequest, host: liveHost.trim() };
     }
-    // 0081 non-dialogue face: freeze pointer section under run/attachments/.
-    // Seat consumes via loadCaseDossierReadingMaterial → existing agent-start
-    // readingMaterial / systemPrompt.materials fold. Caller instruction, empty
-    // request, and resume --message stay verbatim.
-    await deliverCaseDossierAsAttachment({
-      ticketNumber: admitted.ticketNumber,
-      projectRoot: admitted.projectRoot,
-      home: env.home,
-      runDirectory: admitted.runDirectory,
-    });
 
     // Authoritative host write happens here, at the real dispatch boundary —
     // immediately before the turn actually starts, after every retryable

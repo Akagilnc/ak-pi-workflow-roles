@@ -7,7 +7,7 @@ Kit layout (default ~/.ak-roles/replays/<runId>/):
   records.jsonl  diarist records with timestamp <= cut, session pointers re-aimed at sources/
   sources/       the driver transcripts those records point at, truncated at the cut
   run/<run>/     the replayed run itself truncated at the cut (ledger rows, payloads, attachments)
-  pointer.md     the run's case-dossier pointer, re-pointed at records.jsonl
+  pointer.md     optional historical case-dossier pointer (#1092: new runs omit it)
   sys.txt        frozen system prompt (codex: full headless prompt; pi: appended tail)
   schema.json    headless output schema when the run had one
   instr.txt      the instruction the run was admitted with

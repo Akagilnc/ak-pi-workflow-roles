@@ -677,8 +677,8 @@ export async function prepareRoleEnvelope(options: {
       return [value.systemPrompt];
     });
     const systemPromptBody = systemPromptParts.join("\n\n");
-    // Typed reading materials from agent-start handlers (incl. single shared
-    // case-dossier owner). Folded into provider-visible systemPrompt at send.
+    // Typed reading materials from agent-start handlers. Folded into
+    // provider-visible systemPrompt at send.
     const readingMaterials: unknown[] = [];
     for (const value of promptResults) {
       if (typeof value !== "object" || value === null) continue;

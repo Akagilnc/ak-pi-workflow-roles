@@ -413,23 +413,22 @@ test("#879 absent HostContext identity never inherits ambient run or court", () 
   }
 });
 
-test("#879 concurrent envelopes keep case-dossier identity on HostContext, not process.env", async () => {
+test("#1092 concurrent envelopes do not fold case-dossier pointer materials", async () => {
   const previousRun = process.env.AK_ROLE_RUN_DIR;
   const previousCourt = process.env.AK_ROLE_COURT_ATTEMPT;
   delete process.env.AK_ROLE_RUN_DIR;
   delete process.env.AK_ROLE_COURT_ATTEMPT;
-  const home = await mkdtemp(join(tmpdir(), "ak-879-envelope-dossier-"));
+  const home = await mkdtemp(join(tmpdir(), "ak-1092-envelope-no-dossier-"));
   try {
-    const mkFrozen = async (label: string, courtAttemptId: string) => {
+    const mkRun = async (label: string, courtAttemptId: string) => {
       const runDirectory = join(home, label, "run");
+      // Legacy freeze leaf may still exist on disk; runtime must not load it (#1092).
       const freezeDir = join(runDirectory, "attachments", "case-dossier");
       await mkdir(freezeDir, { recursive: true });
       await mkdir(join(runDirectory, "session"), { recursive: true });
-      const frozenPath = join(freezeDir, "00-case-dossier-pointer.md");
-      await writeFile(frozenPath, `dossier-for-${label}\n`, "utf8");
+      await writeFile(join(freezeDir, "00-case-dossier-pointer.md"), `stale-${label}\n`, "utf8");
       return {
         socketPath: join(home, `${label}.sock`),
-        frozenPath,
         request: {
           principal: fixturePrincipal(join(runDirectory, "session")),
           activation: { role: "judge" as const },
@@ -443,8 +442,8 @@ test("#879 concurrent envelopes keep case-dossier identity on HostContext, not p
         },
       };
     };
-    const a = await mkFrozen("a", "court-a");
-    const b = await mkFrozen("b", "court-b");
+    const a = await mkRun("a", "court-a");
+    const b = await mkRun("b", "court-b");
     const deps = createRoleRuntimeDependencies(packageRoot);
     const [preparedA, preparedB] = await Promise.all([
       prepareRoleEnvelope({ request: a.request, dependencies: deps, socketPath: a.socketPath }),
@@ -453,22 +452,15 @@ test("#879 concurrent envelopes keep case-dossier identity on HostContext, not p
     try {
       assert.equal(process.env.AK_ROLE_RUN_DIR, undefined);
       assert.equal(process.env.AK_ROLE_COURT_ATTEMPT, undefined);
-      const dossierOf = (prepared: typeof preparedA, frozenPath: string) => {
-        const rows = prepared.systemPrompt.materials.filter(
+      const dossierCount = (prepared: typeof preparedA) =>
+        prepared.systemPrompt.materials.filter(
           (material) =>
             typeof material === "object"
             && material !== null
             && (material as { kind?: unknown }).kind === "case-dossier-pointer",
-        );
-        assert.equal(rows.length, 1, "each envelope must load exactly its own dossier");
-        const row = rows[0] as { frozenPath?: unknown; section?: unknown };
-        assert.equal(row.frozenPath, frozenPath);
-        return row;
-      };
-      const dossierA = dossierOf(preparedA, a.frozenPath);
-      const dossierB = dossierOf(preparedB, b.frozenPath);
-      assert.equal(dossierA.section, "dossier-for-a\n");
-      assert.equal(dossierB.section, "dossier-for-b\n");
+        ).length;
+      assert.equal(dossierCount(preparedA), 0);
+      assert.equal(dossierCount(preparedB), 0);
       assert.equal(preparedA.prompt, "peer-a");
       assert.equal(preparedB.prompt, "peer-b");
     } finally {
@@ -484,7 +476,6 @@ test("#879 concurrent envelopes keep case-dossier identity on HostContext, not p
     else process.env.AK_ROLE_COURT_ATTEMPT = previousCourt;
   }
 });
-
 const INSPECTOR_PARENT = "/tmp/ak-879-parent-run";
 const OFFICER_PAYLOAD = { status: "completed", report: "officer-peer-body" };
 const ENGINE = "cursor";

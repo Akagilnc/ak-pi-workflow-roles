@@ -48,4 +48,4 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 ## 已知不一致
 
-仓级 [`CLAUDE.md`](../CLAUDE.md) 的 “Role invocation evidence” 仍写作 `books/<主仓目录名>/issues/<issue>/runs/...`，与本页的 `books/<book-key>/<ticket>/runs/...` 不一致。#852 明确未授权本片修订仓级 `CLAUDE.md`；因此本页记录该事实，但不改该文件。
+无。#1092 已在仓级 [`CLAUDE.md`](../CLAUDE.md) 写入与本页一致的记录根约定（`books/<book-key>/<ticket>/records.jsonl`）；角色凭票号自取，代码不再递送路径。

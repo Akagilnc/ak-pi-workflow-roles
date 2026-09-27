@@ -1256,20 +1256,6 @@ export function createRoleRuntimeExtension(
         },
       };
     });
-    // #879: single shared owner of station-child 0081 case-dossier → readingMaterial fold.
-    // post-admission freezes under run/attachments/case-dossier/; this handler alone
-    // projects it onto the existing agent-start materials face (Pi + envelope collect).
-    // Role modules must not re-read the freeze (ADR 0018 lifecycle; no duplicate fold).
-    roleHost.on("before_agent_start", async (_event, ctx) => {
-      const runDir = runDirectoryFromHostContext(ctx);
-      if (runDir === undefined) return;
-      const { loadCaseDossierReadingMaterial } = await import(
-        "./public-cli/case-dossier-delivery.ts"
-      );
-      const caseDossier = await loadCaseDossierReadingMaterial(runDir);
-      if (caseDossier === undefined) return;
-      return { readingMaterial: caseDossier };
-    });
     roleHost.on("tool_result", async (event) => {
       const role = selectedRole;
       if (role === undefined) return;
