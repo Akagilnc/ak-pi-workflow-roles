@@ -388,11 +388,16 @@ process.exit(1);
 test("headless stdin delivery error cannot settle valid output as success", async () => {
   const ledger = createTempPackageHomeLedger({ prefix: "ak-headless-epipe-", runName: "run@codex" });
   const fakeBin = join(ledger.runDirectory, "fake-codex-epipe");
+  const rollout = join(ledger.runDirectory, ".codex", "sessions", "rollout-thread-epipe.jsonl");
   await writeFile(fakeBin, `#!/usr/bin/env node
+import { mkdirSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 process.stdin.destroy();
 process.stdout.write(JSON.stringify({ type: "thread.started", thread_id: "thread-epipe" }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: JSON.stringify({ status: "completed" }) } }) + "\\n");
 process.stdout.write(JSON.stringify({ type: "turn.completed" }) + "\\n");
+mkdirSync(dirname(${JSON.stringify(rollout)}), { recursive: true });
+writeFileSync(${JSON.stringify(rollout)}, 'native after close\\n');
 process.exit(0);
 `, "utf8");
   await chmod(fakeBin, 0o755);
@@ -403,6 +408,7 @@ process.exit(0);
       description,
       hostName: "codex",
       binary: fakeBin,
+      env: { CODEX_HOME: join(ledger.runDirectory, ".codex") },
       sessionIdentity: { async load() { return undefined; }, async bind() {}, resolveSessionFile: () => join(ledger.runDirectory, "session", "session.jsonl") },
       prepare: async () => ({
         mcpServers: [],
@@ -427,6 +433,7 @@ process.exit(0);
     });
     assert.notEqual(result.code, 0);
     assert.notEqual(result.knownFailure, undefined);
+    assert.equal(await readFile(join(ledger.runDirectory, "session", "codex-gpt-test-1.jsonl"), "utf8"), "native after close\n");
   } finally {
     ledger.dispose();
   }

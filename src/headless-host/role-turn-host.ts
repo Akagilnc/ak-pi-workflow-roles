@@ -264,6 +264,7 @@ function spawnHeadlessTurn(options: {
   readonly stdin?: string;
   /** Called for each complete stdout line as it arrives (live stream-json). */
   readonly onStdoutLine?: (line: string) => void;
+  readonly onClose?: () => void;
 }): Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }> {
   return new Promise((resolve, reject) => {
     if (options.signal?.aborted) {
@@ -365,7 +366,10 @@ function spawnHeadlessTurn(options: {
       options.signal?.removeEventListener("abort", onAbort);
       reject(error);
     });
-    child.on("close", (code) => settle(code));
+    child.on("close", (code) => {
+      options.onClose?.();
+      settle(code);
+    });
     options.signal?.addEventListener("abort", onAbort, { once: true });
     if (options.timeoutMs !== undefined && options.timeoutMs > 0) {
       timer = setTimeout(() => {
@@ -555,8 +559,10 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           }
 
           let spawned: { code: number | null; stdout: string; stderr: string; timedOut: boolean };
+          let childExited = false;
           try {
             spawned = await spawnHeadlessTurn({
+              onClose() { childExited = true; },
               binary: config.binary,
               args,
               cwd: request.cwd,
@@ -602,10 +608,8 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
               recordNativeSessionPointer({ host: config.hostName, sessionId: roundSessionId, cwd: request.cwd, sessionParent, home: request.home });
             }
           } catch (error) {
-            if (isHostAbortedError(error)) {
-              exitedSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
-              throw error;
-            }
+            if (childExited) exitedSessionId = (codex ? codexObserver?.result().threadId : undefined) ?? sessionId;
+            if (isHostAbortedError(error)) throw error;
             const message = error instanceof Error ? error.message : String(error);
             const observedHostFailure = codexObserver?.result().failureDiagnostic;
             if (observedHostFailure !== undefined) {

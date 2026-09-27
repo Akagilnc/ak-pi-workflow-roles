@@ -29,13 +29,17 @@ import type { SitianRecordInput } from "./sitian-contracts.ts";
 /** Volume category under `<run>/session/<kind>/records.jsonl`. */
 export const HOST_SESSION_RECORD_KIND = "host-session" as const;
 
+function declareHostSessionFailure(error: unknown): void {
+  const message = error instanceof Error ? (error.stack || error.message) : String(error);
+  process.stderr.write(`[host-session] Dossier record failure: ${message}\n`);
+}
+
 /** Declare sitian record failure once to stderr without aborting the leg (ADR 0086). */
 export function sitianReportSafe(input: SitianRecordInput): void {
   try {
     sitianReport(input);
   } catch (error) {
-    const message = error instanceof Error ? (error.stack || error.message) : String(error);
-    process.stderr.write(`[host-session] Sitian record write failure: ${message}\n`);
+    declareHostSessionFailure(error);
   }
 }
 
@@ -113,7 +117,8 @@ export function resolveNativeSessionPath(options: {
 
 /** Count each host activation, including Pi turns without an external copy. */
 export function recordRunStart(runDirectory: string): void {
-  appendFileSync(join(runDirectory, ".run-starts"), "\n");
+  try { appendFileSync(join(runDirectory, ".run-starts"), "\n"); }
+  catch (error) { declareHostSessionFailure(error); }
 }
 
 /**
@@ -149,7 +154,9 @@ export function resolveHostDossierLandingPath(options: {
   }
 
   const startsPath = join(dirname(options.sessionDirectory), ".run-starts");
-  const starts = existsSync(startsPath) ? readFileSync(startsPath, "utf8").length : 0;
+  let starts = 0;
+  try { if (existsSync(startsPath)) starts = readFileSync(startsPath, "utf8").length; }
+  catch (error) { declareHostSessionFailure(error); }
   const ordinal = Math.max(maxOrdinal + 1, starts, options.continuation.kind === "resume" ? 2 : 1);
 
   const baseName = `${options.host}-${sanitizedModel}-${ordinal}`;
@@ -250,8 +257,7 @@ export function copyAndRecordHostDossier(options: {
 
   let lastError: unknown;
   let copySuccess = false;
-  let attempt = 0;
-  for (; attempt < 2; attempt++) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       if (options.host === "grok-build") {
         copyGrokDossier(nativePath!, landingPath);
@@ -307,7 +313,6 @@ export function copyAndRecordHostDossier(options: {
         landingPath,
         ordinal,
         sessionId: options.sessionId,
-        attempts: attempt,
         error: lastError instanceof Error ? lastError.message : String(lastError),
       },
     });

@@ -235,13 +235,19 @@ process.stdout.write(JSON.stringify({
       // Allocated and host-reported IDs each produce a pointer; warning declares once.
       assert.equal(stderrChunks.length, 3);
 
-      const native = join(ledger.home, ".claude", "projects", ledger.runDirectory.replace(/[^a-zA-Z0-9]/g, "-"), "sid.jsonl");
+      await chmod(sessionDir, 0o755);
+      const native = join(ledger.home, ".claude", "projects", ledger.home.replace(/[^a-zA-Z0-9]/g, "-"), "sid.jsonl");
       await mkdir(dirname(native), { recursive: true });
       await writeFile(native, "native session", "utf8");
+      const recordDir = join(sessionDir, "host-session");
+      await mkdir(recordDir, { recursive: true });
+      await chmod(recordDir, 0o555);
       const copied = await host.executeTurn(request(ledger.runDirectory, ledger.home));
       assert.equal(copied.knownFailure, undefined, JSON.stringify(copied));
-      // The second turn likewise declares its two pointers and one copy failure.
+      assert.equal(await readFile(join(sessionDir, "claude-default-1.jsonl"), "utf8"), "native session");
+      // The two pointers and successful-copy record each declare once.
       assert.equal(stderrChunks.length, 6);
+      await chmod(recordDir, 0o755);
     } finally {
       process.stderr.write = origStderrWrite;
     }
