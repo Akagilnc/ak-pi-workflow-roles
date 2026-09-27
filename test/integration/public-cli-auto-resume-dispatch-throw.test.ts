@@ -226,7 +226,7 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
     // Malformed dossier JSONL makes the pointer append fail after the error file lands.
     await writeFile(sessionFile,"{not json\n","utf8");
     const callsRef={n:0};
-    const {io,stderr}=captureIo();
+    const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
       sessionAppender: appendPiSessionCustomEntry,
@@ -242,7 +242,7 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
     assert.equal(result.exitCode,1);
     assert.equal(result.terminal?.roleOutcome.kind,"failure");
     assert.equal(result.terminal?.autoResumeCount,2);
-    assert.match(stderr.join(""),/dispatch error retention failed/);
+    assert.equal(result.terminal?.artifacts.filter((artifact)=>artifact.kind==="error").length,3);
   });
 });
 

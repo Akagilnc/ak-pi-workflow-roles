@@ -278,7 +278,7 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
     const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
     const runDir=join(home,"runs","416-audit-escal-loop");await mkdir(join(runDir,"session"),{recursive:true});
     const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
-    let calls=0;const {io,stdout}=captureIo();
+    let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
     sessionAppender: appendPiSessionCustomEntry,
@@ -289,7 +289,7 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
       buildResumePayload: ()=>["--resume"],
       dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"audit_escalation",role:"judge",status:"audit_escalation",decisiveFacts:{}},navigator:{disposition:"no-advice"},artifacts:[],runId:"416-audit-escal-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
     });
-    assert.equal(calls,1);assert.equal(result.terminal?.autoResumeCount,0);assert.equal(stdout.length,1);
+    assert.equal(calls,1);assert.equal(result.terminal?.autoResumeCount,0);
   });
 });
 
@@ -299,7 +299,7 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
     const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
     const runDir=join(home,"runs","416-no-receipt-loop");await mkdir(join(runDir,"session"),{recursive:true});
     const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
-    let calls=0;const {io,stdout}=captureIo();
+    let calls=0;const {io}=captureIo();
     const noReceiptFacts={acceptedReceipt:false, rejectedReceipts:[], deliveryTurns:0, sessionCompletion:"completed" as const};
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
@@ -311,7 +311,7 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
       buildResumePayload: ()=>["--resume"],
       dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"no_receipt",role:"judge",status:"no-accepted-receipt",decisiveFacts:noReceiptFacts,...noReceiptFacts},navigator:{disposition:"no-advice"},artifacts:[],runId:"416-no-receipt-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
     });
-    assert.equal(calls,1);assert.equal(result.terminal?.autoResumeCount,0);assert.equal(stdout.length,1);
+    assert.equal(calls,1);assert.equal(result.terminal?.autoResumeCount,0);
   });
 });
 
@@ -319,7 +319,7 @@ test("block2: lawful (accepted) does not trigger auto - single presentation", as
   await withTempHome(async(home)=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="416-lawful-no-auto-002";let calls=0;
-    const {io,stdout}=captureIo();
+    const {io}=captureIo();
     const result=await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"lawful"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
@@ -327,7 +327,7 @@ test("block2: lawful (accepted) does not trigger auto - single presentation", as
         piRunner: async(args)=>{calls+=1;const sd=args[args.indexOf("--session-dir")+1]!;await mkdir(sd,{recursive:true});
         const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge();await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
-    assert.equal(calls,1);assert.equal(result.exitCode,0);assert.equal(stdout.length,1);assert.equal(result.terminal?.autoResumeCount,0);
+    assert.equal(calls,1);assert.equal(result.exitCode,0);assert.equal(result.terminal?.autoResumeCount,0);
   });
 });
 

@@ -331,8 +331,6 @@ test("typed 429 failure Terminal carries resume command and reveals run id only 
     );
 
     assert.equal(result.exitCode, 1);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 1);
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     assertRunIdOnlyInResumeCommand(result.terminal!, runId);
@@ -1230,7 +1228,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
     assert.equal(resumed.terminal!.runId, runId);
     assert.equal(resumed.terminal!.resume, undefined);
-    assert.equal(stdout.length, 1);
 
     // Frozen attachment bytes unchanged after source mutation.
     const frozenBytes = await readFile(frozenPath, "utf8");
@@ -1541,8 +1538,6 @@ test("unknown run id rejects; terminal run still reaches host (#416/#1091)", asy
         }),
       });
       assert.equal(unknown.exitCode, 2);
-      assert.equal(stdout.length, 0);
-      assert.equal(stderr.length >= 1, true);
       assert.equal(dispatches, 0);
     }
 

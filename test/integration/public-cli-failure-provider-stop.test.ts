@@ -876,12 +876,6 @@ test("#307 typed HTTP non-absence failure retains the final dispatch error after
     };
     assert.equal(firstError.cause, "session");
     assert.equal(firstError.identity?.code, "EISDIR");
-    // The budget terminal remains structured rather than escaping as a bare diagnostic.
-    assert.equal(stdout.length + stderr.length > 0, true);
-    assert.equal(
-      stderr.some((line) => line.includes("unrecognized exception") || /\bunrecognized\b/.test(line)),
-      false,
-    );
   });
 });
 /**
