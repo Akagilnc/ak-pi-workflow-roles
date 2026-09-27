@@ -6,7 +6,7 @@
  * - Sitian log line write failure declared to stderr without aborting the turn.
  */
 import assert from "node:assert/strict";
-import { access, chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
@@ -196,8 +196,9 @@ process.stdout.write(JSON.stringify({
     const sessionFile = join(sessionDir, "session.jsonl");
     await mkdir(sessionDir, { recursive: true });
     await writeFile(sessionFile, "{}\n", "utf8");
-    // Make session directory read-only so sitian cannot create host-session directory
-    await chmod(sessionDir, 0o555);
+    // A regular file at the Sitian directory path prevents creation for every user.
+    const recordDir = join(sessionDir, "host-session");
+    await writeFile(recordDir, "blocked");
 
     const stderrChunks: string[] = [];
     const origStderrWrite = process.stderr.write;
@@ -235,24 +236,23 @@ process.stdout.write(JSON.stringify({
       // Allocated and host-reported IDs each produce a pointer; warning declares once.
       assert.equal(stderrChunks.length, 3);
 
-      await chmod(sessionDir, 0o755);
+      await rm(recordDir);
       const native = join(ledger.home, ".claude", "projects", ledger.home.replace(/[^a-zA-Z0-9]/g, "-"), "sid.jsonl");
       await mkdir(dirname(native), { recursive: true });
       await writeFile(native, "native session", "utf8");
-      const recordDir = join(sessionDir, "host-session");
-      await mkdir(recordDir, { recursive: true });
-      await chmod(recordDir, 0o555);
+      await mkdir(recordDir);
+      await mkdir(join(recordDir, "records.jsonl"));
       const copied = await host.executeTurn(request(ledger.runDirectory, ledger.home));
       assert.equal(copied.knownFailure, undefined, JSON.stringify(copied));
-      assert.equal(await readFile(join(sessionDir, "claude-default-1.jsonl"), "utf8"), "native session");
+      const dossiers = (await readdir(sessionDir)).filter((entry) => entry.startsWith("claude-default-") && entry.endsWith(".jsonl"));
+      assert.equal(dossiers.length, 1);
+      assert.equal(await readFile(join(sessionDir, dossiers[0]!), "utf8"), "native session");
       // The two pointers and successful-copy record each declare once.
       assert.equal(stderrChunks.length, 6);
-      await chmod(recordDir, 0o755);
     } finally {
       process.stderr.write = origStderrWrite;
     }
   } finally {
-    try { await chmod(join(ledger.runDirectory, "session"), 0o755); } catch { /* dispose */ }
     ledger.dispose();
   }
 });
