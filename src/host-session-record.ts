@@ -156,8 +156,7 @@ export function resolveHostDossierLandingPath(options: {
 
   const startsPath = join(dirname(options.sessionDirectory), ".run-starts");
   let starts = 0;
-  try { if (existsSync(startsPath)) starts = readFileSync(startsPath, "utf8").length; }
-  catch (error) { declareHostSessionFailure(error); }
+  if (existsSync(startsPath)) starts = readFileSync(startsPath, "utf8").length;
   const ordinal = Math.max(maxOrdinal + 1, starts, options.continuation.kind === "resume" ? 2 : 1);
 
   const baseName = `${options.host}-${sanitizedModel}-${ordinal}`;
@@ -256,7 +255,26 @@ export function copyAndRecordHostDossier(options: {
   });
   if (nativePath === undefined && options.host !== "codex") return;
 
-  const { landingPath, ordinal, sanitizedModel } = resolveHostDossierLandingPath(options);
+  let destination: ReturnType<typeof resolveHostDossierLandingPath>;
+  try {
+    destination = resolveHostDossierLandingPath(options);
+  } catch (error) {
+    sitianReportSafe({
+      level: "event",
+      kind: HOST_SESSION_RECORD_KIND,
+      host: options.host,
+      cwd: options.cwd,
+      sessionParent: options.sessionParent,
+      source: `${options.host}-dossier`,
+      payload: {
+        type: "native-session-warning",
+        sessionId: options.sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+    return;
+  }
+  const { landingPath, ordinal, sanitizedModel } = destination;
 
   let lastError: unknown;
   let copySuccess = false;

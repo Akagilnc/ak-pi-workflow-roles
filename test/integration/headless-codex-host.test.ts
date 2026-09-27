@@ -43,13 +43,16 @@ const thread = resumed ? args[resumeAt + 1] : "thread-fake-1";
 const prompt = readFileSync(0, "utf8");
 appendFileSync(${JSON.stringify(promptLog)}, JSON.stringify(prompt) + "\\n");
 mkdirSync(dirname(${JSON.stringify(nativeRollout)}), { recursive: true });
-writeFileSync(${JSON.stringify(nativeRollout)}, 'native codex transcript\\n');
 const events = [
   { type: "thread.started", thread_id: thread },
   { type: "item.completed", item: { type: "agent_message", text: JSON.stringify({ status: "completed", report: resumed ? "resumed" : "initial" }) } },
   ...(prompt.endsWith("missing-terminal") ? [] : [{ type: "turn.completed" }]),
 ];
-process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
+process.stdout.write(JSON.stringify(events[0]) + "\\n");
+setTimeout(() => {
+  writeFileSync(${JSON.stringify(nativeRollout)}, 'native codex transcript\\n');
+  process.stdout.write(events.slice(1).map(JSON.stringify).join("\\n") + "\\n");
+}, 100);
 `, "utf8");
   await chmod(fakeBin, 0o755);
 
