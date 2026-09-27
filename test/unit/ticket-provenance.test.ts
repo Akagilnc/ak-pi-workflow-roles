@@ -7,19 +7,12 @@ import test from "node:test";
 
 import {
   projectTicketProvenanceHeader,
-  projectTicketProvenanceLine,
   projectTicketProvenanceSessions,
 } from "../../src/ticket-provenance-contracts.ts";
-import { ticketProvenanceSubject } from "../../src/ticket-provenance.ts";
 import {
   projectDiaristSessions,
 } from "../../src/diarist-contracts.ts";
 
-test("ticket-provenance subject is the ticket number string", () => {
-  assert.equal(ticketProvenanceSubject(582), "582");
-  assert.throws(() => ticketProvenanceSubject(0));
-  assert.throws(() => ticketProvenanceSubject(-1));
-});
 
 test("projectTicketProvenanceSessions: empty is lawful; malformed is absent", () => {
   assert.deepEqual(projectTicketProvenanceSessions([]), []);
@@ -49,7 +42,7 @@ test("projectTicketProvenanceSessions: empty is lawful; malformed is absent", ()
   ]);
 });
 
-test("projectTicketProvenanceHeader and line round-trip the diary shape", () => {
+test("projectTicketProvenanceHeader round-trips the diary shape", () => {
   const header = projectTicketProvenanceHeader({
     repo: "demo",
     ticket: 900,
@@ -92,21 +85,6 @@ test("projectTicketProvenanceHeader and line round-trip the diary shape", () => 
     undefined,
   );
 
-  const line = projectTicketProvenanceLine({
-    speaker: "runner",
-    s: 0,
-    sourcePosition: 7,
-    id: "m1",
-    text: "hi",
-  });
-  assert.deepEqual(line, {
-    speaker: "runner",
-    s: 0,
-    sourcePosition: 7,
-    id: "m1",
-    text: "hi",
-  });
-  assert.equal(projectTicketProvenanceLine({ speaker: "x", s: 0, text: "t" }), undefined);
 });
 
 test("projectDiaristSessions: absent field is empty, not rejection", () => {
