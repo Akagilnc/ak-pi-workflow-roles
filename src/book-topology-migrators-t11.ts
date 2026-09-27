@@ -1,10 +1,10 @@
 /**
  * #867 T11: migrate auditor-roles and issues/, discard retired kinds and run
- * pages, copy legacy orphan navigator / collector-handbook at book top-level,
+ * pages, copy legacy orphan collector-handbook at book top-level,
  * and move manual archives out of the books home.
  *
  * Partition order below is the registration order: auditor-roles, issues,
- * deprecated-kinds, deprecated-run-pages, navigator (legacy orphan #1087),
+ * deprecated-kinds, deprecated-run-pages,
  * collector-handbook, manual-archives.
  */
 import { cp, lstat, mkdir, readFile, stat, unlink, utimes, writeFile } from "node:fs/promises";
@@ -41,7 +41,6 @@ const AUDITOR_ROLES_PARTITION = "auditor-roles";
 const ISSUES_PARTITION = "issues";
 const DEPRECATED_KINDS_PARTITION = "deprecated-kinds";
 const DEPRECATED_RUN_PAGES_PARTITION = "deprecated-run-pages";
-const NAVIGATOR_PARTITION = "navigator";
 const COLLECTOR_HANDBOOK_PARTITION = "collector-handbook";
 const MANUAL_ARCHIVES_PARTITION = "manual-archives";
 
@@ -803,16 +802,6 @@ async function copyBookTopLevelPartition(
   }
 }
 
-/** Copies pre-#1087 book-top `navigator/` trees only — not a living partition. */
-export const bookTopologyNavigatorMigrator: BookTopologyPartitionMigrator = {
-  partition: NAVIGATOR_PARTITION,
-  async migrate(context: BookTopologyMigrationContext) {
-    const outcomes: MigrationItemOutcome[] = [];
-    await copyBookTopLevelPartition(context, NAVIGATOR_PARTITION, outcomes);
-    return reconcileMigrationPartition(NAVIGATOR_PARTITION, "entries", outcomes);
-  },
-};
-
 export const bookTopologyCollectorHandbookMigrator: BookTopologyPartitionMigrator = {
   partition: COLLECTOR_HANDBOOK_PARTITION,
   async migrate(context: BookTopologyMigrationContext) {
@@ -851,7 +840,6 @@ export const BOOK_TOPOLOGY_T11_MIGRATORS: readonly BookTopologyPartitionMigrator
   bookTopologyIssuesMigrator,
   bookTopologyDeprecatedKindsMigrator,
   bookTopologyDeprecatedRunPagesMigrator,
-  bookTopologyNavigatorMigrator,
   bookTopologyCollectorHandbookMigrator,
   bookTopologyManualArchivesMigrator,
 ];

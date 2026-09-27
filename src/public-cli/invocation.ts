@@ -2284,34 +2284,6 @@ export async function materializeCountersignInvocation(
   );
 }
 
-/** Load admitted-request.json written at role-run admission. */
-export async function loadAdmittedJudgeRequest(
-  runDirectory: string,
-): Promise<{
-  instruction: string;
-  instructionEmpty: boolean;
-  attachments: readonly FrozenAttachment[];
-} | undefined> {
-  try {
-    const raw = JSON.parse(
-      await readFile(join(runDirectory, "admitted-request.json"), "utf8"),
-    ) as unknown;
-    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
-    const record = raw as Record<string, unknown>;
-    if (typeof record.role !== "string" || record.role !== "judge") return undefined;
-    if (typeof record.instruction !== "string") return undefined;
-    if (typeof record.instructionEmpty !== "boolean") return undefined;
-    if (!Array.isArray(record.attachments)) return undefined;
-    return {
-      instruction: record.instruction,
-      instructionEmpty: record.instructionEmpty,
-      attachments: record.attachments as FrozenAttachment[],
-    };
-  } catch {
-    return undefined;
-  }
-}
-
 export async function ensureRunArtifactsDir(runDirectory: string): Promise<string> {
   const directory = roleRunArtifactsDirectory(runDirectory);
   return ensureRoleRunDirectory(

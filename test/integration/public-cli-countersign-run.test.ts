@@ -1751,7 +1751,7 @@ test("public CLI keeps ticket, unbound, first-binding, run records, and all read
       await readFile(artifact.path, "utf8");
     }
 
-    const allowedBookEntries = new Set(["582", "unbound", "navigator", "collector-handbook"]);
+    const allowedBookEntries = new Set(["582", "unbound", "collector-handbook"]);
     for (const entry of await readdir(bookRoot)) {
       assert.equal(allowedBookEntries.has(entry), true, entry);
     }
