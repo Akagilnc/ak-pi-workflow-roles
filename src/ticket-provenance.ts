@@ -3,7 +3,6 @@
  * 一册＝一个追加式 records.jsonl。每轮新投影经司天台 appender 追加为不可变提交；
  * 纯追加、不回读历史去重、不折叠。
  */
-import { randomUUID } from "node:crypto";
 import { readFile, unlink } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
@@ -300,7 +299,6 @@ async function projectSessionRanges(input: {
   const rows = sessionLines.map((entry) => entry.row);
   const dialogue = adaptSessionDialogue(rows);
   const sourceFacts = stableSourceFacts(sessionLines);
-  const seenIds = new Set<string>();
   const lines: TicketProvenanceLine[] = [];
   const raw: TicketProvenanceRaw[] = [];
   const ranges = normalizeResolvedRanges(
@@ -317,10 +315,6 @@ async function projectSessionRanges(input: {
         continue;
       }
       for (const event of dialogue[index] ?? []) {
-        if (event.id !== undefined) {
-          if (seenIds.has(event.id)) continue;
-          seenIds.add(event.id);
-        }
         lines.push({
           speaker: event.speaker,
           s: input.s,
@@ -375,7 +369,6 @@ export async function reprojectTicketProvenance(input: {
 
   const pointer = appendSitianRecord({
     ...recordInput,
-    identity: `ticket-provenance:${randomUUID()}`,
     payload: {
       type: "ticket-provenance-append",
       sessions: input.sessions,

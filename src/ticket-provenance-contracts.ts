@@ -74,19 +74,6 @@ function positiveInteger(value: unknown): number | undefined {
   return undefined;
 }
 
-function nonNegativeInteger(value: unknown): number | undefined {
-  if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0) return value;
-  if (typeof value === "string" && /^(0|[1-9][0-9]*)$/.test(value)) {
-    const parsed = Number(value);
-    if (Number.isSafeInteger(parsed)) return parsed;
-  }
-  return undefined;
-}
-
-function projectSpeaker(value: unknown): TicketProvenanceSpeaker | undefined {
-  return value === "owner" || value === "runner" ? value : undefined;
-}
-
 function projectBound(value: unknown): TicketProvenanceBound | undefined {
   if (!isRecord(value)) return undefined;
   const id = typeof value.id === "string" && value.id !== "" ? value.id : undefined;
@@ -146,29 +133,5 @@ export function projectTicketProvenanceHeader(
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
     sessions,
-  };
-}
-
-/** 读回一条对话行。 */
-export function projectTicketProvenanceLine(
-  value: unknown,
-): TicketProvenanceLine | undefined {
-  if (!isRecord(value)) return undefined;
-  const speaker = projectSpeaker(value.speaker);
-  const s = nonNegativeInteger(value.s);
-  if (speaker === undefined || s === undefined) return undefined;
-  if (typeof value.text !== "string") return undefined;
-  const sourcePosition = nonNegativeInteger(value.sourcePosition);
-  const sourceIdentity = typeof value.sourceIdentity === "string" && value.sourceIdentity !== ""
-    ? value.sourceIdentity
-    : undefined;
-  const id = typeof value.id === "string" && value.id !== "" ? value.id : undefined;
-  return {
-    speaker,
-    s,
-    ...(sourcePosition === undefined ? {} : { sourcePosition }),
-    ...(sourceIdentity === undefined ? {} : { sourceIdentity }),
-    ...(id === undefined ? {} : { id }),
-    text: value.text,
   };
 }

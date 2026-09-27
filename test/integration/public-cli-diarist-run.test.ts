@@ -234,7 +234,7 @@ function diaristEnvelopeRunner(
  * paired dequeue materialization (no double-count), empty-content enqueue whose
  * sole materialization user must be kept, runner reply, pure tool result
  * (excluded), mixed tool_result+text (text kept), Codex response_item dialogue,
- * absorbed interjection (enqueue-only), duplicate id (first-seen), and one
+ * absorbed interjection (enqueue-only), repeated native id, and one
  * unparsable line. Path must sit under an authorized host session root.
  */
 async function writeDialogueSessionFixture(path: string): Promise<{
@@ -532,13 +532,13 @@ async function writeDialogueSessionFixture(path: string): Promise<{
     }),
     // 20. unparsable line (completed by terminator)
     unparsableRaw,
-    // 21. duplicate id second occurrence — must not re-enter
+    // 21. repeated id with distinct source text remains in the submitted range
     JSON.stringify({
       type: "assistant",
       uuid: duplicateId,
       message: {
         role: "assistant",
-        content: [{ type: "text", text: "副本正文（应被首现吞掉）" }],
+        content: [{ type: "text", text: "副本正文" }],
       },
     }),
     // 22. machine task-notification via queue — must NOT become owner (#918)
@@ -995,7 +995,7 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
       "prior snapshot dialogue must survive the append",
     );
 
-    // Speakers + first-seen identity + no tool output + raw-byte preservation.
+    // Speakers + no tool output + raw-byte preservation.
     const byId = new Map(
       volume.lines
         .filter((line) => line.id !== undefined)
@@ -1098,11 +1098,9 @@ test("ak-role diarist projects dialogue bounds and preserves unparsable source b
     // Fixed-prefix authority applies to enqueue only; an untyped user is not reverse-linked.
     assert.equal(byId.get(fixture.bareMachineEnqueueId), undefined);
     assert.equal(byId.get("msg-bare-machine-mat")?.speaker, "owner");
-    assert.equal(byId.get(fixture.duplicateId)?.text, "首现正文");
-    // Duplicate second occurrence must not produce a second line with that id.
-    assert.equal(
-      volume.lines.filter((line) => line.id === fixture.duplicateId).length,
-      1,
+    assert.deepEqual(
+      volume.lines.filter((line) => line.id === fixture.duplicateId).map((line) => line.text),
+      ["首现正文", "副本正文"],
     );
     // Pure tool result never enters; mixed message keeps speaker text only.
     assert.equal(
