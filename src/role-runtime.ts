@@ -99,6 +99,7 @@ import {
   classifyPackagedRoleTerminalResult,
   extractInfrastructureFailureEvidence,
   NAVIGATOR_INVOCATION_ENTRY,
+  NAVIGATOR_FAILURE_DELIVERY_ENTRY,
   resolveLifecycleInvocationPrincipal,
 } from "./navigator-invocation-identity.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
@@ -1283,7 +1284,7 @@ export function createRoleRuntimeExtension(
       if (caseDossier === undefined) return;
       return { readingMaterial: caseDossier };
     });
-    roleHost.on("tool_result", async (event) => {
+    roleHost.on("tool_result", async (event, ctx) => {
       const role = selectedRole;
       if (role === undefined) return;
       // #676 E / J1: collector operational bookkeeping on the shared tool_result seam.
@@ -1314,7 +1315,13 @@ export function createRoleRuntimeExtension(
       const settlement = isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure"
         ? publicNavigatorSettlement(role, navigatorPhase(roleHost, role), classified)
         : undefined;
-      await settleNavigatorProjection(settlement);
+      if (settlement !== undefined) {
+        const navigator = await settleNavigatorProjection(settlement);
+        ctx.sessionManager.appendCustomEntry?.(NAVIGATOR_FAILURE_DELIVERY_ENTRY, {
+          toolCallId: event.toolCallId,
+          ...(navigator === undefined ? {} : { navigator }),
+        });
+      }
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {

@@ -8,7 +8,7 @@ import { basename, join, resolve } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import { createRoleRuntimeExtension, projectClosedSubmissionLifecycle } from "../../src/role-runtime.ts";
-import { buildNavigatorInfrastructureFailureFact } from "../../src/navigator-invocation-identity.ts";
+import { buildNavigatorInfrastructureFailureFact, NAVIGATOR_FAILURE_DELIVERY_ENTRY } from "../../src/navigator-invocation-identity.ts";
 import { createNativeNavigatorSessionFactory, createNavigatorAttendance, createNavigatorPrepareTool, NAVIGATOR_EVENT_TYPE, NAVIGATOR_PREPARE_TOOL_NAME, NavigatorUnavailableError, NAVIGATOR_TARGETS } from "../../src/navigator-attendance.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
@@ -77,10 +77,12 @@ test("shared accepted submission binds settled attendance before public extracti
           return {
             prepare() {}, setWorkContext() {}, warmHelp() {}, isPreparing: () => false,
             async settle() {
+              const disposition = callbacks.length === 1 ? "no-advice" : "advice";
               await options.onEvent({
-                version: 1, disposition: "no-advice", invocationId: options.invocationId,
+                version: 1, disposition, invocationId: options.invocationId,
                 role: options.role, phase: options.phase, subjectKey: options.subjectKey,
-              }, { disposition: "no-advice" });
+                ...(disposition === "advice" ? { prose: "current advice" } : {}),
+              }, { disposition, ...(disposition === "advice" ? { prose: "current advice" } : {}) });
             },
             dispose() {},
           };
@@ -104,6 +106,19 @@ test("shared accepted submission binds settled attendance before public extracti
       await callbacks[0]?.({ version: 1, disposition: "advice", prose: "late", invocationId: "old", role: "judge", phase: null, subjectKey: "old" }, { disposition: "advice", prose: "late" });
       await handlers.get("agent_settled")?.({}, ctx);
       assert.deepEqual(sent, []);
+      await handlers.get("tool_result")?.({
+        toolCallId: "infra-bound", toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: true, content: [], details: buildNavigatorInfrastructureFailureFact(),
+      }, ctx);
+      const delivered = sessionManager.getEntries().find((entry: any) => entry.type === "custom" && entry.customType === NAVIGATOR_FAILURE_DELIVERY_ENTRY);
+      assert.equal((delivered as any)?.data?.navigator?.prose, "current advice");
+      sessionManager.appendMessage({
+        role: "toolResult", toolCallId: "infra-bound", toolName: JUDGE_OUTPUT_TOOL_NAME,
+        isError: true, content: [], details: buildNavigatorInfrastructureFailureFact(),
+      } as never);
+      const failed = extractNavigatorFact(sessionManager.getEntries());
+      assert.equal(failed.disposition, "advice");
+      if (failed.disposition === "advice") assert.equal(failed.prose, "current advice");
     } finally {
       if (previousRunDir === undefined) delete process.env.AK_ROLE_RUN_DIR;
       else process.env.AK_ROLE_RUN_DIR = previousRunDir;

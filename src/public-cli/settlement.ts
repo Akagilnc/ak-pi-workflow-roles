@@ -98,6 +98,7 @@ import {
   hasNavigatorInfrastructureFailureBase,
   isAcceptedPackagedRoleTerminalResult,
   NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
+  NAVIGATOR_FAILURE_DELIVERY_ENTRY,
 } from "../navigator-invocation-identity.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
@@ -2294,6 +2295,18 @@ function extractNavigatorAttendanceFact(
     };
   }
 
+  if (terminal.classification === "infrastructure") {
+    const toolCallId = "toolCallId" in terminal.message ? terminal.message.toolCallId : undefined;
+    if (typeof toolCallId === "string") {
+      for (let i = entries.length - 1; i >= 0; i -= 1) {
+        const entry = entries[i];
+        if (entry?.type !== "custom" || entry.customType !== NAVIGATOR_FAILURE_DELIVERY_ENTRY) continue;
+        if (!isRecord(entry.data) || entry.data.toolCallId !== toolCallId) continue;
+        if (isRecord(entry.data.navigator)) return parseNavigatorAttendanceDetails(entry.data.navigator);
+        break;
+      }
+    }
+  }
   for (let i = terminal.index; i < entries.length; i += 1) {
     const entry = entries[i];
     if (entry?.type !== "custom" || entry.customType !== "ak-role-submission-closure") continue;
