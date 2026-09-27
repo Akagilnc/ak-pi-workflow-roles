@@ -61,10 +61,6 @@ export type CollectorRoleDependencies = {
   loadSoul(): Promise<string>;
 };
 
-export type CollectorRoleHostActions = {
-  failInfrastructure(error: unknown, ctx: HostContext, toolCallId?: string): never;
-};
-
 export type CollectorActivation = {
   soul: string;
   repository: CollectorRepository;
@@ -101,7 +97,6 @@ function buildMethodContext(activation: CollectorActivation): string {
 export function createCollectorRoleRuntime(
   pi: RoleHost,
   dependencies: CollectorRoleDependencies,
-  _hostActions: CollectorRoleHostActions,
 ): {
   activate(ctx: HostContext): Promise<CollectorActivation>;
   assembleMaterials(activation: CollectorActivation, baseSystemPrompt: string): string;
@@ -109,7 +104,6 @@ export function createCollectorRoleRuntime(
     _activation: CollectorActivation,
     event: { toolName: string; toolCallId: string },
   ): { block: true; reason: string } | undefined;
-  onToolResult(_activation: CollectorActivation, _event: { toolCallId: string }): void;
   registerBusinessTools(getActivation: () => CollectorActivation | undefined): void;
 } {
   let toolsRegistered = false;
@@ -164,10 +158,6 @@ export function createCollectorRoleRuntime(
         };
       }
       return undefined;
-    },
-
-    onToolResult() {
-      // No operational ledger after #1088.
     },
 
     registerBusinessTools(getActivation) {

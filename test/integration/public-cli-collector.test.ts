@@ -9,7 +9,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
-import { emptyCollectorManifest, loadCollectorManifest } from "../../src/collector-config.ts";
+import { emptyCollectorManifest } from "../../src/collector-config.ts";
 import { COLLECTOR_OUTPUT_TOOL } from "../../src/package-contracts/collector-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import { admitPublicRole, parsePublicSeatArgv } from "../../src/public-cli/invocation.ts";
@@ -87,58 +87,38 @@ test("typed groups travel from real output settlement into the report artifact",
   });
 });
 
-test("#1088 public --request-manifest admission freezes digest; invalid JSON is usage", async () => {
+test("#1088 public --request-manifest accepts semantic requests and rejects invalid input", async () => {
   await withTempRoot("collector-manifest-admit-", async (home) => {
     const project = join(home, "project");
     await mkdir(project);
     seedProject(project);
     const good = join(home, "requests.json");
     await writeFile(good, JSON.stringify({ requests: [{ id: "codex", body: "@codex review" }] }));
-    const manifest = await loadCollectorManifest(good);
-
-    const admitted = await admitPublicRole("collector", parsePublicSeatArgv("collector", [
-      "--pr",
-      "42",
-      "--repo",
-      "acme/widgets",
-      "--request-manifest",
-      good,
-      "--project",
-      project,
-      "Collect findings.",
-    ]), {
-      home,
-      principalAuthority: piDurablePrincipalAuthority,
-      cwd: project,
-      createRunId: () => "collector-manifest-run",
-    });
-    assert.equal(admitted.role, "collector");
-    if (admitted.role === "collector") {
-      assert.equal(admitted.manifestDigest, manifest.digest);
-      assert.equal(admitted.prNumber, 42);
-      assert.ok(admitted.requestManifestPath?.endsWith("request-manifest.json"));
-    }
-
-    const bad = join(home, "bad.json");
-    await writeFile(bad, "{ not json");
-    await assert.rejects(
-      () => admitPublicRole("collector", parsePublicSeatArgv("collector", [
-        "--pr",
-        "42",
-        "--repo",
-        "acme/widgets",
-        "--request-manifest",
-        bad,
-        "--project",
-        project,
-      ]), {
-        home,
-        principalAuthority: piDurablePrincipalAuthority,
-        cwd: project,
-        createRunId: () => "collector-bad-manifest",
+    let invocation = 0;
+    const invoke = (path: string) => runAkRole([
+      "collector", "--model", "test/caller-seat:high", "--pr", "42", "--repo", "acme/widgets",
+      "--request-manifest", path, "--project", project,
+    ], {
+      packageRoot, home, cwd: project,
+      credentials: { "openai-codex": true, xai: false },
+      createRunId: () => `collector-manifest-${++invocation}`,
+      io: { stdout: () => undefined, stderr: () => undefined },
+      roleTurnHost: roleTurnHostFromLegacyPiRunner({
+        packageRoot, principalAuthority: piDurablePrincipalAuthority,
+        piRunner: async (args) => {
+          const sessionFile = args[args.indexOf("--session") + 1]!;
+          const details = receipt();
+          await writeFile(sessionFile, `${JSON.stringify({ type: "message", message: { role: "toolResult", toolName: COLLECTOR_OUTPUT_TOOL, isError: false, details } })}\n`);
+          return { code: 0, timedOut: false, stderr: "", args: [...args], sealedAcceptance: { role: "collector" as const, details } };
+        },
       }),
-      (error: unknown) => error instanceof CliUsageError,
-    );
+    });
+    assert.equal((await invoke(good)).exitCode, 0);
+    const bad = join(home, "bad.json");
+    for (const bytes of ["{ not json", Buffer.from([0xff]), JSON.stringify({ requests: [{}] })]) {
+      await writeFile(bad, bytes);
+      assert.equal((await invoke(bad)).exitCode, 2);
+    }
   });
 });
 

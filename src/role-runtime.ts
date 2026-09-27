@@ -1199,7 +1199,6 @@ export function createRoleRuntimeExtension(
       }
       // #676 E / J1: collector materials share this envelope hook (no parallel register).
       if (activeCollector !== undefined && selectedRole === role) {
-        collectorFirstDispatchDone = true;
         return {
           systemPrompt: collectorBusiness.assembleMaterials(activeCollector, event.systemPrompt),
         };
@@ -1256,10 +1255,6 @@ export function createRoleRuntimeExtension(
     roleHost.on("tool_result", async (event) => {
       const role = selectedRole;
       if (role === undefined) return;
-      // #676 E / J1: collector operational bookkeeping on the shared tool_result seam.
-      if (activeCollector !== undefined && selectedRole === roleHost.getFlag(ROLE_FLAG.name)) {
-        collectorBusiness.onToolResult(activeCollector, event);
-      }
       const pendingInfra = pendingInfrastructureFailures.get(event.toolCallId);
       const isRoleInfrastructureFailure = pendingInfra !== undefined;
       if (pendingInfra !== undefined) pendingInfrastructureFailures.delete(event.toolCallId);
@@ -1563,19 +1558,16 @@ export function createRoleRuntimeExtension(
     // tool surface). Role supplies soul/materials + submission tool only; code
     // no longer observes or merges GitHub findings.
     let activeCollector: CollectorActivation | undefined;
-    let collectorFirstDispatchDone = false;
     const collectorBusiness = createCollectorRoleRuntime(
       roleHost,
       {
         loadSoul: () => requireRoleSoul("collector"),
       },
-      hostActions,
     );
     let collectorToolCallRegistered = false;
     const collector = {
       async activate(context: HostContext, event: { reason: string }) {
         activeCollector = undefined;
-        collectorFirstDispatchDone = false;
         if (context.mode !== "print" && context.mode !== "json") {
           throw new Error(
             `Collector supports only print or json mode (got ${context.mode})`,
@@ -1714,7 +1706,6 @@ export function createRoleRuntimeExtension(
       roleReferenceMaterials = "";
       activeReviewerParent = undefined;
       activeCollector = undefined;
-      collectorFirstDispatchDone = false;
       receiptDelivery = createReceiptDeliveryPolicy();
       noReceiptRecorded = false;
       pendingNavigatorPresentation = undefined;
