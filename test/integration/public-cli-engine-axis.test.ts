@@ -977,7 +977,7 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
       return [role, ...model, "--project", project, "engine axis probe"];
     case "gatekeeper":
       return [role, ...model, "--project", project, "engine axis probe"];
-    case "navigator":
+    case "judge":
       return [role, ...model, "--project", project, "engine axis probe"];
     case "auditor":
       return [
@@ -1203,17 +1203,17 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
       // #639: navigator is a callable role — set-engine persists (old automatic refusal gone).
       {
         await runAkRole(
-          ["config", "set", "navigator", "openai-codex/gpt-5.6-luna:medium"],
+          ["config", "set", "judge", "openai-codex/gpt-5.6-luna:medium"],
           { packageRoot, home, io: captureIo().io },
         );
         const { io, stderr } = captureIo();
         const result = await runAkRole(
-          ["config", "set-engine", "navigator", "opus"],
+          ["config", "set-engine", "judge", "opus"],
           { packageRoot, home, io },
         );
         assert.equal(result.exitCode, 0, stderr.join(""));
         assert.equal(
-          (await loadPublicCliConfig(home)).seats.navigator?.engine,
+          (await loadPublicCliConfig(home)).seats.judge?.engine,
           "opus",
         );
       }
@@ -1222,12 +1222,12 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
       {
         const { io, stderr } = captureIo();
         const result = await runAkRole(
-          ["config", "unset-engine", "navigator"],
+          ["config", "unset-engine", "judge"],
           { packageRoot, home, io },
         );
         assert.equal(result.exitCode, 0, stderr.join(""));
         assert.equal(
-          (await loadPublicCliConfig(home)).seats.navigator?.engine,
+          (await loadPublicCliConfig(home)).seats.judge?.engine,
           undefined,
         );
       }
@@ -1236,7 +1236,7 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
       {
         const { io, stderr } = captureIo();
         const result = await runAkRole(
-          ["config", "set", "navigator", "openai-codex/gpt-5.6-luna:high"],
+          ["config", "set", "judge", "openai-codex/gpt-5.6-luna:high"],
           { packageRoot, home, io },
         );
         assert.equal(result.exitCode, 0, stderr.join(""));
@@ -1248,19 +1248,12 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
           join(home, ".ak-roles", "public-cli.json"),
           `${JSON.stringify({
             seats: {
-              navigator: {
-                provider: "openai-codex",
-                model: "gpt-5.6-luna",
-                thinking: "medium",
-                engine: "opus",
-              },
             },
           }, null, 2)}\n`,
           "utf8",
         );
         const loaded = await loadPublicCliConfig(home);
         validatePublicCliConfigAxes(loaded, packageRoot);
-        assert.equal(loaded.seats.navigator?.engine, "opus");
         // CLI load path accepts it.
         const { io, stderr } = captureIo();
         const result = await runAkRole(["config", "get"], {

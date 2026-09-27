@@ -13,7 +13,6 @@ import { GatekeeperDecisionError } from "../../src/gatekeeper-role.ts";
 import { packagedRoleOutputTool } from "../../src/packaged-role-registry.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { WorkerUnfinishedReasonReminderError } from "../../src/worker-submission-gates.ts";
-import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import { Type } from "typebox";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import {
@@ -248,11 +247,6 @@ test("review escalate keeps a failure declaration; other roles still host-fail",
       accepted: params,
       toolCallId: "review-escalate",
     });
-    assert.deepEqual(publicNavigatorSettlement("judge", null, {
-      toolName: JUDGE_OUTPUT_TOOL_NAME,
-      isError: false,
-      details: params,
-    }), { kind: "human_decision", role: "judge", phase: null, status: "escalate" });
   });
 
   await withLedgerFixture(async (f) => {

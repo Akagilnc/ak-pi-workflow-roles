@@ -21,7 +21,6 @@ import { LEGACY_REVIEW_OUTPUT_ROLES, PACKAGED_ROLE_REGISTRY } from "../packaged-
 import { CorrectableSubmissionError } from "../submission-correctable-error.ts";
 import { DOCTOR_OUTPUT_TOOL_NAME, validateDoctorSubmissionShape, validateRecordedDoctorOutput, type DoctorOutput, type DoctorSubmission } from "../doctor-contracts.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME, validateRecordedGatekeeperOutput, type GatekeeperDirectOutput } from "./gatekeeper-output.ts";
-import { NAVIGATOR_OUTPUT_TOOL_NAME, validateRecordedNavigatorOutput, type NavigatorAdvice } from "./navigator-output.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME, validateRecordedAuditorOutput, type AuditorOutput } from "./auditor-output.ts";
 import { MERGER_OUTPUT_TOOL_NAME, validateMergerOutput, type MergerOutput } from "../merger-contracts.ts";
 import { NOTARY_OUTPUT_TOOL_NAME, validateRecordedNotaryOutput, type NotaryOutput } from "../notary-contracts.ts";
@@ -55,7 +54,6 @@ export {
   validateRecordedGleanerLeftOutput,
   validateRecordedInspectorOutput,
   validateRecordedGatekeeperOutput,
-  validateRecordedNavigatorOutput,
   validateRecordedAuditorOutput,
   validateRecordedDiaristOutput,
 };
@@ -72,7 +70,6 @@ export type {
   GleanerLeftOutput,
   InspectorOutput,
   GatekeeperDirectOutput,
-  NavigatorAdvice,
   AuditorOutput,
   DiaristOutput,
   SecretariatVerdict,
@@ -97,7 +94,6 @@ export type AcceptedDetails =
   | GleanerLeftOutput
   | InspectorOutput
   | GatekeeperDirectOutput
-  | NavigatorAdvice
   | AuditorOutput
   | DiaristOutput
   | SecretariatVerdict;

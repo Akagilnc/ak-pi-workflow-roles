@@ -1092,14 +1092,6 @@ export type PublicCommandHelpFacts = {
   readonly examples: readonly string[];
 };
 
-/**
- * Top-level public help short note for Navigator automatic attendance (#639:
- * attendance is orthogonal to callability — the direct command face lives on
- * the role list like every other role).
- */
-export const PUBLIC_NAVIGATOR_HELP_NOTE =
-  "Navigator also attends automatically on top-level public entry legs; that sidecar is unchanged by direct `ak-role navigator` calls." as const;
-
 const TOP_LEVEL_HELP = {
   command: "top",
   summary: "public role CLI",
@@ -1211,14 +1203,6 @@ const ROLE_COMMAND_HELP = {
     usage: ["ak-role gatekeeper [options] [instruction]"],
     examples: [
       'ak-role gatekeeper --attach ./submission.json "审：这批材料该谁审？"',
-    ],
-  },
-  navigator: {
-    command: "navigator",
-    summary: "Direct Navigator (游奕使) free-form prose route advice.",
-    usage: ["ak-role navigator [options] [instruction]"],
-    examples: [
-      'ak-role navigator "刚完成 coder apply 收敛，下一步？"',
     ],
   },
   auditor: {

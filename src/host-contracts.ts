@@ -133,7 +133,6 @@ export type RoleTurnActivation =
     }
   | { readonly role: "inspector"; readonly sourceRun?: string }
   | { readonly role: "gatekeeper" }
-  | { readonly role: "navigator" }
   | { readonly role: "auditor" }
   | { readonly role: "diarist" }
   | { readonly role: "secretariat" };

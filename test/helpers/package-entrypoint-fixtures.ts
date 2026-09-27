@@ -11,7 +11,6 @@ export const RELEASE_SOUL_INVENTORY = [
   "souls/collector.md",
   "souls/doctor.md",
   "souls/merger.md",
-  "souls/navigator.md",
   "souls/gatekeeper.md",
   "souls/inspector.md",
   "souls/notary.md",

@@ -28,7 +28,6 @@ import { ExplicitInternalActivationError } from "../../src/host-contracts.ts";
 import { ATTEMPT_HISTORY_ENTRY_TYPE, classifyPostAdmissionFailure, exitCodeForTerminalOutcome, isLawfulTypedTerminalOutcome, settleJudgeFailureTerminalResult } from "../../src/public-cli/settlement.ts";
 import type { ControlledFailureCause, TerminalRoleOutcome } from "../../src/public-cli/terminal.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-import { publicNavigatorSettlement } from "../../src/role-runtime.ts";
 import {
   withTempHome,
   captureIo,
@@ -370,7 +369,6 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
       diagnostic: "role infrastructure failed",
     }, piDurablePrincipalAuthority);
     assert.equal(terminal.roleOutcome.kind, "failure");
-    assert.equal(terminal.navigator.disposition, "no-advice");
   });
 });
 test("JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded", async () => {
@@ -803,11 +801,6 @@ test("each controlled cause persists typed Error Artifact without manufacturing 
       // dedicated durable-recordings test): artifact paths already openable,
       // evidence leg present, and no session attendance → typed unavailable.
       if (cause === "activation") {
-        assert.equal(terminal.navigator.disposition, "unavailable");
-        if (terminal.navigator.disposition === "unavailable") {
-          assert.equal(terminal.navigator.source, "unknown");
-          assert.equal(typeof terminal.navigator.reason, "string");
-        }
         assert.equal(terminal.artifacts.some((a) => a.kind === "evidence"), true);
       }
       const errorRef = terminal.artifacts.find((a) => a.kind === "error");

@@ -10,10 +10,6 @@ import {
 
 import { reportHostSessionEvent } from "../host-session-record.ts";
 import {
-  NAVIGATOR_OUTPUT_TOOL_NAME,
-  navigatorProseFromUnknown,
-} from "../package-contracts/navigator-output.ts";
-import {
   renderSystemPromptOverride,
   type PreparedRoleTurn,
   type SessionIdentityAuthority,
@@ -313,11 +309,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
       ): Promise<Readonly<Record<string, unknown>>> =>
         raceAgainstHostAbort(connection!.request(method, params), recordAbort.signal, "host-session-record-failed");
 
-      // #959: navigator free-form agent text — only while session/prompt is in flight.
-      // session/load replays history via session/update; those must not enter the bucket
-      // (resume / set_model load would otherwise prepend prior turns as "this turn" prose).
-      const agentProseChunks: string[] = [];
-      let collectAgentProse = false;
       // #971: usage + auto_compact are grok-build-only; same ACP adapter serves Hermes too.
       const ledgerGrokBuildObservability = config.hostName === GROK_BUILD_HOST;
       connection.onNotification?.((method, params) => {
@@ -327,10 +318,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           && isAcpAutoCompactCompletedNotification(method, params);
         // #971: session/update stays; auto_compact_completed is the only vendor notice.
         if (!isSessionUpdate && !isAutoCompact) return;
-        if (isSessionUpdate && collectAgentProse) {
-          const chunk = acpAgentTextChunk(params);
-          if (chunk !== undefined) agentProseChunks.push(chunk);
-        }
         try {
           reportHostSessionEvent({
             host: config.hostName,
@@ -422,9 +409,6 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             if (abortSignal !== undefined) abortParts.push(abortSignal);
             const combinedAbort = AbortSignal.any(abortParts);
             let result: Readonly<Record<string, unknown>>;
-            // Open the prose gate only for this prompt round; clear any stale chunks first.
-            agentProseChunks.length = 0;
-            collectAgentProse = prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME;
             try {
               result = await raceAgainstHostAbort(
                 activeConnection.request("session/prompt", {
@@ -435,14 +419,11 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
                 "ACP host aborted",
               );
             } catch (error) {
-              collectAgentProse = false;
-              agentProseChunks.length = 0;
               if (hostSessionRecordFailure !== undefined) {
                 return { status: "terminal", result: hostSessionRecordResult() };
               }
               throw error;
             }
-            collectAgentProse = false;
             // #971: per-round grok-build usage is on the prompt JSON-RPC result, not a notice.
             if (ledgerGrokBuildObservability && acpPromptResultHasUsage(result)) {
               try {
@@ -462,23 +443,10 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
               return { status: "terminal", result: hostSessionRecordResult() };
             }
             if (result.stopReason === "refusal") {
-              agentProseChunks.length = 0;
               return {
                 status: "terminal",
                 result: failure("output", "AcpRefusal", "refusal", { sessionId }),
               };
-            }
-            // #959: navigator prose exit when the model spoke without the output tool.
-            // Tool path still wins via MCP; ingest is a no-op once the tool already sealed.
-            // Emptiness via shared projector; payload keeps original bytes (LLM 原话过手).
-            if (prepared.terminatingToolName === NAVIGATOR_OUTPUT_TOOL_NAME) {
-              const prose = agentProseChunks.join("");
-              agentProseChunks.length = 0;
-              if (navigatorProseFromUnknown(prose) !== undefined) {
-                await prepared.ingestStructuredOutput({ prose });
-              }
-            } else {
-              agentProseChunks.length = 0;
             }
             return { status: "delivered", stderr: activeConnection.stderr?.() ?? "" };
           },

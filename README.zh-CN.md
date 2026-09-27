@@ -33,7 +33,6 @@ ak-role judge --model <provider/model[:thinking]> --attach ./plan.md "Review thi
 
 ```bash
 ak-role config set judge <provider/model[:thinking]>
-ak-role config set navigator <provider/model[:thinking]>
 # 门下省官席（DONE 交卷直接传召台院/符宝郎；中书省署章由交卷闸传召给事中）
 ak-role config set gatekeeper <provider/model[:thinking]>
 ak-role config set inspector <provider/model[:thinking]>
@@ -70,7 +69,7 @@ ak-role config set-auto-resume-limit 3
 
 门下省官席解析顺序：官自钉 → 省钉（`gatekeeper`）→ 继承父 session；显式指定失败响亮、不回退。配置用法与拒绝文案以 `ak-role config`／`ak-role help config` 为准。持久配置是全机共享单文件、多 CLI 版本同读：本构建不认识的席位键读时跳过（不报错）；已知席位上的未知字段沿用现行容忍。
 
-回执默认是 typed 的，调用者不必解析散文即可组合角色；游奕使是散文出口例外（[#959](https://github.com/Akagilnc/ak-pi-workflow-roles/issues/959)）——终局原样呈现它说的话。顺序与停止归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
+回执默认是 typed 的，调用者不必解析散文即可组合角色。顺序与停止归调用者（[ADR 0010](docs/adr/0010-callers-own-role-composition-and-repetition.md)）。编程消费者从 `src/package-contracts/` 导出推导契约，不从本文。
 
 门下省交卷闸：DONE 侧交卷（`completed`／`partially_completed`）时包按受审物直接传召官（将作监/修内司→`inspector`；大理寺判牒/给事中署章→`notary`），不再起门下省子 session 选席；交卷工具调用结束后才传召审核官；放行即结算、不回被审席，封驳则续跑被审席重交，直至各审核官放行，不是角色失败；`planned`／`refused`／`unfinished` 不传召官、直接结算；`ak-role gatekeeper` 仍可独立 dispatch/pass；闸史读回执 typed gate 段，勿刮 session 散文。指针：[ADR 0067](docs/adr/0067-menxia-province-founding-jishizhong-fubaolang.md)、[ADR 0072](docs/adr/0072-menxia-pre-pr-submission-hooks.md)、[ADR 0079](docs/adr/0079-direct-officer-summons-ticket-memory-pointer-input.md)。劳务引擎绕行失败沿既有基础设施故障路径停止、真因可见（[ADR 0071](docs/adr/0071-engine-detour-failure-seat-fallback-declaration.md)）。运行时事实 `decisiveFacts.engineDetourToolUsage`（#537）只计 package 工具 `ak_engine_detour`；bash/CLI ordinary path 是永久观测盲区，不得读成「该腿没用引擎」。
 
@@ -118,9 +117,6 @@ ak-role inspector --model <provider/model[:thinking]> --attach ./change.patch "R
 # 门下省——直调省审：派官或放行
 ak-role gatekeeper --model <provider/model[:thinking]> --attach ./submission.json "审：这批材料该谁审？"
 
-# 游奕使——直调散文路线建议；随公开入口顶层腿自动出席
-ak-role navigator --model <provider/model[:thinking]> "刚完成 coder apply 收敛，下一步？"
-
 # 给事中——票庭五问；票号经由 instruction 识别；受理内先自动起居郎再本席（#742，调用者无感）
 ak-role countersign --model <provider/model[:thinking]> --attach ./ticket.md "裁：本票 #582 是否足以开工。"
 
@@ -158,7 +154,6 @@ ak-role --model <provider/model[:thinking]> resume <runId> "<裁定>"
 | **符宝郎** | notary | **首责唯一：核实实际授权出处**（防乱编乱扩）。行事两步：读该票起居录→以录核旨；引语真伪与票面对齐为手段。受审物是大理寺拟判与给事中署章；可被门下省派发，也可 `ak-role notary` 单独调。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)。 |
 | **通进司** | collector | **承接百议／收证。** 门下省下的收证衙门：收集外部 GitHub PR 材料与意见，只收不审、不替人裁决。canonical 键仍为 `collector`。 |
 | **校书郎** | merger | **雠校异文。** 面对不同来源的修改，负责整理、校合与调和。保留双方有价值的部分，解决彼此冲突；无进行中合并、无活可干或遇到无法自行决定之处，则升级。 |
-| **游奕使** | navigator（随公开入口顶层腿自动出席，亦可 `ak-role navigator` 直调） | **巡行问路。** 不掌具体事务，而是观察全局变化，结合当前局面提醒下一步方向。它提供建议与路径参考，但最终选择仍由执掌之人决定。 |
 | **起居郎** | diarist（`ak-role diarist` 单独传召；给事中受理内自动先起，#742） | **修起居录。** 为本票搜集、整理决策依据，写进每票起居录；LLM 自行搜集、整理、认票（#779 后无机械验真，机械只做 IO；起居录供符宝郎读录核旨）。只记录已作出的决定，不立法、不批准设计、不指挥施工。规范见 [ADR 0075](docs/adr/0075-ticket-provenance-diarist-pipeline.md)（起居郎是 LLM 角色）、[ADR 0081](docs/adr/0081-diarist-case-context-and-delivery.md)。 |
 
 其余席位：

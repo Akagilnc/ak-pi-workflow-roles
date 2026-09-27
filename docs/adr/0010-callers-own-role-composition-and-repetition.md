@@ -2,7 +2,7 @@
 
 Status: accepted
 
-角色之间不建强关联，包内不再造编排器——前两代编排器（v1 Ming 仓 in-repo `orchestrator/`、v2 TDD 自治 loop）均已封存，代价是死板沉重而收益未兑现；史料见 vault wiki `archive/epic-orchestration` 与 `archive/tdd-autonomous-dev`（2026-08-26 封存，superseded_by `v3-role-factory`）。故本包专心做好每一个角色：角色只拥有单次调用的内政，调用者拥有组合、顺序、重复次数、预算与停止条件，想怎么调都行——喊给事中或大理寺来审一个想法、一张票面，都是合法调用。角色不关心自己是第几次被调用；谁在前谁在后也不推荐写进 Soul／schema／runtime／回执。仍应机械验证单次调用所需输入。省部级角色可在自己一次调用的内政之内作为 caller 派发正经角色，对其子调用拥有组合、预算与停止（品级分类见 `CONTEXT.md`「角色」条；两品级只是法律分类，不建通用品级 runtime）。Navigator 可在 typed 结算后建议下一包角色（建议无执行或授权效力）；attendance 由共享生命周期信封供给。
+角色之间不建强关联，包内不再造编排器——前两代编排器（v1 Ming 仓 in-repo `orchestrator/`、v2 TDD 自治 loop）均已封存，代价是死板沉重而收益未兑现；史料见 vault wiki `archive/epic-orchestration` 与 `archive/tdd-autonomous-dev`（2026-08-26 封存，superseded_by `v3-role-factory`）。故本包专心做好每一个角色：角色只拥有单次调用的内政，调用者拥有组合、顺序、重复次数、预算与停止条件，想怎么调都行——喊给事中或大理寺来审一个想法、一张票面，都是合法调用。角色不关心自己是第几次被调用；谁在前谁在后也不推荐写进 Soul／schema／runtime／回执。仍应机械验证单次调用所需输入。省部级角色可在自己一次调用的内政之内作为 caller 派发正经角色，对其子调用拥有组合、预算与停止（品级分类见 `CONTEXT.md`「角色」条；两品级只是法律分类，不建通用品级 runtime）。
 
 **具名例外：Reviewer 默认双轴公开命令。** 公开 Reviewer 命令省略 `--lens` 时，由外层共享执行接缝机械并行发起 completeness 与 correctness 两条普通单轴 Reviewer run，并把两份原始终局一起呈给调用方；该命令本身不建立父 run。显式 `--lens` 只起一条普通 run。本例外不改变 Reviewer 的寺监级身份，也不建立通用编排器。
 
@@ -20,4 +20,4 @@ Status: accepted
 
 ## Consequences
 
-同一角色可被不同调用者以不同拓扑复用；角色回执证明的是该次调用本身，**回执中出现的下一步建议无执行或授权效力**（Navigator 建议同此）——不再绝对禁止其出现，落到「不推荐写」一档。包内不含通用编排器。
+同一角色可被不同调用者以不同拓扑复用；角色回执证明的是该次调用本身，**回执中出现的下一步建议无执行或授权效力**——不再绝对禁止其出现，落到「不推荐写」一档。包内不含通用编排器。

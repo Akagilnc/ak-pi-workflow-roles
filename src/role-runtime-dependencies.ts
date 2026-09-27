@@ -3,8 +3,6 @@ import { join } from "node:path";
 
 import { createGhCollectorGitHubTransport } from "./collector-github.ts";
 import { loadDoctorCase } from "./doctor-evidence.ts";
-import { createNativeNavigatorSessionFactory, createNavigatorAttendance } from "./navigator-attendance.ts";
-import { loadNavigatorWorkContext } from "./navigator-work-context.ts";
 import { loadNotarySourceRunLocator } from "./notary-source-run.ts";
 import { type RoleRuntimeDependencies } from "./role-runtime.ts";
 import {
@@ -42,7 +40,6 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
   // import.meta.url — headless/acp production-host bundles live under dist/*/
   // and would otherwise look for dist/resources/ (#962).
   const collectorHandbookSeedPath = join(packageRoot, "resources/collector-bot-handbook.md");
-  const navigatorSessionFactory = createNativeNavigatorSessionFactory();
   return {
     packageRoot,
     loadRoleReferenceMaterials: loadPackagedRoleReferenceMaterials,
@@ -54,22 +51,5 @@ export function createRoleRuntimeDependencies(packageRoot: string): RoleRuntimeD
     loadDoctorCase,
     loadNotarySourceRun: loadNotarySourceRunLocator,
     loadMergerInput: async (path) => JSON.parse(await readFile(path, "utf8")),
-    loadNavigatorWorkContext: (options) => loadNavigatorWorkContext({
-      context: options.context,
-      role: options.role,
-      ...(options.getFlag === undefined ? {} : { getFlag: options.getFlag }),
-    }),
-    createNavigatorAttendance: (options) => createNavigatorAttendance({
-      context: options.context,
-      role: options.role,
-      phase: options.phase,
-      subjectKey: options.subjectKey,
-      subject: options.subject,
-      authority: options.authority,
-      invocationId: options.invocationId,
-      createSession: navigatorSessionFactory,
-      ...(options.contextError === undefined ? {} : { contextError: options.contextError }),
-      onEvent: options.onEvent,
-    }),
   };
 }

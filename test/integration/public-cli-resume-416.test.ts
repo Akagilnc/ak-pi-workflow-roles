@@ -284,7 +284,7 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
       autoResumeLimit:0,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
-      dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"audit_escalation",role:"judge",status:"audit_escalation",decisiveFacts:{}},navigator:{disposition:"no-advice"},artifacts:[],runId:"416-audit-escal-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
+      dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"audit_escalation",role:"judge",status:"audit_escalation",decisiveFacts:{}},artifacts:[],runId:"416-audit-escal-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
     });
     assert.equal(calls,1);assert.equal(result.terminal?.autoResumeCount,0);assert.equal(stdout.length,1);
   });
@@ -306,7 +306,7 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
       autoResumeLimit:0,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
-      dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"no_receipt",role:"judge",status:"no-accepted-receipt",decisiveFacts:noReceiptFacts,...noReceiptFacts},navigator:{disposition:"no-advice"},artifacts:[],runId:"416-no-receipt-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
+      dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"no_receipt",role:"judge",status:"no-accepted-receipt",decisiveFacts:noReceiptFacts,...noReceiptFacts},artifacts:[],runId:"416-no-receipt-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
     });
     assert.equal(calls,1);assert.equal(result.terminal?.autoResumeCount,0);assert.equal(stdout.length,1);
   });

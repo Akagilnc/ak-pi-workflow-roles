@@ -43,7 +43,6 @@ import {
   packagedBareToken,
   packagedBaseIsRevision,
   packagedEmitsAuthorityRefs,
-  packagedPublicInstructionSubject,
   packagedRoleMetadata,
   packagedStoresSourceRunRaw,
   packagedSubjectChoices,
@@ -191,10 +190,6 @@ export type AdmittedGatekeeperInvocation = AdmittedRoleInvocationBase & {
   readonly role: "gatekeeper";
 };
 
-export type AdmittedNavigatorInvocation = AdmittedRoleInvocationBase & {
-  readonly role: "navigator";
-};
-
 export type AdmittedAuditorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "auditor";
 };
@@ -296,7 +291,6 @@ export type AdmittedRoleInvocation =
   | AdmittedGleanerLeftInvocation
   | AdmittedInspectorInvocation
   | AdmittedGatekeeperInvocation
-  | AdmittedNavigatorInvocation
   | AdmittedAuditorInvocation
   | AdmittedDiaristInvocation
   | AdmittedSecretariatInvocation
@@ -1533,7 +1527,7 @@ export async function admitPublicRole(
   switch (record.admission) {
     case "instruction":
       return admitStandardMaterialInvocation(
-        role as "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat",
+        role as "judge" | "inspector" | "gatekeeper" | "auditor" | "diarist" | "secretariat",
         {
           ...shared,
           instruction,
@@ -2074,7 +2068,7 @@ async function persistPlacedAdmission(
  * doctor resolves the case, then freezes attachments; merger writes merger-input.json).
  */
 async function admitStandardMaterialInvocation<
-  R extends "judge" | "inspector" | "gatekeeper" | "navigator" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder" | "fixer" | "collector" | "doctor" | "merger",
+  R extends "judge" | "inspector" | "gatekeeper" | "auditor" | "diarist" | "secretariat" | "countersign" | "gleaner-left" | "reviewer" | "notary" | "coder" | "fixer" | "collector" | "doctor" | "merger",
   Extra extends object = {},
 >(
   role: R,
@@ -2305,7 +2299,7 @@ export async function loadAdmittedJudgeRequest(
     ) as unknown;
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
     const record = raw as Record<string, unknown>;
-    if (!packagedPublicInstructionSubject(record.role)) return undefined;
+    if (typeof record.role !== "string" || record.role !== "judge") return undefined;
     if (typeof record.instruction !== "string") return undefined;
     if (typeof record.instructionEmpty !== "boolean") return undefined;
     if (!Array.isArray(record.attachments)) return undefined;

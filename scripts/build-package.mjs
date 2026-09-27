@@ -6,18 +6,8 @@ import { build } from "esbuild";
 const entries = [
   "packaged-role-registry",
   "work-subject-identity",
-  "navigator-invocation-identity",
-  // Static import of navigator-invocation-identity (#603: non-bundle graph closure).
+  "role-terminal-classification",
   "uuidv7",
-  "navigator-attendance",
-  // Navigator package-graph dependencies used by attendance settlement.
-  // navigator-session-contracts is a static import of the published attendance root
-  // (#590: published non-bundle graph must stay closed under its own relative edges).
-  "navigator-public-session",
-  "navigator-session-contracts",
-  // Static import of navigator-attendance and navigator-public-session.
-  "navigator-work-base",
-  // Static import of navigator-work-base.
   "atomic-write",
   "public-role-summons",
   "activation-ledger-git",
@@ -56,7 +46,6 @@ const entries = [
   "package-contracts/fixer-packet",
   "package-contracts/gatekeeper-output",
   "package-contracts/judge-output",
-  "package-contracts/navigator-output",
   "package-contracts/reviewer-output",
   "package-contracts/terminating-infrastructure",
   "package-contracts/worker-output",

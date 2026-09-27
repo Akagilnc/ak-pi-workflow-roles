@@ -84,9 +84,9 @@ test(
       const distRoot = resolve(root, "dist");
       await assertRelativeImportClosure(distRoot);
 
-      // Loadable proof for the attendance root that failed on clean publish.
+      // Loadable proof for the shared terminal classification root.
       await import(
-        pathToFileURL(resolve(distRoot, "navigator-attendance.js")).href
+        pathToFileURL(resolve(distRoot, "role-terminal-classification.js")).href
       );
     });
   },

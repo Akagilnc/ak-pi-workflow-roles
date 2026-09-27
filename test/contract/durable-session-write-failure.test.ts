@@ -12,57 +12,12 @@ import test from "node:test";
 
 import { prepareRoleEnvelope } from "../../src/role-envelope.ts";
 import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
-import type { RoleRuntimeDependencies } from "../../src/role-runtime.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import {
   sampleCompletedDoctorOutput,
   seedDoctorIssueRuns,
 } from "../helpers/doctor-fixtures.ts";
 import { packageRoot } from "../helpers/pi-test-harness.ts";
-
-/** Stage one pending attendance so session_shutdown will book a package entry. */
-function withStagedShutdownAttendance(
-  base: RoleRuntimeDependencies,
-  runDirectory: string,
-): RoleRuntimeDependencies {
-  return {
-    ...base,
-    loadNavigatorWorkContext: async () => ({
-      subjectKey: `${runDirectory}/work`,
-      subject: "shutdown drain subject",
-      authority: "shutdown drain authority",
-      subjectProvenance: "role_input" as const,
-    }),
-    createNavigatorAttendance: async (options) => {
-      const event = {
-        version: 1 as const,
-        disposition: "unavailable" as const,
-        invocationId: options.invocationId,
-        role: options.role,
-        phase: options.phase,
-        subjectKey: options.subjectKey,
-        unavailableReason: "staged for session_shutdown drain probe",
-        unavailableSource: "unknown" as const,
-        unavailableCause: "unknown" as const,
-      };
-      const report = {
-        disposition: "unavailable" as const,
-        unavailableReason: "staged for session_shutdown drain probe",
-        unavailableSource: "unknown" as const,
-        unavailableCause: "unknown" as const,
-      };
-      await options.onEvent(event, report);
-      return {
-        prepare() {},
-        setWorkContext() {},
-        warmHelp() {},
-        isPreparing: () => false,
-        settle: async () => {},
-        dispose() {},
-      };
-    },
-  };
-}
 
 async function withTempEnvelopeHome(
   roleLabel: string,
@@ -110,17 +65,16 @@ async function poisonSessionFileWrite(sessionFile: string): Promise<void> {
 }
 
 test("#959 durable session entry flush failure is infrastructure not accepted", async () => {
-  await withTempEnvelopeHome("navigator", async ({ home, runDirectory, sessionDir, sessionFile, socketPath }) => {
-    // Temp seat table only — never touch the real public-cli.json (席位表法).
+  await withTempEnvelopeHome("judge-flush", async ({ home, runDirectory, sessionDir, sessionFile, socketPath }) => {
     await writeFile(
       join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({ seats: { navigator: { provider: "provider", model: "model" } } }, null, 2)}\n`,
+      `${JSON.stringify({ seats: { judge: { provider: "provider", model: "model" } } }, null, 2)}\n`,
     );
 
     const prepared = await prepareRoleEnvelope({
       request: {
         principal: fixturePrincipal(sessionDir),
-        activation: { role: "navigator" },
+        activation: { role: "judge" },
         methods: [],
         continuation: { kind: "initial", prompt: "durable flush probe" },
         cwd: packageRoot,
@@ -135,7 +89,7 @@ test("#959 durable session entry flush failure is infrastructure not accepted", 
     });
     try {
       await poisonSessionFileWrite(sessionFile);
-      await prepared.ingestStructuredOutput({ prose: "下一步送 reviewer" });
+      await prepared.ingestStructuredOutput({ status: "converged", report: "probe" });
       assertDurableFlushFailure(await prepared.closeRound());
     } finally {
       await prepared.dispose?.();
@@ -151,7 +105,6 @@ test("#959 durable flush failure outranks completed Doctor submission", async ()
         seats: {
           doctor: { provider: "provider", model: "model" },
           auditor: { provider: "provider", model: "model" },
-          navigator: { provider: "provider", model: "model" },
         },
       }, null, 2)}\n`,
     );
@@ -181,61 +134,6 @@ test("#959 durable flush failure outranks completed Doctor submission", async ()
       assertDurableFlushFailure(await prepared.closeRound());
     } finally {
       await prepared.dispose?.();
-    }
-  });
-});
-
-test("#959 session_shutdown durable flush failure surfaces from dispose", async () => {
-  // Real entry: prepareRoleEnvelope → session_start stages attendance via onEvent →
-  // dispose emits session_shutdown (no closeRound, so agent_settled cannot pre-flush).
-  // Readonly principal forces the shutdown-path append to fail; dispose must throw the
-  // typed durable failure (mutation: drain-before-shutdown → missing rejection).
-  await withTempEnvelopeHome("shutdown-fail", async ({ home, runDirectory, sessionDir, sessionFile, socketPath }) => {
-    await writeFile(
-      join(home, ".ak-roles", "public-cli.json"),
-      `${JSON.stringify({
-        seats: {
-          judge: { provider: "provider", model: "model" },
-          navigator: { provider: "provider", model: "model" },
-        },
-      }, null, 2)}\n`,
-    );
-    const base = createRoleRuntimeDependencies(packageRoot);
-    const prepared = await prepareRoleEnvelope({
-      request: {
-        principal: fixturePrincipal(sessionDir),
-        activation: { role: "judge" },
-        methods: [],
-        continuation: { kind: "initial", prompt: "shutdown flush failure probe" },
-        cwd: packageRoot,
-        home,
-        agentDir: join(home, "agent"),
-        runDirectory,
-      },
-      dependencies: withStagedShutdownAttendance(base, runDirectory),
-      socketPath,
-      sessionFile,
-    });
-    try {
-      // Writable during prepare (invocation marker); poison before dispose flush.
-      await poisonSessionFileWrite(sessionFile);
-      await assert.rejects(
-        async () => prepared.dispose?.(),
-        (error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          assert.match(message, /durable session entry flush failed/);
-          assert.equal(
-            typeof error === "object" && error !== null
-              ? (error as { code?: unknown }).code
-              : undefined,
-            "durable-session-write-failed",
-          );
-          return true;
-        },
-      );
-    } finally {
-      // Already disposed (or failed mid-dispose); second call is a no-op.
-      await prepared.dispose?.().catch(() => undefined);
     }
   });
 });

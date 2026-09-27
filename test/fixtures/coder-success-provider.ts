@@ -18,7 +18,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   CODER_OUTPUT_TOOL_NAME,
   INSPECTOR_OUTPUT_TOOL,
-  NAVIGATOR_PREPARE_TOOL_NAME,
 } from "../../src/role-runtime.ts";
 
 export default async function coderSuccessProvider(pi: ExtensionAPI): Promise<void> {
@@ -29,23 +28,6 @@ export default async function coderSuccessProvider(pi: ExtensionAPI): Promise<vo
   });
   const respond = async (context: Context) => {
     const toolNames = context.tools?.map((tool) => tool.name) ?? [];
-    if (toolNames.includes(NAVIGATOR_PREPARE_TOOL_NAME)) {
-      const contextText = JSON.stringify(context.messages);
-      const hasInstalledRoutebook = contextText.includes("COLD_INSTALLED_ROUTEBOOK_MARKER");
-      const unavailable = process.env.AK_TEST_NAVIGATOR_UNAVAILABLE === "1";
-      const expectedUnreadable = process.env.AK_TEST_ROUTEBOOK_UNREADABLE === "1";
-      return fauxAssistantMessage(
-        fauxToolCall(NAVIGATOR_PREPARE_TOOL_NAME, {
-          candidates: unavailable || (!hasInstalledRoutebook && !expectedUnreadable) ? [] : [{
-            id: "cold-installed-advice",
-            matches: { role: "coder", phase: "apply", kind: "accepted" },
-            next: { role: "reviewer", phase: null },
-            reason: "fixture advice",
-          }],
-        }),
-        { stopReason: "toolUse" },
-      );
-    }
     if (toolNames.includes(INSPECTOR_OUTPUT_TOOL)) {
       return fauxAssistantMessage(
         fauxToolCall(INSPECTOR_OUTPUT_TOOL, { status: "pass", findings: [] }),
@@ -91,8 +73,7 @@ export default async function coderSuccessProvider(pi: ExtensionAPI): Promise<vo
     ) {
       const toolNames = streamContext.tools?.map((tool) => tool.name) ?? [];
       if (
-        process.env.AK_TEST_PROVIDER_STOP === "1" &&
-        !toolNames.includes(NAVIGATOR_PREPARE_TOOL_NAME)
+        process.env.AK_TEST_PROVIDER_STOP === "1"
       ) {
         const stream = createAssistantMessageEventStream();
         const human = fauxAssistantMessage([], {

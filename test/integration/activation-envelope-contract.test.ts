@@ -44,7 +44,6 @@ import { outsideWorktreeTempPrefix, worktreeTempPrefix } from "../helpers/worktr
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 import { DOCTOR_EVIDENCE_TOOL_NAME } from "../../src/doctor-contracts.ts";
-import { createNavigatorPrepareTool, NAVIGATOR_PREPARE_TOOL_NAME } from "../../src/navigator-attendance.ts";
 
 function sha256Hex(bytes: Uint8Array | string): string {
   return createHash("sha256").update(bytes).digest("hex");
@@ -147,7 +146,7 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
     case "gleaner-left":
     case "inspector":
     case "gatekeeper":
-    case "navigator":
+    case "judge":
       return base;
     default:
       throw new Error(`unexpected packaged role: ${role}`);

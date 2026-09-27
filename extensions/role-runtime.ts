@@ -11,12 +11,6 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import type { Message } from "@earendil-works/pi-ai";
 
-import {
-  registerNavigatorModelCommand,
-  resolveNavigatorAuthorityMaterial,
-} from "../src/navigator-attendance.ts";
-import { loadNavigatorWorkContext as loadHostNeutralNavigatorWorkContext } from "../src/navigator-work-context.ts";
-export { resolveNavigatorAuthorityMaterial };
 import { JUDGE_OUTPUT_TOOL_NAME } from "../src/package-contracts/judge-output.ts";
 import { readOAuthKeepaliveProviders } from "../src/oauth-keepalive.ts";
 import {
@@ -55,17 +49,6 @@ export function transcriptFromContext(ctx: ExtensionContext): string {
   );
 }
 
-export async function loadNavigatorWorkContext(
-  pi: Pick<ExtensionAPI, "getFlag">,
-  options: { context: ExtensionContext | import("../src/host-contracts.ts").HostContext; role: string },
-) {
-  return loadHostNeutralNavigatorWorkContext({
-    context: options.context as import("../src/host-contracts.ts").HostContext,
-    role: options.role,
-    getFlag: (name) => pi.getFlag(name),
-  });
-}
-
 /** Pi extension deps are the shared packaged factory. Host flags stay on the envelope. */
 export function createPiRoleRuntimeDependencies(
   _pi: ExtensionAPI,
@@ -75,7 +58,6 @@ export function createPiRoleRuntimeDependencies(
 
 export default function roleRuntime(pi: ExtensionAPI): void {
   const oauthKeepaliveProviders = readOAuthKeepaliveProviders();
-  registerNavigatorModelCommand(pi);
   createPiRoleRuntimeExtension(createPiRoleRuntimeDependencies(pi), {
     transcriptFromContext,
     oauthKeepalive: { providers: oauthKeepaliveProviders },

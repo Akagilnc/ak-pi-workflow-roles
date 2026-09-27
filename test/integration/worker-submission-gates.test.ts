@@ -31,7 +31,7 @@ import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
-  buildNavigatorInfrastructureFailureFact,
+  buildRoleInfrastructureFailureFact,
   FIXER_OUTPUT_TOOL_NAME,
 } from "../../src/role-runtime.ts";
 import { createRecordSession } from "../../src/archivist-record-entry.ts";

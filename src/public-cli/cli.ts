@@ -73,7 +73,6 @@ import {
   optionsForOwner,
   projectCommandHelp,
   projectOwnerOptions,
-  PUBLIC_NAVIGATOR_HELP_NOTE,
   PUBLIC_ROLE_OPTION_OWNERS,
   renderHumanOwnerOptionLines,
   type PublicOptionDefinition,
@@ -664,7 +663,6 @@ function renderHelp(): string {
     `ak-role — ${top.summary}`,
   ];
   appendUsageAndExamples(lines, "top");
-  lines.push("", PUBLIC_NAVIGATOR_HELP_NOTE);
   lines.push("", "Support commands:");
   for (const cap of doc.capabilities) {
     if (cap.kind === "support") {

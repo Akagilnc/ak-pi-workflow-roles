@@ -29,7 +29,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settlement: "sealed",
     runnerFailure: "engine-detour-known-first",
     boardPlacement: "judge-history",
-    navigatorSubject: "public-instruction",
     activationStage: "load-and-install",
     receiptStatusKey: "status",
   },
@@ -182,7 +181,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
       ],
       doctorReportFacts: true,
     },
-    navigatorSubject: "case",
     activationFlags: [
       { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
     ],
@@ -237,7 +235,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     settlement: "accepted",
     reaskPrompt: true,
     transportPrompt: "fixed-kickoff",
-    navigatorSubject: "source-run",
     gateStageLabel: "符宝郎",
     gateSummon: "source-run",
     activationFlags: [
@@ -344,19 +341,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     activationStage: "load-and-install",
   },
   {
-    role: "navigator",
-    inCallAutoResume: false,
-    presentSettled: "always",
-    summonResume: true,
-    admission: "instruction",
-    sameParent: "none",
-    phases: [null],
-    outputTool: "ak_navigator_output",
-    settlement: "accepted",
-    runnerFailure: "engine-detour-record-first",
-    activationStage: "load-and-install",
-  },
-  {
     role: "auditor",
     inCallAutoResume: false,
     presentSettled: "always",
@@ -409,6 +393,7 @@ test("public registry exposes callable roles with no automatic/classifiable dist
     [...PUBLIC_CALLABLE_ROLES],
   );
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("auditor"), true);
+  assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("navigator"), false);
   assert.equal((PUBLIC_CALLABLE_ROLES as readonly string[]).includes("evidence-child"), false);
   for (const forbidden of ["soul-audit", "reviewer-cmr", "archivist", "assisted"]) {
     assert.equal(
@@ -428,6 +413,7 @@ test("help capabilities derive from typed public registry facts", () => {
   for (const role of PUBLIC_CALLABLE_ROLES) {
     assert.equal(names.includes(role), true, `callable role ${role}`);
   }
+  assert.equal((names as readonly string[]).includes("navigator"), false, "navigator is not a public callable seat");
   const rolesCap = capabilities.find((cap) => cap.name === "roles");
   assert.equal(rolesCap?.kind, "support");
   const judgeCap = capabilities.find((cap) => cap.kind === "role" && cap.name === "judge");

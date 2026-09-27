@@ -2,7 +2,6 @@
 import { COLLECTOR_OUTPUT_TOOL } from "./package-contracts/collector-output.ts";
 import { COLLECTOR_WAIT_TOOL } from "./collector-ledger.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME } from "./package-contracts/gatekeeper-output.ts";
-import { NAVIGATOR_OUTPUT_TOOL_NAME } from "./package-contracts/navigator-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "./package-contracts/judge-output.ts";
 import { REVIEWER_OUTPUT_TOOL_NAME } from "./package-contracts/reviewer-output.ts";
 import { CODER_OUTPUT_TOOL_NAME, FIXER_OUTPUT_TOOL_NAME } from "./package-contracts/worker-output.ts";
@@ -81,7 +80,7 @@ export const AUDITOR_PUBLIC_SESSION_MATERIALS = [
 ] as const;
 
 /**
- * One record per public callable role (#639: includes gatekeeper and navigator).
+ * One record per public callable role (#639: includes gatekeeper).
  */
 export const PUBLIC_ROLE_RECORDS = [
   {
@@ -100,8 +99,6 @@ export const PUBLIC_ROLE_RECORDS = [
     runnerFailure: "engine-detour-known-first",
     /** Factory board: court until another station has started, then marshal. */
     boardPlacement: "judge-history",
-    /** Navigator subject is the public admitted instruction when the run is bound. */
-    navigatorSubject: "public-instruction",
     activationStage: "load-and-install",
     receiptStatusKey: "status",
     sessionMaterials: [
@@ -290,8 +287,6 @@ export const PUBLIC_ROLE_RECORDS = [
       ],
       doctorReportFacts: true,
     },
-    /** Navigator subject is the doctor case, not the case-path file bytes. */
-    navigatorSubject: "case",
     activationFlags: [
       { field: "casePath", from: "caseRunsPath", flag: "ak-doctor-case", binds: "input" },
     ],
@@ -358,8 +353,6 @@ export const PUBLIC_ROLE_RECORDS = [
     gateStageLabel: "符宝郎",
     /** Gate summon binds --source-run and keeps dialogue off the argv. */
     gateSummon: "source-run",
-    /** Navigator subject is the source-run locator, not the path file bytes. */
-    navigatorSubject: "source-run",
     activationFlags: [
       { field: "sourceRun", from: "sourceRunPath", flag: "ak-notary-source-run", binds: "input" },
       { field: "ticketNumber", flag: "ak-notary-ticket-number" },
@@ -475,8 +468,8 @@ export const PUBLIC_ROLE_RECORDS = [
     activationStage: "load-and-install",
     sessionMaterials: INSPECTOR_SESSION_MATERIALS,
   },
-  // #639: gatekeeper and navigator are roles like any other — public ak-role
-  // entries; automatic attendance (province dispatch, navigator sidecar) is
+  // #639: gatekeeper is a role like any other — public ak-role
+  // entry; automatic attendance (province dispatch) is
   // unchanged and orthogonal to callability.
   {
     role: "gatekeeper",
@@ -496,20 +489,6 @@ export const PUBLIC_ROLE_RECORDS = [
     activationStage: "load-and-install",
     // Province materials; officers reuse their own public records below.
     sessionMaterials: ["CLAUDE.md", "souls/gatekeeper.md", "souls/quality-law.md", "souls/gate-output-guide.md"],
-  },
-  {
-    role: "navigator",
-    inCallAutoResume: false,
-    presentSettled: "always",
-    summonResume: true,
-    admission: "instruction",
-    sameParent: "none",
-    phases: [null],
-    outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
-    settlement: "accepted",
-    runnerFailure: "engine-detour-record-first",
-    activationStage: "load-and-install",
-    sessionMaterials: ["CLAUDE.md", "souls/navigator.md"],
   },
   // #675: 审刑院 is a role like any other — public ak-role entry. (#744: evidence-child deleted)
   {
@@ -754,15 +733,6 @@ export function packagedDurableOfficerEntry(officer: unknown): boolean {
   );
 }
 
-/** Admitted-request role whose navigator subject is the public instruction. */
-export function packagedPublicInstructionSubject(role: unknown): boolean {
-  return typeof role === "string" && PUBLIC_ROLE_RECORDS.some((record) =>
-    "navigatorSubject" in record
-    && record.navigatorSubject === "public-instruction"
-    && record.role === role
-  );
-}
-
 /** Resume restores an optional source-run path. */
 export function packagedResumeSourcePath(role: string): boolean {
   const record = packagedRoleMetadata(role);
@@ -775,14 +745,6 @@ export function packagedProjectsTargetBindRejection(role: string): boolean {
   return record !== undefined
     && "projectTargetBindRejection" in record
     && record.projectTargetBindRejection === true;
-}
-
-export function packagedNavigatorSubject(
-  role: string,
-): "file" | "case" | "source-run" | "public-instruction" {
-  const record = packagedRoleMetadata(role);
-  if (record !== undefined && "navigatorSubject" in record) return record.navigatorSubject;
-  return "file";
 }
 
 export type PackagedBoardPlacement = "judge-history" | "coder" | "marshal" | "collector";
@@ -803,10 +765,6 @@ export function packagedAnalystTerminal(role: string): "groups" | undefined {
 
 export function packagedRoleSessionMaterials(role: string): readonly string[] | undefined {
   return PUBLIC_ROLE_RECORDS.find((entry) => entry.role === role)?.sessionMaterials;
-}
-
-export function isNavigatorSeat(role: string): boolean {
-  return packagedRoleOutputTool(role) === NAVIGATOR_OUTPUT_TOOL_NAME;
 }
 
 /** Gate-province display label. Absent when the seat is not a gate stage. */

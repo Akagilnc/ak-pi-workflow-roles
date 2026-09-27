@@ -1,5 +1,5 @@
 /**
- * Shared settlement for public Role runs: role outcome + Navigator fact + artifacts
+ * Shared settlement for public Role runs: role outcome + artifacts
  * into one Terminal result (ADR 0052 / #106 / #107 / #101).
  * Controlled failures and audit human decisions settle here without washing causes.
  */
@@ -94,15 +94,9 @@ import {
 } from "../secretariat-contracts.ts";
 import {
   classifyPackagedRoleTerminalResult,
-  findLatestDurablePackagedRoleTerminal,
-  hasNavigatorInfrastructureFailureBase,
+  hasRoleInfrastructureFailureBase,
   isAcceptedPackagedRoleTerminalResult,
-  isReceiptSettlementBindingClear,
-  NAVIGATOR_INVOCATION_ENTRY,
-  NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
-  parseInvocationMarkerIdentity,
-  type InvocationMarkerIdentity,
-} from "../navigator-invocation-identity.ts";
+} from "../role-terminal-classification.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
   RECEIPT_DELIVERY_TURN_LIMIT,
@@ -326,7 +320,6 @@ export async function settleHostEndedNoReceipt(
         ...facts,
         decisiveFacts: facts,
       },
-      navigator: await extractNavigatorFactFromAdmittedSession(coordinates.sessionFile),
       artifacts: [],
       runId: admitted.runId,
     },
@@ -347,12 +340,10 @@ import {
   exitCodeForTerminalOutcome,
   formatTerminalResult,
   isLawfulTypedTerminalOutcome,
-  adviceNavigatorFact,
   type ControlledFailureCause,
   type TerminalArtifactRef,
   type TerminalGateFact,
   type TerminalGateSeat,
-  type TerminalNavigatorFact,
   type TerminalResult,
   type TerminalResume,
   type TerminalRoleName,
@@ -797,15 +788,6 @@ export function explicitInternalKnownFailureClassificationInput(
     ...(failure.details === undefined ? {} : { knownDetails: failure.details }),
   };
 }
-
-/**
- * Post-role Navigator delivery grace (Issue #11 / #101 / #106 / #159).
- * After the parent finishes: wait at most this long for navigator output, then
- * stop waiting. Navigator must already be running from parent start (prepare
- * host round in parallel); this window is only the tail after parent end — not
- * the budget to start a cold full host turn (owner 2026-09-17 #959).
- */
-export const NAVIGATOR_POST_ROLE_GRACE_MS = 10_000;
 
 type SessionMessage = {
   role?: string;
@@ -1611,7 +1593,7 @@ function extractInfrastructureToolFailure(
       continue;
     }
     if (spec.requireInfrastructureFact?.(message.toolName) === true) {
-      if (!hasNavigatorInfrastructureFailureBase(message.details)) continue;
+      if (!hasRoleInfrastructureFailureBase(message.details)) continue;
     }
     const diagnostic = toolResultText(message);
     if (diagnostic.length === 0) continue;
@@ -2009,98 +1991,6 @@ export async function appendRunAttemptHistory(
 }
 
 /**
- * Minimal attendance provenance against the bound marker (ADR 0043).
- * Keep only invocationId + post-terminal ordering. Runtime-self-produced
- * role/phase/subject/version are not re-reconciled here (ADR 0042).
- */
-function navigatorAttendanceCorrelatedWithBoundMarker(
-  details: Record<string, unknown>,
-  attendanceIndex: number,
-  terminalIndex: number,
-  marker: InvocationMarkerIdentity,
-): boolean {
-  if (attendanceIndex <= terminalIndex) return false;
-  // Exact current invocation token is the bound marker principal.
-  if (details.invocationId !== marker.invocationId) return false;
-  return true;
-}
-
-function parseNavigatorAttendanceDetails(
-  details: Record<string, unknown>,
-): TerminalNavigatorFact {
-  const disposition = details.disposition;
-  const advisoryDiagnostic = typeof details.routePlaybookReadFailure === "string"
-    ? { advisoryDiagnostic: details.routePlaybookReadFailure }
-    : {};
-  // #959: advice prose is presented as-is. Legacy "recommendation" with next/reason/
-  // command is projected into prose so historical sessions still render — never wash
-  // a real recommendation into no-advice when any advice body is recoverable.
-  if (disposition === "advice" || disposition === "recommendation") {
-    let prose: string | undefined;
-    if (typeof details.prose === "string" && details.prose.trim() !== "") {
-      prose = details.prose;
-    } else {
-      const next = isRecord(details.next) && typeof details.next.role === "string"
-        ? details.next.role
-        : undefined;
-      const reason = typeof details.reason === "string" && details.reason.trim() !== ""
-        ? details.reason
-        : undefined;
-      const command = typeof details.command === "string" && details.command.trim() !== ""
-        ? details.command
-        : undefined;
-      if (reason !== undefined && next !== undefined) {
-        prose = `${reason}（下一步：${next}）`;
-      } else if (reason !== undefined) {
-        prose = reason;
-      } else if (next !== undefined) {
-        // Historical recommendation with only typed next — still real advice.
-        prose = `下一步：${next}`;
-      } else if (command !== undefined) {
-        prose = command;
-      }
-    }
-    if (prose === undefined || prose.trim() === "") {
-      // Attended but empty body is affirmative no-advice, not unavailable (#959).
-      return {
-        disposition: "no-advice",
-        ...advisoryDiagnostic,
-      };
-    }
-    return adviceNavigatorFact({
-      prose,
-      ...advisoryDiagnostic,
-    });
-  }
-  if (disposition === "unavailable") {
-    return {
-      disposition: "unavailable",
-      ...advisoryDiagnostic,
-      source:
-        typeof details.unavailableSource === "string"
-          ? details.unavailableSource
-          : "unknown",
-      reason:
-        typeof details.unavailableReason === "string"
-          ? details.unavailableReason
-          : "Navigator unavailable",
-    };
-  }
-  // arrival and legacy silence both mean affirmative lawful no next-role advice.
-  if (disposition === "no-advice" || disposition === "arrival" || disposition === "silence") {
-    return {
-      disposition: "no-advice",
-      ...advisoryDiagnostic,
-    };
-  }
-  return {
-    disposition: "unavailable",
-    source: "unknown",
-    reason: "Navigator attendance disposition is unparseable",
-  };
-}
-
-/**
  * Project direct and historical paired gate rounds onto the public Terminal.
  * actualSeats derive only from accepted receipts, never expected/missing seats.
  */
@@ -2245,7 +2135,6 @@ function detourGateContext(
 async function withOptionalGateProjection<
   T extends {
     roleOutcome: TerminalRoleOutcome;
-    navigator: TerminalNavigatorFact;
     artifacts: readonly TerminalArtifactRef[];
     resume?: TerminalResume;
   },
@@ -2278,129 +2167,6 @@ async function withOptionalGateProjection<
   }
 
   return attachEngineDetourToolUsage(next, sessionDirectory, gateContext);
-}
-
-function routePlaybookFailureMessage(entries: readonly SessionEntry[]): string | undefined {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "custom" || entry.customType !== NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY) continue;
-    const data = entry.data;
-    if (!isRecord(data) || typeof data.message !== "string" || data.message.trim() === "") return undefined;
-    return data.message;
-  }
-  return undefined;
-}
-
-export function extractNavigatorFact(
-  entries: readonly SessionEntry[],
-): TerminalNavigatorFact {
-  const fact = extractNavigatorAttendanceFact(entries);
-  if (fact.advisoryDiagnostic !== undefined) return fact;
-  const message = routePlaybookFailureMessage(entries);
-  return message === undefined ? fact : { ...fact, advisoryDiagnostic: message };
-}
-
-function extractNavigatorAttendanceFact(
-  entries: readonly SessionEntry[],
-): TerminalNavigatorFact {
-  // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.
-  // Minimal provenance: latest durable terminal + nearest preceding marker +
-  // invocationId + post-terminal order. Marker↔terminal cardinality belongs to
-  // receipt settlement (isReceiptSettlementBindingClear), not attendance extraction.
-  const terminal = findLatestDurablePackagedRoleTerminal(entries);
-  if (terminal === undefined) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: "Navigator attendance has no durable packaged role terminal",
-    };
-  }
-
-  let markerIndex = -1;
-  for (let i = terminal.index - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY) {
-      markerIndex = i;
-      break;
-    }
-  }
-  if (markerIndex < 0) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: "Navigator attendance is uncorrelated with session invocation facts",
-    };
-  }
-  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
-  if (marker === undefined) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: "Navigator attendance is uncorrelated with session invocation facts",
-    };
-  }
-
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
-      const details = entry.message?.details ?? (entry as { details?: unknown }).details;
-      if (!isRecord(details)) {
-        return {
-          disposition: "unavailable",
-          source: "unknown",
-          reason: "Navigator attendance is unparseable",
-        };
-      }
-      if (
-        !navigatorAttendanceCorrelatedWithBoundMarker(
-          details,
-          i,
-          terminal.index,
-          marker,
-        )
-      ) {
-        return {
-          disposition: "unavailable",
-          source: "unknown",
-          reason: "Navigator attendance is uncorrelated with session invocation facts",
-        };
-      }
-      return parseNavigatorAttendanceDetails(details);
-    }
-  }
-  // Absence is not successful no-advice — require affirmative typed attendance.
-  return {
-    disposition: "unavailable",
-    source: "unknown",
-    reason: "Navigator attendance is missing from the session",
-  };
-}
-
-/**
- * Exact-session Navigator fact for failure Terminal settlement.
- * Never infers no-advice from omission; session read failures stay typed unavailable
- * so the controlled-failure Terminal itself still settles.
- */
-async function extractNavigatorFactFromAdmittedSession(
-  sessionFile: string,
-): Promise<TerminalNavigatorFact> {
-  try {
-    const entries = await readBoundSessionEntries(sessionFile);
-    return extractNavigatorFact(entries);
-  } catch (error) {
-    if (isMissingPathError(error)) {
-      return {
-        disposition: "unavailable",
-        source: "unknown",
-        reason: "Navigator attendance is missing from the session",
-      };
-    }
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: "Navigator attendance is unavailable because the session could not be read",
-    };
-  }
 }
 
 /**
@@ -2583,7 +2349,6 @@ async function settleSealedLedgerTerminal(
   return withOptionalGateProjection(
     {
       roleOutcome,
-      navigator: extractNavigatorFact(entries),
       artifacts,
       runId: admitted.runId,
     },
@@ -2645,7 +2410,6 @@ async function settleSealedAcceptedOrToolResidual(
     await withOptionalGateProjection(
       {
         roleOutcome,
-        navigator: extractNavigatorFact(entries),
         artifacts,
         runId: admitted.runId,
       },
@@ -2898,7 +2662,6 @@ async function settleLawfulSeatAcceptedTerminalResult(
   if (roleOutcome !== undefined && (
     thisAttemptHasSeatSuccess || residual === undefined || (scope?.courtAttemptId !== undefined && scope.courtAttemptId.length > 0)
   )) {
-    const navigator = extractNavigatorFact(entries);
     const artifacts = await publishDeclaredSeatArtifacts(
       admitted,
       roleOutcome,
@@ -2909,7 +2672,6 @@ async function settleLawfulSeatAcceptedTerminalResult(
       await withOptionalGateProjection(
         {
           roleOutcome,
-          navigator,
           artifacts,
           runId: admitted.runId,
         },
@@ -3415,7 +3177,6 @@ export async function settleFailureTerminalResult(
                 ...facts,
                 decisiveFacts,
               },
-              navigator: await extractNavigatorFactFromAdmittedSession(sessionFile),
               artifacts: [],
               runId: admitted.runId,
             },
@@ -3426,8 +3187,6 @@ export async function settleFailureTerminalResult(
       }
     }
   }
-  // Exact-session attendance only — never infer no-advice from caller omission.
-  const navigator = await extractNavigatorFactFromAdmittedSession(sessionFile);
   // Private durable artifacts retain the original diagnostic identity (including run ID).
   const artifacts = await publishFailureArtifacts(admitted, failure, authority, options.onErrorPublished);
   const errorPath = artifacts.find((artifact) => artifact.kind === "error")?.path;
@@ -3459,8 +3218,7 @@ export async function settleFailureTerminalResult(
     const terminal = await withOptionalGateProjection(
       {
         roleOutcome,
-        navigator,
-        artifacts: [],
+                artifacts: [],
         resume: options.resume,
       },
       sessionDirectory,
@@ -3480,8 +3238,7 @@ export async function settleFailureTerminalResult(
   return withOptionalGateProjection(
     {
       roleOutcome,
-      navigator,
-      artifacts,
+            artifacts,
       runId: admitted.runId,
     },
     sessionDirectory,
@@ -3529,57 +3286,4 @@ export function presentFailureTerminal(
       diagnostic: bindDiagnostic,
     }));
   }
-}
-
-/** Optional cancel hook so early settle can release an in-flight grace sleep. */
-export type NavigatorGraceSleep = ((ms: number) => Promise<void>) & {
-  cancel?: () => void;
-};
-
-function defaultNavigatorGraceSleep(): NavigatorGraceSleep {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const sleep = ((ms: number) =>
-    new Promise<void>((resolve) => {
-      timer = setTimeout(() => {
-        timer = undefined;
-        resolve();
-      }, ms);
-    })) as NavigatorGraceSleep;
-  sleep.cancel = () => {
-    if (timer !== undefined) {
-      clearTimeout(timer);
-      timer = undefined;
-    }
-  };
-  return sleep;
-}
-
-/**
- * Race a promise against the post-role Navigator grace.
- * On timeout, returns the timeout sentinel; the caller records unavailable and
- * ignores or disposes late completion.
- * When work settles first, the grace sleep is canceled synchronously so its
- * timer/resource cannot keep the process alive after the race resolves.
- */
-export function raceNavigatorGrace<T>(
-  work: Promise<T>,
-  graceMs: number = NAVIGATOR_POST_ROLE_GRACE_MS,
-  sleep: NavigatorGraceSleep = defaultNavigatorGraceSleep(),
-): Promise<{ status: "done"; value: T } | { status: "timeout" }> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (action: () => void): void => {
-      if (settled) return;
-      settled = true;
-      sleep.cancel?.();
-      action();
-    };
-    void work.then(
-      (value) => finish(() => resolve({ status: "done", value })),
-      (error) => finish(() => reject(error)),
-    );
-    void sleep(graceMs).then(() => {
-      finish(() => resolve({ status: "timeout" }));
-    });
-  });
 }

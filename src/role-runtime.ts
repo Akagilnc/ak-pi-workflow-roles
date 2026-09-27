@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { readFileSync, writeSync } from "node:fs";
 import { join } from "node:path";
 import {
@@ -13,7 +12,7 @@ import {
 
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
-import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
+import { createSubmissionLedgerHost } from "./submission-ledger.ts";
 import { createCollectorLedger } from "./collector-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
@@ -22,7 +21,6 @@ import {
   durableSessionPointer,
   resolveBookKeyFromGit,
 } from "./activation-ledger.ts";
-import { readPackageMaterial } from "./session-opening-materials.ts";
 import { writeStderrJsonlRecord } from "./stderr-jsonl.ts";
 import {
   ENGINE_DETOUR_TOOL_NAME,
@@ -84,26 +82,17 @@ import {
   type GatekeeperRuntimeDependencies,
 } from "./gatekeeper-role.ts";
 import {
-  NAVIGATOR_TOOL_SPEC,
-  type NavigatorRuntimeDependencies,
-} from "./navigator-role.ts";
-import {
   AUDITOR_TOOL_SPEC,
   type AuditorRuntimeDependencies,
 } from "./auditor-role.ts";
 
-import { formatNavigatorReport, NAVIGATOR_EVENT_TYPE, NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, navigatorSubjectKey, navigatorUnavailableError, subjectPath, type NavigatorAttendance, type NavigatorAttendanceOptions, type NavigatorEvent, type NavigatorPhase, type NavigatorReport, type NavigatorSettlement, type NavigatorSubjectProvenance, type NavigatorWorkContext } from "./navigator-attendance.ts";
-import { loadNavigatorWorkBaseSuffix } from "./navigator-work-base.ts";
 import {
-  buildNavigatorInfrastructureFailureFact,
+  buildRoleInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
   extractInfrastructureFailureEvidence,
-  NAVIGATOR_INVOCATION_ENTRY,
-  resolveLifecycleInvocationPrincipal,
-} from "./navigator-invocation-identity.ts";
+} from "./role-terminal-classification.ts";
 import { recordTypedProviderHttpStatus } from "./typed-provider-http.ts";
-import { NAVIGATOR_POST_ROLE_GRACE_MS, raceNavigatorGrace } from "./public-cli/settlement.ts";
-import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleActivationFlags, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, packagedRolePhaseFlag, type PackagedRole } from "./packaged-role-registry.ts";
+import { PACKAGED_ROLE_REGISTRY, isOfficerReviewSeat, packagedRoleActivationFlags, packagedRoleInputFlag, packagedRoleMetadata, packagedRoleOutputTool, type PackagedRole } from "./packaged-role-registry.ts";
 import {
   createJudgeRoleRuntime,
 } from "./judge-role.ts";
@@ -253,18 +242,18 @@ import { MERGER_OUTPUT_TOOL_NAME } from "./merger-contracts.ts";
 import { createMergerRoleRuntime, type MergerRoleDependencies } from "./merger-role.ts";
 
 export {
-  buildNavigatorInfrastructureFailureFact,
+  buildRoleInfrastructureFailureFact,
   classifyPackagedRoleTerminalResult,
   extractInfrastructureFailureEvidence,
-  hasNavigatorInfrastructureFailureBase,
+  hasRoleInfrastructureFailureBase,
   isAcceptedPackagedRoleTerminalResult,
   isDurablePackagedRoleTerminalResult,
-  isNavigatorInfrastructureFailureFact,
-  NAVIGATOR_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS,
-  NAVIGATOR_INFRASTRUCTURE_FAILURE_KIND,
-  type NavigatorInfrastructureFailureFact,
+  isRoleInfrastructureFailureFact,
+  ROLE_INFRASTRUCTURE_FAILURE_EVIDENCE_KEYS,
+  ROLE_INFRASTRUCTURE_FAILURE_KIND,
+  type RoleInfrastructureFailureFact,
   type PackagedRoleTerminalClassification,
-} from "./navigator-invocation-identity.ts";
+} from "./role-terminal-classification.ts";
 export { activationTraceRecordSchema, namedActivationCause } from "./activation-trace.ts";
 export type { ActivationTraceRecord, ActivationTraceWriter } from "./activation-trace.ts";
 export {
@@ -348,7 +337,6 @@ export {
 export type { CollectorReceipt } from "./package-contracts/collector-output.ts";
 export type { CollectorGitHubTransport } from "./collector-github.ts";
 export type { CollectorClock } from "./collector-evidence.ts";
-export * from "./navigator-attendance.ts";
 export { MERGER_INPUT_FLAG, createMergerRoleRuntime } from "./merger-role.ts";
 export { MERGER_OUTPUT_TOOL_NAME, mergerInputSchema, mergerOutputSchema, validateMergerInput, validateMergerOutput } from "./merger-contracts.ts";
 export type { MergerInput, MergerMaterial, MergerOutput } from "./merger-contracts.ts";
@@ -431,8 +419,6 @@ export const ROLE_FLAG = {
   },
 } as const;
 
-type NavigatorAttendanceDependency = NavigatorAttendance;
-
 export type RoleRuntimeDependencies = {
   /** Package root for packaged engine-note resolution (#879). */
   packageRoot?: string;
@@ -456,8 +442,6 @@ export type RoleRuntimeDependencies = {
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerInput?(path: string): Promise<unknown>;
   createCollectorClock?(): CollectorClock;
-  createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
-  loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
 };
@@ -483,70 +467,24 @@ type PendingInfrastructureFailure = {
 function buildPendingInfrastructureFailure(error: unknown): PendingInfrastructureFailure {
   return {
     details: {
-      ...buildNavigatorInfrastructureFailureFact(),
+      ...buildRoleInfrastructureFailureFact(),
       ...extractInfrastructureFailureEvidence(error),
     },
   };
 }
 
-function navigatorPhase(roleHost: RoleHost, role: string): NavigatorPhase {
-  const metadata = packagedRoleMetadata(role);
-  if (metadata === undefined || metadata.phases[0] === null) return null;
-  const phaseFlag = packagedRolePhaseFlag(role);
-  const requested = phaseFlag === undefined ? undefined : roleHost.getFlag(phaseFlag);
-  return requested === "apply" ? "apply" : "plan";
-}
-
-function navigatorOutputTool(role: string): string | undefined {
-  return packagedRoleOutputTool(role);
-}
-
-/** Status leaves that are not the shared `status` key, in registry order. */
-function receiptStatusFromRegistry(details: Record<string, unknown>): string | undefined {
-  for (const entry of PACKAGED_ROLE_REGISTRY) {
-    if (!("receiptStatusKey" in entry)) continue;
-    const value = details[entry.receiptStatusKey];
-    if (typeof value === "string") return value;
-  }
-  return undefined;
-}
-
-export function publicNavigatorSettlement(role: string, phase: NavigatorPhase, event: { toolName: string; isError?: unknown; details: unknown }): NavigatorSettlement | undefined {
-  // One shared classifier owns terminal discriminant (lifecycle + settlement + extractors).
-  if (event.toolName !== navigatorOutputTool(role)) return undefined;
-  const classification = classifyPackagedRoleTerminalResult(event);
-  if (classification.kind === "nonterminal") return undefined;
-  if (classification.kind === "infrastructure") {
-    return { kind: "role_infrastructure_failure", role, phase };
-  }
-  // accepted/human — project role/phase status; classifier already rejected infra/contradiction.
-  const details = typeof event.details === "object" && event.details !== null && !Array.isArray(event.details)
-    ? event.details as Record<string, unknown>
-    : {};
-  const status = typeof details.status === "string"
-    ? details.status
-    : receiptStatusFromRegistry(details);
-  if (status !== undefined && status === "escalate") {
-    return { kind: "human_decision", role, phase, status };
-  }
-  return { kind: "accepted", role, phase, ...(status === undefined ? {} : { status }) };
-}
-
 export async function projectClosedSubmissionLifecycle(
   closed: import("./submission-ledger.ts").ClosedSubmission,
   context: HostContext,
-  phase: NavigatorPhase,
   recordAccepted: () => void,
-  settle: (settlement: NavigatorSettlement | undefined) => Promise<void>,
 ): Promise<void> {
   recordAccepted();
   const closure = {
-    toolName: navigatorOutputTool(closed.role)!,
+    toolName: packagedRoleOutputTool(closed.role)!,
     isError: false,
     details: closed.accepted,
   };
   context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
-  await settle(publicNavigatorSettlement(closed.role, phase, closure));
 }
 
 /**
@@ -678,59 +616,6 @@ export function createGatekeeperRoleRuntime(
     },
     dependencies,
   );
-}
-
-/** #639: direct Navigator public seat on the shared filed-officer envelope. */
-export function createNavigatorRoleRuntime(
-  roleHost: RoleHost,
-  dependencies: NavigatorRuntimeDependencies,
-) {
-  const base = createFiledOfficerRuntime(
-    roleHost,
-    {
-      role: "navigator",
-      tool: NAVIGATOR_TOOL_SPEC,
-      soulTag: "navigator",
-    },
-    dependencies,
-  );
-  let playbookBound = false;
-  return {
-    async activate() {
-      await base.activate();
-      if (playbookBound) return;
-      playbookBound = true;
-      // Standing system prompt, not a per-turn user message. Native read failure
-      // is the explanation (ADR 0061); no code-written sentence.
-      const loadRoutePlaybook = dependencies.loadRoutePlaybook
-        ?? (() => readPackageMaterial("resources/navigator-route-playbook.md"));
-      let playbookRead: Promise<string> | undefined;
-      roleHost.on("before_agent_start", async (event) => {
-        const basePrompt = typeof event.systemPrompt === "string" ? event.systemPrompt : "";
-        const parts: string[] = [];
-        try {
-          playbookRead ??= loadRoutePlaybook();
-          const content = await playbookRead;
-          dependencies.recordRoutePlaybookReadFailure?.(undefined);
-          if (content.trim() !== "") parts.push(content);
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (message.trim() !== "") {
-            dependencies.recordRoutePlaybookReadFailure?.(message);
-            parts.push(message);
-          }
-        }
-        const prompt = typeof event.prompt === "string" ? event.prompt : "";
-        const work = await loadNavigatorWorkBaseSuffix(prompt);
-        if (work !== undefined && work.trim() !== "") parts.push(work);
-        if (parts.length === 0) return;
-        const text = parts.join("\n\n");
-        return {
-          systemPrompt: basePrompt.trim() === "" ? text : `${basePrompt}\n\n${text}`,
-        };
-      });
-    },
-  };
 }
 
 /** #675: public 审刑院 seat on the shared filed-officer envelope. */
@@ -966,28 +851,6 @@ export function createCountersignRoleRuntime(
   );
 }
 
-/**
- * #959: last assistant text parts as navigator prose exit.
- * Tool-call-only messages yield undefined — those already ride the tool path.
- */
-function lastAssistantProse(
-  messages: readonly { role: string; content?: readonly { type: string; text?: string }[] }[],
-): string | undefined {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    const message = messages[index];
-    if (message?.role !== "assistant" || !Array.isArray(message.content)) continue;
-    const texts: string[] = [];
-    for (const part of message.content) {
-      if (part.type === "text" && typeof part.text === "string" && part.text.length > 0) {
-        texts.push(part.text);
-      }
-    }
-    if (texts.length === 0) continue;
-    return texts.join("");
-  }
-  return undefined;
-}
-
 export function createRoleRuntimeExtension(
   dependencies: RoleRuntimeDependencies,
 ): (envelopeHost: RoleEnvelopeHost) => void {
@@ -1043,13 +906,6 @@ export function createRoleRuntimeExtension(
     let roleReferenceMaterials = "";
     /** Live Reviewer parent activation for envelope agent_start prompt assembly. */
     let activeReviewerParent: ReviewerActivation | undefined;
-    let navigatorAttendance: NavigatorAttendanceDependency | undefined;
-    // #351: session-lifecycle owner for periodic OAuth refresh (orthogonal to role admission).
-    let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
-    let pendingNavigatorSettlement: Promise<void> | undefined;
-    let navigatorWorkContext: NavigatorWorkContext | undefined;
-    let navigatorSessionParent: string | undefined;
-    let navigatorCwd: string | undefined;
     /** toolCallId → fact+evidence; one-shot projected onto durable tool_result (#475). */
     const pendingInfrastructureFailures = new Map<string, PendingInfrastructureFailure>();
     // Envelope-owned execute→tool_result bridge for submission non-pass (ADR 0018 / #525).
@@ -1062,89 +918,10 @@ export function createRoleRuntimeExtension(
     // Public-run fetch observation.
     let priorFetch: typeof globalThis.fetch | undefined;
     let fetchWrapped = false;
-    /** Envelope-owned: abort/teardown attendance without re-blocking the parent court (#959). */
-    const disposeNavigatorAttendanceNonBlocking = (
-      attendance: NavigatorAttendanceDependency | undefined,
-    ): void => {
-      if (attendance === undefined) return;
-      const recordDisposeFailure = (error: unknown): void => {
-        const diagnostic = error instanceof Error ? error.message : String(error);
-        try {
-          sitianReport({
-            level: "event",
-            kind: "navigator-dispose-failure",
-            cwd: navigatorCwd,
-            sessionParent: navigatorSessionParent,
-            payload: { diagnostic },
-            source: "role-runtime",
-          });
-        } catch (recordError) {
-          try {
-            envelopeHost.appendEntry?.("ak-navigator-dispose-failure", {
-              diagnostic,
-              recordFailure: recordError instanceof Error ? recordError.message : String(recordError),
-            });
-          } catch {
-            // Failure already diagnosed; recording must not create unhandled rejection (#959).
-          }
-        }
-      };
-      // Evaluate dispose inside try: Promise.resolve(dispose()) throws sync before .then attaches.
-      let pending: void | Promise<void>;
-      try {
-        pending = attendance.dispose();
-      } catch (error) {
-        recordDisposeFailure(error);
-        return;
-      }
-      void Promise.resolve(pending).then(undefined, recordDisposeFailure);
-    };
-    const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined) => {
-      const attendance = navigatorAttendance;
-      if (settlement === undefined || attendance === undefined) return;
-      const workContext = navigatorWorkContext;
-      const pending = (async () => {
-        // ADR 0052 / #959: every settlement that starts a post-role feed host round
-        // (accepted, human_decision, role_infrastructure_failure) shares one grace
-        // and the same honest unavailable projection — no unbounded parallel branch.
-        const settlePromise = attendance.settle(settlement);
-        // Attach catch immediately so a late rejection after grace timeout cannot
-        // surface as unhandledRejection / stale-ctx after session dispose (#675).
-        void settlePromise.catch(() => undefined);
-        const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
-        if (raced.status !== "timeout") return;
-        if (pendingNavigatorPresentation === undefined) {
-          const report: NavigatorReport = {
-            disposition: "unavailable",
-            unavailableReason: "Navigator exceeded post-role delivery grace",
-            unavailableSource: "unknown",
-            unavailableCause: "unknown",
-          };
-          const event: NavigatorEvent = {
-            version: 1,
-            disposition: "unavailable",
-            invocationId: "post-role-grace-timeout",
-            role: settlement.role,
-            phase: settlement.phase,
-            subjectKey: workContext?.subjectKey ?? "",
-            unavailableReason: "Navigator exceeded post-role delivery grace",
-            unavailableSource: "unknown",
-            unavailableCause: "unknown",
-          };
-          pendingNavigatorPresentation = { event, report };
-        }
-        // 过时不候: do not await sidecar teardown — parent court must close.
-        disposeNavigatorAttendanceNonBlocking(attendance);
-      })();
-      pendingNavigatorSettlement = pending;
-      await pending;
-    };
     projectClosedSubmission = async (closed, context) => projectClosedSubmissionLifecycle(
       closed,
       context,
-      navigatorPhase(roleHost, closed.role),
       () => receiptDelivery.recordAccepted(),
-      settleNavigatorProjection,
     );
     roleHost.on("input", (_event) => {
       const role = roleHost.getFlag(ROLE_FLAG.name);
@@ -1171,37 +948,6 @@ export function createRoleRuntimeExtension(
           ctx.sessionManager.appendCustomEntry?.(NOTARY_SESSION_BOUND_ENTRY, bound);
         }
       }
-      if (navigatorAttendance !== undefined && navigatorWorkContext !== undefined && navigatorWorkContext.contextError === undefined) {
-        // Flagged roles already have a concrete packet/task/case/review input.
-        // A bare Judge (and other bare packaged entrypoint) gets its concrete
-        // user task at this seam; do not copy the assembled system prompt.
-        // Replacement is keyed by typed subject provenance, never prose prefixes.
-        // Soft session_start placeholders (no materials yet) recover here; hard
-        // contextError from true loader failures stays poisoned and honest.
-        if (navigatorWorkContext.subjectProvenance === "placeholder") {
-          // Navigator's own input bootstrap, not a rewrite of another role's
-          // output payload (#836 targets the latter): the human's own raw
-          // prompt bytes, copied verbatim into Navigator's work context when
-          // nothing else has supplied a subject yet.
-          const subject = prompt.trim();
-          if (subject !== "") {
-            const root = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-            const subjectProvenance = "user_prompt" satisfies NavigatorSubjectProvenance;
-            const priorAuthority = navigatorWorkContext.authority;
-            const authority = typeof priorAuthority === "string" && priorAuthority.trim() !== ""
-              ? priorAuthority
-              : subject;
-            navigatorWorkContext = {
-              subjectKey: navigatorSubjectKey(root, subject, subjectProvenance),
-              subject,
-              authority,
-              subjectProvenance,
-            };
-            await navigatorAttendance.setWorkContext(navigatorWorkContext);
-          }
-        }
-      }
-      navigatorAttendance?.prepare();
       // Reviewer parent prompt assembly.
       if (activeReviewerParent !== undefined && selectedRole === role) {
         return {
@@ -1285,7 +1031,7 @@ export function createRoleRuntimeExtension(
       const classified = infrastructureDetails === undefined
         ? event
         : { ...event, details: infrastructureDetails };
-      const isOutputTool = event.toolName === navigatorOutputTool(role);
+      const isOutputTool = event.toolName === packagedRoleOutputTool(role);
       const outputClassification = isOutputTool ? classifyPackagedRoleTerminalResult(classified) : undefined;
       if (isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure") {
         receiptDelivery.stopForInfrastructure();
@@ -1296,12 +1042,6 @@ export function createRoleRuntimeExtension(
           .trim();
         receiptDelivery.recordRejected(reason);
       }
-      // Accepted/human terminal projection belongs exclusively to typed ledger
-      // closure. tool_result retains only infrastructure settlement.
-      const settlement = isRoleInfrastructureFailure || outputClassification?.kind === "infrastructure"
-        ? publicNavigatorSettlement(role, navigatorPhase(roleHost, role), classified)
-        : undefined;
-      await settleNavigatorProjection(settlement);
       // Persist typed infrastructure-failure fact onto the role session toolResult so
       // exact-session restart shares the same durable completion classification.
       if (infrastructureDetails !== undefined) {
@@ -1326,54 +1066,6 @@ export function createRoleRuntimeExtension(
         // Abort after an already-recorded receipt must not un-accept or催交.
         if (receiptDelivery.nextAction() !== "accepted") {
           receiptDelivery.stopForInfrastructure();
-        }
-        return;
-      }
-      const role = selectedRole ?? roleHost.getFlag(ROLE_FLAG.name);
-      // #959: navigator prose exit — final assistant text is the receipt.
-      // No typed-tool 催交; no JSON required. Tool path still wins when already accepted.
-      if (
-        typeof role === "string"
-        && packagedRoleOutputTool(role) === NAVIGATOR_TOOL_SPEC.name
-        && receiptDelivery.nextAction() !== "accepted"
-      ) {
-        const prose = lastAssistantProse(event.messages);
-        if (prose !== undefined && prose.trim() !== "") {
-          const accepted = { prose };
-          await sealAcceptedSubmission({
-            context: ctx,
-            role: "navigator",
-            accepted,
-            toolCallId: `navigator-prose-exit:${randomUUID()}`,
-          });
-          await projectClosedSubmission(
-            { role: "navigator", kind: "accepted", accepted },
-            ctx,
-          );
-          return;
-        }
-        // Attended with neither tool nor prose → honest no_receipt (not typed 催交).
-        // Exhaust delivery budget without sending the typed prompt so facts() stays lawful.
-        if (!noReceiptRecorded) {
-          const runPointer = runDirectoryFromHostContext(ctx);
-          if (runPointer !== undefined) {
-            noReceiptRecorded = true;
-            while (receiptDelivery.nextAction() === "request-delivery") {
-              receiptDelivery.recordDeliveryRequest();
-            }
-            const facts = receiptDelivery.facts({ runPointer, attemptPointer: `current:${runPointer}` });
-            envelopeHost.appendEntry(NO_RECEIPT_LIFECYCLE_ENTRY_TYPE, facts);
-            try {
-              sitianReport({
-                level: "event",
-                kind: "no-receipt-lifecycle",
-                cwd: ctx.cwd,
-                sessionParent: ctx.sessionManager.getSessionFile(),
-                payload: facts,
-                source: "role-runtime",
-              });
-            } catch {}
-          }
         }
         return;
       }
@@ -1416,28 +1108,6 @@ export function createRoleRuntimeExtension(
         }
       }
     });
-    roleHost.on("agent_settled", async () => {
-      if (pendingNavigatorSettlement !== undefined) {
-        await pendingNavigatorSettlement;
-      }
-      // Do not auto-drain Navigator on ordinary mid-turn agent_settled.
-      // Multi-turn roles (#162 coder) fire agent_settled after every tool turn;
-      // discarding a healthy/in-flight prepare there forces a cold prepare on the
-      // final accepted terminal and races the post-role grace. Keep preparation
-      // until an accepted/human/infrastructure tool_result settlement (or dispose).
-      // Provider death without any role tool_result leaves preparation held; the
-      // next explicit settlement or session end owns it — not mid-turn churn.
-      pendingNavigatorSettlement = undefined;
-      const presentation = pendingNavigatorPresentation;
-      pendingNavigatorPresentation = undefined;
-      if (presentation === undefined) return;
-      await envelopeHost.sendMessage({
-        customType: NAVIGATOR_EVENT_TYPE,
-        content: formatNavigatorReport(presentation.report),
-        display: true,
-        details: presentation.event,
-      }, { triggerTurn: false });
-    });
     roleHost.on("session_shutdown", async () => {
       // #351: stop OAuth keepalive first so shutdown yields zero further ticks.
       envelopeHost.stopKeepalive();
@@ -1452,28 +1122,6 @@ export function createRoleRuntimeExtension(
           process.exitCode = 1;
         }
       }
-      // Flush any still-pending affirmative attendance before teardown.
-      // Grace-timeout paths normally emit on agent_settled; abort can skip that hook.
-      const presentation = pendingNavigatorPresentation;
-      pendingNavigatorPresentation = undefined;
-      if (presentation !== undefined) {
-        try {
-          await envelopeHost.sendMessage({
-            customType: NAVIGATOR_EVENT_TYPE,
-            content: formatNavigatorReport(presentation.report),
-            display: true,
-            details: presentation.event,
-          }, { triggerTurn: false });
-        } catch {
-          // Teardown must not mask the original role failure cause.
-        }
-      }
-      // Same non-blocking dispose as post-role grace: awaiting here re-blocked the
-      // parent court for 43–270s after unavailable was already projected (#959 reopen).
-      const attendanceToDispose = navigatorAttendance;
-      navigatorAttendance = undefined;
-      pendingNavigatorSettlement = undefined;
-      disposeNavigatorAttendanceNonBlocking(attendanceToDispose);
       pendingInfrastructureFailures.clear();
       pendingSubmissionNonPassByToolCallId.clear();
     });
@@ -1557,14 +1205,6 @@ export function createRoleRuntimeExtension(
     });
     const gatekeeper = createGatekeeperRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("gatekeeper"),
-    });
-    const navigator = createNavigatorRoleRuntime(roleHost, {
-      loadSoul: () => requireRoleSoul("navigator"),
-      recordRoutePlaybookReadFailure: (message) => {
-        envelopeHost.appendEntry(NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY, {
-          message: message ?? "",
-        });
-      },
     });
     const auditor = createAuditorRoleRuntime(roleHost, {
       loadSoul: () => requireRoleSoul("auditor"),
@@ -1790,11 +1430,8 @@ export function createRoleRuntimeExtension(
       collectorFirstDispatchDone = false;
       receiptDelivery = createReceiptDeliveryPolicy();
       noReceiptRecorded = false;
-      pendingNavigatorPresentation = undefined;
-      pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
       pendingSubmissionNonPassByToolCallId.clear();
-      navigatorWorkContext = undefined;
       // #351: OAuth keepalive is orthogonal to --ak-role; start before role early-return
       // so role-less sessions (and reload after shutdown stop) still keep tokens alive.
       envelopeHost.startKeepalive(ctx);
@@ -1805,8 +1442,6 @@ export function createRoleRuntimeExtension(
         failInfrastructure(new Error(`Unsupported workflow role: ${String(rawRole)}`), ctx);
       }
       selectedRole = entry.role;
-      await navigatorAttendance?.dispose();
-      navigatorAttendance = undefined;
       // One activation call per seat. Stage id still comes from the registry.
       // Envelope owns Reviewer and Notary flag reads (ADR 0018).
       const activateByRole = {
@@ -1827,7 +1462,6 @@ export function createRoleRuntimeExtension(
         "gleaner-left": () => gleanerLeft.activate(),
         inspector: () => inspector.activate(),
         gatekeeper: () => gatekeeper.activate(),
-        navigator: () => navigator.activate(),
         auditor: () => auditor.activate(),
         diarist: () => diarist.activate(),
         secretariat: () => secretariat.activate(),
@@ -1840,95 +1474,6 @@ export function createRoleRuntimeExtension(
         // #855: two-face waiting.jsonl write removed — fail-closed book-key + session only.
         resolveBookKeyFromGit(ctx.cwd);
         durableSessionPointer(ctx.sessionManager);
-
-        // Station children (court diarist, inner-gate summons) omit navigator sidecar (#840).
-        // Top-level public entry legs still attend automatically.
-        // Navigator seat never re-attaches itself — prepare turns already ARE the navigator
-        // public activation (prevents summonPublicRole navigator ↔ attendance recursion).
-        const isStationChild = roleHost.getFlag(STATION_CHILD_FLAG.name) === true;
-        if (
-          dependencies.createNavigatorAttendance !== undefined
-          && entry.outputTool !== NAVIGATOR_TOOL_SPEC.name
-          && !isStationChild
-        ) {
-          navigatorSessionParent = ctx.sessionManager.getSessionFile();
-          navigatorCwd = ctx.cwd;
-          let work: NavigatorWorkContext;
-          let contextError: unknown;
-          if (dependencies.loadNavigatorWorkContext === undefined) {
-            const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-            contextError = new Error("Navigator work context loader is not configured");
-            work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
-          } else {
-            try {
-              work = await dependencies.loadNavigatorWorkContext({
-                context: ctx,
-                role: entry.role,
-                phase: navigatorPhase(roleHost, entry.role),
-                getFlag: (name) => roleHost.getFlag(name),
-              });
-              contextError = work.contextError;
-            } catch (error) {
-              // Contract: README.md#Navigator-attendance — a failed context load continues with a typed placeholder work context; the original cause is retained in contextError for the typed unavailable report.
-              contextError = navigatorUnavailableError("context", error);
-              const fallbackSubjectKey = subjectPath(ctx.sessionManager.getSessionDir(), ctx.cwd);
-              work = { subjectKey: fallbackSubjectKey, subject: `work subject: ${fallbackSubjectKey}`, authority: "", subjectProvenance: "placeholder" };
-            }
-          }
-          navigatorWorkContext = { ...work, ...(contextError === undefined ? {} : { contextError }) };
-          // Shared envelope owns exact invocation principal from admitted session lifecycle.
-          // session_start is process activation: resume unfinished principal only when marker
-          // role/phase/subjectKey still match; mint for contradictory marker, malformed nearest,
-          // missing marker, or terminal already completed.
-          const sessionEntries = [...ctx.sessionManager.getEntries()];
-          const invocationPhase = navigatorPhase(roleHost, entry.role);
-          const lifecyclePrincipal = resolveLifecycleInvocationPrincipal(sessionEntries, {
-            role: entry.role,
-            phase: invocationPhase,
-            subjectKey: work.subjectKey,
-          });
-          const invocationId = lifecyclePrincipal.invocationId;
-          if (!lifecyclePrincipal.resume) {
-            const data = {
-              invocationId,
-              role: entry.role,
-              phase: invocationPhase,
-              subjectKey: work.subjectKey,
-            };
-            envelopeHost.appendEntry(NAVIGATOR_INVOCATION_ENTRY, data);
-            try {
-              sitianReport({
-                level: "event",
-                kind: "attendance",
-                cwd: ctx.cwd,
-                sessionParent: ctx.sessionManager.getSessionFile(),
-                payload: { type: NAVIGATOR_INVOCATION_ENTRY, ...data },
-                source: "role-runtime",
-              });
-            } catch {}
-          }
-          navigatorAttendance = await dependencies.createNavigatorAttendance({
-            context: ctx,
-            role: entry.role,
-            phase: invocationPhase,
-            subjectKey: work.subjectKey,
-            subject: work.subject,
-            authority: work.authority,
-            invocationId,
-            ...(contextError === undefined ? {} : { contextError }),
-            onEvent: (navigatorEvent, report) => {
-              pendingNavigatorPresentation = { event: navigatorEvent, report };
-            },
-          });
-          // Concrete work context starts standby attendance (record only, no model).
-          // Placeholder subjects wait for before_agent_start (user prompt may replace the subject key).
-          if (
-            navigatorWorkContext.contextError === undefined &&
-            navigatorWorkContext.subjectProvenance !== "placeholder"
-          ) {
-            navigatorAttendance.prepare();
-          }
-        }
 
         await executeActivationStage(entry.role, activationStage(entry.role, activateByRole), { clock, writeTrace });
         roleReferenceMaterials = await dependencies.loadRoleReferenceMaterials?.(entry.role) ?? "";

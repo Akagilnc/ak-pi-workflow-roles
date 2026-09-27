@@ -1727,7 +1727,6 @@ export async function peekRoleRunRole(
   | "gleaner-left"
   | "inspector"
   | "gatekeeper"
-  | "navigator"
   | "auditor"
   | "diarist"
   | "secretariat"

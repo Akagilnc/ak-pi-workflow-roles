@@ -22,7 +22,7 @@ import test from "node:test";
 import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { issuePiDurablePrincipalCoordinates } from "../../src/pi/durable-principal.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME as GATEKEEPER_OUTPUT_TOOL } from "../../src/package-contracts/gatekeeper-output.ts";
-import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
+import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
@@ -32,7 +32,7 @@ import { packageRoot } from "../helpers/pi-test-harness.ts";
 import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
 
 type InstructionSeatCase = {
-  readonly role: "gatekeeper" | "navigator";
+  readonly role: "gatekeeper" | "judge";
   readonly runId: string;
   readonly instruction: string;
   readonly toolName: string;
@@ -89,10 +89,10 @@ const CASES: readonly InstructionSeatCase[] = [
     },
   },
   {
-    role: "navigator",
+    role: "judge",
     runId: "01a0navi00-0000-7000-8000-000000000639",
     instruction: "刚完成 coder apply 收敛，下一步？",
-    toolName: NAVIGATOR_OUTPUT_TOOL_NAME,
+    toolName: JUDGE_OUTPUT_TOOL_NAME,
     details: {
       status: "advice",
       candidates: [

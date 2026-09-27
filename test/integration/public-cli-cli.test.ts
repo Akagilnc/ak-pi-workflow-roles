@@ -156,8 +156,6 @@ test("config persistence round-trips across processes on the typed seat face", a
         "set",
         "judge",
         "xai/grok-4.5:high",
-        "navigator",
-        "openai-codex/gpt-5.6-luna:medium",
       ],
       { packageRoot, home, io: captureIo().io },
     );
@@ -167,11 +165,6 @@ test("config persistence round-trips across processes on the typed seat face", a
       provider: "xai",
       model: "grok-4.5",
       thinking: "high",
-    });
-    assert.deepEqual(persisted.seats.navigator, {
-      provider: "openai-codex",
-      model: "gpt-5.6-luna",
-      thinking: "medium",
     });
 
     const rolesResult = await runAkRole(["roles"], {

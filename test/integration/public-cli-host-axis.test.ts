@@ -98,17 +98,16 @@ test("host selection failures are canonical and stop before role turn", async ()
   assert.equal(turnCalls, 0);
 }));
 
-test("host flags reject non-role commands; navigator is a callable seat (#639)", async () => homeTest(async (home) => {
+test("host flags reject non-role commands; judge host axis persists", async () => homeTest(async (home) => {
   const flag = await runAkRole(["roles", "--host", "pi"], base(home, [adapter("pi", [])]));
   assert.equal(flag.exitCode, 2);
 
-  // #639: navigator has a public call path — persistent host axis is legal.
-  await runAkRole(["config", "set", "navigator", "openai-codex/gpt-5.6-sol:high"], base(home, []));
-  const command = await runAkRole(["config", "set-host", "navigator", "pi"], base(home, []));
+  await runAkRole(["config", "set", "judge", "openai-codex/gpt-5.6-sol:high"], base(home, []));
+  const command = await runAkRole(["config", "set-host", "judge", "pi"], base(home, []));
   assert.equal(command.exitCode, 0);
 
   await writeFile(publicCliConfigPath(home), JSON.stringify({
-    seats: { navigator: { provider: "openai-codex", model: "gpt-5.6-sol", host: "pi" } },
+    seats: { judge: { provider: "openai-codex", model: "gpt-5.6-sol", host: "pi" } },
   }));
   const disk = await runAkRole(["config", "show"], base(home, []));
   assert.equal(disk.exitCode, 0);

@@ -37,11 +37,6 @@ test("bulk persistent configuration survives a new process boundary", async () =
       model: "gpt-5.6-sol",
       thinking: "high",
     });
-    config = setPersistentSeatConfig(config, "navigator", {
-      provider: "xai",
-      model: "grok-4.5",
-      thinking: "medium",
-    });
     await savePublicCliConfig(config, home);
 
     // New process boundary: reload from the same home path with a fresh read.
@@ -50,11 +45,6 @@ test("bulk persistent configuration survives a new process boundary", async () =
       provider: "openai-codex",
       model: "gpt-5.6-sol",
       thinking: "high",
-    });
-    assert.deepEqual(reloaded.seats.navigator, {
-      provider: "xai",
-      model: "grok-4.5",
-      thinking: "medium",
     });
     assert.equal(publicCliConfigPath(home).endsWith("public-cli.json"), true);
     const raw = JSON.parse(await readFile(publicCliConfigPath(home), "utf8")) as PublicCliConfig;
@@ -120,7 +110,6 @@ test("effective seat configurations enumerate the public configurable roster", (
     "gleaner-left",
     "inspector",
     "gatekeeper",
-    "navigator",
     "auditor",
     "diarist",
   ]);

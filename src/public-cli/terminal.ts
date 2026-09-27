@@ -35,7 +35,6 @@ export type TerminalRoleName =
   | "gleaner-left"
   | "inspector"
   | "gatekeeper"
-  | "navigator"
   | "auditor"
   | "diarist"
   | "secretariat";
@@ -99,24 +98,6 @@ export function exitCodeForTerminalOutcome(
   return isLawfulTypedTerminalOutcome(outcome) ? 0 : 1;
 }
 
-export type TerminalNavigatorFact =
-  | {
-      /** #959: navigator speaks prose; code does not parse or rank the advice. */
-      disposition: "advice";
-      prose: string;
-      advisoryDiagnostic?: string;
-    }
-  | {
-      disposition: "no-advice";
-      advisoryDiagnostic?: string;
-    }
-  | {
-      disposition: "unavailable";
-      source: string;
-      reason: string;
-      advisoryDiagnostic?: string;
-    };
-
 /** Present only when a controlled failure is v1-resumable (typed HTTP 429). */
 export type TerminalResume = {
   /** Complete public command; run ID is revealed only here. */
@@ -162,14 +143,6 @@ export type TerminalGateFact = {
 };
 
 /**
- * One admitted Role run's typed Terminal aggregate.
- * Resumable failures carry `resume` and must not re-disclose the run ID via
- * top-level `runId` or public artifact path components — only `resume.command`.
- * #416: autoResumeCount (0..2) is a call-local observation of how many in-place
- * auto-resumes occurred during this single LLM call; it is not persisted to
- * run-state.json and does not participate in limit decisions.
- */
-/**
  * Current-result payloads on a terminal — accepted/audit role result, or a
  * rare intentional failure face. Run history is TerminalResult.submissions
  * (#836 / #953), not this helper.
@@ -206,7 +179,6 @@ export type TerminalResult = {
     completeness: { exitCode: number; stderr?: string };
     correctness: { exitCode: number; stderr?: string };
   }>;
-  navigator: TerminalNavigatorFact;
   artifacts: readonly TerminalArtifactRef[];
   /**
    * Run-scoped recorded submission history (#836). For accepted/audit this often
@@ -242,21 +214,6 @@ export type TerminalResult = {
 );
 
 /**
- * Build an advice navigator fact (#959). Prose is presented as submitted;
- * code does not parse route/next or judge usability.
- */
-export function adviceNavigatorFact(input: {
-  prose: string;
-  advisoryDiagnostic?: string;
-}): TerminalNavigatorFact {
-  return {
-    disposition: "advice",
-    prose: input.prose,
-    ...(input.advisoryDiagnostic === undefined ? {} : { advisoryDiagnostic: input.advisoryDiagnostic }),
-  };
-}
-
-/**
  * Present one Terminal result for humans. Labels, row order, wording, and layout
  * are unfrozen (ADR 0052). Machine consumers and tests must read typed
  * TerminalResult / settlement owners — never bite this presentation.
@@ -286,18 +243,6 @@ export function formatTerminalResult(result: TerminalResult): string {
         typeof value === "string" ? value : JSON.stringify(value);
       lines.push(`fact\t${encodeTerminalField(key)}\t${encodeTerminalField(rendered)}`);
     }
-  }
-  lines.push(`navigator\t${result.navigator.disposition}`);
-  if (result.navigator.advisoryDiagnostic !== undefined) {
-    lines.push(`navigator-advisory\t${encodeTerminalField(result.navigator.advisoryDiagnostic)}`);
-  }
-  if (result.navigator.disposition === "advice") {
-    // #959: present navigator prose as-is — no next/reason/command parsing.
-    lines.push(`prose\t${encodeTerminalField(result.navigator.prose)}`);
-  } else if (result.navigator.disposition === "unavailable") {
-    lines.push(
-      `unavailable\t${result.navigator.source}\t${encodeTerminalField(result.navigator.reason)}`,
-    );
   }
   for (const artifact of result.artifacts) {
     lines.push(`artifact\t${artifact.kind}\t${encodeTerminalField(artifact.path)}`);

@@ -35,7 +35,6 @@ export type PublicSummonRole =
   | "inspector"
   | "notary"
   | "auditor"
-  | "navigator"
   | "gatekeeper"
   | "judge"
   | "doctor"
@@ -109,15 +108,13 @@ export type PublicSummonRequest = {
   readonly correlationId?: string;
   /**
    * Resume an existing instruction-seat run via public CLI resume (host-native
-   * session continuity). Used by navigator attendance so prior advice stays on
-   * the host session — not a package-built advice ledger.
+   * session continuity).
    */
   readonly resumeRunId?: string;
   /**
-   * Nested court station child (default true): omit Navigator auto-attendance
-   * and use station-child resume. Ordinary public-equivalent legs (dual-lens
-   * Reviewer axes) pass false so behavior matches a top-level single-axis call
-   * (#946 / ADR 0082).
+   * Nested court station child (default true): use station-child resume.
+   * Ordinary public-equivalent legs (dual-lens Reviewer axes) pass false so
+   * behavior matches a top-level single-axis call (#946 / ADR 0082).
    */
   readonly stationChild?: boolean;
 };

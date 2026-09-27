@@ -591,7 +591,6 @@ test("public CLI resumable failure projects gate without re-disclosing runId out
     // Resume desensitization: runId only inside resume.command among typed regions.
     const outside = {
       roleOutcome: terminal.roleOutcome,
-      navigator: terminal.navigator,
       artifacts: terminal.artifacts,
       gate: terminal.gate,
       runId: terminal.runId,

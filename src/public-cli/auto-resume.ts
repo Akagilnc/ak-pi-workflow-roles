@@ -370,7 +370,6 @@ function dispatchExceptionFailureTerminal(input: {
       diagnostic,
       decisiveFacts,
     },
-    navigator: { disposition: "no-advice" },
     artifacts,
     runId: input.runId,
     autoResumeCount: input.autoResumeAttempts,

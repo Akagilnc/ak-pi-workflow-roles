@@ -37,7 +37,7 @@ import {
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { INSPECTOR_OUTPUT_TOOL_NAME } from "../../src/inspector-contracts.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME } from "../../src/package-contracts/gatekeeper-output.ts";
-import { NAVIGATOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/navigator-output.ts";
+import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
 import {
   roleTurnHostFromLegacyPiRunner,
   scriptedTerminatingToolSession,
@@ -119,16 +119,16 @@ const SEAT_SPECS: readonly SeatTracerSpec[] = [
     sealedDetails: () => ({ status: "pass", findings: [] }),
   },
   {
-    role: "navigator",
-    outputTool: NAVIGATOR_OUTPUT_TOOL_NAME,
-    admit: async ({ home, project, runId }) => await admitPublicRole("navigator", {
-      instruction: "original admitted navigator instruction",
+    role: "judge",
+    outputTool: JUDGE_OUTPUT_TOOL_NAME,
+    admit: async ({ home, project, runId }) => await admitPublicRole("judge", {
+      instruction: "original admitted judge instruction",
       attachmentPaths: [],
     }, {
       home, principalAuthority: piDurablePrincipalAuthority, cwd: project, createRunId: () => runId,
     }),
-    originalInstruction: "original admitted navigator instruction",
-    sealedDetails: () => ({ status: "advice", candidates: [] }),
+    originalInstruction: "original admitted judge instruction",
+    sealedDetails: () => ({ status: "converged", report: "resume probe" }),
   },
   {
     role: "collector",

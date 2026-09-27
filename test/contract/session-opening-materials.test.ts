@@ -75,7 +75,6 @@ const TICKET_MAIN_MATERIALS = {
     "souls/gate-output-guide.md",
     "docs/adr/0057-schema-narrowing-cuts-the-required-set-not-the-declared-set.md",
   ],
-  navigator: ["CLAUDE.md", "souls/navigator.md"],
 } as const;
 
 const TICKET_GATEKEEPER_MATERIALS = {

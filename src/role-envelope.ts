@@ -30,9 +30,9 @@ import {
   projectCorrectableExecuteRejection,
 } from "./submission-correctable-error.ts";
 import {
-  buildNavigatorInfrastructureFailureFact,
+  buildRoleInfrastructureFailureFact,
   extractInfrastructureFailureEvidence,
-} from "./navigator-invocation-identity.ts";
+} from "./role-terminal-classification.ts";
 import { serializeThrownValue } from "./serialize-thrown-value.ts";
 
 export { projectActivationFlags };
@@ -342,7 +342,7 @@ export async function prepareRoleEnvelope(options: {
       ? (error as unknown as { code: string }).code
       : "ak-tool-execution-failed";
     const details: Record<string, unknown> = {
-      ...buildNavigatorInfrastructureFailureFact(),
+      ...buildRoleInfrastructureFailureFact(),
       ...extractInfrastructureFailureEvidence(error),
       cause: "infrastructure",
       code: errorCode,

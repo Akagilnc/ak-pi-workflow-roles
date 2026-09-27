@@ -245,7 +245,7 @@ test("#959 missing host binary stays activation spawn-failed with real path", as
     });
     const result = await host.executeTurn({
       principal: fixturePrincipal(join(ledger.runDirectory, "session")),
-      activation: { role: "navigator" },
+      activation: { role: "judge" },
       methods: [],
       continuation: { kind: "initial", prompt: "probe" },
       model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
