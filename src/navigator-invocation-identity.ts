@@ -260,8 +260,6 @@ export function isAcceptedPackagedRoleTerminalResult(
   return classifyPackagedRoleTerminalResult(message).kind === "accepted";
 }
 
-export const NAVIGATOR_FAILURE_DELIVERY_ENTRY = "ak-navigator-failure-delivery";
-
 export type DurablePackagedRoleTerminalRef = {
   readonly index: number;
   readonly role: string;

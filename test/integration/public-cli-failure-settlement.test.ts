@@ -16,7 +16,6 @@ import { DOCTOR_AUDIT_TOOL_NAME } from "../../src/doctor-auditor.ts";
 import { JUDGE_AUDIT_TOOL_NAME } from "../../src/judge-auditor.ts";
 
 import { JUDGE_OUTPUT_TOOL_NAME } from "../../src/package-contracts/judge-output.ts";
-import { buildNavigatorInfrastructureFailureFact, NAVIGATOR_FAILURE_DELIVERY_ENTRY } from "../../src/navigator-invocation-identity.ts";
 import { NOTARY_OUTPUT_TOOL_NAME } from "../../src/notary-contracts.ts";
 import { AUDITOR_OUTPUT_TOOL_NAME } from "../../src/package-contracts/auditor-output.ts";
 import { savePublicCliConfig, setPersistentSeatConfig } from "../../src/public-cli/config.ts";
@@ -289,7 +288,7 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   });
   assert.equal(noThrownKey.cause, "activation");
 });
-test("failure settlement Terminal retains this tool call's delivered advice", async () => {
+test("failure settlement Terminal agrees with exact-session affirmative attendance", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -309,8 +308,7 @@ test("failure settlement Terminal retains this tool call's delivered advice", as
     const sessionFile = join(sessionDirectory, "session.jsonl");
     const attendanceDetails = {
       version: 1,
-      disposition: "advice",
-      prose: "review before closing",
+      disposition: "no-advice",
       invocationId: "019f8c2a-6666-7666-8666-666666666666",
       role: "judge",
       phase: null,
@@ -335,24 +333,22 @@ test("failure settlement Terminal retains this tool call's delivered advice", as
             role: "toolResult",
             toolName: JUDGE_OUTPUT_TOOL_NAME,
             toolCallId: "fatal-judge",
-            isError: true,
-            details: buildNavigatorInfrastructureFailureFact(),
+            // Durable accepted terminal for post-terminal attendance window; retryable
+            // isError:true/details:{} is nonterminal under the shared classifier.
+            isError: false,
+            details: { status: "converged" },
           },
         }),
         JSON.stringify({
           type: "custom",
-          customType: NAVIGATOR_FAILURE_DELIVERY_ENTRY,
-          data: { toolCallId: "fatal-judge", navigator: attendanceDetails },
-        }),
-        JSON.stringify({
-          type: "custom",
-          customType: NAVIGATOR_FAILURE_DELIVERY_ENTRY,
-          data: { toolCallId: "other-call", navigator: { disposition: "no-advice" } },
+          customType: "ak-role-submission-closure",
+          data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" }, navigator: attendanceDetails },
         }),
         JSON.stringify({
           type: "custom_message",
           customType: "ak-navigator-attendance",
-          message: { details: { disposition: "no-advice" } },
+          message: { details: attendanceDetails },
+          details: attendanceDetails,
         }),
       ].join("\n") + "\n",
       "utf8",
@@ -374,10 +370,7 @@ test("failure settlement Terminal retains this tool call's delivered advice", as
       diagnostic: "role infrastructure failed",
     }, piDurablePrincipalAuthority);
     assert.equal(terminal.roleOutcome.kind, "failure");
-    assert.equal(terminal.navigator.disposition, "advice");
-    if (terminal.navigator.disposition === "advice") {
-      assert.equal(terminal.navigator.prose, "review before closing");
-    }
+    assert.equal(terminal.navigator.disposition, "no-advice");
   });
 });
 test("JSONL tool_execution event flood keeps real diagnostic; oversized line is presentation-bounded", async () => {
