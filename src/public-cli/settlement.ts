@@ -88,11 +88,7 @@ import {
   findLatestDurablePackagedRoleTerminal,
   hasNavigatorInfrastructureFailureBase,
   isAcceptedPackagedRoleTerminalResult,
-  isReceiptSettlementBindingClear,
-  NAVIGATOR_INVOCATION_ENTRY,
   NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
-  parseInvocationMarkerIdentity,
-  type InvocationMarkerIdentity,
 } from "../navigator-invocation-identity.ts";
 import {
   NO_RECEIPT_LIFECYCLE_ENTRY_TYPE,
@@ -1921,23 +1917,6 @@ export async function appendRunAttemptHistory(
   } catch {}
 }
 
-/**
- * Minimal attendance provenance against the bound marker (ADR 0043).
- * Keep only invocationId + post-terminal ordering. Runtime-self-produced
- * role/phase/subject/version are not re-reconciled here (ADR 0042).
- */
-function navigatorAttendanceCorrelatedWithBoundMarker(
-  details: Record<string, unknown>,
-  attendanceIndex: number,
-  terminalIndex: number,
-  marker: InvocationMarkerIdentity,
-): boolean {
-  if (attendanceIndex <= terminalIndex) return false;
-  // Exact current invocation token is the bound marker principal.
-  if (details.invocationId !== marker.invocationId) return false;
-  return true;
-}
-
 function parseNavigatorAttendanceDetails(
   details: Record<string, unknown>,
 ): TerminalNavigatorFact {
@@ -2216,10 +2195,9 @@ export function extractNavigatorFact(
 function extractNavigatorAttendanceFact(
   entries: readonly SessionEntry[],
 ): TerminalNavigatorFact {
-  // Affirmative attendance only. Missing / uncorrelated / unparseable is never no-advice.
-  // Minimal provenance: latest durable terminal + nearest preceding marker +
-  // invocationId + post-terminal order. Marker↔terminal cardinality belongs to
-  // receipt settlement (isReceiptSettlementBindingClear), not attendance extraction.
+  // Affirmative attendance only. Missing / unparseable is never no-advice.
+  // The shared lifecycle places the settled event on this submission's closure;
+  // an unrelated attendance message cannot supply another call's result.
   const terminal = findLatestDurablePackagedRoleTerminal(entries);
   if (terminal === undefined) {
     return {
@@ -2229,57 +2207,12 @@ function extractNavigatorAttendanceFact(
     };
   }
 
-  let markerIndex = -1;
-  for (let i = terminal.index - 1; i >= 0; i -= 1) {
+  for (let i = terminal.index; i < entries.length; i += 1) {
     const entry = entries[i];
-    if (entry?.type === "custom" && entry.customType === NAVIGATOR_INVOCATION_ENTRY) {
-      markerIndex = i;
-      break;
-    }
-  }
-  if (markerIndex < 0) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: "Navigator attendance is uncorrelated with session invocation facts",
-    };
-  }
-  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
-  if (marker === undefined) {
-    return {
-      disposition: "unavailable",
-      source: "unknown",
-      reason: "Navigator attendance is uncorrelated with session invocation facts",
-    };
-  }
-
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type === "custom_message" && entry.customType === "ak-navigator-attendance") {
-      const details = entry.message?.details ?? (entry as { details?: unknown }).details;
-      if (!isRecord(details)) {
-        return {
-          disposition: "unavailable",
-          source: "unknown",
-          reason: "Navigator attendance is unparseable",
-        };
-      }
-      if (
-        !navigatorAttendanceCorrelatedWithBoundMarker(
-          details,
-          i,
-          terminal.index,
-          marker,
-        )
-      ) {
-        return {
-          disposition: "unavailable",
-          source: "unknown",
-          reason: "Navigator attendance is uncorrelated with session invocation facts",
-        };
-      }
-      return parseNavigatorAttendanceDetails(details);
-    }
+    if (entry?.type !== "custom" || entry.customType !== "ak-role-submission-closure") continue;
+    const details = isRecord(entry.data) ? entry.data.navigator : undefined;
+    if (!isRecord(details)) break;
+    return parseNavigatorAttendanceDetails(details);
   }
   // Absence is not successful no-advice — require affirmative typed attendance.
   return {

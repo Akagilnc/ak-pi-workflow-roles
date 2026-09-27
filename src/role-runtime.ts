@@ -523,7 +523,7 @@ export async function projectClosedSubmissionLifecycle(
   context: HostContext,
   phase: NavigatorPhase,
   recordAccepted: () => void,
-  settle: (settlement: NavigatorSettlement | undefined) => Promise<void>,
+  settle: (settlement: NavigatorSettlement | undefined) => Promise<NavigatorEvent | undefined>,
 ): Promise<void> {
   recordAccepted();
   const closure = {
@@ -531,8 +531,17 @@ export async function projectClosedSubmissionLifecycle(
     isError: false,
     details: closed.accepted,
   };
-  context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", closure);
-  await settle(publicNavigatorSettlement(closed.role, phase, closure));
+  let navigator: NavigatorEvent | undefined;
+  try {
+    navigator = await settle(publicNavigatorSettlement(closed.role, phase, closure));
+  } finally {
+    // A Navigator failure cannot erase an already accepted role closure.
+    // Missing attendance remains a typed unavailable at public settlement.
+    context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", {
+      ...closure,
+      ...(navigator === undefined ? {} : { navigator }),
+    });
+  }
 }
 
 /**
@@ -1032,6 +1041,8 @@ export function createRoleRuntimeExtension(
     let navigatorAttendance: NavigatorAttendanceDependency | undefined;
     // #351: session-lifecycle owner for periodic OAuth refresh (orthogonal to role admission).
     let pendingNavigatorPresentation: { event: import("./navigator-attendance.ts").NavigatorEvent; report: import("./navigator-attendance.ts").NavigatorReport } | undefined;
+    let navigatorActivation = 0;
+    let navigatorDeliveryClosed = false;
     let pendingNavigatorSettlement: Promise<void> | undefined;
     let navigatorWorkContext: NavigatorWorkContext | undefined;
     let navigatorSessionParent: string | undefined;
@@ -1085,7 +1096,7 @@ export function createRoleRuntimeExtension(
       }
       void Promise.resolve(pending).then(undefined, recordDisposeFailure);
     };
-    const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined) => {
+    const settleNavigatorProjection = async (settlement: NavigatorSettlement | undefined): Promise<NavigatorEvent | undefined> => {
       const attendance = navigatorAttendance;
       if (settlement === undefined || attendance === undefined) return;
       const workContext = navigatorWorkContext;
@@ -1099,6 +1110,7 @@ export function createRoleRuntimeExtension(
         void settlePromise.catch(() => undefined);
         const raced = await raceNavigatorGrace(settlePromise, NAVIGATOR_POST_ROLE_GRACE_MS);
         if (raced.status !== "timeout") return;
+        navigatorDeliveryClosed = true;
         if (pendingNavigatorPresentation === undefined) {
           const report: NavigatorReport = {
             disposition: "unavailable",
@@ -1124,6 +1136,7 @@ export function createRoleRuntimeExtension(
       })();
       pendingNavigatorSettlement = pending;
       await pending;
+      return pendingNavigatorPresentation?.event;
     };
     projectClosedSubmission = async (closed, context) => projectClosedSubmissionLifecycle(
       closed,
@@ -1695,6 +1708,8 @@ export function createRoleRuntimeExtension(
       receiptDelivery = createReceiptDeliveryPolicy();
       noReceiptRecorded = false;
       pendingNavigatorPresentation = undefined;
+      navigatorActivation += 1;
+      navigatorDeliveryClosed = false;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();
       pendingSubmissionNonPassByToolCallId.clear();
@@ -1811,6 +1826,7 @@ export function createRoleRuntimeExtension(
               });
             } catch {}
           }
+          const activation = navigatorActivation;
           navigatorAttendance = await dependencies.createNavigatorAttendance({
             context: ctx,
             role: entry.role,
@@ -1821,7 +1837,9 @@ export function createRoleRuntimeExtension(
             invocationId,
             ...(contextError === undefined ? {} : { contextError }),
             onEvent: (navigatorEvent, report) => {
-              pendingNavigatorPresentation = { event: navigatorEvent, report };
+              if (activation === navigatorActivation && !navigatorDeliveryClosed) {
+                pendingNavigatorPresentation = { event: navigatorEvent, report };
+              }
             },
           });
           // Concrete work context starts standby attendance (record only, no model).

@@ -7,7 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
@@ -17,6 +17,7 @@ import { piDurablePrincipalAuthority } from "../../src/pi/durable-principal.ts";
 import { runAkRole } from "../../src/public-cli/cli.ts";
 import type { TerminalRoleName } from "../../src/public-cli/terminal.ts";
 import { DOCTOR_CANDIDATE_ENTRY_TYPE } from "../../src/dossier-resolution.ts";
+import { NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY } from "../../src/navigator-attendance.ts";
 import { configurePassingReviewSeats } from "../helpers/passing-review-host.ts";
 import { seedDoctorIssueRuns } from "../helpers/doctor-fixtures.ts";
 import { seedCanonicalSourceRun } from "../helpers/notary-fixtures.ts";
@@ -31,7 +32,6 @@ import {
 
 const TICKET = 505;
 const ROUTEBOOK_FAILURE = "missing playbook";
-const ROUTEBOOK_INVOCATION = "01a05052-0000-7000-8000-000000000099";
 
 function seedGitProject(root: string): void {
   execFileSync("git", ["init", "-b", "main"], { cwd: root });
@@ -92,29 +92,11 @@ test("#505 every active seat routes, submits, and settles from the public entry"
           if (seat.role === "navigator") {
             const sessionFile = argvFlagValue(args, "--session");
             assert.ok(sessionFile);
-            const prior = await readFile(sessionFile, "utf8");
-            const marker = JSON.stringify({
+            await appendFile(sessionFile, `${JSON.stringify({
               type: "custom",
-              customType: "ak-navigator-invocation",
-              data: {
-                invocationId: ROUTEBOOK_INVOCATION,
-                role: "navigator",
-                phase: null,
-                subjectKey: "subject",
-              },
-            });
-            const attendance = JSON.stringify({
-              type: "custom_message",
-              customType: "ak-navigator-attendance",
-              message: {
-                details: {
-                  invocationId: ROUTEBOOK_INVOCATION,
-                  disposition: "no-advice",
-                  routePlaybookReadFailure: ROUTEBOOK_FAILURE,
-                },
-              },
-            });
-            await writeFile(sessionFile, `${marker}\n${prior}${attendance}\n`, "utf8");
+              customType: NAVIGATOR_ROUTE_PLAYBOOK_FAILURE_ENTRY,
+              data: { message: ROUTEBOOK_FAILURE },
+            })}\n`, "utf8");
           }
           return written;
         },
