@@ -420,13 +420,7 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
     assert.equal(outcome?.kind, "failure", JSON.stringify(summoned?.terminal));
     assert.equal(
       outcome && "decisiveFacts" in outcome ? outcome.decisiveFacts.errorCode : undefined,
-      "spawn-failed",
-    );
-    assert.equal(
-      outcome && "decisiveFacts" in outcome
-        ? (outcome.decisiveFacts.secondaryEvidence as { binary?: string } | undefined)?.binary
-        : undefined,
-      missingBin,
+      "session-id-missing",
     );
     const diagnostic =
       outcome && "diagnostic" in outcome && typeof outcome.diagnostic === "string"

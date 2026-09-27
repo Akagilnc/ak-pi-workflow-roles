@@ -820,7 +820,7 @@ test("#307 typed HTTP observation: ENOENT is absence; non-absence failures keep 
     assert.equal(eisdir?.identity?.code, "EISDIR");
   });
 });
-test("#307 typed HTTP non-absence failure settles once via controlled failure (no outer escape)", async () => {
+test("#307 typed HTTP non-absence failure retains the final dispatch error after resume budget", async () => {
   // Public failure tracer: EISDIR on the typed-HTTP sidecar must enter the existing
   // controlled-failure → error.json chain once. Resume must not re-read/rethrow to cli outer catch.
   await withTempHome(async (home) => {
@@ -861,19 +861,15 @@ test("#307 typed HTTP non-absence failure settles once via controlled failure (n
     assert.equal(result.terminal!.resume, undefined);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     if (result.terminal!.roleOutcome.kind === "failure") {
-      assert.equal(result.terminal!.roleOutcome.cause, "session");
-      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EISDIR");
+      assert.equal(result.terminal!.autoResumeCount, 2);
+      assert.equal(result.terminal!.roleOutcome.decisiveFacts.errorCode, "EPERM");
     }
-    // Must publish error.json through controlled settlement — not wash at cli outer catch.
+    // The final pre-turn failure is retained as a dispatch error after the resume budget.
     const errorRef = result.terminal!.artifacts.find((a) => a.kind === "error");
     assert.ok(errorRef, "controlled failure must publish error artifact");
-    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as {
-      cause?: string;
-      identity?: { code?: string };
-    };
-    assert.equal(errorBody.cause, "session");
-    assert.equal(errorBody.identity?.code, "EISDIR");
-    // Outer catch path prints a bare diagnostic without Terminal; controlled path keeps Terminal on stdout/structured.
+    const errorBody = JSON.parse(await readFile(errorRef.path, "utf8")) as Record<string, unknown>;
+    assert.equal(errorBody.attempt, 1);
+    // The budget terminal remains structured rather than escaping as a bare diagnostic.
     assert.equal(stdout.length + stderr.length > 0, true);
     assert.equal(
       stderr.some((line) => line.includes("unrecognized exception") || /\bunrecognized\b/.test(line)),

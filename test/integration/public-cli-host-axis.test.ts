@@ -331,13 +331,13 @@ test("production adapter table registers grok-build and hermes and keeps pi sele
   // Default host remains pi (zero drift); injectable roleTurnHost still backs the pi adapter.
   const defaultPi = await runAkRole(["judge", "default"], productionBase(home, countingPi));
   assert.equal(defaultPi.hostFailure, undefined);
-  assert.equal(piTurns, 1);
+  assert.equal(piTurns, 3);
   assert.equal(defaultPi.exitCode, 1);
 
   // Explicit pi still selects the pi adapter.
   const explicitPi = await runAkRole(["judge", "--host", "pi", "explicit"], productionBase(home, countingPi));
   assert.equal(explicitPi.hostFailure, undefined);
-  assert.equal(piTurns, 2);
+  assert.equal(piTurns, 6);
 
   // Unregistered name still fails without fallback; production table lists both hosts as typed fields.
   const missing = await runAkRole(["judge", "--host", "missing", "x"], productionBase(home, countingPi));
@@ -349,7 +349,7 @@ test("production adapter table registers grok-build and hermes and keeps pi sele
     model: "openai-codex/gpt-5.6-sol",
     registeredHosts: ["pi", "grok-build", "hermes", "claude", "codex"],
   });
-  assert.equal(piTurns, 2);
+  assert.equal(piTurns, 6);
 }));
 
 test("grok-build selection and execution have no provider restriction", async () => homeTest(async (home) => {
@@ -389,7 +389,7 @@ test("grok-build selection and execution have no provider restriction", async ()
     assert.equal(result.hostFailure, undefined, spec);
     assert.equal(result.exitCode, 1, spec);
     assert.equal(piTurns, 0, spec);
-    assert.equal(grokTurns, 1, spec);
+    assert.equal(grokTurns, 3, spec);
     assert.equal(grokProviders[0], spec.split("/")[0], spec);
   }
 }));
@@ -455,8 +455,8 @@ test("host provider resolution prefers table, then unique directory, else fails 
   assert.equal(pi.hostFailure, undefined);
   assert.equal(pi.exitCode, 1);
   assert.deepEqual(seen, [
-    { host: "hermes", provider: "xai-oauth" },
-    { host: "pi", provider: "xai" },
+    ...Array.from({ length: 3 }, () => ({ host: "hermes", provider: "xai-oauth" })),
+    ...Array.from({ length: 3 }, () => ({ host: "pi", provider: "xai" })),
   ]);
 
   // Drop the table entry → directory is ambiguous → leg does not start.
@@ -480,7 +480,7 @@ test("host provider resolution prefers table, then unique directory, else fails 
   seen.length = 0;
   const unique = await runAkRole(["judge", "--host", "hermes", "unique"], base(home, adapters));
   assert.equal(unique.hostFailure, undefined);
-  assert.deepEqual(seen, [{ host: "hermes", provider: "xai-oauth" }]);
+  assert.deepEqual(seen, Array.from({ length: 3 }, () => ({ host: "hermes", provider: "xai-oauth" })));
 
   // Seat rows themselves stay as written.
   assert.deepEqual((await loadPublicCliConfig(home)).seats.judge, {

@@ -124,7 +124,7 @@ test("coder apply/plan/resume project typed RoleTurnRequest preserves phase and 
     await mkdir(project, { recursive: true });
     seedGitProject(project);
 
-    const captured: { current: RoleTurnRequest | undefined } = { current: undefined };
+    const captured: { current: RoleTurnRequest | undefined; first: RoleTurnRequest | undefined } = { current: undefined, first: undefined };
 
     // Apply phase selects the typed apply request.
     {
@@ -137,6 +137,7 @@ test("coder apply/plan/resume project typed RoleTurnRequest preserves phase and 
           io: captureIo().io,
           credentials: { "openai-codex": true, xai: true },
           roleTurnHost: createMinimalHost((request) => {
+            captured.first ??= request;
             captured.current = request;
             return Promise.resolve({ code: 1, stderr: "stop", timedOut: false });
           }),
@@ -145,7 +146,8 @@ test("coder apply/plan/resume project typed RoleTurnRequest preserves phase and 
       const req = captured.current!;
       assert.equal(req.activation.role, "coder");
       assert.equal(req.activation.phase, "apply");
-      assert.equal(req.continuation.kind, "initial");
+      assert.equal(captured.first?.continuation.kind, "initial");
+      assert.equal(req.continuation.kind, "resume");
       // Host-neutral transport: no Pi `/skill:` on the shared request face (#822).
       assert.equal(req.continuation.prompt.startsWith("/skill:"), false);
     }
