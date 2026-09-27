@@ -25,12 +25,6 @@ import {
 import { readPackageMaterial } from "./session-opening-materials.ts";
 import { writeStderrJsonlRecord } from "./stderr-jsonl.ts";
 import {
-  createToolExecutionObservationFace,
-  systemToolExecutionObservationMonoNow,
-  writeToolExecutionObservationRecord,
-  type ToolExecutionObservationWriter,
-} from "./tool-execution-observation.ts";
-import {
   ENGINE_DETOUR_TOOL_NAME,
   ENGINE_MODEL_FLAG_NAME,
   resolveEngineModel,
@@ -286,17 +280,6 @@ export type {
   ActivationSessionManager,
   ActivationSessionPointer,
 } from "./activation-ledger.ts";
-export {
-  TOOL_EXECUTION_UPDATE_HEARTBEAT,
-  TOOL_EXECUTION_UPDATE_THROTTLE_MS,
-  createToolExecutionObservationFace,
-  isProducingToolUpdate,
-  systemToolExecutionObservationMonoNow,
-  toolExecutionObservationRecordSchema,
-  validateToolExecutionObservationRecord,
-  writeToolExecutionObservationRecord,
-} from "./tool-execution-observation.ts";
-export type { ToolExecutionObservationRecord, ToolExecutionObservationWriter } from "./tool-execution-observation.ts";
 import {
   NOTARY_OUTPUT_TOOL,
   INSPECTOR_OUTPUT_TOOL,
@@ -477,11 +460,6 @@ export type RoleRuntimeDependencies = {
   loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   activationClock?(): string;
   activationTraceWriter?: (record: ActivationTraceRecord) => void | Promise<void>;
-  /** Wall-clock ISO timestamps for tool-execution observation records; defaults to activationClock/Date. */
-  toolExecutionObservationClock?(): string;
-  /** Monotonic ms clock for update throttling; defaults to performance.now (not Date.now). */
-  toolExecutionObservationMonoNow?(): number;
-  toolExecutionObservationWriter?: ToolExecutionObservationWriter;
 };
 
 function abortContext(ctx: { abort(): void }): void {
@@ -1081,7 +1059,7 @@ export function createRoleRuntimeExtension(
     // terminating-tool rejections and mechanical delivery requests share two turns.
     let receiptDelivery = createReceiptDeliveryPolicy();
     let noReceiptRecorded = false;
-    // Public-run fetch observation (in-process-session statusAwareFetch face).
+    // Public-run fetch observation.
     let priorFetch: typeof globalThis.fetch | undefined;
     let fetchWrapped = false;
     /** Envelope-owned: abort/teardown attendance without re-blocking the parent court (#959). */
@@ -1498,7 +1476,6 @@ export function createRoleRuntimeExtension(
       disposeNavigatorAttendanceNonBlocking(attendanceToDispose);
       pendingInfrastructureFailures.clear();
       pendingSubmissionNonPassByToolCallId.clear();
-      observationFace.reset();
     });
 
     const hostActions = {
@@ -1736,38 +1713,9 @@ export function createRoleRuntimeExtension(
 
     const clock = dependencies.activationClock ?? (() => new Date().toISOString());
     const writeTrace = dependencies.activationTraceWriter ?? writeActivationTraceRecord;
-    const observationFace = createToolExecutionObservationFace({
-      role: () => selectedRole,
-      admitted: () => admitted,
-      clock: dependencies.toolExecutionObservationClock ?? clock,
-      monoNow: dependencies.toolExecutionObservationMonoNow ?? systemToolExecutionObservationMonoNow,
-      write: dependencies.toolExecutionObservationWriter ?? writeToolExecutionObservationRecord,
-    });
-    // ExtensionRunner.emit catches ordinary handler throws, emits extension error, and continues.
-    // Observation plane failures must still hit the shared infrastructure termination path
-    // (abort + nonzero print/json exit) with the original cause before that swallow.
-    const observe = async (
-      run: () => void | Promise<void>,
-      ctx: HostContext,
-    ): Promise<void> => {
-      try {
-        await run();
-      } catch (error) {
-        failInfrastructure(error, ctx);
-      }
-    };
-    roleHost.on("tool_execution_start", async (event, ctx) => {
-      await observe(() => observationFace.onStart(event), ctx);
-    });
-    roleHost.on("tool_execution_update", async (event, ctx) => {
-      await observe(() => observationFace.onUpdate(event), ctx);
-    });
-    roleHost.on("tool_execution_end", async (event, ctx) => {
-      await observe(() => observationFace.onEnd(event), ctx);
-    });
 
     // Public Role run: record typed non-success HTTP for error evidence + v1 resume.
-    // Same observation owner as in-process-session statusAwareFetch → typed-provider-http
+    // Same observation owner → typed-provider-http
     // sidecar (settlement already merges observation.httpStatus into knownFailure).
     // after_provider_response covers the success-path onResponse face; fetch wrap covers
     // non-2xx Responses where openai-completions throws before onResponse (#675).
@@ -1805,7 +1753,7 @@ export function createRoleRuntimeExtension(
     });
 
     roleHost.on("session_start", async (event, ctx) => {
-      // Scope fetch observation to this public run (in-process-session statusAwareFetch face).
+      // Scope fetch observation to this public run.
       if (!fetchWrapped && typeof globalThis.fetch === "function") {
         priorFetch = globalThis.fetch.bind(globalThis);
         const underlying = priorFetch;
@@ -1827,7 +1775,7 @@ export function createRoleRuntimeExtension(
                 provider,
               });
             } catch {
-              // Observation must not break the provider stream (same as in-process-session).
+              // Observation must not break the provider stream.
             }
           }
           return response;
@@ -1842,7 +1790,6 @@ export function createRoleRuntimeExtension(
       collectorFirstDispatchDone = false;
       receiptDelivery = createReceiptDeliveryPolicy();
       noReceiptRecorded = false;
-      observationFace.reset();
       pendingNavigatorPresentation = undefined;
       pendingNavigatorSettlement = undefined;
       pendingInfrastructureFailures.clear();

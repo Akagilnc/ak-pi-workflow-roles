@@ -20,7 +20,6 @@ const entries = [
   // Static import of navigator-work-base.
   "atomic-write",
   "public-role-summons",
-  "pi/in-process-session",
   "activation-ledger-git",
   "activation-ledger-topology",
   "archivist-record-entry",

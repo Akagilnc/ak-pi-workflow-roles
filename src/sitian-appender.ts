@@ -353,7 +353,6 @@ export function appendSitianRecord(input: SitianRecordInput): RecordPointer {
       identity,
       ...(input.subject === undefined ? {} : { subject: input.subject }),
       ...(input.sessionParent === undefined ? {} : { sessionParent: input.sessionParent }),
-      ...(input.priorEventId === undefined ? {} : { priorEventId: input.priorEventId }),
       timestamp,
       host,
       ...(input.source === undefined ? {} : { source: input.source }),

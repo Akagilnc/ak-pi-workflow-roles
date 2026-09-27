@@ -146,7 +146,7 @@ async function submissionRecordFile(cwd: string, runId: string, scope: Submissio
 /**
  * Discriminated owned-row view:
  * - unknown run → file absent + empty owned (read APIs only)
- * - located ledger → file is string; prior/write consumers may build RecordPointer
+ * - located ledger → file is string; write consumers may build RecordPointer
  */
 type OwnedSubmissionRecords =
   | { readonly file: undefined; readonly owned: readonly [] }
@@ -491,11 +491,10 @@ export async function readLatestSubmissionOutcome(
   return undefined;
 }
 
-type LedgerState = { prior?: RecordPointer; sequence: number };
+type LedgerState = { sequence: number };
 
 async function restoreState(cwd: string, runId: string, scope: SubmissionLedgerReadScope): Promise<LedgerState> {
   const located = await readOwnedSubmissionRecords(cwd, runId, scope);
-  // Unknown-run empty set: no prior chain. Owned rows without a file are an internal bug.
   if (located.file === undefined) {
     if (located.owned.length !== 0) {
       throw new Error(
@@ -504,19 +503,8 @@ async function restoreState(cwd: string, runId: string, scope: SubmissionLedgerR
     }
     return { sequence: 0 };
   }
-  const { file, owned } = located;
-  const last = owned.at(-1);
+  const { owned } = located;
   return {
-    ...(last === undefined
-      ? {}
-      : {
-          prior: {
-            identity: last.identity,
-            recordFile: file,
-            kind: last.kind,
-            level: last.level,
-          },
-        }),
     sequence: owned.reduce((maximum, record) => {
       const payload = record.payload as Partial<SubmissionLedgerEvent> | undefined;
       return payload?.type === "candidate" && typeof payload.sequence === "number"
@@ -547,7 +535,7 @@ function homeFromHostContext(context: HostContext, home?: string): string | unde
 
 /**
  * #959: seal one accepted submission without a model tool call.
- * Same ledger row shape and priorEventId chain as the terminating-tool wrap.
+ * Same ledger row shape as the terminating-tool wrap.
  * Used when a prose-exit seat (navigator) harvests the final assistant text.
  */
 export async function sealAcceptedSubmission(options: {
@@ -561,15 +549,10 @@ export async function sealAcceptedSubmission(options: {
   const attemptId = attemptIdentity(options.context, runId);
   const sessionParent = sessionParentFromHostContext(options.context);
   const home = homeFromHostContext(options.context, options.home);
-  const state = await restoreState(options.context.cwd, runId, {
-    ...(home === undefined ? {} : { home }),
-    ...(sessionParent === undefined ? {} : { sessionParent }),
-  });
-  const pointer = sitianReport({
+  sitianReport({
     level: "event",
     kind: "sealed",
     subject: { runId, attemptId },
-    ...(state.prior === undefined ? {} : { priorEventId: state.prior.identity }),
     payload: {
       type: "sealed",
       attemptId,
@@ -582,7 +565,6 @@ export async function sealAcceptedSubmission(options: {
     ...(home !== undefined ? { home } : {}),
     ...(sessionParent === undefined ? {} : { sessionParent }),
   });
-  state.prior = pointer;
 }
 
 /**
@@ -614,19 +596,16 @@ export function createSubmissionLedgerHost(
   const appendFor = (state: LedgerState, context: HostContext, runId: string, attemptId: string, event: SubmissionLedgerEvent): RecordPointer => {
     const home = resolveHomeFromContext(context);
     const sessionParent = sessionParentFromHostContext(context);
-    const pointer = sitianReport({
+    return sitianReport({
       level: "event",
       kind: event.type,
       subject: { runId, attemptId },
-      ...(state.prior === undefined ? {} : { priorEventId: state.prior.identity }),
       payload: event,
       source: "role-runtime",
       cwd: context.cwd,
       ...(home !== undefined ? { home } : {}),
       ...(sessionParent === undefined ? {} : { sessionParent }),
     });
-    state.prior = pointer;
-    return pointer;
   };
 
   host.on("turn_end", async (event, context) => {

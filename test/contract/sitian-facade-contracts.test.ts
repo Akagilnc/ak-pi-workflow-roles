@@ -7,7 +7,7 @@
  * - Torn-tail crash recovery substate a (missing trailing newline -> committed on recovery, 0 re-append)
  * - Torn-tail crash recovery substate b (corrupted fragment preserved, new row appended)
  * - Reader traversal contract (terminated malformed line exposes typed diagnostic and continues traversal; subsequent rows reachable; 0 deduplication)
- * - S4 submission ledger channel (five kinds, subject={runId, attemptId}, priorEventId chain, cross-attempt appending)
+ * - S4 submission ledger channel (five kinds, subject={runId, attemptId}, cross-attempt appending)
  * - Infrastructure failure honesty (original cause propagated)
  */
 import assert from "node:assert/strict";
@@ -238,7 +238,7 @@ test("Sitian facade: Torn-tail recovery substate b (corrupted fragment preserved
   });
 });
 
-test("Sitian facade: S4 submission ledger channel with 5 kinds, priorEventId chain, and cross-attempt appending", async () => {
+test("Sitian facade: S4 submission ledger channel with 5 kinds and cross-attempt appending", async () => {
   await withHermeticHome({ prefix: "ak-sitian-s4-" }, async ({ home }) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -252,7 +252,6 @@ test("Sitian facade: S4 submission ledger channel with 5 kinds, priorEventId cha
       "post-seal-anomaly",
     ] as const;
 
-    let previousEventId: string | undefined;
     let recordFile = "";
 
     // Attempt 1: write candidate, roundContext, outcome
@@ -267,10 +266,8 @@ test("Sitian facade: S4 submission ledger channel with 5 kinds, priorEventId cha
         sessionParent: join(home, ".ak-roles", "books", "proj", "runs", "parent", "session.jsonl"),
         subject: { runId: "s4-run-01", attemptId: "att-1" },
         identity: eventId,
-        priorEventId: previousEventId,
         payload: { index: i, desc: `S4 event ${kind}` },
       });
-      previousEventId = eventId;
       recordFile = ptr.recordFile;
     }
 
@@ -286,10 +283,8 @@ test("Sitian facade: S4 submission ledger channel with 5 kinds, priorEventId cha
         sessionParent: join(home, ".ak-roles", "books", "proj", "runs", "parent", "session.jsonl"),
         subject: { runId: "s4-run-01", attemptId: "att-2" },
         identity: eventId,
-        priorEventId: previousEventId,
         payload: { index: i, desc: `S4 event ${kind}` },
       });
-      previousEventId = eventId;
       assert.equal(ptr.recordFile, recordFile, "Cross-attempt writes share the run ledger volume");
     }
 
@@ -299,11 +294,6 @@ test("Sitian facade: S4 submission ledger channel with 5 kinds, priorEventId cha
     for (let i = 0; i < 5; i++) {
       assert.equal(read.records[i]!.kind, s4Kinds[i]);
       assert.equal(read.records[i]!.identity, `s4-evt-${i + 1}`);
-      if (i === 0) {
-        assert.equal(read.records[i]!.priorEventId, undefined);
-      } else {
-        assert.equal(read.records[i]!.priorEventId, `s4-evt-${i}`);
-      }
     }
   });
 });

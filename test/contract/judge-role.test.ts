@@ -165,7 +165,7 @@ afterEach(async () => {
   );
 });
 
-// The child institutional session (openPiInProcessSession) builds its OWN child
+// The child institutional session builds its OWN child
 // ModelRuntime that reads <PI_CODING_AGENT_DIR>/models.json — the parent ExtensionContext's
 // modelRegistry is no longer consulted (#518). So every harness that drives a gatekeeper /
 // officer child must register the faux provider in the ambient models.json and serve it over
@@ -409,9 +409,6 @@ test("stable factory stays inert without a role", async () => {
     "agent_end",
     "agent_settled",
     "session_shutdown",
-    "tool_execution_start",
-    "tool_execution_update",
-    "tool_execution_end",
     "after_provider_response",
   ]));
   await harness.handlers.get("session_start")?.({}, {});

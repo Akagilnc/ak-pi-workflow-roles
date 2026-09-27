@@ -37,8 +37,6 @@ export type SitianRecord = {
   readonly subject?: SitianSubject | undefined;
   /** Parent session principal link / nesting origin. */
   readonly sessionParent?: string | undefined;
-  /** Prior event identity in a submission ledger chain (S4; distinct from sessionParent). */
-  readonly priorEventId?: string | undefined;
   readonly timestamp: string;
   readonly host: string;
   readonly source?: string | undefined;
@@ -65,7 +63,6 @@ export type SitianRecordInput = {
   readonly sessionParent?: string | undefined;
   /** Run owner for ticket provenance before a ticket is known. */
   readonly runDirectory?: string | undefined;
-  readonly priorEventId?: string | undefined;
   readonly timestamp?: string | undefined;
   readonly host?: string | undefined;
   readonly source?: string | undefined;
