@@ -104,11 +104,10 @@ ak-role reviewer --model <provider/model[:thinking]> --base main --authority-ref
 # optional single-lens override
 ak-role reviewer --model <provider/model[:thinking]> --base main --lens correctness --authority-ref CLAUDE.md
 
-# collector — GitHub PR review evidence (bind target, read handbook/field activity, trigger as needed, wait window, return materials)
+# collector — GitHub PR review evidence (LLM gathers via host CLI; optional request-manifest materials)
 ak-role collector --model <provider/model[:thinking]> --pr 42 --repo owner/repository "Collect findings for the assigned issue."
 ak-role collector --model <provider/model[:thinking]> --repo owner/repository "Collect findings for #42"
-# optional: wait-window ms after the work step opens (default 600000 = 10 minutes)
-ak-role collector --model <provider/model[:thinking]> --pr 42 --repo owner/repository --wait-ms 120000 "Collect with a 2-minute window."
+ak-role collector --model <provider/model[:thinking]> --pr 42 --request-manifest ./requests.json "Collect with named request bodies."
 
 # fixer — repair the assigned findings
 ak-role fixer --model <provider/model[:thinking]> --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."

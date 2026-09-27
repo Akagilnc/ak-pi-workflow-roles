@@ -13,7 +13,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import type { GhApiRunner, GhApiResponse } from "../../src/collector-github.ts";
+import type { GhApiRunner, GhApiResponse } from "../../src/gh-api-runner.ts";
 import {
   createGhTicketSnapshotTransport,
   fetchBoardSnapshot,

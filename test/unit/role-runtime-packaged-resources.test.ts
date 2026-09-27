@@ -1,33 +1,30 @@
 /**
- * #962 — packaged handbook/playbook resolve under the injected packageRoot.
- * Bundle entry (dist/headless-host|acp-host/production-host.js) cannot use
- * import.meta.url-relative ../resources/; packageRoot is the sole authority.
+ * #1088: collector handbook is session material (not a runtime seed loader).
+ * Assert path roster + exact package-material load — no prose regex.
  */
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import test from "node:test";
 
-import { createRoleRuntimeDependencies } from "../../src/role-runtime-dependencies.ts";
-import { withTempRoot } from "../helpers/primary-aware-cleanup.ts";
+import { packagedRoleSessionMaterials } from "../../src/packaged-role-registry.ts";
+import {
+  joinPackageMaterials,
+  loadMainRoleReferenceMaterials,
+  loadMainRoleSessionMaterials,
+  readPackageMaterial,
+} from "../../src/session-opening-materials.ts";
 
-test("loadCollectorHandbookSeed reads only under injected packageRoot", async () => {
-  await withTempRoot("ak-962-resources-", async (root) => {
-    const deps = createRoleRuntimeDependencies(root);
-
-    // Empty packageRoot must not fall back to the real install tree.
-    await assert.rejects(
-      () => deps.loadCollectorHandbookSeed!(),
-      (error: unknown) =>
-        error instanceof Error &&
-        "code" in error &&
-        (error as NodeJS.ErrnoException).code === "ENOENT" &&
-        String((error as NodeJS.ErrnoException).path ?? "").includes(root),
-    );
-
-    const marker = "handbook-marker-962-unique";
-    await mkdir(join(root, "resources"));
-    await writeFile(join(root, "resources/collector-bot-handbook.md"), marker, "utf8");
-    assert.equal(await deps.loadCollectorHandbookSeed!(), marker);
-  });
+test("collector session materials declare handbook and load it with references", async () => {
+  const materials = [
+    "CLAUDE.md",
+    "souls/collector.md",
+    "resources/collector-bot-handbook.md",
+  ] as const;
+  assert.deepEqual(packagedRoleSessionMaterials("collector"), [...materials]);
+  const soul = await loadMainRoleSessionMaterials("collector");
+  const refs = await loadMainRoleReferenceMaterials("collector");
+  assert.equal(soul, await readPackageMaterial("souls/collector.md"));
+  assert.equal(
+    refs,
+    await joinPackageMaterials(["CLAUDE.md", "resources/collector-bot-handbook.md"]),
+  );
 });

@@ -94,11 +94,10 @@ ak-role reviewer --model <provider/model[:thinking]> --base main --authority-ref
 # 可选单 lens 覆盖
 ak-role reviewer --model <provider/model[:thinking]> --base main --lens correctness --authority-ref CLAUDE.md
 
-# 通进司——GitHub PR 收证（认票、读手册/现场活动、按需触发、等待窗、交回材料）
+# 通进司——GitHub PR 收证（LLM 经宿主 CLI 自行取证；可选 request-manifest 作材料）
 ak-role collector --model <provider/model[:thinking]> --pr 42 --repo owner/repository "为所指 issue 收证。"
 ak-role collector --model <provider/model[:thinking]> --repo owner/repository "为 #42 收证。"
-# 可选：工作步骤开启后的等待窗毫秒（默认 600000＝十分钟）
-ak-role collector --model <provider/model[:thinking]> --pr 42 --repo owner/repository --wait-ms 120000 "两分钟窗收证。"
+ak-role collector --model <provider/model[:thinking]> --pr 42 --request-manifest ./requests.json "带具名请求正文收证。"
 
 # 修内司——缮修所指 findings
 ak-role fixer --model <provider/model[:thinking]> --attach ./findings.md --prerequisites ./prereqs.json "Repair the findings."
