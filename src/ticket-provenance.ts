@@ -276,8 +276,7 @@ async function projectSessionRanges(input: {
   readonly session: TicketProvenanceSession;
   readonly home?: string;
 }): Promise<{
-  readonly lines: TicketProvenanceLine[];
-  readonly raw: TicketProvenanceRaw[];
+  readonly entries: (TicketProvenanceLine | TicketProvenanceRaw)[];
 }> {
   assertDialogueSessionSourcePath(input.session.path, input.home);
   let sessionLines: LedgerSessionLine[];
@@ -299,8 +298,7 @@ async function projectSessionRanges(input: {
   const rows = sessionLines.map((entry) => entry.row);
   const dialogue = adaptSessionDialogue(rows);
   const sourceFacts = stableSourceFacts(sessionLines);
-  const lines: TicketProvenanceLine[] = [];
-  const raw: TicketProvenanceRaw[] = [];
+  const entries: (TicketProvenanceLine | TicketProvenanceRaw)[] = [];
   const ranges = normalizeResolvedRanges(
     input.session.ranges,
     sessionLines,
@@ -311,11 +309,11 @@ async function projectSessionRanges(input: {
       const { position: sourcePosition, identity: sourceIdentity } = sourceFacts[index]!;
       const entry = sessionLines[index]!;
       if (entry.row === undefined) {
-        raw.push({ raw: entry.raw, s: input.s, sourcePosition, sourceIdentity });
+        entries.push({ raw: entry.raw, s: input.s, sourcePosition, sourceIdentity });
         continue;
       }
       for (const event of dialogue[index] ?? []) {
-        lines.push({
+        entries.push({
           speaker: event.speaker,
           s: input.s,
           sourcePosition,
@@ -325,7 +323,7 @@ async function projectSessionRanges(input: {
       }
     }
   }
-  return { lines, raw };
+  return { entries };
 }
 
 /**
@@ -354,8 +352,7 @@ export async function reprojectTicketProvenance(input: {
     };
   }
 
-  const lines: TicketProvenanceLine[] = [];
-  const raw: TicketProvenanceRaw[] = [];
+  const entries: (TicketProvenanceLine | TicketProvenanceRaw)[] = [];
   for (let s = 0; s < input.sessions.length; s += 1) {
     const session = input.sessions[s]!;
     const projected = await projectSessionRanges({
@@ -363,8 +360,7 @@ export async function reprojectTicketProvenance(input: {
       session,
       ...(input.home === undefined ? {} : { home: input.home }),
     });
-    lines.push(...projected.lines);
-    raw.push(...projected.raw);
+    entries.push(...projected.entries);
   }
 
   const pointer = appendSitianRecord({
@@ -372,12 +368,12 @@ export async function reprojectTicketProvenance(input: {
     payload: {
       type: "ticket-provenance-append",
       sessions: input.sessions,
-      lines: [...lines, ...raw],
+      lines: entries,
     },
   });
 
   return {
     recordFile: pointer.recordFile,
-    lines,
+    lines: entries.filter((entry): entry is TicketProvenanceLine => "speaker" in entry),
   };
 }
