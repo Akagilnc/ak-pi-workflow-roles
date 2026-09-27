@@ -378,17 +378,25 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             ? loaded.sessionId
             : bindSessionId;
         };
-        if (request.continuation.kind === "resume" && config.boundResume === "session/load") {
+        let sessionReady = true;
+        if (request.continuation.kind === "resume") {
           const explicitHostSessionId = request.continuation.hostSessionId;
           const boundSessionId = explicitHostSessionId !== undefined && explicitHostSessionId !== ""
             ? explicitHostSessionId
             : await config.sessionIdentity.load(request.principal);
           if (boundSessionId !== undefined && boundSessionId !== "") {
             sessionId = await loadSession(boundSessionId);
+          } else {
+            outcome = failure(
+              "session",
+              "AcpSessionFailure",
+              "session-id-missing",
+              undefined,
+              "resume requires a bound session id",
+            );
+            sessionReady = false;
           }
-        }
-        let sessionReady = true;
-        if (sessionId === undefined) {
+        } else {
           const session = await rpc("session/new", sessionBindParams);
           sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
           if (sessionId === undefined || sessionId === "") {

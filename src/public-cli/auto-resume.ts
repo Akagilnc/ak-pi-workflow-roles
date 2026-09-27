@@ -391,16 +391,6 @@ export async function runWithAutoResumeLoop<
     projectRoot: string;
   };
   principalAuthority: DurablePrincipalAuthority;
-  /**
-   * Host-aware "can this principal's turn still be resumed" probe (#840 P1).
-   * Callers that know the selected host pass
-   * session-identity.ts's resolveHostAwareSessionAvailability(host,
-   * principalAuthority) so an ACP/headless turn's own binding file — not
-   * pi's session.jsonl — decides continuation for that host. Defaults to
-   * principalAuthority.isAvailable (pi-only check) when omitted, so a
-   * caller that never leaves the pi host keeps identical behavior.
-   */
-  isPrincipalAvailable?: (principal: DurablePrincipal) => Promise<boolean>;
   io: CliIo;
   sessionAppender: SessionCustomEntryAppender;
   /**
@@ -433,9 +423,6 @@ export async function runWithAutoResumeLoop<
   // `attempts >= limit` comparison (always false) — reject here, before any dispatch.
   const limit = options.autoResumeLimit ?? AUTO_RESUME_LIMIT;
   parseAutoResumeLimit(limit);
-  const isPrincipalAvailable =
-    options.isPrincipalAvailable ??
-    ((principal: DurablePrincipal) => options.principalAuthority.isAvailable(principal));
   let autoResumeAttempts = 0;
   let isFirst = true;
   let currentPayload = options.buildInitialPayload();
@@ -535,13 +522,6 @@ export async function runWithAutoResumeLoop<
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
-      if (
-        result.turnDispatched === true
-        && !(await isPrincipalAvailable(options.admitted.principal))
-      ) {
-        if (terminal !== undefined) presentTerminal(terminal, options.io);
-        return result;
-      }
     } else {
       // Exception path: continue through the identical budget/session gates.
       if (autoResumeAttempts >= limit) {
@@ -577,27 +557,6 @@ export async function runWithAutoResumeLoop<
             errorFiles: retainedErrorFiles,
             autoResumeAttempts,
             endReason: `ak-role terminated by ${cancelName}`,
-            everyAttemptThrew,
-          }),
-          options.io,
-        );
-        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        presentTerminal(terminal, options.io);
-        return {
-          exitCode: 1,
-          terminal,
-        } as T;
-      }
-      if (!(await isPrincipalAvailable(options.admitted.principal))) {
-        const terminal = await attachDispatchExceptionTerminal(
-          options.admitted,
-          dispatchExceptionFailureTerminal({
-            role: options.admitted.role,
-            runId: options.admitted.runId,
-            causeError: lastThrownError,
-            errorFiles: retainedErrorFiles,
-            autoResumeAttempts,
-            endReason: "session principal unavailable before further resume",
             everyAttemptThrew,
           }),
           options.io,

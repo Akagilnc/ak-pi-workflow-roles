@@ -687,17 +687,6 @@ export async function clearCurrentCourt(
   });
 }
 
-/**
- * True when the host authority reports the durable principal available.
- * Resume must reopen this exact principal; directory-latest is not identity.
- */
-export async function isDurablePrincipalAvailable(
-  principal: DurablePrincipal,
-  authority: DurablePrincipalAuthority,
-): Promise<boolean> {
-  return authority.isAvailable(principal);
-}
-
 export class RunWriterLeaseHeldError extends Error {
   readonly code = "AK_RUN_WRITER_LEASE_HELD" as const;
   constructor(message = "role run writer lease is already held") {
@@ -1340,19 +1329,14 @@ async function loadResumableRunRecord(
   if (disk === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
-  // #416: removed terminal/resumable gates per owner decision "根本不要有限制" (2026-08-22).
-  // Only the exact Pi session principal check remains as honest failure.
+  // #416 / #1091: removed terminal/resumable and local session-file gates.
+  // The load seam locates the run and recovers identity; host CLI answers continuation.
   // One authority.decode of the uninterpreted wire yields both principal and record.
   const materialized = materializeRoleRunFromDisk(disk, authority);
   if (materialized === undefined) {
     throw new CliUsageError(`unknown role run id: ${runId}`);
   }
   const { run, principal } = materialized;
-  if (!(allowUnformedAdmitted && run.state === "admitted") && !(await isDurablePrincipalAvailable(principal, authority))) {
-    throw new CliUsageError(
-      `role run Pi session principal is unavailable: ${runId}`,
-    );
-  }
   // Reconstruct admitted identity from durable run record + admitted-request.json.
   let instruction = "";
   let instructionEmpty = true;

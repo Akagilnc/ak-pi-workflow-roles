@@ -42,28 +42,6 @@ export function createSessionIdentityAuthority(
   };
 }
 
-/**
- * Host-aware resumable-session probe (#840 P1). The shared auto-resume loop
- * (public-cli/auto-resume.ts) asks one question — "can this principal's turn
- * still be resumed" — without itself knowing which concrete host executed it.
- * Pi's own session.jsonl transcript (DurablePrincipalAuthority#isAvailable)
- * answers that only for the pi host; ACP and headless hosts persist their
- * resumable native session id under their own session-identity binding file
- * instead (#729 / #731 / #645) and never write session.jsonl, so the plain
- * pi check always reports them unavailable after one attempt. One lookup per
- * registered host family — no per-host-name branch, no per-seat whitelist.
- */
-export function resolveHostAwareSessionAvailability(
-  host: string | undefined,
-  principalAuthority: DurablePrincipalAuthority,
-): (principal: DurablePrincipal) => Promise<boolean> {
-  if (host === undefined || host === DEFAULT_ROLE_TURN_HOST) {
-    return (principal) => principalAuthority.isAvailable(principal);
-  }
-  // Unregistered names have no binding file: absence, not a guess at pi.
-  return async (principal) =>
-    (await readStoredHostSessionId(host, principalAuthority, principal)) !== undefined;
-}
 
 /**
  * Native session/thread id already stored for this principal on `host`.

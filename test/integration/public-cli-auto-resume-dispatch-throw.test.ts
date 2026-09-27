@@ -158,32 +158,38 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
       true,
     );
     assert.deepEqual(terminal.submissions,[sealedParams,bounceParams]);
+  });
+});
 
-    // Same real entry: principal-unavailable exception terminal also attaches ledger sequence.
-    const unavailableCalls={n:0};
-    const unavailable=await runWithAutoResumeLoop({
+test("#1091 auto-resume keeps retrying when the local session file is absent", async()=>{
+  await withTempHome(async(home)=>{
+    const project=join(home,"proj");
+    const runId="throw-no-session-probe";
+    const runDir=join(home,".ak-roles","books","proj","runs",`${runId}@judge`);
+    await mkdir(project,{recursive:true});
+    await mkdir(join(runDir,"session"),{recursive:true});
+    // No session.jsonl — former availability probe would have stopped further resumes.
+    const sessionFile=join(runDir,"session","session.jsonl");
+    await plantRecordedSubmissions({home,project,runDirectory:runDir,runId,role:"judge"});
+    const callsRef={n:0};
+    const {io}=captureIo();
+    const result=await runWithAutoResumeLoop({
       principalAuthority: piDurablePrincipalAuthority,
-      sessionAppender: appendPiSessionCustomEntry,
+      sessionAppender: async()=>{},
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId,projectRoot:project},
       io,
       autoResumeLimit:2,
-      isPrincipalAvailable: async()=>false,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
-      dispatch:alwaysThrowingDispatch(unavailableCalls,["boom-unavailable"]),
+      dispatch:alwaysThrowingDispatch(callsRef,["boom-1","boom-2","boom-3"]),
     });
-    const unavailableTerminal=unavailable.terminal as TerminalResult;
-    assert.equal(unavailableCalls.n,1);
-    assert.equal(unavailable.exitCode,1);
-    assert.equal(unavailableTerminal.roleOutcome.kind,"failure");
-    if(unavailableTerminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
-    assert.match(unavailableTerminal.roleOutcome.diagnostic,/session principal unavailable before further resume/);
-    assert.equal(
-      unavailableTerminal.roleOutcome.payloads === undefined
-        || unavailableTerminal.roleOutcome.payloads.length === 0,
-      true,
-    );
-    assert.deepEqual(unavailableTerminal.submissions,[sealedParams,bounceParams]);
+    assert.equal(callsRef.n,3);
+    assert.equal(result.exitCode,1);
+    assert.equal((result.terminal as TerminalResult).autoResumeCount,2);
+    const diagnostic=(result.terminal as TerminalResult).roleOutcome.kind==="failure"
+      ? (result.terminal as TerminalResult & {roleOutcome:{kind:"failure";diagnostic:string}}).roleOutcome.diagnostic
+      : "";
+    assert.equal(diagnostic.includes("session principal unavailable"),false);
   });
 });
 

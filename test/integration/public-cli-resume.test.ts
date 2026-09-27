@@ -2147,7 +2147,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
   });
 });
 
-test("resume rejects when the exact Pi session principal is unavailable", async () => {
+test("#1091 resume with missing session file loads identity and attempts host", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -2188,23 +2188,20 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
       principal: fixturePrincipal(sessionDirectory, sessionFile),
       admittedRequestPath,
     }, piDurablePrincipalAuthority);
+    await writeFile(join(runDirectory, "invocation.json"), "{}\n", "utf8");
     await markRunResumable(runDirectory, {
       httpStatus: 429,
       provider: "xai",
     });
-    // Principal path is bound but the file itself is missing.
+    // Principal path is bound but the file itself is missing — not a package gate (#1091).
 
-    await assert.rejects(
-      () => loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),
-    );
+    const loaded = await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
+    assert.equal(loaded.admitted.runId, runId);
 
-    const reportPath = join(runDirectory, "artifacts", "report.json");
     await mkdir(join(runDirectory, "artifacts"), { recursive: true });
-    const reportBody = `${JSON.stringify({ role: "judge", runId })}\n`;
-    await writeFile(reportPath, reportBody, "utf8");
-    const { io, stdout, stderr } = captureIo();
+    const { io, stderr } = captureIo();
     let dispatches = 0;
-    const blocked = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,
@@ -2216,27 +2213,27 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
         piRunner: async (args) => {
         dispatches += 1;
         return {
-          code: 0,
-          stderr: "",
+          code: 1,
+          stderr: "host-session-gone\n",
           timedOut: false,
           args: [...args],
         };
       },
       }),
     });
-    assert.equal(dispatches, 0);
-    assert.equal(stdout.length, 0);
-    assert.notEqual(blocked.exitCode, 0);
-    assert.equal(await readFile(reportPath, "utf8"), reportBody);
-    const face = await readRunTerminalArtifact(runDirectory);
-    assert.equal(face.status, "present");
-    assert.equal(face.status === "present" ? face.file : undefined, "report.json");
-    const notedNames = (await readdir(join(runDirectory, "artifacts"))).filter((name) => name !== "report.json");
-    assert.equal(notedNames.length, 1);
-    const pointer = join(runDirectory, "artifacts", notedNames[0]!);
-    assert.equal(stderr.join("").includes(pointer), true);
-    const noted = JSON.parse(await readFile(pointer, "utf8")) as { diagnostic?: unknown };
-    assert.equal(typeof noted.diagnostic, "string");
+    assert.equal(dispatches, 1);
+    assert.notEqual(resumed.exitCode, 0);
+    const pointer = (await readdir(join(runDirectory, "artifacts")))
+      .map((name) => join(runDirectory, "artifacts", name))
+      .find((path) => stderr.join("").includes(path));
+    assert.ok(pointer);
+    const noted = JSON.parse(await readFile(pointer, "utf8")) as {
+      diagnostic?: unknown;
+      details?: { exitCode?: unknown };
+    };
+    assert.equal(noted.diagnostic, "host-session-gone\n");
+    assert.equal(noted.details?.exitCode, 1);
+    assert.equal(String(noted.diagnostic).includes("Pi session principal is unavailable"), false);
   });
 });
 

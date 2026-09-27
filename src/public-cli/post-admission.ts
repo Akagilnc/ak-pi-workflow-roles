@@ -29,10 +29,7 @@ import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
-import {
-  readStoredHostSessionId,
-  resolveHostAwareSessionAvailability,
-} from "../session-identity.ts";
+import { readStoredHostSessionId } from "../session-identity.ts";
 import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
 import type {
@@ -1693,10 +1690,6 @@ export async function runPostAdmissionSeatResume<
       return await runWithAutoResumeLoop({
         admitted: loaded.admitted,
         principalAuthority: env.principalAuthority,
-        isPrincipalAvailable: resolveHostAwareSessionAvailability(
-          env.host,
-          env.principalAuthority,
-        ),
         io: input.io,
         sessionAppender: env.sessionAppender,
         autoResumeLimit: env.autoResumeLimit,
@@ -1972,7 +1965,6 @@ export async function runPostAdmissionResumable<
   return runWithAutoResumeLoop({
     admitted,
     principalAuthority: env.principalAuthority,
-    isPrincipalAvailable: resolveHostAwareSessionAvailability(env.host, env.principalAuthority),
     io,
     sessionAppender: env.sessionAppender,
     autoResumeLimit: env.autoResumeLimit,

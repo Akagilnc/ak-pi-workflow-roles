@@ -188,7 +188,7 @@ test("block1: unknown runId still rejects", async()=>{
   });
 });
 
-test("block1: session principal unavailable still fails honestly", async()=>{
+test("block1: #1091 missing session file still loads; resume attempts host", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="416-no-principal-001";
@@ -202,12 +202,17 @@ test("block1: session principal unavailable still fails honestly", async()=>{
     const bookKey=resolveBookKeyFromGit(project);
     const runDir=join(home,".ak-roles","books",bookKey,"unbound","runs",`${runId}@judge`);
     await rm(join(runDir,"session","session.jsonl"),{force:true});
-    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority));
+    // Load seam only locates the run + identity; session-file absence is not a package gate (#1091).
+    const loaded=await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
+    assert.equal(loaded.admitted.runId,runId);
     const {io:io2,stderr}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,io:io2,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                       packageRoot,
                                                                                       principalAuthority: piDurablePrincipalAuthority,
-                                                                                      piRunner: async(a)=>{dispatched=true;return{code:0,stderr:"",timedOut:false,args:[...a]};},
+                                                                                      piRunner: async(a)=>{
+                                                                                        dispatched=true;
+                                                                                        return{code:1,stderr:"host-session-gone\n",timedOut:false,args:[...a]};
+                                                                                      },
                                                                                     })});
     const sessionFile=join(runDir,"session","session.jsonl");
     const artifactsDirectory=join(runDir,"artifacts");
@@ -216,14 +221,14 @@ test("block1: session principal unavailable still fails honestly", async()=>{
       .find((path)=>stderr.join("").includes(path));
     assert.ok(diagnosticPath);
     const recorded=JSON.parse(await readFile(diagnosticPath,"utf8")) as {
-      runId?:unknown;diagnostic?:unknown;details?:{error?:unknown};
+      runId?:unknown;diagnostic?:unknown;details?:{exitCode?:unknown};
     };
-    assert.equal(dispatched,false);
+    assert.equal(dispatched,true);
     assert.notEqual(res.exitCode,0);
     assert.equal(recorded.runId,runId);
-    assert.equal(typeof recorded.diagnostic,"string");
-    assert.equal(typeof recorded.details?.error,"string");
-    assert.notEqual((recorded.details?.error as string).length,0);
+    assert.equal(recorded.diagnostic,"host-session-gone\n");
+    assert.equal(recorded.details?.exitCode,1);
+    assert.equal(String(recorded.diagnostic).includes("Pi session principal is unavailable"),false);
     await assert.rejects(readFile(sessionFile),{code:"ENOENT"});
   });
 });
