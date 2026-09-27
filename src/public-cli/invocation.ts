@@ -69,7 +69,6 @@ import {
   parseCollectorRepository,
   type CollectorRepository,
 } from "../collector-config.ts";
-import { resolveCollectorTarget } from "../collector-target.ts";
 import { ownerRepoFromGitHubRemoteUrl } from "./github-remote.ts";
 import {
   FixerPacketValidationError,
@@ -231,13 +230,11 @@ export type AdmittedFixerInvocation = AdmittedRoleInvocationBase & {
 
 export type AdmittedCollectorInvocation = AdmittedRoleInvocationBase & {
   readonly role: "collector";
-  /** Bound at admission when explicit/--pr or unique head/commit; otherwise role binds. */
+  /** Bound at admission when explicit --pr; otherwise the LLM locates via host CLI. */
   readonly prNumber?: number;
   readonly repository: CollectorRepository;
   readonly requestManifestPath?: string;
   readonly manifestDigest: string;
-  /** Wait-window ms (#678 D4); default applied at role activate when omitted. */
-  readonly waitWindowMs?: number;
 };
 
 export type AdmittedDoctorInvocation = AdmittedRoleInvocationBase & {
@@ -899,7 +896,6 @@ type SeatArgvFields = {
   prNumber?: number;
   repo?: string;
   requestManifestPath?: string;
-  waitWindowMs?: number;
   issueNumber?: number;
   runs?: string;
   sourceRun?: string;
@@ -975,17 +971,6 @@ function assignPublicSeatOption(
     case "request-manifest":
       fields.requestManifestPath = requireOptionPath(taken.def.canonical, value);
       return;
-    case "wait-ms": {
-      if (value === undefined || !/^[1-9]\d*$/.test(value.trim())) {
-        throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
-      }
-      const parsed = Number(value.trim());
-      if (!Number.isSafeInteger(parsed) || parsed < 1) {
-        throw new CliUsageError("--wait-ms requires a positive safe-integer millisecond value");
-      }
-      fields.waitWindowMs = parsed;
-      return;
-    }
     case "issue": {
       if (value === undefined || value.trim() === "") {
         throw new CliUsageError("doctor --issue requires a positive integer");
@@ -1100,7 +1085,6 @@ export function parsePublicSeatArgv(
     ...(fields.prNumber === undefined ? {} : { prNumber: fields.prNumber }),
     ...(fields.repo === undefined ? {} : { repo: fields.repo }),
     ...(fields.requestManifestPath === undefined ? {} : { requestManifestPath: fields.requestManifestPath }),
-    ...(fields.waitWindowMs === undefined ? {} : { waitWindowMs: fields.waitWindowMs }),
     ...(fields.issueNumber === undefined ? {} : { issueNumber: fields.issueNumber }),
     ...(fields.runs === undefined ? {} : { runs: fields.runs }),
     ...(fields.sourceRun === undefined ? {} : { sourceRun: fields.sourceRun }),
@@ -1485,7 +1469,6 @@ export type PublicSeatParse = {
   readonly prNumber?: number;
   readonly repo?: string;
   readonly requestManifestPath?: string;
-  readonly waitWindowMs?: number;
   readonly issueNumber?: number;
   readonly runs?: string;
   readonly sourceRun?: string;
@@ -1676,24 +1659,17 @@ export async function admitPublicRole(
         attachmentPaths,
         ...project,
         placedFields: async (placed) => {
-          // Task materials are frozen before target resolution (#676 A).
-          const target = await resolveCollectorTarget({
-            projectRoot,
-            repository,
-            ...(explicitPrNumber === undefined ? {} : { explicitPrNumber }),
-          });
-          const prNumber = target.kind === "bound" ? target.prNumber : undefined;
+          // #1088: explicit --pr only. Unbound PR is located by the LLM via host CLI.
           let requestManifestPath: string | undefined;
           if (manifestCanonicalJson !== undefined) {
             requestManifestPath = join(placed.runDirectory, "request-manifest.json");
             await writeFile(requestManifestPath, manifestCanonicalJson, "utf8");
           }
           return {
-            ...(prNumber === undefined ? {} : { prNumber }),
+            ...(explicitPrNumber === undefined ? {} : { prNumber: explicitPrNumber }),
             repository: repository.canonical,
             repositoryDisplay: repository.display,
             ...(requestManifestPath === undefined ? {} : { requestManifestPath }),
-            ...(parsed.waitWindowMs === undefined ? {} : { waitWindowMs: parsed.waitWindowMs }),
             manifestDigest,
           };
         },

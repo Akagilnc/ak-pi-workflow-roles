@@ -14,7 +14,6 @@ import {
 import { Value } from "typebox/value";
 import { sitianReport } from "./sitian-facade.ts";
 import { createSubmissionLedgerHost, sealAcceptedSubmission } from "./submission-ledger.ts";
-import { createCollectorLedger } from "./collector-ledger.ts";
 
 import { activationTraceRecordSchema, namedActivationCause, type ActivationTraceRecord, type ActivationTraceWriter } from "./activation-trace.ts";
 import { homeFromRunDirectory } from "./activation-ledger-topology.ts";
@@ -33,9 +32,8 @@ import {
 import { engineSessionMaterialFromOptions } from "./package-resources/engine-material.ts";
 import { registerEngineDetourTool } from "./engine-detour-tool.ts";
 import { createReceiptDeliveryPolicy, NO_RECEIPT_LIFECYCLE_ENTRY_TYPE } from "./receipt-delivery-policy.ts";
-import type { CollectorClock } from "./collector-evidence.ts";
-import type { CollectorGitHubTransport } from "./collector-github.ts";
 import {
+  COLLECTOR_CONSTRUCTION_TOOLS,
   COLLECTOR_REQUIRED_TOOLS,
   COLLECTOR_TRANSPORT_FLAGS,
   createCollectorRoleRuntime,
@@ -338,16 +336,8 @@ export type { AuditorSoulRole } from "./auditor-soul.ts";
 export { JUDGE_AUDIT_TOOL_NAME, SOUL_AUDIT_TOOL_NAME } from "./judge-auditor.ts";
 export { DOCTOR_AUDIT_TOOL_NAME, createPiDoctorAuditor } from "./doctor-auditor.ts";
 export type { ComplianceDecision } from "./compliance-transport.ts";
-export {
-  COLLECTOR_OBSERVE_TOOL,
-  COLLECTOR_OUTPUT_TOOL,
-  COLLECTOR_READ_TOOL,
-  COLLECTOR_REQUEST_TOOL,
-  COLLECTOR_WAIT_TOOL,
-} from "./collector-role.ts";
+export { COLLECTOR_OUTPUT_TOOL } from "./collector-role.ts";
 export type { CollectorReceipt } from "./package-contracts/collector-output.ts";
-export type { CollectorGitHubTransport } from "./collector-github.ts";
-export type { CollectorClock } from "./collector-evidence.ts";
 export * from "./navigator-attendance.ts";
 export { MERGER_INPUT_FLAG, createMergerRoleRuntime } from "./merger-role.ts";
 export { MERGER_OUTPUT_TOOL_NAME, mergerInputSchema, mergerOutputSchema, validateMergerInput, validateMergerOutput } from "./merger-contracts.ts";
@@ -449,13 +439,9 @@ export type RoleRuntimeDependencies = {
   loadRoleSoul(role: PackagedRole): Promise<string>;
   loadFixPacket?(path: string): Promise<string>;
   loadCoderTask?(path: string): Promise<string>;
-  /** #677: optional packaged seed for first-use general bot handbook. */
-  loadCollectorHandbookSeed?(): Promise<string>;
-  createCollectorTransport?(): CollectorGitHubTransport;
   loadNotarySourceRun?(path: string): Promise<import("./notary-contracts.ts").NotarySourceRunLocator>;
   loadDoctorCase?(path: string): Promise<import("./doctor-contracts.ts").DoctorCase>;
   loadMergerInput?(path: string): Promise<unknown>;
-  createCollectorClock?(): CollectorClock;
   createNavigatorAttendance?(options: { context: HostContext; role: string; phase: NavigatorPhase; subjectKey: string; subject: string; authority: string; contextError?: unknown; invocationId: string; onEvent: (event: import("./navigator-attendance.ts").NavigatorEvent, report: import("./navigator-attendance.ts").NavigatorReport) => void | Promise<void> }): NavigatorAttendanceDependency | Promise<NavigatorAttendanceDependency>;
   loadNavigatorWorkContext?(options: { context: HostContext; role: string; phase: NavigatorPhase; getFlag?: (name: string) => unknown }): Promise<NavigatorWorkContext>;
   activationClock?(): string;
@@ -1211,12 +1197,9 @@ export function createRoleRuntimeExtension(
           }),
         };
       }
-      // #676 E / J1: collector materials + drift gates share this envelope hook (no parallel register).
+      // #676 E / J1: collector materials share this envelope hook (no parallel register).
       if (activeCollector !== undefined && selectedRole === role) {
-        if (!collectorFirstDispatchDone) {
-          collectorFirstDispatchDone = true;
-          activeCollector.ledger.recordActivation(activeCollector.clock);
-        }
+        collectorFirstDispatchDone = true;
         return {
           systemPrompt: collectorBusiness.assembleMaterials(activeCollector, event.systemPrompt),
         };
@@ -1446,12 +1429,6 @@ export function createRoleRuntimeExtension(
         priorFetch = undefined;
         fetchWrapped = false;
       }
-      // #676 J4: collector fatal latch must surface nonzero exit on shutdown (envelope-owned).
-      if (activeCollector !== undefined && activeCollector.ledger.fatal) {
-        if (process.exitCode === undefined || process.exitCode === 0) {
-          process.exitCode = 1;
-        }
-      }
       // Flush any still-pending affirmative attendance before teardown.
       // Grace-timeout paths normally emit on agent_settled; abort can skip that hook.
       const presentation = pendingNavigatorPresentation;
@@ -1582,64 +1559,23 @@ export function createRoleRuntimeExtension(
       loadSoul: () => requireRoleSoul("merger"),
       async loadInput(path) { if (!dependencies.loadMergerInput) throw new Error("Merger runtime dependencies are not configured"); return dependencies.loadMergerInput(path); },
     });
-    // #676 E: shared envelope owns collector lifecycle (mode/fork, tool surface,
-    // event gates). Role module supplies business activate/tools/materials only.
+    // #676 E / #1088: shared envelope owns collector lifecycle (mode/fork, host
+    // tool surface). Role supplies soul/materials + submission tool only; code
+    // no longer observes or merges GitHub findings.
     let activeCollector: CollectorActivation | undefined;
     let collectorFirstDispatchDone = false;
     const collectorBusiness = createCollectorRoleRuntime(
       roleHost,
       {
         loadSoul: () => requireRoleSoul("collector"),
-        createTransport() {
-          if (dependencies.createCollectorTransport === undefined) {
-            throw new Error("Collector GitHub transport is not configured");
-          }
-          return dependencies.createCollectorTransport();
-        },
-        createLedger(config, collectorClock, context) {
-          const append = context.sessionManager?.appendCustomEntry;
-          return createCollectorLedger(config, {
-            clock: collectorClock,
-            ...(append === undefined
-              ? {}
-              : {
-                journal: {
-                  append(customType, data) {
-                    context.sessionManager?.appendCustomEntry?.(customType, data);
-                  },
-                },
-              }),
-            dossierEntries: context.sessionManager?.getEntries?.() ?? [],
-          });
-        },
-        ...(dependencies.createCollectorClock === undefined
-          ? {}
-          : { createClock: dependencies.createCollectorClock }),
-        ...(dependencies.loadCollectorHandbookSeed === undefined
-          ? {}
-          : { loadHandbookSeed: dependencies.loadCollectorHandbookSeed }),
       },
       hostActions,
     );
-    // #676 J1: business tools + tool_call gate register only behind admission/activation.
-    // before_agent_start / tool_result collector branches live on the shared envelope hooks above.
-    //
-    // #676 J4 dispositions for guards removed from the role-private collector module:
-    // - skills/contextFiles/appendSystemPrompt fail-closed → shared before_agent_start (above).
-    // - ambient skill/prompt/template commands → activate (below).
-    // - session_shutdown fatal exitCode → shared session_shutdown (above).
-    // - subsequent-input latchFatal + fixed-kickoff rewrite → intentionally not migrated:
-    //   #676 materials-first multi-turn abolished the single-shot fixed kickoff; multi-turn
-    //   observe/request/wait requires later inputs. Judge r1: fixed-kickoff equality delete is authorized.
-    // - tool sourceInfo path override check → intentionally not migrated: depended on
-    //   packageExtensionPath deleted under ADR 0018 / #676 E envelope ownership; uniqueness
-    //   + setActiveTools inventory checks remain on activate.
     let collectorToolCallRegistered = false;
     const collector = {
       async activate(context: HostContext, event: { reason: string }) {
         activeCollector = undefined;
         collectorFirstDispatchDone = false;
-        // Envelope-owned mode / fork-reload gates (not role-private lifecycle).
         if (context.mode !== "print" && context.mode !== "json") {
           throw new Error(
             `Collector supports only print or json mode (got ${context.mode})`,
@@ -1650,9 +1586,6 @@ export function createRoleRuntimeExtension(
             `Collector does not support session_start reason ${event.reason}`,
           );
         }
-        // Business tools behind admission barrier (inert-without-role invariant).
-        // First activation: fail closed if a required name is already occupied.
-        // Later activations reuse the once-registered tools (registerBusinessTools is idempotent).
         const preExisting = roleHost.getAllTools();
         const alreadyRegistered = COLLECTOR_REQUIRED_TOOLS.every((required) =>
           preExisting.some((tool) => tool.name === required),
@@ -1676,38 +1609,32 @@ export function createRoleRuntimeExtension(
             throw new Error(`Collector required tool name collision: ${required}`);
           }
         }
-        roleHost.setActiveTools([...COLLECTOR_REQUIRED_TOOLS]);
+        // #1088: keep host CLI surface for self-collect; drop construction write/edit (ADR 0064).
+        const priorActive = roleHost.getActiveTools();
+        const hostSurface = (priorActive.length > 0 ? priorActive : allTools.map((tool) => tool.name))
+          .filter((name) => !(COLLECTOR_CONSTRUCTION_TOOLS as readonly string[]).includes(name));
+        const nextActive = [...new Set([...hostSurface, ...COLLECTOR_REQUIRED_TOOLS])];
+        roleHost.setActiveTools(nextActive);
         const active = new Set(roleHost.getActiveTools());
         for (const required of COLLECTOR_REQUIRED_TOOLS) {
           if (!active.has(required)) {
             throw new Error(`Collector failed to activate required tool ${required}`);
           }
         }
-        for (const name of active) {
-          if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(name)) {
-            throw new Error(`Collector active tool surface includes unexpected ${name}`);
+        for (const name of COLLECTOR_CONSTRUCTION_TOOLS) {
+          if (active.has(name)) {
+            throw new Error(`Collector must not activate construction tool ${name}`);
           }
         }
-        // Seat-scoped tool_call gate — registered only after collector admission (no install-time tool_call).
         if (!collectorToolCallRegistered) {
           collectorToolCallRegistered = true;
           roleHost.on("tool_call", (toolEvent) => {
             const liveRole = roleHost.getFlag(ROLE_FLAG.name);
             if (activeCollector === undefined || selectedRole === undefined || selectedRole !== liveRole) return;
-            if (!(COLLECTOR_REQUIRED_TOOLS as readonly string[]).includes(toolEvent.toolName)) {
-              return {
-                block: true,
-                reason: `通进司禁用工具 ${toolEvent.toolName}`,
-              };
-            }
             return collectorBusiness.onToolCall(activeCollector, toolEvent);
           });
         }
-        const activation = await collectorBusiness.activate(context);
-        if (activation.ledger.activationRecorded) {
-          collectorFirstDispatchDone = true;
-        }
-        activeCollector = activation;
+        activeCollector = await collectorBusiness.activate(context);
       },
     };
 

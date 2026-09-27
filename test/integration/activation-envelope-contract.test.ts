@@ -29,11 +29,6 @@ import { createRoleRuntimeExtension } from "../../src/role-runtime.ts";
 import { PACKAGED_ROLE_REGISTRY } from "../../src/packaged-role-registry.ts";
 import { TERMINATING_TOOL_NAMES } from "../../src/package-contracts/terminating-tools.ts";
 import {
-  createFakeGitHubTransport,
-  samplePull,
-  sampleUser,
-} from "../helpers/fake-github-transport.ts";
-import {
   activationBookKeyFor,
   machineLedgerHome,
   packageRoot,
@@ -93,16 +88,7 @@ function admissionDepsForRole(role: string, fixtureRoot: string): Parameters<typ
     case "reviewer":
       return base;
     case "collector":
-      return {
-        ...base,
-        createCollectorTransport: () => createFakeGitHubTransport({
-          user: sampleUser(),
-          pullRequest: samplePull(),
-          reviews: [],
-          issueComments: [],
-          reviewComments: [],
-        }),
-      };
+      return base;
     case "doctor":
       return {
         ...base,

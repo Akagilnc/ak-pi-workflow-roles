@@ -1,6 +1,5 @@
 /** Composition-root unique authoritative public-role records (#509 / #524). */
 import { COLLECTOR_OUTPUT_TOOL } from "./package-contracts/collector-output.ts";
-import { COLLECTOR_WAIT_TOOL } from "./collector-ledger.ts";
 import { GATEKEEPER_OUTPUT_TOOL_NAME } from "./package-contracts/gatekeeper-output.ts";
 import { NAVIGATOR_OUTPUT_TOOL_NAME } from "./package-contracts/navigator-output.ts";
 import { JUDGE_OUTPUT_TOOL_NAME } from "./package-contracts/judge-output.ts";
@@ -232,22 +231,18 @@ export const PUBLIC_ROLE_RECORDS = [
     ],
   },
   // ak-collector-repo is GitHub owner/repo identity, not a local material path (#438).
+  // #1088: seat + request-manifest kept; code no longer collects — LLM uses host CLI.
   {
     role: "collector",
     inCallAutoResume: false,
     presentSettled: "always",
     summonResume: false,
     admission: "collect-target",
-    /** Public no_receipt projects a durable bind-target rejection. */
-    projectTargetBindRejection: true,
     sameParent: "none",
     phases: [null],
     bareCommand: false,
     outputTool: COLLECTOR_OUTPUT_TOOL,
-    settlement: "residual",
-    /** #633: a prior wait-tool residual must not mask this attempt. */
-    residualScan: "current-attempt",
-    residualTool: COLLECTOR_WAIT_TOOL,
+    settlement: "sealed",
     runnerFailure: "collector-known-first",
     artifactFace: {
       evidenceRole: true,
@@ -264,10 +259,13 @@ export const PUBLIC_ROLE_RECORDS = [
       { field: "repo", from: "repository.display", flag: "ak-collector-repo" },
       { field: "pr", from: "prNumber", text: true, flag: "ak-collector-pr" },
       { field: "requestManifestPath", flag: "ak-collector-request-manifest" },
-      { field: "waitMs", from: "waitWindowMs", text: true, flag: "ak-collector-wait-ms" },
     ],
     activationStage: "load-and-install",
-    sessionMaterials: ["CLAUDE.md", "souls/collector.md"],
+    sessionMaterials: [
+      "CLAUDE.md",
+      "souls/collector.md",
+      "resources/collector-bot-handbook.md",
+    ],
   },
   {
     role: "doctor",

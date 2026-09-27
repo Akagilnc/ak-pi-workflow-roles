@@ -40,7 +40,7 @@ import {
   type SnapshotTicket,
   type TicketSnapshotTransport,
 } from "../../src/ticket-snapshot.ts";
-import type { GhApiRunner, GhApiResponse } from "../../src/collector-github.ts";
+import type { GhApiRunner, GhApiResponse } from "../../src/gh-api-runner.ts";
 import {
   acceptedFacts,
   isTerminatingToolName,

@@ -85,7 +85,6 @@ test("fast audited-seat public wiring matrix settles an injected auditor provide
 test("runnerFailure registry rank is the public settlement principal", async () => {
   const detourDiagnostic = "ENGINE_DETOUR_HARD_FAIL_505_RECORD";
   const knownDiagnostic = "KNOWN_FAILURE_505_STANDS";
-  const collectorDiagnostic = "COLLECTOR_OBSERVE_HARD_FAIL_505";
   const cases = [
     {
       label: "judge known-first still reads a lone engine-detour record",
@@ -112,12 +111,12 @@ test("runnerFailure registry rank is the public settlement principal", async () 
       diagnostic: detourDiagnostic,
     },
     {
-      label: "collector known-first reads its own infrastructure tool",
+      label: "collector known-first with no code-collection infra keeps knownFailure",
       argv: (project: string) => ["--model", "openai-codex/faux-1:off", "collector", "--project", project, "--pr", "7", "--repo", "acme/widgets"],
-      session: "collector" as const,
-      known: false,
-      cause: "activation" as const,
-      diagnostic: collectorDiagnostic,
+      session: "detour" as const,
+      known: true,
+      cause: "provider" as const,
+      diagnostic: knownDiagnostic,
     },
     {
       label: "gleaner-left has no runnerFailure leaf so knownFailure stands",
@@ -134,8 +133,8 @@ test("runnerFailure registry rank is the public settlement principal", async () 
       await mkdir(project, { recursive: true });
       seedGitProject(project);
       const { io, stdout, stderr } = captureIo();
-      const toolName = row.session === "collector" ? "ak_collector_observe" : ENGINE_DETOUR_TOOL_NAME;
-      const toolText = row.session === "collector" ? collectorDiagnostic : detourDiagnostic;
+      const toolName = ENGINE_DETOUR_TOOL_NAME;
+      const toolText = detourDiagnostic;
       const result = await runAkRole(row.argv(project), {
         packageRoot,
         home,

@@ -524,13 +524,12 @@ const COLLECTOR_OPTIONS = [
     canonical: "--pr",
     aliases: [],
     valueMetavar: "number",
-    // #676 D1: optional when context uniquely determines the PR; ambiguous → require explicit.
     required: false,
     repeatable: false,
     form: "option",
     description: {
-      en: "Positive GitHub pull request number. Optional when unique branch/HEAD association binds the PR, or when the Collector role can decide the target from task materials via bind-target; multi-candidate git context or a role that cannot decide requires an explicit value.",
-      zh: "正整数 GitHub PR 号。分支/HEAD 唯一关联可绑定时可省略；亦可由通进司从任务材料经 bind-target 判定。git 多候选或角色无法判定时必须显式提供。",
+      en: "Positive GitHub pull request number. Optional when the Collector role locates the PR via host CLI from task materials.",
+      zh: "正整数 GitHub PR 号。可选；省略时由通进司经宿主 CLI 从任务材料自行定位。",
     },
   },
   {
@@ -557,22 +556,8 @@ const COLLECTOR_OPTIONS = [
     repeatable: false,
     form: "option",
     description: {
-      en: "Optional request manifest JSON path ({requests:[{id,body}]}). Role may also decide request bodies from handbook/field activity without this file.",
-      zh: "可选 request manifest JSON 路径（{requests:[{id,body}]}）。角色亦可依手册/现场自行判定请求正文，不必依赖本文件。",
-    },
-  },
-  {
-    id: "wait-ms",
-    owner: "collector",
-    canonical: "--wait-ms",
-    aliases: [],
-    valueMetavar: "ms",
-    required: false,
-    repeatable: false,
-    form: "option",
-    description: {
-      en: "Wait-window duration in milliseconds after the work step opens (default 600000 = 10 minutes). Does not require a code change to adjust.",
-      zh: "工作步骤开启后的等待窗时长（毫秒；默认 600000＝十分钟）。改配置即可，无需改代码。",
+      en: "Optional request manifest JSON path ({requests:[{id,body}]}). Parsed for semantics and passed to the Collector as materials — not a machine collection directive.",
+      zh: "可选 request manifest JSON 路径（{requests:[{id,body}]}）。按语义解析后作为材料递给通进司，不是机器代收 finding 的指令。",
     },
   },
 ] as const satisfies readonly PublicOptionDefinition[];

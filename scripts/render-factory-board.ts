@@ -29,7 +29,7 @@
  */
 import { resolve } from "node:path";
 
-import { createGhApiRunner } from "../src/collector-github.ts";
+import { createGhApiRunner } from "../src/gh-api-runner.ts";
 import {
   DEFAULT_REFRESH_BOUNDARY_SECONDS,
   startFactoryBoardPage,

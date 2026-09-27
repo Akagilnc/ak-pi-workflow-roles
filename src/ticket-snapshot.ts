@@ -11,7 +11,7 @@
  * blockedBy is paginated to completion (or fails loudly). Never expose a
  * truncated first page as the full blocker set.
  */
-import { createGhApiRunner, type GhApiRunner } from "./collector-github.ts";
+import { createGhApiRunner, type GhApiRunner } from "./gh-api-runner.ts";
 
 export type BookRepoBinding = {
   bookKey: string;
