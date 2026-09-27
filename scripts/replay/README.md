@@ -13,7 +13,7 @@ scripts/replay/replay-run.sh clean  <kit>
 
 `freeze` writes `~/.ak-roles/replays/<runId>/`: the ticket body as of the cut (from the
 issue's edit history), diarist records up to the cut, the run's system prompt with the
-records pointer swapped to the frozen copy and a `<frozen_replay_notice>` on top, the
+historical records pointer (if present) swapped to the frozen copy and a `<frozen_replay_notice>` naming the frozen records for all runs, the
 admitted instruction, the output schema, and a detached worktree at the judged HEAD.
 `run` starts one leg in its own detached worktree (`wt-<arm>-<n>`): codex with `--sandbox read-only`, pi with
 `--append-system-prompt`; `gh` resolves to `bin/gh`, which serves the frozen issue and

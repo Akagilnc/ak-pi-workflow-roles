@@ -127,20 +127,6 @@ export function resolveSitianRecordPathInLedger(
   return { sessionDir, recordFile, ledgerHome };
 }
 
-/**
- * Owner-visible ticket 起居录 path shape via the writer ticket joins
- * (ticketProvenanceUnderBookPaths). Ledger leaf is the package-owned `.ak-roles`
- * name (ADR 0048); variable slots keep owner labels; no fake-home path reverse.
- */
-export function projectTicketRecordsPathShape(): string {
-  const { recordFile } = ticketProvenanceUnderBookPaths(
-    join("~", ".ak-roles"),
-    "<簿>",
-    "<票号>",
-  );
-  return recordFile.replace(/\\/g, "/");
-}
-
 /** Compute a write destination from ambient ledger topology (ADR 0065). */
 export function resolveSitianRecordPath(input: SitianRecordInput): SitianRecordPath {
   const ledgerHome =

@@ -6,7 +6,7 @@
  * - Officer seat host is not parent invocation host (#821).
  * - Nth review turn binds Nth typed payload structure (not pairwise dialogue).
  * - Court-scoped settlement: this-court outcome; empty scope → no outcome; history kept.
- * - Station-child 0081 dossier folds via systemPrompt.materials, not dialogue.
+ * - Station-child: #1092 drops case-dossier pointer delivery; dialogue stays peer-only.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
@@ -452,12 +452,12 @@ test("#879 court-scoped settlement: this-court outcome; empty scope court yields
   });
 });
 
-test("#879 station-child officer: case dossier once via shared envelope readingMaterial; dialogue = peer only", async () => {
-  await withTempRoot("ak-officer-dossier-attach-", async (home) => {
+test("#1092 station-child officer: no case-dossier pointer material; dialogue = peer only", async () => {
+  await withTempRoot("ak-officer-no-dossier-", async (home) => {
     const project = join(home, "project");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
-    const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 879 });
+    const sourceRunPath = await seedCanonicalSourceRun(home, project, { ticketNumber: 1092 });
     // #178: officer summons need a caller-specified seat model (same pattern as #821 above).
     await mkdir(join(home, ".ak-roles"), { recursive: true });
     await writeFile(
@@ -494,7 +494,7 @@ test("#879 station-child officer: case dossier once via shared envelope readingM
       },
     };
 
-    const body = { countersignStatus: "converged", note: "DOSSIER-ATTACH-BODY" };
+    const body = { countersignStatus: "converged", note: "NO-DOSSIER-PEER-BODY" };
     const projected = await projectGatekeeperRun({
       context: {
         cwd: project,
@@ -511,7 +511,7 @@ test("#879 station-child officer: case dossier once via shared envelope readingM
         home,
         packageRoot,
         roleTurnHost: host,
-        createRunId: () => "01a087900-0000-7000-8000-0000000d001",
+        createRunId: () => "01a0109200007000800000000000d1",
       }),
     });
     assert.equal(projected.result.status, "converged");
@@ -521,7 +521,14 @@ test("#879 station-child officer: case dossier once via shared envelope readingM
     const officerRun = projected.summoned?.runDirectory ?? runDirs[runDirs.length - 1];
     assert.ok(officerRun, "officer run directory must exist");
 
-    const socketDir = await mkdtemp(join(tmpdir(), "ak-879-env-"));
+    await assert.rejects(
+      () => access(join(officerRun!, "attachments", "case-dossier")),
+      (error: unknown) =>
+        error instanceof Error
+        && (error as NodeJS.ErrnoException).code === "ENOENT",
+    );
+
+    const socketDir = await mkdtemp(join(tmpdir(), "ak-1092-officer-env-"));
     const prepared = await prepareRoleEnvelope({
       request: {
         principal: fixturePrincipal(join(officerRun!, "session")),
@@ -545,12 +552,7 @@ test("#879 station-child officer: case dossier once via shared envelope readingM
           && material !== null
           && (material as { kind?: unknown }).kind === "case-dossier-pointer",
       );
-      assert.equal(dossiers.length, 1);
-      const dossier = dossiers[0] as { kind?: unknown; frozenPath?: unknown };
-      assert.equal(dossier.kind, "case-dossier-pointer");
-      assert.equal(typeof dossier.frozenPath, "string");
-      assert.ok(typeof dossier.frozenPath === "string" && dossier.frozenPath.length > 0);
-      await access(dossier.frozenPath as string);
+      assert.equal(dossiers.length, 0);
     } finally {
       await prepared.dispose?.();
     }

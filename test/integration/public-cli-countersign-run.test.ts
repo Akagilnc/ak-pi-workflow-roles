@@ -8,7 +8,7 @@ import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} fr
  * station), never from mechanical matching of summons text against book records.
  * Public re-summons mint a new run under the typed ticket (#505 / #987).
  * Gate handoff resumes by parent run path. Explicit ak-role resume takes a runId.
- * 起居录 path delivery rides the shared post-admission mount.
+ * #1092: no code-side 起居录 path delivery.
  */
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";

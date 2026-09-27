@@ -8,9 +8,10 @@
  * mechanical layer only verifies; countersign reuses that typed identity for bind
  * (ADR 0075 / 0081). Code never matches instruction text against book-known
  * numbers. Who may call 起居郎 and in what order is not written into law
- * (ADR 0075 不规定谁调用起居郎、顺序归调用者). 起居录 path delivery is owned once by
- * post-admission (#709 / ADR 0081). Bound refresh hands the typed key to 起居郎
- * so freeze loads issue face (ADR 0075: 每次过庭都跑是调用者用法 / typed handoff).
+ * (ADR 0075 不规定谁调用起居郎、顺序归调用者). #1092: code no longer freezes or
+ * delivers 起居录 paths — roles locate records by ticket. Bound refresh hands the
+ * typed key to 起居郎 so freeze loads issue face (ADR 0075: 每次过庭都跑是调用者用法 /
+ * typed handoff).
  */
 import type { DurablePrincipalAuthority } from "../host-contracts.ts";
 import { projectCourtTicketNumbers } from "../diarist-contracts.ts";

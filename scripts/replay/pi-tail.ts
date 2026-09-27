@@ -1,7 +1,8 @@
-// Rebuild the system-prompt tail a pi-host seat received: <role_soul> plus the
-// role-reference-materials and case-dossier-pointer reading materials. The
-// registry and renderer are loaded from the frozen worktree (argv[2]) so every
-// byte comes from the judged HEAD:
+// Rebuild the system-prompt tail a pi-host seat received: <role_soul> plus
+// role-reference-materials (and, for historical kits only, a case-dossier
+// pointer.md when AK_REPLAY_POINTER points at a non-empty freeze). #1092
+// production no longer freezes that pointer; registry/renderer load from the
+// frozen worktree (argv[2]) so every byte comes from the judged HEAD:
 //   AK_REPLAY_POINTER=<kit>/pointer.md node --import tsx pi-tail.ts <role> <kit>/wt
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";

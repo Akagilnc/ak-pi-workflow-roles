@@ -8,7 +8,7 @@
  * Envelope / role-runtime #969 cases (archivist + runtime load):
  * test/contract/submission-gate.test.ts,
  * test/contract/secretariat-role.test.ts.
- * Medium FS #753 / #821 / #879 Nth-turn / court-scope / dossier fold:
+ * Medium FS #753 / #821 / #879 Nth-turn / court-scope; #1092 no dossier delivery:
  * test/integration/gate-officer-resume-accounting.test.ts
  */
 import assert from "node:assert/strict";
