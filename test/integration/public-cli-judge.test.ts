@@ -409,20 +409,9 @@ test("extractNavigatorFact keeps a native playbook read failure on the existing 
   assert.equal(laterSuccess.advisoryDiagnostic, undefined);
 });
 
-test("extractNavigatorFact keeps three-state attendance: affirmative no-advice vs missing/uncorrelated/unparseable", () => {
-  const invocationId = "019f8c2a-1111-7111-8111-111111111111";
-  const correlated = {
-    version: 1,
-    invocationId,
-    role: "judge",
-    phase: null,
-    subjectKey: "/repo/.ak/work",
-  };
-  const invocationPrincipal = {
-    type: "custom",
-    customType: "ak-navigator-invocation",
-    data: { invocationId, role: "judge", phase: null, subjectKey: "/repo/.ak/work" },
-  };
+test("extractNavigatorFact keeps three-state attendance: affirmative no-advice vs missing/unparseable (#1087)", () => {
+  // #1087: settlement takes this-call post-terminal attendance as-is — no marker /
+  // invocationId correlation. Identity tokens on the payload are optional provenance.
   const judgeTerminal = {
     type: "custom",
     customType: "ak-role-submission-closure",
@@ -434,12 +423,11 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   };
 
   const noAdvice = extractNavigatorFact([
-    invocationPrincipal,
     judgeTerminal,
     {
       type: "custom_message",
       customType: "ak-navigator-attendance",
-      message: { details: { ...correlated, disposition: "no-advice" } },
+      message: { details: { disposition: "no-advice" } },
     },
   ]);
   assert.equal(noAdvice.disposition, "no-advice");
@@ -449,25 +437,6 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   if (missing.disposition === "unavailable") {
     assert.equal(missing.source, "unknown");
     assert.equal(typeof missing.reason, "string");
-  }
-
-  const uncorrelated = extractNavigatorFact([
-    invocationPrincipal,
-    judgeTerminal,
-    {
-      type: "custom_message",
-      customType: "ak-navigator-attendance",
-      message: {
-        details: {
-          disposition: "no-advice",
-          // missing invocation/role/phase/subject correlation facts
-        },
-      },
-    },
-  ]);
-  assert.equal(uncorrelated.disposition, "unavailable");
-  if (uncorrelated.disposition === "unavailable") {
-    assert.equal(uncorrelated.source, "unknown");
   }
 
   const unparseable = extractNavigatorFact([
@@ -484,26 +453,23 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   }
 
   const badDisposition = extractNavigatorFact([
-    invocationPrincipal,
     judgeTerminal,
     {
       type: "custom_message",
       customType: "ak-navigator-attendance",
-      message: { details: { ...correlated, disposition: "mystery" } },
+      message: { details: { disposition: "mystery" } },
     },
   ]);
   assert.equal(badDisposition.disposition, "unavailable");
 
   // #959: historical recommendation with only next must stay advice, not no-advice.
   const legacyNextOnly = extractNavigatorFact([
-    invocationPrincipal,
     judgeTerminal,
     {
       type: "custom_message",
       customType: "ak-navigator-attendance",
       message: {
         details: {
-          ...correlated,
           disposition: "recommendation",
           next: { role: "reviewer", phase: null },
         },
@@ -516,25 +482,20 @@ test("extractNavigatorFact keeps three-state attendance: affirmative no-advice v
   }
 });
 
-test("extractNavigatorFact keeps minimal invocationId provenance and post-terminal order", async () => {
-  const sessionId = "019f-session-current";
-  const cwd = "/repo";
+test("extractNavigatorFact uses post-terminal delivery window without invocation identity correlation (#1087)", async () => {
   const subjectKey = "/repo/.ak/work";
-  // Opaque principals — not sessionId:sequence (restart-repeatable).
   const currentInvocationId = "019f8c2a-7b3e-7d11-8a4f-1c2d3e4f5a6b";
   const oldInvocationId = "019f8c2a-0000-7000-8000-000000000001";
-  const futureInvocationId = "019f8c2a-ffff-7fff-8fff-ffffffffffff";
   const sessionHeader = {
     type: "session",
-    id: sessionId,
-    cwd,
+    id: "019f-session-current",
+    cwd: "/repo",
   };
   const invocation = (invocationId: string, data: Record<string, unknown> = {}) => ({
     type: "custom",
     customType: "ak-navigator-invocation",
     data: { invocationId, role: "judge", phase: null, subjectKey, ...data },
   });
-  // Durable accepted terminal (shared classifier). isError:true/details:{} is nonterminal.
   const currentTerminal = {
     type: "custom",
     customType: "ak-role-submission-closure",
@@ -549,27 +510,29 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
     customType: "ak-navigator-attendance",
     message: { details: { disposition: "no-advice", ...details } },
   });
-  const matched = {
-    invocationId: currentInvocationId,
-  };
 
-  // Attendance before the current role terminal is an old-round/stale fact.
+  // Lifecycle isolation: attendance before the current durable terminal is not this call.
   const beforeTerminal = extractNavigatorFact([
     sessionHeader,
     invocation(currentInvocationId),
-    attendance(matched),
+    attendance({ invocationId: currentInvocationId }),
     currentTerminal,
   ]);
   assert.equal(beforeTerminal.disposition, "unavailable");
 
-  // Runtime-self-produced role/phase/subject/version are not re-reconciled (ADR 0042).
-  // Divergent self-fields still admit when invocationId + post-terminal order hold.
+  // No historical marker / invocationId equality check (ADR 0042 / #1087).
+  const withoutMarkerOrToken = extractNavigatorFact([
+    sessionHeader,
+    currentTerminal,
+    attendance({ disposition: "no-advice" }),
+  ]);
+  assert.equal(withoutMarkerOrToken.disposition, "no-advice");
+
   const mismatchedSelfFields = extractNavigatorFact([
     sessionHeader,
-    invocation(currentInvocationId),
     currentTerminal,
     attendance({
-      ...matched,
+      invocationId: "019f8c2a-aaaa-7bbb-8ccc-ddddeeeeffff",
       version: 99,
       role: "fixer",
       phase: "apply",
@@ -578,16 +541,7 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
   ]);
   assert.equal(mismatchedSelfFields.disposition, "no-advice");
 
-  // Old attendance token (and old marker left behind a newer principal) rejected.
-  const oldAttendance = extractNavigatorFact([
-    sessionHeader,
-    invocation(oldInvocationId),
-    invocation(currentInvocationId),
-    currentTerminal,
-    attendance({ invocationId: oldInvocationId }),
-  ]);
-  assert.equal(oldAttendance.disposition, "unavailable");
-  // Old attendance event before the current terminal is stale, even with matching old marker.
+  // Prior-round attendance before the current terminal stays outside the window.
   const oldAttendanceEvent = extractNavigatorFact([
     sessionHeader,
     invocation(oldInvocationId),
@@ -597,88 +551,7 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
   ]);
   assert.equal(oldAttendanceEvent.disposition, "unavailable");
 
-  // Future marker/event after terminal must not supply the principal.
-  const futureMarker = extractNavigatorFact([
-    sessionHeader,
-    invocation(currentInvocationId),
-    currentTerminal,
-    invocation(futureInvocationId),
-    attendance({ invocationId: futureInvocationId }),
-  ]);
-  assert.equal(futureMarker.disposition, "unavailable");
-  // Attendance carrying future token while current marker is before terminal.
-  const futureAttendance = extractNavigatorFact([
-    sessionHeader,
-    invocation(currentInvocationId),
-    currentTerminal,
-    attendance({ invocationId: futureInvocationId }),
-  ]);
-  assert.equal(futureAttendance.disposition, "unavailable");
-
-  // Malformed nearest marker before terminal blocks fallback to older valid marker.
-  const malformedNearest = extractNavigatorFact([
-    sessionHeader,
-    invocation(oldInvocationId),
-    { type: "custom", customType: "ak-navigator-invocation", data: { invocationId: "" } },
-    currentTerminal,
-    attendance({ invocationId: oldInvocationId }),
-  ]);
-  assert.equal(malformedNearest.disposition, "unavailable");
-  const malformedData = extractNavigatorFact([
-    sessionHeader,
-    invocation(currentInvocationId),
-    { type: "custom", customType: "ak-navigator-invocation", data: "not-an-object" },
-    currentTerminal,
-    attendance(matched),
-  ]);
-  assert.equal(malformedData.disposition, "unavailable");
-
-  // Missing independent invocation principal → unavailable.
-  const noInvocationPrincipal = extractNavigatorFact([
-    sessionHeader,
-    currentTerminal,
-    attendance(matched),
-  ]);
-  assert.equal(noInvocationPrincipal.disposition, "unavailable");
-
-  // No session header and no independent invocation principal → unavailable.
-  const noSessionHeader = extractNavigatorFact([
-    currentTerminal,
-    attendance(matched),
-  ]);
-  assert.equal(noSessionHeader.disposition, "unavailable");
-
-  // Wrong invocation id (different opaque principal) is not this call.
-  const wrongInvocation = extractNavigatorFact([
-    sessionHeader,
-    invocation(currentInvocationId),
-    currentTerminal,
-    attendance({ invocationId: "019f8c2a-aaaa-7bbb-8ccc-ddddeeeeffff" }),
-  ]);
-  assert.equal(wrongInvocation.disposition, "unavailable");
-
-  // Exact current token (nearest before terminal) correlates; older rounds stay ignored.
-  const current = extractNavigatorFact([
-    sessionHeader,
-    invocation(oldInvocationId),
-    attendance({ invocationId: oldInvocationId }),
-    invocation(currentInvocationId),
-    currentTerminal,
-    attendance(matched),
-  ]);
-  assert.equal(current.disposition, "no-advice");
-
-  // Future marker after terminal is ignored when current marker is before terminal.
-  const ignoreFutureMarker = extractNavigatorFact([
-    sessionHeader,
-    invocation(currentInvocationId),
-    currentTerminal,
-    invocation(futureInvocationId),
-    attendance(matched),
-  ]);
-  assert.equal(ignoreFutureMarker.disposition, "no-advice");
-
-  // Same-session new invocation: only the current token (nearest before terminal) correlates.
+  // Same-session successor: latest post-terminal attendance is this call's delivery.
   const priorTerminal = {
     type: "message",
     message: {
@@ -695,36 +568,11 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
     attendance({ invocationId: oldInvocationId }),
     invocation(currentInvocationId),
     currentTerminal,
-    attendance(matched),
+    attendance({ invocationId: currentInvocationId }),
   ]);
   assert.equal(sameSessionNewInvocation.disposition, "no-advice");
-  const sameSessionStaleAttendance = extractNavigatorFact([
-    sessionHeader,
-    invocation(oldInvocationId),
-    priorTerminal,
-    attendance({ invocationId: oldInvocationId }),
-    invocation(currentInvocationId),
-    currentTerminal,
-    attendance({ invocationId: oldInvocationId }),
-  ]);
-  assert.equal(sameSessionStaleAttendance.disposition, "unavailable");
 
-  // Marker self role/phase/subject are not re-reconciled against the terminal or admitted identity.
-  const mismatchedMarkerFields = extractNavigatorFact([
-    sessionHeader,
-    invocation(currentInvocationId, { role: "coder", phase: "apply", subjectKey: "/other/work" }),
-    currentTerminal,
-    attendance({
-      invocationId: currentInvocationId,
-      role: "coder",
-      phase: "apply",
-      subjectKey: "/other/work",
-    }),
-  ]);
-  assert.equal(mismatchedMarkerFields.disposition, "no-advice");
-
-  // Attendance extraction does not re-litigate marker↔terminal cardinality (receipt settlement owns that).
-  // Latest durable terminal + invocationId + post-terminal order still admits affirmative attendance.
+  // Latest durable terminal bounds the window even when earlier terminals exist.
   const twoDurable = extractNavigatorFact([
     sessionHeader,
     invocation(currentInvocationId),
@@ -738,14 +586,13 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
         details: { status: "continue" },
       },
     },
-    attendance(matched),
+    attendance({ disposition: "no-advice" }),
   ]);
   assert.equal(twoDurable.disposition, "no-advice");
 
   // Real entry → external result: divergent prose advice appears as-is (#959).
   const divergentAdvice = extractNavigatorFact([
     sessionHeader,
-    invocation(currentInvocationId),
     currentTerminal,
     {
       type: "custom_message",
@@ -753,10 +600,6 @@ test("extractNavigatorFact keeps minimal invocationId provenance and post-termin
       message: {
         details: {
           disposition: "advice",
-          invocationId: currentInvocationId,
-          role: "judge",
-          phase: null,
-          subjectKey,
           prose: "游奕使建议直接合并（与判词无关，原样交调用者）",
         },
       },

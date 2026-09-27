@@ -333,7 +333,7 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
             role: "toolResult",
             toolName: JUDGE_OUTPUT_TOOL_NAME,
             toolCallId: "fatal-judge",
-            // Durable accepted terminal for attendance correlation; retryable
+            // Durable accepted terminal for post-terminal attendance window; retryable
             // isError:true/details:{} is nonterminal under the shared classifier.
             isError: false,
             details: { status: "converged" },

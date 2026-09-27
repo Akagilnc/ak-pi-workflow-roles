@@ -1,5 +1,5 @@
 /**
- * Exact current-invocation principal for Navigator attendance correlation.
+ * Exact current-invocation principal for shared role lifecycle (#1087).
  * Shared role lifecycle owns one opaque uuidv7 per Role invocation and persists
  * it on the role session via Pi's guaranteed `pi.appendEntry` boundary.
  *
@@ -7,21 +7,14 @@
  * unfinished exact-session resume reuses the latest valid marker only when its
  * role/phase/subjectKey still match the expected identity; a packaged role
  * terminal completing that marker starts the next invocation (fresh mint).
- * Terminal settlement binds the nearest independent marker strictly before the
- * current durable packaged role terminal and compares equality — never attendance
- * self-shape, markers after the terminal, or stale older markers behind a
- * malformed nearest. Non-UUIDv7 principals are never accepted.
+ * Public settlement does not re-correlate attendance against this principal
+ * (ADR 0042); lifecycle dispose/grace owns call-boundary isolation (ADR 0084).
  *
  * One shared typed terminal classifier owns durable completion for lifecycle,
  * publicNavigatorSettlement, and every public CLI Receipt extractor:
  *   - accepted/human: isError exactly false and no infrastructure-failure fact
  *   - infrastructure: isError exactly true plus base kind/source/reasonCode identity
  *   - retryable/missing/nonboolean/contradictory/malformed: nonterminal
- *
- * One truth table also owns marker↔terminal cardinality:
- *   - a marker binds exactly one durable packaged role terminal
- *   - multiple durable terminals after the same marker → ambiguous / fail-closed
- *   - marker role/phase/subjectKey must match the terminal + independent expected
  */
 
 import { LEGACY_REVIEW_OUTPUT_ROLES, PACKAGED_ROLE_REGISTRY } from "./packaged-role-registry.ts";
@@ -147,7 +140,7 @@ export type InvocationMarkerIdentity = {
   readonly subjectKey: string;
 };
 
-/** Independently admitted / registry / cwd expected identity for resume and correlation. */
+/** Independently admitted / registry / cwd expected identity for lifecycle resume. */
 export type ExpectedInvocationIdentity = {
   readonly role: string;
   readonly phase?: InvocationPhase;
@@ -342,83 +335,6 @@ export function findLatestDurablePackagedRoleTerminal(
   return undefined;
 }
 
-/**
- * Truth-table binding of the current durable packaged role terminal to its
- * owning invocation marker. Singleton cardinality: multiple durable terminals
- * after the same marker are ambiguous and fail closed.
- */
-export type DurableTerminalMarkerBinding =
-  | {
-      readonly kind: "bound";
-      readonly terminal: DurablePackagedRoleTerminalRef;
-      readonly marker: InvocationMarkerIdentity & { readonly index: number };
-    }
-  | {
-      readonly kind: "unbound";
-      readonly terminal: DurablePackagedRoleTerminalRef;
-    }
-  | { readonly kind: "absent" }
-  | { readonly kind: "ambiguous" };
-
-export function bindCurrentDurableTerminalToMarker(
-  entries: readonly NavigatorInvocationEntryLike[],
-): DurableTerminalMarkerBinding {
-  const terminal = findLatestDurablePackagedRoleTerminal(entries);
-  if (terminal === undefined) return { kind: "absent" };
-
-  let markerIndex = -1;
-  for (let i = terminal.index - 1; i >= 0; i -= 1) {
-    if (isInvocationMarkerEntry(entries[i])) {
-      markerIndex = i;
-      break;
-    }
-  }
-  if (markerIndex < 0) {
-    return { kind: "unbound", terminal };
-  }
-
-  const marker = parseInvocationMarkerIdentity(entries[markerIndex]?.data);
-  if (marker === undefined) {
-    // Malformed nearest marker: no stale fallback; terminal exists but is unbound.
-    return { kind: "unbound", terminal };
-  }
-
-  let windowEnd = entries.length;
-  for (let i = markerIndex + 1; i < entries.length; i += 1) {
-    if (isInvocationMarkerEntry(entries[i])) {
-      windowEnd = i;
-      break;
-    }
-  }
-
-  let durableCount = 0;
-  for (let i = markerIndex + 1; i < windowEnd; i += 1) {
-    if (durableTerminalAt(entries, i) !== undefined) durableCount += 1;
-  }
-  if (durableCount !== 1) return { kind: "ambiguous" };
-  // Current terminal must be the singleton inside this marker window.
-  if (terminal.index <= markerIndex || terminal.index >= windowEnd) {
-    return { kind: "ambiguous" };
-  }
-
-  return {
-    kind: "bound",
-    terminal,
-    marker: { ...marker, index: markerIndex },
-  };
-}
-
-/**
- * Whether public Receipt settlement may proceed for the current durable terminal.
- * Only ambiguous multi-terminal bindings fail closed; attendance mismatch does not
- * pollute an otherwise legal single Receipt.
- */
-export function isReceiptSettlementBindingClear(
-  entries: readonly NavigatorInvocationEntryLike[],
-): boolean {
-  return bindCurrentDurableTerminalToMarker(entries).kind !== "ambiguous";
-}
-
 export type LifecycleInvocationPrincipal = {
   readonly invocationId: string;
   /** True when the principal is already on the admitted session (resume; do not re-append). */
@@ -462,37 +378,4 @@ export function resolveLifecycleInvocationPrincipal(
   }
 
   return { invocationId: marker.invocationId, resume: true };
-}
-
-/**
- * Exact current invocation principal already present on the role session.
- * `beforeIndex` is the current packaged role terminal index: only the nearest
- * marker strictly before that bound is applicable. A malformed nearest marker
- * fails closed (undefined) — never falls back to a stale older valid marker.
- * Markers at/after the terminal (future prepare/event) are never considered.
- * Non-UUIDv7 values are rejected.
- */
-export function currentInvocationPrincipalFromSession(
-  entries: readonly NavigatorInvocationEntryLike[],
-  beforeIndex: number = entries.length,
-): string | undefined {
-  return currentInvocationMarkerFromSession(entries, beforeIndex)?.invocationId;
-}
-
-/**
- * Full marker identity nearest before `beforeIndex` (current durable terminal).
- * Malformed nearest fails closed — no stale older fallback.
- */
-export function currentInvocationMarkerFromSession(
-  entries: readonly NavigatorInvocationEntryLike[],
-  beforeIndex: number = entries.length,
-): InvocationMarkerIdentity | undefined {
-  const limit = Math.min(Math.max(beforeIndex, 0), entries.length);
-  for (let i = limit - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (!isInvocationMarkerEntry(entry)) continue;
-    // Nearest marker only — parse full identity or fail closed.
-    return parseInvocationMarkerIdentity(entry?.data);
-  }
-  return undefined;
 }
