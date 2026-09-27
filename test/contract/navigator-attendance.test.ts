@@ -420,21 +420,18 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
     assert.equal(outcome?.kind, "failure", JSON.stringify(summoned?.terminal));
     assert.equal(
       outcome && "decisiveFacts" in outcome ? outcome.decisiveFacts.errorCode : undefined,
-      "spawn-failed",
-    );
-    assert.equal(
-      outcome && "decisiveFacts" in outcome
-        ? (outcome.decisiveFacts.secondaryEvidence as { binary?: string } | undefined)?.binary
-        : undefined,
-      missingBin,
-    );
-    assert.equal(summoned?.terminal?.autoResumeCount, 2);
-    assert.equal(
-      outcome && "decisiveFacts" in outcome
-        ? (outcome.decisiveFacts.laterResumeFailure as { errorCode?: string } | undefined)?.errorCode
-        : undefined,
       "session-id-missing",
     );
+    const firstTurnFailure = outcome && "decisiveFacts" in outcome
+      ? outcome.decisiveFacts.firstTurnFailure as {
+          diagnostic?: string;
+          decisiveFacts?: { errorCode?: string; secondaryEvidence?: { binary?: string } };
+        } | undefined
+      : undefined;
+    assert.equal(firstTurnFailure?.decisiveFacts?.errorCode, "spawn-failed");
+    assert.equal(firstTurnFailure?.decisiveFacts?.secondaryEvidence?.binary, missingBin);
+    assert.equal(summoned?.terminal?.autoResumeCount, 2);
+    assert.ok(firstTurnFailure?.diagnostic);
     const diagnostic =
       outcome && "diagnostic" in outcome && typeof outcome.diagnostic === "string"
         ? outcome.diagnostic
@@ -443,7 +440,7 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
 
     assert.equal(events.length, 1);
     assert.equal(events[0].disposition, "unavailable");
-    assert.equal(events[0].unavailableReason, diagnostic);
+    assert.equal(events[0].unavailableReason, firstTurnFailure?.diagnostic);
 
     const invocationId = events[0].invocationId as string;
     const terminalNavigator = extractNavigatorFact([
@@ -474,7 +471,7 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
     ] as never);
     assert.equal(terminalNavigator.disposition, "unavailable");
     if (terminalNavigator.disposition === "unavailable") {
-      assert.equal(terminalNavigator.reason, diagnostic);
+      assert.equal(terminalNavigator.reason, firstTurnFailure?.diagnostic);
     }
   });
 });

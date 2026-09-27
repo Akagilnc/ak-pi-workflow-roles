@@ -427,7 +427,7 @@ export async function runWithAutoResumeLoop<
   let lastThrownError: unknown;
   let everyAttemptThrew = true;
   const retainedErrorFiles: string[] = [];
-  let firstHostFailure: TerminalResult | undefined;
+  let firstHostFailure: Extract<TerminalResult["roleOutcome"], { kind: "failure" }> | undefined;
 
   while (true) {
     let result: T | undefined;
@@ -494,7 +494,7 @@ export async function runWithAutoResumeLoop<
       if (terminal !== undefined) {
         (terminal as { autoResumeCount?: number }).autoResumeCount = autoResumeAttempts;
         if (autoResumeAttempts === 0 && terminal.roleOutcome.kind === "failure") {
-          firstHostFailure = terminal;
+          firstHostFailure = terminal.roleOutcome;
         }
       }
 
@@ -520,19 +520,23 @@ export async function runWithAutoResumeLoop<
     if (result !== undefined) {
       const terminal = (result as { terminal?: TerminalResult }).terminal;
       if (autoResumeAttempts >= limit) {
-        // A missing resume identity is a later failure to dispatch, not a
-        // replacement for the host's first-turn failure. Keep both facts.
+        // A missing resume identity is a later failure to dispatch. Retain
+        // the first turn's facts under their own attempt, without replacing
+        // the final outcome or attaching the wrong attempt's artifacts.
         if (terminal?.roleOutcome.kind === "failure"
           && terminal.roleOutcome.decisiveFacts.errorCode === "session-id-missing"
-          && firstHostFailure?.roleOutcome.kind === "failure") {
-          const original = firstHostFailure.roleOutcome;
+          && firstHostFailure !== undefined) {
+          const original = firstHostFailure;
           const restored: TerminalResult = {
             ...terminal,
             roleOutcome: {
-              ...original,
+              ...terminal.roleOutcome,
               decisiveFacts: {
-                ...original.decisiveFacts,
-                laterResumeFailure: terminal.roleOutcome.decisiveFacts,
+                ...terminal.roleOutcome.decisiveFacts,
+                firstTurnFailure: {
+                  diagnostic: original.diagnostic,
+                  decisiveFacts: original.decisiveFacts,
+                },
               },
             },
           };

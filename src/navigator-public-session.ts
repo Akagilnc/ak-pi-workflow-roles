@@ -214,9 +214,14 @@ export function createNativeNavigatorSessionFactory(deps?: {
           }
           if (outcome.kind === "failure") {
             providerFailure = navigatorProviderFailureFromPublicTerminal(outcome);
+            const firstTurnFailure = outcome.decisiveFacts.firstTurnFailure as
+              | { diagnostic?: unknown }
+              | undefined;
             throw navigatorUnavailableError(
               providerFailure.source,
-              new Error(outcome.diagnostic),
+              new Error(typeof firstTurnFailure?.diagnostic === "string"
+                ? firstTurnFailure.diagnostic
+                : outcome.diagnostic),
               providerFailure.cause,
             );
           }
