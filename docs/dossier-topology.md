@@ -48,4 +48,4 @@ Status: accepted design（issue [#852](https://github.com/Akagilnc/ak-pi-workflo
 
 ## 已知不一致
 
-无。#1092 已在仓级 [`CLAUDE.md`](../CLAUDE.md) 写入与本页一致的记录根约定（`books/<book-key>/<ticket>/records.jsonl`）；角色凭票号自取，代码不再递送路径。
+无。#1092 已在仓级 [`CLAUDE.md`](../CLAUDE.md) 写入与本页票目录一致的记录目录约定（`books/<book-key>/<ticket>/`）；角色凭票号自取，代码不再递送本票指针。
