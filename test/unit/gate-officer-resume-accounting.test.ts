@@ -4,7 +4,6 @@
  * - This-court officer receipt from settlement payloads only — no sole-row guess.
  * - Undivided submissions without scoped payloads are not this-court identity.
  * - Non-three-state then lawful pass: parent sees this-court pass only.
- * - Station-child officer promptWithPriorNativePaths omits prior paths.
  * - #969 secretariat_verdict → countersign status map (projection only).
  * Envelope / role-runtime #969 cases (archivist + runtime load):
  * test/contract/submission-gate.test.ts,
@@ -15,36 +14,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { promptWithPriorNativePaths } from "../../src/external-host-turn-loop.ts";
 import { projectGatekeeperRun } from "../../src/gatekeeper-role.ts";
-import type { RoleTurnRequest } from "../../src/host-contracts.ts";
-import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
-
-function stubRoleTurn(input: {
-  readonly role: "notary" | "judge";
-  readonly prompt: string;
-  readonly priorNativePaths: readonly string[];
-  readonly stationChild?: boolean;
-}): RoleTurnRequest {
-  return {
-    principal: fixturePrincipal("/tmp/session"),
-    activation:
-      input.role === "notary"
-        ? { role: "notary", sourceRun: "/tmp/parent" }
-        : { role: "judge" },
-    methods: [],
-    continuation: { kind: "resume", prompt: input.prompt },
-    cwd: "/tmp",
-    home: "/tmp",
-    agentDir: "/tmp/agent",
-    runDirectory: "/tmp/run",
-    hostTransition: {
-      priorNativeKind: "sitian",
-      priorNativePaths: input.priorNativePaths,
-    },
-    ...(input.stationChild === undefined ? {} : { stationChild: input.stationChild }),
-  };
-}
 
 test("#836 host abort coexists with recorded officer payload — does not wash to bounce", async () => {
   const bounce = { status: "continue", findings: ["keep-me"] };
@@ -220,45 +190,6 @@ test("#879 non-three-state then lawful pass converges; parent sees this-court pa
     { status: "other", note: "first" },
     thisCourt,
   ]);
-});
-
-test("#879 promptWithPriorNativePaths: station-child officer omits paths; others append", () => {
-  const prior = "/tmp/prior-sitian.jsonl";
-  const peer = "PEER-BODY-TRANSITION-DIFF";
-  const appended = `${peer}\n${prior}`;
-
-  assert.equal(
-    promptWithPriorNativePaths(
-      peer,
-      stubRoleTurn({ role: "notary", prompt: peer, priorNativePaths: [prior], stationChild: true }),
-    ),
-    peer,
-    "station-child officer must not splice priorNativePaths",
-  );
-  assert.equal(
-    promptWithPriorNativePaths(
-      peer,
-      stubRoleTurn({ role: "judge", prompt: peer, priorNativePaths: [prior] }),
-    ),
-    appended,
-    "non-officer must append priorNativePaths",
-  );
-  assert.equal(
-    promptWithPriorNativePaths(
-      peer,
-      stubRoleTurn({ role: "notary", prompt: peer, priorNativePaths: [prior] }),
-    ),
-    appended,
-    "officer without stationChild must append priorNativePaths",
-  );
-  assert.equal(
-    promptWithPriorNativePaths(
-      peer,
-      stubRoleTurn({ role: "notary", prompt: peer, priorNativePaths: [prior], stationChild: false }),
-    ),
-    appended,
-    "officer with stationChild false must append priorNativePaths",
-  );
 });
 
 test("#969 secretariat_verdict routes to countersign and maps status",

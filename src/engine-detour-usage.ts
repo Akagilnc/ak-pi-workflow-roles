@@ -302,20 +302,6 @@ export async function readInvocationEngineMounted(
   return typeof raw.engine === "string" && raw.engine.trim() !== "";
 }
 
-/**
- * Selected host from the admission invocation page — for post-admission
- * host-transition classification only. In-turn tools take host from the shared
- * Host envelope (RoleTurnRequest / HostContext), never this reader.
- * Undefined when absent — callers must not invent "pi".
- */
-export function readInvocationSelectedHost(runDirectory: string): string | undefined {
-  const raw = readInvocationRecord(runDirectory);
-  if (raw === undefined) return undefined;
-  return typeof raw.host === "string" && raw.host.trim() !== ""
-    ? raw.host.trim()
-    : undefined;
-}
-
 /** Merge usage into decisiveFacts without touching role payloads. */
 export function withEngineDetourToolUsageFact<
   T extends { readonly decisiveFacts?: Readonly<Record<string, unknown>> },

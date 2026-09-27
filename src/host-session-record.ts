@@ -7,10 +7,12 @@
  */
 import { spawnSync } from "node:child_process";
 import {
+  appendFileSync,
   copyFileSync,
   closeSync,
   existsSync,
   openSync,
+  readFileSync,
   mkdirSync,
   readdirSync,
   rmSync,
@@ -109,6 +111,11 @@ export function resolveNativeSessionPath(options: {
   return undefined;
 }
 
+/** Count each host activation, including Pi turns without an external copy. */
+export function recordRunStart(runDirectory: string): void {
+  appendFileSync(join(runDirectory, ".run-starts"), "\n");
+}
+
 /**
  * Resolve the host dossier landing destination under `<run>/session/`.
  * Format: `<run>/session/<host>-<model>-<n>` (single file adds .jsonl; model slashes replaced with -).
@@ -141,11 +148,9 @@ export function resolveHostDossierLandingPath(options: {
     }
   }
 
-  const ordinal = maxOrdinal > 0
-    ? maxOrdinal + 1
-    : options.continuation.kind === "resume"
-      ? 2
-      : 1;
+  const startsPath = join(dirname(options.sessionDirectory), ".run-starts");
+  const starts = existsSync(startsPath) ? readFileSync(startsPath, "utf8").length : 0;
+  const ordinal = Math.max(maxOrdinal + 1, starts, options.continuation.kind === "resume" ? 2 : 1);
 
   const baseName = `${options.host}-${sanitizedModel}-${ordinal}`;
   const landingPath = options.host === "grok-build"

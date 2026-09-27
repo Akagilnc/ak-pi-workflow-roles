@@ -29,8 +29,10 @@ test("codex headless host binds and resumes a structured turn", async () => {
   const argvLog = join(root, "argv.log");
   const promptLog = join(root, "prompt.log");
   const fakeBin = join(root, "fake-codex");
+  const nativeRollout = join(root, ".codex", "sessions", "rollout-thread-fake-1.jsonl");
   await writeFile(fakeBin, `#!/usr/bin/env node
-import { appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
 const resumeAt = args.indexOf("resume");
@@ -38,6 +40,8 @@ const resumed = resumeAt >= 0;
 const thread = resumed ? args[resumeAt + 1] : "thread-fake-1";
 const prompt = readFileSync(0, "utf8");
 appendFileSync(${JSON.stringify(promptLog)}, JSON.stringify(prompt) + "\\n");
+mkdirSync(dirname(${JSON.stringify(nativeRollout)}), { recursive: true });
+writeFileSync(${JSON.stringify(nativeRollout)}, 'native codex transcript\\n');
 const events = [
   { type: "thread.started", thread_id: thread },
   { type: "item.completed", item: { type: "agent_message", text: JSON.stringify({ status: "completed", report: resumed ? "resumed" : "initial" }) } },
@@ -57,6 +61,7 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
       description,
       hostName: "codex",
       binary: fakeBin,
+      env: { CODEX_HOME: join(root, ".codex") },
       sessionIdentity: {
         async load() {
           if (rejectLoad) throw new Error("explicit resume must use the stored host session id");
@@ -118,6 +123,7 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     assert.equal(first.knownFailure, undefined, JSON.stringify(first));
     assert.equal(bound, "thread-fake-1");
     assert.deepEqual(receipt, { status: "completed", report: "initial" });
+    assert.equal(await readFile(join(root, "session", "codex-gpt-test-1.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
     const schema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8")) as {
       additionalProperties: unknown;
       required: string[];
@@ -174,6 +180,7 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     });
     assert.equal(resumed.knownFailure, undefined, JSON.stringify(resumed));
     assert.deepEqual(receipt, { status: "completed", report: "resumed" });
+    assert.equal(await readFile(join(root, "session", "codex-gpt-test-2.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
     const prompts = (await readFile(promptLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string);
     assert.deepEqual(prompts.slice(0, 2), ["work", "continue"]);
     const argv = (await readFile(argvLog, "utf8")).trim().split("\n").map((line) => JSON.parse(line) as string[]);
