@@ -40,53 +40,6 @@ function isAcpAutoCompactCompletedNotification(
   return (update as { sessionUpdate?: unknown }).sessionUpdate === "auto_compact_completed";
 }
 
-/**
- * #959: collect free-form agent text from ACP session/update stream.
- * Used only when the navigator seat spoke prose without calling the output tool.
- * ACP agent speech is only agent_message / agent_message_chunk — never user,
- * thought, or other *_message kinds (load replay must not poison the bucket).
- *
- * Standard ACP nests under params.update: { sessionUpdate, content }.
- * Flat params.sessionUpdate / string params.update remain accepted for host variants.
- */
-function acpAgentTextChunk(params: Readonly<Record<string, unknown>>): string | undefined {
-  let kind: unknown;
-  let content: unknown;
-  let textFallback: unknown;
-
-  const nested = params.update;
-  if (typeof nested === "object" && nested !== null && !Array.isArray(nested)) {
-    const record = nested as Record<string, unknown>;
-    kind = record.sessionUpdate;
-    content = record.content;
-    textFallback = record.text;
-  } else {
-    kind = params.sessionUpdate ?? nested;
-    content = params.content;
-    textFallback = params.text;
-  }
-
-  if (kind !== "agent_message_chunk" && kind !== "agent_message") return undefined;
-  if (typeof content === "string" && content.length > 0) return content;
-  if (typeof content === "object" && content !== null && !Array.isArray(content)) {
-    const record = content as Record<string, unknown>;
-    if (typeof record.text === "string" && record.text.length > 0) return record.text;
-  }
-  if (Array.isArray(content)) {
-    const parts: string[] = [];
-    for (const part of content) {
-      if (typeof part === "string" && part.length > 0) parts.push(part);
-      else if (typeof part === "object" && part !== null) {
-        const record = part as Record<string, unknown>;
-        if (typeof record.text === "string" && record.text.length > 0) parts.push(record.text);
-      }
-    }
-    if (parts.length > 0) return parts.join("");
-  }
-  if (typeof textFallback === "string" && textFallback.length > 0) return textFallback;
-  return undefined;
-}
-
 /** ACP v1 surface used by the generic ACP adapter. Protocol details stay in this module. */
 export interface AcpConnection {
   request(method: string, params: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>>>;

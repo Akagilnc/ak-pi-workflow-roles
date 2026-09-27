@@ -287,13 +287,13 @@ test("classifyPostAdmissionFailure retains typed causes without washing identity
   });
   assert.equal(noThrownKey.cause, "activation");
 });
-test("failure settlement Terminal agrees with exact-session affirmative attendance", async () => {
+test("failure settlement Terminal reports failure kind for activation cause", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
     seedGitProject(project);
     const bookKey = resolveBookKeyFromGit(project);
-    const runId = "run-fail-attendance-001";
+    const runId = "run-fail-settlement-001";
     const runDirectory = join(
       home,
       ".ak-roles",
@@ -305,35 +305,15 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
     const sessionDirectory = join(runDirectory, "session");
     await mkdir(sessionDirectory, { recursive: true });
     const sessionFile = join(sessionDirectory, "session.jsonl");
-    const attendanceDetails = {
-      version: 1,
-      disposition: "no-advice",
-      invocationId: "019f8c2a-6666-7666-8666-666666666666",
-      role: "judge",
-      phase: null,
-      subjectKey: `${project}/.ak/work`,
-    };
     await writeFile(
       sessionFile,
       [
-        JSON.stringify({
-          type: "custom",
-          customType: "ak-navigator-invocation",
-          data: {
-            invocationId: "019f8c2a-6666-7666-8666-666666666666",
-            role: "judge",
-            phase: null,
-            subjectKey: attendanceDetails.subjectKey,
-          },
-        }),
         JSON.stringify({
           type: "message",
           message: {
             role: "toolResult",
             toolName: JUDGE_OUTPUT_TOOL_NAME,
             toolCallId: "fatal-judge",
-            // Durable accepted terminal for attendance correlation; retryable
-            // isError:true/details:{} is nonterminal under the shared classifier.
             isError: false,
             details: { status: "converged" },
           },
@@ -342,12 +322,6 @@ test("failure settlement Terminal agrees with exact-session affirmative attendan
           type: "custom",
           customType: "ak-role-submission-closure",
           data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" } },
-        }),
-        JSON.stringify({
-          type: "custom_message",
-          customType: "ak-navigator-attendance",
-          message: { details: attendanceDetails },
-          details: attendanceDetails,
         }),
       ].join("\n") + "\n",
       "utf8",

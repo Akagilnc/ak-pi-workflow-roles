@@ -1,4 +1,4 @@
-/** Shared accepted-receipt delivery budget for role, auditor, and Navigator sessions (#288). */
+/** Shared accepted-receipt delivery budget for role and auditor sessions (#288). */
 export const RECEIPT_DELIVERY_TURN_LIMIT = 2 as const;
 
 export const NO_RECEIPT_LIFECYCLE_ENTRY_TYPE = "ak-no-receipt-lifecycle" as const;

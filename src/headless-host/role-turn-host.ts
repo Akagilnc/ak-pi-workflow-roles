@@ -400,8 +400,8 @@ function terminalFromSpawned(
 function buildTurnArgs(options: {
   readonly description: HeadlessHostDescription;
   readonly systemPromptPath: string;
-  /** Closed schema; omit for #959 navigator prose-exit seats. */
-  readonly jsonSchema?: Readonly<Record<string, unknown>>;
+  /** Closed schema — required for every prepared turn. */
+  readonly jsonSchema: Readonly<Record<string, unknown>>;
   readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
   readonly mcpConfigPath?: string;
   readonly outputSchemaPath?: string;
@@ -416,10 +416,12 @@ function buildTurnArgs(options: {
     if (options.sessionKind === "resume" && !options.sessionId) {
       throw new Error("codex resume requires a bound thread_id");
     }
-    // #959: prose-exit seats (navigator) omit --output-schema; other seats still require it.
+    if (options.outputSchemaPath === undefined) {
+      throw new Error("codex exec requires an output schema path");
+    }
     return codexTurnArgs({
       systemPromptPath: options.systemPromptPath,
-      ...(options.outputSchemaPath === undefined ? {} : { outputSchemaPath: options.outputSchemaPath }),
+      outputSchemaPath: options.outputSchemaPath,
       mcpServers: options.mcpServers,
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.effort === undefined ? {} : { effort: options.effort }),
@@ -437,8 +439,7 @@ function buildTurnArgs(options: {
   return headlessTurnArgs({
     description: options.description,
     systemPromptPath: options.systemPromptPath,
-    // #959: navigator omits --json-schema so free-form prose is a lawful exit.
-    ...(options.jsonSchema === undefined ? {} : { jsonSchema: options.jsonSchema }),
+    jsonSchema: options.jsonSchema,
     mcpConfigPath: options.mcpConfigPath,
     ...(options.model === undefined ? {} : { model: options.model }),
     ...(options.effort === undefined ? {} : { effort: options.effort }),

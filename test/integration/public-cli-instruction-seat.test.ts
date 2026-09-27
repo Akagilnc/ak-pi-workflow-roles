@@ -1,12 +1,11 @@
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 import { payloadFacts, payloadStatus, payloadStatusSequence , objectPayloads} from "../helpers/terminal-payload.ts";
 /**
- * #639 public instruction-seat entries — Gatekeeper + Navigator via real runAkRole.
+ * #639 public instruction-seat entries — Gatekeeper + Judge via real runAkRole.
  *
- * Both stop being automatic-only configurable seats: each accepts an invocation
- * request (opaque instruction + attachments) and delivers a typed terminal from
- * its own terminating receipt, same law as other roles. Automatic attendance is
- * untouched and not asserted here.
+ * Each accepts an invocation request (opaque instruction + attachments) and
+ * delivers a typed terminal from its own terminating receipt, same law as
+ * other roles.
  *
  * One shared harness, table-driven per role; role-specific typed receipt oracles
  * stay on each row. Oracles: typed TerminalResult / roleOutcome fields only;

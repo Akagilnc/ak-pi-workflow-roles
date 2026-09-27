@@ -5,7 +5,6 @@ import { build } from "esbuild";
 
 const entries = [
   "packaged-role-registry",
-  "work-subject-identity",
   "role-terminal-classification",
   "uuidv7",
   "atomic-write",

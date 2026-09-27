@@ -43,7 +43,7 @@ export type RoleTurnRequestProjectionOptions = {
   courtAttemptId?: string;
   /** #537 public-invocation scope (one ak-role call). */
   invocationScopeId?: string;
-  /** Station child role run (#840): omit automatic navigator attendance. */
+  /** Station child role run (#840): officer-review child summons (isOfficerReviewSeat). */
   stationChild?: boolean;
 };
 

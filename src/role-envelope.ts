@@ -115,10 +115,8 @@ export async function prepareRoleEnvelope(options: {
 
   // Durable principal file for isAvailable / resumable settlement (public-cli).
   // #617 DK-4: never host conversation/tool writeback into Pi JSONL.
-  // #959: package-owned custom entries (invocation marker, submission-closure,
-  // navigator attendance, no-receipt) MUST flush so parent settlement can read
-  // them after the headless process ends — memory-only books left extractNavigatorFact
-  // with no durable terminal / attendance on codex/claude/ACP parents.
+  // #959: package-owned custom entries (submission-closure, no-receipt) MUST
+  // flush so parent settlement can read them after the headless process ends.
   let sessionFile = options.sessionFile ?? join(request.runDirectory, "session", "session.jsonl");
   await mkdir(dirname(sessionFile), { recursive: true });
   if (request.continuation.kind !== "resume") {
@@ -552,9 +550,8 @@ export async function prepareRoleEnvelope(options: {
     if (disposed) return;
     disposed = true;
     const cleanupFailures: unknown[] = [];
-    // session_shutdown may still append package durable entries (navigator
-    // attendance when agent_settled was skipped). Drain only after those
-    // handlers — single terminal judgment via settleDurableWrites (#959).
+    // session_shutdown may still append package durable entries. Drain only
+    // after those handlers — single terminal judgment via settleDurableWrites (#959).
     try {
       await emit("session_shutdown", {});
     } catch (error) {
@@ -617,8 +614,7 @@ export async function prepareRoleEnvelope(options: {
       if (customEntries[index]?.customType === "ak-role-submission-closure") { closure = customEntries[index]; break; }
     }
     if (closure !== undefined) {
-      // Pi flushes navigator attendance on agent_settled; session/prompt
-      // resolution is the ACP host equivalent round boundary.
+      // session/prompt resolution is the ACP host equivalent round boundary.
       await emit("agent_settled", {});
       const durableFailure = await settleDurableWrites();
       if (durableFailure !== undefined) return durableFailure;

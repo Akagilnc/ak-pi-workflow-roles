@@ -1927,7 +1927,6 @@ export type AdmitInspectorInvocationOptions = AdmitJudgeInvocationOptions & {
 };
 
 export type AdmitGatekeeperInvocationOptions = AdmitInspectorInvocationOptions;
-export type AdmitNavigatorInvocationOptions = AdmitInspectorInvocationOptions;
 export type AdmitDiaristInvocationOptions = AdmitInspectorInvocationOptions;
 export type AdmitSecretariatInvocationOptions = AdmitInspectorInvocationOptions;
 

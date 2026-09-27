@@ -534,40 +534,6 @@ function homeFromHostContext(context: HostContext, home?: string): string | unde
 }
 
 /**
- * #959: seal one accepted submission without a model tool call.
- * Same ledger row shape as the terminating-tool wrap.
- * Used when a prose-exit seat (navigator) harvests the final assistant text.
- */
-export async function sealAcceptedSubmission(options: {
-  readonly context: HostContext;
-  readonly role: TerminalRoleName;
-  readonly accepted: unknown;
-  readonly toolCallId: string;
-  readonly home?: string;
-}): Promise<void> {
-  const runId = runIdentity(options.context);
-  const attemptId = attemptIdentity(options.context, runId);
-  const sessionParent = sessionParentFromHostContext(options.context);
-  const home = homeFromHostContext(options.context, options.home);
-  sitianReport({
-    level: "event",
-    kind: "sealed",
-    subject: { runId, attemptId },
-    payload: {
-      type: "sealed",
-      attemptId,
-      toolCallId: options.toolCallId,
-      role: options.role,
-      accepted: options.accepted,
-    },
-    source: "role-runtime",
-    cwd: options.context.cwd,
-    ...(home !== undefined ? { home } : {}),
-    ...(sessionParent === undefined ? {} : { sessionParent }),
-  });
-}
-
-/**
  * Submission ledger host — record only (#836).
  * Each terminating submission is appended with the role's original payload.
  * No sole-final, no seal barrier, no context.abort(), no details rewrite.

@@ -77,16 +77,7 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
       return realSetTimeout(handler, delay, ...args);
     }) as typeof setTimeout;
   }
-  /** Canonical delivery matrix: recommendation | unavailable | silence (fixture seam). */
-  const deliveryOutcome = process.env.AK_NAVIGATOR_DELIVERY_OUTCOME;
-  const deliveryMode = deliveryOutcome === "recommendation" || deliveryOutcome === "unavailable" || deliveryOutcome === "silence"
-    ? deliveryOutcome
-    : undefined;
-  const tolerateMalformedAudit =
-    process.env.AK_HEALTHY_NAVIGATOR === "1"
-    || deliveryMode === "recommendation"
-    || deliveryMode === "silence";
-  const roleScripted = deliveryMode !== undefined ||
+  const roleScripted =
     process.env.AK_AUDIT_NON_OBJECT === "1" || process.env.AK_AUDIT_UNKNOWN_STATUS === "1";
   // #419: settlement binds tool calls to results one-to-one across the whole
   // session. Auto-resume legs are separate pi subprocesses sharing one session,
@@ -151,29 +142,20 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
           }, timeoutMs);
         });
       }
-      if (deliveryMode === "silence") {
-        return fauxAssistantMessage(fauxToolCall(auditTool, {
-          status: "escalate",
-          violations: [],
-          conflicts: ["Soul authority conflicts with controlling authority"],
-          decisionGate: {
-            question: "Which authority governs this verdict?",
-            options: ["Soul", "Controlling authority"],
-          },
-        }), { stopReason: "toolUse" });
-      }
-      if (roleScripted) return fauxAssistantMessage(fauxToolCall(auditTool, { status: "pass", violations: [], conflicts: [], decisionGate: null }), { stopReason: "toolUse" });
-      if (tolerateMalformedAudit) return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
       throw new Error("MALFORMED AUDITOR OUTPUT");
     }
     if (names.includes(JUDGE_OUTPUT_TOOL_NAME)) {
-      if (deliveryMode === "silence") {
-        return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "silence-judge" }), { stopReason: "toolUse" });
+      if (roleScripted) {
+        return fauxAssistantMessage(
+          fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: observedJudgeCallId() }),
+          { stopReason: "toolUse" },
+        );
       }
-      if (roleScripted) return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: observedJudgeCallId() }), { stopReason: "toolUse" });
-      return fauxAssistantMessage(fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "fatal-judge" }), { stopReason: "toolUse" });
+      return fauxAssistantMessage(
+        fauxToolCall(JUDGE_OUTPUT_TOOL_NAME, { judgeStatus: "converged" }, { id: "fatal-judge" }),
+        { stopReason: "toolUse" },
+      );
     }
-    if (tolerateMalformedAudit || deliveryMode === "unavailable") return fauxAssistantMessage("MALFORMED AUDITOR OUTPUT");
     return fauxAssistantMessage("FORBIDDEN LATER SUCCESS PROSE");
   };
   // Shared agentDir mock legal call graph (single-invoke e2e, no nested-env skip):
@@ -198,9 +180,6 @@ export default async function auditFailureProvider(pi: ExtensionAPI): Promise<vo
   pi.registerProvider(provider);
   pi.on("agent_end", () => {
     inputReleasedAt = new Date().toISOString();
-  });
-  process.on("exit", () => {
-    if (tolerateMalformedAudit) console.error(`AUDIT_FAILURE_PROCESS_RELEASE=${JSON.stringify({ at: new Date().toISOString() })}`);
   });
   pi.on("session_shutdown", async () => {
     await seeded.close();

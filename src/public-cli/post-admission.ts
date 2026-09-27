@@ -343,7 +343,7 @@ export type PostAdmissionEnv = {
    * Admission places the run under it. Not a public CLI flag.
    */
   boundTicketNumber?: number;
-  /** Station child role run (#840): omit automatic navigator attendance. */
+  /** Station child role run (#840): officer-review child summons (isOfficerReviewSeat). */
   stationChild?: boolean;
 };
 

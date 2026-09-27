@@ -631,7 +631,7 @@ export async function createMockProviderServer(
         // classification through the OpenAI-completions round-trip.
         // When the scripted assistant message holds a direct statusCode/status,
         // mirror it as the HTTP status so auth/quota classification stays typed
-        // through institutional open (host-neutral navigator/auditor children).
+        // through institutional open (host-neutral auditor children).
         const messageRecord = message as unknown as {
           statusCode?: unknown;
           status?: unknown;
@@ -785,7 +785,7 @@ export async function withInstitutionalProviderFixture<T>(
                 name: model.id,
                 api: "openai-completions",
                 // Preserve faux model reasoning / thinking map so institutional
-                // children honor Navigator :max the same way the parent session does.
+                // children honor :max the same way the parent session does.
                 reasoning: model.reasoning === true,
                 ...(model.thinkingLevelMap === undefined
                   ? {}
@@ -861,7 +861,7 @@ export async function seedAgentDirModelsJsonFromFaux(
                   name: model.id,
                   api: "openai-completions",
                   // Preserve faux model reasoning / thinking map so institutional
-                  // children honor Navigator :max the same way the parent session does.
+                  // children honor :max the same way the parent session does.
                   reasoning: model.reasoning === true,
                   ...(model.thinkingLevelMap === undefined
                     ? {}

@@ -4,8 +4,8 @@ import { fixtureJudgeAdmitted } from "../helpers/admitted-principal-fixture.ts";
 import { roleTurnHostFromLegacyPiRunner, scriptedTerminatingToolSession } from "../helpers/role-turn-host-fixture.ts";
 import { worktreeTempPrefix } from "../helpers/worktree-temp.ts";
 /**
- * #106 public Judge path — admission, freeze, terminal settlement, grace.
- * Seams: parseJudgeArgv / admitJudgeInvocation / TerminalResult / raceNavigatorGrace /
+ * #106 public Judge path — admission, freeze, terminal settlement.
+ * Seams: parseJudgeArgv / admitJudgeInvocation / TerminalResult /
  * runAkRole(judge) with injectable Pi runner.
  */
 import assert from "node:assert/strict";
@@ -534,18 +534,7 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
           const sessionDir = args[sessionDirIdx + 1]!;
           await mkdir(sessionDir, { recursive: true });
           const sessionFile = join(sessionDir, "session.jsonl");
-          const subjectKey = join(project, ".ak/work");
           const rows = [
-            {
-              type: "custom",
-              customType: "ak-navigator-invocation",
-              data: {
-                invocationId: "019f8c2a-5555-7555-8555-555555555555",
-                role: "judge",
-                phase: null,
-                subjectKey,
-              },
-            },
             {
               type: "message",
               message: {
@@ -572,22 +561,6 @@ test("runAkRole Judge publishes accepted Terminal facts when its audit has no re
               type: "custom",
               customType: "ak-role-submission-closure",
               data: { toolName: JUDGE_OUTPUT_TOOL_NAME, isError: false, details: { status: "converged" } },
-            },
-            {
-              type: "custom_message",
-              customType: "ak-navigator-attendance",
-              message: {
-                details: {
-                  version: 1,
-                  disposition: "advice",
-                  invocationId: "019f8c2a-5555-7555-8555-555555555555",
-                  role: "judge",
-                  phase: null,
-                  // Matches admitted projectRoot work identity.
-                  subjectKey,
-                  prose: "review next → reviewer",
-                },
-              },
             },
           ];
           await writeFile(
@@ -790,7 +763,6 @@ test("runAkRole judge empty request does not invent semantic task content on the
       }),
       piDurablePrincipalAuthority,
     );
-    // Missing attendance is not successful no-advice — require affirmative typed fact.
     assert.equal(terminal.roleOutcome.kind, "accepted");
     assert.deepEqual(payloadStatusSequence(terminal.roleOutcome), ["converged"]);
   });

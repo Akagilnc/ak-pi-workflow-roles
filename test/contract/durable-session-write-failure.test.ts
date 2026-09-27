@@ -1,8 +1,8 @@
 /**
  * #959: required package-owned durable session entry flush failure must not
  * close as accepted / retry — reuse typed infrastructure-failure channel.
- * Also: session_shutdown producers (navigator attendance) drain before dispose
- * returns; their flush failure is a dispose terminal failure, not washed.
+ * Also: session_shutdown producers drain before dispose returns; their flush
+ * failure is a dispose terminal failure, not washed.
  */
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";

@@ -1005,7 +1005,7 @@ function roleEngineProbeArgv(role: PublicCallableRole, project: string): string[
 
 test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → childEnv + invocation.engine",
   async () => {
-    assert.equal(PUBLIC_CALLABLE_ROLES.length, 16);
+    assert.equal(PUBLIC_CALLABLE_ROLES.length, 15);
     await withTempHome(async (home) => {
       const baseProject = join(home, "project");
         await mkdir(baseProject, { recursive: true });
@@ -1197,10 +1197,10 @@ test("#391 E4 table: all PUBLIC_CALLABLE_ROLES --engine and set-engine → child
   },
 );
 
-test("#391 E4 negative table: navigator / analyst / support / illegal / model-before-engine / disk navigator",
+test("#391 E4 negative table: judge / analyst / support / illegal / model-before-engine / empty seats",
   async () => {
     await withTempHome(async (home) => {
-      // #639: navigator is a callable role — set-engine persists (old automatic refusal gone).
+      // Callable seat: set-engine persists (old automatic refusal gone).
       {
         await runAkRole(
           ["config", "set", "judge", "openai-codex/gpt-5.6-luna:medium"],
@@ -1218,7 +1218,7 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
         );
       }
 
-      // navigator unset-engine also succeeds (same callable face).
+      // unset-engine also succeeds on the same callable face.
       {
         const { io, stderr } = captureIo();
         const result = await runAkRole(
@@ -1232,7 +1232,7 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
         );
       }
 
-      // navigator model config remains legal (not part of engine refusal).
+      // Model config remains legal (not part of engine refusal).
       {
         const { io, stderr } = captureIo();
         const result = await runAkRole(
@@ -1242,7 +1242,7 @@ test("#391 E4 negative table: navigator / analyst / support / illegal / model-be
         assert.equal(result.exitCode, 0, stderr.join(""));
       }
 
-      // Disk-handwritten seats.navigator.engine is a legal persisted call axis now.
+      // Empty seats object remains a legal persisted config surface.
       {
         await writeFile(
           join(home, ".ak-roles", "public-cli.json"),

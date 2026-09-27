@@ -1,6 +1,6 @@
 /**
  * Shared durable typed-provider HTTP observation owner.
- * Published with both public-cli and navigator-attendance entries.
+ * Published with the public-cli entry.
  */
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";

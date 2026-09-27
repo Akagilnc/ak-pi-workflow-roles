@@ -238,7 +238,7 @@ test("#959 missing host binary stays activation spawn-failed with real path", as
         systemPrompt: { body: "system", materials: [] },
         prompt: "probe",
         jsonSchema: { type: "object" },
-        terminatingToolName: "ak_navigator_output",
+        terminatingToolName: "ak_judge_output",
         async ingestStructuredOutput() {},
         async closeRound() { return { accepted: true as const }; },
       }),
@@ -260,7 +260,7 @@ test("#959 missing host binary stays activation spawn-failed with real path", as
     const details = result.knownFailure?.details as { binary?: string } | undefined;
     assert.equal(details?.binary, missingBin);
     // Host-layer producer only — structured identity + binary path; no free-text
-    // diagnostic matching. Full chain is navigator-attendance 怎么验#2.
+    // diagnostic matching.
     assert.notEqual(
       (result.knownFailure?.diagnostic ?? "").trim(),
       "",

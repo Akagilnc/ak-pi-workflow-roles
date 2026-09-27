@@ -83,11 +83,8 @@ export function headlessTurnArgs(options: {
   readonly description: ClaudePrintHostDescription;
   /** Absolute path written by the adapter; paired with `systemPromptFlag`. */
   readonly systemPromptPath: string;
-  /**
-   * Closed JSON Schema for structured_output seats.
-   * Optional: omit for prose-exit seats (#959 navigator) so the model may speak free text.
-   */
-  readonly jsonSchema?: Readonly<Record<string, unknown>>;
+  /** Closed JSON Schema for structured_output seats (required for every prepared turn). */
+  readonly jsonSchema: Readonly<Record<string, unknown>>;
   /** Absolute path to host-native MCP config JSON; omitted when no AK MCP servers. */
   readonly mcpConfigPath?: string;
   readonly model?: string;
@@ -102,9 +99,7 @@ export function headlessTurnArgs(options: {
     description.systemPromptFlag,
     options.systemPromptPath,
   ];
-  if (options.jsonSchema !== undefined) {
-    args.push(description.jsonSchemaFlag, JSON.stringify(options.jsonSchema));
-  }
+  args.push(description.jsonSchemaFlag, JSON.stringify(options.jsonSchema));
   if (options.mcpConfigPath !== undefined && options.mcpConfigPath !== "") {
     args.push(description.mcpConfigFlag, options.mcpConfigPath);
   }
@@ -412,11 +407,8 @@ function codexMcpConfigArgs(
 export function codexTurnArgs(options: {
   /** Absolute path for `-c model_instructions_file=…`. */
   readonly systemPromptPath: string;
-  /**
-   * Absolute path for `--output-schema` (closed transport schema).
-   * Optional: omit for prose-exit seats (#959 navigator) so agent_message stays free text.
-   */
-  readonly outputSchemaPath?: string;
+  /** Absolute path for `--output-schema` (closed transport schema; required). */
+  readonly outputSchemaPath: string;
   readonly mcpServers: readonly Readonly<Record<string, unknown>>[];
   readonly model?: string;
   readonly effort?: string;
@@ -458,9 +450,7 @@ export function codexTurnArgs(options: {
   }
 
   args.push("-c", `model_instructions_file=${codexTomlString(options.systemPromptPath)}`);
-  if (options.outputSchemaPath !== undefined) {
-    args.push("--output-schema", options.outputSchemaPath);
-  }
+  args.push("--output-schema", options.outputSchemaPath);
   args.push(...codexMcpConfigArgs(options.mcpServers));
 
   if (options.model !== undefined && options.model !== "") {

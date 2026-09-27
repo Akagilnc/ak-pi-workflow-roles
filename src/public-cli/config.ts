@@ -249,7 +249,7 @@ export function setPersistentSeatHost(
  * Clearing engine drops engineModel with it; clearing engine from an axis-only
  * residual drops the empty row; clearing engine from a model+engine row leaves
  * model-only. Optional engineModel on set writes both halves of the pool directive.
- * Seat type is PublicCallableRole (navigator included since #639).
+ * Seat type is PublicCallableRole.
  */
 export function setPersistentSeatEngine(
   config: PublicCliConfig,
@@ -647,7 +647,7 @@ export function resolvedSeatWithModel(
 /**
  * #178 shared missing-model wording; throw site stays per entry.
  * Recommend `--model` only when the entry actually has an invocation-model channel
- * (direct public CLI). Nested summons / navigator seat reads do not — config set only.
+ * (direct public CLI). Nested summons do not — config set only.
  */
 export function missingResolvedSeatModelMessage(
   seat: PublicConfigurableSeat,

@@ -103,9 +103,9 @@ async function withEnvelopeHome<T>(
     const runDirectory = join(home, ".ak-roles", "books", "probe", "runs", "run-818@judge");
     await mkdir(join(runDirectory, "session"), { recursive: true });
     const socketPath = join(home, "mcp.sock");
-    // stationChild: real envelope without automatic Navigator attendance.
-    // Top-level attendance may finish session create after dispose returns;
-    // this fixture would then rm the home under that late writer (CI ENOTEMPTY).
+    // stationChild: officer-review child envelope (isOfficerReviewSeat).
+    // Avoid top-level session create finishing after dispose returns; this
+    // fixture would then rm the home under that late writer (CI ENOTEMPTY).
     const request = (engine?: string): RoleTurnRequest => ({
       principal: fixturePrincipal(join(runDirectory, "session")),
       activation: { role: "judge" },

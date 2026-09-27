@@ -2,7 +2,7 @@
  * Owning seam for scripts/run-test-all.mjs — Issue #160 scheduling contract
  * plus #549 HOME redirect negative tracers on the real entry seams.
  * Observes the real runner entry (discovery, child argv, exit honesty) under
- * an isolated cwd/PATH child seam; does not touch production, grace, or Navigator.
+ * an isolated cwd/PATH child seam; does not touch production.
  * #685: heavy partition removed — single default-parallel child only.
  * #685: runner default HOME is worktree-internal and deleted on exit (#612).
  */
