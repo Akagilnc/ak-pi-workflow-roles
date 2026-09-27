@@ -433,6 +433,8 @@ export async function runWithAutoResumeLoop<
     decisiveFacts?: Readonly<Record<string, unknown>>;
     errorFile?: string;
   }> = [];
+  let stoppedResult: T | undefined;
+  let endReason: string | undefined;
 
   while (true) {
     let result: T | undefined;
@@ -513,94 +515,22 @@ export async function runWithAutoResumeLoop<
         }
       }
 
-      const lawful = terminal !== undefined && isLawfulTypedTerminalOutcome(terminal.roleOutcome);
-      if (lawful) {
-        if (terminal !== undefined) {
-          // Present lawful terminal once to real io (dummy was used inside dispatch)
-          options.io.stdout(formatTerminalResult(terminal));
-        }
-        return result;
-      }
-      if (result.skipAutoResume === true) {
-        if (terminal !== undefined) presentTerminal(terminal, options.io);
-        return result;
-      }
-    }
-
-    if (result !== undefined) {
-      const terminal = (result as { terminal?: TerminalResult }).terminal;
-      if (autoResumeAttempts >= limit) {
-        if (terminal?.roleOutcome.kind === "failure" && failedAttempts.length > 1) {
-          const complete: TerminalResult = {
-            ...terminal,
-            roleOutcome: {
-              ...terminal.roleOutcome,
-              decisiveFacts: { ...terminal.roleOutcome.decisiveFacts, failedAttempts },
-            },
-          };
-          presentTerminal(complete, options.io);
-          return { ...result, terminal: complete } as T;
-        }
-        if (terminal !== undefined) presentTerminal(terminal, options.io);
-        return result;
-      }
-      // #855: cancellation still stops before another dispatch. At the
-      // exhausted attempt, the budget path above first returns all failures.
-      if (processCancelSignalName(options.signal) !== undefined) {
-        if (terminal !== undefined) presentTerminal(terminal, options.io);
-        return result;
+      if (terminal !== undefined && isLawfulTypedTerminalOutcome(terminal.roleOutcome)
+        || result.skipAutoResume === true
+        || autoResumeAttempts >= limit
+        || processCancelSignalName(options.signal) !== undefined) {
+        stoppedResult = result;
+        break;
       }
     } else {
-      // Exception path: continue through the identical budget/session gates.
       if (autoResumeAttempts >= limit) {
-        const terminal = await attachDispatchExceptionTerminal(
-          options.admitted,
-          dispatchExceptionFailureTerminal({
-            role: options.admitted.role,
-            runId: options.admitted.runId,
-            causeError: lastThrownError,
-            errorFiles: retainedErrorFiles,
-            autoResumeAttempts,
-            endReason: "auto-resume budget exhausted",
-            everyAttemptThrew,
-          }),
-          options.io,
-        );
-        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        const complete: TerminalResult = terminal.roleOutcome.kind === "failure"
-          ? { ...terminal, roleOutcome: {
-            ...terminal.roleOutcome,
-            decisiveFacts: { ...terminal.roleOutcome.decisiveFacts, failedAttempts },
-          } }
-          : terminal;
-        presentTerminal(complete, options.io);
-        return {
-          exitCode: 1,
-          terminal: complete,
-        } as T;
+        endReason = "auto-resume budget exhausted";
+        break;
       }
-      // #855: process cancel on the throw path — do not re-dispatch; name the signal.
       const cancelName = processCancelSignalName(options.signal);
       if (cancelName !== undefined) {
-        const terminal = await attachDispatchExceptionTerminal(
-          options.admitted,
-          dispatchExceptionFailureTerminal({
-            role: options.admitted.role,
-            runId: options.admitted.runId,
-            causeError: lastThrownError,
-            errorFiles: retainedErrorFiles,
-            autoResumeAttempts,
-            endReason: `ak-role terminated by ${cancelName}`,
-            everyAttemptThrew,
-          }),
-          options.io,
-        );
-        await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
-        presentTerminal(terminal, options.io);
-        return {
-          exitCode: 1,
-          terminal,
-        } as T;
+        endReason = `ak-role terminated by ${cancelName}`;
+        break;
       }
     }
 
@@ -614,4 +544,40 @@ export async function runWithAutoResumeLoop<
       isFirst = false;
     }
   }
+
+  const terminal = stoppedResult === undefined
+    ? await attachDispatchExceptionTerminal(
+        options.admitted,
+        dispatchExceptionFailureTerminal({
+          role: options.admitted.role,
+          runId: options.admitted.runId,
+          causeError: lastThrownError,
+          errorFiles: retainedErrorFiles,
+          autoResumeAttempts,
+          endReason: endReason!,
+          everyAttemptThrew,
+        }),
+        options.io,
+      )
+    : stoppedResult.terminal;
+  if (stoppedResult === undefined) {
+    await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
+  }
+  const complete: TerminalResult | undefined = terminal?.roleOutcome.kind === "failure"
+    && failedAttempts.length > 1
+    ? { ...terminal, roleOutcome: {
+      ...terminal.roleOutcome,
+      decisiveFacts: { ...terminal.roleOutcome.decisiveFacts, failedAttempts },
+    } }
+    : terminal;
+  if (complete !== undefined) {
+    if (isLawfulTypedTerminalOutcome(complete.roleOutcome)) {
+      options.io.stdout(formatTerminalResult(complete));
+    } else {
+      presentTerminal(complete, options.io);
+    }
+  }
+  return stoppedResult === undefined
+    ? { exitCode: 1, terminal: complete } as T
+    : { ...stoppedResult, ...(complete === undefined ? {} : { terminal: complete }) } as T;
 }

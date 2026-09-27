@@ -245,3 +245,45 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
     assert.match(stderr.join(""),/dispatch error retention failed/);
   });
 });
+
+test("three failed turns retain every cause when the final result stops dispatch", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(home, "runs", "stop-after-three");
+    await mkdir(runDirectory, { recursive: true });
+    let attempts = 0;
+    const result = await runWithAutoResumeLoop({
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      admitted: {
+        principal: fixturePrincipal(join(runDirectory, "session"), join(runDirectory, "session", "session.jsonl")),
+        runDirectory, role: "judge", runId: "stop-after-three", projectRoot: home,
+      },
+      io: captureIo().io,
+      autoResumeLimit: 2,
+      buildInitialPayload: () => "initial",
+      buildResumePayload: () => "resume",
+      dispatch: async () => {
+        attempts++;
+        return {
+          exitCode: 1,
+          turnDispatched: true as const,
+          ...(attempts === 3 ? { skipAutoResume: true as const } : {}),
+          terminal: {
+            roleOutcome: { kind: "failure" as const, role: "judge" as const,
+              diagnostic: `failure-${attempts}`, decisiveFacts: { errorCode: `err-${attempts}` } },
+            navigator: { disposition: "no-advice" as const },
+            artifacts: [], runId: "stop-after-three",
+          },
+        };
+      },
+    });
+    assert.equal(attempts, 3);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    if (result.terminal?.roleOutcome.kind === "failure") {
+      const history = (result.terminal.roleOutcome.decisiveFacts as Record<string, unknown>).failedAttempts as
+        Array<{ attempt: number; decisiveFacts: { errorCode: string } }>;
+      assert.deepEqual(history.map(({ attempt, decisiveFacts }) => [attempt, decisiveFacts.errorCode]),
+        [[0, "err-1"], [1, "err-2"], [2, "err-3"]]);
+    }
+  });
+});
