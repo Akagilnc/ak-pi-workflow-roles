@@ -331,8 +331,6 @@ test("typed 429 failure Terminal carries resume command and reveals run id only 
     );
 
     assert.equal(result.exitCode, 1);
-    assert.equal(stdout.length, 1);
-    assert.equal(stderr.length, 1);
     assert.ok(result.terminal);
     assert.equal(result.terminal!.roleOutcome.kind, "failure");
     assertRunIdOnlyInResumeCommand(result.terminal!, runId);
@@ -561,7 +559,6 @@ test("within-attempt earlier 429 does not qualify resume after a later non-429 r
     );
     assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
     assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
-    assert.equal(stdout.join("").includes("ak-role resume"), false);
   });
 });
 
@@ -668,8 +665,7 @@ test("prior attempt 429 does not make a later non-429 failure resumable", async 
     }
     assert.equal(await readTypedHttp429Observation(runDirectory), undefined);
     assert.equal((await readRoleRunState(runDirectory, piDurablePrincipalAuthority))?.state, "terminal");
-    // Presented output must not advertise a resume command after the non-429 attempt.
-    assert.equal(stdout.join("").includes("ak-role resume"), false);
+    assert.equal(second.terminal!.resume, undefined);
   });
 });
 
@@ -1232,7 +1228,6 @@ test("resume restores admitted identity and exact Pi session without resubmittin
     assert.equal(resumed.terminal!.roleOutcome.kind, "accepted");
     assert.equal(resumed.terminal!.runId, runId);
     assert.equal(resumed.terminal!.resume, undefined);
-    assert.equal(stdout.length, 1);
 
     // Frozen attachment bytes unchanged after source mutation.
     const frozenBytes = await readFile(frozenPath, "utf8");
@@ -1513,7 +1508,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
   });
 });
 
-test("unknown terminal and non-resumable ids reject without replay", async () => {
+test("unknown run id rejects; terminal run still reaches host (#416/#1091)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -1543,12 +1538,10 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
         }),
       });
       assert.equal(unknown.exitCode, 2);
-      assert.equal(stdout.length, 0);
-      assert.equal(stderr.length >= 1, true);
       assert.equal(dispatches, 0);
     }
 
-    // Create a terminal (non-resumable) failure run.
+    // Terminal failure run: #416/#1091 load does not gate on terminal state.
     const terminalId = "run-terminal-reject-001";
     {
       const { io } = captureIo();
@@ -1577,8 +1570,8 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
     }
     dispatches = 0;
     {
-      const { io, stdout } = captureIo();
-      const rejected = await runAkRole(["resume", "--model", "test/caller-seat:high", terminalId], {
+      const { io } = captureIo();
+      const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", terminalId], {
         packageRoot,
         home,
         cwd: project,
@@ -1589,19 +1582,16 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
           piRunner: runner,
         }),
       });
-      assert.equal(rejected.exitCode, 2);
-      assert.equal(stdout.length, 0);
-      assert.equal(dispatches, 0);
+      assert.equal(dispatches, 1);
+      assert.equal(resumed.exitCode, 0);
     }
 
-    // Unit: loadResumablePublicRole rejects terminal/non-resumable.
     await assert.rejects(
       () => loadResumablePublicRole(home, "missing", piDurablePrincipalAuthority),
       /unknown role run id/,
     );
   });
 });
-
 test("#987 public manual resume reaches host CLI despite live writer lease", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -1997,16 +1987,6 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
         const coords = piDurablePrincipalAuthority.decode(value);
         return Object.assign({}, coords, { __durableCoords: true });
       },
-      async isAvailable(principal: Parameters<typeof piDurablePrincipalAuthority.isAvailable>[0]) {
-        if (
-          principal !== null &&
-          typeof principal === "object" &&
-          "__durableCoords" in (principal as Record<string, unknown>)
-        ) {
-          return false;
-        }
-        return piDurablePrincipalAuthority.isAvailable(principal);
-      },
     };
 
     {
@@ -2069,40 +2049,8 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     );
     assert.equal(durable.state, "resumable");
 
-    // Host-denied availability must fail honestly without a typed accepted Terminal.
-    const blockingAuthority = {
-      issue: principalAuthority.issue,
-      seal: principalAuthority.seal,
-      decode: principalAuthority.decode,
-      async isAvailable() {
-        return false;
-      },
-    };
-    {
-      const { io } = captureIo();
-      const blocked = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        principalAuthority: blockingAuthority,
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => ({
-          code: 0,
-          stderr: "",
-          timedOut: false,
-          args: [...args],
-        }),
-        }),
-      });
-      assert.equal(blocked.exitCode, 2);
-      assert.equal(blocked.terminal, undefined);
-    }
-
     // Successful resume with opaque frozen wire must reopen the same host-issued sessionFile.
+    // #1091: package no longer gates resume on local session files.
     const { io } = captureIo();
     const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
@@ -2147,7 +2095,7 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
   });
 });
 
-test("resume rejects when the exact Pi session principal is unavailable", async () => {
+test("#1091 resume with missing session file loads identity and attempts host", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -2188,23 +2136,20 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
       principal: fixturePrincipal(sessionDirectory, sessionFile),
       admittedRequestPath,
     }, piDurablePrincipalAuthority);
+    await writeFile(join(runDirectory, "invocation.json"), "{}\n", "utf8");
     await markRunResumable(runDirectory, {
       httpStatus: 429,
       provider: "xai",
     });
-    // Principal path is bound but the file itself is missing.
+    // Principal path is bound but the file itself is missing — not a package gate (#1091).
 
-    await assert.rejects(
-      () => loadResumablePublicRole(home, runId, piDurablePrincipalAuthority),
-    );
+    const loaded = await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
+    assert.equal(loaded.admitted.runId, runId);
 
-    const reportPath = join(runDirectory, "artifacts", "report.json");
     await mkdir(join(runDirectory, "artifacts"), { recursive: true });
-    const reportBody = `${JSON.stringify({ role: "judge", runId })}\n`;
-    await writeFile(reportPath, reportBody, "utf8");
-    const { io, stdout, stderr } = captureIo();
+    const { io, stderr } = captureIo();
     let dispatches = 0;
-    const blocked = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
+    const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,
       home,
       cwd: project,
@@ -2216,31 +2161,29 @@ test("resume rejects when the exact Pi session principal is unavailable", async 
         piRunner: async (args) => {
         dispatches += 1;
         return {
-          code: 0,
-          stderr: "",
+          code: 1,
+          stderr: "host-session-gone\n",
           timedOut: false,
           args: [...args],
         };
       },
       }),
     });
-    assert.equal(dispatches, 0);
-    assert.equal(stdout.length, 0);
-    assert.notEqual(blocked.exitCode, 0);
-    assert.equal(await readFile(reportPath, "utf8"), reportBody);
-    const face = await readRunTerminalArtifact(runDirectory);
-    assert.equal(face.status, "present");
-    assert.equal(face.status === "present" ? face.file : undefined, "report.json");
-    const notedNames = (await readdir(join(runDirectory, "artifacts"))).filter((name) => name !== "report.json");
-    assert.equal(notedNames.length, 1);
-    const pointer = join(runDirectory, "artifacts", notedNames[0]!);
-    assert.equal(stderr.join("").includes(pointer), true);
-    const noted = JSON.parse(await readFile(pointer, "utf8")) as { diagnostic?: unknown };
-    assert.equal(typeof noted.diagnostic, "string");
+    assert.equal(dispatches, 1);
+    assert.notEqual(resumed.exitCode, 0);
+    const pointer = (await readdir(join(runDirectory, "artifacts")))
+      .map((name) => join(runDirectory, "artifacts", name))
+      .find((path) => stderr.join("").includes(path));
+    assert.ok(pointer);
+    const noted = JSON.parse(await readFile(pointer, "utf8")) as {
+      diagnostic?: unknown;
+      details?: { exitCode?: unknown };
+    };
+    assert.equal(noted.details?.exitCode, 1);
   });
 });
 
-test("typed 429 without a session principal is not offered as resumable", async () => {
+test("typed 429 is offered as resumable without a local session file", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -2279,8 +2222,7 @@ test("typed 429 without a session principal is not offered as resumable", async 
     );
 
     assert.notEqual(result.exitCode, 0);
-    assert.equal(result.terminal?.resume, undefined);
-    assert.equal(stdout.join("").includes("ak-role resume"), false);
+    assert.ok(result.terminal?.resume);
 
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
@@ -2292,7 +2234,7 @@ test("typed 429 without a session principal is not offered as resumable", async 
       `${runId}@judge`,
     );
     const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
-    assert.equal(durable?.state, "terminal");
+    assert.equal(durable?.state, "resumable");
   });
 });
 

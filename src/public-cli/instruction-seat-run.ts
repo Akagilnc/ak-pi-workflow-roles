@@ -946,7 +946,7 @@ export async function runPublicInstructionSeatResume(
   };
   let binding: Awaited<ReturnType<typeof readAuditorResumeBinding>>;
   try {
-    const loaded = await loadResumablePublicRole(env.home, request.runId, env.principalAuthority, true);
+    const loaded = await loadResumablePublicRole(env.home, request.runId, env.principalAuthority);
     binding = loaded.admitted.role === "auditor"
       ? await readAuditorResumeBinding(loaded.admitted.runDirectory)
       : undefined;
@@ -1014,7 +1014,7 @@ export async function continueParentAfterChild(
   env: InstructionSeatRunEnv,
   io: CliIo,
 ): Promise<SeatRunResult> {
-  const loaded = await loadResumablePublicRole(env.home, parentRunId, env.principalAuthority, true);
+  const loaded = await loadResumablePublicRole(env.home, parentRunId, env.principalAuthority);
   if (loaded.run.state !== "admitted" && !AUDITED_ROLES.has(loaded.admitted.role)) {
     return runPublicInstructionSeatResume({ runId: parentRunId }, env, io);
   }
@@ -1215,7 +1215,7 @@ async function auditSubmittedRole(
         ?? (escalation?.runDirectory === undefined
           ? undefined : runIdFromRunDirectory(escalation.runDirectory));
       if (escalatedRunId === undefined) throw new Error("escalated audit has no resumable run identity");
-      const officer = await loadResumablePublicRole(env.home, escalatedRunId, env.principalAuthority, true);
+      const officer = await loadResumablePublicRole(env.home, escalatedRunId, env.principalAuthority);
       const terminal = await trySettlePublicSeat(officer.admitted, env.principalAuthority, undefined);
       if (terminal === undefined) throw new Error("escalated audit has no terminal result");
       io.stdout(formatTerminalResult(terminal));

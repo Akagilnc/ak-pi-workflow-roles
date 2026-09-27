@@ -1,4 +1,3 @@
-import { lstat } from "node:fs/promises";
 import { join } from "node:path";
 
 import type {
@@ -42,7 +41,7 @@ export function issuePiDurablePrincipalCoordinates(
   };
 }
 
-/** Pi's durable-principal codec and availability authority. */
+/** Pi's durable-principal codec. */
 export const piDurablePrincipalAuthority: DurablePrincipalAuthority = {
   issue(request: NewDurablePrincipalRequest): DurablePrincipal {
     const coordinates = issuePiDurablePrincipalCoordinates(request);
@@ -72,14 +71,5 @@ export const piDurablePrincipalAuthority: DurablePrincipalAuthority = {
           ? record.sessionFile
           : join(record.sessionDirectory, "session.jsonl"),
     };
-  },
-  async isAvailable(principal: DurablePrincipal): Promise<boolean> {
-    const { sessionFile } = this.decode(principal);
-    try {
-      const stat = await lstat(sessionFile);
-      return stat.isFile() && !stat.isSymbolicLink();
-    } catch {
-      return false;
-    }
   },
 };

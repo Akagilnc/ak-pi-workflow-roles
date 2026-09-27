@@ -188,7 +188,7 @@ test("block1: unknown runId still rejects", async()=>{
   });
 });
 
-test("block1: session principal unavailable still fails honestly", async()=>{
+test("block1: #1091 missing session file still loads; resume attempts host", async()=>{
   await withTempHome(async(home)=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="416-no-principal-001";
@@ -202,12 +202,17 @@ test("block1: session principal unavailable still fails honestly", async()=>{
     const bookKey=resolveBookKeyFromGit(project);
     const runDir=join(home,".ak-roles","books",bookKey,"unbound","runs",`${runId}@judge`);
     await rm(join(runDir,"session","session.jsonl"),{force:true});
-    await assert.rejects(()=>loadResumablePublicRole(home, runId, piDurablePrincipalAuthority));
+    // Load seam only locates the run + identity; session-file absence is not a package gate (#1091).
+    const loaded=await loadResumablePublicRole(home, runId, piDurablePrincipalAuthority);
+    assert.equal(loaded.admitted.runId,runId);
     const {io:io2,stderr}=captureIo();let dispatched=false;
     const res=await runAkRole(["resume", "--model", "test/caller-seat:high",runId],{packageRoot,home,cwd:project,io:io2,roleTurnHost: roleTurnHostFromLegacyPiRunner({
                                                                                       packageRoot,
                                                                                       principalAuthority: piDurablePrincipalAuthority,
-                                                                                      piRunner: async(a)=>{dispatched=true;return{code:0,stderr:"",timedOut:false,args:[...a]};},
+                                                                                      piRunner: async(a)=>{
+                                                                                        dispatched=true;
+                                                                                        return{code:1,stderr:"host-session-gone\n",timedOut:false,args:[...a]};
+                                                                                      },
                                                                                     })});
     const sessionFile=join(runDir,"session","session.jsonl");
     const artifactsDirectory=join(runDir,"artifacts");
@@ -216,14 +221,12 @@ test("block1: session principal unavailable still fails honestly", async()=>{
       .find((path)=>stderr.join("").includes(path));
     assert.ok(diagnosticPath);
     const recorded=JSON.parse(await readFile(diagnosticPath,"utf8")) as {
-      runId?:unknown;diagnostic?:unknown;details?:{error?:unknown};
+      runId?:unknown;diagnostic?:unknown;details?:{exitCode?:unknown};
     };
-    assert.equal(dispatched,false);
+    assert.equal(dispatched,true);
     assert.notEqual(res.exitCode,0);
     assert.equal(recorded.runId,runId);
-    assert.equal(typeof recorded.diagnostic,"string");
-    assert.equal(typeof recorded.details?.error,"string");
-    assert.notEqual((recorded.details?.error as string).length,0);
+    assert.equal(recorded.details?.exitCode,1);
     await assert.rejects(readFile(sessionFile),{code:"ENOENT"});
   });
 });
@@ -275,7 +278,7 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
     const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
     const runDir=join(home,"runs","416-audit-escal-loop");await mkdir(join(runDir,"session"),{recursive:true});
     const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
-    let calls=0;const {io,stdout}=captureIo();
+    let calls=0;const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
     sessionAppender: appendPiSessionCustomEntry,
@@ -286,7 +289,7 @@ test("F1: audit_escalation lawful does not trigger auto", async()=>{
       buildResumePayload: ()=>["--resume"],
       dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"audit_escalation",role:"judge",status:"audit_escalation",decisiveFacts:{}},navigator:{disposition:"no-advice"},artifacts:[],runId:"416-audit-escal-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
     });
-    assert.equal(calls,1);assert.equal(result.terminal?.autoResumeCount,0);assert.equal(stdout.length,1);
+    assert.equal(calls,1);assert.equal(result.terminal?.autoResumeCount,0);
   });
 });
 
@@ -296,7 +299,7 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
     const { runWithAutoResumeLoop } = await import("../../src/public-cli/auto-resume.ts");
     const runDir=join(home,"runs","416-no-receipt-loop");await mkdir(join(runDir,"session"),{recursive:true});
     const sessionFile=join(runDir,"session","session.jsonl");await writeFile(sessionFile,"{}\n","utf8");
-    let calls=0;const {io,stdout}=captureIo();
+    let calls=0;const {io}=captureIo();
     const noReceiptFacts={acceptedReceipt:false, rejectedReceipts:[], deliveryTurns:0, sessionCompletion:"completed" as const};
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
@@ -308,7 +311,7 @@ test("F1: no_receipt lawful does not trigger auto", async()=>{
       buildResumePayload: ()=>["--resume"],
       dispatch: async()=>{calls+=1;return{exitCode:0,terminal:{roleOutcome:{kind:"no_receipt",role:"judge",status:"no-accepted-receipt",decisiveFacts:noReceiptFacts,...noReceiptFacts},navigator:{disposition:"no-advice"},artifacts:[],runId:"416-no-receipt-loop"} as unknown as import("../../src/public-cli/terminal.ts").TerminalResult};},
     });
-    assert.equal(calls,1);assert.equal(result.terminal?.autoResumeCount,0);assert.equal(stdout.length,1);
+    assert.equal(calls,1);assert.equal(result.terminal?.autoResumeCount,0);
   });
 });
 
@@ -316,7 +319,7 @@ test("block2: lawful (accepted) does not trigger auto - single presentation", as
   await withTempHome(async(home)=>{
     const project=join(home,"proj");await mkdir(project,{recursive:true});seedGitProject(project);
     const runId="416-lawful-no-auto-002";let calls=0;
-    const {io,stdout}=captureIo();
+    const {io}=captureIo();
     const result=await runAkRole(["judge", "--model", "test/caller-seat:high","--project",project,"lawful"],{packageRoot,home,cwd:project,credentials:{"openai-codex":true,xai:true},createRunId:()=>runId,io,
       roleTurnHost: roleTurnHostFromLegacyPiRunner({
         packageRoot,
@@ -324,7 +327,7 @@ test("block2: lawful (accepted) does not trigger auto - single presentation", as
         piRunner: async(args)=>{calls+=1;const sd=args[args.indexOf("--session-dir")+1]!;await mkdir(sd,{recursive:true});
         const sf=args[args.indexOf("--session")+1]!;const acc=acceptedJudge();await acc.write(sf);return{code:0,stderr:"",timedOut:false,args:[...args],sealedAcceptance:acc.sealedAcceptance};},
       })});
-    assert.equal(calls,1);assert.equal(result.exitCode,0);assert.equal(stdout.length,1);assert.equal(result.terminal?.autoResumeCount,0);
+    assert.equal(calls,1);assert.equal(result.exitCode,0);assert.equal(result.terminal?.autoResumeCount,0);
   });
 });
 
@@ -531,7 +534,7 @@ test("A2: pi/acp/headless stand-ins share the same auto-resume middle layer", as
       const calls = { n: 0 };
       // Each stand-in host persists its OWN real resumable-session binding
       // shape (#840 r8 判词 class 3) — never a shared fake. pi's binding is
-      // the transcript session.jsonl (DurablePrincipalAuthority#isAvailable);
+      // the transcript session.jsonl;
       // ACP/headless hosts persist a native session id under their own
       // session-identity binding file (host-descriptions.ts) instead and
       // never touch session.jsonl. Writing the same file for every host would

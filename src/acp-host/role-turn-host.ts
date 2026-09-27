@@ -86,8 +86,6 @@ export type AcpRoleTurnHostConfig = Readonly<{
   sessionIdentity: SessionIdentityAuthority;
   /** Seat-table host key (e.g. grok-build) for sitian host field. */
   hostName: string;
-  /** Whether a bound resume reuses the native session or mints a fresh one. */
-  boundResume: AcpHostDescription["boundResume"];
   /**
    * How the seat model reaches the agent: "set_model" sends an ACP
    * `session/set_model` RPC with modelId `provider:model` once the session
@@ -324,7 +322,8 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
           });
           return loadedId;
         };
-        if (request.continuation.kind === "resume" && config.boundResume === "session/load") {
+        let sessionReady = true;
+        if (request.continuation.kind === "resume") {
           const explicitHostSessionId = request.continuation.hostSessionId;
           const boundSessionId = explicitHostSessionId !== undefined && explicitHostSessionId !== ""
             ? explicitHostSessionId
@@ -333,10 +332,17 @@ export function createAcpRoleTurnHost(config: AcpRoleTurnHostConfig): RoleTurnHo
             sessionId = boundSessionId;
             sessionId = await loadSession(boundSessionId);
             sessionOpened = true;
+          } else {
+            outcome = failure(
+              "session",
+              "AcpSessionFailure",
+              "session-id-missing",
+              undefined,
+              "resume requires a bound session id",
+            );
+            sessionReady = false;
           }
-        }
-        let sessionReady = true;
-        if (sessionId === undefined) {
+        } else {
           const session = await rpc("session/new", sessionBindParams);
           sessionId = typeof session.sessionId === "string" ? session.sessionId : undefined;
           if (sessionId === undefined || sessionId === "") {

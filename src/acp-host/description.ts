@@ -26,8 +26,6 @@ export type AcpHostDescription = Readonly<{
    *   `provider:model` (hermes).
    */
   modelPassing: "argv" | "set_model";
-  /** Which verb a bound resume uses; "session/new" hosts always mint + bind. */
-  boundResume: "session/load" | "session/new";
   /** Durable ACP binding filename written beside the session principal. */
   sessionBindingFile: string;
   /**

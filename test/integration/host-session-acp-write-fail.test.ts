@@ -65,7 +65,6 @@ test("ACP host-session write failure writes to stderr without aborting the turn 
       const host = createAcpRoleTurnHost({
         hostName: "grok-build",
         modelPassing: "argv",
-        boundResume: "session/new",
         sessionIdentity: {
           async load() { return undefined; },
           async bind() {},

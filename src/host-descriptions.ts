@@ -23,7 +23,6 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
       modelFlag: "--model",
     }),
     modelPassing: "argv",
-    boundResume: "session/load",
     sessionBindingFile: "grok-acp-session.json",
   }),
   /**
@@ -41,7 +40,6 @@ export const HOST_DESCRIPTIONS: Readonly<Record<string, AcpHostDescription>> = O
       thinkingFlag: "--reasoning",
     }),
     modelPassing: "set_model",
-    boundResume: "session/load",
     sessionBindingFile: "hermes-acp-session.json",
     seatProfileSoul: Object.freeze({
       flag: "-p",

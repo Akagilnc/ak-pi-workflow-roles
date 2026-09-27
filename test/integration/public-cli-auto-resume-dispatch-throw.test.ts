@@ -158,32 +158,34 @@ test("dispatch exceptions retry to budget with full per-attempt retention and ty
       true,
     );
     assert.deepEqual(terminal.submissions,[sealedParams,bounceParams]);
+  });
+});
 
-    // Same real entry: principal-unavailable exception terminal also attaches ledger sequence.
-    const unavailableCalls={n:0};
-    const unavailable=await runWithAutoResumeLoop({
+test("#1091 auto-resume keeps retrying when the local session file is absent", async()=>{
+  await withTempHome(async(home)=>{
+    const project=join(home,"proj");
+    const runId="throw-no-session-probe";
+    const runDir=join(home,".ak-roles","books","proj","runs",`${runId}@judge`);
+    await mkdir(project,{recursive:true});
+    await mkdir(join(runDir,"session"),{recursive:true});
+    // No session.jsonl — former availability probe would have stopped further resumes.
+    const sessionFile=join(runDir,"session","session.jsonl");
+    await plantRecordedSubmissions({home,project,runDirectory:runDir,runId,role:"judge"});
+    const callsRef={n:0};
+    const {io}=captureIo();
+    const result=await runWithAutoResumeLoop({
       principalAuthority: piDurablePrincipalAuthority,
-      sessionAppender: appendPiSessionCustomEntry,
+      sessionAppender: async()=>{},
       admitted:{principal:fixturePrincipal(dirname(sessionFile),sessionFile),runDirectory:runDir,role:"judge",runId,projectRoot:project},
       io,
       autoResumeLimit:2,
-      isPrincipalAvailable: async()=>false,
       buildInitialPayload: ()=>["--initial"],
       buildResumePayload: ()=>["--resume"],
-      dispatch:alwaysThrowingDispatch(unavailableCalls,["boom-unavailable"]),
+      dispatch:alwaysThrowingDispatch(callsRef,["boom-1","boom-2","boom-3"]),
     });
-    const unavailableTerminal=unavailable.terminal as TerminalResult;
-    assert.equal(unavailableCalls.n,1);
-    assert.equal(unavailable.exitCode,1);
-    assert.equal(unavailableTerminal.roleOutcome.kind,"failure");
-    if(unavailableTerminal.roleOutcome.kind!=="failure")throw new Error("unreachable");
-    assert.match(unavailableTerminal.roleOutcome.diagnostic,/session principal unavailable before further resume/);
-    assert.equal(
-      unavailableTerminal.roleOutcome.payloads === undefined
-        || unavailableTerminal.roleOutcome.payloads.length === 0,
-      true,
-    );
-    assert.deepEqual(unavailableTerminal.submissions,[sealedParams,bounceParams]);
+    assert.equal(callsRef.n,3);
+    assert.equal(result.exitCode,1);
+    assert.equal((result.terminal as TerminalResult).autoResumeCount,2);
   });
 });
 
@@ -224,7 +226,7 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
     // Malformed dossier JSONL makes the pointer append fail after the error file lands.
     await writeFile(sessionFile,"{not json\n","utf8");
     const callsRef={n:0};
-    const {io,stderr}=captureIo();
+    const {io}=captureIo();
     const result=await runWithAutoResumeLoop({
     principalAuthority: piDurablePrincipalAuthority,
       sessionAppender: appendPiSessionCustomEntry,
@@ -240,6 +242,89 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
     assert.equal(result.exitCode,1);
     assert.equal(result.terminal?.roleOutcome.kind,"failure");
     assert.equal(result.terminal?.autoResumeCount,2);
-    assert.match(stderr.join(""),/dispatch error retention failed/);
+    assert.equal(result.terminal?.artifacts.filter((artifact)=>artifact.kind==="error").length,3);
+  });
+});
+
+test("a lawful final turn still returns preceding failed attempts", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(home, "runs", "failure-then-accepted");
+    await mkdir(runDirectory, { recursive: true });
+    let attempts = 0;
+    const result = await runWithAutoResumeLoop({
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      admitted: {
+        principal: fixturePrincipal(join(runDirectory, "session"), join(runDirectory, "session", "session.jsonl")),
+        runDirectory, role: "judge", runId: "failure-then-accepted", projectRoot: home,
+      },
+      io: captureIo().io,
+      autoResumeLimit: 2,
+      buildInitialPayload: () => "initial",
+      buildResumePayload: () => "resume",
+      dispatch: async () => {
+        attempts++;
+        return {
+          exitCode: attempts === 1 ? 1 : 0,
+          turnDispatched: true as const,
+          terminal: {
+            roleOutcome: attempts === 1
+              ? { kind: "failure" as const, role: "judge" as const,
+                diagnostic: "first-failure", decisiveFacts: { errorCode: "first" } }
+              : { kind: "accepted" as const, role: "judge" as const },
+            navigator: { disposition: "no-advice" as const },
+            artifacts: [], runId: "failure-then-accepted",
+          },
+        };
+      },
+    });
+    assert.equal(attempts, 2);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    const history = (result.terminal?.roleOutcome.decisiveFacts as Record<string, unknown> | undefined)?.failedAttempts as
+      Array<{ attempt: number; decisiveFacts: { errorCode: string } }>;
+    assert.deepEqual(history.map(({ attempt, decisiveFacts }) => [attempt, decisiveFacts.errorCode]),
+      [[0, "first"]]);
+  });
+});
+
+test("three failed turns retain every cause when the final result stops dispatch", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(home, "runs", "stop-after-three");
+    await mkdir(runDirectory, { recursive: true });
+    let attempts = 0;
+    const result = await runWithAutoResumeLoop({
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      admitted: {
+        principal: fixturePrincipal(join(runDirectory, "session"), join(runDirectory, "session", "session.jsonl")),
+        runDirectory, role: "judge", runId: "stop-after-three", projectRoot: home,
+      },
+      io: captureIo().io,
+      autoResumeLimit: 2,
+      buildInitialPayload: () => "initial",
+      buildResumePayload: () => "resume",
+      dispatch: async () => {
+        attempts++;
+        return {
+          exitCode: 1,
+          turnDispatched: true as const,
+          ...(attempts === 3 ? { skipAutoResume: true as const } : {}),
+          terminal: {
+            roleOutcome: { kind: "failure" as const, role: "judge" as const,
+              diagnostic: `failure-${attempts}`, decisiveFacts: { errorCode: `err-${attempts}` } },
+            navigator: { disposition: "no-advice" as const },
+            artifacts: [], runId: "stop-after-three",
+          },
+        };
+      },
+    });
+    assert.equal(attempts, 3);
+    assert.equal(result.terminal?.roleOutcome.kind, "failure");
+    if (result.terminal?.roleOutcome.kind === "failure") {
+      const history = (result.terminal.roleOutcome.decisiveFacts as Record<string, unknown>).failedAttempts as
+        Array<{ attempt: number; decisiveFacts: { errorCode: string } }>;
+      assert.deepEqual(history.map(({ attempt, decisiveFacts }) => [attempt, decisiveFacts.errorCode]),
+        [[0, "err-1"], [1, "err-2"], [2, "err-3"]]);
+    }
   });
 });

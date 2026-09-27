@@ -475,10 +475,17 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
       let sessionId = explicitHostSessionId !== undefined && explicitHostSessionId !== ""
         ? explicitHostSessionId
         : await config.sessionIdentity.load(request.principal);
+      if (request.continuation.kind === "resume" && (sessionId === undefined || sessionId === "")) {
+        outcome = failure(
+          "session",
+          "HeadlessSessionFailure",
+          "session-id-missing",
+          undefined,
+          "resume requires a bound session id",
+        );
+      } else {
       let sessionKind: "new" | "resume" =
-        request.continuation.kind === "resume" && sessionId !== undefined && sessionId !== ""
-          ? "resume"
-          : "new";
+        request.continuation.kind === "resume" ? "resume" : "new";
       if (sessionKind === "new" && !codex) {
         sessionId = randomUUID();
         await config.sessionIdentity.bind(request.principal, sessionId);
@@ -808,6 +815,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           ...(request.model !== undefined ? { model: request.model } : {}),
           ...(request.home !== undefined ? { home: request.home } : {}),
         });
+      }
       }
     } finally {
       try {

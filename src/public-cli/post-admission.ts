@@ -29,10 +29,7 @@ import { readRecordedSubmissionRows } from "../submission-ledger.ts";
 import { readDeclaredTicketNumber } from "../run-ticket-number.ts";
 import { pathContainedIn } from "../activation-ledger-topology.ts";
 import { pickEngineAxis } from "../package-resources/engine-material.ts";
-import {
-  readStoredHostSessionId,
-  resolveHostAwareSessionAvailability,
-} from "../session-identity.ts";
+import { readStoredHostSessionId } from "../session-identity.ts";
 import { rewriteRunDirectoryPathValue } from "../role-run-relocation.ts";
 
 import type {
@@ -525,17 +522,11 @@ export async function presentControlledFailure<
     ...(session === undefined ? {} : { session }),
   });
 
-  // #665 / #416: resume hint is seat-uniform — principal available && typed 429 → show.
-  // Do not fork the public terminal face on per-seat hasLawful / isResumableRole (ADR 0040).
-  let resumable = false;
-  const typedHttp429 = resumeObservation.typedHttp429;
-  if (admitted.principal !== undefined) {
-    const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal);
-    resumable = sessionPrincipalAvailable && typedHttp429 !== undefined;
-  }
+  // #665 / #416: typed 429 with a run principal offers resume; the host decides availability.
+  const resumable = admitted.principal !== undefined && resumeObservation.typedHttp429 !== undefined;
 
   if (persistRunState && !failureInput.skipRunStateWrite) {
-    await persistReturnedRunState(admitted, authority);
+    await persistReturnedRunState(admitted);
   }
 
   let publishedErrorPath: string | undefined;
@@ -638,7 +629,7 @@ async function settleDeferredPersist<
   const { needsPersist: _needsPersist, ...settledResult } = result;
   const lawful = isLawfulTypedTerminalOutcome(result.terminal.roleOutcome);
   try {
-    await persistReturnedRunState(admitted, authority, lawful ? { lawful: true } : undefined);
+    await persistReturnedRunState(admitted, lawful ? { lawful: true } : undefined);
     return settledResult;
   } catch (error) {
     const failed = await settleAfterTurnStarted(
@@ -1136,7 +1127,7 @@ export async function dispatchPostAdmissionTurn<
       }
       if (persistRunState) {
         try {
-          await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
+          await persistReturnedRunState(admitted, { lawful: true });
         } catch (error) {
           await recordBestEffortPostDispatchDiagnostic(
             admitted,
@@ -1241,7 +1232,7 @@ export async function dispatchPostAdmissionTurn<
     }
     if (persistRunState) {
       try {
-        await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
+        await persistReturnedRunState(admitted, { lawful: true });
       } catch (error) {
         await recordBestEffortPostDispatchDiagnostic(
           admitted,
@@ -1634,10 +1625,6 @@ export async function runPostAdmissionSeatResume<
       return await runWithAutoResumeLoop({
         admitted: loaded.admitted,
         principalAuthority: env.principalAuthority,
-        isPrincipalAvailable: resolveHostAwareSessionAvailability(
-          env.host,
-          env.principalAuthority,
-        ),
         io: input.io,
         sessionAppender: env.sessionAppender,
         autoResumeLimit: env.autoResumeLimit,
@@ -1913,7 +1900,6 @@ export async function runPostAdmissionResumable<
   return runWithAutoResumeLoop({
     admitted,
     principalAuthority: env.principalAuthority,
-    isPrincipalAvailable: resolveHostAwareSessionAvailability(env.host, env.principalAuthority),
     io,
     sessionAppender: env.sessionAppender,
     autoResumeLimit: env.autoResumeLimit,

@@ -63,6 +63,6 @@ export function renderSystemPromptOverride(authority: {
 export type SessionIdentityAuthority = Readonly<{
   load(principal: RoleTurnRequest["principal"]): Promise<string | undefined>;
   bind(principal: RoleTurnRequest["principal"], sessionId: string): Promise<void>;
-  /** Durable principal session path for layout ownership / isAvailable — not a rebuild source (#617 DK-4). */
+  /** Durable principal session path for layout ownership — not a rebuild source (#617 DK-4). */
   resolveSessionFile(principal: RoleTurnRequest["principal"]): string;
 }>;

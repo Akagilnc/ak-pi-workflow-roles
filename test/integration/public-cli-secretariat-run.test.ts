@@ -1089,7 +1089,6 @@ async function adapterBoundaryCase(input: {
       const host = createAcpRoleTurnHost({
         hostName: "grok-build",
         modelPassing: "argv",
-        boundResume: "session/new",
         sessionIdentity: createSessionIdentityAuthority(
           piDurablePrincipalAuthority,
           description.sessionBindingFile,
