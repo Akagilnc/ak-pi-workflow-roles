@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -179,8 +179,6 @@ export async function buildMigrateBookTopology(
 }
 
 export async function buildPackageArtifacts() {
-  // Remove stale artifacts from previous builds before assembling the publishable tree.
-  await rm("dist", { recursive: true, force: true });
   await build({
     entryPoints: entries.map((name) => `src/${name}.ts`),
     outdir: "dist",
