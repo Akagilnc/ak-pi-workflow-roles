@@ -75,7 +75,6 @@ async function runNavigatorProseIngest(
     const host = createAcpRoleTurnHost({
       hostName: "grok-build",
       modelPassing: "argv",
-      boundResume: "session/new",
       sessionIdentity: {
         async load() {
           return undefined;

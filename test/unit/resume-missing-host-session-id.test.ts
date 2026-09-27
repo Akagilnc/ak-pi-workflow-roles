@@ -43,7 +43,6 @@ test("#1091 ACP resume without bound session id reports missing; never session/n
   const host = createAcpRoleTurnHost({
     hostName: "grok-build",
     modelPassing: "argv",
-    boundResume: "session/load",
     sessionIdentity: {
       async load() {
         return undefined;

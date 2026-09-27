@@ -106,8 +106,6 @@ export type AcpRoleTurnHostConfig = Readonly<{
   sessionIdentity: SessionIdentityAuthority;
   /** Seat-table host key (e.g. grok-build) for sitian host field. */
   hostName: string;
-  /** Whether a bound resume reuses the native session or mints a fresh one. */
-  boundResume: AcpHostDescription["boundResume"];
   /**
    * How the seat model reaches the agent: "set_model" sends an ACP
    * `session/set_model` RPC with modelId `provider:model` once the session

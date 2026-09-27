@@ -1513,7 +1513,7 @@ test("resume model precedence: live seat table wins bare resume; explicit --mode
   });
 });
 
-test("unknown terminal and non-resumable ids reject without replay", async () => {
+test("unknown run id rejects; terminal run still reaches host (#416/#1091)", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -1548,7 +1548,7 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
       assert.equal(dispatches, 0);
     }
 
-    // Create a terminal (non-resumable) failure run.
+    // Terminal failure run: #416/#1091 load does not gate on terminal state.
     const terminalId = "run-terminal-reject-001";
     {
       const { io } = captureIo();
@@ -1577,8 +1577,8 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
     }
     dispatches = 0;
     {
-      const { io, stdout } = captureIo();
-      const rejected = await runAkRole(["resume", "--model", "test/caller-seat:high", terminalId], {
+      const { io } = captureIo();
+      const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", terminalId], {
         packageRoot,
         home,
         cwd: project,
@@ -1589,19 +1589,16 @@ test("unknown terminal and non-resumable ids reject without replay", async () =>
           piRunner: runner,
         }),
       });
-      assert.equal(rejected.exitCode, 2);
-      assert.equal(stdout.length, 0);
-      assert.equal(dispatches, 0);
+      assert.equal(dispatches, 1);
+      assert.equal(resumed.exitCode, 0);
     }
 
-    // Unit: loadResumablePublicRole rejects terminal/non-resumable.
     await assert.rejects(
       () => loadResumablePublicRole(home, "missing", piDurablePrincipalAuthority),
       /unknown role run id/,
     );
   });
 });
-
 test("#987 public manual resume reaches host CLI despite live writer lease", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
@@ -2069,40 +2066,8 @@ test("host-issued sessionFile coordinate reaches activation and resume execution
     );
     assert.equal(durable.state, "resumable");
 
-    // Host-denied availability must fail honestly without a typed accepted Terminal.
-    const blockingAuthority = {
-      issue: principalAuthority.issue,
-      seal: principalAuthority.seal,
-      decode: principalAuthority.decode,
-      async isAvailable() {
-        return false;
-      },
-    };
-    {
-      const { io } = captureIo();
-      const blocked = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
-        packageRoot,
-        home,
-        cwd: project,
-        credentials: { "openai-codex": true, xai: true },
-        principalAuthority: blockingAuthority,
-        io,
-        roleTurnHost: roleTurnHostFromLegacyPiRunner({
-          packageRoot,
-          principalAuthority: piDurablePrincipalAuthority,
-          piRunner: async (args) => ({
-          code: 0,
-          stderr: "",
-          timedOut: false,
-          args: [...args],
-        }),
-        }),
-      });
-      assert.equal(blocked.exitCode, 2);
-      assert.equal(blocked.terminal, undefined);
-    }
-
     // Successful resume with opaque frozen wire must reopen the same host-issued sessionFile.
+    // #1091: package no longer gates resume on principalAuthority.isAvailable.
     const { io } = captureIo();
     const resumed = await runAkRole(["resume", "--model", "test/caller-seat:high", runId], {
       packageRoot,

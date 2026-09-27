@@ -186,10 +186,6 @@ test("#1091 auto-resume keeps retrying when the local session file is absent", a
     assert.equal(callsRef.n,3);
     assert.equal(result.exitCode,1);
     assert.equal((result.terminal as TerminalResult).autoResumeCount,2);
-    const diagnostic=(result.terminal as TerminalResult).roleOutcome.kind==="failure"
-      ? (result.terminal as TerminalResult & {roleOutcome:{kind:"failure";diagnostic:string}}).roleOutcome.diagnostic
-      : "";
-    assert.equal(diagnostic.includes("session principal unavailable"),false);
   });
 });
 

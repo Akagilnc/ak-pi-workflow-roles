@@ -38,7 +38,6 @@ test("hermes set_model RPC modelId is seat provider:model", async () => {
   const host = createAcpRoleTurnHost({
     hostName: "hermes",
     modelPassing: hermes.modelPassing,
-    boundResume: hermes.boundResume,
     sessionIdentity: {
       async load() {
         if (rejectLoad) throw new Error("explicit resume must use the stored host session id");

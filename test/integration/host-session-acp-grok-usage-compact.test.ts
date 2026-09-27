@@ -90,7 +90,6 @@ function createHost(input: {
   return createAcpRoleTurnHost({
     hostName: input.hostName ?? "grok-build",
     modelPassing: "argv",
-    boundResume: "session/new",
     sessionIdentity: {
       async load() {
         return undefined;

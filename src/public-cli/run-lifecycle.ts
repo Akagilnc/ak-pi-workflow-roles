@@ -1314,7 +1314,6 @@ async function loadResumableRunRecord(
   home: string,
   runId: string,
   authority: DurablePrincipalAuthority,
-  allowUnformedAdmitted = false,
 ): Promise<{
   readonly run: RoleRunRecord;
   readonly principal: DurablePrincipal;
@@ -1739,9 +1738,8 @@ export async function loadResumablePublicRole(
   home: string,
   runId: string,
   authority: DurablePrincipalAuthority,
-  allowUnformedAdmitted = false,
 ): Promise<LoadedResumablePublicRole> {
-  const loaded = await loadResumableRunRecord(home, runId, authority, allowUnformedAdmitted);
+  const loaded = await loadResumableRunRecord(home, runId, authority);
   return seatLoadedResult(loaded, admitResumedRole(loaded));
 }
 

@@ -83,7 +83,6 @@ test("ACP host-session write failure aborts pending prompt without waiting for i
     const host = createAcpRoleTurnHost({
       hostName: "grok-build",
       modelPassing: "argv",
-      boundResume: "session/new",
       sessionIdentity: {
         async load() { return undefined; },
         async bind() {},
