@@ -103,16 +103,17 @@ export function resolveNativeSessionPath(options: {
     return join(configDir, "projects", sanitizedCwd, `${options.sessionId}.jsonl`);
   }
   if (options.host === "codex") {
-    const codexHome = process.env.CODEX_HOME || join(home, ".codex");
-    const sessionsDir = join(codexHome, "sessions");
-    const existing = findCodexRollout(sessionsDir, options.sessionId);
-    return existing;
+    return findCodexRollout(codexSessionsDirectory(home), options.sessionId);
   }
   if (options.host === "grok-build") {
     const grokHome = process.env.GROK_HOME || join(home, ".grok");
     return join(grokHome, "sessions", encodeURIComponent(options.cwd), options.sessionId);
   }
   return undefined;
+}
+
+function codexSessionsDirectory(home?: string): string {
+  return join(process.env.CODEX_HOME || join(home || homedir(), ".codex"), "sessions");
 }
 
 /** Count each host activation, including Pi turns without an external copy. */
@@ -178,7 +179,9 @@ export function recordNativeSessionPointer(options: {
   if (options.host === "pi" || options.host === "hermes") {
     return undefined;
   }
-  const nativePath = resolveNativeSessionPath(options);
+  const nativePath = options.host === "codex"
+    ? codexSessionsDirectory(options.home)
+    : resolveNativeSessionPath(options);
   if (nativePath === undefined) return undefined;
 
   sitianReportSafe({

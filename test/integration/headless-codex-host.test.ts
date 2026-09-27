@@ -6,6 +6,8 @@ import test from "node:test";
 import { createHeadlessRoleTurnHost } from "../../src/headless-host/role-turn-host.ts";
 import type { RoleTurnRequest } from "../../src/host-contracts.ts";
 import { lookupHeadlessHostDescription } from "../../src/host-descriptions.ts";
+import { HOST_SESSION_RECORD_KIND } from "../../src/host-session-record.ts";
+import { readSitianRecords } from "../../src/sitian-facade.ts";
 import { fixturePrincipal } from "../helpers/admitted-principal-fixture.ts";
 import { createTempPackageHomeLedger } from "../helpers/pi-test-harness.ts";
 
@@ -124,6 +126,13 @@ process.stdout.write(events.map(JSON.stringify).join("\\n") + "\\n");
     assert.equal(bound, "thread-fake-1");
     assert.deepEqual(receipt, { status: "completed", report: "initial" });
     assert.equal(await readFile(join(root, "session", "codex-gpt-test-1.jsonl"), "utf8"), await readFile(nativeRollout, "utf8"));
+    const sitianFile = join(root, "session", HOST_SESSION_RECORD_KIND, "records.jsonl");
+    const firstRecords = (await readSitianRecords(sitianFile)).records;
+    assert.equal((firstRecords[0]?.payload as { type?: string })?.type, "native-session-pointer");
+    assert.equal((firstRecords[0]?.payload as { nativePath?: string })?.nativePath, join(root, ".codex", "sessions"));
+    assert.equal((firstRecords[0]?.payload as { sessionId?: string })?.sessionId, "thread-fake-1");
+    assert.equal((firstRecords[1]?.payload as { type?: string })?.type, "native-session-copy");
+    assert.equal((firstRecords[1]?.payload as { nativePath?: string })?.nativePath, nativeRollout);
     const schema = JSON.parse(await readFile(join(root, "headless-output-schema.json"), "utf8")) as {
       additionalProperties: unknown;
       required: string[];
