@@ -385,7 +385,6 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
     });
 
     let summoned: PublicSummonResult | undefined;
-    const hostFailures: Array<{ code: string | number | undefined; binary: string | undefined }> = [];
     const events: any[] = [];
     const nav = createNavigatorAttendance({
       context: { cwd: root, home: root, runDirectory: parentRun } as never,
@@ -405,16 +404,7 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
             model: { provider: "openai-codex", model: "gpt-test", thinking: "low" },
             credentials: { "openai-codex": true, xai: true },
             hostAdapters: [
-              { name: "codex", create: () => ({ ok: true as const, host: {
-                executeTurn: async (request) => {
-                  const result = await host.executeTurn(request);
-                  hostFailures.push({
-                    code: result.knownFailure?.identity?.code,
-                    binary: result.knownFailure?.details?.binary as string | undefined,
-                  });
-                  return result;
-                },
-              } }) },
+              { name: "codex", create: () => ({ ok: true as const, host }) },
             ],
             createRunId: () => "01navmiss",
           });
@@ -427,12 +417,16 @@ test("#959 missing host binary diagnostic reaches terminal.navigator.reason", as
     await nav.settle({ kind: "accepted", role: "coder", phase: "apply", status: "completed" });
 
     const outcome = summoned?.terminal?.roleOutcome;
-    assert.equal(hostFailures[0]?.code, "spawn-failed");
-    assert.equal(hostFailures[0]?.binary, missingBin);
     assert.equal(outcome?.kind, "failure", JSON.stringify(summoned?.terminal));
     assert.equal(
       outcome && "decisiveFacts" in outcome ? outcome.decisiveFacts.errorCode : undefined,
-      "session-id-missing",
+      "spawn-failed",
+    );
+    assert.equal(
+      outcome && "decisiveFacts" in outcome
+        ? (outcome.decisiveFacts.secondaryEvidence as { binary?: string } | undefined)?.binary
+        : undefined,
+      missingBin,
     );
     const diagnostic =
       outcome && "diagnostic" in outcome && typeof outcome.diagnostic === "string"
