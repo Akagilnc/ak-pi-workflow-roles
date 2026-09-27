@@ -545,13 +545,17 @@ export async function projectClosedSubmissionLifecycle(
     isError: false,
     details: closed.accepted,
   };
-  const navigator = await settle(publicNavigatorSettlement(closed.role, phase, closure));
-  // The closure carries this call's settled attendance, not a session-wide
-  // search for whichever message happened to arrive last.
-  context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", {
-    ...closure,
-    ...(navigator === undefined ? {} : { navigator }),
-  });
+  let navigator: NavigatorEvent | undefined;
+  try {
+    navigator = await settle(publicNavigatorSettlement(closed.role, phase, closure));
+  } finally {
+    // A Navigator failure cannot erase an already accepted role closure.
+    // Missing attendance remains a typed unavailable at public settlement.
+    context.sessionManager.appendCustomEntry?.("ak-role-submission-closure", {
+      ...closure,
+      ...(navigator === undefined ? {} : { navigator }),
+    });
+  }
 }
 
 /**
