@@ -457,7 +457,7 @@ export async function runWithAutoResumeLoop<
       lastThrownError = error;
       const failedAttempt: (typeof failedAttempts)[number] = {
         attempt: dispatchOrdinal,
-        diagnostic: describeErrorIdentity(error),
+        diagnostic: describeErrorIdentity(unwrapTurnDispatchedFailure(error)),
       };
       failedAttempts.push(failedAttempt);
       turnStartedBeforeThrow = error instanceof TurnDispatchedFailure;
@@ -525,11 +525,6 @@ export async function runWithAutoResumeLoop<
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
-      // #855: process cancel — stop even if dispatch forgot skipAutoResume.
-      if (processCancelSignalName(options.signal) !== undefined) {
-        if (terminal !== undefined) presentTerminal(terminal, options.io);
-        return result;
-      }
     }
 
     if (result !== undefined) {
@@ -546,6 +541,12 @@ export async function runWithAutoResumeLoop<
           presentTerminal(complete, options.io);
           return { ...result, terminal: complete } as T;
         }
+        if (terminal !== undefined) presentTerminal(terminal, options.io);
+        return result;
+      }
+      // #855: cancellation still stops before another dispatch. At the
+      // exhausted attempt, the budget path above first returns all failures.
+      if (processCancelSignalName(options.signal) !== undefined) {
         if (terminal !== undefined) presentTerminal(terminal, options.io);
         return result;
       }
