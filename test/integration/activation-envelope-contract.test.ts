@@ -22,7 +22,6 @@ import {
   durableSessionPointer,
   resolveActivationLedgerHome,
   resolveBookKeyFromGit,
-  type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
 import { type ActivationTraceRecord } from "../../src/activation-trace.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";

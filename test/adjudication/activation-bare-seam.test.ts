@@ -8,7 +8,6 @@ import {
   ActivationGitRepositoryRequiredError,
   createRoleRuntimeExtension,
   type ActivationTraceRecord,
-  type ToolExecutionObservationRecord,
 } from "../../src/role-runtime.ts";
 import { createPiRoleRuntimeExtension } from "../../src/pi/adapter.ts";
 import {
@@ -234,49 +233,3 @@ for (const [mode, expected] of [["print", 1], ["json", 1], ["tui", undefined], [
   });
 }
 
-test("shared role runtime registers tool observation only after admitted activation and never writes stdout", async () => {
-  // Pre/post-admission observation ordering needs a custom writer on the same handler set;
-  // withInProcessPi cannot inject toolExecutionObservationWriter between events this tightly.
-  await withActivationHome({ prefix: "ak-act-obs-" }, async ({ home }) => {
-    const observations: ToolExecutionObservationRecord[] = [];
-    const { handlers } = captureExtensionHandlers(
-      (pi) => createPiRoleRuntimeExtension({
-        loadRoleSoul: async () => "LAW",
-        activationClock: () => "2025-01-01T00:00:00.000Z",
-        activationTraceWriter: () => {},
-        toolExecutionObservationWriter: (record) => { observations.push(record); },
-      })(pi),
-      { getFlag: (name) => name === "ak-role" ? "judge" : undefined },
-    );
-
-    const startHandler = handlers.get("tool_execution_start")?.[0];
-    const updateHandler = handlers.get("tool_execution_update")?.[0];
-    const endHandler = handlers.get("tool_execution_end")?.[0];
-    assert.ok(startHandler && updateHandler && endHandler);
-
-    await startHandler({ toolCallId: "pre", toolName: "bash" }, activationExtensionContext({ cwd: home, home }));
-    await updateHandler({ toolCallId: "pre", toolName: "bash", partialResult: { content: [{ type: "text", text: "x" }] } }, activationExtensionContext({ cwd: home, home }));
-    await endHandler({ toolCallId: "pre", toolName: "bash", isError: false }, activationExtensionContext({ cwd: home, home }));
-    assert.equal(observations.length, 0);
-
-    const sessionStart = handlers.get("session_start")?.[0];
-    assert.ok(sessionStart);
-    await sessionStart({ reason: "startup" }, activationExtensionContext({ cwd: home, home }));
-
-    await startHandler({ toolCallId: "post", toolName: "bash" }, activationExtensionContext({ cwd: home, home }));
-    await updateHandler({ toolCallId: "post", toolName: "bash", partialResult: { content: [] } }, activationExtensionContext({ cwd: home, home }));
-    await updateHandler({ toolCallId: "post", toolName: "bash", partialResult: { content: [{ type: "text", text: "hello" }] } }, activationExtensionContext({ cwd: home, home }));
-    await endHandler({ toolCallId: "post", toolName: "bash", isError: true }, activationExtensionContext({ cwd: home, home }));
-    assert.deepEqual(observations.map((record) => ({
-      event: record.event,
-      toolCallId: record.toolCallId,
-      toolName: record.toolName,
-      role: record.role,
-      ...(record.event === "tool_execution_end" ? { isError: record.isError } : {}),
-    })), [
-      { event: "tool_execution_start", toolCallId: "post", toolName: "bash", role: "judge" },
-      { event: "tool_execution_update", toolCallId: "post", toolName: "bash", role: "judge" },
-      { event: "tool_execution_end", toolCallId: "post", toolName: "bash", role: "judge", isError: true },
-    ]);
-  });
-});

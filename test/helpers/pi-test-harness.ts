@@ -748,10 +748,10 @@ export async function createMockProviderServer(
 
 /**
  * Seed the child institutional sub-session's provider from a faux provider over
- * the real OpenAI-completions HTTP path. `openPiInstitutionalSession` builds its
+ * the real OpenAI-completions HTTP path. The child institutional session builds its
  * own child ModelRuntime that reads `<PI_CODING_AGENT_DIR>/models.json`, so tests
  * that drive `executeAuditorChild`/`runGatekeeper`/`runComplianceAudit` directly
- * (without `withInProcessPi`) must register the faux provider there. Starts a
+ * must register the faux provider there. Starts a
  * mock SSE server backed by `faux`, writes the model registration, runs `run`,
  * then tears both down.
  */

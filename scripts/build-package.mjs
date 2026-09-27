@@ -1,4 +1,4 @@
-import { chmod, copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
@@ -20,7 +20,6 @@ const entries = [
   // Static import of navigator-work-base.
   "atomic-write",
   "public-role-summons",
-  "pi/in-process-session",
   "activation-ledger-git",
   "activation-ledger-topology",
   "archivist-record-entry",
@@ -70,7 +69,6 @@ const entries = [
   "sitian-contracts",
   "sitian-facade",
   "sitian-reader",
-  "stream-idle-guard",
   "typed-provider-http",
   "upstream-error-testimony",
 ];
