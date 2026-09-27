@@ -33,7 +33,7 @@ test("codex headless host binds and resumes a structured turn", { timeout: 10000
   const fakeBin = join(root, "fake-codex");
   const nativeRollout = join(root, ".codex", "sessions", "rollout-thread-fake-1.jsonl");
   await writeFile(fakeBin, `#!/usr/bin/env node
-import { appendFileSync, existsSync, mkdirSync, readFileSync, watch, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 const args = process.argv.slice(2);
 appendFileSync(${JSON.stringify(argvLog)}, JSON.stringify(args) + "\\n");
@@ -55,14 +55,18 @@ const hasPointer = () => existsSync(pointerFile) && readFileSync(pointerFile, "u
     try { return JSON.parse(line).payload?.type === "native-session-pointer"; }
     catch { return false; }
   });
-const finish = () => {
-  if (!hasPointer()) return;
-  watcher.close();
-  writeFileSync(${JSON.stringify(nativeRollout)}, 'native codex transcript\\n');
-  process.stdout.write(events.slice(1).map(JSON.stringify).join("\\n") + "\\n");
-};
-const watcher = watch(${JSON.stringify(join(root, "session"))}, finish);
-finish();
+let checks = 0;
+const waitForPointer = setInterval(() => {
+  if (hasPointer()) {
+    clearInterval(waitForPointer);
+    writeFileSync(${JSON.stringify(nativeRollout)}, 'native codex transcript\\n');
+    process.stdout.write(events.slice(1).map(JSON.stringify).join("\\n") + "\\n");
+  } else if (++checks >= 500) {
+    clearInterval(waitForPointer);
+    process.stderr.write("Codex pointer was not recorded before rollout\\n");
+    process.exitCode = 1;
+  }
+}, 10);
 `, "utf8");
   await chmod(fakeBin, 0o755);
 
