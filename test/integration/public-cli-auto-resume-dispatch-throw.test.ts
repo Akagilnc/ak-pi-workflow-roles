@@ -246,6 +246,47 @@ test("retention sink failure does not break the retry path (PR #418 isolation pr
   });
 });
 
+test("a lawful final turn still returns preceding failed attempts", async () => {
+  await withTempHome(async (home) => {
+    const runDirectory = join(home, "runs", "failure-then-accepted");
+    await mkdir(runDirectory, { recursive: true });
+    let attempts = 0;
+    const result = await runWithAutoResumeLoop({
+      principalAuthority: piDurablePrincipalAuthority,
+      sessionAppender: appendPiSessionCustomEntry,
+      admitted: {
+        principal: fixturePrincipal(join(runDirectory, "session"), join(runDirectory, "session", "session.jsonl")),
+        runDirectory, role: "judge", runId: "failure-then-accepted", projectRoot: home,
+      },
+      io: captureIo().io,
+      autoResumeLimit: 2,
+      buildInitialPayload: () => "initial",
+      buildResumePayload: () => "resume",
+      dispatch: async () => {
+        attempts++;
+        return {
+          exitCode: attempts === 1 ? 1 : 0,
+          turnDispatched: true as const,
+          terminal: {
+            roleOutcome: attempts === 1
+              ? { kind: "failure" as const, role: "judge" as const,
+                diagnostic: "first-failure", decisiveFacts: { errorCode: "first" } }
+              : { kind: "accepted" as const, role: "judge" as const },
+            navigator: { disposition: "no-advice" as const },
+            artifacts: [], runId: "failure-then-accepted",
+          },
+        };
+      },
+    });
+    assert.equal(attempts, 2);
+    assert.equal(result.terminal?.roleOutcome.kind, "accepted");
+    const history = (result.terminal?.roleOutcome.decisiveFacts as Record<string, unknown> | undefined)?.failedAttempts as
+      Array<{ attempt: number; decisiveFacts: { errorCode: string } }>;
+    assert.deepEqual(history.map(({ attempt, decisiveFacts }) => [attempt, decisiveFacts.errorCode]),
+      [[0, "first"]]);
+  });
+});
+
 test("three failed turns retain every cause when the final result stops dispatch", async () => {
   await withTempHome(async (home) => {
     const runDirectory = join(home, "runs", "stop-after-three");

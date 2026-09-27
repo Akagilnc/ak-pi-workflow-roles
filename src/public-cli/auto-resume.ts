@@ -563,12 +563,11 @@ export async function runWithAutoResumeLoop<
   if (stoppedResult === undefined) {
     await finalizeExceptionRunBestEffort(options.admitted.runDirectory, options.io);
   }
-  const complete: TerminalResult | undefined = terminal?.roleOutcome.kind === "failure"
-    && failedAttempts.length > 1
+  const complete: TerminalResult | undefined = terminal !== undefined && failedAttempts.length > 0
     ? { ...terminal, roleOutcome: {
       ...terminal.roleOutcome,
       decisiveFacts: { ...terminal.roleOutcome.decisiveFacts, failedAttempts },
-    } }
+    } } as TerminalResult
     : terminal;
   if (complete !== undefined) {
     if (isLawfulTypedTerminalOutcome(complete.roleOutcome)) {

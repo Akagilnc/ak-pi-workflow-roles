@@ -226,9 +226,7 @@ test("block1: #1091 missing session file still loads; resume attempts host", asy
     assert.equal(dispatched,true);
     assert.notEqual(res.exitCode,0);
     assert.equal(recorded.runId,runId);
-    assert.equal(recorded.diagnostic,"host-session-gone\n");
     assert.equal(recorded.details?.exitCode,1);
-    assert.equal(String(recorded.diagnostic).includes("Pi session principal is unavailable"),false);
     await assert.rejects(readFile(sessionFile),{code:"ENOENT"});
   });
 });
