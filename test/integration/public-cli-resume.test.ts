@@ -2202,7 +2202,7 @@ test("#1091 resume with missing session file loads identity and attempts host", 
   });
 });
 
-test("typed 429 without a session principal is not offered as resumable", async () => {
+test("typed 429 is offered as resumable without a local session file", async () => {
   await withTempHome(async (home) => {
     const project = join(home, "proj");
     await mkdir(project, { recursive: true });
@@ -2241,8 +2241,8 @@ test("typed 429 without a session principal is not offered as resumable", async 
     );
 
     assert.notEqual(result.exitCode, 0);
-    assert.equal(result.terminal?.resume, undefined);
-    assert.equal(stdout.join("").includes("ak-role resume"), false);
+    assert.ok(result.terminal?.resume);
+    assert.equal(stdout.join("").includes("ak-role resume"), true);
 
     const bookKey = resolveBookKeyFromGit(project);
     const runDirectory = join(
@@ -2254,7 +2254,7 @@ test("typed 429 without a session principal is not offered as resumable", async 
       `${runId}@judge`,
     );
     const durable = await readRoleRunState(runDirectory, piDurablePrincipalAuthority);
-    assert.equal(durable?.state, "terminal");
+    assert.equal(durable?.state, "resumable");
   });
 });
 

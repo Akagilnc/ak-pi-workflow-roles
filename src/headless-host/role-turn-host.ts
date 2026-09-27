@@ -464,14 +464,14 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
         ? explicitHostSessionId
         : await config.sessionIdentity.load(request.principal);
       if (request.continuation.kind === "resume" && (sessionId === undefined || sessionId === "")) {
-        return failure(
+        outcome = failure(
           "session",
           "HeadlessSessionFailure",
           "session-id-missing",
           undefined,
           "resume requires a bound session id",
         );
-      }
+      } else {
       let sessionKind: "new" | "resume" =
         request.continuation.kind === "resume" ? "resume" : "new";
       if (sessionKind === "new" && !codex) {
@@ -780,6 +780,7 @@ export function createHeadlessRoleTurnHost(config: HeadlessRoleTurnHostConfig): 
           return { status: "delivered", stderr: spawned.stderr };
         },
       });
+      }
     } finally {
       try {
         await prepared.dispose?.();

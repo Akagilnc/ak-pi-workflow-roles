@@ -525,17 +525,11 @@ export async function presentControlledFailure<
     ...(session === undefined ? {} : { session }),
   });
 
-  // #665 / #416: resume hint is seat-uniform — principal available && typed 429 → show.
-  // Do not fork the public terminal face on per-seat hasLawful / isResumableRole (ADR 0040).
-  let resumable = false;
-  const typedHttp429 = resumeObservation.typedHttp429;
-  if (admitted.principal !== undefined) {
-    const sessionPrincipalAvailable = await authority.isAvailable(admitted.principal);
-    resumable = sessionPrincipalAvailable && typedHttp429 !== undefined;
-  }
+  // #665 / #416: typed 429 with a run principal offers resume; the host decides availability.
+  const resumable = admitted.principal !== undefined && resumeObservation.typedHttp429 !== undefined;
 
   if (persistRunState && !failureInput.skipRunStateWrite) {
-    await persistReturnedRunState(admitted, authority);
+    await persistReturnedRunState(admitted);
   }
 
   let publishedErrorPath: string | undefined;
@@ -638,7 +632,7 @@ async function settleDeferredPersist<
   const { needsPersist: _needsPersist, ...settledResult } = result;
   const lawful = isLawfulTypedTerminalOutcome(result.terminal.roleOutcome);
   try {
-    await persistReturnedRunState(admitted, authority, lawful ? { lawful: true } : undefined);
+    await persistReturnedRunState(admitted, lawful ? { lawful: true } : undefined);
     return settledResult;
   } catch (error) {
     const failed = await settleAfterTurnStarted(
@@ -1192,7 +1186,7 @@ export async function dispatchPostAdmissionTurn<
       }
       if (persistRunState) {
         try {
-          await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
+          await persistReturnedRunState(admitted, { lawful: true });
         } catch (error) {
           await recordBestEffortPostDispatchDiagnostic(
             admitted,
@@ -1297,7 +1291,7 @@ export async function dispatchPostAdmissionTurn<
     }
     if (persistRunState) {
       try {
-        await persistReturnedRunState(admitted, env.principalAuthority, { lawful: true });
+        await persistReturnedRunState(admitted, { lawful: true });
       } catch (error) {
         await recordBestEffortPostDispatchDiagnostic(
           admitted,

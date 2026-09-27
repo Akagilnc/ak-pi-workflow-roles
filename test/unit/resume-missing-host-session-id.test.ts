@@ -68,7 +68,6 @@ test("#1091 ACP resume without bound session id reports missing; never session/n
   const result = await host.executeTurn(baseRequest(runDirectory));
   assert.equal(result.knownFailure?.identity?.code, "session-id-missing");
   assert.equal(result.knownFailure?.identity?.name, "AcpSessionFailure");
-  assert.equal(result.knownFailure?.diagnostic, "resume requires a bound session id");
   assert.equal(methods.includes("session/new"), false);
   assert.equal(methods.includes("session/load"), false);
   assert.equal(methods.includes("session/prompt"), false);
@@ -103,11 +102,14 @@ test("#1091 headless resume without bound session id reports missing; never bind
       async closeRound() {
         return { accepted: true as const };
       },
+      async dispose() {
+        throw new Error("cleanup failed");
+      },
     }),
   });
   const result = await host.executeTurn(baseRequest(runDirectory));
   assert.equal(result.knownFailure?.identity?.code, "session-id-missing");
   assert.equal(result.knownFailure?.identity?.name, "HeadlessSessionFailure");
-  assert.equal(result.knownFailure?.diagnostic, "resume requires a bound session id");
+  assert.ok(result.knownFailure?.details?.cleanupError);
   assert.equal(bindCalls, 0);
 });

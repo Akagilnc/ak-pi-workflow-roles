@@ -53,7 +53,6 @@ const dummyIo: CliIo = { stdout: () => {}, stderr: () => {} };
  */
 export async function persistReturnedRunState(
   admitted: { runDirectory: string; principal?: DurablePrincipal },
-  authority: Pick<DurablePrincipalAuthority, "isAvailable">,
   options?: { readonly lawful?: boolean },
 ): Promise<void> {
   if (options?.lawful === true) {
@@ -65,10 +64,8 @@ export async function persistReturnedRunState(
   });
   const typedHttp429 = resumeObservation.typedHttp429;
   if (admitted.principal !== undefined && typedHttp429 !== undefined) {
-    if (await authority.isAvailable(admitted.principal)) {
-      await markRunResumable(admitted.runDirectory, typedHttp429);
-      return;
-    }
+    await markRunResumable(admitted.runDirectory, typedHttp429);
+    return;
   }
   await markRunTerminal(admitted.runDirectory);
 }
