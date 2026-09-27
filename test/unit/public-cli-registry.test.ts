@@ -139,7 +139,6 @@ const EXPECTED_PACKAGED_ROLE_METADATA = [
     bareCommand: false,
     outputTool: "ak_collector_output",
     settlement: "sealed",
-    runnerFailure: "collector-known-first",
     artifactFace: {
       evidenceRole: true,
       leaves: [

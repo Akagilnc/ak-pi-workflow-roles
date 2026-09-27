@@ -1590,23 +1590,6 @@ async function readInfrastructureToolFailure(
 }
 
 /**
- * #1088: code-collection infrastructure tools are gone — no session-principal
- * collector infra failure preempts provider-stop.
- */
-export function extractCollectorInfrastructureFailure(
-  _entries: readonly SessionEntry[],
-): ControlledFailure | undefined {
-  return undefined;
-}
-
-/** #1088: no durable collector infrastructure-tool failure surface. */
-export async function readCollectorInfrastructureFailure(
-  _sessionFile: string,
-): Promise<ControlledFailure | undefined> {
-  return undefined;
-}
-
-/**
  * Prefer a real engine-detour infrastructure tool failure already on the session
  * principal over a later secondary provider-stop (failure-honesty / #357 T2).
  * Cause stays `output` — labor leg failed before accepted typed Receipt.
@@ -1646,10 +1629,6 @@ const RUNNER_FAILURE_POLICY = {
   "engine-detour-record-first": {
     read: readEngineDetourInfrastructureFailure,
     rank: "record-first",
-  },
-  "collector-known-first": {
-    read: readCollectorInfrastructureFailure,
-    rank: "known-first",
   },
 } as const;
 

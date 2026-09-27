@@ -111,7 +111,7 @@ test("runnerFailure registry rank is the public settlement principal", async () 
       diagnostic: detourDiagnostic,
     },
     {
-      label: "collector known-first with no code-collection infra keeps knownFailure",
+      label: "collector has no runnerFailure leaf so knownFailure stands",
       argv: (project: string) => ["--model", "openai-codex/faux-1:off", "collector", "--project", project, "--pr", "7", "--repo", "acme/widgets"],
       session: "detour" as const,
       known: true,

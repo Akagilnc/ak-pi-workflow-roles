@@ -243,7 +243,6 @@ export const PUBLIC_ROLE_RECORDS = [
     bareCommand: false,
     outputTool: COLLECTOR_OUTPUT_TOOL,
     settlement: "sealed",
-    runnerFailure: "collector-known-first",
     artifactFace: {
       evidenceRole: true,
       leaves: [

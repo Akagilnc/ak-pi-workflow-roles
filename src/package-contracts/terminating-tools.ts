@@ -5,7 +5,6 @@
 
 import {
   COLLECTOR_OUTPUT_TOOL,
-  validateAcceptedCollectorReceipt,
   type CollectorReceipt,
 } from "./collector-output.ts";
 import {
@@ -44,7 +43,6 @@ export {
   JUDGE_OUTPUT_TOOL_NAME,
   REVIEWER_OUTPUT_TOOL_NAME,
   MERGER_OUTPUT_TOOL_NAME,
-  validateAcceptedCollectorReceipt,
   validateReviewerIntent,
   validateAcceptedWorkerDetails,
   validateDoctorSubmissionShape,
